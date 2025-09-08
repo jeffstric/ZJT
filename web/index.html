@@ -132,37 +132,106 @@
         error: '',
         results: [],
         promptId: '',
-        timeout: 180,
+        status: '',
+        statusInterval: null,
       }
     },
     computed: {
       canSubmit() { return !!this.file && !!this.prompt && !this.loading },
+      statusText() {
+        switch(this.status) {
+          case 'submitted': return '任务已提交，等待处理...';
+          case 'pending': return '任务排队中...';
+          case 'running': return '正在生成图片...';
+          case 'completed': return '生成完成！';
+          case 'error': return '任务出错';
+          case 'not_found': return '任务未找到';
+          default: return '';
+        }
+      }
     },
     methods: {
       onFile(e){ this.file = e.target.files[0] || null; },
       saveServer(){ localStorage.setItem('comfyui_server', this.server || ''); },
+      
       async submit(){
         if(!this.canSubmit) return;
-        this.loading = true; this.error=''; this.results=[]; this.promptId='';
+        this.loading = true; this.error=''; this.results=[]; this.promptId=''; this.status='';
+        this.clearStatusCheck();
+        
         try {
           const form = new FormData();
           form.append('image', this.file);
           form.append('prompt', this.prompt);
           if(this.server) form.append('server', this.server);
-          form.append('timeout', String(this.timeout));
 
           const res = await axios.post('/api/qwen-image-edit', form, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
+          
           this.promptId = res.data.prompt_id || '';
-          this.results = Array.isArray(res.data.image_urls) ? res.data.image_urls : [];
+          this.status = res.data.status || 'submitted';
+          
+          // Start polling for status
+          this.startStatusCheck();
+          
         } catch (err) {
           console.error(err);
           this.error = err?.response?.data?.detail || err?.message || '请求失败';
-        } finally {
           this.loading = false;
         }
+      },
+      
+      async checkStatus() {
+        if (!this.promptId) return;
+        
+        try {
+          const url = `/api/status/${this.promptId}${this.server ? '?server=' + encodeURIComponent(this.server) : ''}`;
+          const res = await axios.get(url);
+          
+          this.status = res.data.status;
+          
+          if (res.data.status === 'completed') {
+            this.results = res.data.image_urls || [];
+            this.loading = false;
+            this.clearStatusCheck();
+          } else if (res.data.status === 'error' || res.data.status === 'not_found') {
+            this.error = '任务处理失败或未找到';
+            this.loading = false;
+            this.clearStatusCheck();
+          }
+        } catch (err) {
+          console.error('Status check error:', err);
+          // Continue checking, don't stop on temporary errors
+        }
+      },
+      
+      startStatusCheck() {
+        this.statusInterval = setInterval(() => {
+          this.checkStatus();
+        }, 2000); // Check every 2 seconds
+      },
+      
+      clearStatusCheck() {
+        if (this.statusInterval) {
+          clearInterval(this.statusInterval);
+          this.statusInterval = null;
+        }
+      },
+      
+      downloadImage(url, index) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `generated_image_${index + 1}.png`;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
       }
+    },
+    
+    beforeUnmount() {
+      this.clearStatusCheck();
     },
     template: `
       <div>
@@ -186,23 +255,21 @@
             <textarea class="textarea" v-model.trim="prompt" placeholder="请输入对图片的编辑指令"></textarea>
           </div>
 
-          <div class="field row" style="align-items:center">
-            <div style="flex:1">
-              <label class="label">超时时间（秒）</label>
-              <input class="input" type="number" min="30" max="600" v-model.number="timeout" />
-            </div>
-            <div style="display:flex; align-items:flex-end; padding-bottom: 2px;">
-              <button class="btn" :disabled="!canSubmit" @click="submit">{{ loading ? '提交中…' : '提交任务' }}</button>
-            </div>
+          <div class="field">
+            <button class="btn" :disabled="!canSubmit" @click="submit">{{ loading ? '提交中…' : '提交任务' }}</button>
           </div>
         </div>
 
         <div class="status" v-if="promptId">任务 ID：{{ promptId }}</div>
+        <div class="status" v-if="statusText">{{ statusText }}</div>
         <div class="status danger" v-if="error">{{ error }}</div>
 
         <div class="preview" v-if="results.length">
           <div class="imgbox" v-for="(url, i) in results" :key="i">
             <img :src="url" :alt="'result-'+i" />
+            <div style="padding: 8px; text-align: center;">
+              <button class="btn secondary" @click="downloadImage(url, i)">下载图片</button>
+            </div>
           </div>
         </div>
       </div>

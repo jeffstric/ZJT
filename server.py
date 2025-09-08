@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -126,23 +126,52 @@ def _submit_prompt(server: str, payload: dict) -> str:
         raise HTTPException(status_code=502, detail=f"Failed to submit prompt: {e}")
 
 
-def _poll_history_for_images(server: str, prompt_id: str, timeout_sec: int = 180, interval: float = 2.0) -> List[str]:
-    start = time.time()
-    history_url = f"{server}history/{prompt_id}"
-    view_url = f"{server}view?filename="
+def _check_queue_status(server: str, prompt_id: str) -> str:
+    """Check if prompt is in queue (running or pending)"""
+    try:
+        queue_url = f"{server}queue"
+        r = requests.get(queue_url, timeout=5)
+        if r.status_code == 200:
+            queue_data = r.json()
+            
+            # Check running jobs
+            if "queue_running" in queue_data:
+                running_jobs = queue_data["queue_running"]
+                if isinstance(running_jobs, list):
+                    for job in running_jobs:
+                        if isinstance(job, list) and len(job) >= 2 and job[1] == prompt_id:
+                            return "running"
+            
+            # Check pending jobs
+            if "queue_pending" in queue_data:
+                pending_jobs = queue_data["queue_pending"]
+                if isinstance(pending_jobs, list):
+                    for job in pending_jobs:
+                        if isinstance(job, list) and len(job) >= 2 and job[1] == prompt_id:
+                            return "pending"
+        return "not_found"
+    except Exception:
+        return "error"
 
-    while time.time() - start < timeout_sec:
-        try:
-            r = requests.get(history_url, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                outputs = data.get("outputs") if isinstance(data, dict) else None
+
+def _check_history_for_images(server: str, prompt_id: str) -> List[str]:
+    """Check history for completed results"""
+    try:
+        history_url = f"{server}history/{prompt_id}"
+        view_url = f"{server}view?filename="
+        
+        r = requests.get(history_url, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            # ComfyUI history format: {prompt_id: {outputs: {...}, status: {...}, ...}}
+            if isinstance(data, dict) and prompt_id in data:
+                prompt_data = data[prompt_id]
+                outputs = prompt_data.get("outputs") if isinstance(prompt_data, dict) else None
                 if outputs:
                     image_urls: List[str] = []
                     for node_id, node_out in outputs.items():
                         if not isinstance(node_out, dict):
                             continue
-                        # Common keys: images, gifs, etc. We focus on images
                         for out_type, out_items in node_out.items():
                             if not isinstance(out_items, list):
                                 continue
@@ -152,25 +181,21 @@ def _poll_history_for_images(server: str, prompt_id: str, timeout_sec: int = 180
                                 fname = item.get("filename")
                                 if fname:
                                     image_urls.append(view_url + fname)
-                    if image_urls:
-                        return image_urls
-        except requests.RequestException:
-            pass
-        time.sleep(interval)
-
-    raise HTTPException(status_code=504, detail="Timed out waiting for ComfyUI result")
+                    return image_urls
+        return []
+    except Exception:
+        return []
 
 
 @app.post("/api/qwen-image-edit")
 async def qwen_image_edit(
     image: UploadFile = File(...),
     prompt: str = Form(...),
-    server: str = Form(None),
-    timeout: int = Form(180)
+    server: str = Form(None)
 ):
     """
     Accepts an image and a text prompt, calls ComfyUI with the provided template,
-    and returns the resulting image URLs.
+    and returns the prompt_id for status checking.
     """
     srv = _normalize_server(server)
 
@@ -183,12 +208,37 @@ async def qwen_image_edit(
     # Step 3: Submit prompt
     prompt_id = _submit_prompt(srv, payload)
 
-    # Step 4: Poll history for outputs
-    image_urls = _poll_history_for_images(srv, prompt_id, timeout_sec=int(timeout))
-
     return JSONResponse({
         "prompt_id": prompt_id,
-        "image_urls": image_urls
+        "status": "submitted"
+    })
+
+
+@app.get("/api/status/{prompt_id}")
+async def check_status(
+    prompt_id: str,
+    server: str = Query(None)
+):
+    """
+    Check the status of a submitted prompt.
+    Returns: pending, running, completed, or error
+    """
+    srv = _normalize_server(server)
+    
+    # First check if it's completed
+    image_urls = _check_history_for_images(srv, prompt_id)
+    if image_urls:
+        return JSONResponse({
+            "status": "completed",
+            "image_urls": image_urls
+        })
+    
+    # Check queue status
+    queue_status = _check_queue_status(srv, prompt_id)
+    
+    return JSONResponse({
+        "status": queue_status,
+        "image_urls": []
     })
 
 
