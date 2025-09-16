@@ -124,6 +124,13 @@
           </div>
           <button class="btn" @click="$router.push({name:'nanobanana-edit'})">打开</button>
         </div>
+        <div class="list-item">
+          <div>
+            <div style="font-weight:700">小红书笔记修改</div>
+            <div class="muted">直接跳转到表单页面进行笔记修改</div>
+          </div>
+          <button class="btn" onclick="location.href='http://ssh.perseids.cn:15678/form/8cd1955c-5cf6-4111-a3a4-406001d7e3b2'">打开</button>
+        </div>
       </div>
     `,
   };
@@ -457,7 +464,11 @@
   });
 
   const App = {
-    data(){ return { tools: [{name:'图片AI编辑功能', path:'/image-edit'}] } },
+    data(){ return { tools: [
+      {name:'qwen中文图片编辑', path:'/image-edit'},
+      {name:'nano banana图片编辑', path:'/nanobanana-edit'},
+      {name:'小红书笔记修改', path:'http://ssh.perseids.cn:15678/form/8cd1955c-5cf6-4111-a3a4-406001d7e3b2'}
+    ] } },
     computed: {
       route(){ return this.$route },
       pageTitle(){ 
