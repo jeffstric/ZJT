@@ -227,35 +227,52 @@ class RunningHubClient:
         raise TimeoutError(f"Task {task_id} did not complete within {timeout} seconds")
     
     def run_and_wait(self, node_info_list: List[NodeInfo], 
-                     timeout: Optional[int] = None) -> tuple[str, List[TaskResult]]:
+                     timeout: Optional[int] = None,
+                     max_retries: int = 3) -> tuple[str, List[TaskResult]]:
         """
         Submit a task and wait for completion, then return results
+        Retries up to max_retries times if task fails
         
         Args:
             node_info_list: List of node information for the workflow
             timeout: Maximum time to wait for completion
+            max_retries: Maximum number of retry attempts (default: 3)
             
         Returns:
             Tuple of (task_id, results)
             
         Raises:
-            RuntimeError: If task fails
+            RuntimeError: If task fails after all retry attempts
             TimeoutError: If task doesn't complete within timeout
         """
-        # Submit task
-        response = self.run_task(node_info_list)
-        task_id = response["data"]["taskId"]
+        last_error = None
         
-        # Wait for completion
-        final_status = self.wait_for_completion(task_id, timeout)
-        
-        if final_status == TaskStatus.FAILED:
-            raise RuntimeError(f"Task {task_id} failed")
-        
-        # Get results
-        results = self.get_outputs(task_id)
-        
-        return task_id, results
+        for attempt in range(max_retries):
+            try:
+                # Submit task
+                response = self.run_task(node_info_list)
+                task_id = response["data"]["taskId"]
+                
+                # Wait for completion
+                final_status = self.wait_for_completion(task_id, timeout)
+                
+                if final_status == TaskStatus.FAILED:
+                    raise RuntimeError(f"Task {task_id} failed")
+                
+                # Get results
+                results = self.get_outputs(task_id)
+                
+                return task_id, results
+                
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    # Not the last attempt, log and retry
+                    print(f"Attempt {attempt + 1}/{max_retries} failed: {str(e)}. Retrying...")
+                    time.sleep(1)  # Brief pause before retry
+                else:
+                    # Last attempt failed, raise the error
+                    raise last_error
 
 
 # Convenience functions for common use cases
@@ -327,8 +344,8 @@ if __name__ == "__main__":
 
     # Example: Create nodes for image editing
     nodes = create_image_edit_nodes(
-        image_url="https://sns-webpic-qc.xhscdn.com/202510101731/76968279d8c5d2a1efa2cbb8065d32af/1040g00831g1s92qa0idg5npsq1c0bnlahbnd6eo!nd_dft_wlteh_webp_3",
-        prompt="将图片的背景替换掉，换成你认为更加合适的背景。新背景和原背景一定要不同。将所有的文字全部去除"
+        image_url="https://www.perseids.cn/007mfYxXly1hvdnrv6k9ij30qo140425.jpg",
+        prompt="将人物制作成为手办"
     )
 
     try:
