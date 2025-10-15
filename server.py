@@ -10,7 +10,7 @@ import os
 import time
 from datetime import datetime
 from typing import List
-from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task
+from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(APP_DIR, "qwen_image_edit_api.json")
@@ -19,7 +19,9 @@ UPLOAD_DIR = os.path.join(APP_DIR, "upload")
 
 # Load server configuration
 import yaml
-with open(os.path.join(APP_DIR, "config.yml"), 'r', encoding='utf-8') as f:
+env = os.getenv("comfyui_env", "prod")
+config_file = "config_dev.yml" if env == "dev" else "config.yml"
+with open(os.path.join(APP_DIR, config_file), 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 SERVER_HOST = config["server"]["host"]
 
@@ -453,6 +455,82 @@ async def runninghub_edit_sync(
         raise HTTPException(status_code=500, detail=f"Failed to process image editing task: {str(e)}")
 
 
+@app.post("/api/ai-app-run")
+async def ai_app_run(
+    prompt: str = Form(..., description="Text prompt for the AI app"),
+    model: str = Form("portrait", description="Model type: portrait, landscape, portrait-hd, landscape-hd"),
+    timeout: int = Form(300, description="Maximum wait time in seconds")
+):
+    """
+    Submit task to RunningHub AI-app/run endpoint and wait for completion.
+    Automatically polls task status and returns final video/image URLs.
+    """
+    try:
+        # Validate model parameter
+        valid_models = ["portrait", "landscape", "portrait-hd", "landscape-hd"]
+        if model not in valid_models:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid model. Must be one of: {', '.join(valid_models)}"
+            )
+        
+        # Model descriptions mapping
+        model_descriptions = {
+            "portrait": "竖屏",
+            "landscape": "横屏",
+            "portrait-hd": "高清竖屏",
+            "landscape-hd": "高清横屏"
+        }
+        
+        # Build node info list
+        node_info_list = [
+            {
+                "nodeId": "1",
+                "fieldName": "prompt",
+                "fieldValue": prompt,
+                "description": "Input text"
+            },
+            {
+                "nodeId": "1",
+                "fieldName": "model",
+                "fieldData": '[{"name":"portrait","index":"portrait","description":"竖屏","fastIndex":1.0,"descriptionEn":"Vertical screen"},{"name":"landscape","index":"landscape","description":"横屏","fastIndex":2.0,"descriptionEn":"Horizontal screen"},{"name":"portrait-hd","index":"portrait-hd","description":"高清竖屏","fastIndex":3.0,"descriptionEn":"High-definition vertical screen"},{"name":"landscape-hd","index":"landscape-hd","description":"高清横屏","fastIndex":4.0,"descriptionEn":"HD horizontal screen"}]',
+                "fieldValue": model,
+                "description": model_descriptions.get(model, "Horizontal and vertical mode")
+            }
+        ]
+        
+        # Run task and wait for completion
+        task_id, results = run_ai_app_task_sync(
+            webapp_id="1973555977595301890",
+            api_key="789ee82e4a644d7ea6a4f772ed5ff458",
+            node_info_list=node_info_list,
+            timeout=timeout
+        )
+        
+        return JSONResponse({
+            "success": True,
+            "task_id": task_id,
+            "status": "completed",
+            "results": [
+                {
+                    "file_url": result.file_url,
+                    "file_type": result.file_type,
+                    "task_cost_time": result.task_cost_time,
+                    "node_id": result.node_id
+                }
+                for result in results
+            ]
+        })
+        
+    except TimeoutError as e:
+        raise HTTPException(status_code=408, detail=f"Task timed out: {str(e)}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=f"Task failed: {str(e)}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
+
 
 # Serve upload directory for static file access
 upload_dir = os.path.join(APP_DIR, "upload")
@@ -468,4 +546,6 @@ app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 
 if __name__ == "__main__":
-    uvicorn.run("server:app", host="0.0.0.0", port=5173, reload=False)
+    env = os.getenv("comfyui_env", "prod")
+    port = 9002 if env == "dev" else config["server"].get("port", 5173)
+    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)

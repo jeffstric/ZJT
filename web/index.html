@@ -126,6 +126,13 @@
         </div>
         <div class="list-item">
           <div>
+            <div style="font-weight:700">AI视频生成</div>
+            <div class="muted">输入文本提示词生成视频（调用 RunningHub AI-app）</div>
+          </div>
+          <button class="btn" @click="$router.push({name:'ai-video-gen'})">打开</button>
+        </div>
+        <div class="list-item">
+          <div>
             <div style="font-weight:700">小红书笔记修改</div>
             <div class="muted">直接跳转到表单页面进行笔记修改</div>
           </div>
@@ -453,10 +460,131 @@
     `
   };
 
+
+  const AIVideoGen = {
+    name: 'AIVideoGen',
+    data() {
+      return {
+        prompt: '',
+        model: 'portrait',
+        loading: false,
+        error: '',
+        results: [],
+        taskId: '',
+        status: '',
+      }
+    },
+    computed: {
+      canSubmit() { return !!this.prompt.trim() && !this.loading },
+      statusText() {
+        if (this.status === 'completed') return '生成完成！';
+        if (this.loading) return '正在生成视频，请稍候...';
+        return '';
+      },
+      modelOptions() {
+        return [
+          { value: 'portrait', label: '竖屏' },
+          { value: 'landscape', label: '横屏' },
+          { value: 'portrait-hd', label: '高清竖屏' },
+          { value: 'landscape-hd', label: '高清横屏' }
+        ];
+      }
+    },
+    methods: {
+      async submit(){
+        if(!this.canSubmit) return;
+        this.loading = true; 
+        this.error=''; 
+        this.results=[]; 
+        this.taskId=''; 
+        this.status='';
+        
+        try {
+          const form = new FormData();
+          form.append('prompt', this.prompt);
+          form.append('model', this.model);
+          form.append('timeout', '900'); // 15 minutes timeout
+
+          const res = await axios.post('/api/ai-app-run', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          
+          this.taskId = res.data.task_id || '';
+          this.status = res.data.status || '';
+          this.results = res.data.results || [];
+          this.loading = false;
+          
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '请求失败';
+          this.loading = false;
+        }
+      },
+      
+      downloadVideo(url, index) {
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = `ai_video_${dateStr}_${timeStr}_${index + 1}.mp4`;
+        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+        
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    },
+    
+    template: `
+      <div>
+        <div class="form">
+          <div class="field">
+            <label class="label">视频提示词</label>
+            <textarea class="textarea" v-model.trim="prompt" placeholder="请输入视频内容描述，例如：第一镜（0–3秒）静谧晨光，窗外的城市尚在沉睡..."></textarea>
+          </div>
+
+          <div class="field">
+            <label class="label">视频模式</label>
+            <select class="input" v-model="model">
+              <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <button class="btn" :disabled="!canSubmit" @click="submit">{{ loading ? '生成中…' : '开始生成' }}</button>
+          </div>
+        </div>
+
+        <div class="status" v-if="taskId">任务 ID：{{ taskId }}</div>
+        <div class="status" v-if="statusText">{{ statusText }}</div>
+        <div class="status danger" v-if="error">{{ error }}</div>
+
+        <div class="preview" v-if="results.length">
+          <div class="imgbox" v-for="(result, i) in results" :key="i">
+            <video :src="result.file_url" controls style="width: 100%; display: block;"></video>
+            <div style="padding: 8px; text-align: center;">
+              <button class="btn secondary" @click="downloadVideo(result.file_url, i)">下载视频</button>
+              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `
+  };
+
   const routes = [
     { path: '/', name: 'list', component: ListPage },
     { path: '/image-edit', name: 'image-edit', component: ImageEdit },
     { path: '/nanobanana-edit', name: 'nanobanana-edit', component: NanobananaEdit },
+    { path: '/ai-video-gen', name: 'ai-video-gen', component: AIVideoGen },
   ];
   const router = VueRouter.createRouter({
     history: VueRouter.createWebHistory(),
@@ -467,6 +595,7 @@
     data(){ return { tools: [
       {name:'qwen中文图片编辑', path:'/image-edit'},
       {name:'nano banana图片编辑', path:'/nanobanana-edit'},
+      {name:'AI视频生成', path:'/ai-video-gen'},
       {name:'小红书笔记修改', path:'http://ssh.perseids.cn:15678/form/8cd1955c-5cf6-4111-a3a4-406001d7e3b2'}
     ] } },
     computed: {
@@ -475,6 +604,7 @@
         if (this.route.name === 'list') return 'AI 工具列表';
         if (this.route.name === 'image-edit') return 'qwen中文图片编辑';
         if (this.route.name === 'nanobanana-edit') return 'nano banano图片编辑';
+        if (this.route.name === 'ai-video-gen') return 'AI 视频生成';
         return 'AI 工具';
       }
     },

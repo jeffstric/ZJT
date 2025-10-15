@@ -37,16 +37,17 @@ class RunningHubClient:
     WEBAPP_ID = "1960639129312780290"
     QUICK_CREATE_CODE = "005"
     
-    def __init__(self, config_path: str = "config.yml"):
+    def __init__(self, config_path: str = "config.yml", api_key: str = None):
         """
         Initialize RunningHub API client
         
         Args:
             config_path: Path to YAML configuration file
+            api_key: Optional API key to override the one in config file
         """
         self.config = self._load_config(config_path)
         self.host = self.config["runninghub"]["host"]
-        self.api_key = self.config["runninghub"]["api_key"]
+        self.api_key = api_key if api_key is not None else self.config["runninghub"]["api_key"]
         self.request_timeout = self.config["timeout"]["request_timeout"]
         
     def _load_config(self, config_path: str) -> Dict[str, Any]:
@@ -320,6 +321,140 @@ def run_image_edit_task(image_url: str, prompt: str, timeout: int = 180) -> tupl
     return task_id, results
 
 
+def run_ai_app_task(
+    webapp_id: str,
+    api_key: str,
+    node_info_list: List[Dict[str, str]],
+    config_path: str = None
+) -> Dict[str, Any]:
+    """
+    Run AI app task using the ai-app/run endpoint
+    
+    Args:
+        webapp_id: The webapp ID for the AI app
+        api_key: API key for authentication
+        node_info_list: List of node information dictionaries with nodeId, fieldName, fieldValue, etc.
+        config_path: Path to configuration file (default: auto-detect based on comfyui_env)
+        
+    Returns:
+        API response as dictionary
+        
+    Raises:
+        requests.RequestException: If request fails
+        ValueError: If response format is invalid
+    """
+    # Auto-detect config file based on environment if not specified
+    if config_path is None:
+        env = os.getenv("comfyui_env", "prod")
+        config_path = "config_dev.yml" if env == "dev" else "config.yml"
+    
+    # Load config to get host
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as file:
+        config = yaml.safe_load(file)
+    
+    host = config["runninghub"]["host"]
+    endpoint = "/task/openapi/ai-app/run"
+    url = f"{host}{endpoint}"
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "webappId": webapp_id,
+        "apiKey": api_key,
+        "nodeInfoList": node_info_list
+    }
+    
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=config["timeout"]["request_timeout"]
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        # Return result directly, let caller handle code != 0
+        return result
+        
+    except requests.RequestException as e:
+        raise requests.RequestException(f"Request failed: {str(e)}")
+    except ValueError as e:
+        raise ValueError(f"Invalid response format: {str(e)}")
+
+
+
+def run_ai_app_task_sync(
+    webapp_id: str,
+    api_key: str,
+    node_info_list: List[Dict[str, str]],
+    timeout: int = 180,
+    config_path: str = None
+) -> tuple[str, List[TaskResult]]:
+    """
+    Run AI app task and wait for completion (synchronous)
+    
+    Args:
+        webapp_id: The webapp ID for the AI app
+        api_key: API key for authentication
+        node_info_list: List of node information dictionaries
+        timeout: Maximum time to wait for completion in seconds (default: 180s = 3 minutes)
+        config_path: Path to configuration file (default: auto-detect based on comfyui_env)
+        
+    Returns:
+        Tuple of (task_id, results)
+        
+    Raises:
+        RuntimeError: If task fails
+        TimeoutError: If task doesn't complete within timeout
+    """
+    # Auto-detect config file based on environment if not specified
+    if config_path is None:
+        env = os.getenv("comfyui_env", "prod")
+        config_path = "config_dev.yml" if env == "dev" else "config.yml"
+    
+    # Create client instance with custom api_key
+    client = RunningHubClient(config_path=config_path, api_key=api_key)
+    check_interval = client.config["timeout"].get("status_check_interval", 5)
+    
+    # Submit task
+    result = run_ai_app_task(webapp_id, api_key, node_info_list, config_path)
+    
+    # Check if task submission failed
+    if result.get("code") != 0:
+        error_msg = result.get("msg", "Unknown error")
+        raise RuntimeError(f"Task submission failed: {error_msg}")
+    
+    task_id = result.get("data", {}).get("taskId")
+    if not task_id:
+        raise RuntimeError("Failed to get task ID from response")
+    
+    # Wait for completion
+    start_time = time.time()
+    while True:
+        elapsed = time.time() - start_time
+        if elapsed > timeout:
+            raise TimeoutError(f"Task {task_id} did not complete within {timeout} seconds")
+        
+        # Use client's check_status method
+        status = client.check_status(task_id)
+        
+        if status == TaskStatus.SUCCESS:
+            # Use client's get_outputs method
+            results = client.get_outputs(task_id)
+            return task_id, results
+        elif status == TaskStatus.FAILED:
+            raise RuntimeError(f"Task {task_id} failed")
+        
+        # Still running or queued, wait before checking again
+        time.sleep(check_interval)
+
 # Example usage
 if __name__ == "__main__":
     # Initialize client
@@ -327,8 +462,8 @@ if __name__ == "__main__":
 
     # Example: Create nodes for image editing
     nodes = create_image_edit_nodes(
-        image_url="https://sns-webpic-qc.xhscdn.com/202510101731/76968279d8c5d2a1efa2cbb8065d32af/1040g00831g1s92qa0idg5npsq1c0bnlahbnd6eo!nd_dft_wlteh_webp_3",
-        prompt="将图片的背景替换掉，换成你认为更加合适的背景。新背景和原背景一定要不同。将所有的文字全部去除"
+        image_url="https://www.perseids.cn/007mfYxXly1hvdnrv6k9ij30qo140425.jpg",
+        prompt="将人物制作成为手办"
     )
 
     try:
