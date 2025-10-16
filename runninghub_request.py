@@ -5,7 +5,7 @@ import os
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
-
+from config_util import get_config_path
 
 class TaskStatus(Enum):
     QUEUED = "QUEUED"
@@ -344,9 +344,7 @@ def run_ai_app_task(
         ValueError: If response format is invalid
     """
     # Auto-detect config file based on environment if not specified
-    if config_path is None:
-        env = os.getenv("comfyui_env", "prod")
-        config_path = "config_dev.yml" if env == "dev" else "config.yml"
+    config_path = get_config_path(config_path)
     
     # Load config to get host
     if not os.path.exists(config_path):

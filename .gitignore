@@ -1,0 +1,6 @@
+config_*.yml
+__pycache__/
+server_output/
+upload/
+*.json
+*.md

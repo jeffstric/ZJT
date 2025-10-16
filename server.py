@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from typing import List
 from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync
+from config_util import get_config_path, is_dev_environment
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(APP_DIR, "qwen_image_edit_api.json")
@@ -19,8 +20,7 @@ UPLOAD_DIR = os.path.join(APP_DIR, "upload")
 
 # Load server configuration
 import yaml
-env = os.getenv("comfyui_env", "prod")
-config_file = "config_dev.yml" if env == "dev" else "config.yml"
+config_file = get_config_path()
 with open(os.path.join(APP_DIR, config_file), 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 SERVER_HOST = config["server"]["host"]
@@ -499,10 +499,14 @@ async def ai_app_run(
             }
         ]
         
+        # Get AI-app configuration from config file
+        webapp_id = config["runninghub"].get("ai_app_webapp_id", "1973555977595301890")
+        api_key = config["runninghub"].get("ai_app_api_key", config["runninghub"]["api_key"])
+        
         # Run task and wait for completion
         task_id, results = run_ai_app_task_sync(
-            webapp_id="1973555977595301890",
-            api_key="789ee82e4a644d7ea6a4f772ed5ff458",
+            webapp_id=webapp_id,
+            api_key=api_key,
             node_info_list=node_info_list,
             timeout=timeout
         )
@@ -546,6 +550,5 @@ app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 
 if __name__ == "__main__":
-    env = os.getenv("comfyui_env", "prod")
-    port = 9002 if env == "dev" else config["server"].get("port", 5173)
+    port = 9002 if is_dev_environment() else config["server"].get("port", 5173)
     uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
