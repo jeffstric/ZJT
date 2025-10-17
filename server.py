@@ -254,14 +254,14 @@ async def check_status(
 
 @app.get("/api/download")
 async def download_image(
-    url: str = Query(..., description="Image URL to download"),
+    url: str = Query(..., description="Media URL to download"),
     filename: str = Query(None, description="Custom filename")
 ):
     """
-    Proxy download for ComfyUI images to handle CORS and provide proper download headers
+    Proxy download for media files (images/videos) to handle CORS and provide proper download headers
     """
     try:
-        # Fetch the image from ComfyUI server
+        # Fetch the file from remote server
         response = requests.get(url, timeout=30, stream=True)
         response.raise_for_status()
         
@@ -271,14 +271,23 @@ async def download_image(
             if "filename=" in url:
                 filename = url.split("filename=")[-1].split("&")[0]
             else:
-                filename = f"generated_image_{int(time.time())}.png"
+                # Try to get extension from URL
+                url_path = url.split('?')[0]
+                ext = url_path.split('.')[-1] if '.' in url_path else 'bin'
+                filename = f"generated_file_{int(time.time())}.{ext}"
         
-        # Ensure proper file extension
-        if not filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
-            filename += '.png'
+        # Don't add extension if filename already has a valid one
+        valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv')
+        if not filename.lower().endswith(valid_extensions):
+            # Try to detect from content-type
+            content_type = response.headers.get('content-type', '')
+            if 'video' in content_type:
+                filename += '.mp4'
+            elif 'image' in content_type:
+                filename += '.png'
         
         # Get content type
-        content_type = response.headers.get('content-type', 'image/png')
+        content_type = response.headers.get('content-type', 'application/octet-stream')
         
         def generate():
             for chunk in response.iter_content(chunk_size=8192):
