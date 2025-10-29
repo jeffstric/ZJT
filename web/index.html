@@ -361,7 +361,7 @@
         </div>
         <div class="list-item">
           <div>
-            <div style="font-weight:700">nano banana图片编辑</div>
+            <div style="font-weight:700">图片编辑</div>
             <div class="muted">上传图片 + 提示词</div>
           </div>
           <button class="btn" @click="$router.push({name:'nanobanana-edit'})">打开</button>
@@ -372,6 +372,13 @@
             <div class="muted">输入文本提示词生成视频</div>
           </div>
           <button class="btn" @click="$router.push({name:'ai-video-gen'})">打开</button>
+        </div>
+        <div class="list-item">
+          <div>
+            <div style="font-weight:700">图片生成视频</div>
+            <div class="muted">上传图片 + 提示词生成视频</div>
+          </div>
+          <button class="btn" @click="$router.push({name:'image-to-video'})">打开</button>
         </div>
         <div class="list-item">
           <div>
@@ -741,6 +748,162 @@
   };
 
 
+  const ImageToVideo = {
+    name: 'ImageToVideo',
+    data() {
+      return {
+        file: null,
+        prompt: '',
+        model: 'portrait',
+        durationSeconds: 10,
+        loading: false,
+        error: '',
+        results: [],
+        taskId: '',
+        status: '',
+        authToken: '',
+      }
+    },
+    mounted() {
+      // Get auth_token from localStorage (set by App component)
+      this.authToken = localStorage.getItem('auth_token') || '';
+    },
+    computed: {
+      canSubmit() { return !!this.file && !!this.prompt.trim() && !this.loading },
+      statusText() {
+        if (this.status === 'completed') return '生成完成！';
+        if (this.loading) return '正在生成视频，请稍候...';
+        return '';
+      },
+      modelOptions() {
+        return [
+          { value: 'portrait', label: '竖屏' },
+          { value: 'landscape', label: '横屏' },
+          { value: 'portrait-hd', label: '高清竖屏' },
+          { value: 'landscape-hd', label: '高清横屏' }
+        ];
+      },
+      durationOptions() {
+        return [
+          { value: 10, label: '10秒' },
+          { value: 15, label: '15秒' }
+        ];
+      }
+    },
+    methods: {
+      onFile(e){ this.file = e.target.files[0] || null; },
+      
+      async submit(){
+        if(!this.canSubmit) return;
+        this.loading = true; 
+        this.error=''; 
+        this.results=[]; 
+        this.taskId=''; 
+        this.status='';
+        
+        try {
+          const form = new FormData();
+          form.append('image', this.file);
+          form.append('prompt', this.prompt);
+          form.append('model', this.model);
+          form.append('duration_seconds', this.durationSeconds);
+          form.append('timeout', '900'); // 15 minutes timeout
+          
+          // Add auth_token if available
+          if (this.authToken) {
+            form.append('auth_token', this.authToken);
+          }
+
+          const res = await axios.post('/api/ai-app-run-image', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          
+          this.taskId = res.data.task_id || '';
+          this.status = res.data.status || '';
+          this.results = res.data.results || [];
+          this.loading = false;
+          
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '请求失败';
+          this.loading = false;
+        }
+      },
+      
+      downloadVideo(url, index) {
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = `image_to_video_${dateStr}_${timeStr}_${index + 1}.mp4`;
+        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+        
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    },
+    
+    template: `
+      <div>
+        <div class="form">
+          <div class="field">
+            <label class="label">上传图片</label>
+            <input class="input" type="file" accept="image/*" @change="onFile" />
+            <div class="muted" style="margin-top:6px; color: #fca5a5;">⚠️ 注意：请勿上传真人图片</div>
+          </div>
+
+          <div class="field">
+            <label class="label">视频提示词</label>
+            <textarea class="textarea" v-model.trim="prompt" placeholder="请输入视频内容描述，例如：让图片中的人物动起来..."></textarea>
+          </div>
+
+          <div class="field">
+            <label class="label">视频模式</label>
+            <select class="input" v-model="model">
+              <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="label">视频时长</label>
+            <select class="input" v-model.number="durationSeconds">
+              <option v-for="opt in durationOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <button class="btn" :disabled="!canSubmit" @click="submit">{{ loading ? '生成中…' : '开始生成' }}</button>
+          </div>
+        </div>
+
+        <div class="status" v-if="taskId">任务 ID：{{ taskId }}</div>
+        <div class="status" v-if="statusText">{{ statusText }}</div>
+        <div class="status danger" v-if="error">{{ error }}</div>
+
+        <div class="preview" v-if="results.length">
+          <div class="imgbox" v-for="(result, i) in results" :key="i">
+            <video :src="result.file_url" controls style="width: 100%; display: block;"></video>
+            <div style="padding: 8px; text-align: center;">
+              <button class="btn secondary" @click="downloadVideo(result.file_url, i)">下载视频</button>
+              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `
+  };
+
   const AIVideoGen = {
     name: 'AIVideoGen',
     data() {
@@ -875,6 +1038,7 @@
     { path: '/image-edit', name: 'image-edit', component: ImageEdit },
     { path: '/nanobanana-edit', name: 'nanobanana-edit', component: NanobananaEdit },
     { path: '/ai-video-gen', name: 'ai-video-gen', component: AIVideoGen },
+    { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
   ];
   const router = VueRouter.createRouter({
     history: VueRouter.createWebHistory(),
@@ -950,6 +1114,7 @@
         if (this.route.name === 'image-edit') return 'qwen中文图片编辑';
         if (this.route.name === 'nanobanana-edit') return 'nano banano图片编辑';
         if (this.route.name === 'ai-video-gen') return 'AI 视频生成';
+        if (this.route.name === 'image-to-video') return '图片生成视频';
         return 'AI 工具';
       },
       isLoggedIn() {

@@ -653,6 +653,144 @@ async def ai_app_run(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
 
+@app.post("/api/ai-app-run-image")
+async def ai_app_run_image(
+    prompt: str = Form(..., description="Text prompt for the AI app"),
+    image: UploadFile = File(..., description="Image file for the AI app"),
+    model: str = Form("portrait", description="Model type: portrait, landscape, portrait-hd, landscape-hd"),
+    duration_seconds: int = Form(10, description="Duration in seconds"),
+    timeout: int = Form(300, description="Maximum wait time in seconds"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Submit task to RunningHub AI-app/run endpoint and wait for completion.
+    Automatically polls task status and returns final video/image URLs.
+    """
+    try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
+        # Validate model parameter
+        valid_models = ["portrait", "landscape", "portrait-hd", "landscape-hd"]
+        if model not in valid_models:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid model. Must be one of: {', '.join(valid_models)}"
+            )
+        
+        image_url = _save_uploaded_image(image)
+        # Build node info list
+        node_info_list = [
+            {
+                "nodeId": "3",
+                "fieldName": "text",
+                "fieldValue": prompt,
+                "description": "Prompt"
+            },
+            {
+                "nodeId": "4",
+                "fieldName": "image",
+                "fieldValue": image_url,
+                "description": "Upload image"
+            },
+            {
+                "nodeId": "14",
+                "fieldName": "model",
+                "fieldData": "[{\"name\":\"portrait\",\"index\":\"portrait\",\"description\":\"\",\"fastIndex\":1.0,\"descriptionEn\":\"Vertical version 704X1280\"},{\"name\":\"landscape\",\"index\":\"landscape\",\"description\":\"\",\"fastIndex\":2.0,\"descriptionEn\":\"Vertical 1024X1792\"},{\"name\":\"portrait-hd\",\"index\":\"portrait-hd\",\"description\":\"\",\"fastIndex\":3.0,\"descriptionEn\":\"Horizontal version 1280X704\"},{\"name\":\"landscape-hd\",\"index\":\"landscape-hd\",\"description\":\"\",\"fastIndex\":4.0,\"descriptionEn\":\"Landscape 1972X1024\"}]",
+                "fieldValue": model,
+                "description": "Model options, vertical screen, horizontal screen, HD vertical screen, HD horizontal screen"
+            },
+            {
+                "nodeId": "14",
+                "fieldName": "duration_seconds",
+                "fieldData": "[[10, 15], {\"default\": 10}]",
+                "fieldValue": duration_seconds,
+                "description": "Generation duration (0.2 yuan per 15 seconds per time)"
+            }
+        ]
+        
+        # Get AI-app configuration from config file0
+        webapp_id = config["runninghub"].get("ai_app_webapp_img_id", "1976487269899046914")
+        api_key = config["runninghub"].get("ai_app_api_key", config["runninghub"]["api_key"])
+
+        #用uuid生成交易id
+        transaction_id = str(uuid.uuid4())
+        if CHECK_AUTH_TOKEN:
+            computing_power = 20
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            #发起请求，检查算力是否充足
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+            # Check if computing power is sufficient
+            user_computing_power = response_data.get('computing_power', 0)
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="您的算力不足，无法生成视频"
+                )
+            
+
+            #发起请求，扣除算力
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+        # Run task and wait for completion
+        task_id, results = run_ai_app_task_sync(
+            webapp_id=webapp_id,
+            api_key=api_key,
+            node_info_list=node_info_list,
+            timeout=timeout,
+            transaction_id=transaction_id
+        )
+        
+        return JSONResponse({
+            "success": True,
+            "task_id": task_id,
+            "status": "completed",
+            "results": [
+                {
+                    "file_url": result.file_url,
+                    "file_type": result.file_type,
+                    "task_cost_time": result.task_cost_time,
+                    "node_id": result.node_id
+                }
+                for result in results
+            ]
+        })
+        
+    except TimeoutError as e:
+        raise HTTPException(status_code=408, detail=f"Task timed out: {str(e)}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=f"Task failed: {str(e)}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
+
 
 @app.get('/api/user/computing_power')
 async def get_computing_power(auth_token: str = Header(None, alias="Authorization")):
