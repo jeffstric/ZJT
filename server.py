@@ -953,6 +953,68 @@ async def logout(request: LogoutRequest):
             }
         )
 
+class ResetPasswordRequest(BaseModel):
+    phone: str
+    code: str
+    new_password: str
+
+@app.post('/api/auth/reset_password')
+async def reset_password(request: ResetPasswordRequest):
+    """
+    重置密码
+    """
+    try:
+        phone = request.phone
+        code = request.code
+        new_password = request.new_password
+
+        if not all([phone, code, new_password]):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '缺少必要参数'
+                }
+            )
+
+        # 调用外部认证服务器重置密码
+        success, message, response_data = call_external_auth_server(
+            phone=phone,
+            password=new_password,
+            auth_type='reset_password',
+            extra_data={
+                'code': code,
+                'new_password': new_password
+            }
+        )
+
+        if success:
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '密码重置成功',
+                    'data': response_data
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message
+                }
+            )
+
+    except Exception as e:
+        logger.error(f'重置密码失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
 
 # Serve upload directory for static file access
 upload_dir = os.path.join(APP_DIR, "upload")

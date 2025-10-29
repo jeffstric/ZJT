@@ -194,7 +194,7 @@
     <div class="modal-overlay" v-if="showLoginModal" @click.self="closeModal">
       <div class="modal" style="position: relative;">
         <button class="modal-close" @click="closeModal">×</button>
-        <div class="modal-title">{{ authMode === 'login' ? '用户登录' : '用户注册' }}</div>
+        <div class="modal-title">{{ authMode === 'login' ? '用户登录' : (authMode === 'register' ? '用户注册' : '重置密码') }}</div>
         
         <!-- Tab Switcher -->
         <div class="modal-tabs">
@@ -203,6 +203,9 @@
           </button>
           <button class="modal-tab" :class="{active: authMode === 'register'}" @click="switchAuthMode('register')">
             注册
+          </button>
+          <button class="modal-tab" :class="{active: authMode === 'reset'}" @click="switchAuthMode('reset')">
+            重置密码
           </button>
         </div>
 
@@ -253,6 +256,37 @@
             </button>
           </div>
           <div class="status danger" v-if="registerError" style="text-align: center; margin-top: 10px;">{{ registerError }}</div>
+        </div>
+
+        <!-- Reset Password Form -->
+        <div v-if="authMode === 'reset'">
+          <div class="field">
+            <label class="label">手机号</label>
+            <input class="input" type="tel" v-model="resetForm.phone" placeholder="请输入手机号" maxlength="11" />
+          </div>
+          <div class="field">
+            <label class="label">验证码</label>
+            <div class="row">
+              <input class="input" type="text" v-model="resetForm.code" placeholder="请输入验证码" maxlength="6" />
+              <button class="code-btn" @click="sendResetCode" :disabled="resetCodeSending || resetCodeCountdown > 0">
+                {{ resetCodeCountdown > 0 ? `${resetCodeCountdown}秒后重试` : (resetCodeSending ? '发送中...' : '发送验证码') }}
+              </button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label">新密码</label>
+            <input class="input" type="password" v-model="resetForm.newPassword" placeholder="请输入新密码" />
+          </div>
+          <div class="field">
+            <label class="label">确认新密码</label>
+            <input class="input" type="password" v-model="resetForm.confirmPassword" placeholder="请再次输入新密码" @keyup.enter="handleResetPassword" />
+          </div>
+          <div class="field" style="margin-top: 20px;">
+            <button class="btn" style="width: 100%;" @click="handleResetPassword" :disabled="resetLoading">
+              {{ resetLoading ? '重置中...' : '重置密码' }}
+            </button>
+          </div>
+          <div class="status danger" v-if="resetError" style="text-align: center; margin-top: 10px;">{{ resetError }}</div>
         </div>
       </div>
     </div>
@@ -795,7 +829,18 @@
       registerError: '',
       codeSending: false,
       codeCountdown: 0,
-      countdownTimer: null
+      countdownTimer: null,
+      resetForm: {
+        phone: '',
+        code: '',
+        newPassword: '',
+        confirmPassword: ''
+      },
+      resetLoading: false,
+      resetError: '',
+      resetCodeSending: false,
+      resetCodeCountdown: 0,
+      resetCountdownTimer: null
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -839,6 +884,7 @@
         this.authMode = mode;
         this.loginError = '';
         this.registerError = '';
+        this.resetError = '';
       },
       
       closeModal() {
@@ -846,12 +892,17 @@
         this.authMode = 'login';
         this.loginError = '';
         this.registerError = '';
+        this.resetError = '';
         this.loginForm.phone = '';
         this.loginForm.password = '';
         this.registerForm.phone = '';
         this.registerForm.code = '';
         this.registerForm.password = '';
         this.registerForm.confirmPassword = '';
+        this.resetForm.phone = '';
+        this.resetForm.code = '';
+        this.resetForm.newPassword = '';
+        this.resetForm.confirmPassword = '';
       },
       
       async handleLogin() {
@@ -1047,6 +1098,111 @@
           sessionStorage.removeItem('auth_token');
           sessionStorage.removeItem('phone');
         }
+      },
+      
+      async sendResetCode() {
+        this.resetError = '';
+        
+        // 验证手机号
+        if (!this.resetForm.phone) {
+          this.resetError = '请输入手机号';
+          return;
+        }
+        
+        if (!/^1[3-9]\d{9}$/.test(this.resetForm.phone)) {
+          this.resetError = '请输入正确的手机号';
+          return;
+        }
+        
+        this.resetCodeSending = true;
+        
+        try {
+          // 调用发送验证码 API
+          const response = await axios.post('/api/auth/send_verify_code', {
+            phone: this.resetForm.phone,
+            type: 'reset_password',
+            agent: 'default'
+          });
+          
+          if (response.data.success) {
+            // 开始倒计时
+            this.resetCodeCountdown = 60;
+            this.resetCountdownTimer = setInterval(() => {
+              this.resetCodeCountdown--;
+              if (this.resetCodeCountdown <= 0) {
+                clearInterval(this.resetCountdownTimer);
+                this.resetCountdownTimer = null;
+              }
+            }, 1000);
+          } else {
+            this.resetError = response.data.message || '发送验证码失败';
+          }
+          
+        } catch (error) {
+          console.error('Send reset code error:', error);
+          this.resetError = error?.response?.data?.message || '发送验证码失败，请重试';
+        } finally {
+          this.resetCodeSending = false;
+        }
+      },
+      
+      async handleResetPassword() {
+        this.resetError = '';
+        this.resetLoading = true;
+        
+        try {
+          // 验证输入
+          if (!this.resetForm.phone || !this.resetForm.code || 
+              !this.resetForm.newPassword || !this.resetForm.confirmPassword) {
+            this.resetError = '请填写完整信息';
+            this.resetLoading = false;
+            return;
+          }
+          
+          // 验证手机号格式
+          if (!/^1[3-9]\d{9}$/.test(this.resetForm.phone)) {
+            this.resetError = '请输入正确的手机号';
+            this.resetLoading = false;
+            return;
+          }
+          
+          // 验证密码长度
+          if (this.resetForm.newPassword.length < 6) {
+            this.resetError = '密码长度不能少于6位';
+            this.resetLoading = false;
+            return;
+          }
+          
+          // 验证两次密码是否一致
+          if (this.resetForm.newPassword !== this.resetForm.confirmPassword) {
+            this.resetError = '两次输入的密码不一致';
+            this.resetLoading = false;
+            return;
+          }
+          
+          // 调用重置密码 API
+          const response = await axios.post('/api/auth/reset_password', {
+            phone: this.resetForm.phone,
+            code: this.resetForm.code,
+            new_password: this.resetForm.newPassword
+          });
+          
+          if (response.data.success) {
+            // 重置密码成功
+            this.closeModal();
+            alert('密码重置成功，请使用新密码登录！');
+            // 切换到登录模式
+            this.authMode = 'login';
+          } else {
+            this.resetError = response.data.message || '重置密码失败';
+          }
+          
+        } catch (error) {
+          console.error('Reset password error:', error);
+          this.resetError = error?.response?.data?.message || '重置密码失败，请重试';
+        } finally {
+          this.resetLoading = false;
+        }
       }
     },
     
@@ -1054,6 +1210,9 @@
       // 清理倒计时定时器
       if (this.countdownTimer) {
         clearInterval(this.countdownTimer);
+      }
+      if (this.resetCountdownTimer) {
+        clearInterval(this.resetCountdownTimer);
       }
     }
   };
