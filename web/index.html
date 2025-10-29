@@ -169,6 +169,48 @@
       color: #9ca3af;
       cursor: not-allowed;
     }
+    
+    /* User Info Styles */
+    .user-info-wrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+    }
+    .user-phone {
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .computing-power-display {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .computing-power-value {
+      color: var(--primary);
+      font-weight: 600;
+    }
+    .refresh-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 6px;
+      padding: 2px 6px;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      transition: all 0.2s;
+    }
+    .refresh-btn:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+      border-color: var(--primary);
+    }
+    .refresh-btn:active {
+      transform: rotate(180deg);
+    }
   </style>
 </head>
 <body>
@@ -180,7 +222,17 @@
         <div style="display: flex; gap: 10px; align-items: center;">
           <button class="btn secondary" v-if="route.name!=='list'" @click="goHome">返回</button>
           <template v-if="isLoggedIn">
-            <span class="muted" style="font-size: 14px;">{{ maskedPhone }}</span>
+            <div class="user-info-wrapper">
+              <span class="user-phone">{{ maskedPhone }}</span>
+              <div class="computing-power-display">
+                <span>
+                  算力: <span class="computing-power-value">{{ computingPower !== null ? computingPower : '加载中...' }}</span>
+                </span>
+                <button class="refresh-btn" @click="fetchComputingPower" title="刷新算力">
+                  ↻
+                </button>
+              </div>
+            </div>
             <button class="btn secondary" @click="handleLogout">登出</button>
           </template>
           <button class="btn" v-else @click="showLoginModal = true">登录</button>
@@ -811,6 +863,7 @@
       ],
       authToken: '',
       userPhone: '',
+      computingPower: null,
       showLoginModal: false,
       authMode: 'login', // 'login' or 'register'
       loginForm: {
@@ -855,6 +908,11 @@
         // Try to restore from sessionStorage
         this.authToken = sessionStorage.getItem('auth_token') || '';
         this.userPhone = sessionStorage.getItem('phone') || '';
+      }
+      
+      // Fetch computing power if logged in
+      if (this.authToken) {
+        this.fetchComputingPower();
       }
     },
     computed: {
@@ -938,6 +996,9 @@
               this.userPhone = response.data.data.phone || this.loginForm.phone;
               sessionStorage.setItem('auth_token', this.authToken);
               sessionStorage.setItem('phone', this.userPhone);
+              
+              // 获取算力
+              this.fetchComputingPower();
             }
             
             // 关闭模态框并清空表单
@@ -1050,6 +1111,9 @@
               this.userPhone = response.data.data.phone || this.registerForm.phone;
               sessionStorage.setItem('auth_token', this.authToken);
               sessionStorage.setItem('phone', this.userPhone);
+              
+              // 获取算力
+              this.fetchComputingPower();
             }
             
             // 关闭模态框并清空表单
@@ -1080,6 +1144,7 @@
             // 登出成功，清除登录状态
             this.authToken = '';
             this.userPhone = '';
+            this.computingPower = null;
             sessionStorage.removeItem('auth_token');
             sessionStorage.removeItem('phone');
           } else {
@@ -1087,6 +1152,7 @@
             console.error('Logout error:', response.data.message);
             this.authToken = '';
             this.userPhone = '';
+            this.computingPower = null;
             sessionStorage.removeItem('auth_token');
             sessionStorage.removeItem('phone');
           }
@@ -1095,8 +1161,31 @@
           // 发生错误时也清除本地状态
           this.authToken = '';
           this.userPhone = '';
+          this.computingPower = null;
           sessionStorage.removeItem('auth_token');
           sessionStorage.removeItem('phone');
+        }
+      },
+      
+      async fetchComputingPower() {
+        if (!this.authToken) {
+          return;
+        }
+        
+        try {
+          const response = await axios.get('/api/user/computing_power', {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          
+          if (response.data.success) {
+            this.computingPower = response.data.data.computing_power;
+          } else {
+            console.error('Failed to fetch computing power:', response.data.message);
+          }
+        } catch (error) {
+          console.error('Fetch computing power error:', error);
         }
       },
       

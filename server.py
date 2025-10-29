@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Header
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -652,6 +652,65 @@ async def ai_app_run(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
+
+
+@app.get('/api/user/computing_power')
+async def get_computing_power(auth_token: str = Header(None, alias="Authorization")):
+    """
+    查询用户算力
+    """
+    try:
+        # 验证 auth_token
+        if not auth_token:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    'success': False,
+                    'message': '未提供认证信息'
+                }
+            )
+        
+        # 移除 "Bearer " 前缀（如果存在）
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+        
+        # 调用 perseids_server 的查询算力接口
+        headers = {'Authorization': f'Bearer {auth_token}'}
+        success, message, response_data = make_perseids_request(
+            endpoint='user/check_computing_power',
+            method='GET',
+            headers=headers
+        )
+        
+        if success:
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '查询成功',
+                    'data': {
+                        'computing_power': response_data.get('computing_power', 0)
+                    }
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message or '查询算力失败'
+                }
+            )
+    
+    except Exception as e:
+        logger.error(f'查询算力失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
 
 
 class SendVerifyCodeRequest(BaseModel):
