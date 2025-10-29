@@ -580,8 +580,8 @@
       }
     },
     mounted() {
-      // Get auth_token from sessionStorage (set by App component)
-      this.authToken = sessionStorage.getItem('auth_token') || '';
+      // Get auth_token from localStorage (set by App component)
+      this.authToken = localStorage.getItem('auth_token') || '';
     },
     computed: {
       canSubmit() { return !!this.file && !!this.prompt && !this.loading },
@@ -756,8 +756,8 @@
       }
     },
     mounted() {
-      // Get auth_token from sessionStorage (set by App component)
-      this.authToken = sessionStorage.getItem('auth_token') || '';
+      // Get auth_token from localStorage (set by App component)
+      this.authToken = localStorage.getItem('auth_token') || '';
     },
     computed: {
       canSubmit() { return !!this.prompt.trim() && !this.loading },
@@ -929,13 +929,13 @@
       this.authToken = urlParams.get('auth_token') || '';
       this.userPhone = urlParams.get('phone') || '';
       if (this.authToken) {
-        // Store in sessionStorage for persistence across navigation
-        sessionStorage.setItem('auth_token', this.authToken);
-        sessionStorage.setItem('phone', this.userPhone);
+        // Store in localStorage for persistence across sessions
+        localStorage.setItem('auth_token', this.authToken);
+        localStorage.setItem('phone', this.userPhone);
       } else {
-        // Try to restore from sessionStorage
-        this.authToken = sessionStorage.getItem('auth_token') || '';
-        this.userPhone = sessionStorage.getItem('phone') || '';
+        // Try to restore from localStorage
+        this.authToken = localStorage.getItem('auth_token') || '';
+        this.userPhone = localStorage.getItem('phone') || '';
       }
       
       // Fetch computing power if logged in
@@ -1022,8 +1022,8 @@
             if (response.data.data && response.data.data.token) {
               this.authToken = response.data.data.token;
               this.userPhone = response.data.data.phone || this.loginForm.phone;
-              sessionStorage.setItem('auth_token', this.authToken);
-              sessionStorage.setItem('phone', this.userPhone);
+              localStorage.setItem('auth_token', this.authToken);
+              localStorage.setItem('phone', this.userPhone);
               
               // 获取算力
               this.fetchComputingPower();
@@ -1137,8 +1137,8 @@
             if (response.data.data && response.data.data.token) {
               this.authToken = response.data.data.token;
               this.userPhone = response.data.data.phone || this.registerForm.phone;
-              sessionStorage.setItem('auth_token', this.authToken);
-              sessionStorage.setItem('phone', this.userPhone);
+              localStorage.setItem('auth_token', this.authToken);
+              localStorage.setItem('phone', this.userPhone);
               
               // 获取算力
               this.fetchComputingPower();
@@ -1173,16 +1173,16 @@
             this.authToken = '';
             this.userPhone = '';
             this.computingPower = null;
-            sessionStorage.removeItem('auth_token');
-            sessionStorage.removeItem('phone');
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('phone');
           } else {
             // 即使后端登出失败，也清除本地状态
             console.error('Logout error:', response.data.message);
             this.authToken = '';
             this.userPhone = '';
             this.computingPower = null;
-            sessionStorage.removeItem('auth_token');
-            sessionStorage.removeItem('phone');
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('phone');
           }
         } catch (error) {
           console.error('Logout error:', error);
@@ -1190,8 +1190,8 @@
           this.authToken = '';
           this.userPhone = '';
           this.computingPower = null;
-          sessionStorage.removeItem('auth_token');
-          sessionStorage.removeItem('phone');
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('phone');
         }
       },
       
