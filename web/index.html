@@ -530,11 +530,16 @@
         }
       },
       
-      async fetchHistory() {
+      async fetchHistory(append = false) {
         const userId = localStorage.getItem('user_id');
         if (!userId) {
           alert('请先登录');
           return;
+        }
+        
+        if (!append) {
+          this.historyPage = 1;
+          this.historyList = [];
         }
         
         this.historyLoading = true;
@@ -549,7 +554,12 @@
           });
           
           if (response.data.success) {
-            this.historyList = response.data.data.data || [];
+            const newData = response.data.data.data || [];
+            if (append) {
+              this.historyList = [...this.historyList, ...newData];
+            } else {
+              this.historyList = newData;
+            }
             this.historyTotal = response.data.data.total || 0;
             this.showHistory = true;
           } else {
@@ -563,8 +573,25 @@
         }
       },
       
+      async loadMoreHistory() {
+        if (this.historyLoading || this.historyList.length >= this.historyTotal) {
+          return;
+        }
+        this.historyPage++;
+        await this.fetchHistory(true);
+      },
+      
+      handleHistoryScroll(event) {
+        const element = event.target;
+        const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+        if (scrollBottom < 100) {
+          this.loadMoreHistory();
+        }
+      },
+      
       closeHistory() {
         this.showHistory = false;
+        this.historyPage = 1;
       }
     },
     
@@ -613,7 +640,7 @@
         
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
-          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
             <div style="position: relative;">
               <button class="modal-close" @click="closeHistory">×</button>
               <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
@@ -634,6 +661,16 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                 </div>
+              </div>
+              
+              <!-- Loading indicator -->
+              <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
+                加载中...
+              </div>
+              
+              <!-- End indicator -->
+              <div v-else-if="historyList.length >= historyTotal" style="text-align: center; padding: 20px; color: var(--muted);">
+                已加载全部数据
               </div>
             </div>
           </div>
@@ -790,11 +827,16 @@
         }
       },
       
-      async fetchHistory() {
+      async fetchHistory(append = false) {
         const userId = localStorage.getItem('user_id');
         if (!userId) {
           alert('请先登录');
           return;
+        }
+        
+        if (!append) {
+          this.historyPage = 1;
+          this.historyList = [];
         }
         
         this.historyLoading = true;
@@ -809,7 +851,12 @@
           });
           
           if (response.data.success) {
-            this.historyList = response.data.data.data || [];
+            const newData = response.data.data.data || [];
+            if (append) {
+              this.historyList = [...this.historyList, ...newData];
+            } else {
+              this.historyList = newData;
+            }
             this.historyTotal = response.data.data.total || 0;
             this.showHistory = true;
           } else {
@@ -823,8 +870,25 @@
         }
       },
       
+      async loadMoreHistory() {
+        if (this.historyLoading || this.historyList.length >= this.historyTotal) {
+          return;
+        }
+        this.historyPage++;
+        await this.fetchHistory(true);
+      },
+      
+      handleHistoryScroll(event) {
+        const element = event.target;
+        const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+        if (scrollBottom < 100) {
+          this.loadMoreHistory();
+        }
+      },
+      
       closeHistory() {
         this.showHistory = false;
+        this.historyPage = 1;
       }
     },
     
@@ -868,7 +932,7 @@
         
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
-          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
             <div style="position: relative;">
               <button class="modal-close" @click="closeHistory">×</button>
               <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
@@ -889,6 +953,16 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                 </div>
+              </div>
+              
+              <!-- Loading indicator -->
+              <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
+                加载中...
+              </div>
+              
+              <!-- End indicator -->
+              <div v-else-if="historyList.length >= historyTotal" style="text-align: center; padding: 20px; color: var(--muted);">
+                已加载全部数据
               </div>
             </div>
           </div>
@@ -981,13 +1055,50 @@
           
           this.taskId = res.data.task_id || '';
           this.status = res.data.status || '';
-          this.results = res.data.results || [];
-          this.loading = false;
+          
+          // Start polling for status
+          if (this.taskId) {
+            this.checkStatus();
+          }
           
         } catch (err) {
           console.error(err);
           this.error = err?.response?.data?.detail || err?.message || '请求失败';
           this.loading = false;
+        }
+      },
+      
+      async checkStatus() {
+        if (!this.taskId) return;
+        
+        try {
+          const res = await axios.get(`/api/nanobanana-status/${this.taskId}`);
+          this.status = res.data.status || '';
+          
+          if (this.status === 'SUCCESS') {
+            this.results = res.data.results || [];
+            this.loading = false;
+            this.clearStatusCheck();
+          } else if (this.status === 'FAILED') {
+            this.error = '任务失败';
+            this.loading = false;
+            this.clearStatusCheck();
+          } else {
+            // Still running, check again after 5 seconds
+            this.statusInterval = setTimeout(() => this.checkStatus(), 5000);
+          }
+        } catch (err) {
+          console.error(err);
+          this.error = '查询状态失败';
+          this.loading = false;
+          this.clearStatusCheck();
+        }
+      },
+      
+      clearStatusCheck() {
+        if (this.statusInterval) {
+          clearTimeout(this.statusInterval);
+          this.statusInterval = null;
         }
       },
       
@@ -1058,6 +1169,10 @@
       }
     },
     
+    beforeUnmount() {
+      this.clearStatusCheck();
+    },
+    
     template: `
       <div>
         <div class="form">
@@ -1114,7 +1229,7 @@
         
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
-          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
             <div style="position: relative;">
               <button class="modal-close" @click="closeHistory">×</button>
               <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
@@ -1137,6 +1252,16 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                 </div>
+              </div>
+              
+              <!-- Loading indicator -->
+              <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
+                加载中...
+              </div>
+              
+              <!-- End indicator -->
+              <div v-else-if="historyList.length >= historyTotal" style="text-align: center; padding: 20px; color: var(--muted);">
+                已加载全部数据
               </div>
             </div>
           </div>
@@ -1216,13 +1341,55 @@
           
           this.taskId = res.data.task_id || '';
           this.status = res.data.status || '';
-          this.results = res.data.results || [];
-          this.loading = false;
+          
+          // Start polling for status
+          if (this.taskId) {
+            this.checkStatus();
+          }
           
         } catch (err) {
           console.error(err);
           this.error = err?.response?.data?.detail || err?.message || '请求失败';
           this.loading = false;
+        }
+      },
+      
+      async checkStatus() {
+        if (!this.taskId) return;
+        
+        try {
+          const res = await axios.get(`/api/nanobanana-status/${this.taskId}`);
+          this.status = res.data.status || '';
+          
+          if (this.status === 'SUCCESS') {
+            this.results = res.data.results || [];
+            this.loading = false;
+            this.clearStatusCheck();
+            
+            // Update database with result_url
+            if (this.results.length > 0) {
+              // Database is already updated by the status endpoint
+            }
+          } else if (this.status === 'FAILED') {
+            this.error = '任务失败';
+            this.loading = false;
+            this.clearStatusCheck();
+          } else {
+            // Still running, check again after 5 seconds
+            this.statusInterval = setTimeout(() => this.checkStatus(), 5000);
+          }
+        } catch (err) {
+          console.error(err);
+          this.error = '查询状态失败';
+          this.loading = false;
+          this.clearStatusCheck();
+        }
+      },
+      
+      clearStatusCheck() {
+        if (this.statusInterval) {
+          clearTimeout(this.statusInterval);
+          this.statusInterval = null;
         }
       },
       
@@ -1293,6 +1460,10 @@
       }
     },
     
+    beforeUnmount() {
+      this.clearStatusCheck();
+    },
+    
     template: `
       <div>
         <div class="form">
@@ -1334,7 +1505,7 @@
         
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
-          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
             <div style="position: relative;">
               <button class="modal-close" @click="closeHistory">×</button>
               <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
@@ -1356,6 +1527,16 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                 </div>
+              </div>
+              
+              <!-- Loading indicator -->
+              <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
+                加载中...
+              </div>
+              
+              <!-- End indicator -->
+              <div v-else-if="historyList.length >= historyTotal" style="text-align: center; padding: 20px; color: var(--muted);">
+                已加载全部数据
               </div>
             </div>
           </div>

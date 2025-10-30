@@ -25,6 +25,7 @@ class AITool:
         self.result_url = kwargs.get('result_url')
         self.user_id = kwargs.get('user_id')
         self.type = kwargs.get('type')
+        self.status = kwargs.get('status')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -40,7 +41,8 @@ class AITool:
             'transaction_id': self.transaction_id,
             'result_url': self.result_url,
             'user_id': self.user_id,
-            'type': self.type
+            'type': self.type,
+            'status': self.status
         }
 
 
@@ -57,7 +59,8 @@ class AIToolsModel:
         video_mode: Optional[str] = None,
         task_id: Optional[str] = None,
         transaction_id: Optional[str] = None,
-        result_url: Optional[str] = None
+        result_url: Optional[str] = None,
+        status: Optional[int] = 0
     ) -> int:
         """
         Create a new AI tool record
@@ -72,16 +75,17 @@ class AIToolsModel:
             task_id: Task ID (optional)
             transaction_id: Transaction ID (optional)
             result_url: Result URL (optional)
+            status: Status (0-未处理, 1-正在处理, -1-处理失败, 2-处理完成, default: 0)
         
         Returns:
             Inserted record ID
         """
         sql = """
             INSERT INTO ai_tools 
-            (prompt, user_id, type, image_path, duration, video_mode, task_id, transaction_id, result_url)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (prompt, user_id, type, image_path, duration, video_mode, task_id, transaction_id, result_url, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (prompt, user_id, type, image_path, duration, video_mode, task_id, transaction_id, result_url)
+        params = (prompt, user_id, type, image_path, duration, video_mode, task_id, transaction_id, result_url, status)
         
         try:
             record_id = execute_insert(sql, params)
@@ -141,7 +145,8 @@ class AIToolsModel:
         page: int = 1,
         page_size: int = 20,
         order_by: str = 'create_time',
-        order_direction: str = 'DESC'
+        order_direction: str = 'DESC',
+        type: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Get AI tool records list by user ID with pagination
@@ -152,6 +157,7 @@ class AIToolsModel:
             page_size: Number of records per page
             order_by: Order by field (create_time, update_time, id)
             order_direction: Order direction (ASC, DESC)
+            type: Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)
         
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
@@ -165,22 +171,34 @@ class AIToolsModel:
         if order_direction.upper() not in valid_directions:
             order_direction = 'DESC'
         
+        # Build WHERE clause
+        where_conditions = ["user_id = %s"]
+        params = [user_id]
+        
+        if type is not None:
+            where_conditions.append("type = %s")
+            params.append(type)
+        
+        where_clause = " AND ".join(where_conditions)
+        
         # Get total count
-        count_sql = "SELECT COUNT(*) as total FROM ai_tools WHERE user_id = %s"
-        count_result = execute_query(count_sql, (user_id,), fetch_one=True)
+        count_sql = f"SELECT COUNT(*) as total FROM ai_tools WHERE {where_clause}"
+        count_result = execute_query(count_sql, tuple(params), fetch_one=True)
         total = count_result['total'] if count_result else 0
         
         # Get paginated data
         offset = (page - 1) * page_size
         data_sql = f"""
             SELECT * FROM ai_tools 
-            WHERE user_id = %s 
+            WHERE {where_clause}
             ORDER BY {order_by} {order_direction}
             LIMIT %s OFFSET %s
         """
         
+        params.extend([page_size, offset])
+        
         try:
-            results = execute_query(data_sql, (user_id, page_size, offset), fetch_all=True)
+            results = execute_query(data_sql, tuple(params), fetch_all=True)
             tools = [AITool(**row).to_dict() for row in results] if results else []
             
             return {
@@ -191,6 +209,31 @@ class AIToolsModel:
             }
         except Exception as e:
             logger.error(f"Failed to list AI tools for user {user_id}: {e}")
+            raise
+    
+    @staticmethod
+    def list_processing_by_user(user_id: int) -> List[AITool]:
+        """
+        Get all processing AI tool records by user ID (status = 1)
+        
+        Args:
+            user_id: User ID
+        
+        Returns:
+            List of AITool objects
+        """
+        sql = """
+            SELECT * FROM ai_tools 
+            WHERE user_id = %s AND status = 1
+            ORDER BY create_time DESC
+        """
+        
+        try:
+            results = execute_query(sql, (user_id,), fetch_all=True)
+            tools = [AITool(**row) for row in results] if results else []
+            return tools
+        except Exception as e:
+            logger.error(f"Failed to list processing AI tools for user {user_id}: {e}")
             raise
      
     @staticmethod
@@ -204,7 +247,7 @@ class AIToolsModel:
         Args:
             record_id: Record ID
             **kwargs: Fields to update (prompt, type, image_path, duration, video_mode, 
-                     task_id, transaction_id, result_url, user_id)
+                     task_id, transaction_id, result_url, user_id, status)
         
         Returns:
             Number of affected rows
@@ -212,7 +255,7 @@ class AIToolsModel:
         # Build update fields
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'video_mode',
-            'task_id', 'transaction_id', 'result_url', 'user_id'
+            'task_id', 'transaction_id', 'result_url', 'user_id', 'status'
         ]
         
         update_fields = []
@@ -255,7 +298,7 @@ class AIToolsModel:
         """
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'video_mode',
-            'transaction_id', 'result_url', 'user_id'
+            'transaction_id', 'result_url', 'user_id', 'status'
         ]
         
         update_fields = []

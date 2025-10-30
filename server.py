@@ -13,7 +13,7 @@ import traceback
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync
+from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync, run_ai_app_task
 from config_util import get_config_path, is_dev_environment
 from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
 from model import AIToolsModel
@@ -452,7 +452,8 @@ async def nanobanana_edit(
                     type=1,  # 1-图片编辑
                     image_path=image_url,
                     task_id=task_id,
-                    transaction_id=transaction_id
+                    transaction_id=transaction_id,
+                    status=1
                 )
             except Exception as db_error:
                 logger.error(f"Failed to create database record: {db_error}")
@@ -487,7 +488,8 @@ async def nanobanana_status(task_id: str):
                     result_url = results[0].file_url
                     AIToolsModel.update_by_task_id(
                         task_id=task_id,
-                        result_url=result_url
+                        result_url=result_url,
+                        status=2
                     )
                 except Exception as db_error:
                     logger.error(f"Failed to update database record: {db_error}")
@@ -504,7 +506,11 @@ async def nanobanana_status(task_id: str):
                     for result in results
                 ]
             })
-        else:
+        elif status == TaskStatus.FAILED:
+            AIToolsModel.update_by_task_id(
+                task_id=task_id,
+                status=-1
+            )
             return JSONResponse({
                 "status": status.value,
                 "results": []
@@ -651,19 +657,26 @@ async def ai_app_run(
                     detail=message
                 )
             
-        # Run task and wait for completion
-        task_id, results = run_ai_app_task_sync(
+        # Submit task (async, return immediately)
+        result = run_ai_app_task(
             webapp_id=webapp_id,
             api_key=api_key,
             node_info_list=node_info_list,
-            timeout=timeout,
             transaction_id=transaction_id
         )
         
+        # Check if task submission failed
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Unknown error")
+            raise HTTPException(status_code=500, detail=f"Task submission failed: {error_msg}")
+        
+        task_id = result.get("data", {}).get("taskId")
+        if not task_id:
+            raise HTTPException(status_code=500, detail="Failed to get task ID from response")
+        
         # Create database record
-        if user_id and results:
+        if user_id:
             try:
-                result_url = results[0].file_url if results else None
                 AIToolsModel.create(
                     prompt=prompt,
                     user_id=user_id,
@@ -671,7 +684,7 @@ async def ai_app_run(
                     video_mode=model,
                     task_id=task_id,
                     transaction_id=transaction_id,
-                    result_url=result_url
+                    status=1
                 )
             except Exception as db_error:
                 logger.error(f"Failed to create database record: {db_error}")
@@ -680,24 +693,11 @@ async def ai_app_run(
         return JSONResponse({
             "success": True,
             "task_id": task_id,
-            "status": "completed",
-            "results": [
-                {
-                    "file_url": result.file_url,
-                    "file_type": result.file_type,
-                    "task_cost_time": result.task_cost_time,
-                    "node_id": result.node_id
-                }
-                for result in results
-            ]
+            "status": "submitted"
         })
         
-    except TimeoutError as e:
-        raise HTTPException(status_code=408, detail=f"Task timed out: {str(e)}")
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=f"Task failed: {str(e)}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
 
@@ -807,19 +807,26 @@ async def ai_app_run_image(
                     detail=message
                 )
             
-        # Run task and wait for completion
-        task_id, results = run_ai_app_task_sync(
+        # Submit task (async, return immediately)
+        result = run_ai_app_task(
             webapp_id=webapp_id,
             api_key=api_key,
             node_info_list=node_info_list,
-            timeout=timeout,
             transaction_id=transaction_id
         )
         
+        # Check if task submission failed
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Unknown error")
+            raise HTTPException(status_code=500, detail=f"Task submission failed: {error_msg}")
+        
+        task_id = result.get("data", {}).get("taskId")
+        if not task_id:
+            raise HTTPException(status_code=500, detail="Failed to get task ID from response")
+        
         # Create database record
-        if user_id and results:
+        if user_id:
             try:
-                result_url = results[0].file_url if results else None
                 AIToolsModel.create(
                     prompt=prompt,
                     user_id=user_id,
@@ -829,7 +836,7 @@ async def ai_app_run_image(
                     duration=duration_seconds,
                     task_id=task_id,
                     transaction_id=transaction_id,
-                    result_url=result_url
+                    status=1
                 )
             except Exception as db_error:
                 logger.error(f"Failed to create database record: {db_error}")
@@ -838,24 +845,12 @@ async def ai_app_run_image(
         return JSONResponse({
             "success": True,
             "task_id": task_id,
-            "status": "completed",
-            "results": [
-                {
-                    "file_url": result.file_url,
-                    "file_type": result.file_type,
-                    "task_cost_time": result.task_cost_time,
-                    "node_id": result.node_id
-                }
-                for result in results
-            ]
+            "status": "submitted",
+            "image_url": image_url
         })
         
-    except TimeoutError as e:
-        raise HTTPException(status_code=408, detail=f"Task timed out: {str(e)}")
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=f"Task failed: {str(e)}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
 
@@ -1291,21 +1286,64 @@ async def get_ai_tools_history(
 ):
     """
     获取用户的 AI 工具历史记录
+    在查询前会先检查并更新所有正在处理的任务状态
     """
     try:
+        # First, check and update processing tasks
+        processing_tasks = AIToolsModel.list_processing_by_user(user_id)
+        
+        if processing_tasks:
+            client = RunningHubClient()
+            updated_count = 0
+            
+            # Check each task's status
+            for task in processing_tasks:
+                if not task.task_id:
+                    continue
+                    
+                try:
+                    status = client.check_status(task.task_id)
+                    
+                    if status == TaskStatus.SUCCESS:
+                        # Get results and update database
+                        results = client.get_outputs(task.task_id)
+                        if results:
+                            print(results)
+                            result_url = results[0].file_url
+                            AIToolsModel.update_by_task_id(
+                                task_id=task.task_id,
+                                result_url=result_url,
+                                status=2  # 处理完成
+                            )
+                            updated_count += 1
+                            logger.info(f"Task {task.task_id} completed successfully")
+                            
+                    elif status == TaskStatus.FAILED:
+                        # Update status to failed
+                        AIToolsModel.update_by_task_id(
+                            task_id=task.task_id,
+                            status=-1  # 处理失败
+                        )
+                        updated_count += 1
+                        logger.info(f"Task {task.task_id} failed")
+                        
+                    # If status is QUEUED or RUNNING, keep status as 1 (processing)
+                    
+                except Exception as task_error:
+                    logger.error(f"Failed to check status for task {task.task_id}: {task_error}")
+                    continue
+            
+            logger.info(f"Checked {len(processing_tasks)} processing tasks, updated {updated_count}")
+        
         # 查询历史记录
         result = AIToolsModel.list_by_user(
             user_id=user_id,
             page=page,
             page_size=page_size,
             order_by='create_time',
-            order_direction='DESC'
+            order_direction='DESC',
+            type=type
         )
-        
-        # 如果指定了 type，过滤结果
-        if type is not None:
-            result['data'] = [item for item in result['data'] if item.get('type') == type]
-            result['total'] = len(result['data'])
         
         return JSONResponse(
             content={
@@ -1361,5 +1399,5 @@ async def serve_spa(full_path: str):
 
 
 if __name__ == "__main__":
-    port = 9003 if is_dev_environment() else config["server"].get("port", 5174)
+    port = 9002 if is_dev_environment() else config["server"].get("port", 5173)
     uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
