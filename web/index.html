@@ -632,7 +632,7 @@
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
-                  <img :src="item.result_url" style="width: 100%; max-width: 400px; border-radius: 6px;" />
+                  <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                 </div>
               </div>
             </div>
@@ -887,7 +887,7 @@
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
-                  <img :src="item.result_url" style="width: 100%; max-width: 400px; border-radius: 6px;" />
+                  <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                 </div>
               </div>
             </div>
@@ -964,6 +964,12 @@
           form.append('duration_seconds', this.durationSeconds);
           form.append('timeout', '900'); // 15 minutes timeout
           
+          // Add user_id from localStorage
+          const userId = localStorage.getItem('user_id');
+          if (userId) {
+            form.append('user_id', userId);
+          }
+          
           // Add auth_token if available
           if (this.authToken) {
             form.append('auth_token', this.authToken);
@@ -1039,6 +1045,16 @@
       
       closeHistory() {
         this.showHistory = false;
+      },
+      
+      getModelLabel(value) {
+        const modelMap = {
+          'portrait': '竖屏',
+          'landscape': '横屏',
+          'portrait-hd': '高清竖屏',
+          'landscape-hd': '高清横屏'
+        };
+        return modelMap[value] || value || '未知';
       }
     },
     
@@ -1114,12 +1130,12 @@
                   <strong>提示词:</strong> {{ item.prompt }}
                 </div>
                 <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
-                  <span>模式: {{ item.video_mode || '未知' }}</span>
+                  <span>模式: {{ getModelLabel(item.video_mode) }}</span>
                   <span>时长: {{ item.duration || 0 }}秒</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
-                  <video :src="item.result_url" controls style="width: 100%; max-width: 400px; border-radius: 6px;"></video>
+                  <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                 </div>
               </div>
             </div>
@@ -1182,6 +1198,12 @@
           form.append('prompt', this.prompt);
           form.append('model', this.model);
           form.append('timeout', '900'); // 15 minutes timeout
+          
+          // Add user_id from localStorage
+          const userId = localStorage.getItem('user_id');
+          if (userId) {
+            form.append('user_id', userId);
+          }
           
           // Add auth_token if available
           if (this.authToken) {
@@ -1258,6 +1280,16 @@
       
       closeHistory() {
         this.showHistory = false;
+      },
+      
+      getModelLabel(value) {
+        const modelMap = {
+          'portrait': '竖屏',
+          'landscape': '横屏',
+          'portrait-hd': '高清竖屏',
+          'landscape-hd': '高清横屏'
+        };
+        return modelMap[value] || value || '未知';
       }
     },
     
@@ -1318,11 +1350,11 @@
                   <strong>提示词:</strong> {{ item.prompt }}
                 </div>
                 <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
-                  <span>模式: {{ item.video_mode || '未知' }}</span>
+                  <span>模式: {{ getModelLabel(item.video_mode) }}</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
-                  <video :src="item.result_url" controls style="width: 100%; max-width: 400px; border-radius: 6px;"></video>
+                  <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                 </div>
               </div>
             </div>

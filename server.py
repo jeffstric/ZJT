@@ -558,6 +558,7 @@ async def ai_app_run(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     model: str = Form("portrait", description="Model type: portrait, landscape, portrait-hd, landscape-hd"),
     timeout: int = Form(300, description="Maximum wait time in seconds"),
+    user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
@@ -659,6 +660,23 @@ async def ai_app_run(
             transaction_id=transaction_id
         )
         
+        # Create database record
+        if user_id and results:
+            try:
+                result_url = results[0].file_url if results else None
+                AIToolsModel.create(
+                    prompt=prompt,
+                    user_id=user_id,
+                    type=2,  # 2-AI视频生成
+                    video_mode=model,
+                    task_id=task_id,
+                    transaction_id=transaction_id,
+                    result_url=result_url
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+                # Don't fail the request if database insert fails
+        
         return JSONResponse({
             "success": True,
             "task_id": task_id,
@@ -690,6 +708,7 @@ async def ai_app_run_image(
     model: str = Form("portrait", description="Model type: portrait, landscape, portrait-hd, landscape-hd"),
     duration_seconds: int = Form(10, description="Duration in seconds"),
     timeout: int = Form(300, description="Maximum wait time in seconds"),
+    user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
@@ -796,6 +815,25 @@ async def ai_app_run_image(
             timeout=timeout,
             transaction_id=transaction_id
         )
+        
+        # Create database record
+        if user_id and results:
+            try:
+                result_url = results[0].file_url if results else None
+                AIToolsModel.create(
+                    prompt=prompt,
+                    user_id=user_id,
+                    type=3,  # 3-图片生成视频
+                    image_path=image_url,
+                    video_mode=model,
+                    duration=duration_seconds,
+                    task_id=task_id,
+                    transaction_id=transaction_id,
+                    result_url=result_url
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+                # Don't fail the request if database insert fails
         
         return JSONResponse({
             "success": True,
