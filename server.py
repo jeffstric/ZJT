@@ -1,5 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Header
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -8,15 +8,21 @@ import uuid
 import json
 import os
 import time
+import logging
+import traceback
 from datetime import datetime
-from typing import List
+from typing import List, Optional
+from pydantic import BaseModel
 from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync
 from config_util import get_config_path, is_dev_environment
+from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
+import uuid
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(APP_DIR, "qwen_image_edit_api.json")
 COMFYUI_OUTPUT_PATH = '/mnt/disk/ComfyUI/server_output'
 UPLOAD_DIR = os.path.join(APP_DIR, "upload")
+CHECK_AUTH_TOKEN = True
 
 # Load server configuration
 import yaml
@@ -29,6 +35,10 @@ SERVER_HOST = config["server"]["host"]
 DEFAULT_COMFYUI_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188/")
 
 app = FastAPI(title="ComfyUI Qwen Image Edit Proxy")
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Allow CORS for local dev if needed
 app.add_middleware(
@@ -362,12 +372,61 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
 @app.post("/api/nanobanana-edit")
 async def nanobanana_edit(
     image: UploadFile = File(...),
-    prompt: str = Form(...)
+    prompt: str = Form(...),
+    auth_token: str = Form(None, description="Authentication token")
 ):
     """
     Submit image editing task to RunningHub nanobanana service
     """
     try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
+
+        #用uuid生成交易id
+        transaction_id = str(uuid.uuid4())
+        if CHECK_AUTH_TOKEN:
+            computing_power = 2
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            #发起请求，检查算力是否充足
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+            # Check if computing power is sufficient
+            user_computing_power = response_data.get('computing_power', 0)
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="您的算力不足，无法生成视频"
+                )
+            
+
+            #发起请求，扣除算力
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
         # Save uploaded image to upload directory
         image_url = _save_uploaded_image(image)
         
@@ -378,7 +437,7 @@ async def nanobanana_edit(
         nodes = create_image_edit_nodes(image_url, prompt)
         
         # Submit task
-        response = client.run_task(nodes)
+        response = client.run_task(nodes,transaction_id)
         task_id = response["data"]["taskId"]
         
         return JSONResponse({
@@ -468,13 +527,19 @@ async def runninghub_edit_sync(
 async def ai_app_run(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     model: str = Form("portrait", description="Model type: portrait, landscape, portrait-hd, landscape-hd"),
-    timeout: int = Form(300, description="Maximum wait time in seconds")
+    timeout: int = Form(300, description="Maximum wait time in seconds"),
+    auth_token: str = Form(None, description="Authentication token")
 ):
     """
     Submit task to RunningHub AI-app/run endpoint and wait for completion.
     Automatically polls task status and returns final video/image URLs.
     """
     try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
         # Validate model parameter
         valid_models = ["portrait", "landscape", "portrait-hd", "landscape-hd"]
         if model not in valid_models:
@@ -508,16 +573,198 @@ async def ai_app_run(
             }
         ]
         
-        # Get AI-app configuration from config file
+        # Get AI-app configuration from config file0
         webapp_id = config["runninghub"].get("ai_app_webapp_id", "1973555977595301890")
         api_key = config["runninghub"].get("ai_app_api_key", config["runninghub"]["api_key"])
-        
+
+        #用uuid生成交易id
+        transaction_id = str(uuid.uuid4())
+        if CHECK_AUTH_TOKEN:
+            computing_power = 20
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            #发起请求，检查算力是否充足
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+            # Check if computing power is sufficient
+            user_computing_power = response_data.get('computing_power', 0)
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="您的算力不足，无法生成视频"
+                )
+            
+
+            #发起请求，扣除算力
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
         # Run task and wait for completion
         task_id, results = run_ai_app_task_sync(
             webapp_id=webapp_id,
             api_key=api_key,
             node_info_list=node_info_list,
-            timeout=timeout
+            timeout=timeout,
+            transaction_id=transaction_id
+        )
+        
+        return JSONResponse({
+            "success": True,
+            "task_id": task_id,
+            "status": "completed",
+            "results": [
+                {
+                    "file_url": result.file_url,
+                    "file_type": result.file_type,
+                    "task_cost_time": result.task_cost_time,
+                    "node_id": result.node_id
+                }
+                for result in results
+            ]
+        })
+        
+    except TimeoutError as e:
+        raise HTTPException(status_code=408, detail=f"Task timed out: {str(e)}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=f"Task failed: {str(e)}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
+
+@app.post("/api/ai-app-run-image")
+async def ai_app_run_image(
+    prompt: str = Form(..., description="Text prompt for the AI app"),
+    image: UploadFile = File(..., description="Image file for the AI app"),
+    model: str = Form("portrait", description="Model type: portrait, landscape, portrait-hd, landscape-hd"),
+    duration_seconds: int = Form(10, description="Duration in seconds"),
+    timeout: int = Form(300, description="Maximum wait time in seconds"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Submit task to RunningHub AI-app/run endpoint and wait for completion.
+    Automatically polls task status and returns final video/image URLs.
+    """
+    try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
+        # Validate model parameter
+        valid_models = ["portrait", "landscape", "portrait-hd", "landscape-hd"]
+        if model not in valid_models:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid model. Must be one of: {', '.join(valid_models)}"
+            )
+        
+        image_url = _save_uploaded_image(image)
+        # Build node info list
+        node_info_list = [
+            {
+                "nodeId": "3",
+                "fieldName": "text",
+                "fieldValue": prompt,
+                "description": "Prompt"
+            },
+            {
+                "nodeId": "4",
+                "fieldName": "image",
+                "fieldValue": image_url,
+                "description": "Upload image"
+            },
+            {
+                "nodeId": "14",
+                "fieldName": "model",
+                "fieldData": "[{\"name\":\"portrait\",\"index\":\"portrait\",\"description\":\"\",\"fastIndex\":1.0,\"descriptionEn\":\"Vertical version 704X1280\"},{\"name\":\"landscape\",\"index\":\"landscape\",\"description\":\"\",\"fastIndex\":2.0,\"descriptionEn\":\"Vertical 1024X1792\"},{\"name\":\"portrait-hd\",\"index\":\"portrait-hd\",\"description\":\"\",\"fastIndex\":3.0,\"descriptionEn\":\"Horizontal version 1280X704\"},{\"name\":\"landscape-hd\",\"index\":\"landscape-hd\",\"description\":\"\",\"fastIndex\":4.0,\"descriptionEn\":\"Landscape 1972X1024\"}]",
+                "fieldValue": model,
+                "description": "Model options, vertical screen, horizontal screen, HD vertical screen, HD horizontal screen"
+            },
+            {
+                "nodeId": "14",
+                "fieldName": "duration_seconds",
+                "fieldData": "[[10, 15], {\"default\": 10}]",
+                "fieldValue": duration_seconds,
+                "description": "Generation duration (0.2 yuan per 15 seconds per time)"
+            }
+        ]
+        
+        # Get AI-app configuration from config file0
+        webapp_id = config["runninghub"].get("ai_app_webapp_img_id", "1976487269899046914")
+        api_key = config["runninghub"].get("ai_app_api_key", config["runninghub"]["api_key"])
+
+        #用uuid生成交易id
+        transaction_id = str(uuid.uuid4())
+        if CHECK_AUTH_TOKEN:
+            computing_power = 20
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            #发起请求，检查算力是否充足
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+            # Check if computing power is sufficient
+            user_computing_power = response_data.get('computing_power', 0)
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="您的算力不足，无法生成视频"
+                )
+            
+
+            #发起请求，扣除算力
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+        # Run task and wait for completion
+        task_id, results = run_ai_app_task_sync(
+            webapp_id=webapp_id,
+            api_key=api_key,
+            node_info_list=node_info_list,
+            timeout=timeout,
+            transaction_id=transaction_id
         )
         
         return JSONResponse({
@@ -545,19 +792,461 @@ async def ai_app_run(
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
 
 
+@app.get('/api/user/computing_power')
+async def get_computing_power(auth_token: str = Header(None, alias="Authorization")):
+    """
+    查询用户算力
+    """
+    try:
+        # 验证 auth_token
+        if not auth_token:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    'success': False,
+                    'message': '未提供认证信息'
+                }
+            )
+        
+        # 移除 "Bearer " 前缀（如果存在）
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+        
+        # 调用 perseids_server 的查询算力接口
+        headers = {'Authorization': f'Bearer {auth_token}'}
+        success, message, response_data = make_perseids_request(
+            endpoint='user/check_computing_power',
+            method='GET',
+            headers=headers
+        )
+        
+        if success:
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '查询成功',
+                    'data': {
+                        'computing_power': response_data.get('computing_power', 0)
+                    }
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message or '查询算力失败'
+                }
+            )
+    
+    except Exception as e:
+        logger.error(f'查询算力失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
+class SendVerifyCodeRequest(BaseModel):
+    phone: str
+    type: str
+    agent: Optional[str] = 'default'
+
+@app.post('/api/auth/send_verify_code')
+async def send_verify_code(request: SendVerifyCodeRequest):
+    """
+    发送验证码
+    """
+    try:
+        phone = request.phone
+        verify_type = request.type
+        agent = request.agent
+
+        if not phone or not verify_type:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '手机号和验证码类型不能为空'
+                }
+            )
+
+        # 验证手机号格式
+        if not phone.isdigit() or len(phone) != 11:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '无效的手机号格式'
+                }
+            )
+
+        # 验证码类型检查
+        valid_types = ['register', 'login', 'reset_password', 'get_serial', 'update_serial']
+        if verify_type not in valid_types:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '无效的验证码类型'
+                }
+            )
+
+        # 调用 Go 服务器发送验证码
+        success, message, response_data = make_perseids_request(
+            endpoint='send_verify_code',
+            data={
+                'phone': phone,
+                'type': verify_type,
+                'agent': agent
+            }
+        )
+
+        if success:
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '验证码发送成功'
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message or '验证码发送失败'
+                }
+            )
+
+    except Exception as e:
+        logger.error(f"发送验证码时发生错误: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器内部错误'
+            }
+        )
+
+class RegisterRequest(BaseModel):
+    phone: str
+    code: str
+    password: str
+    agent: Optional[str] = 'default'
+
+@app.post('/api/auth/register')
+async def register(request: RegisterRequest):
+    """
+    用户注册接口
+    """
+    try:
+        phone = request.phone
+        password = request.password
+        verify_code = request.code
+        agent = request.agent
+        
+        logger.info(f"收到注册请求 - 手机号: {phone}")
+
+        # 验证必填字段
+        if not all([phone, password, verify_code]):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '手机号、密码和验证码不能为空'
+                }
+            )
+
+        # 验证手机号格式
+        if not phone.isdigit() or len(phone) != 11:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '无效的手机号格式'
+                }
+            )
+
+        # 验证密码长度
+        if len(password) < 6:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '密码长度不能少于6位'
+                }
+            )
+
+        # 调用认证服务器注册
+        success, message, auth_data = call_external_auth_server(
+            phone=phone,
+            password=password,
+            auth_type='register',
+            extra_data={'code': verify_code}  # 使用 code 而不是 verify_code
+        )
+        
+        if success:
+            logger.info(f"用户注册成功 - 手机号: {phone}")
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '注册成功',
+                    'data': auth_data
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message or '注册失败'
+                }
+            )
+            
+    except Exception as e:
+        logger.error(f"处理注册请求时发生异常: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '系统异常，请稍后重试'
+            }
+        )
+
+class LoginRequest(BaseModel):
+    phone: str
+    password: str
+    agent: Optional[str] = 'default'
+
+@app.post('/api/auth/login')
+async def login(request: LoginRequest):
+    """
+    用户登录接口
+    """
+    try:
+        phone = request.phone
+        password = request.password
+        agent = request.agent
+        
+        logger.info(f"收到登录请求 - 手机号: {phone}")
+
+        # 验证必填字段
+        if not all([phone, password]):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '手机号和密码不能为空'
+                }
+            )
+
+        # 验证手机号格式
+        if not phone.isdigit() or len(phone) != 11:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '无效的手机号格式'
+                }
+            )
+        device_uuid = get_device_uuid()
+        if device_uuid is None:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '无法获取设备UUID'
+                }
+            )
+        # 调用认证服务器登录
+        success, message, auth_data = call_external_auth_server(phone, password, device_uuid)
+        
+        if success:
+            logger.info(f"用户登录成功 - 手机号: {phone}")
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '登录成功',
+                    'data': auth_data
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message or '登录失败'
+                }
+            )
+
+    except Exception as e:
+        logger.error(f"处理登录请求时发生异常: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '系统异常，请稍后重试'
+            }
+        )
+
+class LogoutRequest(BaseModel):
+    auth_token: str
+
+@app.post('/api/auth/logout')
+async def logout(request: LogoutRequest):
+    """
+    用户登出接口
+    """
+    try:
+        auth_token = request.auth_token
+
+        if not auth_token:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '认证信息不存在'
+                }
+            )
+
+        # 调用 perseids_server 的登出接口
+        success, message, response_data = make_perseids_request(
+            endpoint='auth/logout',
+            method='POST',
+            headers={'Authorization': f"Bearer {auth_token}"}
+        )
+
+        if success:
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '登出成功'
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message or '登出失败'
+                }
+            )
+
+    except Exception as e:
+        logger.error(f"登出失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '登出失败'
+            }
+        )
+
+class ResetPasswordRequest(BaseModel):
+    phone: str
+    code: str
+    new_password: str
+
+@app.post('/api/auth/reset_password')
+async def reset_password(request: ResetPasswordRequest):
+    """
+    重置密码
+    """
+    try:
+        phone = request.phone
+        code = request.code
+        new_password = request.new_password
+
+        if not all([phone, code, new_password]):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': '缺少必要参数'
+                }
+            )
+
+        # 调用外部认证服务器重置密码
+        success, message, response_data = call_external_auth_server(
+            phone=phone,
+            password=new_password,
+            auth_type='reset_password',
+            extra_data={
+                'code': code,
+                'new_password': new_password
+            }
+        )
+
+        if success:
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '密码重置成功',
+                    'data': response_data
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message
+                }
+            )
+
+    except Exception as e:
+        logger.error(f'重置密码失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
+
 # Serve upload directory for static file access
 upload_dir = os.path.join(APP_DIR, "upload")
 if not os.path.exists(upload_dir):
     os.makedirs(upload_dir, exist_ok=True)
 app.mount("/upload", StaticFiles(directory=upload_dir), name="uploads")
 
-# Serve frontend - MUST be after API routes
+# Serve frontend static files
 static_dir = os.path.join(APP_DIR, "web")
 if not os.path.exists(static_dir):
     os.makedirs(static_dir, exist_ok=True)
-app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+
+# Catch-all route for SPA - returns index.html for all unmatched routes
+# This supports Vue Router history mode
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """
+    Serve index.html for all routes to support Vue Router history mode.
+    This allows refreshing on routes like /nanobanana-edit, /ai-video-gen, etc.
+    
+    First tries to serve a static file if it exists, otherwise returns index.html.
+    """
+    # Try to serve static file first
+    file_path = os.path.join(static_dir, full_path)
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    
+    # Otherwise return index.html for SPA routing
+    index_path = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    
+    raise HTTPException(status_code=404, detail="Frontend not found")
 
 
 if __name__ == "__main__":
-    port = 9002 if is_dev_environment() else config["server"].get("port", 5173)
+    port = 9003 if is_dev_environment() else config["server"].get("port", 5174)
     uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)

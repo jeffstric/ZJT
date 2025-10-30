@@ -103,7 +103,7 @@ class RunningHubClient:
                 raise
             raise ValueError(f"Invalid response format: {str(e)}")
     
-    def run_task(self, node_info_list: List[NodeInfo]) -> Dict[str, Any]:
+    def run_task(self, node_info_list: List[NodeInfo],transaction_id:str) -> Dict[str, Any]:
         """
         Submit a new task to RunningHub
         
@@ -131,7 +131,8 @@ class RunningHubClient:
             "webappId": self.WEBAPP_ID,
             "apiKey": self.api_key,
             "quickCreateCode": self.QUICK_CREATE_CODE,
-            "nodeInfoList": nodes_data
+            "nodeInfoList": nodes_data,
+            "transactionId": transaction_id
         }
         
         return self._make_request(endpoint, payload)
@@ -246,7 +247,10 @@ class RunningHubClient:
             RuntimeError: If task fails after all retry attempts
             TimeoutError: If task doesn't complete within timeout
         """
-        last_error = None
+        # Submit task
+        response = self.run_task(node_info_list, None)
+        task_id = response["data"]["taskId"]
+
         
         for attempt in range(max_retries):
             try:
@@ -342,7 +346,8 @@ def run_ai_app_task(
     webapp_id: str,
     api_key: str,
     node_info_list: List[Dict[str, str]],
-    config_path: str = None
+    config_path: str = None,
+    transaction_id: str = None
 ) -> Dict[str, Any]:
     """
     Run AI app task using the ai-app/run endpoint
@@ -381,7 +386,8 @@ def run_ai_app_task(
     payload = {
         "webappId": webapp_id,
         "apiKey": api_key,
-        "nodeInfoList": node_info_list
+        "nodeInfoList": node_info_list,
+        "transactionId": transaction_id
     }
     
     try:
@@ -410,7 +416,8 @@ def run_ai_app_task_sync(
     api_key: str,
     node_info_list: List[Dict[str, str]],
     timeout: int = 180,
-    config_path: str = None
+    config_path: str = None,
+    transaction_id: str = None
 ) -> tuple[str, List[TaskResult]]:
     """
     Run AI app task and wait for completion (synchronous)
@@ -439,7 +446,7 @@ def run_ai_app_task_sync(
     check_interval = client.config["timeout"].get("status_check_interval", 5)
     
     # Submit task
-    result = run_ai_app_task(webapp_id, api_key, node_info_list, config_path)
+    result = run_ai_app_task(webapp_id, api_key, node_info_list, config_path, transaction_id)
     
     # Check if task submission failed
     if result.get("code") != 0:
