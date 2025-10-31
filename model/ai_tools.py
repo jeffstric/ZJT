@@ -19,8 +19,8 @@ class AITool:
         self.update_time = kwargs.get('update_time')
         self.image_path = kwargs.get('image_path')
         self.duration = kwargs.get('duration')
-        self.video_mode = kwargs.get('video_mode')
-        self.task_id = kwargs.get('task_id')
+        self.ratio = kwargs.get('ratio')
+        self.project_id = kwargs.get('project_id')
         self.transaction_id = kwargs.get('transaction_id')
         self.result_url = kwargs.get('result_url')
         self.user_id = kwargs.get('user_id')
@@ -36,8 +36,8 @@ class AITool:
             'update_time': self.update_time.isoformat() if self.update_time else None,
             'image_path': self.image_path,
             'duration': self.duration,
-            'video_mode': self.video_mode,
-            'task_id': self.task_id,
+            'ratio': self.ratio,
+            'project_id': self.project_id,
             'transaction_id': self.transaction_id,
             'result_url': self.result_url,
             'user_id': self.user_id,
@@ -56,8 +56,8 @@ class AIToolsModel:
         type: Optional[int] = None,
         image_path: Optional[str] = None,
         duration: Optional[int] = None,
-        video_mode: Optional[str] = None,
-        task_id: Optional[str] = None,
+        ratio: Optional[str] = None,
+        project_id: Optional[str] = None,
         transaction_id: Optional[str] = None,
         result_url: Optional[str] = None,
         status: Optional[int] = 0
@@ -71,8 +71,8 @@ class AIToolsModel:
             type: Type (1-图片编辑, 2-AI视频生成, 3-图片生成视频)
             image_path: Image path (optional)
             duration: Video duration (optional)
-            video_mode: Video mode (portrait, landscape, portrait-hd, landscape-hd)
-            task_id: Task ID (optional)
+            ratio: Video ratio (9:16, 16:9, 1:1, 3:4, 4:3)
+            project_id: Project ID (optional)
             transaction_id: Transaction ID (optional)
             result_url: Result URL (optional)
             status: Status (0-未处理, 1-正在处理, -1-处理失败, 2-处理完成, default: 0)
@@ -82,10 +82,10 @@ class AIToolsModel:
         """
         sql = """
             INSERT INTO ai_tools 
-            (prompt, user_id, type, image_path, duration, video_mode, task_id, transaction_id, result_url, status)
+            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (prompt, user_id, type, image_path, duration, video_mode, task_id, transaction_id, result_url, status)
+        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status)
         
         try:
             record_id = execute_insert(sql, params)
@@ -118,25 +118,25 @@ class AIToolsModel:
             raise
     
     @staticmethod
-    def get_by_task_id(task_id: str) -> Optional[AITool]:
+    def get_by_project_id(project_id: str) -> Optional[AITool]:
         """
-        Get AI tool record by task ID
+        Get AI tool record by project ID
         
         Args:
-            task_id: Task ID
+            project_id: Project ID
         
         Returns:
             AITool object or None
         """
-        sql = "SELECT * FROM ai_tools WHERE task_id = %s"
+        sql = "SELECT * FROM ai_tools WHERE project_id = %s"
         
         try:
-            result = execute_query(sql, (task_id,), fetch_one=True)
+            result = execute_query(sql, (project_id,), fetch_one=True)
             if result:
                 return AITool(**result)
             return None
         except Exception as e:
-            logger.error(f"Failed to get AI tool record by task_id {task_id}: {e}")
+            logger.error(f"Failed to get AI tool record by project_id {project_id}: {e}")
             raise
      
     @staticmethod
@@ -246,16 +246,16 @@ class AIToolsModel:
         
         Args:
             record_id: Record ID
-            **kwargs: Fields to update (prompt, type, image_path, duration, video_mode, 
-                     task_id, transaction_id, result_url, user_id, status)
+            **kwargs: Fields to update (prompt, type, image_path, duration, ratio, 
+                     project_id, transaction_id, result_url, user_id, status)
         
         Returns:
             Number of affected rows
         """
         # Build update fields
         allowed_fields = [
-            'prompt', 'type', 'image_path', 'duration', 'video_mode',
-            'task_id', 'transaction_id', 'result_url', 'user_id', 'status'
+            'prompt', 'type', 'image_path', 'duration', 'ratio',
+            'project_id', 'transaction_id', 'result_url', 'user_id', 'status'
         ]
         
         update_fields = []
@@ -282,22 +282,22 @@ class AIToolsModel:
             raise
     
     @staticmethod
-    def update_by_task_id(
-        task_id: str,
+    def update_by_project_id(
+        project_id: str,
         **kwargs
     ) -> int:
         """
-        Update AI tool record by task ID
+        Update AI tool record by project ID
         
         Args:
-            task_id: Task ID
+            project_id: Project ID
             **kwargs: Fields to update
         
         Returns:
             Number of affected rows
         """
         allowed_fields = [
-            'prompt', 'type', 'image_path', 'duration', 'video_mode',
+            'prompt', 'type', 'image_path', 'duration', 'ratio',
             'transaction_id', 'result_url', 'user_id', 'status'
         ]
         
@@ -313,15 +313,15 @@ class AIToolsModel:
             logger.warning("No valid fields to update")
             return 0
         
-        params.append(task_id)
-        sql = f"UPDATE ai_tools SET {', '.join(update_fields)} WHERE task_id = %s"
+        params.append(project_id)
+        sql = f"UPDATE ai_tools SET {', '.join(update_fields)} WHERE project_id = %s"
         
         try:
             affected_rows = execute_update(sql, tuple(params))
-            logger.info(f"Updated AI tool record with task_id {task_id}, affected rows: {affected_rows}")
+            logger.info(f"Updated AI tool record with project_id {project_id}, affected rows: {affected_rows}")
             return affected_rows
         except Exception as e:
-            logger.error(f"Failed to update AI tool record by task_id {task_id}: {e}")
+            logger.error(f"Failed to update AI tool record by project_id {project_id}: {e}")
             raise
     
     @staticmethod
