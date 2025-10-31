@@ -486,6 +486,16 @@ async def get_status(project_id: str):
         media_url = data.get("mediaUrl")
         reason = data.get("reason")
         
+        # Query database to get creation time
+        task_record = AIToolsModel.get_by_project_id(project_id)
+        task_cost_time = None
+        if task_record and task_record.create_time:
+            # Calculate time difference in seconds
+            from datetime import datetime
+            current_time = datetime.now()
+            time_diff = current_time - task_record.create_time
+            task_cost_time = int(time_diff.total_seconds())
+        
         # Update database based on status
         if task_status == 1:  # Success
             try:
@@ -501,7 +511,8 @@ async def get_status(project_id: str):
                 "status": "SUCCESS",
                 "results": [
                     {
-                        "file_url": media_url
+                        "file_url": media_url,
+                        "task_cost_time": task_cost_time
                     }
                 ] if media_url else []
             })
@@ -536,6 +547,7 @@ async def ai_app_run(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     ratio: str = Form("9:16", description="Model type: 9:16, 16:9"),
     timeout: int = Form(300, description="Maximum wait time in seconds"),
+    duration_seconds: int = Form(15, description="Duration in seconds"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -576,7 +588,7 @@ async def ai_app_run(
             
             
         # Submit task (async, return immediately)
-        result = create_image_to_video(prompt, ratio, None, duration)
+        result = create_image_to_video(prompt, ratio, None, duration_seconds)
         # Check if task submission failed
         if result.get("code") != 0:
             error_msg = result.get("msg", "Unknown error")
@@ -588,12 +600,12 @@ async def ai_app_run(
         if CHECK_AUTH_TOKEN:
             #发起请求，增加算力
             success, message, response_data = make_perseids_request(
-                endpoint='user/increase_computing_power',
+                endpoint='user/calculate_computing_power',
                 method='POST',
                 headers=headers,
                 data={
                     "computing_power": computing_power,
-                    "behavior": "increase",
+                    "behavior": "deduct",
                     "transaction_id": transaction_id
                 }
             )
@@ -635,7 +647,7 @@ async def ai_app_run_image(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     image: UploadFile = File(..., description="Image file for the AI app"),
     ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9"),
-    duration_seconds: int = Form(10, description="Duration in seconds"),
+    duration_seconds: int = Form(15, description="Duration in seconds"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -691,12 +703,12 @@ async def ai_app_run_image(
         if CHECK_AUTH_TOKEN:
             #发起请求，增加算力
             success, message, response_data = make_perseids_request(
-                endpoint='user/increase_computing_power',
+                endpoint='user/calculate_computing_power',
                 method='POST',
                 headers=headers,
                 data={
                     "computing_power": computing_power,
-                    "behavior": "increase",
+                    "behavior": "deduct",
                     "transaction_id": transaction_id
                 }
             )
