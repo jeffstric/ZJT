@@ -705,6 +705,30 @@
           clearTimeout(this.upscaleStatusInterval);
           this.upscaleStatusInterval = null;
         }
+      },
+      
+      async upscaleHistoryImage(item) {
+        if (!item.project_id) return;
+        
+        try {
+          const form = new FormData();
+          form.append('project_id', item.project_id);
+          form.append('user_id', localStorage.getItem('user_id') || '');
+          form.append('auth_token', this.authToken);
+          
+          const res = await axios.post('/api/image-upscale', form);
+          
+          if (res.data.success) {
+            alert('高清放大任务已创建，请稍后在历史记录中查看结果');
+            // Refresh history to show the new upscale task
+            await this.fetchHistory();
+          } else {
+            alert(res.data.message || '高清放大失败');
+          }
+        } catch (err) {
+          console.error(err);
+          alert(err?.response?.data?.detail || err?.message || '高清放大请求失败');
+        }
       }
     },
     
@@ -744,8 +768,10 @@
         <div class="status" v-if="statusText">{{ statusText }}</div>
         <div class="status danger" v-if="error">{{ error }}</div>
 
-        <div class="preview" v-if="results.length">
+        <div class="preview" v-if="results.length || upscaleResults.length">
+          <!-- Original Results -->
           <div class="imgbox" v-for="(result, i) in results" :key="i">
+            <div style="margin-bottom: 8px; font-weight: bold; color: var(--primary); text-align: center;">原始图片</div>
             <img :src="result.file_url" :alt="'result-'+i" />
             <div style="padding: 8px; text-align: center;">
               <button class="btn secondary" @click="downloadImage(result.file_url, i)">下载图片</button>
@@ -753,12 +779,10 @@
               <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}s</div>
             </div>
           </div>
-        </div>
-        
-        <!-- Upscaled Results -->
-        <div class="preview" v-if="upscaleResults.length">
-          <h3 style="margin-bottom: 16px;">高清放大结果</h3>
+          
+          <!-- Upscaled Results -->
           <div class="imgbox" v-for="(result, i) in upscaleResults" :key="'upscale-'+i">
+            <div style="margin-bottom: 8px; font-weight: bold; color: #10b981; text-align: center;">高清放大结果</div>
             <img :src="result.file_url" :alt="'upscale-result-'+i" />
             <div style="padding: 8px; text-align: center;">
               <button class="btn secondary" @click="downloadImage(result.file_url, i)">下载高清图</button>
@@ -772,7 +796,12 @@
           <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
             <div style="position: relative;">
               <button class="modal-close" @click="closeHistory">×</button>
-              <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding-right: 40px;">
+                <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
+                <button class="btn secondary" @click="fetchHistory(false)" :disabled="historyLoading" style="font-size: 12px; padding: 4px 12px;">
+                  {{ historyLoading ? '刷新中...' : '刷新' }}
+                </button>
+              </div>
             </div>
             
             <div v-if="historyList.length === 0" style="padding: 40px; text-align: center; color: var(--muted);">
@@ -790,11 +819,14 @@
                   </span>
                 </div>
                 <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
+                  <span v-if="item.type == 1">类型: 图片编辑</span>
+                  <span v-else-if="item.type == 4">类型: 高清放大</span>
                   <span>比例: {{ getRatioLabel(item.ratio) }}</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
+                  <button v-if="item.type == 1" class="btn" @click="upscaleHistoryImage(item)" style="margin-left: 8px;">高清放大</button>
                 </div>
               </div>
               
@@ -1117,7 +1149,12 @@
           <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
             <div style="position: relative;">
               <button class="modal-close" @click="closeHistory">×</button>
-              <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding-right: 40px;">
+                <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
+                <button class="btn secondary" @click="fetchHistory(false)" :disabled="historyLoading" style="font-size: 12px; padding: 4px 12px;">
+                  {{ historyLoading ? '刷新中...' : '刷新' }}
+                </button>
+              </div>
             </div>
             
             <div v-if="historyList.length === 0" style="padding: 40px; text-align: center; color: var(--muted);">
@@ -1458,7 +1495,12 @@
           <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
             <div style="position: relative;">
               <button class="modal-close" @click="closeHistory">×</button>
-              <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
+              <div style="display: flex; justify-content: space-between; align-items: center; padding-right: 40px;">
+                <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
+                <button class="btn secondary" @click="fetchHistory(false)" :disabled="historyLoading" style="font-size: 12px; padding: 4px 12px;">
+                  {{ historyLoading ? '刷新中...' : '刷新' }}
+                </button>
+              </div>
             </div>
             
             <div v-if="historyList.length === 0" style="padding: 40px; text-align: center; color: var(--muted);">

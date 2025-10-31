@@ -326,8 +326,7 @@ def run_ai_app_task(
     webapp_id: str,
     api_key: str,
     node_info_list: List[Dict[str, str]],
-    config_path: str = None,
-    transaction_id: str = None
+    config_path: str = None
 ) -> Dict[str, Any]:
     """
     Run AI app task using the ai-app/run endpoint
@@ -366,8 +365,7 @@ def run_ai_app_task(
     payload = {
         "webappId": webapp_id,
         "apiKey": api_key,
-        "nodeInfoList": node_info_list,
-        "transactionId": transaction_id
+        "nodeInfoList": node_info_list
     }
     
     try:

@@ -1464,6 +1464,7 @@ async def image_upscale(
             type=4,  # 4-图片高清放大
             image_path=result_url,  # Store original image URL
             project_id=task_id,  # Use the new task_id as project_id
+            ratio=original_record.ratio,
             transaction_id=transaction_id,  # Store transaction ID
             status=1  # 1-正在处理
         )
