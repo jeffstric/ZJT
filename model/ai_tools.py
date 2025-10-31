@@ -71,7 +71,7 @@ class AIToolsModel:
         Args:
             prompt: Prompt text
             user_id: User ID
-            type: Type (1-图片编辑, 2-AI视频生成, 3-图片生成视频)
+            type: Type (1-图片编辑, 2-AI视频生成, 3-图片生成视频, 4-图片高清)
             image_path: Image path (optional)
             duration: Video duration (optional)
             ratio: Video ratio (9:16, 16:9, 1:1, 3:4, 4:3)
@@ -150,7 +150,8 @@ class AIToolsModel:
         page_size: int = 20,
         order_by: str = 'create_time',
         order_direction: str = 'DESC',
-        type: Optional[int] = None
+        type: Optional[int] = None,
+        type_list: Optional[List[int]] = None
     ) -> Dict[str, Any]:
         """
         Get AI tool records list by user ID with pagination
@@ -161,7 +162,8 @@ class AIToolsModel:
             page_size: Number of records per page
             order_by: Order by field (create_time, update_time, id)
             order_direction: Order direction (ASC, DESC)
-            type: Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)
+            type: Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频, 4-图片高清放大)
+            type_list: List of tool types to filter (alternative to type)
         
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
@@ -179,7 +181,12 @@ class AIToolsModel:
         where_conditions = ["user_id = %s"]
         params = [user_id]
         
-        if type is not None:
+        if type_list is not None and len(type_list) > 0:
+            # Use IN clause for multiple types
+            placeholders = ','.join(['%s'] * len(type_list))
+            where_conditions.append(f"type IN ({placeholders})")
+            params.extend(type_list)
+        elif type is not None:
             where_conditions.append("type = %s")
             params.append(type)
         

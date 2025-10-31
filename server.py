@@ -32,6 +32,7 @@ config_file = get_config_path()
 with open(os.path.join(APP_DIR, config_file), 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 SERVER_HOST = config["server"]["host"]
+API_KEY = config["runninghub"]["api_key"]
 
 # Default ComfyUI server address; can be overridden by request field
 DEFAULT_COMFYUI_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188/")
@@ -465,6 +466,56 @@ async def image_edit(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit nanobanana task: {str(e)}")
+
+@app.get("/api/runninghub-status/{project_id}")
+async def runninghub_status(project_id: str):
+    """
+    Check the status of a runninghub task
+    """
+    try:
+        client = RunningHubClient()
+        status = client.check_status(project_id)
+        
+        if status == TaskStatus.SUCCESS:
+            # Get results
+            results = client.get_outputs(project_id)
+            
+            # Update database record with result_url
+            if results:
+                try:
+                    result_url = results[0].file_url
+                    AIToolsModel.update_by_project_id(
+                        project_id=project_id,
+                        result_url=result_url,
+                        status=2
+                    )
+                except Exception as db_error:
+                    logger.error(f"Failed to update database record: {db_error}")
+            
+            return JSONResponse({
+                "status": status.value,
+                "results": [
+                    {
+                        "file_url": result.file_url,
+                        "file_type": result.file_type,
+                        "task_cost_time": result.task_cost_time,
+                        "node_id": result.node_id
+                    }
+                    for result in results
+                ]
+            })
+        elif status == TaskStatus.FAILED:
+            AIToolsModel.update_by_project_id(
+                project_id=project_id,
+                status=-1
+            )
+            return JSONResponse({
+                "status": status.value,
+                "results": []
+            })
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check runninghub status: {str(e)}")
 
 
 @app.get("/api/get-status/{project_id}")
@@ -1197,41 +1248,69 @@ async def get_ai_tools_history(
                     continue
                     
                 try:
-                    # Call get_ai_task_result to check status
-                    result = get_ai_task_result(task.project_id)
-                    
-                    # Check if API call was successful
-                    if result.get("code") != 0:
-                        logger.error(f"Failed to get task result for {task.project_id}: {result.get('msg')}")
-                        continue
-                    
-                    data = result.get("data", {})
-                    task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-                    media_url = data.get("mediaUrl")
-                    reason = data.get("reason")
-                    
-                    if task_status == 1:  # Success
-                        AIToolsModel.update_by_project_id(
-                            project_id=task.project_id,
-                            result_url=media_url,
-                            status=2  # 处理完成
-                        )
-                        updated_count += 1
-                        logger.info(f"Task {task.project_id} completed successfully")
-                            
-                    elif task_status == 2:  # Failed
-                        if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
-                            reason = "图片包含真人，无法处理"
-                        # Update status to failed
-                        AIToolsModel.update_by_project_id(
-                            project_id=task.project_id,
-                            status=-1,  # 处理失败
-                            message=reason
-                        )
-                        updated_count += 1
-                        logger.info(f"Task {task.project_id} failed: {reason}")
+                    # Type 4 (图片高清放大) uses RunningHub, others use get_ai_task_result
+                    if task.type == 4:
+                        # Use RunningHub client for upscale tasks
+                        client = RunningHubClient()
+                        status = client.check_status(task.project_id)
                         
-                    # If task_status == 0 (in progress), keep status as 1 (processing)
+                        if status == TaskStatus.SUCCESS:
+                            # Get results
+                            results = client.get_outputs(task.project_id)
+                            
+                            if results:
+                                result_url = results[0].file_url
+                                AIToolsModel.update_by_project_id(
+                                    project_id=task.project_id,
+                                    result_url=result_url,
+                                    status=2  # 处理完成
+                                )
+                                updated_count += 1
+                                logger.info(f"Upscale task {task.project_id} completed successfully")
+                        elif status == TaskStatus.FAILED:
+                            AIToolsModel.update_by_project_id(
+                                project_id=task.project_id,
+                                status=-1,  # 处理失败
+                                message="高清放大失败"
+                            )
+                            updated_count += 1
+                            logger.info(f"Upscale task {task.project_id} failed")
+                    else:
+                        # Use get_ai_task_result for other task types
+                        result = get_ai_task_result(task.project_id)
+                        
+                        # Check if API call was successful
+                        if result.get("code") != 0:
+                            logger.error(f"Failed to get task result for {task.project_id}: {result.get('msg')}")
+                            continue
+                        
+                        data = result.get("data", {})
+                        task_status = data.get("status")  # 0-进行中 1-成功 2-失败
+                        media_url = data.get("mediaUrl")
+                        reason = data.get("reason")
+                        
+                        if task_status == 1:  # Success
+                            AIToolsModel.update_by_project_id(
+                                project_id=task.project_id,
+                                result_url=media_url,
+                                status=2  # 处理完成
+                            )
+                            updated_count += 1
+                            logger.info(f"Task {task.project_id} completed successfully")
+                                
+                        elif task_status == 2:  # Failed
+                            if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
+                                reason = "图片包含真人，无法处理"
+                            # Update status to failed
+                            AIToolsModel.update_by_project_id(
+                                project_id=task.project_id,
+                                status=-1,  # 处理失败
+                                message=reason
+                            )
+                            updated_count += 1
+                            logger.info(f"Task {task.project_id} failed: {reason}")
+                        
+                        # If task_status == 0 (in progress), keep status as 1 (processing)
                     
                 except Exception as task_error:
                     logger.error(f"Failed to check status for task {task.project_id}: {task_error}")
@@ -1240,14 +1319,25 @@ async def get_ai_tools_history(
             logger.info(f"Checked {len(processing_tasks)} processing tasks, updated {updated_count}")
         
         # 查询历史记录
-        result = AIToolsModel.list_by_user(
-            user_id=user_id,
-            page=page,
-            page_size=page_size,
-            order_by='create_time',
-            order_direction='DESC',
-            type=type
-        )
+        # If type=1, also include type=4 (图片高清放大)
+        if type == 1:
+            result = AIToolsModel.list_by_user(
+                user_id=user_id,
+                page=page,
+                page_size=page_size,
+                order_by='create_time',
+                order_direction='DESC',
+                type_list=[1, 4]  # 1-图片编辑, 4-图片高清放大
+            )
+        else:
+            result = AIToolsModel.list_by_user(
+                user_id=user_id,
+                page=page,
+                page_size=page_size,
+                order_by='create_time',
+                order_direction='DESC',
+                type=type
+            )
         
         return JSONResponse(
             content={
@@ -1267,6 +1357,136 @@ async def get_ai_tools_history(
                 'message': '服务器错误'
             }
         )
+
+
+@app.post("/api/image-upscale")
+async def image_upscale(
+    project_id: str = Form(..., description="Project ID of the image to upscale"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Image upscale endpoint - Upscale an image to higher resolution
+    
+    Args:
+        project_id: The project ID of the existing image record
+    
+    Returns:
+        JSON response with upscale task information
+    """
+    try:
+        logger.info(f"Image upscale request received for project_id: {project_id}")
+        
+        # Check authentication and computing power
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
+        
+        # Generate transaction ID
+        transaction_id = str(uuid.uuid4())
+        
+        if CHECK_AUTH_TOKEN:
+            computing_power = 1  # 高清放大需要1算力
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            
+            # Check if computing power is sufficient
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+            user_computing_power = response_data.get('computing_power', 0)
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="您的算力不足，无法进行高清放大"
+                )
+            
+            # Deduct computing power
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+        
+        # 1. Get the original image record from database using project_id
+        original_record = AIToolsModel.get_by_project_id(project_id)
+        
+        if not original_record:
+            raise HTTPException(status_code=404, detail="未找到对应的图片记录")
+        
+        if not original_record.result_url:
+            raise HTTPException(status_code=400, detail="原始图片未生成完成，无法进行高清放大")
+        result_url = original_record.result_url
+        
+        logger.info(f"Found original record: type={original_record.type}, result_url={result_url}")
+        node_info_list=[
+            {
+                "nodeId": "15",
+                "fieldName": "image",
+                "fieldValue": result_url,
+                "description": "Upload image"
+            }
+        ]
+        result = run_ai_app_task("1950110619129307138", API_KEY, node_info_list, None)
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Unknown error")
+            raise RuntimeError(f"Task submission failed: {error_msg}")
+        
+        task_id = result.get("data", {}).get("taskId")
+        if not task_id:
+            raise RuntimeError("创建任务失败")
+        
+        logger.info(f"Upscale task created with task_id: {task_id}")
+        
+        # Create new database record for upscale task (type=4)
+        new_record_id = AIToolsModel.create(
+            prompt=f"高清放大: {original_record.prompt or '原始图片'}",
+            user_id=user_id or original_record.user_id,
+            type=4,  # 4-图片高清放大
+            image_path=result_url,  # Store original image URL
+            project_id=task_id,  # Use the new task_id as project_id
+            transaction_id=transaction_id,  # Store transaction ID
+            status=1  # 1-正在处理
+        )
+        
+        logger.info(f"Created upscale record with ID: {new_record_id}, project_id: {task_id}")
+        
+        return JSONResponse({
+            "success": True,
+            "message": "图片高清放大任务已创建",
+            "data": {
+                "project_id": task_id,
+                "record_id": new_record_id,
+                "status": "processing"
+            }
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Image upscale failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"图片高清放大失败: {str(e)}")
+
 
 # Serve upload directory for static file access
 upload_dir = os.path.join(APP_DIR, "upload")

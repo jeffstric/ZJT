@@ -404,6 +404,10 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        upscaling: false,
+        upscaleProjectId: '',
+        upscaleResults: [],
+        upscaleStatusInterval: null,
       }
     },
     mounted() {
@@ -637,11 +641,76 @@
           '4:3': '横屏 (4:3)'
         };
         return ratioMap[value] || value || '未知';
+      },
+      
+      async upscaleImage() {
+        if (!this.projectId) return;
+        
+        this.upscaling = true;
+        this.error = '';
+        
+        try {
+          const form = new FormData();
+          form.append('project_id', this.projectId);
+          form.append('user_id', localStorage.getItem('user_id') || '');
+          form.append('auth_token', this.authToken);
+          
+          const res = await axios.post('/api/image-upscale', form);
+          
+          if (res.data.success) {
+            this.upscaleProjectId = res.data.data.project_id;
+            this.startUpscaleStatusCheck();
+          } else {
+            this.error = res.data.message || '高清放大失败';
+            this.upscaling = false;
+          }
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '高清放大请求失败';
+          this.upscaling = false;
+        }
+      },
+      
+      startUpscaleStatusCheck() {
+        this.checkUpscaleStatus();
+      },
+      
+      async checkUpscaleStatus() {
+        if (!this.upscaleProjectId) return;
+        
+        try {
+          const res = await axios.get(`/api/runninghub-status/${this.upscaleProjectId}`);
+          
+          if (res.data.status === 'SUCCESS') {
+            this.upscaleResults = res.data.results || [];
+            this.upscaling = false;
+            this.clearUpscaleStatusCheck();
+          } else if (res.data.status === 'FAILED') {
+            this.error = '高清放大失败';
+            this.upscaling = false;
+            this.clearUpscaleStatusCheck();
+          } else {
+            // Still running, check again after 5 seconds
+            this.upscaleStatusInterval = setTimeout(() => this.checkUpscaleStatus(), 5000);
+          }
+        } catch (err) {
+          console.error('Upscale status check error:', err);
+          // Continue checking, don't stop on temporary errors
+          this.upscaleStatusInterval = setTimeout(() => this.checkUpscaleStatus(), 5000);
+        }
+      },
+      
+      clearUpscaleStatusCheck() {
+        if (this.upscaleStatusInterval) {
+          clearTimeout(this.upscaleStatusInterval);
+          this.upscaleStatusInterval = null;
+        }
       }
     },
     
     beforeUnmount() {
       this.clearStatusCheck();
+      this.clearUpscaleStatusCheck();
     },
     template: `
       <div>
@@ -680,6 +749,19 @@
             <img :src="result.file_url" :alt="'result-'+i" />
             <div style="padding: 8px; text-align: center;">
               <button class="btn secondary" @click="downloadImage(result.file_url, i)">下载图片</button>
+              <button class="btn" @click="upscaleImage" :disabled="upscaling" style="margin-left: 8px;">{{ upscaling ? '高清放大中...' : '高清放大' }}</button>
+              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}s</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Upscaled Results -->
+        <div class="preview" v-if="upscaleResults.length">
+          <h3 style="margin-bottom: 16px;">高清放大结果</h3>
+          <div class="imgbox" v-for="(result, i) in upscaleResults" :key="'upscale-'+i">
+            <img :src="result.file_url" :alt="'upscale-result-'+i" />
+            <div style="padding: 8px; text-align: center;">
+              <button class="btn secondary" @click="downloadImage(result.file_url, i)">下载高清图</button>
               <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}s</div>
             </div>
           </div>
