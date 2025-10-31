@@ -13,9 +13,10 @@ import traceback
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync
+from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync, run_ai_app_task
 from config_util import get_config_path, is_dev_environment
 from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
+from model import AIToolsModel
 import uuid
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -373,6 +374,7 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
 async def nanobanana_edit(
     image: UploadFile = File(...),
     prompt: str = Form(...),
+    user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
@@ -387,6 +389,7 @@ async def nanobanana_edit(
 
         #用uuid生成交易id
         transaction_id = str(uuid.uuid4())
+        
         if CHECK_AUTH_TOKEN:
             computing_power = 2
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -440,6 +443,22 @@ async def nanobanana_edit(
         response = client.run_task(nodes,transaction_id)
         task_id = response["data"]["taskId"]
         
+        # Create database record
+        if user_id:
+            try:
+                AIToolsModel.create(
+                    prompt=prompt,
+                    user_id=user_id,
+                    type=1,  # 1-图片编辑
+                    image_path=image_url,
+                    task_id=task_id,
+                    transaction_id=transaction_id,
+                    status=1
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+                # Don't fail the request if database insert fails
+        
         return JSONResponse({
             "task_id": task_id,
             "status": "submitted",
@@ -462,6 +481,19 @@ async def nanobanana_status(task_id: str):
         if status == TaskStatus.SUCCESS:
             # Get results
             results = client.get_outputs(task_id)
+            
+            # Update database record with result_url
+            if results:
+                try:
+                    result_url = results[0].file_url
+                    AIToolsModel.update_by_task_id(
+                        task_id=task_id,
+                        result_url=result_url,
+                        status=2
+                    )
+                except Exception as db_error:
+                    logger.error(f"Failed to update database record: {db_error}")
+            
             return JSONResponse({
                 "status": status.value,
                 "results": [
@@ -474,7 +506,11 @@ async def nanobanana_status(task_id: str):
                     for result in results
                 ]
             })
-        else:
+        elif status == TaskStatus.FAILED:
+            AIToolsModel.update_by_task_id(
+                task_id=task_id,
+                status=-1
+            )
             return JSONResponse({
                 "status": status.value,
                 "results": []
@@ -528,6 +564,7 @@ async def ai_app_run(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     model: str = Form("portrait", description="Model type: portrait, landscape, portrait-hd, landscape-hd"),
     timeout: int = Form(300, description="Maximum wait time in seconds"),
+    user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
@@ -620,36 +657,47 @@ async def ai_app_run(
                     detail=message
                 )
             
-        # Run task and wait for completion
-        task_id, results = run_ai_app_task_sync(
+        # Submit task (async, return immediately)
+        result = run_ai_app_task(
             webapp_id=webapp_id,
             api_key=api_key,
             node_info_list=node_info_list,
-            timeout=timeout,
             transaction_id=transaction_id
         )
+        
+        # Check if task submission failed
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Unknown error")
+            raise HTTPException(status_code=500, detail=f"Task submission failed: {error_msg}")
+        
+        task_id = result.get("data", {}).get("taskId")
+        if not task_id:
+            raise HTTPException(status_code=500, detail="Failed to get task ID from response")
+        
+        # Create database record
+        if user_id:
+            try:
+                AIToolsModel.create(
+                    prompt=prompt,
+                    user_id=user_id,
+                    type=2,  # 2-AI视频生成
+                    video_mode=model,
+                    task_id=task_id,
+                    transaction_id=transaction_id,
+                    status=1
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+                # Don't fail the request if database insert fails
         
         return JSONResponse({
             "success": True,
             "task_id": task_id,
-            "status": "completed",
-            "results": [
-                {
-                    "file_url": result.file_url,
-                    "file_type": result.file_type,
-                    "task_cost_time": result.task_cost_time,
-                    "node_id": result.node_id
-                }
-                for result in results
-            ]
+            "status": "submitted"
         })
         
-    except TimeoutError as e:
-        raise HTTPException(status_code=408, detail=f"Task timed out: {str(e)}")
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=f"Task failed: {str(e)}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
 
@@ -660,6 +708,7 @@ async def ai_app_run_image(
     model: str = Form("portrait", description="Model type: portrait, landscape, portrait-hd, landscape-hd"),
     duration_seconds: int = Form(10, description="Duration in seconds"),
     timeout: int = Form(300, description="Maximum wait time in seconds"),
+    user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
@@ -758,36 +807,50 @@ async def ai_app_run_image(
                     detail=message
                 )
             
-        # Run task and wait for completion
-        task_id, results = run_ai_app_task_sync(
+        # Submit task (async, return immediately)
+        result = run_ai_app_task(
             webapp_id=webapp_id,
             api_key=api_key,
             node_info_list=node_info_list,
-            timeout=timeout,
             transaction_id=transaction_id
         )
+        
+        # Check if task submission failed
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Unknown error")
+            raise HTTPException(status_code=500, detail=f"Task submission failed: {error_msg}")
+        
+        task_id = result.get("data", {}).get("taskId")
+        if not task_id:
+            raise HTTPException(status_code=500, detail="Failed to get task ID from response")
+        
+        # Create database record
+        if user_id:
+            try:
+                AIToolsModel.create(
+                    prompt=prompt,
+                    user_id=user_id,
+                    type=3,  # 3-图片生成视频
+                    image_path=image_url,
+                    video_mode=model,
+                    duration=duration_seconds,
+                    task_id=task_id,
+                    transaction_id=transaction_id,
+                    status=1
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+                # Don't fail the request if database insert fails
         
         return JSONResponse({
             "success": True,
             "task_id": task_id,
-            "status": "completed",
-            "results": [
-                {
-                    "file_url": result.file_url,
-                    "file_type": result.file_type,
-                    "task_cost_time": result.task_cost_time,
-                    "node_id": result.node_id
-                }
-                for result in results
-            ]
+            "status": "submitted",
+            "image_url": image_url
         })
         
-    except TimeoutError as e:
-        raise HTTPException(status_code=408, detail=f"Task timed out: {str(e)}")
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=f"Task failed: {str(e)}")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
 
@@ -1204,6 +1267,94 @@ async def reset_password(request: ResetPasswordRequest):
 
     except Exception as e:
         logger.error(f'重置密码失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
+@app.get('/api/ai-tools/history')
+async def get_ai_tools_history(
+    user_id: int = Query(..., description="User ID"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+    type: Optional[int] = Query(None, description="Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)")
+):
+    """
+    获取用户的 AI 工具历史记录
+    在查询前会先检查并更新所有正在处理的任务状态
+    """
+    try:
+        # First, check and update processing tasks
+        processing_tasks = AIToolsModel.list_processing_by_user(user_id)
+        
+        if processing_tasks:
+            client = RunningHubClient()
+            updated_count = 0
+            
+            # Check each task's status
+            for task in processing_tasks:
+                if not task.task_id:
+                    continue
+                    
+                try:
+                    status = client.check_status(task.task_id)
+                    
+                    if status == TaskStatus.SUCCESS:
+                        # Get results and update database
+                        results = client.get_outputs(task.task_id)
+                        if results:
+                            print(results)
+                            result_url = results[0].file_url
+                            AIToolsModel.update_by_task_id(
+                                task_id=task.task_id,
+                                result_url=result_url,
+                                status=2  # 处理完成
+                            )
+                            updated_count += 1
+                            logger.info(f"Task {task.task_id} completed successfully")
+                            
+                    elif status == TaskStatus.FAILED:
+                        # Update status to failed
+                        AIToolsModel.update_by_task_id(
+                            task_id=task.task_id,
+                            status=-1  # 处理失败
+                        )
+                        updated_count += 1
+                        logger.info(f"Task {task.task_id} failed")
+                        
+                    # If status is QUEUED or RUNNING, keep status as 1 (processing)
+                    
+                except Exception as task_error:
+                    logger.error(f"Failed to check status for task {task.task_id}: {task_error}")
+                    continue
+            
+            logger.info(f"Checked {len(processing_tasks)} processing tasks, updated {updated_count}")
+        
+        # 查询历史记录
+        result = AIToolsModel.list_by_user(
+            user_id=user_id,
+            page=page,
+            page_size=page_size,
+            order_by='create_time',
+            order_direction='DESC',
+            type=type
+        )
+        
+        return JSONResponse(
+            content={
+                'success': True,
+                'message': '查询成功',
+                'data': result
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f'查询历史记录失败: {str(e)}')
         logger.error(traceback.format_exc())
         return JSONResponse(
             status_code=500,

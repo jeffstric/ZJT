@@ -1,0 +1,367 @@
+"""
+AI Tools Model - Database operations for ai_tools table
+"""
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from .database import execute_query, execute_update, execute_insert
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class AITool:
+    """AI Tool model class"""
+    
+    def __init__(self, **kwargs):
+        self.id = kwargs.get('id')
+        self.prompt = kwargs.get('prompt')
+        self.create_time = kwargs.get('create_time')
+        self.update_time = kwargs.get('update_time')
+        self.image_path = kwargs.get('image_path')
+        self.duration = kwargs.get('duration')
+        self.video_mode = kwargs.get('video_mode')
+        self.task_id = kwargs.get('task_id')
+        self.transaction_id = kwargs.get('transaction_id')
+        self.result_url = kwargs.get('result_url')
+        self.user_id = kwargs.get('user_id')
+        self.type = kwargs.get('type')
+        self.status = kwargs.get('status')
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary"""
+        return {
+            'id': self.id,
+            'prompt': self.prompt,
+            'create_time': self.create_time.isoformat() if self.create_time else None,
+            'update_time': self.update_time.isoformat() if self.update_time else None,
+            'image_path': self.image_path,
+            'duration': self.duration,
+            'video_mode': self.video_mode,
+            'task_id': self.task_id,
+            'transaction_id': self.transaction_id,
+            'result_url': self.result_url,
+            'user_id': self.user_id,
+            'type': self.type,
+            'status': self.status
+        }
+
+
+class AIToolsModel:
+    """AI Tools database operations"""
+    
+    @staticmethod
+    def create(
+        prompt: str,
+        user_id: int,
+        type: Optional[int] = None,
+        image_path: Optional[str] = None,
+        duration: Optional[int] = None,
+        video_mode: Optional[str] = None,
+        task_id: Optional[str] = None,
+        transaction_id: Optional[str] = None,
+        result_url: Optional[str] = None,
+        status: Optional[int] = 0
+    ) -> int:
+        """
+        Create a new AI tool record
+        
+        Args:
+            prompt: Prompt text
+            user_id: User ID
+            type: Type (1-图片编辑, 2-AI视频生成, 3-图片生成视频)
+            image_path: Image path (optional)
+            duration: Video duration (optional)
+            video_mode: Video mode (portrait, landscape, portrait-hd, landscape-hd)
+            task_id: Task ID (optional)
+            transaction_id: Transaction ID (optional)
+            result_url: Result URL (optional)
+            status: Status (0-未处理, 1-正在处理, -1-处理失败, 2-处理完成, default: 0)
+        
+        Returns:
+            Inserted record ID
+        """
+        sql = """
+            INSERT INTO ai_tools 
+            (prompt, user_id, type, image_path, duration, video_mode, task_id, transaction_id, result_url, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        params = (prompt, user_id, type, image_path, duration, video_mode, task_id, transaction_id, result_url, status)
+        
+        try:
+            record_id = execute_insert(sql, params)
+            logger.info(f"Created AI tool record with ID: {record_id}")
+            return record_id
+        except Exception as e:
+            logger.error(f"Failed to create AI tool record: {e}")
+            raise
+    
+    @staticmethod
+    def get_by_id(record_id: int) -> Optional[AITool]:
+        """
+        Get AI tool record by ID
+        
+        Args:
+            record_id: Record ID
+        
+        Returns:
+            AITool object or None
+        """
+        sql = "SELECT * FROM ai_tools WHERE id = %s"
+        
+        try:
+            result = execute_query(sql, (record_id,), fetch_one=True)
+            if result:
+                return AITool(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get AI tool record by ID {record_id}: {e}")
+            raise
+    
+    @staticmethod
+    def get_by_task_id(task_id: str) -> Optional[AITool]:
+        """
+        Get AI tool record by task ID
+        
+        Args:
+            task_id: Task ID
+        
+        Returns:
+            AITool object or None
+        """
+        sql = "SELECT * FROM ai_tools WHERE task_id = %s"
+        
+        try:
+            result = execute_query(sql, (task_id,), fetch_one=True)
+            if result:
+                return AITool(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get AI tool record by task_id {task_id}: {e}")
+            raise
+     
+    @staticmethod
+    def list_by_user(
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        order_by: str = 'create_time',
+        order_direction: str = 'DESC',
+        type: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Get AI tool records list by user ID with pagination
+        
+        Args:
+            user_id: User ID
+            page: Page number (starting from 1)
+            page_size: Number of records per page
+            order_by: Order by field (create_time, update_time, id)
+            order_direction: Order direction (ASC, DESC)
+            type: Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)
+        
+        Returns:
+            Dictionary with 'total', 'page', 'page_size', 'data' keys
+        """
+        # Validate order_by and order_direction to prevent SQL injection
+        valid_order_fields = ['id', 'create_time', 'update_time']
+        valid_directions = ['ASC', 'DESC']
+        
+        if order_by not in valid_order_fields:
+            order_by = 'create_time'
+        if order_direction.upper() not in valid_directions:
+            order_direction = 'DESC'
+        
+        # Build WHERE clause
+        where_conditions = ["user_id = %s"]
+        params = [user_id]
+        
+        if type is not None:
+            where_conditions.append("type = %s")
+            params.append(type)
+        
+        where_clause = " AND ".join(where_conditions)
+        
+        # Get total count
+        count_sql = f"SELECT COUNT(*) as total FROM ai_tools WHERE {where_clause}"
+        count_result = execute_query(count_sql, tuple(params), fetch_one=True)
+        total = count_result['total'] if count_result else 0
+        
+        # Get paginated data
+        offset = (page - 1) * page_size
+        data_sql = f"""
+            SELECT * FROM ai_tools 
+            WHERE {where_clause}
+            ORDER BY {order_by} {order_direction}
+            LIMIT %s OFFSET %s
+        """
+        
+        params.extend([page_size, offset])
+        
+        try:
+            results = execute_query(data_sql, tuple(params), fetch_all=True)
+            tools = [AITool(**row).to_dict() for row in results] if results else []
+            
+            return {
+                'total': total,
+                'page': page,
+                'page_size': page_size,
+                'data': tools
+            }
+        except Exception as e:
+            logger.error(f"Failed to list AI tools for user {user_id}: {e}")
+            raise
+    
+    @staticmethod
+    def list_processing_by_user(user_id: int) -> List[AITool]:
+        """
+        Get all processing AI tool records by user ID (status = 1)
+        
+        Args:
+            user_id: User ID
+        
+        Returns:
+            List of AITool objects
+        """
+        sql = """
+            SELECT * FROM ai_tools 
+            WHERE user_id = %s AND status = 1
+            ORDER BY create_time DESC
+        """
+        
+        try:
+            results = execute_query(sql, (user_id,), fetch_all=True)
+            tools = [AITool(**row) for row in results] if results else []
+            return tools
+        except Exception as e:
+            logger.error(f"Failed to list processing AI tools for user {user_id}: {e}")
+            raise
+     
+    @staticmethod
+    def update(
+        record_id: int,
+        **kwargs
+    ) -> int:
+        """
+        Update AI tool record
+        
+        Args:
+            record_id: Record ID
+            **kwargs: Fields to update (prompt, type, image_path, duration, video_mode, 
+                     task_id, transaction_id, result_url, user_id, status)
+        
+        Returns:
+            Number of affected rows
+        """
+        # Build update fields
+        allowed_fields = [
+            'prompt', 'type', 'image_path', 'duration', 'video_mode',
+            'task_id', 'transaction_id', 'result_url', 'user_id', 'status'
+        ]
+        
+        update_fields = []
+        params = []
+        
+        for field, value in kwargs.items():
+            if field in allowed_fields:
+                update_fields.append(f"{field} = %s")
+                params.append(value)
+        
+        if not update_fields:
+            logger.warning("No valid fields to update")
+            return 0
+        
+        params.append(record_id)
+        sql = f"UPDATE ai_tools SET {', '.join(update_fields)} WHERE id = %s"
+        
+        try:
+            affected_rows = execute_update(sql, tuple(params))
+            logger.info(f"Updated AI tool record {record_id}, affected rows: {affected_rows}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to update AI tool record {record_id}: {e}")
+            raise
+    
+    @staticmethod
+    def update_by_task_id(
+        task_id: str,
+        **kwargs
+    ) -> int:
+        """
+        Update AI tool record by task ID
+        
+        Args:
+            task_id: Task ID
+            **kwargs: Fields to update
+        
+        Returns:
+            Number of affected rows
+        """
+        allowed_fields = [
+            'prompt', 'type', 'image_path', 'duration', 'video_mode',
+            'transaction_id', 'result_url', 'user_id', 'status'
+        ]
+        
+        update_fields = []
+        params = []
+        
+        for field, value in kwargs.items():
+            if field in allowed_fields:
+                update_fields.append(f"{field} = %s")
+                params.append(value)
+        
+        if not update_fields:
+            logger.warning("No valid fields to update")
+            return 0
+        
+        params.append(task_id)
+        sql = f"UPDATE ai_tools SET {', '.join(update_fields)} WHERE task_id = %s"
+        
+        try:
+            affected_rows = execute_update(sql, tuple(params))
+            logger.info(f"Updated AI tool record with task_id {task_id}, affected rows: {affected_rows}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to update AI tool record by task_id {task_id}: {e}")
+            raise
+    
+    @staticmethod
+    def delete(record_id: int) -> int:
+        """
+        Delete AI tool record by ID
+        
+        Args:
+            record_id: Record ID
+        
+        Returns:
+            Number of affected rows
+        """
+        sql = "DELETE FROM ai_tools WHERE id = %s"
+        
+        try:
+            affected_rows = execute_update(sql, (record_id,))
+            logger.info(f"Deleted AI tool record {record_id}, affected rows: {affected_rows}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to delete AI tool record {record_id}: {e}")
+            raise
+    
+    @staticmethod
+    def delete_by_user(user_id: int) -> int:
+        """
+        Delete all AI tool records for a user
+        
+        Args:
+            user_id: User ID
+        
+        Returns:
+            Number of affected rows
+        """
+        sql = "DELETE FROM ai_tools WHERE user_id = %s"
+        
+        try:
+            affected_rows = execute_update(sql, (user_id,))
+            logger.info(f"Deleted AI tool records for user {user_id}, affected rows: {affected_rows}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to delete AI tool records for user {user_id}: {e}")
+            raise
