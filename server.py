@@ -371,8 +371,8 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     return f"{SERVER_HOST}/upload/{filename}"
 
 
-@app.post("/api/nanobanana-edit")
-async def nanobanana_edit(
+@app.post("/api/image-edit")
+async def image_edit(
     image: UploadFile = File(...),
     prompt: str = Form(...),
     ratio: str = Form("9:16", description="Model type: 9:16, 16:9, 1:1 ,3:4, 4:3"),
@@ -467,55 +467,68 @@ async def nanobanana_edit(
         raise HTTPException(status_code=500, detail=f"Failed to submit nanobanana task: {str(e)}")
 
 
-@app.get("/api/nanobanana-status/{project_id}")
-async def nanobanana_status(project_id: str):
+@app.get("/api/get-status/{project_id}")
+async def get_status(project_id: str):
     """
-    Check the status of a nanobanana task
+    Check the status of an AI task
     """
     try:
-        client = RunningHubClient()
-        status = client.check_status(project_id)
+        # Call get_ai_task_result to check status
+        result = get_ai_task_result(project_id)
         
-        if status == TaskStatus.SUCCESS:
-            # Get results
-            results = client.get_outputs(project_id)
-            
-            # Update database record with result_url
-            if results:
-                try:
-                    result_url = results[0].file_url
-                    AIToolsModel.update_by_project_id(
-                        project_id=project_id,
-                        result_url=result_url,
-                        status=2
-                    )
-                except Exception as db_error:
-                    logger.error(f"Failed to update database record: {db_error}")
+        # Check if API call was successful
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Unknown error")
+            raise HTTPException(status_code=500, detail=f"Failed to get task result: {error_msg}")
+        
+        data = result.get("data", {})
+        task_status = data.get("status")  # 0-进行中 1-成功 2-失败
+        media_url = data.get("mediaUrl")
+        reason = data.get("reason")
+        
+        # Update database based on status
+        if task_status == 1:  # Success
+            try:
+                AIToolsModel.update_by_project_id(
+                    project_id=project_id,
+                    result_url=media_url,
+                    status=2  # 2-处理完成
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to update database record: {db_error}")
             
             return JSONResponse({
-                "status": status.value,
+                "status": "SUCCESS",
                 "results": [
                     {
-                        "file_url": result.file_url,
-                        "file_type": result.file_type,
-                        "task_cost_time": result.task_cost_time,
-                        "node_id": result.node_id
+                        "file_url": media_url
                     }
-                    for result in results
-                ]
+                ] if media_url else []
             })
-        elif status == TaskStatus.FAILED:
-            AIToolsModel.update_by_project_id(
-                project_id=project_id,
-                status=-1
-            )
+        elif task_status == 2:  # Failed
+            try:
+                AIToolsModel.update_by_project_id(
+                    project_id=project_id,
+                    status=-1  # -1-处理失败
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to update database record: {db_error}")
+            
             return JSONResponse({
-                "status": status.value,
+                "status": "FAILED",
+                "reason": reason,
+                "results": []
+            })
+        else:  # task_status == 0, In progress
+            return JSONResponse({
+                "status": "RUNNING",
                 "results": []
             })
             
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to check nanobanana status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to check task status: {str(e)}")
 
 
 @app.post("/api/ai-app-run")
@@ -1161,7 +1174,6 @@ async def get_ai_tools_history(
         processing_tasks = AIToolsModel.list_processing_by_user(user_id)
         
         if processing_tasks:
-            client = RunningHubClient()
             updated_count = 0
             
             # Check each task's status
@@ -1170,23 +1182,28 @@ async def get_ai_tools_history(
                     continue
                     
                 try:
-                    status = client.check_status(task.project_id)
+                    # Call get_ai_task_result to check status
+                    result = get_ai_task_result(task.project_id)
                     
-                    if status == TaskStatus.SUCCESS:
-                        # Get results and update database
-                        results = client.get_outputs(task.project_id)
-                        if results:
-                            print(results)
-                            result_url = results[0].file_url
-                            AIToolsModel.update_by_project_id(
-                                project_id=task.project_id,
-                                result_url=result_url,
-                                status=2  # 处理完成
-                            )
-                            updated_count += 1
-                            logger.info(f"Task {task.project_id} completed successfully")
+                    # Check if API call was successful
+                    if result.get("code") != 0:
+                        logger.error(f"Failed to get task result for {task.project_id}: {result.get('msg')}")
+                        continue
+                    
+                    data = result.get("data", {})
+                    task_status = data.get("status")  # 0-进行中 1-成功 2-失败
+                    media_url = data.get("mediaUrl")
+                    
+                    if task_status == 1:  # Success
+                        AIToolsModel.update_by_project_id(
+                            project_id=task.project_id,
+                            result_url=media_url,
+                            status=2  # 处理完成
+                        )
+                        updated_count += 1
+                        logger.info(f"Task {task.project_id} completed successfully")
                             
-                    elif status == TaskStatus.FAILED:
+                    elif task_status == 2:  # Failed
                         # Update status to failed
                         AIToolsModel.update_by_project_id(
                             project_id=task.project_id,
@@ -1195,7 +1212,7 @@ async def get_ai_tools_history(
                         updated_count += 1
                         logger.info(f"Task {task.project_id} failed")
                         
-                    # If status is QUEUED or RUNNING, keep status as 1 (processing)
+                    # If task_status == 0 (in progress), keep status as 1 (processing)
                     
                 except Exception as task_error:
                     logger.error(f"Failed to check status for task {task.project_id}: {task_error}")

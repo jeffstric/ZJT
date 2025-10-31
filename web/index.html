@@ -358,7 +358,7 @@
             <div style="font-weight:700">图片编辑</div>
             <div class="muted">上传图片 + 提示词</div>
           </div>
-          <button class="btn" @click="$router.push({name:'nanobanana-edit'})">打开</button>
+          <button class="btn" @click="$router.push({name:'image-edit'})">打开</button>
         </div>
         <div class="list-item">
           <div>
@@ -389,327 +389,9 @@
     name: 'ImageEdit',
     data() {
       return {
-        server: localStorage.getItem('comfyui_server') || 'http://127.0.0.1:8188/',
         file: null,
         prompt: '请输入图片的编辑指令',
-        loading: false,
-        error: '',
-        results: [],
-        promptId: '',
-        status: '',
-        statusInterval: null,
-        authToken: '',
-        showHistory: false,
-        historyList: [],
-        historyLoading: false,
-        historyPage: 1,
-        historyTotal: 0,
-      }
-    },
-    mounted() {
-      this.authToken = localStorage.getItem('auth_token') || '';
-    },
-    computed: {
-      canSubmit() { return !!this.file && !!this.prompt && !this.loading },
-      statusText() {
-        switch(this.status) {
-          case 'submitted': return '任务已提交，等待处理...';
-          case 'pending': return '任务排队中...';
-          case 'running': return '正在生成图片...';
-          case 'completed': return '生成完成！';
-          case 'error': return '任务出错';
-          case 'not_found': return '任务未找到';
-          default: return '';
-        }
-      }
-    },
-    methods: {
-      onFile(e){ this.file = e.target.files[0] || null; },
-      
-      async submit(){
-        if(!this.canSubmit) return;
-        this.loading = true; this.error=''; this.results=[]; this.promptId=''; this.status='';
-        this.clearStatusCheck();
-        
-        try {
-          const form = new FormData();
-          form.append('image', this.file);
-          form.append('prompt', this.prompt);
-          if(this.server) form.append('server', this.server);
-
-          const res = await axios.post('/api/qwen-image-edit', form, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-          });
-          
-          this.promptId = res.data.prompt_id || '';
-          this.status = res.data.status || 'submitted';
-          
-          // Start polling for status
-          this.startStatusCheck();
-          
-        } catch (err) {
-          console.error(err);
-          this.error = err?.response?.data?.detail || err?.message || '请求失败';
-          this.loading = false;
-        }
-      },
-      
-      async checkStatus() {
-        if (!this.promptId) return;
-        
-        try {
-          const url = `/api/status/${this.promptId}${this.server ? '?server=' + encodeURIComponent(this.server) : ''}`;
-          const res = await axios.get(url);
-          
-          this.status = res.data.status;
-          
-          if (res.data.status === 'completed') {
-            this.results = res.data.image_urls || [];
-            this.loading = false;
-            this.clearStatusCheck();
-          } else if (res.data.status === 'error' || res.data.status === 'not_found') {
-            this.error = '任务处理失败或未找到';
-            this.loading = false;
-            this.clearStatusCheck();
-          }
-        } catch (err) {
-          console.error('Status check error:', err);
-          // Continue checking, don't stop on temporary errors
-        }
-      },
-      
-      startStatusCheck() {
-        this.statusInterval = setInterval(() => {
-          this.checkStatus();
-        }, 2000); // Check every 2 seconds
-      },
-      
-      clearStatusCheck() {
-        if (this.statusInterval) {
-          clearInterval(this.statusInterval);
-          this.statusInterval = null;
-        }
-      },
-      
-      getProxyImageUrl(url) {
-        // Use backend proxy for image display to avoid CORS issues in Electron
-        return `/api/proxy-image?url=${encodeURIComponent(url)}`;
-      },
-
-      isWechatBrowser() {
-        const ua = navigator.userAgent.toLowerCase();
-        return /micromessenger/.test(ua);
-      },
-      
-      downloadImage(url, index) {
-        const now = new Date();
-        const dateStr = now.getFullYear().toString() + 
-                       (now.getMonth() + 1).toString().padStart(2, '0') + 
-                       now.getDate().toString().padStart(2, '0');
-        const timeStr = now.getHours().toString().padStart(2, '0') + 
-                       now.getMinutes().toString().padStart(2, '0');
-        const filename = `qwen_image_${dateStr}_${timeStr}_${index + 1}.png`;
-        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
-        
-        // 微信浏览器中直接打开图片，用户可以长按保存
-        if (this.isWechatBrowser()) {
-          window.open(downloadUrl, '_blank');
-          // 提示用户如何保存
-          setTimeout(() => {
-            alert('请长按图片，然后选择“保存图片”');
-          }, 500);
-        } else {
-          // 非微信浏览器使用标准下载方式
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = filename;
-          link.target = '_blank';
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-        }
-      },
-      
-      async fetchHistory(append = false) {
-        const userId = localStorage.getItem('user_id');
-        if (!userId) {
-          alert('请先登录');
-          return;
-        }
-        
-        if (!append) {
-          this.historyPage = 1;
-          this.historyList = [];
-        }
-        
-        this.historyLoading = true;
-        try {
-          const response = await axios.get('/api/ai-tools/history', {
-            params: {
-              user_id: parseInt(userId),
-              page: this.historyPage,
-              page_size: 20,
-              type: 1  // 1-图片编辑
-            }
-          });
-          
-          if (response.data.success) {
-            const newData = response.data.data.data || [];
-            if (append) {
-              this.historyList = [...this.historyList, ...newData];
-            } else {
-              this.historyList = newData;
-            }
-            this.historyTotal = response.data.data.total || 0;
-            this.showHistory = true;
-          } else {
-            alert(response.data.message || '获取历史记录失败');
-          }
-        } catch (err) {
-          console.error(err);
-          alert(err?.response?.data?.message || '获取历史记录失败');
-        } finally {
-          this.historyLoading = false;
-        }
-      },
-      
-      async loadMoreHistory() {
-        if (this.historyLoading || this.historyList.length >= this.historyTotal) {
-          return;
-        }
-        this.historyPage++;
-        await this.fetchHistory(true);
-      },
-      
-      handleHistoryScroll(event) {
-        const element = event.target;
-        const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-        if (scrollBottom < 100) {
-          this.loadMoreHistory();
-        }
-      },
-      
-      closeHistory() {
-        this.showHistory = false;
-        this.historyPage = 1;
-      },
-      
-      getStatusText(status) {
-        const statusMap = {
-          0: '未处理',
-          1: '处理中',
-          2: '处理完成',
-          '-1': '处理失败'
-        };
-        return statusMap[status] || '未知';
-      },
-      
-      getStatusColor(status) {
-        const colorMap = {
-          0: '#888',
-          1: '#3b82f6',
-          2: '#10b981',
-          '-1': '#ef4444'
-        };
-        return colorMap[status] || '#888';
-      }
-    },
-    
-    beforeUnmount() {
-      this.clearStatusCheck();
-    },
-    template: `
-      <div>
-        <div class="form">
-          <div class="field">
-            <label class="label">ComfyUI 后端地址</label>
-            <div class="input" style="background: #1a1f2e; color: #9ca3af; cursor: not-allowed;">{{ server || 'http://127.0.0.1:8188/' }}</div>
-            <div class="muted" style="margin-top:6px">当前使用的 ComfyUI 服务地址</div>
-          </div>
-
-          <div class="field">
-            <label class="label">上传图片</label>
-            <input class="input" type="file" accept="image/*" @change="onFile" />
-          </div>
-
-          <div class="field">
-            <label class="label">提示词</label>
-            <textarea class="textarea" v-model.trim="prompt" placeholder="请输入对图片的编辑指令"></textarea>
-          </div>
-
-          <div class="field">
-            <div class="row">
-              <button class="btn" :disabled="!canSubmit" @click="submit">{{ loading ? '提交中…' : '提交任务' }}</button>
-              <button class="btn secondary" @click="fetchHistory" :disabled="historyLoading">{{ historyLoading ? '加载中...' : '历史记录' }}</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="status" v-if="promptId">任务 ID：{{ promptId }}</div>
-        <div class="status" v-if="statusText">{{ statusText }}</div>
-        <div class="status danger" v-if="error">{{ error }}</div>
-
-        <div class="preview" v-if="results.length">
-          <div class="imgbox" v-for="(url, i) in results" :key="i">
-            <img :src="getProxyImageUrl(url)" :alt="'result-'+i" />
-            <div style="padding: 8px; text-align: center;">
-              <button class="btn secondary" @click="downloadImage(url, i)">下载图片</button>
-            </div>
-          </div>
-        </div>
-        
-        <!-- History Modal -->
-        <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
-          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
-            <div style="position: relative;">
-              <button class="modal-close" @click="closeHistory">×</button>
-              <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
-            </div>
-            
-            <div v-if="historyList.length === 0" style="padding: 40px; text-align: center; color: var(--muted);">
-              暂无历史记录
-            </div>
-            
-            <div v-else style="padding: 16px;">
-              <div v-for="item in historyList" :key="item.id" style="margin-bottom: 16px; padding: 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 8px;">
-                <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-                  <div>
-                    <strong>提示词:</strong> {{ item.prompt }}
-                  </div>
-                  <span :style="{ padding: '4px 12px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', backgroundColor: getStatusColor(item.status) + '20', color: getStatusColor(item.status), border: '1px solid ' + getStatusColor(item.status) }">
-                    {{ getStatusText(item.status) }}
-                  </span>
-                </div>
-                <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
-                  <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
-                </div>
-                <div v-if="item.result_url" style="margin-top: 8px;">
-                  <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
-                </div>
-              </div>
-              
-              <!-- Loading indicator -->
-              <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
-                加载中...
-              </div>
-              
-              <!-- End indicator -->
-              <div v-else-if="historyList.length >= historyTotal" style="text-align: center; padding: 20px; color: var(--muted);">
-                已加载全部数据
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `
-  };
-
-  const NanobananaEdit = {
-    name: 'NanobananaEdit',
-    data() {
-      return {
-        file: null,
-        prompt: '请输入图片的编辑指令',
+        ratio: '9:16',
         loading: false,
         error: '',
         results: [],
@@ -730,6 +412,15 @@
     },
     computed: {
       canSubmit() { return !!this.file && !!this.prompt && !this.loading },
+      ratioOptions() {
+        return [
+          { value: '9:16', label: '竖屏 (9:16)' },
+          { value: '16:9', label: '横屏 (16:9)' },
+          { value: '1:1', label: '正方形 (1:1)' },
+          { value: '3:4', label: '竖屏 (3:4)' },
+          { value: '4:3', label: '横屏 (4:3)' }
+        ];
+      },
       statusText() {
         switch(this.status) {
           case 'submitted': return '任务已提交，等待处理...';
@@ -753,6 +444,7 @@
           const form = new FormData();
           form.append('image', this.file);
           form.append('prompt', this.prompt);
+          form.append('ratio', this.ratio);
           
           // Add user_id from localStorage
           const userId = localStorage.getItem('user_id');
@@ -765,7 +457,7 @@
             form.append('auth_token', this.authToken);
           }
 
-          const res = await axios.post('/api/nanobanana-edit', form, {
+          const res = await axios.post('/api/image-edit', form, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
           
@@ -786,7 +478,7 @@
         if (!this.projectId) return;
         
         try {
-          const res = await axios.get(`/api/nanobanana-status/${this.projectId}`);
+          const res = await axios.get(`/api/get-status/${this.projectId}`);
           
           this.status = res.data.status;
           
@@ -954,6 +646,13 @@
           </div>
 
           <div class="field">
+            <label class="label">图片比例</label>
+            <select class="input" v-model="ratio">
+              <option v-for="opt in ratioOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+
+          <div class="field">
             <div class="row">
               <button class="btn" :disabled="!canSubmit" @click="submit">{{ loading ? '提交中…' : '提交任务' }}</button>
               <button class="btn secondary" @click="fetchHistory" :disabled="historyLoading">{{ historyLoading ? '加载中...' : '历史记录' }}</button>
@@ -1056,8 +755,8 @@
       },
       modelOptions() {
         return [
-          { value: 'portrait', label: '竖屏' },
-          { value: 'landscape', label: '横屏' }
+          { value: '9:16', label: '竖屏' },
+          { value: '16:9', label: '横屏' }
         ];
       },
       durationOptions() {
@@ -1119,7 +818,7 @@
         if (!this.projectId) return;
         
         try {
-          const res = await axios.get(`/api/nanobanana-status/${this.projectId}`);
+          const res = await axios.get(`/api/get-status/${this.projectId}`);
           this.status = res.data.status || '';
           
           if (this.status === 'SUCCESS') {
@@ -1254,8 +953,8 @@
       
       getModelLabel(value) {
         const modelMap = {
-          'portrait': '竖屏',
-          'landscape': '横屏'
+          '9:16': '竖屏',
+          '16:9': '横屏'
         };
         return modelMap[value] || value || '未知';
       }
@@ -1399,8 +1098,8 @@
       },
       modelOptions() {
         return [
-          { value: 'portrait', label: '竖屏' },
-          { value: 'landscape', label: '横屏' }
+          { value: '9:16', label: '竖屏' },
+          { value: '16:9', label: '横屏' }
         ];
       }
     },
@@ -1453,7 +1152,7 @@
         if (!this.projectId) return;
         
         try {
-          const res = await axios.get(`/api/nanobanana-status/${this.projectId}`);
+          const res = await axios.get(`/api/get-status/${this.projectId}`);
           this.status = res.data.status || '';
           
           if (this.status === 'SUCCESS') {
@@ -1593,8 +1292,8 @@
       
       getModelLabel(value) {
         const modelMap = {
-          'portrait': '竖屏',
-          'landscape': '横屏'
+          '9:16': '竖屏',
+          '16:9': '横屏'
         };
         return modelMap[value] || value || '未知';
       }
@@ -1692,7 +1391,7 @@
 
   const routes = [
     { path: '/', name: 'list', component: ListPage },
-    { path: '/nanobanana-edit', name: 'nanobanana-edit', component: NanobananaEdit },
+    { path: '/image-edit', name: 'image-edit', component: ImageEdit },
     { path: '/ai-video-gen', name: 'ai-video-gen', component: AIVideoGen },
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
   ];
@@ -1704,7 +1403,7 @@
   const App = {
     data(){ return { 
       tools: [
-        {name:'图片编辑', path:'/nanobanana-edit'},
+        {name:'图片编辑', path:'/image-edit'},
         {name:'AI视频生成', path:'/ai-video-gen'},
         {name:'图片生成视频', path:'/image-to-video'},
         {name:'小红书笔记修改', path:'http://ssh.perseids.cn:15678/form/8cd1955c-5cf6-4111-a3a4-406001d7e3b2'}
@@ -1767,7 +1466,7 @@
       route(){ return this.$route },
       pageTitle(){ 
         if (this.route.name === 'list') return 'AI 工具列表';
-        if (this.route.name === 'nanobanana-edit') return '图片编辑';
+        if (this.route.name === 'image-edit') return '图片编辑';
         if (this.route.name === 'ai-video-gen') return 'AI 视频生成';
         if (this.route.name === 'image-to-video') return '图片生成视频';
         return 'AI 工具';
