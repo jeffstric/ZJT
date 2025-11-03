@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AI 工具列表</title>
-  <link rel="icon" href="data:," />
+  <link rel="icon" type="image/svg+xml" href="/files/logo.svg" />
   <style>
     :root {
       --bg: #0f172a;
@@ -1603,14 +1603,20 @@
       const urlParams = new URLSearchParams(window.location.search);
       this.authToken = urlParams.get('auth_token') || '';
       this.userPhone = urlParams.get('phone') || '';
+      this.userId = urlParams.get('user_id') || '';
       if (this.authToken) {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('phone');
+        localStorage.removeItem('user_id');
         // Store in localStorage for persistence across sessions
         localStorage.setItem('auth_token', this.authToken);
         localStorage.setItem('phone', this.userPhone);
+        localStorage.setItem('user_id', this.userId);
       } else {
         // Try to restore from localStorage
         this.authToken = localStorage.getItem('auth_token') || '';
         this.userPhone = localStorage.getItem('phone') || '';
+        this.userId = localStorage.getItem('user_id') || '';
       }
       
       // Fetch computing power if logged in
@@ -1693,8 +1699,13 @@
           });
           
           if (response.data.success) {
-            // 登录成功，保存 token
+            // 登录成功，先清除旧数据，再保存新 token
             if (response.data.data && response.data.data.token) {
+              // 清除旧的登录数据
+              localStorage.removeItem('auth_token');
+              localStorage.removeItem('phone');
+              localStorage.removeItem('user_id');
+              
               this.authToken = response.data.data.token;
               this.userPhone = response.data.data.phone || this.loginForm.phone;
               this.userId = response.data.data.user_id;
@@ -1810,17 +1821,6 @@
           });
           
           if (response.data.success) {
-            // 注册成功，保存 token（如果有）
-            if (response.data.data && response.data.data.token) {
-              this.authToken = response.data.data.token;
-              this.userPhone = response.data.data.phone || this.registerForm.phone;
-              localStorage.setItem('auth_token', this.authToken);
-              localStorage.setItem('phone', this.userPhone);
-              
-              // 获取算力
-              this.fetchComputingPower();
-            }
-            
             // 关闭模态框并清空表单
             this.closeModal();
             
@@ -1852,6 +1852,7 @@
             this.computingPower = null;
             localStorage.removeItem('auth_token');
             localStorage.removeItem('phone');
+            localStorage.removeItem('user_id');
           } else {
             // 即使后端登出失败，也清除本地状态
             console.error('Logout error:', response.data.message);
@@ -1860,6 +1861,7 @@
             this.computingPower = null;
             localStorage.removeItem('auth_token');
             localStorage.removeItem('phone');
+            localStorage.removeItem('user_id');
           }
         } catch (error) {
           console.error('Logout error:', error);
@@ -1869,6 +1871,7 @@
           this.computingPower = null;
           localStorage.removeItem('auth_token');
           localStorage.removeItem('phone');
+          localStorage.removeItem('user_id');
         }
       },
       
