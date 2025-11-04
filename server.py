@@ -39,7 +39,7 @@ DEFAULT_COMFYUI_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188
 
 # Type to computing power mapping
 # 1: 图片编辑, 2: AI视频生成, 3: 图片生成视频, 4: 高清放大
-TYPE_COMPUTING_POWER = {
+TASK_COMPUTING_POWER = {
     1: 2,
     2: 20,
     3: 20,
@@ -1543,6 +1543,12 @@ upload_dir = os.path.join(APP_DIR, "upload")
 if not os.path.exists(upload_dir):
     os.makedirs(upload_dir, exist_ok=True)
 app.mount("/upload", StaticFiles(directory=upload_dir), name="uploads")
+
+# Serve files directory for static assets (logo, etc.)
+files_dir = os.path.join(APP_DIR, "files")
+if not os.path.exists(files_dir):
+    os.makedirs(files_dir, exist_ok=True)
+app.mount("/files", StaticFiles(directory=files_dir), name="files")
 
 # Serve frontend static files
 static_dir = os.path.join(APP_DIR, "web")
