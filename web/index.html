@@ -212,10 +212,67 @@
     .refresh-btn:active {
       transform: rotate(180deg);
     }
+    
+    /* Prevent template flashing before Vue initializes */
+    [v-cloak] {
+      display: none !important;
+    }
+    
+    /* Terms of Service Styles */
+    .terms-checkbox {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 12px;
+      margin-bottom: 12px;
+    }
+    .terms-checkbox input[type="checkbox"] {
+      margin-top: 2px;
+      cursor: pointer;
+    }
+    .terms-link {
+      color: var(--primary);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .terms-link:hover {
+      color: #16a34a;
+    }
+    .terms-modal {
+      max-width: 700px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .terms-content {
+      padding: 16px;
+      font-size: 14px;
+      line-height: 1.8;
+      color: var(--text);
+      white-space: pre-wrap;
+    }
+    .terms-content h1 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      color: var(--primary);
+    }
+    .terms-content h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-top: 20px;
+      margin-bottom: 12px;
+      color: var(--text);
+    }
+    .terms-content strong {
+      color: var(--primary);
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
-  <div id="app" class="container">
+  <div id="app" class="container" v-cloak>
     <div class="card">
       <header>
         <div class="title">{{ pageTitle }}</div>
@@ -271,6 +328,12 @@
           <div class="field">
             <label class="label">密码</label>
             <input class="input" type="password" v-model="loginForm.password" placeholder="请输入密码" @keyup.enter="handleLogin" />
+          </div>
+          <div class="terms-checkbox">
+            <input type="checkbox" id="login-terms" v-model="loginForm.termsAgreed" />
+            <label for="login-terms" style="cursor: pointer;">
+              我已阅读并同意 <span class="terms-link" @click.stop="showTermsModal = true">《AI工具服务使用条款》</span>
+            </label>
           </div>
           <div class="field" style="margin-top: 20px;">
             <button class="btn" style="width: 100%;" @click="handleLogin" :disabled="loginLoading">
@@ -340,6 +403,18 @@
             </button>
           </div>
           <div class="status danger" v-if="resetError" style="text-align: center; margin-top: 10px;">{{ resetError }}</div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Terms of Service Modal -->
+    <div class="modal-overlay" v-if="showTermsModal" @click.self="showTermsModal = false">
+      <div class="modal terms-modal" style="position: relative;">
+        <button class="modal-close" @click="showTermsModal = false">×</button>
+        <div class="modal-title">AI工具服务使用条款</div>
+        <div class="terms-content" v-html="termsContent"></div>
+        <div style="padding: 16px; text-align: center;">
+          <button class="btn" style="width: 100%;" @click="showTermsModal = false">我已阅读</button>
         </div>
       </div>
     </div>
@@ -1626,7 +1701,8 @@
       authMode: 'login', // 'login' or 'register'
       loginForm: {
         phone: '',
-        password: ''
+        password: '',
+        termsAgreed: false
       },
       loginLoading: false,
       loginError: '',
@@ -1651,7 +1727,9 @@
       resetError: '',
       resetCodeSending: false,
       resetCodeCountdown: 0,
-      resetCountdownTimer: null
+      resetCountdownTimer: null,
+      showTermsModal: false,
+      termsContent: ''
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -1678,6 +1756,9 @@
       if (this.authToken) {
         this.fetchComputingPower();
       }
+      
+      // Load terms of service
+      this.loadTermsContent();
     },
     computed: {
       route(){ return this.$route },
@@ -1717,6 +1798,7 @@
         this.resetError = '';
         this.loginForm.phone = '';
         this.loginForm.password = '';
+        this.loginForm.termsAgreed = false;
         this.registerForm.phone = '';
         this.registerForm.code = '';
         this.registerForm.password = '';
@@ -1750,7 +1832,8 @@
           const response = await axios.post('/api/auth/login', {
             phone: this.loginForm.phone,
             password: this.loginForm.password,
-            agent: 'default'
+            agent: 'default',
+            terms_agreed: this.loginForm.termsAgreed ? 1 : 0
           });
           
           if (response.data.success) {
@@ -2056,6 +2139,24 @@
           this.resetError = error?.response?.data?.message || '重置密码失败，请重试';
         } finally {
           this.resetLoading = false;
+        }
+      },
+      
+      async loadTermsContent() {
+        try {
+          const response = await axios.get('/files/AI工具服务使用条款.txt');
+          // Convert markdown-like text to HTML
+          let html = response.data
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // Bold text
+            .replace(/^# (.*?)$/gm, '<h1>$1</h1>')  // H1 headers
+            .replace(/^## (.*?)$/gm, '<h2>$1</h2>')  // H2 headers
+            .replace(/\n\n/g, '</p><p>')  // Paragraphs
+            .replace(/\n/g, '<br>');  // Line breaks
+          
+          this.termsContent = '<p>' + html + '</p>';
+        } catch (error) {
+          console.error('Failed to load terms:', error);
+          this.termsContent = '<p>加载使用条款失败，请稍后重试。</p>';
         }
       }
     },

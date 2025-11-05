@@ -1188,6 +1188,7 @@ class LoginRequest(BaseModel):
     phone: str
     password: str
     agent: Optional[str] = 'default'
+    terms_agreed: Optional[int] = 0
 
 @app.post('/api/auth/login')
 async def login(request: LoginRequest):
@@ -1198,6 +1199,7 @@ async def login(request: LoginRequest):
         phone = request.phone
         password = request.password
         agent = request.agent
+        terms_agreed = request.terms_agreed
         
         logger.info(f"收到登录请求 - 手机号: {phone}")
 
@@ -1230,7 +1232,8 @@ async def login(request: LoginRequest):
                 }
             )
         # 调用认证服务器登录
-        success, message, auth_data = call_external_auth_server(phone, password, device_uuid)
+        extra_data={'terms_agreed': terms_agreed}
+        success, message, auth_data = call_external_auth_server(phone, password, device_uuid,'login', extra_data)
         
         if success:
             logger.info(f"用户登录成功 - 手机号: {phone}")
@@ -1725,5 +1728,5 @@ async def serve_spa(full_path: str):
 
 
 if __name__ == "__main__":
-    port = 9002 if is_dev_environment() else config["server"].get("port", 5173)
+    port = 9003 if is_dev_environment() else config["server"].get("port", 5174)
     uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
