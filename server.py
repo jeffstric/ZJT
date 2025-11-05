@@ -546,9 +546,10 @@ async def image_edit(
             "status": "submitted",
             "image_url": image_url
         })
-        
+    except HTTPException:
+        raise    
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to submit nanobanana task: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/runninghub-status/{project_id}")
 async def runninghub_status(

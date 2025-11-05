@@ -1534,6 +1534,17 @@
       
       // Load terms of service
       this.loadTermsContent();
+      
+      // 设置 axios 响应拦截器，全局处理认证错误
+      axios.interceptors.response.use(
+        response => response,
+        error => {
+          // 调用认证错误处理方法
+          this.handleAuthError(error);
+          // 继续抛出错误，让各个接口的 catch 也能处理
+          return Promise.reject(error);
+        }
+      );
     },
     computed: {
       route(){ return this.$route },
@@ -1557,6 +1568,33 @@
     },
     methods: {
       goHome(){ this.$router.push({name:'list'}); },
+      
+      handleAuthError(error) {
+        // 检查错误响应中是否包含认证过期信息
+        const detail = error?.response?.data?.detail || '';
+        if (detail.includes('无效或已过期的认证信息')) {
+          // 清除本地存储的认证信息
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('phone');
+          localStorage.removeItem('user_id');
+          localStorage.removeItem('invite_code');
+          
+          // 清除当前状态
+          this.authToken = '';
+          this.userPhone = '';
+          this.userId = '';
+          this.inviteCode = '';
+          this.computingPower = null;
+          
+          // 设置错误信息并显示登录框
+          this.loginError = '登录已过期，请重新登录';
+          this.showLoginModal = true;
+          this.authMode = 'login';
+          
+          return true; // 表示已处理该错误
+        }
+        return false; // 表示不是认证错误
+      },
       
       switchAuthMode(mode) {
         this.authMode = mode;
