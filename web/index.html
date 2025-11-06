@@ -11,7 +11,10 @@
   <div id="app" class="container" v-cloak>
     <div class="card">
       <header>
-        <div class="title">{{ pageTitle }}</div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <img src="/files/logo.svg" alt="Logo" style="width: 48px; height: 48px;" />
+          <div class="title">{{ pageTitle }}</div>
+        </div>
         <div class="muted" v-if="route.name==='list'">共 {{ tools.length }} 个工具</div>
         <div style="display: flex; gap: 10px; align-items: center;">
           <button class="btn secondary" v-if="route.name!=='list'" @click="goHome">返回</button>
