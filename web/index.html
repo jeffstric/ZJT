@@ -29,6 +29,7 @@
                   ↻
                 </button>
               </div>
+              <button class="btn secondary" @click="showRechargePowerModal = true" style="margin-top: 8px; font-size: 12px; padding: 4px 12px;">算力充值</button>
             </div>
             <button class="btn secondary" @click="handleLogout">登出</button>
           </template>
@@ -186,6 +187,18 @@
           <div style="margin-top: 20px;">
             <button class="btn" style="width: 100%;" @click="copyInviteCode">复制邀请码</button>
           </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Recharge Computing Power Modal -->
+    <div class="modal-overlay" v-if="showRechargePowerModal" @click.self="showRechargePowerModal = false">
+      <div class="modal" style="position: relative; max-width: 500px;">
+        <button class="modal-close" @click="showRechargePowerModal = false">×</button>
+        <div class="modal-title">算力充值</div>
+        <div style="padding: 20px; text-align: center;">
+          <img src="/files/二维码.jpg" alt="客服微信二维码" style="max-width: 100%; height: auto; border-radius: 8px; margin-bottom: 16px;" />
+          <p style="font-size: 16px; color: var(--text); margin: 0;">请添加客服微信充值算力</p>
         </div>
       </div>
     </div>
@@ -1471,6 +1484,7 @@
       computingPower: null,
       showLoginModal: false,
       showInviteModal: false,
+      showRechargePowerModal: false,
       authMode: 'login', // 'login' or 'register'
       loginForm: {
         phone: '',
