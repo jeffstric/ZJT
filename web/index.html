@@ -235,6 +235,13 @@
         </div>
         <div class="list-item">
           <div>
+            <div style="font-weight:700">图生视频智能体</div>
+            <div class="muted">上传1-5张图片生成视频脚本</div>
+          </div>
+          <button class="btn" @click="$router.push({name:'ai-script-gen'})">打开</button>
+        </div>
+        <div class="list-item">
+          <div>
             <div style="font-weight:700">小红书笔记修改</div>
             <div class="muted">直接跳转到表单页面进行笔记修改</div>
           </div>
@@ -726,6 +733,7 @@
         results: [],
         projectId: '',
         status: '',
+        statusInterval: null,
         authToken: '',
         showHistory: false,
         historyList: [],
@@ -1460,11 +1468,540 @@
     `
   };
 
+  const AIScriptGen = {
+    name: 'AIScriptGen',
+    data() {
+      return {
+        image1: null,
+        image2: null,
+        image3: null,
+        image4: null,
+        image5: null,
+        previews: [null, null, null, null, null],
+        extraPrompt: '',
+        addDetail: '否',
+        needNarration: '否',
+        loading: false,
+        error: '',
+        scriptResult: null,
+        scenes: [],
+        sceneJsons: [],
+        authToken: localStorage.getItem('auth_token') || '',
+        videoLoading: false,
+        videoError: '',
+        videoProjectId: '',
+        videoStatus: '',
+        videoResults: [],
+        videoStatusTimer: null,
+        editingSceneIndex: null,
+        editingSceneText: '',
+        progressPercent: 0,
+        progressTimer: null,
+        estimatedTime: 300, // 5 minutes in seconds
+        elapsedTime: 0,
+        showHistory: false,
+        historyList: [],
+        historyLoading: false,
+        historyPage: 1,
+        historyTotal: 0,
+      };
+    },
+    computed: {
+      canSubmit() {
+        return !!this.image1 && !this.loading;
+      }
+    },
+    methods: {
+      onFileChange(e, index) {
+        const file = e.target.files[0] || null;
+        const key = `image${index}`;
+        const currentUrl = this.previews[index - 1];
+        if (currentUrl) {
+          URL.revokeObjectURL(currentUrl);
+        }
+        this[key] = file;
+        if (file) {
+          const previewUrl = URL.createObjectURL(file);
+          this.previews.splice(index - 1, 1, previewUrl);
+        } else {
+          this.previews.splice(index - 1, 1, null);
+        }
+        e.target.value = '';
+      },
+      async submit() {
+        if (!this.canSubmit) return;
+        this.loading = true;
+        this.error = '';
+        this.scriptResult = null;
+        this.scenes = [];
+        this.sceneJsons = [];
+        this.startProgress();
+        try {
+          const form = new FormData();
+          form.append('image1', this.image1);
+          if (this.image2) form.append('image2', this.image2);
+          if (this.image3) form.append('image3', this.image3);
+          if (this.image4) form.append('image4', this.image4);
+          if (this.image5) form.append('image5', this.image5);
+          form.append('extra_prompt', this.extraPrompt);
+          form.append('add_detail', this.addDetail);
+          form.append('need_narration', this.needNarration);
+          const userId = localStorage.getItem('user_id');
+          if (userId) {
+            form.append('user_id', userId);
+          }
+          if (this.authToken) {
+            form.append('auth_token', this.authToken);
+          }
+
+          const res = await axios.post('/api/ai-script-generate', form, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          });
+          this.scriptResult = res.data.script;
+          if (this.scriptResult && Array.isArray(this.scriptResult.ScriptScenes)) {
+            this.scenes = this.scriptResult.ScriptScenes;
+            this.sceneJsons = this.scriptResult.ScriptScenes.map(scene => JSON.stringify(scene, null, 2));
+          } else {
+            this.scenes = [];
+            this.sceneJsons = [];
+          }
+          this.completeProgress();
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '请求失败';
+          this.stopProgress();
+        } finally {
+          this.loading = false;
+        }
+      },
+      startProgress() {
+        this.progressPercent = 0;
+        this.elapsedTime = 0;
+        this.clearProgressTimer();
+        this.progressTimer = setInterval(() => {
+          this.elapsedTime += 0.1;
+          // Progress increases gradually, slowing down as it approaches 95%
+          const targetProgress = Math.min((this.elapsedTime / this.estimatedTime) * 100, 95);
+          this.progressPercent = Math.min(this.progressPercent + (targetProgress - this.progressPercent) * 0.1, 95);
+        }, 100);
+      },
+      completeProgress() {
+        this.progressPercent = 100;
+        this.clearProgressTimer();
+      },
+      stopProgress() {
+        this.clearProgressTimer();
+        this.progressPercent = 0;
+        this.elapsedTime = 0;
+      },
+      clearProgressTimer() {
+        if (this.progressTimer) {
+          clearInterval(this.progressTimer);
+          this.progressTimer = null;
+        }
+      },
+      updateScene(index, field, value) {
+        if (this.scenes[index]) {
+          this.$set ? this.$set(this.scenes[index], field, value) : (this.scenes[index][field] = value);
+          this.sceneJsons[index] = JSON.stringify(this.scenes[index], null, 2);
+        }
+      },
+      formatSceneTitle(scene) {
+        if (!scene) return '';
+        return `${scene.SceneNumber || ''}${scene.SceneName ? ' - ' + scene.SceneName : ''}`;
+      },
+      cleanupPreviews() {
+        this.previews.forEach(url => {
+          if (url) URL.revokeObjectURL(url);
+        });
+      },
+      startEditScene(index) {
+        this.editingSceneIndex = index;
+        this.editingSceneText = this.scenes[index].Text || this.scenes[index].SceneDescription || '';
+      },
+      saveEditScene(index) {
+        if (this.editingSceneText.trim()) {
+          this.scenes[index].Text = this.editingSceneText.trim();
+          this.sceneJsons[index] = JSON.stringify(this.scenes[index], null, 2);
+        }
+        this.editingSceneIndex = null;
+        this.editingSceneText = '';
+      },
+      cancelEditScene() {
+        this.editingSceneIndex = null;
+        this.editingSceneText = '';
+      },
+      async fetchHistory(append = false) {
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          alert('请先登录');
+          return;
+        }
+
+        if (!append) {
+          this.historyPage = 1;
+          this.historyList = [];
+        }
+
+        this.historyLoading = true;
+        try {
+          const authToken = localStorage.getItem('auth_token') || this.authToken;
+          const response = await axios.get('/api/ai-tools/history', {
+            params: {
+              user_id: parseInt(userId, 10),
+              page: this.historyPage,
+              page_size: 20,
+              type: 3, // 3-图片生成视频
+              auth_token: authToken || undefined
+            }
+          });
+
+          if (response.data.success) {
+            const newData = response.data.data?.data || [];
+            this.historyList = append ? [...this.historyList, ...newData] : newData;
+            this.historyTotal = response.data.data?.total || 0;
+            this.showHistory = true;
+          } else {
+            alert(response.data.message || '获取历史记录失败');
+          }
+        } catch (err) {
+          console.error(err);
+          alert(err?.response?.data?.message || '获取历史记录失败');
+          this.showHistory = true;
+        } finally {
+          this.historyLoading = false;
+        }
+      },
+      async loadMoreHistory() {
+        if (this.historyLoading || this.historyList.length >= this.historyTotal) {
+          return;
+        }
+        this.historyPage += 1;
+        await this.fetchHistory(true);
+      },
+      handleHistoryScroll(event) {
+        const element = event.target;
+        const scrollBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+        if (scrollBottom < 100) {
+          this.loadMoreHistory();
+        }
+      },
+      closeHistory() {
+        this.showHistory = false;
+        this.historyPage = 1;
+        this.historyList = [];
+      },
+      getHistoryStatusText(status) {
+        const statusMap = {
+          0: '未处理',
+          1: '处理中',
+          2: '处理完成',
+          '-1': '处理失败'
+        };
+        return statusMap[status] || '未知';
+      },
+      getHistoryStatusColor(status) {
+        const colorMap = {
+          0: '#888',
+          1: '#3b82f6',
+          2: '#10b981',
+          '-1': '#ef4444'
+        };
+        return colorMap[status] || '#888';
+      },
+      async generateVideo() {
+        if (!this.scenes.length || !this.image1) {
+          alert('请先上传图片并生成脚本');
+          return;
+        }
+        
+        this.videoError = '';
+        this.videoResults = [];
+        this.videoStatus = '';
+        this.videoProjectId = '';
+        this.videoLoading = true;
+        this.clearVideoStatusPolling();
+ 
+        
+        try {
+          const form = new FormData();
+          
+          // Add all uploaded images
+          [this.image1, this.image2, this.image3, this.image4, this.image5].forEach(file => {
+            if (file) form.append('images', file);
+          });
+          
+          // Combine all scene Text content
+          const sceneTexts = this.scenes
+            .map(scene => scene.Text || scene.SceneDescription || '')
+            .filter(text => text && text.trim())
+            .join(' ');
+          
+          form.append('prompt', sceneTexts || '根据上传图片生成视频');
+          form.append('ratio', '9:16');
+          
+          form.append('duration_seconds', 15);
+          
+          const userId = localStorage.getItem('user_id');
+          if (userId) form.append('user_id', userId);
+          if (this.authToken) form.append('auth_token', this.authToken);
+          
+          const res = await axios.post('/api/ai-app-run-image', form);
+          
+          this.videoProjectId = res.data.project_id || '';
+          this.videoStatus = res.data.status || '';
+          
+          if (this.videoProjectId) {
+            this.checkVideoStatus();
+          }
+        } catch (err) {
+          console.error(err);
+          this.videoError = err?.response?.data?.detail || err?.message || '视频生成请求失败';
+          this.videoLoading = false;
+        }
+      },
+      async checkVideoStatus() {
+        if (!this.videoProjectId) return;
+        
+        try {
+          const authToken = localStorage.getItem('auth_token');
+          const params = authToken ? { auth_token: authToken } : {};
+          const res = await axios.get('/api/get-status/' + this.videoProjectId, { params });
+          this.videoStatus = res.data.status || '';
+          
+          if (this.videoStatus === 'SUCCESS') {
+            const rawResults = res.data.results || [];
+            this.videoResults = rawResults.map(item => {
+              if (!item) return '';
+              if (typeof item === 'string') return item;
+              return item.file_url || item.url || '';
+            }).filter(url => !!url);
+            this.videoLoading = false;
+            this.clearVideoStatusPolling();
+          } else if (this.videoStatus === 'FAILED') {
+            this.videoError = res.data.reason || '视频生成失败';
+            this.videoLoading = false;
+            this.clearVideoStatusPolling();
+          } else {
+            this.videoStatusTimer = setTimeout(() => this.checkVideoStatus(), 5000);
+          }
+        } catch (err) {
+          console.error(err);
+          this.videoError = '查询视频状态失败';
+          this.videoLoading = false;
+          this.clearVideoStatusPolling();
+        }
+      },
+      clearVideoStatusPolling() {
+        if (this.videoStatusTimer) {
+          clearTimeout(this.videoStatusTimer);
+          this.videoStatusTimer = null;
+        }
+      },
+      downloadVideo(url, index) {
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = 'ai_script_video_' + dateStr + '_' + timeStr + '_' + (index + 1) + '.mp4';
+        const downloadUrl = '/api/download?url=' + encodeURIComponent(url) + '&filename=' + encodeURIComponent(filename);
+        
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    },
+    beforeUnmount() {
+      this.cleanupPreviews();
+      this.clearVideoStatusPolling();
+      this.clearProgressTimer();
+    },
+    template: `
+  <div>
+    <div class="form">
+      <div class="field">
+        <label class="label">上传图片 (最多5张)</label>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 8px;">
+          <div class="upload-card" v-for="slot in 5" :key="slot">
+            <input type="file" accept="image/*" :id="'script-image-' + slot" style="display:none" @change="e => onFileChange(e, slot)" />
+            <label :for="'script-image-' + slot" class="upload-card-body" style="cursor: pointer; display: flex; align-items: center; justify-content: center; border: 1px dashed rgba(255,255,255,0.25); border-radius: 12px; background: rgba(16,24,48,0.85); height: 160px; position: relative; overflow: hidden; transition: border-color 0.2s ease, transform 0.2s ease;">
+              <template v-if="previews[slot - 1]">
+                <img :src="previews[slot - 1]" :alt="'图片' + slot + '预览'" style="width: 100%; height: 100%; object-fit: cover;" />
+                <div style="position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(180deg, transparent, rgba(0,0,0,0.6)); padding: 6px 10px; font-size: 12px; color: #fff; text-align: right;">点击重新上传</div>
+              </template>
+              <template v-else>
+                <div style="text-align: center; color: var(--muted);">
+                  <div style="width: 48px; height: 48px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15); margin: 0 auto 12px; display: flex; align-items: center; justify-content: center; font-size: 28px; color: var(--primary);">＋</div>
+                  <div style="font-weight: 600; color: var(--text);">上传图片</div>
+                  <div style="font-size: 12px; margin-top: 6px;">{{ slot === 1 ? '图片1（必传）' : ('图片' + slot + '（可选）') }}</div>
+                </div>
+              </template>
+            </label>
+            <div style="text-align: center; margin-top: 6px; font-size: 12px; color: var(--muted);">
+              {{ slot === 1 ? '图片1（必传）' : ('图片' + slot + '（可选）') }}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="field">
+        <label class="label">额外提示词（可选）</label>
+        <textarea class="textarea" v-model.trim="extraPrompt" placeholder="请输入想补充的需求，例如：突出产品细节、加入品牌故事等"></textarea>
+      </div>
+      <div class="field">
+        <label class="label">是否添加细节描写</label>
+        <select class="input" v-model="addDetail">
+          <option value="否">否</option>
+          <option value="是">是</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="label">是否需要旁白</label>
+        <select class="input" v-model="needNarration">
+          <option value="否">否</option>
+          <option value="是">是</option>
+        </select>
+      </div>
+      <div class="field">
+        <button class="btn btn-full" :disabled="!canSubmit" @click="submit">{{ loading ? '生成中…' : '启动智能体' }}</button>
+      </div>
+      <div class="field" style="display: flex; justify-content: flex-end; gap: 12px;">
+        <button class="btn secondary" @click="fetchHistory" :disabled="historyLoading">
+          {{ historyLoading ? '加载中...' : '历史记录' }}
+        </button>
+      </div>
+      <div v-if="loading" class="progress-container">
+        <div class="progress-bar-wrapper">
+          <div class="progress-bar" :style="{ width: progressPercent + '%' }"></div>
+        </div>
+        <div class="progress-text">
+          预计时间：<span class="progress-time">5分钟</span> | 当前进度：
+          <span class="progress-time">{{ Math.round(progressPercent) }}%</span>
+        </div>
+      </div>
+    </div>
+    <div class="status danger" v-if="error">{{ error }}</div>
+    <div v-if="scriptResult" style="margin-top: 24px;">
+      <div v-if="scenes.length" style="margin-top: 16px; padding:18px">
+        <h3 style="color: var(--primary); margin-bottom: 12px; font-size: 14px;">脚本场景（共 {{ scenes.length }} 个）</h3>
+        <div class="scene-card" v-for="(scene, idx) in scenes" :key="idx" style="max-width: 720px; margin: 0 0 16px;">
+          <div class="scene-card-header" style="margin-bottom: 6px;">
+            <h4 style="font-size: 14px; font-weight: 600; margin: 0; color: var(--text);">{{ formatSceneTitle(scene) }}</h4>
+          </div>
+          <div class="scene-layout">
+            <textarea
+              class="textarea scene-textarea-left"
+              :value="editingSceneIndex === idx ? editingSceneText : (scene.Text || '')"
+              @input="editingSceneIndex === idx ? (editingSceneText = $event.target.value) : null"
+              :readonly="editingSceneIndex !== idx"
+              style="min-height: 180px;"
+            ></textarea>
+            <div class="scene-buttons-right">
+              <template v-if="editingSceneIndex !== idx">
+                <button class="btn secondary" @click="startEditScene(idx)">修改</button>
+              </template>
+              <template v-else>
+                <button class="btn" @click="saveEditScene(idx)">保存</button>
+                <button class="btn secondary" @click="cancelEditScene">取消</button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="scenes.length" style="margin-top: 16px; padding-right: 18px; display: flex; justify-content: flex-end;">
+        <button class="btn btn-full" :disabled="videoLoading" @click="generateVideo" style="padding: 14px 32px; font-size: 18px;">
+          {{ videoLoading ? '生成中…' : '生成视频' }}
+        </button>
+      </div>
+      <div v-if="videoLoading" class="status" style="margin-top: 16px;">
+        视频生成中，请稍候... 状态: {{ videoStatus }}
+      </div>
+      <div v-if="videoError" class="status danger" style="margin-top: 16px;">
+        {{ videoError }}
+      </div>
+      <div v-if="videoResults.length" style="margin-top: 16px; padding:18px">
+        <h3 style="color: var(--primary); margin-bottom: 12px; font-size: 14px;">生成的视频（共 {{ videoResults.length }} 个）</h3>
+        <div class="results">
+          <div v-for="(result, idx) in videoResults" :key="idx" class="result-item">
+            <video :src="result" controls style="width: 100%; max-width: 240px; border-radius: 8px;"></video>
+            <button class="btn secondary" @click="downloadVideo(result, idx)" style="margin-top: 8px;">下载视频</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
+      <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
+        <div style="position: relative;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-right: 40px; margin-bottom: 12px;">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+              <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
+              <button
+                class="btn secondary"
+                @click="fetchHistory(false)"
+                :disabled="historyLoading"
+                style="display: inline-flex; align-items: center; justify-content: center; padding: 4px 12px; font-size: 12px;"
+              >
+                {{ historyLoading ? '刷新中...' : '刷新' }}
+              </button>
+            </div>
+            <button class="modal-close" @click="closeHistory">×</button>
+          </div>
+        </div>
+        <div v-if="historyList.length === 0" style="padding: 40px; text-align: center; color: var(--muted);">
+          暂无历史记录
+        </div>
+        <div v-else style="padding: 16px;">
+          <div v-for="item in historyList" :key="item.id" style="margin-bottom: 16px; padding: 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 8px;">
+            <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <strong>提示词:</strong> {{ item.prompt }}
+              </div>
+              <span :style="{
+                padding: '4px 12px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontWeight: 'bold',
+                backgroundColor: getHistoryStatusColor(item.status) + '20',
+                color: getHistoryStatusColor(item.status),
+                border: '1px solid ' + getHistoryStatusColor(item.status),
+                cursor: item.status == -1 && item.message ? 'help' : 'default'
+              }" :title="item.status == -1 && item.message ? item.message : ''">
+                {{ getHistoryStatusText(item.status) }}
+              </span>
+            </div>
+            <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
+              <span>画面比例: {{ item.ratio || '未知' }}</span>
+              <span>时长: {{ item.duration || 0 }}秒</span>
+              <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
+            </div>
+            <div v-if="item.result_url" style="margin-top: 8px;">
+              <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
+            </div>
+          </div>
+          <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
+            加载中...
+          </div>
+          <div v-else-if="historyList.length >= historyTotal" style="text-align: center; padding: 20px; color: var(--muted);">
+            已加载全部数据
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+`
+  };
+
   const routes = [
     { path: '/', name: 'list', component: ListPage },
     { path: '/image-edit', name: 'image-edit', component: ImageEdit },
     { path: '/ai-video-gen', name: 'ai-video-gen', component: AIVideoGen },
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
+    { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
   ];
   const router = VueRouter.createRouter({
     history: VueRouter.createWebHistory(),
@@ -1477,6 +2014,7 @@
         {name:'图片编辑', path:'/image-edit'},
         {name:'AI视频生成', path:'/ai-video-gen'},
         {name:'图片生成视频', path:'/image-to-video'},
+        {name:'智能图片生成视频', path:'/ai-script-gen'},
         {name:'小红书笔记修改', path:'http://ssh.perseids.cn:15678/form/8cd1955c-5cf6-4111-a3a4-406001d7e3b2'}
       ],
       authToken: '',
@@ -1571,6 +2109,7 @@
         if (this.route.name === 'image-edit') return '图片编辑';
         if (this.route.name === 'ai-video-gen') return 'AI 视频生成';
         if (this.route.name === 'image-to-video') return '图片生成视频';
+        if (this.route.name === 'ai-script-gen') return '图生视频智能体';
         return 'AI 工具';
       },
       isLoggedIn() {

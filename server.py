@@ -20,6 +20,7 @@ from model import AIToolsModel
 import uuid
 from api_requset import create_image_to_video, get_ai_task_result, create_ai_image
 from PIL import Image
+from baidu import call_ernie_vl_api
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(APP_DIR, "qwen_image_edit_api.json")
@@ -1559,6 +1560,100 @@ async def get_ai_tools_history(
                 'message': '服务器错误'
             }
         )
+
+
+@app.post("/api/ai-script-generate")
+async def ai_script_generate(
+    image1: UploadFile = File(..., description="第一张图片（必传）"),
+    image2: UploadFile = File(None, description="第二张图片（可选）"),
+    image3: UploadFile = File(None, description="第三张图片（可选）"),
+    image4: UploadFile = File(None, description="第四张图片（可选）"),
+    image5: UploadFile = File(None, description="第五张图片（可选）"),
+    extra_prompt: str = Form("", description="额外提示词"),
+    add_detail: str = Form("否", description="是否添加细节描写"),
+    need_narration: str = Form("否", description="是否需要旁白"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    图生视频智能体- 上传1-5张图片，调用百度千帆API生成视频脚本
+    """
+    try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
+        # 保存上传的图片并获取URL
+        image_url1 = _save_uploaded_image(image1)
+        image_url2 = _save_uploaded_image(image2) if image2 else None
+        image_url3 = _save_uploaded_image(image3) if image3 else None
+        image_url4 = _save_uploaded_image(image4) if image4 else None
+        image_url5 = _save_uploaded_image(image5) if image5 else None
+        
+        logger.info(f"AI script generation started with images: {image_url1}, {image_url2}, {image_url3}, {image_url4}, {image_url5}")
+        
+        # 调用百度千帆API
+        result = call_ernie_vl_api(
+            image_url1=image_url1,
+            image_url2=image_url2,
+            image_url3=image_url3,
+            image_url4=image_url4,
+            image_url5=image_url5,
+            prompt="",
+            add_detail=add_detail,
+            need_narration=need_narration,
+            extra_prompt=extra_prompt
+        )
+        
+        logger.info(f"Baidu API response received: {result}")
+        
+        # 检查是否有错误
+        if "error" in result:
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        # 解析返回的脚本内容
+        try:
+            # 百度API返回格式: {"result": "...", "choices": [...]}
+            script_content = result.get("result", "")
+            if not script_content and "choices" in result:
+                script_content = result["choices"][0]["message"]["content"]
+            
+            logger.info(f"Script content extracted: {script_content[:200]}...")
+            
+            # 尝试解析JSON脚本
+            import re
+            json_match = re.search(r'\{.*\}', script_content, re.DOTALL)
+            if json_match:
+                script_json = json.loads(json_match.group())    
+                logger.info(f"Successfully parsed script JSON with {len(script_json.get('ScriptScenes', []))} scenes")
+            else:
+                script_json = {"raw_content": script_content}
+                logger.warning("Could not extract JSON from script content")
+                
+        except Exception as parse_error:
+            logger.warning(f"Failed to parse script JSON: {parse_error}")
+            script_json = {"raw_content": script_content if 'script_content' in locals() else str(result)}
+        
+        return JSONResponse({
+            "success": True,
+            "script": script_json,
+            "raw_response": result,
+            "images": {
+                "image1": image_url1,
+                "image2": image_url2,
+                "image3": image_url3,
+                "image4": image_url4,
+                "image5": image_url5
+            }
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI script generation failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/image-upscale")
