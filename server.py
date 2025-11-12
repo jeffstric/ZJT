@@ -1594,7 +1594,7 @@ async def ai_script_generate(
         logger.info(f"AI script generation started with images: {image_url1}, {image_url2}, {image_url3}, {image_url4}, {image_url5}")
         
         # 调用百度千帆API
-        result = call_ernie_vl_api(
+        result = await call_ernie_vl_api(
             image_url1=image_url1,
             image_url2=image_url2,
             image_url3=image_url3,
