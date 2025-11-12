@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AI 工具列表</title>
+  <title>英仙智能AI工具箱</title>
   <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
   <link rel="stylesheet" href="/css/index.css" />
 </head>
@@ -1501,6 +1501,7 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        videoRatio: '9:16',
       };
     },
     computed: {
@@ -1526,7 +1527,12 @@
         e.target.value = '';
       },
       async submit() {
-        if (!this.canSubmit) return;
+        if (!this.canSubmit) {
+          if (!this.image1) {
+            alert('请上传图片');
+          }
+          return;
+        }
         this.loading = true;
         this.error = '';
         this.scriptResult = null;
@@ -1735,7 +1741,7 @@
             .join(' ');
           
           form.append('prompt', sceneTexts || '根据上传图片生成视频');
-          form.append('ratio', '9:16');
+          form.append('ratio', this.videoRatio);
           
           form.append('duration_seconds', 15);
           
@@ -1845,10 +1851,13 @@
             </div>
           </div>
         </div>
+        <div style="margin-top: 12px; padding: 10px 12px; border-radius: 6px; color: rgb(122 116 116); font-size: 13px; line-height: 1.4;">
+          ⚠️ 注意：请勿上传真人图片。
+        </div>
       </div>
       <div class="field">
         <label class="label">额外提示词（可选）</label>
-        <textarea class="textarea" v-model.trim="extraPrompt" placeholder="请输入想补充的需求，例如：突出产品细节、加入品牌故事等"></textarea>
+        <textarea class="textarea" v-model.trim="extraPrompt" placeholder="请输入想补充的需求，例如：加入品牌故事等"></textarea>
       </div>
       <div class="field">
         <label class="label">是否添加细节描写</label>
@@ -1865,7 +1874,7 @@
         </select>
       </div>
       <div class="field">
-        <button class="btn btn-full" :disabled="!canSubmit" @click="submit">{{ loading ? '生成中…' : '启动智能体' }}</button>
+        <button class="btn btn-full" @click="submit">{{ loading ? '生成中…' : '启动智能体' }}</button>
       </div>
       <div class="field" style="display: flex; justify-content: flex-end; gap: 12px;">
         <button class="btn secondary" @click="fetchHistory" :disabled="historyLoading">
@@ -1910,10 +1919,19 @@
           </div>
         </div>
       </div>
-      <div v-if="scenes.length" style="margin-top: 16px; padding-right: 18px; display: flex; justify-content: flex-end;">
-        <button class="btn btn-full" :disabled="videoLoading" @click="generateVideo" style="padding: 14px 32px; font-size: 18px;">
-          {{ videoLoading ? '生成中…' : '生成视频' }}
-        </button>
+      <div v-if="scenes.length" style="margin-top: 16px; padding-right: 18px;">
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-bottom: 12px;">
+          <label style="font-size: 14px; color: var(--text);">视频比例:</label>
+          <select class="input" v-model="videoRatio" style="width: 120px;">
+            <option value="9:16">竖屏 (9:16)</option>
+            <option value="16:9">横屏 (16:9)</option>
+          </select>
+        </div>
+        <div style="display: flex; justify-content: flex-end;">
+          <button class="btn btn-full" :disabled="videoLoading" @click="generateVideo" style="padding: 14px 32px; font-size: 18px;">
+            {{ videoLoading ? '生成中…' : '生成视频' }}
+          </button>
+        </div>
       </div>
       <div v-if="videoLoading" class="status" style="margin-top: 16px;">
         视频生成中，请稍候... 状态: {{ videoStatus }}
@@ -2101,7 +2119,7 @@
     computed: {
       route(){ return this.$route },
       pageTitle(){ 
-        if (this.route.name === 'list') return 'AI 工具列表';
+        if (this.route.name === 'list') return '英仙智能AI工具箱';
         if (this.route.name === 'image-edit') return '图片编辑';
         if (this.route.name === 'ai-video-gen') return 'AI 视频生成';
         if (this.route.name === 'image-to-video') return '图片生成视频';

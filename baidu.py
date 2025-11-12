@@ -6,7 +6,7 @@ API_KEY = "bce-v3/ALTAK-RW7WrM9SbRGJBisQ6n41v/223a3bda9f1652f86d74d5d8b937201fc3
 QIANFAN_API_URL = "https://qianfan.baidubce.com/v2/chat/completions"
 
 # 基础默认提示词（不含动态参数部分）
-BASE_DEFAULT_PROMPT = """参考用户上传的图片，生成ai脚本，脚本形式为Json格式，将每个场景中的Json字段的内容都接在Text字段中，不要省略字段，也不要概括内容，参照{
+BASE_DEFAULT_PROMPT = """请根据上传的图片生成一个短视频的脚本内容。要求如下： 1. 脚本应包括多个常见且吸引人的场景，前几帧不允许出现我给的参考图片的静态帧，还需要内容特别引人注目，画面内容要真实且富有风格。   2. 避免拟人化内容，但可以在部分场景中加入模特以增强视觉效果。 3. 确保脚本内容不侵犯任何版权。4. 整个视频时长不得超过15秒。 5. 包含专业的镜头要求和拍摄技巧。 6. 所有细节描述需具体且到位，以确保画面呈现的清晰。 7. 视频风格是用户分享，不要营销卖货。 8. 视频完整，头尾呼应 9. 但是除了展示的商品外，画面中不得出现任何文字内容。 10. 视频应包含多样化的场景，避免单一场景。 11. 生成ai脚本，脚本形式为Json格式，将每个场景中的Json字段的内容都接在Text字段中，不要省略字段，也不要概括内容，参照{
   "VideoTitle": "《扇影流年》",
   "VideoStyle": "用户生活分享 · 自然美学 · 动态场景融合",
   "TotalDuration": "5秒",
@@ -63,11 +63,17 @@ async def call_ernie_vl_api(image_url1, image_url2=None, image_url3=None, image_
         
         # 若需要细节描写，追加提示
         if add_detail.strip().lower() in ["是", "yes", "y"]:
-            final_prompt += "，且每张脚本的SceneDescription、VisualRequirements、ActionDesign字段需包含详细描写（如产品材质纹理、光线角度、模特动作细节、场景环境细节等），增强视频画面的可执行性"
+            final_prompt += "  整个脚本中 必须要有特写镜头和微距镜头，特写镜头的SceneDescription、VisualRequirements、ActionDesign字段需包含详细描写（如产品材质纹理、光线角度、模特动作细节、场景环境细节等），增强视频画面的可执行性"
+        else:
+            final_prompt += "  整个脚本中 不需要任何特写镜头和微距镜头"
         
         # 若需要旁白，追加提示
         if need_narration.strip().lower() in ["是", "yes", "y"]:
             final_prompt += "，且每张脚本的Narration字段需包含具体、有感染力的带货旁白（突出产品卖点、场景氛围或用户利益点），旁白时长与视频总时长匹配，语言简洁有记忆点"
+        else:
+            final_prompt += "，且每张脚本的Narration字段需为空"
+
+        final_prompt+="1. 注意实物的尺寸比例，不要出现商品过大或者过小的问题（比如商品如果是服装，袖子不能太长，需要露出手）。2. 视频中的商品请和图片中的商品保持一致，特别是商品上的图案、图案位置都必须保持一模一样。3. 画面中除了商品外，其他部分禁止有文字 或者字幕。4. 需要有旁白声音。5. 禁止出现画面中不真实的部分，比如多条腿、穿模、物体漂浮等违反物理规律的画面"
 
         # 构造content数组
         content = []
@@ -110,7 +116,7 @@ async def call_ernie_vl_api(image_url1, image_url2=None, image_url3=None, image_
             )
 
         response_data = response.json()
-        
+        print(response_data)
         return response_data
     except Exception as e:
         return {"error": str(e)}
