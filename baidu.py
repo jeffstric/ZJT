@@ -116,7 +116,6 @@ async def call_ernie_vl_api(image_url1, image_url2=None, image_url3=None, image_
             )
 
         response_data = response.json()
-        print(response_data)
         return response_data
     except Exception as e:
         return {"error": str(e)}
