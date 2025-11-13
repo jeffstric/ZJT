@@ -33,7 +33,12 @@ import yaml
 config_file = get_config_path()
 with open(os.path.join(APP_DIR, config_file), 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
-SERVER_HOST = config["server"]["host"]
+# Choose appropriate host based on HTTPS configuration
+https_config = config["server"].get("https", {})
+if https_config.get("enabled", False) and "https_host" in config["server"]:
+    SERVER_HOST = config["server"]["https_host"]
+else:
+    SERVER_HOST = config["server"]["host"]
 API_KEY = config["runninghub"]["api_key"]
 
 # Default ComfyUI server address; can be overridden by request field
@@ -1825,5 +1830,39 @@ async def serve_spa(full_path: str):
 
 
 if __name__ == "__main__":
-    port = 9002 if is_dev_environment() else config["server"].get("port", 5173)
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
+    # Check if HTTPS is enabled
+    https_config = config["server"].get("https", {})
+    if https_config.get("enabled", False):
+        # For HTTPS, prefer https_port, fallback to port, then default
+        port = config["server"].get("https_port") or config["server"].get("port")
+    else:
+        # For HTTP, use port or default
+        port = config["server"].get("port", 5173)
+    
+    if https_config.get("enabled", False):
+        # HTTPS configuration
+        ssl_keyfile = os.path.join(APP_DIR, https_config["keyfile"])
+        ssl_certfile = os.path.join(APP_DIR, https_config["certfile"])
+        
+        # Verify certificate files exist
+        if not os.path.exists(ssl_keyfile):
+            raise FileNotFoundError(f"SSL key file not found: {ssl_keyfile}")
+        if not os.path.exists(ssl_certfile):
+            raise FileNotFoundError(f"SSL certificate file not found: {ssl_certfile}")
+        
+        logger.info(f"Starting HTTPS server on port {port}")
+        logger.info(f"Using SSL cert: {ssl_certfile}")
+        logger.info(f"Using SSL key: {ssl_keyfile}")
+        
+        uvicorn.run(
+            "server:app", 
+            host="0.0.0.0", 
+            port=port, 
+            reload=False,
+            ssl_keyfile=ssl_keyfile,
+            ssl_certfile=ssl_certfile
+        )
+    else:
+        # HTTP configuration
+        logger.info(f"Starting HTTP server on port {port}")
+        uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
