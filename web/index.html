@@ -227,6 +227,13 @@
           </div>
           <button class="btn" @click="$router.push({name:'ai-script-gen'})">打开</button>
         </div>
+        <div class="list-item">
+          <div>
+            <div style="font-weight:700">图片高清放大</div>
+            <div class="muted">上传图片进行高清放大</div>
+          </div>
+          <button class="btn" @click="$router.push({name:'image-upscale'})">打开</button>
+        </div>
         <!-- <div class="list-item">
           <div>
             <div style="font-weight:700">小红书笔记修改</div>
@@ -713,8 +720,303 @@
     `
   };
 
+    const ImageUpscale = {
+    name: 'ImageUpscale',
+    data() {
+      return {
+        file: null,
+        loading: false,
+        error: '',
+        results: [],
+        projectId: '',
+        status: '',
+        statusInterval: null,
+        authToken: '',
+        showHistory: false,
+        historyList: [],
+        historyLoading: false,
+        historyPage: 1,
+        historyTotal: 0,
+      }
+    },
+    mounted() {
+      this.authToken = localStorage.getItem('auth_token') || '';
+    },
+    computed: {
+      canSubmit() { return !!this.file && !this.loading },
+      statusText() {
+        switch(this.status) {
+          case 'submitted': return '任务已提交，等待处理...';
+          case 'QUEUED': return '任务排队中...';
+          case 'RUNNING': return '正在高清放大...';
+          case 'SUCCESS': return '高清放大完成！';
+          case 'FAILED': return '任务失败';
+          default: return '';
+        }
+      }
+    },
+    methods: {
+      onFile(e){ this.file = e.target.files[0] || null; },
+      
+      async submit(){
+        if(!this.canSubmit) return;
 
-  const ImageToVideo = {
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.error = '请先登录后再使用高清放大功能';
+          return;
+        }
+
+        this.loading = true; this.error=''; this.results=[]; this.projectId=''; this.status='';
+        this.clearStatusCheck();
+        
+        try {
+          const form = new FormData();
+          form.append('image', this.file);
+          form.append('user_id', userId);
+          
+          if (this.authToken) {
+            form.append('auth_token', this.authToken);
+          }
+
+          const res = await axios.post('/api/image-upscale-new', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          
+          this.projectId = res.data.project_id || '';
+          this.status = res.data.status || 'submitted';
+          
+          this.startStatusCheck();
+          
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '请求失败';
+          this.loading = false;
+        }
+      },
+      
+      async checkStatus() {
+        if (!this.projectId) return;
+        
+        try {
+          const authToken = localStorage.getItem('auth_token');
+          const params = authToken ? { auth_token: authToken } : {};
+          const res = await axios.get(`/api/runninghub-status/${this.projectId}`, { params });
+          const payload = res?.data;
+          
+          if (!payload || typeof payload.status === 'undefined') {
+            console.warn('RunningHub status response missing status field:', payload);
+            return;
+          }
+          
+          this.status = payload.status;
+          
+          if (payload.status === 'SUCCESS') {
+            this.results = payload.results || [];
+            this.loading = false;
+            this.clearStatusCheck();
+          } else if (payload.status === 'FAILED') {
+            this.error = payload.message || '任务处理失败';
+            this.loading = false;
+            this.clearStatusCheck();
+          }
+        } catch (err) {
+          console.error('Status check error:', err);
+        }
+      },
+      
+      startStatusCheck() {
+        this.statusInterval = setInterval(() => {
+          this.checkStatus();
+        }, 5000);
+      },
+      
+      clearStatusCheck() {
+        if (this.statusInterval) {
+          clearInterval(this.statusInterval);
+          this.statusInterval = null;
+        }
+      },
+      
+      downloadImage(url, index) {
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = `upscale_${dateStr}_${timeStr}_${index + 1}.png`;
+        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+        window.open(downloadUrl, '_blank');
+      },
+      
+      async fetchHistory(reset = true) {
+        if (reset) {
+          this.historyPage = 1;
+          this.historyList = [];
+        }
+        
+        this.historyLoading = true;
+        
+        try {
+          const userId = localStorage.getItem('user_id');
+          const authToken = localStorage.getItem('auth_token');
+          
+          if (!userId) {
+            this.error = '请先登录';
+            this.historyLoading = false;
+            return;
+          }
+          
+          const res = await axios.get('/api/ai-tools/history', {
+            params: {
+              user_id: parseInt(userId, 10),
+              page: this.historyPage,
+              page_size: 20,
+              type: 4,
+              auth_token: authToken || undefined
+            }
+          });
+          
+          if (res.data.success) {
+            const payload = res.data.data || {};
+            const newItems = payload.data || payload.items || [];
+            this.historyList = reset ? newItems : [...this.historyList, ...newItems];
+            this.historyTotal = payload.total || 0;
+            this.showHistory = true;
+          }
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || '获取历史记录失败';
+          this.showHistory = true;
+        } finally {
+          this.historyLoading = false;
+        }
+      },
+      
+      handleHistoryScroll(e) {
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        if (scrollHeight - scrollTop - clientHeight < 50 && !this.historyLoading) {
+          if (this.historyList.length < this.historyTotal) {
+            this.historyPage++;
+            this.fetchHistory(false);
+          }
+        }
+      },
+      
+      closeHistory() {
+        this.showHistory = false;
+        this.historyList = [];
+      },
+      
+      getHistoryStatusText(status) {
+        const statusMap = {
+          0: '未处理',
+          1: '处理中',
+          2: '处理完成',
+          '-1': '处理失败'
+        };
+        return statusMap[status] || '未知';
+      },
+      
+      getHistoryStatusColor(status) {
+        const colorMap = {
+          0: '#888',
+          1: '#3b82f6',
+          2: '#10b981',
+          '-1': '#ef4444'
+        };
+        return colorMap[status] || '#888';
+      },
+    },
+    beforeUnmount() {
+      this.clearStatusCheck();
+    },
+    template: `
+      <div class="page">
+        <div class="field">
+          <label class="label">上传图片</label>
+          <input type="file" @change="onFile" accept="image/*" class="input" :disabled="loading">
+        </div>
+        
+        <div class="actions">
+          <button class="btn btn-full" @click="submit" :disabled="!canSubmit">
+            {{ loading ? '处理中...' : '开始高清放大' }}
+          </button>
+          <button class="btn secondary" @click="showHistory = true; fetchHistory()" :disabled="historyLoading">
+            {{ historyLoading ? '加载中...' : '历史记录' }}
+          </button>
+        </div>
+        
+        <div class="status" v-if="statusText">{{ statusText }}</div>
+        <div class="status danger" v-if="error">{{ error }}</div>
+        
+        <div v-if="results.length" class="results">
+          <h3 class="results-title">放大结果</h3>
+          <div class="result-item" v-for="(result, idx) in results" :key="idx">
+            <img :src="result.file_url" :alt="'结果 ' + (idx+1)" class="result-image">
+            <button class="btn secondary" @click="downloadImage(result.file_url, idx)">下载图片</button>
+          </div>
+        </div>
+        
+        <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
+          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
+            <div style="position: relative;">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-right: 40px; margin-bottom: 12px;">
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                  <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>
+                  <button
+                    class="btn secondary"
+                    @click="fetchHistory(true)"
+                    :disabled="historyLoading"
+                    style="display: inline-flex; align-items: center; justify-content: center; padding: 4px 12px; font-size: 12px;"
+                  >
+                    {{ historyLoading ? '刷新中...' : '刷新' }}
+                  </button>
+                </div>
+                <button class="modal-close" @click="closeHistory">×</button>
+              </div>
+            </div>
+            <div v-if="historyList.length === 0" style="padding: 40px; text-align: center; color: var(--muted);">
+              暂无历史记录
+            </div>
+            <div v-else style="padding: 16px;">
+              <div v-for="item in historyList" :key="item.id" style="margin-bottom: 16px; padding: 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 8px;">
+                <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <strong>类型:</strong> 图片高清放大
+                  </div>
+                  <span :style="{
+                    padding: '4px 12px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    backgroundColor: getHistoryStatusColor(item.status) + '20',
+                    color: getHistoryStatusColor(item.status),
+                    border: '1px solid ' + getHistoryStatusColor(item.status),
+                    cursor: item.status == -1 && item.message ? 'help' : 'default'
+                  }" :title="item.status == -1 && item.message ? item.message : ''">
+                    {{ getHistoryStatusText(item.status) }}
+                  </span>
+                </div>
+                <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
+                  <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
+                </div>
+                <div v-if="item.image_path" style="margin-top: 8px;">
+                  <img :src="item.image_path" alt="原始图片" class="result-image" style="margin-bottom: 8px;">
+                </div>
+                <div v-if="item.result_url" style="margin-top: 8px;">
+                  <button class="btn secondary" @click="downloadHistoryImage(item, idx)" style="display: inline-block; text-decoration: none; margin-top: 8px;">查看结果</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `,
+  };
+
+    const ImageToVideo = {
     name: 'ImageToVideo',
     data() {
       return {
@@ -2015,6 +2317,7 @@
   const routes = [
     { path: '/', name: 'list', component: ListPage },
     { path: '/image-edit', name: 'image-edit', component: ImageEdit },
+    { path: '/image-upscale', name: 'image-upscale', component: ImageUpscale },
     { path: '/ai-video-gen', name: 'ai-video-gen', component: AIVideoGen },
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
@@ -2122,6 +2425,7 @@
       pageTitle(){ 
         if (this.route.name === 'list') return '英仙智能AI工具箱';
         if (this.route.name === 'image-edit') return '图片编辑';
+        if (this.route.name === 'image-upscale') return '图片高清放大';
         if (this.route.name === 'ai-video-gen') return 'AI 视频生成';
         if (this.route.name === 'image-to-video') return '图片生成视频';
         if (this.route.name === 'ai-script-gen') return '图生视频智能体';

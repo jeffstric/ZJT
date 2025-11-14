@@ -137,6 +137,69 @@ class RunningHubClient:
         
         return self._make_request(endpoint, payload)
     
+    def run_ai_app_task(self, webapp_id: str, node_info_list: List[Dict[str, str]], transaction_id: str = None) -> Dict[str, Any]:
+        """
+        Submit a task using AI App API (for image upscale, etc.)
+        
+        Args:
+            webapp_id: WebApp ID for the specific AI application
+            node_info_list: List of node information dictionaries
+            transaction_id: Optional transaction ID for tracking
+            
+        Returns:
+            Task submission response containing taskId, clientId, etc.
+        """
+        endpoint = "/task/openapi/ai-app/run"
+        
+        payload = {
+            "webappId": webapp_id,
+            "apiKey": self.api_key,
+            "nodeInfoList": node_info_list
+        }
+        
+        if transaction_id:
+            payload["transactionId"] = transaction_id
+        
+        return self._make_request(endpoint, payload)
+    
+    def upload_image(self, file_bytes: bytes, filename: str, content_type: str = None) -> str:
+        """
+        Upload raw image bytes to RunningHub and return stored filename
+        
+        Args:
+            file_bytes: Binary content of the image
+            filename: Original filename (for reference)
+            content_type: MIME type (optional)
+        
+        Returns:
+            Stored filename returned by RunningHub upload API
+        """
+        endpoint = "/task/openapi/upload"
+        url = f"{self.host}{endpoint}"
+        files = {
+            "file": (filename, file_bytes, content_type or "application/octet-stream")
+        }
+        data = {"apiKey": self.api_key}
+        try:
+            response = requests.post(url, data=data, files=files, timeout=self.request_timeout)
+            response.raise_for_status()
+            result = response.json()
+        except requests.RequestException as e:
+            raise requests.RequestException(f"Upload request failed: {str(e)}")
+        except ValueError as e:
+            raise ValueError(f"Invalid upload response format: {str(e)}")
+        if result.get("code") != 0:
+            raise ValueError(f"Upload failed: {result.get('msg', 'Unknown error')}")
+        data_obj = result.get("data")
+        stored_name = None
+        if isinstance(data_obj, dict):
+            stored_name = data_obj.get("fileName") or data_obj.get("filename") or data_obj.get("name")
+        elif isinstance(data_obj, str):
+            stored_name = data_obj
+        if not stored_name:
+            raise ValueError("Upload response missing stored filename")
+        return stored_name
+    
     def check_status(self, task_id: str) -> TaskStatus:
         """
         Check the status of a submitted task
@@ -289,6 +352,26 @@ def create_image_edit_nodes(image_url: str, prompt: str) -> List[NodeInfo]:
             field_value=prompt,
             description="输入文本"
         )
+    ]
+
+
+def create_image_upscale_nodes(file_name: str) -> List[Dict[str, str]]:
+    """
+    Create node info list for image upscale workflow
+    
+    Args:
+        file_name: Stored filename returned by RunningHub upload API
+        
+    Returns:
+        List of node info dictionaries for the upscale workflow
+    """
+    return [
+        {
+            "nodeId": "8",
+            "fieldName": "image",
+            "fieldValue": file_name,
+            "description": "用户图片"
+        }
     ]
 
 

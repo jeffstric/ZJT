@@ -13,7 +13,7 @@ import traceback
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync, run_ai_app_task
+from runninghub_request import RunningHubClient, create_image_edit_nodes, create_image_upscale_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync, run_ai_app_task
 from config_util import get_config_path, is_dev_environment
 from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
 from model import AIToolsModel
@@ -551,6 +551,123 @@ async def image_edit(
         raise    
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/image-upscale-new")
+async def image_upscale_new(
+    image: UploadFile = File(...),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Submit image upscale task to RunningHub using AI App API
+    """
+    try:
+        transaction_id = str(uuid.uuid4())
+        computing_power = TASK_COMPUTING_POWER[4]
+        headers = None
+
+        if CHECK_AUTH_TOKEN:
+            if auth_token is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Authentication token is required"
+                )
+            headers = {'Authorization': f'Bearer {auth_token}'}
+
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail=message
+                )
+
+            user_computing_power = response_data.get('computing_power', 0)
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail="您的算力不足，无法进行高清放大"
+                )
+
+        # Save uploaded image locally (optional for record)
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        image_filename = f"{uuid.uuid4()}_{image.filename}"
+        image_path = os.path.join(UPLOAD_DIR, image_filename)
+        file_bytes = await image.read()
+        with open(image_path, "wb") as f:
+            f.write(file_bytes)
+
+        # Upload image to RunningHub and get stored filename
+        client = RunningHubClient()
+        try:
+            runninghub_file_name = client.upload_image(
+                file_bytes=file_bytes,
+                filename=image.filename,
+                content_type=image.content_type
+            )
+        except Exception as upload_error:
+            raise HTTPException(status_code=500, detail=f"上传图片到 RunningHub 失败: {str(upload_error)}")
+
+        # Create node info for upscale using RunningHub file name
+        node_info_list = create_image_upscale_nodes(runninghub_file_name)
+
+        # Submit task to RunningHub using AI App API
+        response = client.run_ai_app_task(
+            webapp_id="1987213919284563970",
+            node_info_list=node_info_list,
+            transaction_id=transaction_id
+        )
+
+        project_id = response.get("data", {}).get("taskId")
+        if not project_id:
+            raise HTTPException(status_code=500, detail="提交任务失败，未返回 taskId")
+
+        if CHECK_AUTH_TOKEN:
+            # Deduct computing power after task submission
+            success, message, _ = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                raise HTTPException(status_code=400, detail=message)
+
+        print("project_id: ", project_id)
+        print("user_id: ", user_id)
+        print("transaction_id: ", transaction_id)   
+        # Create database record
+        if user_id:
+            try:
+                AIToolsModel.create(
+                    prompt="图片高清放大",
+                    user_id=user_id,
+                    type=4,  # 4-图片高清放大
+                    image_path=image_path,
+                    project_id=project_id,
+                    transaction_id=transaction_id,
+                    status=1
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+
+        return JSONResponse({
+            "project_id": project_id,
+            "status": "submitted",
+            "image_path": image_path
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/api/runninghub-status/{project_id}")
 async def runninghub_status(
@@ -1532,6 +1649,16 @@ async def get_ai_tools_history(
                 order_direction='DESC',
                 type_list=[1, 4]  # 1-图片编辑, 4-图片高清放大
             )
+        elif type == 4:
+            # Only return type=4 (图片高清放大)
+            result = AIToolsModel.list_by_user(
+                user_id=user_id,
+                page=page,
+                page_size=page_size,
+                order_by='create_time',
+                order_direction='DESC',
+                type=4
+            )
         else:
             result = AIToolsModel.list_by_user(
                 user_id=user_id,
@@ -1825,5 +1952,5 @@ async def serve_spa(full_path: str):
 
 
 if __name__ == "__main__":
-    port = 9002 if is_dev_environment() else config["server"].get("port", 5173)
+    port = 9005 if is_dev_environment() else config["server"].get("port", 5173)
     uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
