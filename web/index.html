@@ -1074,6 +1074,8 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        enhancingVideos: {},  // Track enhancement status by index
+        enhanceTaskIds: {},   // Track enhancement task IDs by index
       }
     },
     mounted() {
@@ -1101,6 +1103,79 @@
       }
     },
     methods: {
+      getDurationText(item) {
+        return item.original_duration 
+          ? `${item.original_duration}秒` 
+          : (item.duration ? `${item.duration}秒` : '未知');
+      },
+
+      async enhanceVideo(item, index) {
+      if ((!item.file_url && !item.result_url) || this.enhancingVideos[index]) return;
+
+       const userId = localStorage.getItem('user_id');
+      if (!userId) {
+        alert('请先登录');
+        return;
+      }
+
+      try {
+        this.$set ? this.$set(this.enhancingVideos, index, true) : (this.enhancingVideos[index] = true);
+
+        const form = new FormData();
+        form.append('video_url', item.file_url || item.result_url);
+        form.append('user_id', userId);
+        form.append('enhance_type', '6'); // 高清放大任务类型为6
+
+        const authToken = localStorage.getItem('auth_token');
+        if (authToken) {
+          form.append('auth_token', authToken);
+        }
+
+        const res = await axios.post('/api/video-enhance', form, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+
+        if (res.data.status === 'submitted' && res.data.project_id) {
+          this.enhanceTaskIds = { ...this.enhanceTaskIds, [index]: res.data.project_id };
+        this.pollEnhanceStatus(item, index);
+        alert('视频修复任务已提交');
+      } else {
+        throw new Error('任务提交失败');
+      }
+     } catch (err) {
+      console.error(err);
+      alert(err?.response?.data?.detail || err?.message || '视频修复失败');
+      this.$set ? this.$set(this.enhancingVideos, index, false) : (this.enhancingVideos[index] = false);
+    }
+  },
+
+    async pollEnhanceStatus(item, index) {
+      const taskId = this.enhanceTaskIds?.[index];
+      if (!taskId) return;
+      
+      try {
+        const authToken = localStorage.getItem('auth_token');
+        const params = authToken ? { auth_token: authToken } : {};
+        const res = await axios.get(`/api/runninghub-status/${taskId}`, { params });
+        
+        if (res.data.status === 'SUCCESS') {
+          if (res.data.results && res.data.results.length > 0) {
+            this.$set ? this.$set(item, 'enhancedVideo', res.data.results[0]) : (item.enhancedVideo = res.data.results[0]);
+          }
+          this.$set ? this.$set(this.enhancingVideos, index, false) : (this.enhancingVideos[index] = false);
+          delete this.enhanceTaskIds[index];
+        } else if (res.data.status === 'FAILED') {
+          alert('视频增强失败');
+          this.$set ? this.$set(this.enhancingVideos, index, false) : (this.enhancingVideos[index] = false);
+          delete this.enhanceTaskIds[index];
+        } else {
+          setTimeout(() => this.pollEnhanceStatus(item, index), 5000);
+        }
+      } catch (err) {
+        setTimeout(() => this.pollEnhanceStatus(item, index), 5000);
+      }
+  },
+
       onFile(e){ 
         const selectedFiles = Array.from(e.target.files || []);
         const remainingSlots = 5 - this.files.length;
@@ -1213,16 +1288,17 @@
         }
       },
       
-      downloadVideo(url, index) {
+      downloadVideo(url, index, isEnhanced = false) {
         const now = new Date();
         const dateStr = now.getFullYear().toString() + 
                        (now.getMonth() + 1).toString().padStart(2, '0') + 
                        now.getDate().toString().padStart(2, '0');
         const timeStr = now.getHours().toString().padStart(2, '0') + 
                        now.getMinutes().toString().padStart(2, '0');
-        const filename = `image_to_video_${dateStr}_${timeStr}_${index + 1}.mp4`;
+        const prefix = isEnhanced ? 'image_to_video_enhanced' : 'image_to_video';
+        const filename = `${prefix}_${dateStr}_${timeStr}_${index + 1}.mp4`;
         const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
-        
+  
         const link = document.createElement('a');
         link.href = downloadUrl;
         link.download = filename;
@@ -1252,7 +1328,7 @@
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              type: 3,  // 3-图片生成视频
+              type: [3,6],  // 3-图片生成视频, 6-视频高清修复
               auth_token: authToken || undefined
             }
           });
@@ -1319,13 +1395,16 @@
         return colorMap[status] || '#888';
       },
       
-      getModelLabel(value) {
+      getModelLabel(item) {
+        if (item.type === 6) {
+          return '模糊视频高清放大';
+        }
         const modelMap = {
           '9:16': '竖屏',
           '16:9': '横屏'
         };
-        return modelMap[value] || value || '未知';
-      }
+        return modelMap[item.ratio] || item.ratio || '未知';
+      },
     },
     
     beforeUnmount() {
@@ -1390,14 +1469,23 @@
         <div class="status danger" v-if="error">{{ error }}</div>
 
         <div class="preview" v-if="results.length">
-          <div class="imgbox" v-for="(result, i) in results" :key="i">
-            <video :src="result.file_url" controls style="width: 100%; display: block;"></video>
+        <div class="imgbox" v-for="(result, i) in results" :key="i" style="margin-bottom: 20px;">
+          <video :src="result.file_url" controls style="width: 100%; display: block;"></video>
+          <div style="padding: 8px; text-align: center;">
+            <button class="btn secondary" @click="downloadVideo(result.file_url, i)">下载视频</button>
+            <button class="btn" @click="enhanceVideo(result, i)" :disabled="enhancingVideos[i]">{{ enhancingVideos[i] ? '处理中...' : '高清放大' }}</button>
+            <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}</div>
+          </div>
+          <div v-if="result.enhancedVideo" style="margin-top: 20px;">
+            <div style="margin-bottom: 8px; font-weight: bold; color: #10b981; text-align: center;">高清视频</div>
+            <video :src="result.enhancedVideo.file_url || result.enhancedVideo" controls style="width: 100%; display: block;"></video>
             <div style="padding: 8px; text-align: center;">
-              <button class="btn secondary" @click="downloadVideo(result.file_url, i)">下载视频</button>
-              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}</div>
+              <button class="btn secondary" @click="downloadVideo(result.enhancedVideo.file_url || result.enhancedVideo, i, true)">下载高清视频</button>
+              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.enhancedVideo.task_cost_time || '未知' }}</div>
             </div>
           </div>
         </div>
+      </div>
         
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
@@ -1429,12 +1517,13 @@
                   </span>
                 </div>
                 <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
-                  <span>模式: {{ getModelLabel(item.ratio) }}</span>
-                  <span>时长: {{ item.duration || 0 }}秒</span>
+                  <span>模式: {{ getModelLabel(item) }}</span>
+                  <span>时长: {{ getDurationText(item) }}</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
+                  <button v-if="item.status == 2 && item.type == 3" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="margin-left: 8px;">{{ enhancingVideos[item.id] ? '已修复' : '生成高清视频' }}</button>
                 </div>
               </div>
               
@@ -1473,6 +1562,7 @@
         historyPage: 1,
         historyTotal: 0,
         enhancingVideos: {},  // Track enhancement status by item id
+        enhanceTaskIds: {},
         enhanceTaskId: '',  // Track current enhancement task ID
         enhanceStatusInterval: null,  // Interval for polling enhancement status
       }
@@ -1554,8 +1644,7 @@
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          const res = await axios.get(`/api/runninghub-status/${this.projectId}`, { params });
-
+          const res = await axios.get(`/api/get-status/${this.projectId}`, { params });
           const payload = res?.data;
 
           if (!payload || typeof payload.status === 'undefined') {
@@ -1630,9 +1719,11 @@
         link.click();
         document.body.removeChild(link);
       },
-      async enhanceVideo(item) {
-        if (!item.result_url || this.enhancingVideos[item.id]) {
-          return;
+      async enhanceVideo(item, index) {
+        console.log('enhanceVideo called with:', { item, index, enhancingVideos: this.enhancingVideos });
+        if (!item.file_url || this.enhancingVideos[index]) {
+          console.log('Early return: file_url=', !!item.file_url, 'enhancingVideos[index]=', this.enhancingVideos[index]);
+          return; 
         }
 
         const userId = localStorage.getItem('user_id');
@@ -1642,10 +1733,10 @@
         }
 
         try {
-          this.$set ? this.$set(this.enhancingVideos, item.id, true) : (this.enhancingVideos[item.id] = true);
+          this.$set ? this.$set(this.enhancingVideos, index, true) : (this.enhancingVideos[index] = true);
 
           const form = new FormData();
-          form.append('video_url', item.result_url);
+          form.append('video_url', item.file_url);
           form.append('user_id', userId);
           form.append('enhance_type', '5'); // Type 5 for AI视频生成
 
@@ -1659,19 +1750,49 @@
           });
 
           if (res.data.status === 'submitted' && res.data.project_id) {
+            this.enhanceTaskIds = this.enhanceTaskIds || {};
+            this.enhanceTaskIds[index] = res.data.project_id;
+            this.pollEnhanceStatus(item, index);
             alert('视频修复任务已提交');
-            await this.fetchHistory(false);
           } else {
             throw new Error('任务提交失败');
           }
         } catch (err) {
           console.error(err);
           alert(err?.response?.data?.detail || err?.message || '视频修复失败');
-          this.$set ? this.$set(this.enhancingVideos, item.id, false) : (this.enhancingVideos[item.id] = false);
+          this.$set ? this.$set(this.enhancingVideos, index, false) : (this.enhancingVideos[index] = false);
         }
       },
       
-
+      async pollEnhanceStatus(item, index) {
+        const taskId = this.enhanceTaskIds?.[index];
+        if (!taskId) {
+          return;
+        }
+        
+        try {
+          const authToken = localStorage.getItem('auth_token');
+          const params = authToken ? { auth_token: authToken } : {};
+          const res = await axios.get(`/api/runninghub-status/${taskId}`, { params });
+          if (res.data.status === 'SUCCESS') {
+            if (res.data.results && res.data.results.length > 0) {
+              this.$set ? this.$set(item, 'enhancedVideo', res.data.results[0]) : (item.enhancedVideo = res.data.results[0]);
+            } else {
+              console.warn('No results in SUCCESS response');
+            }
+            this.$set ? this.$set(this.enhancingVideos, index, false) : (this.enhancingVideos[index] = false);
+            delete this.enhanceTaskIds[index];
+          } else if (res.data.status === 'FAILED') {
+            alert('视频增强失败');
+            this.$set ? this.$set(this.enhancingVideos, index, false) : (this.enhancingVideos[index] = false);
+            delete this.enhanceTaskIds[index];
+          } else {
+            setTimeout(() => this.pollEnhanceStatus(item, index), 5000);
+          }
+        } catch (err) {
+          setTimeout(() => this.pollEnhanceStatus(item, index), 5000);
+        }
+      },
       
       async fetchHistory(append = false) {
         const userId = localStorage.getItem('user_id');
@@ -1852,14 +1973,31 @@
         <div class="status danger" v-if="error">{{ error }}</div>
 
         <div class="preview" v-if="results.length">
+        <div style="display: flex; gap: 20px; padding: 10px 0; min-height: 300px;">
           <div class="imgbox" v-for="(result, i) in results" :key="i">
-            <video :src="result.file_url" controls style="width: 100%; display: block;"></video>
-            <div style="padding: 8px; text-align: center;">
-              <button class="btn secondary" @click="downloadVideo(result.file_url, i)">下载视频</button>
-              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}</div>
+            <!-- 原视频：宽度与按钮一致（此处假设按钮宽度为300px，可根据实际界面调整） -->
+            <div style="width: 300px; flex-shrink: 0;">
+              <div style="margin-bottom: 8px; font-weight: bold; color: var(--primary); text-align: center;">原视频</div>
+              <video :src="result.file_url" controls style="width: 100%; height: auto; display: block;"></video>
+              <div style="padding: 8px; text-align: center;">
+                <button class="btn secondary" @click="downloadVideo(result.file_url, i)" style="margin-right: 8px;">下载视频</button>
+                <button class="btn" @click="enhanceVideo(result, i)" :disabled="enhancingVideos[i]">{{ enhancingVideos[i] ? '处理中...' : '高清放大' }}</button>
+                <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}</div>
+              </div>
+            </div>
+
+            <!-- 高清视频：与原视频宽度一致 -->
+            <div v-if="result.enhancedVideo" style="width: 300px; flex-shrink: 0; margin-left: 20px;">
+              <div style="margin-bottom: 8px; font-weight: bold; color: #10b981; text-align: center;">高清视频</div>
+              <video :src="result.enhancedVideo.file_url || result.enhancedVideo" controls style="width: 100%; height: auto; display: block;"></video>
+              <div style="padding: 8px; text-align: center;">
+                <button class="btn secondary" @click="downloadVideo(result.enhancedVideo.file_url || result.enhancedVideo, i + '_enhanced')">下载高清视频</button>
+                <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.enhancedVideo.task_cost_time || '未知' }}</div>
+              </div>
             </div>
           </div>
         </div>
+      </div>
         
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
@@ -1897,7 +2035,7 @@
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <button class="btn secondary" @click="downloadHistoryResult(item)" style="display: inline-block; margin-right: 8px;">查看结果</button>
-                  <button v-if="item.status == 2 && item.type == 2" class="btn" @click="enhanceVideo(item)" :disabled="enhancingVideos[item.id]" style="display: inline-block;">{{ enhancingVideos[item.id] ? '已修复' : '生成高清视频' }}</button>
+                  <button v-if="item.status == 2 && item.type == 2" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="display: inline-block;">{{ enhancingVideos[item.id] ? '已修复' : '生成高清视频' }}</button>
                 </div>
               </div>
               
