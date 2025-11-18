@@ -1624,9 +1624,11 @@
         prompt: '',
         model: '9:16',
         durationSeconds: 15,
+        count: 1,
         loading: false,
         error: '',
         results: [],
+        projectIds: [],
         projectId: '',
         status: '',
         authToken: '',
@@ -1664,6 +1666,14 @@
           { value: 10, label: '10秒' },
           { value: 15, label: '15秒' }
         ];
+      },
+      countOptions() {
+        return [
+          { value: 1, label: '1个' },
+          { value: 2, label: '2个' },
+          { value: 3, label: '3个' },
+          { value: 4, label: '4个' }
+        ];
       }
     },
     methods: {
@@ -1672,6 +1682,7 @@
         this.loading = true; 
         this.error=''; 
         this.results=[]; 
+        this.projectIds=[];
         this.projectId=''; 
         this.status='';
         
@@ -1680,6 +1691,7 @@
           form.append('prompt', this.prompt);
           form.append('ratio', this.model);
           form.append('duration_seconds', this.durationSeconds);
+          form.append('count', this.count);
           form.append('timeout', '900'); // 15 minutes timeout
           
           // Add user_id from localStorage
@@ -1697,11 +1709,13 @@
             headers: { 'Content-Type': 'multipart/form-data' },
           });
           
-          this.projectId = res.data.project_id || '';
+          // Handle multiple project IDs
+          this.projectIds = res.data.project_ids || [];
+          this.projectId = this.projectIds.join(', ');
           this.status = res.data.status || 'submitted';
           
           // Start polling for status
-          if (this.projectId) {
+          if (this.projectIds.length > 0) {
             this.checkStatus();
           }
           
@@ -1713,37 +1727,77 @@
       },
       
       async checkStatus() {
-        if (!this.projectId) return;
+        if (!this.projectIds || this.projectIds.length === 0) return;
         
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          const res = await axios.get(`/api/get-status/${this.projectId}`, { params });
+          
+          // Batch query all project IDs
+          const projectIdsStr = this.projectIds.join(',');
+          const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
           const payload = res?.data;
 
-          if (!payload || typeof payload.status === 'undefined') {
+          if (!payload) {
             console.error('Invalid status response:', payload);
-            this.statusInterval = setTimeout(() => this.checkStatus(), 5000);
+            this.statusInterval = setTimeout(() => this.checkStatus(), 10000);
             return;
           }
 
-          this.status = payload.status || '';
-
-          if (this.status === 'SUCCESS') {
-            this.results = payload.results || [];
-            this.loading = false;
-            this.clearStatusCheck();
-          } else if (this.status === 'FAILED') {
-            this.error = payload.reason || '任务失败';
-            this.loading = false;
-            this.clearStatusCheck();
+          // Handle batch response
+          if (payload.tasks) {
+            // Multiple tasks response
+            const tasks = payload.tasks;
+            const allSuccess = tasks.every(t => t.status === 'SUCCESS');
+            const anyFailed = tasks.some(t => t.status === 'FAILED');
+            const anyRunning = tasks.some(t => t.status === 'RUNNING');
+            
+            // Collect all successful results
+            const allResults = [];
+            tasks.forEach(task => {
+              if (task.results && task.results.length > 0) {
+                allResults.push(...task.results);
+              }
+            });
+            
+            this.results = allResults;
+            
+            if (allSuccess) {
+              this.status = 'SUCCESS';
+              this.loading = false;
+              this.clearStatusCheck();
+            } else if (anyFailed && !anyRunning) {
+              // All done but some failed
+              const failedTasks = tasks.filter(t => t.status === 'FAILED');
+              this.error = `${failedTasks.length} 个任务失败`;
+              this.status = 'FAILED';
+              this.loading = false;
+              this.clearStatusCheck();
+            } else {
+              // Still running
+              this.status = 'RUNNING';
+              this.statusInterval = setTimeout(() => this.checkStatus(), 10000);
+            }
           } else {
-            this.statusInterval = setTimeout(() => this.checkStatus(), 5000);
+            // Single task response (backward compatibility)
+            this.status = payload.status || '';
+
+            if (this.status === 'SUCCESS') {
+              this.results = payload.results || [];
+              this.loading = false;
+              this.clearStatusCheck();
+            } else if (this.status === 'FAILED') {
+              this.error = payload.reason || '任务失败';
+              this.loading = false;
+              this.clearStatusCheck();
+            } else {
+              this.statusInterval = setTimeout(() => this.checkStatus(), 10000);
+            }
           }
         } catch (err) {
           console.error('Status check failed:', err);
           // Don't stop polling on temporary errors, just log and continue
-          this.statusInterval = setTimeout(() => this.checkStatus(), 5000);
+          this.statusInterval = setTimeout(() => this.checkStatus(), 10000);
         }
       },
       
@@ -2047,6 +2101,13 @@
           </div>
 
           <div class="field">
+            <label class="label">生成数量</label>
+            <select class="input" v-model.number="count">
+              <option v-for="opt in countOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+
+          <div class="field">
             <div class="row">
               <button class="btn" :disabled="!canSubmit" @click="submit">{{ loading ? '生成中…' : '开始生成' }}</button>
               <button class="btn secondary" @click="fetchHistory" :disabled="historyLoading">{{ historyLoading ? '加载中...' : '历史记录' }}</button>
@@ -2059,33 +2120,37 @@
         <div class="status danger" v-if="error">{{ error }}</div>
 
         <div class="preview" v-if="results.length">
-        <div v-for="(result, i) in results" :key="i" style="display: flex; gap: 20px; margin-bottom: 20px; align-items: flex-start;">
-          
-          <div style="width: 300px; flex-shrink: 0;">
-            <div style="margin-bottom: 8px; font-weight: bold; color: var(--primary); text-align: center;">原视频</div>
-            <video :src="result.file_url" controls style="width: 100%; border-radius: 8px;"></video>
-            <div style="padding: 8px; text-align: center;">
-              <button class="btn secondary" @click="downloadVideo(result.file_url, i)">下载视频</button>
-              <button class="btn" @click="enhanceVideo(result, i)" :disabled="enhancingVideos[i]">
-                {{ enhancingVideos[i] ? '处理中...' : '高清放大' }}
-              </button>
-              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time || '未知' }}</div>
-            </div>
-          </div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 24px;">
+            <div v-for="(result, i) in results" :key="i" style="border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: #0b1220;">
+              <div style="margin-bottom: 12px; font-size: 14px; font-weight: bold; color: var(--muted);">视频 #{{ i + 1 }}</div>
+              
+              <!-- 原视频 -->
+              <div style="margin-bottom: 16px;">
+                <div style="margin-bottom: 8px; font-weight: bold; color: var(--primary); text-align: center;">原视频</div>
+                <video :src="result.file_url" controls style="width: 100%; border-radius: 8px;"></video>
+                <div style="padding: 8px; text-align: center;">
+                  <button class="btn secondary" @click="downloadVideo(result.file_url, i)" style="font-size: 12px; padding: 6px 12px;">下载视频</button>
+                  <button class="btn" @click="enhanceVideo(result, i)" :disabled="enhancingVideos[i]" style="font-size: 12px; padding: 6px 12px; margin-left: 8px;">
+                    {{ enhancingVideos[i] ? '处理中...' : '高清放大' }}
+                  </button>
+                  <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time || '未知' }}</div>
+                </div>
+              </div>
 
-
-          <div v-if="result.enhancedVideo" style="width: 300px; flex-shrink: 0;">
-            <div style="margin-bottom: 8px; font-weight: bold; color: #10b981; text-align: center;">高清视频</div>
-            <video :src="result.enhancedVideo.file_url || result.enhancedVideo" controls style="width: 100%; border-radius: 8px;"></video>
-            <div style="padding: 8px; text-align: center;">
-              <button class="btn secondary" @click="downloadVideo(result.enhancedVideo.file_url || result.enhancedVideo, i, true)">
-                下载高清视频
-              </button>
-              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.enhancedVideo.task_cost_time || '未知' }}</div>
+              <!-- 高清视频 -->
+              <div v-if="result.enhancedVideo" style="border-top: 1px solid var(--border); padding-top: 16px;">
+                <div style="margin-bottom: 8px; font-weight: bold; color: #10b981; text-align: center;">高清视频</div>
+                <video :src="result.enhancedVideo.file_url || result.enhancedVideo" controls style="width: 100%; border-radius: 8px;"></video>
+                <div style="padding: 8px; text-align: center;">
+                  <button class="btn secondary" @click="downloadVideo(result.enhancedVideo.file_url || result.enhancedVideo, i, true)" style="font-size: 12px; padding: 6px 12px;">
+                    下载高清视频
+                  </button>
+                  <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.enhancedVideo.task_cost_time || '未知' }}</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
         
         <!-- History Modal -->
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
