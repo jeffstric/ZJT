@@ -2305,10 +2305,12 @@
         authToken: localStorage.getItem('auth_token') || '',
         videoLoading: false,
         videoError: '',
+        videoProjectIds: [],
         videoProjectId: '',
         videoStatus: '',
         videoResults: [],
         videoStatusTimer: null,
+        videoCount: 1,
         editingSceneIndex: null,
         editingSceneText: '',
         progressPercent: 0,
@@ -2643,6 +2645,7 @@
         this.videoError = '';
         this.videoResults = [];
         this.videoStatus = '';
+        this.videoProjectIds = [];
         this.videoProjectId = '';
         this.videoLoading = true;
         this.clearVideoStatusPolling();
@@ -2664,8 +2667,8 @@
           
           form.append('prompt', sceneTexts || '根据上传图片生成视频');
           form.append('ratio', this.videoRatio);
-          
           form.append('duration_seconds', 15);
+          form.append('count', this.videoCount);
           
           const userId = localStorage.getItem('user_id');
           if (userId) form.append('user_id', userId);
@@ -2673,10 +2676,12 @@
           
           const res = await axios.post('/api/ai-app-run-image', form);
           
-          this.videoProjectId = res.data.project_id || '';
+          // Handle multiple project IDs
+          this.videoProjectIds = res.data.project_ids || [];
+          this.videoProjectId = this.videoProjectIds.join(', ');
           this.videoStatus = res.data.status || '';
           
-          if (this.videoProjectId) {
+          if (this.videoProjectIds.length > 0) {
             this.checkVideoStatus();
           }
         } catch (err) {
@@ -2686,28 +2691,79 @@
         }
       },
       async checkVideoStatus() {
-        if (!this.videoProjectId) return;
+        if (!this.videoProjectIds || this.videoProjectIds.length === 0) return;
         
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          const res = await axios.get('/api/get-status/' + this.videoProjectId, { params });
-          this.videoStatus = res.data.status || '';
           
-          if (this.videoStatus === 'SUCCESS') {
-            const rawResults = res.data.results || [];
-            this.videoResults = rawResults.map(item => {
-              const baseItem = typeof item === 'string' ? { file_url: item } : item;
-              return { ...baseItem, enhancedVideo: null };
-            }).filter(item => !!item.file_url);
-            this.videoLoading = false;
-            this.clearVideoStatusPolling();
-          } else if (this.videoStatus === 'FAILED') {
-            this.videoError = res.data.reason || '视频生成失败';
-            this.videoLoading = false;
-            this.clearVideoStatusPolling();
+          // Batch query all project IDs
+          const projectIdsStr = this.videoProjectIds.join(',');
+          const res = await axios.get('/api/get-status/' + projectIdsStr, { params });
+          const payload = res?.data;
+
+          if (!payload) {
+            console.error('Invalid status response:', payload);
+            this.videoStatusTimer = setTimeout(() => this.checkVideoStatus(), 10000);
+            return;
+          }
+
+          // Handle batch response
+          if (payload.tasks) {
+            // Multiple tasks response
+            const tasks = payload.tasks;
+            const allSuccess = tasks.every(t => t.status === 'SUCCESS');
+            const anyFailed = tasks.some(t => t.status === 'FAILED');
+            const anyRunning = tasks.some(t => t.status === 'RUNNING');
+            
+            // Collect all successful results
+            const allResults = [];
+            tasks.forEach(task => {
+              if (task.results && task.results.length > 0) {
+                task.results.forEach(item => {
+                  const baseItem = typeof item === 'string' ? { file_url: item } : item;
+                  allResults.push({ ...baseItem, enhancedVideo: null });
+                });
+              }
+            });
+            
+            this.videoResults = allResults.filter(item => !!item.file_url);
+            
+            if (allSuccess) {
+              this.videoStatus = 'SUCCESS';
+              this.videoLoading = false;
+              this.clearVideoStatusPolling();
+            } else if (anyFailed && !anyRunning) {
+              // All done but some failed
+              const failedTasks = tasks.filter(t => t.status === 'FAILED');
+              this.videoError = `${failedTasks.length} 个任务失败`;
+              this.videoStatus = 'FAILED';
+              this.videoLoading = false;
+              this.clearVideoStatusPolling();
+            } else {
+              // Still running
+              this.videoStatus = 'RUNNING';
+              this.videoStatusTimer = setTimeout(() => this.checkVideoStatus(), 10000);
+            }
           } else {
-            this.videoStatusTimer = setTimeout(() => this.checkVideoStatus(), 5000);
+            // Single task response (backward compatibility)
+            this.videoStatus = payload.status || '';
+            
+            if (this.videoStatus === 'SUCCESS') {
+              const rawResults = payload.results || [];
+              this.videoResults = rawResults.map(item => {
+                const baseItem = typeof item === 'string' ? { file_url: item } : item;
+                return { ...baseItem, enhancedVideo: null };
+              }).filter(item => !!item.file_url);
+              this.videoLoading = false;
+              this.clearVideoStatusPolling();
+            } else if (this.videoStatus === 'FAILED') {
+              this.videoError = payload.reason || '视频生成失败';
+              this.videoLoading = false;
+              this.clearVideoStatusPolling();
+            } else {
+              this.videoStatusTimer = setTimeout(() => this.checkVideoStatus(), 10000);
+            }
           }
         } catch (err) {
           console.error(err);
@@ -2852,6 +2908,15 @@
           </select>
           <div style="margin-top: 6px; font-size: 13px; color: var(--muted);">视频时长15秒</div>
         </div>
+        <div class="field" style="margin-bottom: 12px; padding-left: 18px;">
+          <label class="label">生成数量</label>
+          <select class="input" v-model.number="videoCount">
+            <option :value="1">1个</option>
+            <option :value="2">2个</option>
+            <option :value="3">3个</option>
+            <option :value="4">4个</option>
+          </select>
+        </div>
         <div class="field" style="display: flex; justify-content: flex-end; margin-bottom: 0;">
           <button class="btn btn-full" :disabled="videoLoading" @click="generateVideo" style="padding: 14px 32px; font-size: 18px;">
             {{ videoLoading ? '生成中…' : '生成视频' }}
@@ -2866,25 +2931,28 @@
       </div>
       <div v-if="videoResults.length" style="margin-top: 16px; padding:18px;">
         <h3 style="color: var(--primary); margin-bottom: 12px; font-size: 14px;">生成的视频（共 {{ videoResults.length }} 个）</h3>
-        <div class="results" style="display: flex; flex-direction: column; gap: 20px;">
-          <div v-for="(result, idx) in videoResults" :key="idx" style="display: flex; gap: 20px; align-items: flex-start;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 24px;">
+          <div v-for="(result, idx) in videoResults" :key="idx" style="border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: #0b1220;">
+            <div style="margin-bottom: 12px; font-size: 14px; font-weight: bold; color: var(--muted);">视频 #{{ idx + 1 }}</div>
+            
             <!-- 原视频 -->
-            <div style="width: 300px; flex-shrink: 0;">
+            <div style="margin-bottom: 16px;">
               <div style="margin-bottom: 8px; font-weight: bold; color: var(--primary); text-align: center;">原视频</div>
               <video :src="result.file_url" controls style="width: 100%; border-radius: 8px;"></video>
               <div style="padding: 8px; text-align: center;">
-                <button class="btn secondary" @click="downloadVideo(result.file_url, idx)">下载视频</button>
-                <button class="btn" @click="enhanceVideo(result, idx)" :disabled="enhancingVideos[idx]">
+                <button class="btn secondary" @click="downloadVideo(result.file_url, idx)" style="font-size: 12px; padding: 6px 12px;">下载视频</button>
+                <button class="btn" @click="enhanceVideo(result, idx)" :disabled="enhancingVideos[idx]" style="font-size: 12px; padding: 6px 12px; margin-left: 8px;">
                   {{ enhancingVideos[idx] ? '处理中...' : '高清放大' }}
                 </button>
               </div>
             </div>
-            <!-- 高清视频（右侧显示） -->
-            <div v-if="result.enhancedVideo" style="width: 300px; flex-shrink: 0;">
+
+            <!-- 高清视频 -->
+            <div v-if="result.enhancedVideo" style="border-top: 1px solid var(--border); padding-top: 16px;">
               <div style="margin-bottom: 8px; font-weight: bold; color: #10b981; text-align: center;">高清视频</div>
               <video :src="result.enhancedVideo.file_url || result.enhancedVideo" controls style="width: 100%; border-radius: 8px;"></video>
               <div style="padding: 8px; text-align: center;">
-                <button class="btn secondary" @click="downloadVideo(result.enhancedVideo.file_url || result.enhancedVideo, idx, true)">
+                <button class="btn secondary" @click="downloadVideo(result.enhancedVideo.file_url || result.enhancedVideo, idx, true)" style="font-size: 12px; padding: 6px 12px;">
                   下载高清视频
                 </button>
                 <div class="muted" style="margin-top: 4px; font-size: 11px;">
