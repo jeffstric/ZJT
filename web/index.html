@@ -427,7 +427,7 @@
               user_id: parseInt(userId, 10),
               page: this.historyPage,
               page_size: 20,
-              type: [5, 6],
+              type: 4,
               auth_token: authToken || undefined
             }
           });
@@ -1328,7 +1328,7 @@
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              type: [3,6],  // 3-图片生成视频, 6-视频高清修复
+              type: 3,  // 3-图片生成视频, 6-视频高清修复
               auth_token: authToken || undefined
             }
           });
@@ -1822,7 +1822,7 @@
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              type: [2, 5],  // 2-AI视频生成, 5-视频高清修复
+              type: 2,  // 2-AI视频生成, 5-视频高清修复
               auth_token: authToken || undefined
             }
           });
@@ -2324,7 +2324,7 @@
               user_id: parseInt(userId, 10),
               page: this.historyPage,
               page_size: 20,
-              type: [3, 6], // 3-图片生成视频, 6-高清放大
+              type: 3, // 3-图片生成视频, 6-高清放大
               auth_token: authToken || undefined
             }
           });

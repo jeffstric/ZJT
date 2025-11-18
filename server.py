@@ -1538,6 +1538,7 @@ async def get_ai_tools_history(
             1: [1, 4],  # 图片编辑 + 图片高清放大
             2: [2, 5],  # AI视频生成 + 高清修复
             3: [3, 6],  # 图片生成视频/图生视频智能体 + 高清修复
+            4: [5, 6] # 高清修复
         }
 
         if type in type_mapping:
