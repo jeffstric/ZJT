@@ -1736,13 +1736,13 @@ async def image_upscale(
         logger.info(f"Found original record: type={original_record.type}, result_url={result_url}")
         node_info_list=[
             {
-                "nodeId": "15",
+                "nodeId": "8",
                 "fieldName": "image",
                 "fieldValue": result_url,
-                "description": "Upload image"
+                "description": "用户图片"
             }
         ]
-        result = run_ai_app_task("1950110619129307138", API_KEY, node_info_list, None)
+        result = run_ai_app_task("1987213919284563970", API_KEY, node_info_list, None)
         if result.get("code") != 0:
             error_msg = result.get("msg", "Unknown error")
             raise RuntimeError(f"Task submission failed: {error_msg}")

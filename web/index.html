@@ -882,7 +882,8 @@
           const res = await axios.get(`/api/runninghub-status/${this.upscaleProjectId}`, { params });
           
           if (res.data.status === 'SUCCESS') {
-            this.upscaleResults = res.data.results || [];
+            const rawResults = res.data.results || [];
+            this.upscaleResults = rawResults.length ? [rawResults[0]] : [];
             this.upscaling = false;
             this.clearUpscaleStatusCheck();
           } else if (res.data.status === 'FAILED') {
@@ -1104,9 +1105,8 @@
     },
     methods: {
       getDurationText(item) {
-        return item.original_duration 
-          ? `${item.original_duration}秒` 
-          : (item.duration ? `${item.duration}秒` : '未知');
+        const duration = item?.original_duration ?? item?.duration ?? item?.video_duration ?? (typeof this.durationSeconds === 'number' ? this.durationSeconds : null);
+        return duration ? `${duration}秒` : '未知';
       },
 
       async enhanceVideo(item, index) {
@@ -1395,15 +1395,21 @@
         return colorMap[status] || '#888';
       },
       
+       getHistoryTypeText(type) {
+        const typeMap = {
+        3: '图片生成视频',
+        6: '模糊视频高清放大'
+        };
+        return typeMap[type] || '未知类型';
+        },
+
       getModelLabel(item) {
-        if (item.type === 6) {
-          return '模糊视频高清放大';
-        }
         const modelMap = {
           '9:16': '竖屏',
           '16:9': '横屏'
         };
-        return modelMap[item.ratio] || item.ratio || '未知';
+        const resolved = item.ratio || this.model;
+        return modelMap[resolved] || resolved || '未知';
       },
     },
     
@@ -1525,6 +1531,7 @@
                   </span>
                 </div>
                 <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
+                  <span>类型: {{ getHistoryTypeText(item.type) }}</span>
                   <span>模式: {{ getModelLabel(item) }}</span>
                   <span>时长: {{ getDurationText(item) }}</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
@@ -1729,9 +1736,15 @@
       },
       async enhanceVideo(item, index) {
         console.log('enhanceVideo called with:', { item, index, enhancingVideos: this.enhancingVideos });
-        if (!item.file_url || this.enhancingVideos[index]) {
-          console.log('Early return: file_url=', !!item.file_url, 'enhancingVideos[index]=', this.enhancingVideos[index]);
-          return; 
+        const videoUrl = item?.file_url || item?.result_url;
+        if (!videoUrl) {
+          console.log('Early return: missing videoUrl for enhancement');
+          alert('暂无可增强的视频');
+          return;
+        }
+        if (this.enhancingVideos[index]) {
+          console.log('Early return: enhancingVideos[index]=', this.enhancingVideos[index]);
+          return;
         }
 
         const userId = localStorage.getItem('user_id');
@@ -1744,7 +1757,7 @@
           this.$set ? this.$set(this.enhancingVideos, index, true) : (this.enhancingVideos[index] = true);
 
           const form = new FormData();
-          form.append('video_url', item.file_url);
+          form.append('video_url', videoUrl);
           form.append('user_id', userId);
           form.append('enhance_type', '5'); // Type 5 for AI视频生成
 
@@ -1934,7 +1947,13 @@
           '9:16': '竖屏',
           '16:9': '横屏'
         };
-        return modelMap[value] || value || '未知';
+        const resolved = value || this.model;
+        return modelMap[resolved] || resolved || '未知';
+      },
+      
+      getDurationText(item) {
+        const duration = item?.original_duration ?? item?.duration ?? item?.video_duration ?? (typeof this.durationSeconds === 'number' ? this.durationSeconds : null);
+        return duration ? `${duration}秒` : '未知';
       }
     },
     
@@ -2041,6 +2060,7 @@
                 <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
                   <span>类型: {{ getHistoryTypeText(item.type) }}</span>
                   <span>模式: {{ getModelLabel(item.ratio) }}</span>
+                  <span>时长: {{ getDurationText(item) }}</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
@@ -2238,7 +2258,14 @@
       },
 
       async enhanceVideo(item, index) {
-        if ((!item.file_url && !item.result_url) || this.enhancingVideos[index]) return;
+        const videoUrl = item?.file_url || item?.result_url;
+        if (!videoUrl) {
+          alert('暂无可增强的视频');
+          return;
+        }
+        if (this.enhancingVideos[index]) {
+          return;
+        }
 
         const userId = localStorage.getItem('user_id');
         if (!userId) {
@@ -2250,9 +2277,9 @@
           this.$set ? this.$set(this.enhancingVideos, index, true) : (this.enhancingVideos[index] = true);
 
           const form = new FormData();
-          form.append('video_url', item.file_url || item.result_url);
+          form.append('video_url', videoUrl);
           form.append('user_id', userId);
-          form.append('enhance_type', '7'); // 高清放大任务类型
+          form.append('enhance_type', '6'); // 高清放大任务类型
 
           const authToken = localStorage.getItem('auth_token');
           if (authToken) {
@@ -2383,21 +2410,29 @@
         return colorMap[status] || '#888';
       },
 
+      getHistoryTypeText(type) {
+        const typeMap = {
+          3: '图片生成视频',
+          6: '模糊视频高清放大'
+        };
+        return typeMap[type] || '未知类型';
+      },
+
       getModelLabel(item) {
-      if (item.type === 6) {
-        return '模糊视频高清放大';
-      }
-      const modelMap = {
-        '9:16': '竖屏',
-        '16:9': '横屏'
-      };
-      return modelMap[item.ratio] || item.ratio || '未知';
-    },
+        console.log('AIScriptGen getModelLabel:', { item, videoRatio: this.videoRatio });
+        const modelMap = {
+          '9:16': '竖屏',
+          '16:9': '横屏'
+        };
+        const resolved = item.ratio || this.videoRatio;
+        const result = modelMap[resolved] || resolved || '未知';
+        console.log('AIScriptGen getModelLabel result:', { resolved, result });
+        return result;
+      },
     
       getDurationText(item) {
-        return item.original_duration
-        ? `${item.original_duration}秒`
-        : (item.duration ? `${item.duration}秒` : '未知');
+         const duration = item?.original_duration ?? item?.duration ?? item?.video_duration ?? 15;
+         return duration ? `${duration}秒` : '未知';
       },
 
       async generateVideo() {
@@ -2566,12 +2601,10 @@
         </select>
       </div>
       <div class="field">
-        <button class="btn btn-full" @click="submit">{{ loading ? '生成中…' : '启动智能体' }}</button>
-      </div>
-      <div class="field" style="display: flex; justify-content: flex-end; gap: 12px;">
-        <button class="btn secondary" @click="fetchHistory" :disabled="historyLoading">
-          {{ historyLoading ? '加载中...' : '历史记录' }}
-        </button>
+        <div class="row">
+          <button class="btn" :disabled="!canSubmit" @click="submit">{{ loading ? '生成中…' : '启动智能体' }}</button>
+          <button class="btn secondary" @click="fetchHistory" :disabled="historyLoading">{{ historyLoading ? '加载中...' : '历史记录' }}</button>
+        </div>
       </div>
       <div v-if="loading" class="progress-container">
         <div class="progress-bar-wrapper">
@@ -2705,6 +2738,7 @@
               </span>
             </div>
             <div style="display: flex; gap: 16px; font-size: 13px; color: var(--muted); margin-bottom: 8px;">
+              <span>类型: {{ getHistoryTypeText(item.type) }}</span>
               <span>模式: {{ getModelLabel(item) }}</span>
               <span>时长: {{ getDurationText(item) }}</span>
               <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>

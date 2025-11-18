@@ -379,6 +379,7 @@ def run_ai_app_task(
     url = f"{host}{endpoint}"
     
     headers = {
+        "Host": "www.runninghub.cn",
         "Content-Type": "application/json"
     }
     
