@@ -599,10 +599,10 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
-        upscaling: false,
-        upscaleProjectId: '',
-        upscaleResults: [],
-        upscaleStatusInterval: null,
+        upscalingImages: {},
+        upscaleProjectIds: {},
+        upscaleResults: {},
+        upscaleStatusIntervals: {},
       }
     },
     mounted() {
@@ -703,11 +703,16 @@
             const anyFailed = tasks.some(t => t.status === 'FAILED');
             const anyRunning = tasks.some(t => t.status === 'RUNNING');
             
-            // Collect all successful results
+            // Collect all successful results with their project_ids
             const allResults = [];
-            tasks.forEach(task => {
+            tasks.forEach((task, taskIndex) => {
               if (task.results && task.results.length > 0) {
-                allResults.push(...task.results);
+                task.results.forEach(result => {
+                  allResults.push({
+                    ...result,
+                    project_id: this.projectIds[taskIndex]
+                  });
+                });
               }
             });
             
@@ -893,70 +898,83 @@
         return ratioMap[value] || value || '未知';
       },
       
-      async upscaleImage() {
-        if (!this.projectId) return;
+      async upscaleImage(projectId, index) {
+        if (!projectId) return;
         
-        this.upscaling = true;
+        this.upscalingImages[index] = true;
         this.error = '';
         
         try {
           const form = new FormData();
-          form.append('project_id', this.projectId);
+          form.append('project_id', projectId);
           form.append('user_id', localStorage.getItem('user_id') || '');
           form.append('auth_token', this.authToken);
           
           const res = await axios.post('/api/image-upscale', form);
           
           if (res.data.success) {
-            this.upscaleProjectId = res.data.data.project_id;
-            this.startUpscaleStatusCheck();
+            this.upscaleProjectIds[index] = res.data.data.project_id;
+            this.startUpscaleStatusCheck(index);
           } else {
             this.error = res.data.message || '高清放大失败';
-            this.upscaling = false;
+            this.upscalingImages[index] = false;
           }
         } catch (err) {
           console.error(err);
           this.error = err?.response?.data?.detail || err?.message || '高清放大请求失败';
-          this.upscaling = false;
+          this.upscalingImages[index] = false;
         }
       },
       
-      startUpscaleStatusCheck() {
-        this.checkUpscaleStatus();
+      startUpscaleStatusCheck(index) {
+        this.checkUpscaleStatus(index);
       },
       
-      async checkUpscaleStatus() {
-        if (!this.upscaleProjectId) return;
+      async checkUpscaleStatus(index) {
+        const projectId = this.upscaleProjectIds[index];
+        if (!projectId) return;
         
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          const res = await axios.get(`/api/runninghub-status/${this.upscaleProjectId}`, { params });
+          const res = await axios.get(`/api/runninghub-status/${projectId}`, { params });
+          
+          // Add defensive check for null response
+          if (!res || !res.data) {
+            console.error('Invalid response from server:', res);
+            const timer = setTimeout(() => this.checkUpscaleStatus(index), 3000);
+            this.upscaleStatusIntervals[index] = timer;
+            return;
+          }
           
           if (res.data.status === 'SUCCESS') {
             const rawResults = res.data.results || [];
-            this.upscaleResults = rawResults.length ? [rawResults[0]] : [];
-            this.upscaling = false;
-            this.clearUpscaleStatusCheck();
+            if (rawResults.length > 0) {
+              this.upscaleResults[index] = rawResults[0];
+            }
+            this.upscalingImages[index] = false;
+            this.clearUpscaleStatusCheck(index);
           } else if (res.data.status === 'FAILED') {
             this.error = '高清放大失败';
-            this.upscaling = false;
-            this.clearUpscaleStatusCheck();
+            this.upscalingImages[index] = false;
+            this.clearUpscaleStatusCheck(index);
           } else {
-            // Still running, check again after 5 seconds
-            this.upscaleStatusInterval = setTimeout(() => this.checkUpscaleStatus(), 5000);
+            // RUNNING or QUEUED status
+            const timer = setTimeout(() => this.checkUpscaleStatus(index), 3000);
+            this.upscaleStatusIntervals[index] = timer;
           }
         } catch (err) {
-          console.error('Upscale status check error:', err);
-          // Continue checking, don't stop on temporary errors
-          this.upscaleStatusInterval = setTimeout(() => this.checkUpscaleStatus(), 5000);
+          console.error(err);
+          this.error = '查询高清放大状态失败';
+          this.upscalingImages[index] = false;
+          this.clearUpscaleStatusCheck(index);
         }
       },
       
-      clearUpscaleStatusCheck() {
-        if (this.upscaleStatusInterval) {
-          clearTimeout(this.upscaleStatusInterval);
-          this.upscaleStatusInterval = null;
+      clearUpscaleStatusCheck(index) {
+        if (this.upscaleStatusIntervals[index]) {
+          clearTimeout(this.upscaleStatusIntervals[index]);
+          delete this.upscaleStatusIntervals[index];
         }
       },
       
@@ -1028,25 +1046,27 @@
         <div class="status" v-if="statusText">{{ statusText }}</div>
         <div class="status danger" v-if="error">{{ error }}</div>
 
-        <div class="preview" v-if="results.length || upscaleResults.length">
-          <!-- Original Results -->
+        <div class="preview" v-if="results.length">
           <div class="imgbox" v-for="(result, i) in results" :key="i">
-            <div style="margin-bottom: 8px; font-weight: bold; color: var(--primary); text-align: center;">原始图片</div>
+            <!-- Original Image -->
+            <div style="margin-bottom: 8px; font-weight: bold; color: var(--primary); text-align: center;">原始图片 #{{ i + 1 }}</div>
             <img :src="result.file_url" :alt="'result-'+i" />
             <div style="padding: 8px; text-align: center;">
               <button class="btn secondary" @click="downloadImage(result.file_url, i)">下载图片</button>
-              <button class="btn" @click="upscaleImage" :disabled="upscaling" style="margin-left: 8px;">{{ upscaling ? '高清放大中...' : '高清放大' }}</button>
+              <button class="btn" @click="upscaleImage(result.project_id, i)" :disabled="upscalingImages[i]" style="margin-left: 8px;">
+                {{ upscalingImages[i] ? '高清放大中...' : '高清放大' }}
+              </button>
               <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}s</div>
             </div>
-          </div>
-          
-          <!-- Upscaled Results -->
-          <div class="imgbox" v-for="(result, i) in upscaleResults" :key="'upscale-'+i">
-            <div style="margin-bottom: 8px; font-weight: bold; color: #10b981; text-align: center;">高清放大结果</div>
-            <img :src="result.file_url" :alt="'upscale-result-'+i" />
-            <div style="padding: 8px; text-align: center;">
-              <button class="btn secondary" @click="downloadImage(result.file_url, i)">下载高清图</button>
-              <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ result.task_cost_time }}s</div>
+            
+            <!-- Upscaled Image (shown below original) -->
+            <div v-if="upscaleResults[i]" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+              <div style="margin-bottom: 8px; font-weight: bold; color: #10b981; text-align: center;">高清放大结果</div>
+              <img :src="upscaleResults[i].file_url" :alt="'upscale-result-'+i" />
+              <div style="padding: 8px; text-align: center;">
+                <button class="btn secondary" @click="downloadImage(upscaleResults[i].file_url, i)">下载高清图</button>
+                <div class="muted" style="margin-top: 4px; font-size: 11px;">耗时: {{ upscaleResults[i].task_cost_time }}s</div>
+              </div>
             </div>
           </div>
         </div>
@@ -2923,6 +2943,7 @@
           </button>
         </div>
       </div>
+      <div class="status" v-if="videoProjectId" style="margin-top: 16px;">任务 ID：{{ videoProjectId }}</div>
       <div v-if="videoLoading" class="status" style="margin-top: 16px;">
         视频生成中，请稍候... 状态: {{ videoStatus }}
       </div>

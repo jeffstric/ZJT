@@ -643,6 +643,12 @@ async def runninghub_status(
                 "status": status.value,
                 "results": []
             })
+        else:
+            # RUNNING or QUEUED status
+            return JSONResponse({
+                "status": status.value,
+                "results": []
+            })
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to check runninghub status: {str(e)}")
