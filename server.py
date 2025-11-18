@@ -470,6 +470,7 @@ async def image_edit(
     image: UploadFile = File(...),
     prompt: str = Form(...),
     ratio: str = Form("9:16", description="Model type: 9:16, 16:9, 1:1 ,3:4, 4:3"),
+    count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -484,7 +485,6 @@ async def image_edit(
             )
 
         #用uuid生成交易id
-        transaction_id = str(uuid.uuid4())
         computing_power = TASK_COMPUTING_POWER[1]
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -511,46 +511,56 @@ async def image_edit(
         # Save uploaded image to upload directory
         image_url = _save_uploaded_image(image)
         
-        # Submit task
-        response = create_ai_image(prompt, ratio, image_url)
-        project_id = response["data"]["projectId"]
-        if project_id and CHECK_AUTH_TOKEN:
-            #发起请求，扣除算力
-            success, message, response_data = make_perseids_request(
-                endpoint='user/calculate_computing_power',
-                method='POST',
-                headers=headers,
-                data={
-                    "computing_power": computing_power,
-                    "behavior": "deduct",
-                    "transaction_id": transaction_id
-                }
-            )
-            if not success:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=message
+        # Submit tasks according to generation count
+        project_ids = []
+        for _ in range(count):
+            #用uuid生成交易id
+            transaction_id = str(uuid.uuid4())
+
+            response = create_ai_image(prompt, ratio, image_url)
+            project_id = response.get("data", {}).get("projectId")
+            if not project_id:
+                logger.error("Failed to create project")
+                continue
+            project_ids.append(project_id)
+
+            if CHECK_AUTH_TOKEN:
+                #发起请求，扣除算力
+                success, message, response_data = make_perseids_request(
+                    endpoint='user/calculate_computing_power',
+                    method='POST',
+                    headers=headers,
+                    data={
+                        "computing_power": computing_power,
+                        "behavior": "deduct",
+                        "transaction_id": transaction_id
+                    }
                 )
-            
-        # Create database record
-        if user_id:
-            try:
-                AIToolsModel.create(
-                    prompt=prompt,
-                    user_id=user_id,
-                    type=1,  # 1-图片编辑
-                    image_path=image_url,
-                    ratio=ratio,
-                    project_id=project_id,
-                    transaction_id=transaction_id,
-                    status=1
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to create database record: {db_error}")
-                # Don't fail the request if database insert fails
-        
+                if not success:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=message
+                    )
+
+            # Create database record for each project
+            if user_id:
+                try:
+                    AIToolsModel.create(
+                        prompt=prompt,
+                        user_id=user_id,
+                        type=1,  # 1-图片编辑
+                        image_path=image_url,
+                        ratio=ratio,
+                        project_id=project_id,
+                        transaction_id=transaction_id,
+                        status=1
+                    )
+                except Exception as db_error:
+                    logger.error(f"Failed to create database record: {db_error}")
+                    # Don't fail the request if database insert fails
+
         return JSONResponse({
-            "project_id": project_id,
+            "project_ids": project_ids,
             "status": "submitted",
             "image_url": image_url
         })
@@ -644,99 +654,126 @@ async def get_status(
     auth_token: Optional[str] = Query(None, description="Auth token for computing power refund")
 ):
     """
-    Check the status of an AI task
-    If task fails, will refund computing power
+    Check the status of one or more AI tasks.
+    - For a single project_id: returns the original shape {status, results, reason?}
+    - For multiple project_ids (comma-separated): returns {tasks: [{project_id, status, results, reason}]}
+    If task fails, will refund computing power.
     """
     try:
-        # Call get_ai_task_result to check status
-        result = get_ai_task_result(project_id)
-        
-        # Check if API call was successful
-        if result.get("code") != 0:
-            error_msg = result.get("msg", "Unknown error")
-            raise HTTPException(status_code=500, detail=f"Failed to get task result: {error_msg}")
-        
-        data = result.get("data", {})
-        task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-        media_url = data.get("mediaUrl")
-        reason = data.get("reason")
-        
-        # Query database to get creation time
-        task_record = AIToolsModel.get_by_project_id(project_id)
-        task_cost_time = None
-        if task_record and task_record.create_time:
-            # Calculate time difference in seconds
-            from datetime import datetime
-            current_time = datetime.now()
-            time_diff = current_time - task_record.create_time
-            task_cost_time = int(time_diff.total_seconds())
-        
-        # Update database based on status
-        if task_status == 1:  # Success
-            try:
-                AIToolsModel.update_by_project_id(
-                    project_id=project_id,
-                    result_url=media_url,
-                    status=2  # 2-处理完成
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to update database record: {db_error}")
-            
-            return JSONResponse({
-                "status": "SUCCESS",
-                "results": [
-                    {
+        project_ids = [pid.strip() for pid in project_id.split(",") if pid.strip()]
+        if not project_ids:
+            raise HTTPException(status_code=400, detail="project_id is required")
+
+        tasks_response = []
+
+        for pid in project_ids:
+            # Call get_ai_task_result to check status
+            result = get_ai_task_result(pid)
+
+            # Check if API call was successful
+            if result.get("code") != 0:
+                error_msg = result.get("msg", "Unknown error")
+                raise HTTPException(status_code=500, detail=f"Failed to get task result: {error_msg}")
+
+            data = result.get("data", {})
+            task_status = data.get("status")  # 0-进行中 1-成功 2-失败
+            media_url = data.get("mediaUrl")
+            reason = data.get("reason")
+
+            # Query database to get creation time
+            task_record = AIToolsModel.get_by_project_id(pid)
+            task_cost_time = None
+            if task_record and task_record.create_time:
+                # Calculate time difference in seconds
+                from datetime import datetime
+                current_time = datetime.now()
+                time_diff = current_time - task_record.create_time
+                task_cost_time = int(time_diff.total_seconds())
+
+            status_str = "RUNNING"
+            results_payload = []
+            reason_payload = None
+
+            # Update database based on status
+            if task_status == 1:  # Success
+                status_str = "SUCCESS"
+                try:
+                    AIToolsModel.update_by_project_id(
+                        project_id=pid,
+                        result_url=media_url,
+                        status=2  # 2-处理完成
+                    )
+                except Exception as db_error:
+                    logger.error(f"Failed to update database record: {db_error}")
+
+                if media_url:
+                    results_payload = [{
                         "file_url": media_url,
                         "task_cost_time": task_cost_time
-                    }
-                ] if media_url else []
+                    }]
+
+            elif task_status == 2:  # Failed
+                status_str = "FAILED"
+                logger.info(f"Task failed: {reason}")
+                if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
+                    reason = "图片包含真人，无法处理"
+                elif reason and "This content may violate our guardrails concerning similarity to third-party content. " in reason:
+                    reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
+                try:
+                    AIToolsModel.update_by_project_id(
+                        project_id=pid,
+                        status=-1,  # -1-处理失败
+                        message=reason
+                    )
+                except Exception as db_error:
+                    logger.error(f"Failed to update database record: {db_error}")
+                if CHECK_AUTH_TOKEN and auth_token and task_record is not None:
+                    # 生成交易ID
+                    transaction_id = str(uuid.uuid4())
+                    headers = {'Authorization': f'Bearer {auth_token}'}
+                    #发起请求，增加算力
+                    type = task_record.type
+                    computing_power = TASK_COMPUTING_POWER[type]
+                    success, message, response_data = make_perseids_request(
+                        endpoint='user/calculate_computing_power',
+                        method='POST',
+                        headers=headers,
+                        data={
+                            "computing_power": computing_power,
+                            "behavior": "increase",
+                            "transaction_id": transaction_id
+                        }
+                    )
+                    if success:
+                        logger.info(f"Successfully refunded {computing_power} computing power for failed task {pid}, transaction_id: {transaction_id}")
+                    else:
+                        logger.error(f"Failed to refund computing power for task {pid}: {message}")
+
+                reason_payload = reason
+
+            # task_status == 0 or unknown -> RUNNING by default
+
+            tasks_response.append({
+                "project_id": pid,
+                "status": status_str,
+                "results": results_payload,
+                "reason": reason_payload
             })
-        elif task_status == 2:  # Failed
-            logger.info(f"Task failed: {reason}")
-            if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
-                reason = "图片包含真人，无法处理"
-            elif reason and "This content may violate our guardrails concerning similarity to third-party content. " in reason:
-                reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
-            try:
-                AIToolsModel.update_by_project_id(
-                    project_id=project_id,
-                    status=-1,  # -1-处理失败
-                    message=reason
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to update database record: {db_error}")
-            if CHECK_AUTH_TOKEN and auth_token:
-                # 生成交易ID
-                transaction_id = str(uuid.uuid4())
-                headers = {'Authorization': f'Bearer {auth_token}'}
-                #发起请求，增加算力
-                type = task_record.type
-                computing_power = TASK_COMPUTING_POWER[type]
-                success, message, response_data = make_perseids_request(
-                    endpoint='user/calculate_computing_power',
-                    method='POST',
-                    headers=headers,
-                    data={
-                        "computing_power": computing_power,
-                        "behavior": "increase",
-                        "transaction_id": transaction_id
-                    }
-                )
-                if success:
-                    logger.info(f"Successfully refunded {computing_power} computing power for failed task {project_id}, transaction_id: {transaction_id}")
-                else:
-                    logger.error(f"Failed to refund computing power for task {project_id}: {message}")
+
+        # Backward compatibility: single project_id keeps old shape
+        if len(tasks_response) == 1:
+            task = tasks_response[0]
             return JSONResponse({
-                "status": "FAILED",
-                "reason": reason,
-                "results": []
+                "status": task["status"],
+                "results": task["results"],
+                "reason": task["reason"]
             })
-        else:  # task_status == 0, In progress
-            return JSONResponse({
-                "status": "RUNNING",
-                "results": []
-            })
-            
+
+        # Multiple project_ids: return list
+        return JSONResponse({
+            "tasks": tasks_response
+        })
+
     except HTTPException:
         raise
     except Exception as e:
@@ -748,6 +785,7 @@ async def ai_app_run(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     ratio: str = Form("9:16", description="Model type: 9:16, 16:9"),
     duration_seconds: int = Form(15, description="Duration in seconds"),
+    count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -761,8 +799,6 @@ async def ai_app_run(
                 status_code=400, 
                 detail="Authentication token is required"
             )
-        #用uuid生成交易id
-        transaction_id = str(uuid.uuid4())
         computing_power = TASK_COMPUTING_POWER[2]
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -787,53 +823,62 @@ async def ai_app_run(
                 )
             
             
-        # Submit task (async, return immediately)
-        result = create_image_to_video(prompt, ratio, None, duration_seconds)
-        # Check if task submission failed
-        if result.get("code") != 0:
-            error_msg = result.get("msg", "Unknown error")
-            raise HTTPException(status_code=500, detail=f"Task submission failed: {error_msg}")
-        
-        project_id = result.get("data", {}).get("projectId")
-        if not project_id:
-            raise HTTPException(status_code=500, detail="未获得任务id")
-        if CHECK_AUTH_TOKEN:
-            #发起请求，增加算力
-            success, message, response_data = make_perseids_request(
-                endpoint='user/calculate_computing_power',
-                method='POST',
-                headers=headers,
-                data={
-                    "computing_power": computing_power,
-                    "behavior": "deduct",
-                    "transaction_id": transaction_id
-                }
-            )
-            if not success:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=message
-                )
+        project_ids = []
 
-        # Create database record
-        if user_id:
-            try:
-                AIToolsModel.create(
-                    prompt=prompt,
-                    user_id=user_id,
-                    type=2,  # 2-AI视频生成
-                    ratio=ratio,
-                    project_id=project_id,
-                    transaction_id=transaction_id,
-                    status=1
+        # Submit tasks according to generation count
+        for _ in range(count):
+            # 用uuid生成交易id
+            transaction_id = str(uuid.uuid4())
+
+            # Submit task (async, return immediately)
+            result = create_image_to_video(prompt, ratio, None, duration_seconds)
+            # Check if task submission failed
+            if result.get("code") != 0:
+                error_msg = result.get("msg", "Unknown error")
+                raise HTTPException(status_code=500, detail=f"Task submission failed: {error_msg}")
+
+            project_id = result.get("data", {}).get("projectId")
+            if not project_id:
+                raise HTTPException(status_code=500, detail="未获得任务id")
+            project_ids.append(project_id)
+
+            if CHECK_AUTH_TOKEN:
+                #发起请求，增加算力
+                success, message, response_data = make_perseids_request(
+                    endpoint='user/calculate_computing_power',
+                    method='POST',
+                    headers=headers,
+                    data={
+                        "computing_power": computing_power,
+                        "behavior": "deduct",
+                        "transaction_id": transaction_id
+                    }
                 )
-            except Exception as db_error:
-                logger.error(f"Failed to create database record: {db_error}")
-                # Don't fail the request if database insert fails
-        
+                if not success:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=message
+                    )
+
+            # Create database record for each project
+            if user_id:
+                try:
+                    AIToolsModel.create(
+                        prompt=prompt,
+                        user_id=user_id,
+                        type=2,  # 2-AI视频生成
+                        ratio=ratio,
+                        project_id=project_id,
+                        transaction_id=transaction_id,
+                        status=1
+                    )
+                except Exception as db_error:
+                    logger.error(f"Failed to create database record: {db_error}")
+                    # Don't fail the request if database insert fails
+
         return JSONResponse({
             "success": True,
-            "project_id": project_id,
+            "project_ids": project_ids,
             "status": "submitted"
         })
         
@@ -848,6 +893,7 @@ async def ai_app_run_image(
     images: List[UploadFile] = File(..., description="Image files for the AI app (1-5 images)"),
     ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9"),
     duration_seconds: int = Form(15, description="Duration in seconds"),
+    count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -882,8 +928,6 @@ async def ai_app_run_image(
         else:
             image_url = _concatenate_images(images)
 
-        #用uuid生成交易id
-        transaction_id = str(uuid.uuid4())
         computing_power = TASK_COMPUTING_POWER[3]
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -899,63 +943,83 @@ async def ai_app_run_image(
                     detail=message
                 )
             
-            # Check if computing power is sufficient
+            # Check if computing power is sufficient for all generations
             user_computing_power = response_data.get('computing_power', 0)
-            if user_computing_power < computing_power:
+            total_computing_power = computing_power * count
+            if user_computing_power < total_computing_power:
                 raise HTTPException(
                     status_code=400, 
-                    detail="您的算力不足，无法生成视频"
+                    detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
                 )
-            
-        # Submit task (async, return immediately)
-        result = create_image_to_video(prompt, ratio, image_url, duration_seconds)
         
-        # Check if task submission failed
-        if result.get("code") != 0:
-            error_msg = result.get("msg", "Unknown error")
-            raise HTTPException(status_code=500, detail=f"Task submission failed: {error_msg}")
+        project_ids = []
         
-        project_id = result.get("data", {}).get("projectId")
-        if not project_id:
-            raise HTTPException(status_code=500, detail="未获得任务id")
-        if CHECK_AUTH_TOKEN:
-            #发起请求，扣除算力
-            success, message, response_data = make_perseids_request(
-                endpoint='user/calculate_computing_power',
-                method='POST',
-                headers=headers,
-                data={
-                    "computing_power": computing_power,
-                    "behavior": "deduct",
-                    "transaction_id": transaction_id
-                }
-            )
-            if not success:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=message
-                )
-        # Create database record
-        if user_id:
+        # Loop to create multiple tasks
+        for i in range(count):
             try:
-                AIToolsModel.create(
-                    prompt=prompt,
-                    user_id=user_id,
-                    type=3,  # 3-图片生成视频
-                    image_path=image_url,
-                    ratio=ratio,
-                    duration=duration_seconds,
-                    project_id=project_id,
-                    transaction_id=transaction_id,
-                    status=1
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to create database record: {db_error}")
-                # Don't fail the request if database insert fails
+                # Generate unique transaction ID for each task
+                transaction_id = str(uuid.uuid4())
+                
+                # Submit task (async, return immediately)
+                result = create_image_to_video(prompt, ratio, image_url, duration_seconds)
+                
+                # Check if task submission failed
+                if result.get("code") != 0:
+                    error_msg = result.get("msg", "Unknown error")
+                    logger.error(f"Task {i+1} submission failed: {error_msg}")
+                    continue  # Continue with next task
+                
+                project_id = result.get("data", {}).get("projectId")
+                if not project_id:
+                    logger.error(f"Task {i+1}: No project ID received")
+                    continue  # Continue with next task
+                
+                project_ids.append(project_id)
+                
+                # Deduct computing power for each task
+                if CHECK_AUTH_TOKEN:
+                    success, message, response_data = make_perseids_request(
+                        endpoint='user/calculate_computing_power',
+                        method='POST',
+                        headers=headers,
+                        data={
+                            "computing_power": computing_power,
+                            "behavior": "deduct",
+                            "transaction_id": transaction_id
+                        }
+                    )
+                    if not success:
+                        logger.error(f"Task {i+1} computing power deduction failed: {message}")
+                        # Continue anyway, as task is already submitted
+                
+                # Create database record for each task
+                if user_id:
+                    try:
+                        AIToolsModel.create(
+                            prompt=prompt,
+                            user_id=user_id,
+                            type=3,  # 3-图片生成视频
+                            image_path=image_url,
+                            ratio=ratio,
+                            duration=duration_seconds,
+                            project_id=project_id,
+                            transaction_id=transaction_id,
+                            status=1
+                        )
+                    except Exception as db_error:
+                        logger.error(f"Failed to create database record for task {i+1}: {db_error}")
+                        # Don't fail the request if database insert fails
+                        
+            except Exception as task_error:
+                logger.error(f"Task {i+1} failed: {task_error}")
+                continue  # Continue with next task
+        
+        if not project_ids:
+            raise HTTPException(status_code=500, detail="所有任务都提交失败")
         
         return JSONResponse({
             "success": True,
-            "project_id": project_id,
+            "project_ids": project_ids,
             "status": "submitted",
             "image_url": image_url
         })
@@ -2004,7 +2068,7 @@ if __name__ == "__main__":
         port = config["server"].get("https_port") or config["server"].get("port")
     else:
         # For HTTP, use port or default
-        port = config["server"].get("port", 5173)
+        port = config["server"].get("port")
     
     if https_config.get("enabled", False):
         # HTTPS configuration

@@ -585,9 +585,11 @@
         file: null,
         prompt: '请输入图片的编辑指令',
         ratio: '9:16',
+        count: 1,
         loading: false,
         error: '',
         results: [],
+        projectIds: [],
         projectId: '',
         status: '',
         statusInterval: null,
@@ -618,6 +620,14 @@
           { value: '4:3', label: '横屏 (4:3)' }
         ];
       },
+      countOptions() {
+        return [
+          { value: 1, label: '1张' },
+          { value: 2, label: '2张' },
+          { value: 3, label: '3张' },
+          { value: 4, label: '4张' }
+        ];
+      },
       statusText() {
         switch(this.status) {
           case 'submitted': return '任务已提交，等待处理...';
@@ -634,7 +644,7 @@
       
       async submit(){
         if(!this.canSubmit) return;
-        this.loading = true; this.error=''; this.results=[]; this.projectId=''; this.status='';
+        this.loading = true; this.error=''; this.results=[]; this.projectIds=[]; this.projectId=''; this.status='';
         this.clearStatusCheck();
         
         try {
@@ -642,6 +652,7 @@
           form.append('image', this.file);
           form.append('prompt', this.prompt);
           form.append('ratio', this.ratio);
+          form.append('count', this.count);
           
           // Add user_id from localStorage
           const userId = localStorage.getItem('user_id');
@@ -658,7 +669,9 @@
             headers: { 'Content-Type': 'multipart/form-data' },
           });
           
-          this.projectId = res.data.project_id || '';
+          // Handle multiple project IDs
+          this.projectIds = res.data.project_ids || [];
+          this.projectId = this.projectIds.join(', ');
           this.status = res.data.status || 'submitted';
           
           // Start polling for status
@@ -672,23 +685,62 @@
       },
       
       async checkStatus() {
-        if (!this.projectId) return;
+        if (!this.projectIds || this.projectIds.length === 0) return;
         
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          const res = await axios.get(`/api/get-status/${this.projectId}`, { params });
           
-          this.status = res.data.status;
+          // Batch query all project IDs
+          const projectIdsStr = this.projectIds.join(',');
+          const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
           
-          if (res.data.status === 'SUCCESS') {
-            this.results = res.data.results || [];
-            this.loading = false;
-            this.clearStatusCheck();
-          } else if (res.data.status === 'FAILED') {
-            this.error = res.data.reason || '任务处理失败';
-            this.loading = false;
-            this.clearStatusCheck();
+          // Handle batch response
+          if (res.data.tasks) {
+            // Multiple tasks response
+            const tasks = res.data.tasks;
+            const allSuccess = tasks.every(t => t.status === 'SUCCESS');
+            const anyFailed = tasks.some(t => t.status === 'FAILED');
+            const anyRunning = tasks.some(t => t.status === 'RUNNING');
+            
+            // Collect all successful results
+            const allResults = [];
+            tasks.forEach(task => {
+              if (task.results && task.results.length > 0) {
+                allResults.push(...task.results);
+              }
+            });
+            
+            this.results = allResults;
+            
+            if (allSuccess) {
+              this.status = 'SUCCESS';
+              this.loading = false;
+              this.clearStatusCheck();
+            } else if (anyFailed && !anyRunning) {
+              // All done but some failed
+              const failedTasks = tasks.filter(t => t.status === 'FAILED');
+              this.error = `${failedTasks.length} 个任务失败`;
+              this.status = 'FAILED';
+              this.loading = false;
+              this.clearStatusCheck();
+            } else {
+              // Still running
+              this.status = 'RUNNING';
+            }
+          } else {
+            // Single task response (backward compatibility)
+            this.status = res.data.status;
+            
+            if (res.data.status === 'SUCCESS') {
+              this.results = res.data.results || [];
+              this.loading = false;
+              this.clearStatusCheck();
+            } else if (res.data.status === 'FAILED') {
+              this.error = res.data.reason || '任务处理失败';
+              this.loading = false;
+              this.clearStatusCheck();
+            }
           }
         } catch (err) {
           console.error('Status check error:', err);
@@ -699,7 +751,7 @@
       startStatusCheck() {
         this.statusInterval = setInterval(() => {
           this.checkStatus();
-        }, 3000); // Check every 3 seconds
+        }, 10000); // Check every 10 seconds
       },
       
       clearStatusCheck() {
@@ -954,6 +1006,13 @@
             <label class="label">图片比例</label>
             <select class="input" v-model="ratio">
               <option v-for="opt in ratioOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label class="label">生成数量</label>
+            <select class="input" v-model.number="count">
+              <option v-for="opt in countOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </div>
 
