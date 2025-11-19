@@ -18,7 +18,7 @@ from config_util import get_config_path, is_dev_environment
 from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
 from model import AIToolsModel
 import uuid
-from api_requset import create_image_to_video, get_ai_task_result, create_ai_image
+from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image
 from PIL import Image
 from baidu import call_ernie_vl_api
 
@@ -518,7 +518,7 @@ async def image_edit(
             transaction_id = str(uuid.uuid4())
 
             response = create_ai_image(prompt, ratio, image_url)
-            project_id = response.get("data", {}).get("projectId")
+            project_id = response.get("data", {}).get("task_id")
             if not project_id:
                 logger.error("Failed to create project")
                 continue
@@ -673,8 +673,13 @@ async def get_status(
         tasks_response = []
 
         for pid in project_ids:
-            # Call get_ai_task_result to check status
-            result = get_ai_task_result(pid)
+            # Query database to get task type
+            task_record = AIToolsModel.get_by_project_id(pid)
+            
+            # Determine if this is a video task (type 2 or 3)
+            is_video = task_record and task_record.type in [2, 3]
+            
+            result = get_ai_task_result(pid, is_video)
 
             # Check if API call was successful
             if result.get("code") != 0:
@@ -685,9 +690,7 @@ async def get_status(
             task_status = data.get("status")  # 0-进行中 1-成功 2-失败
             media_url = data.get("mediaUrl")
             reason = data.get("reason")
-
-            # Query database to get creation time
-            task_record = AIToolsModel.get_by_project_id(pid)
+            # Calculate task cost time
             task_cost_time = None
             if task_record and task_record.create_time:
                 # Calculate time difference in seconds
@@ -838,12 +841,9 @@ async def ai_app_run(
 
             # Submit task (async, return immediately)
             result = create_image_to_video(prompt, ratio, None, duration_seconds)
-            # Check if task submission failed
-            if result.get("code") != 0:
-                error_msg = result.get("msg", "Unknown error")
-                raise HTTPException(status_code=500, detail=f"Task submission failed: {error_msg}")
-
-            project_id = result.get("data", {}).get("projectId")
+            logger.info(f"Submit task result: {result}")
+            # Get project_id from new API response format
+            project_id = result.get("id")
             if not project_id:
                 raise HTTPException(status_code=500, detail="未获得任务id")
             project_ids.append(project_id)
@@ -969,13 +969,8 @@ async def ai_app_run_image(
                 # Submit task (async, return immediately)
                 result = create_image_to_video(prompt, ratio, image_url, duration_seconds)
                 
-                # Check if task submission failed
-                if result.get("code") != 0:
-                    error_msg = result.get("msg", "Unknown error")
-                    logger.error(f"Task {i+1} submission failed: {error_msg}")
-                    continue  # Continue with next task
-                
-                project_id = result.get("data", {}).get("projectId")
+                # Get project_id from new API response format
+                project_id = result.get("id")
                 if not project_id:
                     logger.error(f"Task {i+1}: No project ID received")
                     continue  # Continue with next task
@@ -1489,7 +1484,6 @@ async def get_ai_tools_history(
                     continue
                     
                 try:
-                    # Type 4 (图片高清放大) uses RunningHub, others use get_ai_task_result
                     if task.type in [4,5,6]:
                         # Use RunningHub client for upscale tasks
                         client = RunningHubClient()
@@ -1520,8 +1514,10 @@ async def get_ai_tools_history(
                             total_refund_power += computing_power
                             logger.info(f"Upscale task {task.project_id} failed, will refund {computing_power} computing power")
                     else:
-                        # Use get_ai_task_result for other task types
-                        result = get_ai_task_result(task.project_id)
+                        # Determine if this is a video task (type 2 or 3)
+                        is_video = task.type in [2, 3]
+                        
+                        result = get_ai_task_result(task.project_id, is_video)
                         
                         # Ensure we received a valid response
                         if not result or not isinstance(result, dict):
