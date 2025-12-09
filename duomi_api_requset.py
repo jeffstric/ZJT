@@ -48,11 +48,12 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
     response = requests.post(url, json=payload, headers=headers)
     return response.json()
 
-def create_ai_image(prompt, ratio="9:16", img_url=None):
+def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16", image_urls=None):
     """
     Generate AI image using NanoBanana API
     
     Args:
+        model: Model type (default: "gemini-2.5-pro-image-preview")
         prompt: Text prompt for image generation
         ratio: Image aspect ratio (default: "9:16")
         img_url: Optional image URL
@@ -63,11 +64,12 @@ def create_ai_image(prompt, ratio="9:16", img_url=None):
     url = "https://duomiapi.com/api/gemini/nano-banana-edit"
     
     payload = {
+        "model": model,
         "prompt": prompt,
         "aspect_ratio": ratio,
-        "image_urls": [img_url]
+        "image_urls": image_urls,
     }
-    
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": token

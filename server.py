@@ -45,14 +45,15 @@ API_KEY = config["runninghub"]["api_key"]
 DEFAULT_COMFYUI_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188/")
 
 # Type to computing power mapping
-# 1: 图片编辑, 2: AI视频生成, 3: 图片生成视频, 4: 高清放大, 5: 视频高清修复
+# 1: 图片编辑, 2: AI视频生成, 3: 图片生成视频, 4: 高清放大, 5: ai视频高清修复, 6: 图生视频高清修复，7：图片编辑(nano-banana-pro)
 TASK_COMPUTING_POWER = {
     1: 2,
     2: 20,
     3: 20,
     4: 1,
     5: 10,
-    6: 10
+    6: 10,
+    7: 6
 }
 
 app = FastAPI(title="ComfyUI Qwen Image Edit Proxy")
@@ -467,15 +468,17 @@ def _concatenate_images(upload_files: List[UploadFile]) -> str:
 
 @app.post("/api/image-edit")
 async def image_edit(
-    image: UploadFile = File(...),
+    image: List[UploadFile] = File(...),
     prompt: str = Form(...),
     ratio: str = Form("9:16", description="Model type: 9:16, 16:9, 1:1 ,3:4, 4:3"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
-    auth_token: str = Form(None, description="Authentication token")
+    auth_token: str = Form(None, description="Authentication token"),
+    model: str = Form("gemini-2.5-pro-image-preview", description="Model type: gemini-2.5-pro-image-preview, gemini-3-pro-image-preview")
 ):
     """
     Submit image editing task to RunningHub nanobanana service
+    Supports multiple images - will concatenate them horizontally if more than one
     """
     try:
         if CHECK_AUTH_TOKEN and auth_token is None:
@@ -485,7 +488,12 @@ async def image_edit(
             )
 
         #用uuid生成交易id
-        computing_power = TASK_COMPUTING_POWER[1]
+        image_edit_type = 1
+        if model == "gemini-2.5-pro-image-preview":
+            image_edit_type = 1
+        elif model == "gemini-3-pro-image-preview":
+            image_edit_type = 7
+        computing_power = TASK_COMPUTING_POWER[image_edit_type]
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
@@ -508,8 +516,8 @@ async def image_edit(
                     detail="您的算力不足，无法生成视频"
                 )
 
-        # Save uploaded image to upload directory
-        image_url = _save_uploaded_image(image)
+        # Handle multiple images
+        image_urls = [_save_uploaded_image(img) for img in image]
         
         # Submit tasks according to generation count
         project_ids = []
@@ -517,7 +525,8 @@ async def image_edit(
             #用uuid生成交易id
             transaction_id = str(uuid.uuid4())
 
-            response = create_ai_image(prompt, ratio, image_url)
+            response = create_ai_image(model, prompt, ratio, image_urls)
+            logger.info(response)
             project_id = response.get("data", {}).get("task_id")
             if not project_id:
                 logger.error("Failed to create project")
@@ -545,11 +554,13 @@ async def image_edit(
             # Create database record for each project
             if user_id:
                 try:
+                    # Store multiple image URLs as comma-separated string
+                    image_path_str = ','.join(image_urls) if isinstance(image_urls, list) else image_urls
                     AIToolsModel.create(
                         prompt=prompt,
                         user_id=user_id,
-                        type=1,  # 1-图片编辑
-                        image_path=image_url,
+                        type=image_edit_type,  # 1-图片编辑
+                        image_path=image_path_str,
                         ratio=ratio,
                         project_id=project_id,
                         transaction_id=transaction_id,
@@ -562,7 +573,7 @@ async def image_edit(
         return JSONResponse({
             "project_ids": project_ids,
             "status": "submitted",
-            "image_url": image_url
+            "image_urls": image_urls
         })
     except HTTPException:
         raise    
@@ -728,35 +739,44 @@ async def get_status(
                     reason = "图片包含真人，无法处理"
                 elif reason and "This content may violate our guardrails concerning similarity to third-party content. " in reason:
                     reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
-                try:
-                    AIToolsModel.update_by_project_id(
-                        project_id=pid,
-                        status=-1,  # -1-处理失败
-                        message=reason
-                    )
-                except Exception as db_error:
-                    logger.error(f"Failed to update database record: {db_error}")
-                if CHECK_AUTH_TOKEN and auth_token and task_record is not None:
-                    # 生成交易ID
-                    transaction_id = str(uuid.uuid4())
-                    headers = {'Authorization': f'Bearer {auth_token}'}
-                    #发起请求，增加算力
-                    type = task_record.type
-                    computing_power = TASK_COMPUTING_POWER[type]
-                    success, message, response_data = make_perseids_request(
-                        endpoint='user/calculate_computing_power',
-                        method='POST',
-                        headers=headers,
-                        data={
-                            "computing_power": computing_power,
-                            "behavior": "increase",
-                            "transaction_id": transaction_id
-                        }
-                    )
-                    if success:
-                        logger.info(f"Successfully refunded {computing_power} computing power for failed task {pid}, transaction_id: {transaction_id}")
-                    else:
-                        logger.error(f"Failed to refund computing power for task {pid}: {message}")
+                
+                # Check if task has already been marked as failed
+                already_failed = task_record and task_record.status == -1
+                
+                if not already_failed:
+                    # Only update status and refund if not already processed
+                    try:
+                        AIToolsModel.update_by_project_id(
+                            project_id=pid,
+                            status=-1,  # -1-处理失败
+                            message=reason
+                        )
+                    except Exception as db_error:
+                        logger.error(f"Failed to update database record: {db_error}")
+                    
+                    if CHECK_AUTH_TOKEN and auth_token and task_record is not None:
+                        # 生成交易ID
+                        transaction_id = str(uuid.uuid4())
+                        headers = {'Authorization': f'Bearer {auth_token}'}
+                        #发起请求，增加算力
+                        type = task_record.type
+                        computing_power = TASK_COMPUTING_POWER[type]
+                        success, message, response_data = make_perseids_request(
+                            endpoint='user/calculate_computing_power',
+                            method='POST',
+                            headers=headers,
+                            data={
+                                "computing_power": computing_power,
+                                "behavior": "increase",
+                                "transaction_id": transaction_id
+                            }
+                        )
+                        if success:
+                            logger.info(f"Successfully refunded {computing_power} computing power for failed task {pid}, transaction_id: {transaction_id}")
+                        else:
+                            logger.error(f"Failed to refund computing power for task {pid}: {message}")
+                else:
+                    logger.info(f"Task {pid} already marked as failed (status=-1), skipping status update and refund")
 
                 reason_payload = reason
 
@@ -1601,7 +1621,7 @@ async def get_ai_tools_history(
         
         # 查询历史记录
         type_mapping = {
-            1: [1, 4],  # 图片编辑 + 图片高清放大
+            1: [1, 4, 7],  # 图片编辑 + 图片高清放大
             2: [2, 5],  # AI视频生成 + 高清修复
             3: [3, 6],  # 图片生成视频/图生视频智能体 + 高清修复
             4: [5, 6] # 高清修复

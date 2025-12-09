@@ -613,10 +613,11 @@
     name: 'ImageEdit',
     data() {
       return {
-        file: null,
-        prompt: '请输入图片的编辑指令',
+        files: [],
+        prompt: '',
         ratio: '9:16',
         count: 1,
+        model: 'gemini-2.5-pro-image-preview',
         loading: false,
         error: '',
         results: [],
@@ -641,7 +642,7 @@
       this.authToken = localStorage.getItem('auth_token') || '';
     },
     computed: {
-      canSubmit() { return !!this.file && !!this.prompt && !this.loading },
+      canSubmit() { return this.files.length > 0 && this.files.length <= 5 && !!this.prompt && !this.loading },
       ratioOptions() {
         return [
           { value: '9:16', label: '竖屏 (9:16)' },
@@ -659,6 +660,12 @@
           { value: 4, label: '4张' }
         ];
       },
+      modelOptions() {
+        return [
+          { value: 'gemini-2.5-pro-image-preview', label: '标准版 (2算力)' },
+          { value: 'gemini-3-pro-image-preview', label: '加强版 (6算力)' }
+        ];
+      },
       statusText() {
         switch(this.status) {
           case 'submitted': return '任务已提交，等待处理...';
@@ -671,7 +678,33 @@
       }
     },
     methods: {
-      onFile(e){ this.file = e.target.files[0] || null; },
+      onFile(e){ 
+        const selectedFiles = Array.from(e.target.files || []);
+        const remainingSlots = 5 - this.files.length;
+        
+        if (remainingSlots <= 0) {
+          alert('已达到最大数量5张图片，请先删除一些图片');
+          e.target.value = ''; // 清空input
+          return;
+        }
+        
+        if (selectedFiles.length > remainingSlots) {
+          alert(`最多还能添加${remainingSlots}张图片，已自动截取前${remainingSlots}张`);
+          this.files = [...this.files, ...selectedFiles.slice(0, remainingSlots)];
+        } else {
+          this.files = [...this.files, ...selectedFiles];
+        }
+        
+        e.target.value = ''; // 清空input，允许重复选择同一文件
+      },
+      
+      removeFile(index) {
+        this.files.splice(index, 1);
+      },
+      
+      clearAllFiles() {
+        this.files = [];
+      },
       
       async submit(){
         if(!this.canSubmit) return;
@@ -680,10 +713,14 @@
         
         try {
           const form = new FormData();
-          form.append('image', this.file);
+          // Append all images
+          this.files.forEach(file => {
+            form.append('image', file);
+          });
           form.append('prompt', this.prompt);
           form.append('ratio', this.ratio);
           form.append('count', this.count);
+          form.append('model', this.model);
           
           // Add user_id from localStorage
           const userId = localStorage.getItem('user_id');
@@ -1042,13 +1079,32 @@
       <div>
         <div class="form">
           <div class="field">
-            <label class="label">上传图片</label>
-            <input class="input" type="file" accept="image/*" @change="onFile" />
+            <label class="label">上传图片 (最多5张，可多次选择累加)</label>
+            <input class="input" type="file" accept="image/*" multiple @change="onFile" />
+            <div v-if="files.length > 0" style="margin-top: 10px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div style="font-size: 13px; color: var(--muted);">已选择 {{ files.length }}/5 张图片:</div>
+                <button @click="clearAllFiles" class="btn secondary" style="font-size: 12px; padding: 4px 10px;">清空全部</button>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                <div v-for="(file, index) in files" :key="index" style="position: relative; display: inline-block; padding: 6px 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
+                  <span>{{ file.name }}</span>
+                  <button @click="removeFile(index)" style="margin-left: 8px; background: transparent; border: none; color: #ef4444; cursor: pointer; font-weight: bold;">×</button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="field">
             <label class="label">提示词</label>
             <textarea class="textarea" v-model.trim="prompt" placeholder="请输入对图片的编辑指令，例如：将人物制作成为手办"></textarea>
+          </div>
+
+          <div class="field">
+            <label class="label">模型选择</label>
+            <select class="input" v-model="model">
+              <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
           </div>
 
           <div class="field">
