@@ -99,41 +99,62 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       overflow: hidden;
+      cursor: grab;
+    }
+    .canvas-container.panning{
+      cursor: grabbing;
+    }
+    .canvas-world{
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform-origin: 0 0;
     }
     .canvas{
       position: absolute;
       top: 0;
       left: 0;
-      width: 100%;
-      height: 100%;
+      width: 10000px;
+      height: 10000px;
     }
     svg.connections{
       position: absolute;
       top: 0;
       left: 0;
-      width: 100%;
-      height: 100%;
+      width: 10000px;
+      height: 10000px;
       pointer-events: none;
       z-index: 1;
     }
-    svg.connections path{
+    svg.connections path.hitbox{
+      fill: none;
+      stroke: transparent;
+      stroke-width: 20;
+      stroke-linecap: round;
+      pointer-events: stroke;
+      cursor: pointer;
+    }
+    svg.connections path.line{
       fill: none;
       stroke: var(--primary);
       stroke-width: 3;
       stroke-linecap: round;
-      pointer-events: stroke;
-      cursor: pointer;
+      pointer-events: none;
       transition: stroke 0.15s, stroke-width 0.15s;
     }
-    svg.connections path:hover{
+    svg.connections path.line.hover{
       stroke-width: 5;
     }
-    svg.connections path.selected{
+    svg.connections path.line.selected{
       stroke: var(--danger);
       stroke-width: 5;
     }
     svg.connections path.temp{
+      fill: none;
       stroke: #999;
+      stroke-width: 2;
       stroke-dasharray: 5,5;
       pointer-events: none;
     }
@@ -157,6 +178,45 @@
     }
     .conn-delete-btn:hover{
       background: #dc2626;
+    }
+
+    .zoom-controls{
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      z-index: 40;
+    }
+    .zoom-btn{
+      width: 32px;
+      height: 32px;
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 18px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .zoom-btn:hover{
+      background: var(--panel);
+    }
+    .zoom-level{
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 600;
+      text-align: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
     }
 
     .node{
@@ -241,17 +301,26 @@
 
     .port{
       position: absolute;
-      width: 14px;
-      height: 14px;
+      width: 18px;
+      height: 18px;
       background: #fff;
       border: 2px solid var(--primary);
       border-radius: 50%;
       cursor: crosshair;
       z-index: 20;
+      transition: transform 0.15s, background 0.15s, box-shadow 0.15s;
     }
-    .port.input{ left: -7px; top: 50%; transform: translateY(-50%); }
-    .port.output{ right: -7px; top: 50%; transform: translateY(-50%); }
-    .port:hover{ background: var(--primary-light); }
+    .port.input{ left: -9px; top: 50%; transform: translateY(-50%); }
+    .port.output{ right: -9px; top: 50%; transform: translateY(-50%); }
+    .port:hover{ 
+      background: var(--primary-light); 
+      transform: translateY(-50%) scale(1.2);
+    }
+    .port.can-connect{
+      background: var(--primary-light);
+      box-shadow: 0 0 0 4px rgba(34,197,94,0.3);
+      transform: translateY(-50%) scale(1.3);
+    }
   </style>
 </head>
 <body>
@@ -282,9 +351,16 @@
     </div>
 
     <div class="canvas-container" id="canvasContainer">
-      <svg class="connections" id="connectionsSvg"></svg>
-      <div class="canvas" id="canvas"></div>
+      <div class="canvas-world" id="canvasWorld">
+        <svg class="connections" id="connectionsSvg"></svg>
+        <div class="canvas" id="canvas"></div>
+      </div>
       <button class="conn-delete-btn" id="connDeleteBtn" title="删除连接线">×</button>
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="zoomInBtn" title="放大">+</button>
+        <div class="zoom-level" id="zoomLevel">100%</div>
+        <button class="zoom-btn" id="zoomOutBtn" title="缩小">−</button>
+      </div>
     </div>
   </div>
 
@@ -299,13 +375,47 @@
       selectedConnId: null,
       drag: null,
       connecting: null,
+      panning: null,
+      panX: 0,
+      panY: 0,
+      zoom: 1,
     };
 
     const canvasEl = document.getElementById('canvas');
     const canvasContainer = document.getElementById('canvasContainer');
+    const canvasWorld = document.getElementById('canvasWorld');
     const connectionsSvg = document.getElementById('connectionsSvg');
     const ratioSelectEl = document.getElementById('ratioSelect');
     const connDeleteBtn = document.getElementById('connDeleteBtn');
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const zoomLevelEl = document.getElementById('zoomLevel');
+
+    function applyTransform(){
+      canvasWorld.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+    }
+
+    function updateZoomLevel(){
+      zoomLevelEl.textContent = Math.round(state.zoom * 100) + '%';
+    }
+
+    function zoomIn(){
+      if(state.zoom < 2){
+        state.zoom = Math.min(2, state.zoom + 0.1);
+        applyTransform();
+        updateZoomLevel();
+        renderConnections();
+      }
+    }
+
+    function zoomOut(){
+      if(state.zoom > 0.25){
+        state.zoom = Math.max(0.25, state.zoom - 0.1);
+        applyTransform();
+        updateZoomLevel();
+        renderConnections();
+      }
+    }
 
     function setSelected(id){
       state.selectedNodeId = id;
@@ -376,9 +486,9 @@
       for(const nodeEl of canvasEl.querySelectorAll('.node')){
         nodeEl.classList.remove('selected');
       }
-      for(const pathEl of connectionsSvg.querySelectorAll('path:not(.temp)')){
-        const cid = Number(pathEl.dataset.connId);
-        pathEl.classList.toggle('selected', cid === connId);
+      for(const lineEl of connectionsSvg.querySelectorAll('path.line')){
+        const cid = Number(lineEl.dataset.connId);
+        lineEl.classList.toggle('selected', cid === connId);
       }
       // 显示删除按钮并定位到连接线中点
       if(connId !== null){
@@ -386,8 +496,8 @@
         if(conn){
           const from = getOutputPortPos(conn.from);
           const to = getInputPortPos(conn.to);
-          const midX = (from.x + to.x) / 2;
-          const midY = (from.y + to.y) / 2;
+          const midX = ((from.x + to.x) / 2) * state.zoom + state.panX;
+          const midY = ((from.y + to.y) / 2) * state.zoom + state.panY;
           connDeleteBtn.style.left = (midX - 12) + 'px';
           connDeleteBtn.style.top = (midY - 12) + 'px';
           connDeleteBtn.style.display = 'flex';
@@ -414,8 +524,12 @@
         const from = getOutputPortPos(conn.from);
         const to = getInputPortPos(conn.to);
         const dx = Math.abs(to.x - from.x) * 0.5;
-        const selected = state.selectedConnId === conn.id ? ' class="selected"' : '';
-        pathsHtml += `<path d="M${from.x},${from.y} C${from.x+dx},${from.y} ${to.x-dx},${to.y} ${to.x},${to.y}" data-conn-id="${conn.id}"${selected}/>`;
+        const pathD = `M${from.x},${from.y} C${from.x+dx},${from.y} ${to.x-dx},${to.y} ${to.x},${to.y}`;
+        const selected = state.selectedConnId === conn.id ? ' selected' : '';
+        // 透明的hitbox用于点击
+        pathsHtml += `<path class="hitbox" d="${pathD}" data-conn-id="${conn.id}"/>`;
+        // 可见的线条
+        pathsHtml += `<path class="line${selected}" d="${pathD}" data-conn-id="${conn.id}"/>`;
       }
       // 添加拖拽时的虚线预览
       if(tempLine){
@@ -424,12 +538,20 @@
       }
       connectionsSvg.innerHTML = pathsHtml;
       
-      // 重新绑定点击事件（排除temp线）
-      for(const pathEl of connectionsSvg.querySelectorAll('path:not(.temp)')){
-        pathEl.addEventListener('click', (e) => {
+      // 重新绑定hitbox事件
+      for(const hitbox of connectionsSvg.querySelectorAll('path.hitbox')){
+        const connId = Number(hitbox.dataset.connId);
+        const line = connectionsSvg.querySelector(`path.line[data-conn-id="${connId}"]`);
+        
+        hitbox.addEventListener('click', (e) => {
           e.stopPropagation();
-          const connId = Number(pathEl.dataset.connId);
           selectConnection(connId);
+        });
+        hitbox.addEventListener('mouseenter', () => {
+          if(line && state.selectedConnId !== connId) line.classList.add('hover');
+        });
+        hitbox.addEventListener('mouseleave', () => {
+          if(line) line.classList.remove('hover');
         });
       }
       
@@ -439,8 +561,8 @@
         if(conn){
           const from = getOutputPortPos(conn.from);
           const to = getInputPortPos(conn.to);
-          const midX = (from.x + to.x) / 2;
-          const midY = (from.y + to.y) / 2;
+          const midX = ((from.x + to.x) / 2) * state.zoom + state.panX;
+          const midY = ((from.y + to.y) / 2) * state.zoom + state.panY;
           connDeleteBtn.style.left = (midX - 12) + 'px';
           connDeleteBtn.style.top = (midY - 12) + 'px';
         }
@@ -633,11 +755,19 @@
     });
 
     canvasContainer.addEventListener('mousedown', (e) => {
-      if(e.target === canvasEl || e.target === canvasContainer){
+      if(e.target === canvasEl || e.target === canvasContainer || e.target === canvasWorld){
         clearSelection();
         state.selectedConnId = null;
         hideConnDeleteBtn();
         renderConnections();
+        // 开始平移画布
+        state.panning = {
+          startX: e.clientX,
+          startY: e.clientY,
+          origPanX: state.panX,
+          origPanY: state.panY,
+        };
+        canvasContainer.classList.add('panning');
       }
     });
 
@@ -663,14 +793,26 @@
     });
 
     window.addEventListener('mousemove', (e) => {
+      // 平移画布
+      if(state.panning){
+        const dx = e.clientX - state.panning.startX;
+        const dy = e.clientY - state.panning.startY;
+        state.panX = state.panning.origPanX + dx;
+        state.panY = state.panning.origPanY + dy;
+        applyTransform();
+        // 更新删除按钮位置（如果有选中的连接线）
+        if(state.selectedConnId !== null){
+          renderConnections();
+        }
+      }
       // 拖动节点
       if(state.drag){
         const n = state.nodes.find(x => x.id === state.drag.nodeId);
         if(!n) return;
         const dx = e.clientX - state.drag.startX;
         const dy = e.clientY - state.drag.startY;
-        n.x = Math.max(0, state.drag.origX + dx);
-        n.y = Math.max(0, state.drag.origY + dy);
+        n.x = state.drag.origX + dx;
+        n.y = state.drag.origY + dy;
         const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
         if(el){
           el.style.left = n.x + 'px';
@@ -682,23 +824,101 @@
       if(state.connecting){
         const fromPos = getOutputPortPos(state.connecting.fromId);
         const containerRect = canvasContainer.getBoundingClientRect();
-        const toX = e.clientX - containerRect.left;
-        const toY = e.clientY - containerRect.top;
+        const toX = (e.clientX - containerRect.left - state.panX) / state.zoom;
+        const toY = (e.clientY - containerRect.top - state.panY) / state.zoom;
+        
+        // 查找最近的可连接输入端口并高亮
+        let nearestPort = null;
+        let nearestDist = 50; // 感应距离阈值
+        for(const node of state.nodes){
+          if(node.id === state.connecting.fromId) continue; // 跳过自己
+          const inputPos = getInputPortPos(node.id);
+          const dist = Math.sqrt(Math.pow(toX - inputPos.x, 2) + Math.pow(toY - inputPos.y, 2));
+          if(dist < nearestDist){
+            nearestDist = dist;
+            nearestPort = node.id;
+          }
+        }
+        
+        // 更新端口高亮状态
+        for(const portEl of canvasEl.querySelectorAll('.port.input')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          portEl.classList.toggle('can-connect', nodeId === nearestPort);
+        }
+        
+        // 如果找到最近端口，虚线吸附到该端口
+        let targetX = toX, targetY = toY;
+        if(nearestPort !== null){
+          const snapPos = getInputPortPos(nearestPort);
+          targetX = snapPos.x;
+          targetY = snapPos.y;
+        }
+        
         renderConnections({
           fromX: fromPos.x,
           fromY: fromPos.y,
-          toX: toX,
-          toY: toY
+          toX: targetX,
+          toY: targetY
         });
       }
     });
 
-    window.addEventListener('mouseup', () => {
+    window.addEventListener('mouseup', (e) => {
       state.drag = null;
+      if(state.panning){
+        state.panning = null;
+        canvasContainer.classList.remove('panning');
+      }
       if(state.connecting){
+        // 检查是否在某个输入端口附近释放
+        const containerRect = canvasContainer.getBoundingClientRect();
+        const mouseX = (e.clientX - containerRect.left - state.panX) / state.zoom;
+        const mouseY = (e.clientY - containerRect.top - state.panY) / state.zoom;
+        
+        let targetNodeId = null;
+        let nearestDist = 50; // 感应距离阈值
+        for(const node of state.nodes){
+          if(node.id === state.connecting.fromId) continue;
+          const inputPos = getInputPortPos(node.id);
+          const dist = Math.sqrt(Math.pow(mouseX - inputPos.x, 2) + Math.pow(mouseY - inputPos.y, 2));
+          if(dist < nearestDist){
+            nearestDist = dist;
+            targetNodeId = node.id;
+          }
+        }
+        
+        // 如果找到目标节点，创建连接
+        if(targetNodeId !== null){
+          const exists = state.connections.some(c => c.from === state.connecting.fromId && c.to === targetNodeId);
+          if(!exists){
+            state.connections.push({
+              id: state.nextConnId++,
+              from: state.connecting.fromId,
+              to: targetNodeId
+            });
+          }
+        }
+        
+        // 清除所有端口高亮
+        for(const portEl of canvasEl.querySelectorAll('.port.input.can-connect')){
+          portEl.classList.remove('can-connect');
+        }
+        
         state.connecting = null;
         renderConnections(); // 清除虚线
       }
+    });
+
+    // 缩放按钮事件
+    zoomInBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      zoomIn();
+    });
+
+    zoomOutBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      zoomOut();
     });
   </script>
 </body>
