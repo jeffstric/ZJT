@@ -2465,6 +2465,13 @@ static_dir = os.path.join(APP_DIR, "web")
 if not os.path.exists(static_dir):
     os.makedirs(static_dir, exist_ok=True)
 
+@app.get("/video-workflow")
+async def serve_video_workflow():
+    file_path = os.path.join(static_dir, "video_workflow.html")
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Video workflow page not found")
+
 # Catch-all route for SPA - returns index.html for all unmatched routes
 # This supports Vue Router history mode
 @app.get("/{full_path:path}")

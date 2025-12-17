@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>视频工作流</title>
+  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <style>
+    :root{
+      --bg:#ffffff;
+      --panel:#f8f9fa;
+      --border:#e0e0e0;
+      --text:#1a1a1a;
+      --muted:#666666;
+      --primary:#22c55e;
+      --primary-light:#dcfce7;
+      --danger:#ef4444;
+    }
+    *{box-sizing:border-box;}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+      min-height:100vh;
+    }
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:14px 20px;
+      border-bottom:1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .brand img{width:28px;height:28px;}
+    .brand-title{font-weight:900; letter-spacing:0.3px; color: var(--text);}
+    .top-actions{display:flex; align-items:center; gap:10px;}
+    .btn{
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover{ opacity: 0.9; }
+    .btn.secondary{
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .shell{
+      padding: 16px 20px;
+    }
+    .toolbar{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      padding: 12px 16px;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background: var(--panel);
+    }
+    .spacer{flex:1;}
+    .ratio{
+      display:flex;
+      align-items:center;
+      gap:8px;
+    }
+    .ratio-label{
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    select{
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      outline: none;
+      cursor: pointer;
+    }
+    .canvas-container{
+      margin-top: 16px;
+      position: relative;
+      min-height: calc(100vh - 180px);
+      background: #fafafa;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .canvas{
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    svg.connections{
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+    svg.connections path{
+      fill: none;
+      stroke: var(--primary);
+      stroke-width: 3;
+      stroke-linecap: round;
+      pointer-events: stroke;
+      cursor: pointer;
+      transition: stroke 0.15s, stroke-width 0.15s;
+    }
+    svg.connections path:hover{
+      stroke-width: 5;
+    }
+    svg.connections path.selected{
+      stroke: var(--danger);
+      stroke-width: 5;
+    }
+    svg.connections path.temp{
+      stroke: #999;
+      stroke-dasharray: 5,5;
+      pointer-events: none;
+    }
+
+    .conn-delete-btn{
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      background: var(--danger);
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 30;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    .conn-delete-btn:hover{
+      background: #dc2626;
+    }
+
+    .node{
+      position:absolute;
+      width: 300px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #fff;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      user-select:none;
+      z-index: 10;
+    }
+    .node.selected{
+      border-color: var(--primary);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 0 0 2px var(--primary-light);
+    }
+    .node-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding: 10px 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      border-radius: 12px 12px 0 0;
+      cursor: grab;
+    }
+    .node-title{font-weight: 800; font-size: 14px; color: var(--text);}
+    .icon-btn{
+      background: transparent;
+      border: 0;
+      color: var(--muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .icon-btn:hover{ background: rgba(0,0,0,0.05); }
+    .node-body{ padding: 12px; display:flex; flex-direction:column; gap:12px; }
+    .field{ display:flex; flex-direction:column; gap:6px; }
+    .label{ color: var(--muted); font-size:12px; font-weight:700; }
+    input[type="file"]{
+      width:100%;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+    }
+    textarea{
+      width:100%;
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      outline: none;
+      resize: vertical;
+      font-size: 13px;
+    }
+    textarea:focus{ border-color: var(--primary); }
+    .preview-row{ display:flex; align-items:center; gap:10px; margin-top: 6px; }
+    .preview{
+      width:60px;
+      height:60px;
+      object-fit:cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .mini-btn{
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .mini-btn:hover{ background: #eee; }
+
+    .port{
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border: 2px solid var(--primary);
+      border-radius: 50%;
+      cursor: crosshair;
+      z-index: 20;
+    }
+    .port.input{ left: -7px; top: 50%; transform: translateY(-50%); }
+    .port.output{ right: -7px; top: 50%; transform: translateY(-50%); }
+    .port:hover{ background: var(--primary-light); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <img src="/files/logo.svg" alt="logo" />
+      <div class="brand-title">视频工作流</div>
+    </div>
+    <div class="top-actions">
+      <button class="btn secondary" id="backBtn">返回</button>
+    </div>
+  </div>
+
+  <div class="shell">
+    <div class="toolbar">
+      <button class="btn" id="addNodeBtn">+ 图生视频</button>
+      <div class="spacer"></div>
+      <div class="ratio">
+        <div class="ratio-label">视频比例</div>
+        <select id="ratioSelect">
+          <option value="9:16">9:16</option>
+          <option value="3:4">3:4</option>
+          <option value="1:1">1:1</option>
+          <option value="4:3">4:3</option>
+          <option value="16:9" selected>16:9</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="canvas-container" id="canvasContainer">
+      <svg class="connections" id="connectionsSvg"></svg>
+      <div class="canvas" id="canvas"></div>
+      <button class="conn-delete-btn" id="connDeleteBtn" title="删除连接线">×</button>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      ratio: '16:9',
+      nodes: [],
+      connections: [],
+      nextNodeId: 1,
+      nextConnId: 1,
+      selectedNodeId: null,
+      selectedConnId: null,
+      drag: null,
+      connecting: null,
+    };
+
+    const canvasEl = document.getElementById('canvas');
+    const canvasContainer = document.getElementById('canvasContainer');
+    const connectionsSvg = document.getElementById('connectionsSvg');
+    const ratioSelectEl = document.getElementById('ratioSelect');
+    const connDeleteBtn = document.getElementById('connDeleteBtn');
+
+    function setSelected(id){
+      state.selectedNodeId = id;
+      for(const nodeEl of canvasEl.querySelectorAll('.node')){
+        const nid = Number(nodeEl.dataset.nodeId);
+        nodeEl.classList.toggle('selected', nid === id);
+      }
+    }
+
+    function clearSelection(){
+      setSelected(null);
+    }
+
+    function removeNode(id){
+      state.nodes = state.nodes.filter(n => n.id !== id);
+      state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
+      const el = canvasEl.querySelector(`.node[data-node-id="${id}"]`);
+      if(el) el.remove();
+      if(state.selectedNodeId === id) state.selectedNodeId = null;
+      renderConnections();
+    }
+
+    function readFileAsDataUrl(file){
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function getNodeCenter(nodeId){
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node) return {x:0, y:0};
+      const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+      if(!el) return {x: node.x, y: node.y};
+      return {
+        x: node.x + el.offsetWidth / 2,
+        y: node.y + el.offsetHeight / 2
+      };
+    }
+
+    function getOutputPortPos(nodeId){
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node) return {x:0, y:0};
+      const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+      if(!el) return {x: node.x, y: node.y};
+      return {
+        x: node.x + el.offsetWidth,
+        y: node.y + el.offsetHeight / 2
+      };
+    }
+
+    function getInputPortPos(nodeId){
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node) return {x:0, y:0};
+      const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+      if(!el) return {x: node.x, y: node.y};
+      return {
+        x: node.x,
+        y: node.y + el.offsetHeight / 2
+      };
+    }
+
+    function selectConnection(connId){
+      state.selectedConnId = connId;
+      state.selectedNodeId = null;
+      for(const nodeEl of canvasEl.querySelectorAll('.node')){
+        nodeEl.classList.remove('selected');
+      }
+      for(const pathEl of connectionsSvg.querySelectorAll('path:not(.temp)')){
+        const cid = Number(pathEl.dataset.connId);
+        pathEl.classList.toggle('selected', cid === connId);
+      }
+      // 显示删除按钮并定位到连接线中点
+      if(connId !== null){
+        const conn = state.connections.find(c => c.id === connId);
+        if(conn){
+          const from = getOutputPortPos(conn.from);
+          const to = getInputPortPos(conn.to);
+          const midX = (from.x + to.x) / 2;
+          const midY = (from.y + to.y) / 2;
+          connDeleteBtn.style.left = (midX - 12) + 'px';
+          connDeleteBtn.style.top = (midY - 12) + 'px';
+          connDeleteBtn.style.display = 'flex';
+        }
+      } else {
+        connDeleteBtn.style.display = 'none';
+      }
+    }
+
+    function hideConnDeleteBtn(){
+      connDeleteBtn.style.display = 'none';
+    }
+
+    function removeConnection(connId){
+      state.connections = state.connections.filter(c => c.id !== connId);
+      if(state.selectedConnId === connId) state.selectedConnId = null;
+      hideConnDeleteBtn();
+      renderConnections();
+    }
+
+    function renderConnections(tempLine){
+      let pathsHtml = '';
+      for(const conn of state.connections){
+        const from = getOutputPortPos(conn.from);
+        const to = getInputPortPos(conn.to);
+        const dx = Math.abs(to.x - from.x) * 0.5;
+        const selected = state.selectedConnId === conn.id ? ' class="selected"' : '';
+        pathsHtml += `<path d="M${from.x},${from.y} C${from.x+dx},${from.y} ${to.x-dx},${to.y} ${to.x},${to.y}" data-conn-id="${conn.id}"${selected}/>`;
+      }
+      // 添加拖拽时的虚线预览
+      if(tempLine){
+        const dx = Math.abs(tempLine.toX - tempLine.fromX) * 0.5;
+        pathsHtml += `<path class="temp" d="M${tempLine.fromX},${tempLine.fromY} C${tempLine.fromX+dx},${tempLine.fromY} ${tempLine.toX-dx},${tempLine.toY} ${tempLine.toX},${tempLine.toY}"/>`;
+      }
+      connectionsSvg.innerHTML = pathsHtml;
+      
+      // 重新绑定点击事件（排除temp线）
+      for(const pathEl of connectionsSvg.querySelectorAll('path:not(.temp)')){
+        pathEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const connId = Number(pathEl.dataset.connId);
+          selectConnection(connId);
+        });
+      }
+      
+      // 更新删除按钮位置（如果有选中的连接线）
+      if(state.selectedConnId !== null){
+        const conn = state.connections.find(c => c.id === state.selectedConnId);
+        if(conn){
+          const from = getOutputPortPos(conn.from);
+          const to = getInputPortPos(conn.to);
+          const midX = (from.x + to.x) / 2;
+          const midY = (from.y + to.y) / 2;
+          connDeleteBtn.style.left = (midX - 12) + 'px';
+          connDeleteBtn.style.top = (midY - 12) + 'px';
+        }
+      }
+    }
+
+    function createImageToVideoNode(){
+      const id = state.nextNodeId++;
+      const node = {
+        id,
+        type: 'image_to_video',
+        title: '图生视频',
+        x: 60 + (state.nodes.length % 3) * 340,
+        y: 60 + Math.floor(state.nodes.length / 3) * 280,
+        data: {
+          prompt: '',
+          duration: 5,
+          startFile: null,
+          endFile: null,
+          startPreview: '',
+          endPreview: '',
+        }
+      };
+      state.nodes.push(node);
+
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.nodeId = String(id);
+      el.style.left = node.x + 'px';
+      el.style.top = node.y + 'px';
+
+      el.innerHTML = `
+        <div class="port input" title="输入（从上一个节点连接）"></div>
+        <div class="port output" title="输出（连接到下一个节点）"></div>
+        <div class="node-header">
+          <div class="node-title">${node.title}</div>
+          <button class="icon-btn" title="删除">×</button>
+        </div>
+        <div class="node-body">
+          <div class="field">
+            <div class="label">首帧画面（可选）</div>
+            <input class="start-file" type="file" accept="image/*" />
+            <div class="preview-row start-preview-row" style="display:none;">
+              <img class="preview start-preview" />
+              <button class="mini-btn start-clear" type="button">清除</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="label">尾帧画面（可选）</div>
+            <input class="end-file" type="file" accept="image/*" />
+            <div class="preview-row end-preview-row" style="display:none;">
+              <img class="preview end-preview" />
+              <button class="mini-btn end-clear" type="button">清除</button>
+            </div>
+          </div>
+          <div class="field">
+            <div class="label">视频长度</div>
+            <select class="duration-select">
+              <option value="5" selected>5秒</option>
+              <option value="10">10秒</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="label">提示词</div>
+            <textarea class="prompt" placeholder="请输入提示词..." rows="3"></textarea>
+          </div>
+        </div>
+      `;
+
+      const headerEl = el.querySelector('.node-header');
+      const deleteBtn = el.querySelector('.icon-btn');
+      const promptEl = el.querySelector('.prompt');
+      const durationSelect = el.querySelector('.duration-select');
+      const inputPort = el.querySelector('.port.input');
+      const outputPort = el.querySelector('.port.output');
+
+      durationSelect.addEventListener('change', () => {
+        node.data.duration = Number(durationSelect.value);
+      });
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeNode(id);
+      });
+
+      el.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.stopPropagation();
+        setSelected(id);
+      });
+
+      headerEl.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setSelected(id);
+        state.drag = {
+          nodeId: id,
+          startX: e.clientX,
+          startY: e.clientY,
+          origX: node.x,
+          origY: node.y,
+        };
+      });
+
+      outputPort.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+      });
+
+      inputPort.addEventListener('mouseup', (e) => {
+        if(state.connecting && state.connecting.fromId !== id){
+          const exists = state.connections.some(c => c.from === state.connecting.fromId && c.to === id);
+          if(!exists){
+            state.connections.push({
+              id: state.nextConnId++,
+              from: state.connecting.fromId,
+              to: id
+            });
+            renderConnections();
+          }
+        }
+        state.connecting = null;
+      });
+
+      promptEl.addEventListener('input', () => {
+        node.data.prompt = promptEl.value;
+      });
+
+      const startFileEl = el.querySelector('.start-file');
+      const endFileEl = el.querySelector('.end-file');
+      const startPreviewRow = el.querySelector('.start-preview-row');
+      const endPreviewRow = el.querySelector('.end-preview-row');
+      const startPreviewImg = el.querySelector('.start-preview');
+      const endPreviewImg = el.querySelector('.end-preview');
+      const startClearBtn = el.querySelector('.start-clear');
+      const endClearBtn = el.querySelector('.end-clear');
+
+      startFileEl.addEventListener('change', async () => {
+        const file = startFileEl.files && startFileEl.files[0];
+        if(!file) return;
+        node.data.startFile = file;
+        node.data.startPreview = await readFileAsDataUrl(file);
+        startPreviewImg.src = node.data.startPreview;
+        startPreviewRow.style.display = 'flex';
+        startFileEl.value = '';
+      });
+
+      endFileEl.addEventListener('change', async () => {
+        const file = endFileEl.files && endFileEl.files[0];
+        if(!file) return;
+        node.data.endFile = file;
+        node.data.endPreview = await readFileAsDataUrl(file);
+        endPreviewImg.src = node.data.endPreview;
+        endPreviewRow.style.display = 'flex';
+        endFileEl.value = '';
+      });
+
+      startClearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        node.data.startFile = null;
+        node.data.startPreview = '';
+        startPreviewRow.style.display = 'none';
+        startPreviewImg.removeAttribute('src');
+      });
+
+      endClearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        node.data.endFile = null;
+        node.data.endPreview = '';
+        endPreviewRow.style.display = 'none';
+        endPreviewImg.removeAttribute('src');
+      });
+
+      canvasEl.appendChild(el);
+      setSelected(id);
+    }
+
+    document.getElementById('addNodeBtn').addEventListener('click', () => {
+      createImageToVideoNode();
+    });
+
+    ratioSelectEl.addEventListener('change', () => {
+      state.ratio = ratioSelectEl.value;
+    });
+
+    document.getElementById('backBtn').addEventListener('click', () => {
+      window.location.href = '/';
+    });
+
+    canvasContainer.addEventListener('mousedown', (e) => {
+      if(e.target === canvasEl || e.target === canvasContainer){
+        clearSelection();
+        state.selectedConnId = null;
+        hideConnDeleteBtn();
+        renderConnections();
+      }
+    });
+
+    // 删除按钮点击事件
+    connDeleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if(state.selectedConnId !== null){
+        removeConnection(state.selectedConnId);
+      }
+    });
+
+    // 键盘删除连接线
+    window.addEventListener('keydown', (e) => {
+      if(e.key === 'Delete' || e.key === 'Backspace'){
+        // 不在输入框内时才响应
+        if(document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+        
+        if(state.selectedConnId !== null){
+          e.preventDefault();
+          removeConnection(state.selectedConnId);
+        }
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      // 拖动节点
+      if(state.drag){
+        const n = state.nodes.find(x => x.id === state.drag.nodeId);
+        if(!n) return;
+        const dx = e.clientX - state.drag.startX;
+        const dy = e.clientY - state.drag.startY;
+        n.x = Math.max(0, state.drag.origX + dx);
+        n.y = Math.max(0, state.drag.origY + dy);
+        const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
+        if(el){
+          el.style.left = n.x + 'px';
+          el.style.top = n.y + 'px';
+        }
+        renderConnections();
+      }
+      // 拖拽创建连接线时显示虚线预览
+      if(state.connecting){
+        const fromPos = getOutputPortPos(state.connecting.fromId);
+        const containerRect = canvasContainer.getBoundingClientRect();
+        const toX = e.clientX - containerRect.left;
+        const toY = e.clientY - containerRect.top;
+        renderConnections({
+          fromX: fromPos.x,
+          fromY: fromPos.y,
+          toX: toX,
+          toY: toY
+        });
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      state.drag = null;
+      if(state.connecting){
+        state.connecting = null;
+        renderConnections(); // 清除虚线
+      }
+    });
+  </script>
+</body>
+</html>
