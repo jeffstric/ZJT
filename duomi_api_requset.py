@@ -120,6 +120,92 @@ def create_video_remix(video_id, prompt, aspect_ratio="16:9", duration=15):
     except Exception as e:
         raise Exception(f"Failed to parse JSON response: {response.text[:200]}")
 
+def create_character(timestamps, url=None, from_task=None, callback_url=None):
+    """
+    Create character generation task using SORA API
+    
+    Args:
+        timestamps: Time range when character appears (format: "start,end", 1-3 seconds range)
+        url: Video URL containing the character (not for real people)
+        from_task: Task ID of a generated video (supports real people)
+        callback_url: Optional callback URL
+    
+    Returns:
+        Response from the API
+    """
+    api_url = "https://duomiapi.com/v1/characters"
+    
+    payload = {
+        "timestamps": timestamps
+    }
+    
+    if url:
+        payload["url"] = url
+    if from_task:
+        payload["from_task"] = from_task
+    if callback_url:
+        payload["callback_url"] = callback_url
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": token
+    }
+    
+    response = requests.post(api_url, json=payload, headers=headers)
+    
+    # Log response for debugging
+    print(f"Create character API response status: {response.status_code}")
+    print(f"Create character API response text: {response.text[:1000] if response.text else 'EMPTY'}")
+    
+    try:
+        return response.json()
+    except Exception as e:
+        print(f"Failed to parse create character response: {e}")
+        return {"error": str(e), "raw_text": response.text[:500] if response.text else None}
+
+
+def get_character_task_result(task_id):
+    """
+    Query character generation task result
+    Uses the same endpoint as video tasks: /v1/videos/tasks/{task_id}
+    
+    Args:
+        task_id: Character task ID
+    
+    Returns:
+        Response format:
+        {
+            "id": "task-id",
+            "state": "succeeded/processing/failed",
+            "data": {
+                "characters": [{"id": "character-username"}]
+            },
+            "progress": 100,
+            "action": "characters"
+        }
+    """
+    api_url = f"https://duomiapi.com/v1/videos/tasks/{task_id}"
+    
+    headers = {
+        "Authorization": token
+    }
+    
+    response = requests.get(api_url, headers=headers)
+    
+    # Log response for debugging
+    print(f"Character status API response status: {response.status_code}")
+    print(f"Character status API response text: {response.text[:500] if response.text else 'EMPTY'}")
+    
+    try:
+        return response.json()
+    except Exception as e:
+        print(f"Failed to parse character status response: {e}")
+        return {
+            "state": "processing",
+            "message": "任务处理中..."
+        }
+
+
 def get_ai_task_result(project_id, is_video):
     """
     Query AI task generation result
