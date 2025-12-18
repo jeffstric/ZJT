@@ -394,6 +394,93 @@
     .node-body{ padding: 12px; display:flex; flex-direction:column; gap:12px; }
     .field{ display:flex; flex-direction:column; gap:6px; }
     .label{ color: var(--muted); font-size:12px; font-weight:700; }
+    .label .req{ color: var(--danger); margin-left: 4px; }
+    .motion-help{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .toggle-row{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text);
+      user-select: none;
+    }
+    .toggle-row input{ transform: translateY(1px); }
+    .motion-options{ display: none; }
+    .motion-help svg{
+      width: 120px;
+      height: 44px;
+      flex: 0 0 auto;
+    }
+    .motion-help-text{
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.2;
+    }
+    .gen-container{
+      position: relative;
+      display: inline-flex;
+      align-items: stretch;
+    }
+    .gen-btn{
+      border: 1px solid var(--primary);
+      background: var(--primary);
+      color: #fff;
+      padding: 9px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .gen-btn:hover{ opacity: 0.95; }
+    .gen-btn-main{
+      border-radius: 10px 0 0 10px;
+    }
+    .gen-btn-caret{
+      width: 38px;
+      border-left: 1px solid rgba(255,255,255,0.35);
+      border-radius: 0 10px 10px 0;
+      padding: 9px 0;
+    }
+    .gen-menu{
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      min-width: 140px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.14);
+      overflow: hidden;
+      display: none;
+      z-index: 60;
+    }
+    .gen-menu.show{ display: block; }
+    .gen-item{
+      padding: 10px 12px;
+      font-size: 13px;
+      color: var(--text);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .gen-item:hover{ background: var(--panel); }
+    .gen-meta{
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
     input[type="file"]{
       width:100%;
       background: var(--panel);
@@ -436,6 +523,104 @@
       border-radius: 8px;
       border: 1px solid var(--border);
     }
+    .video-preview{
+      position: relative;
+      width: 100%;
+      height: 170px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #000;
+      overflow: hidden;
+    }
+    .video-preview video{
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      background: #000;
+    }
+    .video-preview-actions{
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .video-preview-actions .vp-btn{
+      pointer-events: auto;
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.35);
+      background: rgba(0,0,0,0.55);
+      color: #fff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      line-height: 1;
+      backdrop-filter: blur(6px);
+    }
+    .video-preview-actions .vp-btn:hover{ background: rgba(0,0,0,0.65); }
+    .modal{
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.55);
+      z-index: 999;
+    }
+    .modal.show{ display: flex; }
+    .modal-card{
+      width: min(920px, calc(100vw - 32px));
+      background: #111;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+    }
+    .modal-header{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      color: #fff;
+      background: rgba(0,0,0,0.35);
+    }
+    .modal-title{ font-size: 13px; font-weight: 700; }
+    .modal-close{
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08);
+      color: #fff;
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+    }
+    .modal-close:hover{ background: rgba(255,255,255,0.12); }
+    .modal-body{
+      background: #000;
+    }
+    .modal-body video{
+      width: 100%;
+      height: min(70vh, 560px);
+      display: block;
+    }
+    .modal-body img{
+      width: 100%;
+      height: auto;
+      max-height: min(70vh, 560px);
+      display: block;
+      object-fit: contain;
+    }
+    .preview{ cursor: zoom-in; }
     .mini-btn{
       background: var(--panel);
       color: var(--text);
@@ -536,6 +721,13 @@
               </svg>
               <span class="add-menu-text">图生视频</span>
             </div>
+            <div class="add-menu-item" id="menuAddVideoNode">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="4" y="6" width="16" height="12" rx="2" stroke="currentColor" stroke-width="2" />
+                <path d="M10 9.5V14.5L14.5 12L10 9.5Z" fill="currentColor" />
+              </svg>
+              <span class="add-menu-text">视频</span>
+            </div>
             <div class="add-menu-item" id="menuAddImage">
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <rect x="4" y="5" width="16" height="14" rx="2" stroke="currentColor" stroke-width="2" />
@@ -575,6 +767,30 @@
     </div>
   </div>
 
+  <div class="modal" id="videoModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div class="modal-title">视频预览</div>
+        <button class="modal-close" id="videoModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <video id="videoModalPlayer" controls></video>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="imageModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div class="modal-title" id="imageModalTitle">图片预览</div>
+        <button class="modal-close" id="imageModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <img id="imageModalImg" alt="" />
+      </div>
+    </div>
+  </div>
+
   <script>
     const state = {
       ratio: '16:9',
@@ -606,6 +822,13 @@
     const zoomLevelEl = document.getElementById('zoomLevel');
     const minimap = document.getElementById('minimap');
     const minimapContent = document.getElementById('minimapContent');
+    const videoModal = document.getElementById('videoModal');
+    const videoModalClose = document.getElementById('videoModalClose');
+    const videoModalPlayer = document.getElementById('videoModalPlayer');
+    const imageModal = document.getElementById('imageModal');
+    const imageModalClose = document.getElementById('imageModalClose');
+    const imageModalImg = document.getElementById('imageModalImg');
+    const imageModalTitle = document.getElementById('imageModalTitle');
 
     const MINIMAP_WIDTH = 180;
     const MINIMAP_HEIGHT = 120;
@@ -716,6 +939,10 @@
     function removeNode(id){
       // 清除该节点相关的图片连接
       state.imageConnections = state.imageConnections.filter(c => c.from !== id && c.to !== id);
+      const node = state.nodes.find(n => n.id === id);
+      if(node && node.type === 'video' && node.data && node.data.url){
+        try{ URL.revokeObjectURL(node.data.url); } catch(e){}
+      }
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
       const el = canvasEl.querySelector(`.node[data-node-id="${id}"]`);
@@ -726,6 +953,177 @@
       renderImageConnections();
     }
 
+    function createVideoNode(opts){
+      const id = state.nextNodeId++;
+      const x = opts && typeof opts.x === 'number' ? opts.x : (60 + (state.nodes.length % 3) * 340);
+      const y = opts && typeof opts.y === 'number' ? opts.y : (60 + Math.floor(state.nodes.length / 3) * 280);
+      const node = {
+        id,
+        type: 'video',
+        title: '视频',
+        x,
+        y,
+        data: {
+          file: null,
+          url: '',
+          name: '',
+        }
+      };
+      state.nodes.push(node);
+
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.nodeId = String(id);
+      el.style.left = node.x + 'px';
+      el.style.top = node.y + 'px';
+
+      el.innerHTML = `
+        <div class="port input" title="输入（连接图生视频节点）"></div>
+        <div class="node-header">
+          <div class="node-title">${node.title}</div>
+          <button class="icon-btn" title="删除">×</button>
+        </div>
+        <div class="node-body">
+          <div class="field">
+            <div class="label">视频</div>
+            <input class="video-file" type="file" accept="video/*" />
+            <div class="gen-meta" style="margin-top: 4px;">或</div>
+            <button class="mini-btn video-from-asset" type="button">从素材库选择</button>
+          </div>
+          <div class="field video-preview-field" style="display:none;">
+            <div class="label">预览</div>
+            <div class="video-preview">
+              <video class="video-thumb" playsinline></video>
+              <div class="video-preview-actions">
+                <button class="vp-btn vp-play" type="button" aria-label="播放">▶</button>
+                <button class="vp-btn vp-zoom" type="button" aria-label="放大">⤢</button>
+              </div>
+            </div>
+            <div class="preview-row" style="margin-top: 8px; justify-content: space-between;">
+              <div class="gen-meta video-name"></div>
+              <button class="mini-btn video-clear" type="button">清除</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const headerEl = el.querySelector('.node-header');
+      const deleteBtn = el.querySelector('.icon-btn');
+      const fileEl = el.querySelector('.video-file');
+      const fromAssetBtn = el.querySelector('.video-from-asset');
+      const inputPort = el.querySelector('.port.input');
+      const previewField = el.querySelector('.video-preview-field');
+      const thumbVideo = el.querySelector('.video-thumb');
+      const playBtn = el.querySelector('.vp-play');
+      const zoomBtn = el.querySelector('.vp-zoom');
+      const nameEl = el.querySelector('.video-name');
+      const clearBtn = el.querySelector('.video-clear');
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeNode(id);
+      });
+
+      el.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        setSelected(id);
+      });
+
+      headerEl.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelected(id);
+        state.drag = {
+          nodeId: id,
+          startX: e.clientX,
+          startY: e.clientY,
+          origX: node.x,
+          origY: node.y,
+        };
+      });
+
+      inputPort.addEventListener('mouseup', (e) => {
+        if(state.connecting && state.connecting.fromId !== id){
+          const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
+          if(fromNode && fromNode.type === 'image_to_video'){
+            const exists = state.connections.some(c => c.to === id);
+            if(!exists){
+              state.connections.push({
+                id: state.nextConnId++,
+                from: state.connecting.fromId,
+                to: id
+              });
+              renderConnections();
+            }
+          }
+        }
+        state.connecting = null;
+      });
+
+      function setVideoFromFile(file){
+        if(node.data.url){
+          try{ URL.revokeObjectURL(node.data.url); } catch(e){}
+        }
+        node.data.file = file;
+        node.data.name = file ? file.name : '';
+        node.data.url = file ? URL.createObjectURL(file) : '';
+        if(node.data.url){
+          thumbVideo.src = node.data.url;
+          thumbVideo.muted = true;
+          thumbVideo.loop = true;
+          thumbVideo.controls = false;
+          nameEl.textContent = node.data.name;
+          previewField.style.display = 'block';
+        } else {
+          thumbVideo.removeAttribute('src');
+          thumbVideo.load();
+          previewField.style.display = 'none';
+        }
+      }
+
+      fileEl.addEventListener('change', () => {
+        const file = fileEl.files && fileEl.files[0];
+        if(!file) return;
+        setVideoFromFile(file);
+        fileEl.value = '';
+      });
+
+      fromAssetBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        alert('素材库 - 空实现');
+      });
+
+      playBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if(!thumbVideo.src) return;
+        if(thumbVideo.paused){
+          const p = thumbVideo.play();
+          if(p && typeof p.catch === 'function') p.catch(() => {});
+          playBtn.textContent = '❚❚';
+        } else {
+          thumbVideo.pause();
+          playBtn.textContent = '▶';
+        }
+      });
+
+      zoomBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if(!node.data.url) return;
+        openVideoModal(node.data.url);
+      });
+
+      clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try{ thumbVideo.pause(); } catch(err){}
+        playBtn.textContent = '▶';
+        setVideoFromFile(null);
+      });
+
+      canvasEl.appendChild(el);
+      setSelected(id);
+      return id;
+    }
+
     function readFileAsDataUrl(file){
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -734,6 +1132,57 @@
         reader.readAsDataURL(file);
       });
     }
+
+    function openVideoModal(src){
+      if(!src) return;
+      videoModalPlayer.src = src;
+      videoModal.classList.add('show');
+      videoModal.setAttribute('aria-hidden', 'false');
+      const p = videoModalPlayer.play();
+      if(p && typeof p.catch === 'function') p.catch(() => {});
+    }
+
+    function closeVideoModal(){
+      videoModal.classList.remove('show');
+      videoModal.setAttribute('aria-hidden', 'true');
+      try{ videoModalPlayer.pause(); } catch(e){}
+      videoModalPlayer.removeAttribute('src');
+      videoModalPlayer.load();
+    }
+
+    function openImageModal(src, title){
+      if(!src) return;
+      imageModalImg.src = src;
+      if(typeof title === 'string' && title){
+        imageModalTitle.textContent = title;
+      } else {
+        imageModalTitle.textContent = '图片预览';
+      }
+      imageModal.classList.add('show');
+      imageModal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeImageModal(){
+      imageModal.classList.remove('show');
+      imageModal.setAttribute('aria-hidden', 'true');
+      imageModalImg.removeAttribute('src');
+    }
+
+    videoModalClose.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeVideoModal();
+    });
+    videoModal.addEventListener('click', (e) => {
+      if(e.target === videoModal) closeVideoModal();
+    });
+
+    imageModalClose.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeImageModal();
+    });
+    imageModal.addEventListener('click', (e) => {
+      if(e.target === imageModal) closeImageModal();
+    });
 
     function getNodeCenter(nodeId){
       const node = state.nodes.find(n => n.id === nodeId);
@@ -972,6 +1421,10 @@
         data: {
           prompt: '',
           duration: 5,
+          model: 'kling',
+          drawCount: 1,
+          motionEnabled: false,
+          motion: '',
           startFile: null,
           endFile: null,
           startPreview: '',
@@ -989,13 +1442,14 @@
       el.innerHTML = `
         <div class="port start-image-port" data-port-type="start" title="连接图片节点（首帧）"></div>
         <div class="port end-image-port" data-port-type="end" title="连接图片节点（尾帧）"></div>
+        <div class="port output" title="输出（连接到视频节点）"></div>
         <div class="node-header">
           <div class="node-title">${node.title}</div>
           <button class="icon-btn" title="删除">×</button>
         </div>
         <div class="node-body">
           <div class="field">
-            <div class="label">首帧画面（可选）</div>
+            <div class="label">首帧画面<span class="req">*</span></div>
             <input class="start-file" type="file" accept="image/*" />
             <div class="preview-row start-preview-row" style="display:none;">
               <img class="preview start-preview" />
@@ -1018,8 +1472,46 @@
             </select>
           </div>
           <div class="field">
+            <div class="label">模型</div>
+            <select class="model-select">
+              <option value="kling" selected>kling</option>
+              <option value="sora">sora</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="label">运镜</div>
+            <label class="toggle-row"><input class="motion-enable" type="checkbox" />启用运镜</label>
+            <div class="motion-options">
+              <select class="motion-select">
+                <option value="pan_left">向左横切</option>
+                <option value="pan_right">向右横切</option>
+                <option value="zoom_out">镜头拉</option>
+                <option value="zoom_in">镜头推</option>
+              </select>
+              <div class="motion-help">
+                <div class="motion-help-illu"></div>
+                <div class="motion-help-text"></div>
+              </div>
+            </div>
+          </div>
+          <div class="field">
             <div class="label">提示词</div>
             <textarea class="prompt" placeholder="请输入提示词..." rows="3"></textarea>
+          </div>
+          <div class="field">
+            <div class="label">生成视频</div>
+            <div class="gen-container">
+              <button class="gen-btn gen-btn-main" type="button">生成视频</button>
+              <button class="gen-btn gen-btn-caret" type="button" aria-label="选择抽卡次数">▾</button>
+              <div class="gen-menu">
+                <div class="gen-item" data-count="1">X1</div>
+                <div class="gen-item" data-count="2">X2</div>
+                <div class="gen-item" data-count="3">X3</div>
+                <div class="gen-item" data-count="4">X4</div>
+              </div>
+            </div>
+            <div class="gen-meta gen-count-label"></div>
+            <div class="gen-meta gen-status" style="display:none;"></div>
           </div>
         </div>
       `;
@@ -1028,11 +1520,182 @@
       const deleteBtn = el.querySelector('.icon-btn');
       const promptEl = el.querySelector('.prompt');
       const durationSelect = el.querySelector('.duration-select');
+      const modelSelect = el.querySelector('.model-select');
+      const motionEnableEl = el.querySelector('.motion-enable');
+      const motionOptionsEl = el.querySelector('.motion-options');
+      const motionSelect = el.querySelector('.motion-select');
+      const motionHelpIllu = el.querySelector('.motion-help-illu');
+      const motionHelpText = el.querySelector('.motion-help-text');
+      const genBtnMain = el.querySelector('.gen-btn-main');
+      const genBtnCaret = el.querySelector('.gen-btn-caret');
+      const genMenu = el.querySelector('.gen-menu');
+      const genCountLabel = el.querySelector('.gen-count-label');
+      const genStatus = el.querySelector('.gen-status');
+      const outputPort = el.querySelector('.port.output');
       const startImagePort = el.querySelector('.start-image-port');
       const endImagePort = el.querySelector('.end-image-port');
 
+      outputPort.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+      });
+
       durationSelect.addEventListener('change', () => {
         node.data.duration = Number(durationSelect.value);
+      });
+
+      modelSelect.value = node.data.model;
+      modelSelect.addEventListener('change', () => {
+        node.data.model = modelSelect.value;
+      });
+
+      function setMotionHelp(val){
+        if(val === 'pan_left'){
+          motionHelpIllu.innerHTML = `
+            <svg viewBox="0 0 120 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="6" y="8" width="84" height="28" rx="6" stroke="#9ca3af" stroke-width="2"/>
+              <path d="M100 22H116" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M104 16L98 22L104 28" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M78 22H30" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M34 16L28 22L34 28" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          `;
+          motionHelpText.textContent = '画面整体向左移动（横向平移），适合展示横向场景。';
+        } else if(val === 'pan_right'){
+          motionHelpIllu.innerHTML = `
+            <svg viewBox="0 0 120 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="30" y="8" width="84" height="28" rx="6" stroke="#9ca3af" stroke-width="2"/>
+              <path d="M4 22H20" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M16 16L22 22L16 28" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M42 22H90" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M86 16L92 22L86 28" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          `;
+          motionHelpText.textContent = '画面整体向右移动（横向平移），适合跟随主体或扫景。';
+        } else if(val === 'zoom_out'){
+          motionHelpIllu.innerHTML = `
+            <svg viewBox="0 0 120 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="40" y="12" width="40" height="20" rx="6" stroke="#22c55e" stroke-width="2.5"/>
+              <rect x="26" y="8" width="68" height="28" rx="8" stroke="#9ca3af" stroke-width="2"/>
+              <path d="M60 22L44 14" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M60 22L76 14" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M60 22L44 30" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M60 22L76 30" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          `;
+          motionHelpText.textContent = '镜头拉远（Zoom Out），视野变大，更强调环境与整体氛围。';
+        } else {
+          motionHelpIllu.innerHTML = `
+            <svg viewBox="0 0 120 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="26" y="8" width="68" height="28" rx="8" stroke="#22c55e" stroke-width="2.5"/>
+              <rect x="40" y="12" width="40" height="20" rx="6" stroke="#9ca3af" stroke-width="2"/>
+              <path d="M44 14L60 22" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M76 14L60 22" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M44 30L60 22" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M76 30L60 22" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          `;
+          motionHelpText.textContent = '镜头推进（Zoom In），视野变小，更突出主体细节与情绪。';
+        }
+      }
+
+      function updateMotionUI(){
+        const enabled = !!node.data.motionEnabled;
+        motionEnableEl.checked = enabled;
+        motionOptionsEl.style.display = enabled ? 'block' : 'none';
+        if(!enabled){
+          node.data.motion = '';
+          return;
+        }
+        if(!node.data.motion){
+          node.data.motion = 'pan_left';
+        }
+        motionSelect.value = node.data.motion;
+        setMotionHelp(node.data.motion);
+      }
+
+      motionEnableEl.addEventListener('change', () => {
+        node.data.motionEnabled = motionEnableEl.checked;
+        updateMotionUI();
+      });
+
+      motionSelect.addEventListener('change', () => {
+        node.data.motion = motionSelect.value;
+        setMotionHelp(node.data.motion);
+      });
+
+      updateMotionUI();
+
+      function updateGenMeta(){
+        genCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
+      }
+      updateGenMeta();
+
+      genBtnCaret.addEventListener('click', (e) => {
+        e.stopPropagation();
+        genMenu.classList.toggle('show');
+      });
+
+      for(const item of genMenu.querySelectorAll('.gen-item')){
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const count = Number(item.dataset.count || '1');
+          node.data.drawCount = count;
+          updateGenMeta();
+          genMenu.classList.remove('show');
+        });
+      }
+
+      document.addEventListener('click', (e) => {
+        if(!e.target.closest('.gen-container')){
+          genMenu.classList.remove('show');
+        }
+      });
+
+      genBtnMain.addEventListener('click', (e) => {
+        e.stopPropagation();
+
+        const hasStartFrame = (() => {
+          if(node.data.startFile) return true;
+          const startConn = state.imageConnections.find(c => c.to === id && c.portType === 'start');
+          if(!startConn) return false;
+          const fromNode = state.nodes.find(n => n.id === startConn.from);
+          return !!(fromNode && fromNode.type === 'image' && fromNode.data && fromNode.data.file);
+        })();
+
+        if(!hasStartFrame){
+          genStatus.style.display = 'block';
+          genStatus.style.color = '#dc2626';
+          genStatus.textContent = '请先填写首帧画面（上传图片或连接图片节点到首帧端口）';
+          return;
+        }
+
+        genStatus.style.color = '';
+        genStatus.style.display = 'block';
+        genStatus.textContent = `已触发生成（模型：${node.data.model}，抽卡：X${node.data.drawCount}）`;
+
+        const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
+        const connectedVideoIds = Array.from(new Set(
+          state.connections
+            .filter(c => c.from === id)
+            .map(c => c.to)
+            .filter(toId => {
+              const toNode = state.nodes.find(n => n.id === toId);
+              return toNode && toNode.type === 'video';
+            })
+        ));
+        const missingCount = Math.max(0, desiredCount - connectedVideoIds.length);
+        const prevSelectedId = state.selectedNodeId;
+
+        for(let i = 0; i < missingCount; i++){
+          const newVideoId = createVideoNode({ x: node.x + 380, y: node.y + i * 260 });
+          state.connections.push({ id: state.nextConnId++, from: id, to: newVideoId });
+        }
+
+        setSelected(prevSelectedId === null ? id : prevSelectedId);
+        renderConnections();
+        renderMinimap();
       });
 
       deleteBtn.addEventListener('click', (e) => {
@@ -1077,6 +1740,25 @@
             }
           }
         }
+
+        // 如果从图生视频节点拖拽，查找视频节点输入端口
+        if(fromNode && fromNode.type === 'image_to_video'){
+          for(const node of state.nodes){
+            if(node.type !== 'video') continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+            if(!toEl) continue;
+            const portEl = toEl.querySelector('.port.input');
+            if(!portEl) continue;
+            const rect = portEl.getBoundingClientRect();
+            const portX = (rect.left + rect.width/2 - containerRect.left - state.panX) / state.zoom;
+            const portY = (rect.top + rect.height/2 - containerRect.top - state.panY) / state.zoom;
+            const dist = Math.sqrt(Math.pow(toX - portX, 2) + Math.pow(toY - portY, 2));
+            if(dist < nearestDist){
+              nearestDist = dist;
+              nearestPort = { nodeId: node.id, x: portX, y: portY };
+            }
+          }
+        }
         state.connecting = null;
       });
 
@@ -1111,6 +1793,20 @@
       const endPreviewImg = el.querySelector('.end-preview');
       const startClearBtn = el.querySelector('.start-clear');
       const endClearBtn = el.querySelector('.end-clear');
+
+      startPreviewImg.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const src = startPreviewImg.getAttribute('src') || node.data.startPreview;
+        if(!src) return;
+        openImageModal(src, '首帧预览');
+      });
+
+      endPreviewImg.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const src = endPreviewImg.getAttribute('src') || node.data.endPreview;
+        if(!src) return;
+        openImageModal(src, '尾帧预览');
+      });
 
       startFileEl.addEventListener('change', async () => {
         const file = startFileEl.files && startFileEl.files[0];
@@ -1241,6 +1937,13 @@
       const imagePreviewImg = el.querySelector('.image-preview');
       const imageClearBtn = el.querySelector('.image-clear');
 
+      imagePreviewImg.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const src = imagePreviewImg.getAttribute('src') || node.data.preview;
+        if(!src) return;
+        openImageModal(src, '图片预览');
+      });
+
       imageFileEl.addEventListener('change', async () => {
         const file = imageFileEl.files && imageFileEl.files[0];
         if(!file) return;
@@ -1273,6 +1976,12 @@
 
     document.getElementById('menuAddVideo').addEventListener('click', () => {
       createImageToVideoNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+    });
+
+    document.getElementById('menuAddVideoNode').addEventListener('click', () => {
+      createVideoNode();
       renderMinimap();
       addMenu.classList.remove('show');
     });
@@ -1476,12 +2185,24 @@
           const isNearest = nearestImgPort && nearestImgPort.nodeId === nodeId && nearestImgPort.portType === portType;
           portEl.classList.toggle('can-connect', isNearest);
         }
+
+        // 更新视频输入端口高亮状态
+        for(const portEl of canvasEl.querySelectorAll('.port.input')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          const isNearest = nearestPort && nearestPort.nodeId === nodeId;
+          portEl.classList.toggle('can-connect', isNearest);
+        }
         
         // 如果找到最近端口，虚线吸附到该端口
         let targetX = toX, targetY = toY;
         if(nearestImgPort){
           targetX = nearestImgPort.x;
           targetY = nearestImgPort.y;
+        }
+        if(nearestPort){
+          targetX = nearestPort.x;
+          targetY = nearestPort.y;
         }
         
         renderConnections({
@@ -1490,6 +2211,7 @@
           toX: targetX,
           toY: targetY
         });
+        renderImageConnections();
       }
     });
 
@@ -1558,6 +2280,38 @@
                 from: state.connecting.fromId,
                 to: nearestImgPort.nodeId,
                 portType: nearestImgPort.portType
+              });
+            }
+          }
+        }
+
+        // 如果从图生视频节点拖拽，查找视频节点输入端口
+        if(fromNode && fromNode.type === 'image_to_video'){
+          let nearestPort = null;
+          let nearestDist = 50;
+          for(const node of state.nodes){
+            if(node.type !== 'video') continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+            if(!toEl) continue;
+            const portEl = toEl.querySelector('.port.input');
+            if(!portEl) continue;
+            const rect = portEl.getBoundingClientRect();
+            const portX = (rect.left + rect.width/2 - containerRect.left - state.panX) / state.zoom;
+            const portY = (rect.top + rect.height/2 - containerRect.top - state.panY) / state.zoom;
+            const dist = Math.sqrt(Math.pow(mouseX - portX, 2) + Math.pow(mouseY - portY, 2));
+            if(dist < nearestDist){
+              nearestDist = dist;
+              nearestPort = { nodeId: node.id };
+            }
+          }
+
+          if(nearestPort){
+            const exists = state.connections.some(c => c.from === state.connecting.fromId && c.to === nearestPort.nodeId);
+            if(!exists){
+              state.connections.push({
+                id: state.nextConnId++,
+                from: state.connecting.fromId,
+                to: nearestPort.nodeId
               });
             }
           }
