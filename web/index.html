@@ -272,6 +272,13 @@
           </div>
           <button class="btn" @click="$router.push({name:'video-remix'})">打开</button>
         </div>
+        <div class="list-item">
+          <div>
+            <div style="font-weight:700">创建角色卡</div>
+            <div class="muted">从视频中提取角色，用于后续@引用</div>
+          </div>
+          <button class="btn" onclick="location.href='/character_card.html'">打开</button>
+        </div>
         <!-- <div class="list-item">
           <div>
             <div style="font-weight:700">小红书笔记修改</div>
@@ -291,7 +298,7 @@
         videoId: '',
         prompt: '',
         aspectRatio: '16:9',
-        duration: 15,
+        duration: 10,
         count: 1,
         loading: false,
         error: '',
@@ -299,6 +306,11 @@
         projectIds: [],
         status: '',
         authToken: '',
+        showHistory: false,
+        historyList: [],
+        historyLoading: false,
+        historyPage: 1,
+        historyTotal: 0,
       }
     },
     mounted() {
@@ -322,8 +334,7 @@
       durationOptions() {
         return [
           { value: 10, label: '10秒' },
-          { value: 15, label: '15秒' },
-          { value: 20, label: '20秒' }
+          { value: 15, label: '15秒' }
         ];
       },
       countOptions() {
@@ -474,6 +485,107 @@
         const filename = `remix_video_${dateStr}_${timeStr}_${index + 1}.mp4`;
         const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
         window.open(downloadUrl, '_blank');
+      },
+      
+      async fetchHistory(reset = true) {
+        if (reset) {
+          this.historyPage = 1;
+          this.historyList = [];
+        }
+        
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.error = '请先登录';
+          this.showHistory = true;
+          return;
+        }
+        
+        this.historyLoading = true;
+        try {
+          const authToken = localStorage.getItem('auth_token');
+          
+          const res = await axios.get('/api/ai-tools/history', {
+            params: {
+              user_id: parseInt(userId, 10),
+              page: this.historyPage,
+              page_size: 20,
+              type: 2,
+              auth_token: authToken || undefined
+            }
+          });
+          
+          if (res.data.success) {
+            const payload = res.data.data || {};
+            const newItems = payload.data || payload.items || [];
+            // Filter to only show remix items
+            const remixItems = newItems.filter(item => item.prompt && item.prompt.startsWith('Remix:'));
+            this.historyList = reset ? remixItems : [...this.historyList, ...remixItems];
+            this.historyTotal = payload.total || 0;
+            this.showHistory = true;
+          }
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || '获取历史记录失败';
+          this.showHistory = true;
+        } finally {
+          this.historyLoading = false;
+        }
+      },
+      
+      handleHistoryScroll(e) {
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        if (scrollHeight - scrollTop - clientHeight < 50 && !this.historyLoading) {
+          this.loadMoreHistory();
+        }
+      },
+      
+      async loadMoreHistory() {
+        if (this.historyList.length >= this.historyTotal) return;
+        this.historyPage++;
+        await this.fetchHistory(false);
+      },
+      
+      closeHistory() {
+        this.showHistory = false;
+        this.historyPage = 1;
+        this.historyList = [];
+      },
+      
+      getHistoryStatusText(status) {
+        const statusMap = {
+          0: '未处理',
+          1: '处理中',
+          2: '处理完成',
+          '-1': '处理失败'
+        };
+        return statusMap[status] || '未知';
+      },
+      
+      getHistoryStatusColor(status) {
+        const colorMap = {
+          0: '#888',
+          1: '#3b82f6',
+          2: '#10b981',
+          '-1': '#ef4444'
+        };
+        return colorMap[status] || '#888';
+      },
+      
+      downloadHistoryVideo(item, index) {
+        if (!item || !item.result_url) {
+          alert('下载链接不可用');
+          return;
+        }
+        
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = `remix_history_${dateStr}_${timeStr}_${index + 1}.mp4`;
+        const downloadUrl = `/api/download?url=${encodeURIComponent(item.result_url)}&filename=${encodeURIComponent(filename)}`;
+        window.open(downloadUrl, '_blank');
       }
     },
     template: `
@@ -511,9 +623,14 @@
         </div>
 
         <div class="field">
-          <button class="btn" @click="submit" :disabled="!canSubmit">
-            {{ loading ? 'Remix中...' : '开始 Remix' }}
-          </button>
+          <div class="row">
+            <button class="btn" @click="submit" :disabled="!canSubmit">
+              {{ loading ? 'Remix中...' : '开始 Remix' }}
+            </button>
+            <button class="btn secondary" @click="showHistory = true; fetchHistory()" :disabled="historyLoading">
+              {{ historyLoading ? '加载中...' : '历史记录' }}
+            </button>
+          </div>
         </div>
 
         <div v-if="statusText" class="status" :class="{'success': status==='SUCCESS', 'danger': status==='FAILED'}">
@@ -529,6 +646,40 @@
             <div style="margin-top:8px; display:flex; gap:8px;">
               <button class="btn secondary" @click="downloadVideo(r.file_url, idx)">下载视频</button>
               <span v-if="r.task_cost_time" class="muted">耗时: {{ r.task_cost_time }}秒</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
+          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
+            <button class="modal-close" @click="closeHistory">×</button>
+            <div class="modal-title">Remix 历史记录</div>
+            <div v-if="historyList.length === 0 && !historyLoading" style="text-align: center; padding: 40px; color: var(--muted);">
+              暂无历史记录
+            </div>
+            <div v-for="(item, idx) in historyList" :key="idx" style="padding: 16px; border-bottom: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                <div style="flex: 1;">
+                  <div style="font-size: 14px; color: var(--text); margin-bottom: 4px;">{{ item.prompt }}</div>
+                  <div style="font-size: 12px; color: var(--muted);">{{ item.message }}</div>
+                  <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">
+                    比例: {{ item.ratio || '-' }} | 时长: {{ item.duration || '-' }}秒
+                  </div>
+                </div>
+                <span :style="{color: getHistoryStatusColor(item.status), fontSize: '12px', fontWeight: '600'}">
+                  {{ getHistoryStatusText(item.status) }}
+                </span>
+              </div>
+              <div v-if="item.result_url" style="margin-top: 8px;">
+                <video :src="item.result_url" controls style="width: 100%; max-height: 200px; border-radius: 8px;"></video>
+                <button class="btn secondary" style="margin-top: 8px; font-size: 12px;" @click="downloadHistoryVideo(item, idx)">下载视频</button>
+              </div>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 8px;">
+                创建时间: {{ new Date(item.create_time).toLocaleString() }}
+              </div>
+            </div>
+            <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
+              加载中...
             </div>
           </div>
         </div>
