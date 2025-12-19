@@ -119,6 +119,37 @@
     .ratio-floating .ratio-label{
       font-weight: 600;
     }
+    .save-btn{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+    }
+    .save-btn:disabled{
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .toast{
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #1a1a1a;
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 2000;
+      opacity: 0;
+      transition: all 0.3s;
+    }
+    .toast.show{
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    .toast.error{ background: var(--danger); }
+    .toast.success{ background: var(--primary); }
     .canvas-container.panning{
       cursor: grabbing;
     }
@@ -694,12 +725,20 @@
   <div class="shell">
     <div class="canvas-container" id="canvasContainer">
       <div class="brand-floating">
-        <a class="brand" href="/" title="返回首页">
+        <a class="brand" href="/video-workflow-list" title="返回列表">
           <img src="/files/logo.svg" alt="logo" />
           <div class="brand-title">视频工作流</div>
         </a>
       </div>
       <div class="ratio-floating">
+        <button class="btn save-btn" id="saveBtn" title="保存工作流">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          <span id="saveBtnText">保存</span>
+        </button>
         <div class="ratio-label">视频比例</div>
         <select id="ratioSelect">
           <option value="9:16">9:16</option>
@@ -767,6 +806,8 @@
     </div>
   </div>
 
+  <div class="toast" id="toast"></div>
+
   <div class="modal" id="videoModal" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true">
       <div class="modal-header">
@@ -833,6 +874,374 @@
     const MINIMAP_WIDTH = 180;
     const MINIMAP_HEIGHT = 120;
     const MINIMAP_PADDING = 10;
+
+    // 获取URL参数中的工作流ID
+    function getWorkflowIdFromUrl(){
+      const params = new URLSearchParams(window.location.search);
+      return params.get('id');
+    }
+
+    // 获取auth token
+    function getAuthToken(){
+      return localStorage.getItem('auth_token') || '';
+    }
+
+    // 显示Toast消息
+    function showToast(message, type = ''){
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = 'toast ' + type;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // 上传文件到服务器，返回永久URL
+    async function uploadFile(file){
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      try {
+        const response = await fetch('/api/video-workflow/upload', {
+          method: 'POST',
+          headers: {
+            'Authorization': getAuthToken()
+          },
+          body: formData
+        });
+        
+        const result = await response.json();
+        if(result.code === 0 && result.data && result.data.url){
+          return result.data.url;
+        } else {
+          throw new Error(result.message || '上传失败');
+        }
+      } catch(error){
+        console.error('Upload error:', error);
+        showToast('文件上传失败: ' + error.message, 'error');
+        return null;
+      }
+    }
+
+    // 序列化工作流数据（用于保存）
+    function serializeWorkflow(){
+      // 只保存必要的数据，排除File对象和临时URL
+      const serializableNodes = state.nodes.map(node => {
+        const nodeData = { ...node.data };
+        // 移除File对象
+        if(nodeData.file) delete nodeData.file;
+        if(nodeData.startFile) delete nodeData.startFile;
+        if(nodeData.endFile) delete nodeData.endFile;
+        // 对于本地blob URL，需要清除（这些是临时的）
+        // 服务器URL（以http开头）保留
+        if(nodeData.url && nodeData.url.startsWith('blob:')) nodeData.url = '';
+        if(nodeData.startUrl && nodeData.startUrl.startsWith('blob:')) nodeData.startUrl = '';
+        if(nodeData.endUrl && nodeData.endUrl.startsWith('blob:')) nodeData.endUrl = '';
+        if(nodeData.preview && nodeData.preview.startsWith('data:')) nodeData.preview = nodeData.url || '';
+        if(nodeData.startPreview && nodeData.startPreview.startsWith('data:')) nodeData.startPreview = nodeData.startUrl || '';
+        if(nodeData.endPreview && nodeData.endPreview.startsWith('data:')) nodeData.endPreview = nodeData.endUrl || '';
+        
+        return {
+          id: node.id,
+          type: node.type,
+          title: node.title,
+          x: node.x,
+          y: node.y,
+          data: nodeData
+        };
+      });
+
+      return {
+        version: '1.0',
+        ratio: state.ratio,
+        viewport: {
+          panX: state.panX,
+          panY: state.panY,
+          zoom: state.zoom
+        },
+        nextNodeId: state.nextNodeId,
+        nextConnId: state.nextConnId,
+        nextImgConnId: state.nextImgConnId,
+        nodes: serializableNodes,
+        connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType }))
+      };
+    }
+
+    // 保存工作流
+    async function saveWorkflow(){
+      const saveBtn = document.getElementById('saveBtn');
+      const saveBtnText = document.getElementById('saveBtnText');
+      const workflowId = getWorkflowIdFromUrl();
+
+      if(!workflowId){
+        showToast('请先从列表创建或选择工作流', 'error');
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtnText.textContent = '保存中...';
+
+      try {
+        const workflowData = serializeWorkflow();
+        
+        const response = await fetch(`/api/video-workflow/${workflowId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': getAuthToken()
+          },
+          body: JSON.stringify({
+            workflow_data: workflowData
+          })
+        });
+
+        const result = await response.json();
+        
+        if(result.code === 0){
+          showToast('保存成功', 'success');
+        } else {
+          showToast(result.message || '保存失败', 'error');
+        }
+      } catch(error){
+        console.error('Save error:', error);
+        showToast('保存失败: ' + error.message, 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtnText.textContent = '保存';
+      }
+    }
+
+    // 加载工作流
+    async function loadWorkflow(workflowId){
+      if(!workflowId) return;
+
+      try {
+        const response = await fetch(`/api/video-workflow/${workflowId}`, {
+          headers: {
+            'Authorization': getAuthToken()
+          }
+        });
+
+        const result = await response.json();
+        
+        if(result.code === 0 && result.data){
+          const workflow = result.data;
+          
+          // 更新页面标题
+          if(workflow.name){
+            document.querySelector('.brand-title').textContent = workflow.name;
+            document.title = workflow.name + ' - 视频工作流';
+          }
+          
+          // 如果有workflow_data，恢复状态
+          if(workflow.workflow_data){
+            restoreWorkflow(workflow.workflow_data);
+          }
+        } else {
+          showToast(result.message || '加载工作流失败', 'error');
+        }
+      } catch(error){
+        console.error('Load error:', error);
+        showToast('加载工作流失败', 'error');
+      }
+    }
+
+    // 恢复工作流状态
+    function restoreWorkflow(data){
+      // 清除现有节点
+      for(const node of [...state.nodes]){
+        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+        if(el) el.remove();
+      }
+      
+      // 重置状态
+      state.nodes = [];
+      state.connections = [];
+      state.imageConnections = [];
+      state.selectedNodeId = null;
+      state.selectedConnId = null;
+      state.selectedImgConnId = null;
+      
+      // 恢复视口
+      if(data.viewport){
+        state.panX = data.viewport.panX || 0;
+        state.panY = data.viewport.panY || 0;
+        state.zoom = data.viewport.zoom || 1;
+        applyTransform();
+        updateZoomLevel();
+      }
+      
+      // 恢复比例
+      if(data.ratio){
+        state.ratio = data.ratio;
+        ratioSelectEl.value = data.ratio;
+      }
+      
+      // 恢复ID计数器
+      state.nextNodeId = data.nextNodeId || 1;
+      state.nextConnId = data.nextConnId || 1;
+      state.nextImgConnId = data.nextImgConnId || 1;
+      
+      // 恢复节点
+      if(data.nodes && Array.isArray(data.nodes)){
+        for(const nodeData of data.nodes){
+          restoreNode(nodeData);
+        }
+      }
+      
+      // 恢复连接
+      if(data.connections && Array.isArray(data.connections)){
+        state.connections = data.connections;
+      }
+      
+      if(data.imageConnections && Array.isArray(data.imageConnections)){
+        state.imageConnections = data.imageConnections;
+      }
+      
+      // 重新渲染
+      renderConnections();
+      renderImageConnections();
+      renderMinimap();
+    }
+
+    // 恢复单个节点
+    function restoreNode(nodeData){
+      if(nodeData.type === 'image_to_video'){
+        createImageToVideoNodeWithData(nodeData);
+      } else if(nodeData.type === 'video'){
+        createVideoNodeWithData(nodeData);
+      } else if(nodeData.type === 'image'){
+        createImageNodeWithData(nodeData);
+      }
+    }
+
+    // 带数据创建图生视频节点（复用createImageToVideoNode的逻辑）
+    function createImageToVideoNodeWithData(nodeData){
+      // 临时保存nextNodeId
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      // 调用原有的创建函数
+      createImageToVideoNode({ x: nodeData.x, y: nodeData.y });
+      
+      // 恢复nextNodeId为最大值
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+      
+      // 更新节点数据
+      const node = state.nodes.find(n => n.id === nodeData.id);
+      if(node && nodeData.data){
+        node.data.prompt = nodeData.data.prompt || '';
+        node.data.startUrl = nodeData.data.startUrl || '';
+        node.data.endUrl = nodeData.data.endUrl || '';
+        node.data.motionLevel = nodeData.data.motionLevel || 5;
+        node.data.useMotion = nodeData.data.useMotion || false;
+        
+        // 更新DOM显示
+        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+        if(el){
+          // 更新提示词
+          const promptEl = el.querySelector('.prompt-input');
+          if(promptEl) promptEl.value = node.data.prompt;
+          
+          // 更新首帧图片
+          if(node.data.startUrl){
+            const startPreviewRow = el.querySelector('.start-preview-row');
+            const startPreview = el.querySelector('.start-preview');
+            const startImagePort = el.querySelector('.start-image-port');
+            if(startPreview){
+              startPreview.src = node.data.startUrl;
+              node.data.startPreview = node.data.startUrl;
+            }
+            if(startPreviewRow) startPreviewRow.style.display = 'flex';
+            if(startImagePort) startImagePort.classList.add('disabled');
+          }
+          
+          // 更新尾帧图片
+          if(node.data.endUrl){
+            const endPreviewRow = el.querySelector('.end-preview-row');
+            const endPreview = el.querySelector('.end-preview');
+            const endImagePort = el.querySelector('.end-image-port');
+            if(endPreview){
+              endPreview.src = node.data.endUrl;
+              node.data.endPreview = node.data.endUrl;
+            }
+            if(endPreviewRow) endPreviewRow.style.display = 'flex';
+            if(endImagePort) endImagePort.classList.add('disabled');
+          }
+        }
+      }
+    }
+
+    // 带数据创建视频节点（复用createVideoNode的逻辑）
+    function createVideoNodeWithData(nodeData){
+      // 临时保存nextNodeId
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      // 调用原有的创建函数
+      createVideoNode({ x: nodeData.x, y: nodeData.y });
+      
+      // 恢复nextNodeId为最大值
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+      
+      // 更新节点数据
+      const node = state.nodes.find(n => n.id === nodeData.id);
+      if(node && nodeData.data){
+        node.data.url = nodeData.data.url || '';
+        node.data.name = nodeData.data.name || '';
+        // 如果有URL，显示预览
+        if(node.data.url){
+          const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+          if(el){
+            const previewField = el.querySelector('.video-preview-field');
+            const thumbVideo = el.querySelector('.video-thumb');
+            const nameEl = el.querySelector('.video-name');
+            if(previewField && thumbVideo && nameEl){
+              thumbVideo.src = node.data.url;
+              thumbVideo.muted = true;
+              thumbVideo.loop = true;
+              nameEl.textContent = node.data.name;
+              previewField.style.display = 'block';
+            }
+          }
+        }
+      }
+    }
+
+    // 带数据创建图片节点（复用createImageNode的逻辑）
+    function createImageNodeWithData(nodeData){
+      // 临时保存nextNodeId
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      // 调用原有的创建函数
+      createImageNode({ x: nodeData.x, y: nodeData.y });
+      
+      // 恢复nextNodeId为最大值
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+      
+      // 更新节点数据
+      const node = state.nodes.find(n => n.id === nodeData.id);
+      if(node && nodeData.data){
+        node.data.url = nodeData.data.url || '';
+        node.data.name = nodeData.data.name || '';
+        node.data.preview = nodeData.data.preview || nodeData.data.url || '';
+        // 如果有URL，显示预览
+        if(node.data.url || node.data.preview){
+          const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+          if(el){
+            const previewImg = el.querySelector('.image-preview');
+            const previewRow = el.querySelector('.image-preview-row');
+            if(previewImg){
+              previewImg.src = node.data.url || node.data.preview;
+              if(previewRow) previewRow.style.display = 'flex';
+            }
+          }
+        }
+      }
+    }
 
     function renderMinimap(){
       if(state.nodes.length === 0){
@@ -1410,14 +1819,16 @@
       }
     }
 
-    function createImageToVideoNode(){
+    function createImageToVideoNode(opts){
       const id = state.nextNodeId++;
+      const x = opts && typeof opts.x === 'number' ? opts.x : (60 + (state.nodes.length % 3) * 340);
+      const y = opts && typeof opts.y === 'number' ? opts.y : (60 + Math.floor(state.nodes.length / 3) * 280);
       const node = {
         id,
         type: 'image_to_video',
         title: '图生视频',
-        x: 60 + (state.nodes.length % 3) * 340,
-        y: 60 + Math.floor(state.nodes.length / 3) * 280,
+        x,
+        y,
         data: {
           prompt: '',
           duration: 5,
@@ -1811,34 +2222,61 @@
       startFileEl.addEventListener('change', async () => {
         const file = startFileEl.files && startFileEl.files[0];
         if(!file) return;
-        node.data.startFile = file;
-        node.data.startPreview = await readFileAsDataUrl(file);
-        // 删除该端口的连接
-        state.imageConnections = state.imageConnections.filter(c => !(c.to === id && c.portType === 'start'));
-        startPreviewImg.src = node.data.startPreview;
+        
+        // 先显示本地预览
+        const localPreview = await readFileAsDataUrl(file);
+        startPreviewImg.src = localPreview;
         startPreviewRow.style.display = 'flex';
+        
+        // 上传到服务器获取永久URL
+        const uploadedUrl = await uploadFile(file);
+        if(uploadedUrl){
+          node.data.startUrl = uploadedUrl;
+          node.data.startPreview = uploadedUrl;
+          startPreviewImg.src = uploadedUrl;
+          // 删除该端口的连接
+          state.imageConnections = state.imageConnections.filter(c => !(c.to === id && c.portType === 'start'));
+          startImagePort.classList.add('disabled');
+          renderImageConnections();
+          showToast('首帧图片上传成功', 'success');
+        } else {
+          startPreviewRow.style.display = 'none';
+          startPreviewImg.removeAttribute('src');
+        }
         startFileEl.value = '';
-        startImagePort.classList.add('disabled');
-        renderImageConnections();
       });
 
       endFileEl.addEventListener('change', async () => {
         const file = endFileEl.files && endFileEl.files[0];
         if(!file) return;
-        node.data.endFile = file;
-        node.data.endPreview = await readFileAsDataUrl(file);
-        // 删除该端口的连接
-        state.imageConnections = state.imageConnections.filter(c => !(c.to === id && c.portType === 'end'));
-        endPreviewImg.src = node.data.endPreview;
+        
+        // 先显示本地预览
+        const localPreview = await readFileAsDataUrl(file);
+        endPreviewImg.src = localPreview;
         endPreviewRow.style.display = 'flex';
+        
+        // 上传到服务器获取永久URL
+        const uploadedUrl = await uploadFile(file);
+        if(uploadedUrl){
+          node.data.endUrl = uploadedUrl;
+          node.data.endPreview = uploadedUrl;
+          endPreviewImg.src = uploadedUrl;
+          // 删除该端口的连接
+          state.imageConnections = state.imageConnections.filter(c => !(c.to === id && c.portType === 'end'));
+          endImagePort.classList.add('disabled');
+          renderImageConnections();
+          showToast('尾帧图片上传成功', 'success');
+        } else {
+          endPreviewRow.style.display = 'none';
+          endPreviewImg.removeAttribute('src');
+        }
         endFileEl.value = '';
-        endImagePort.classList.add('disabled');
-        renderImageConnections();
       });
 
       startClearBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         node.data.startFile = null;
+        node.data.startUrl = '';
         node.data.startPreview = '';
         startPreviewRow.style.display = 'none';
         startPreviewImg.removeAttribute('src');
@@ -1848,6 +2286,7 @@
       endClearBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         node.data.endFile = null;
+        node.data.endUrl = '';
         node.data.endPreview = '';
         endPreviewRow.style.display = 'none';
         endPreviewImg.removeAttribute('src');
@@ -1858,14 +2297,16 @@
       setSelected(id);
     }
 
-    function createImageNode(){
+    function createImageNode(opts){
       const id = state.nextNodeId++;
+      const x = opts && typeof opts.x === 'number' ? opts.x : (60 + (state.nodes.length % 3) * 340);
+      const y = opts && typeof opts.y === 'number' ? opts.y : (60 + Math.floor(state.nodes.length / 3) * 280);
       const node = {
         id,
         type: 'image',
         title: '图片',
-        x: 60 + (state.nodes.length % 3) * 340,
-        y: 60 + Math.floor(state.nodes.length / 3) * 280,
+        x,
+        y,
         data: {
           file: null,
           preview: '',
@@ -1947,16 +2388,33 @@
       imageFileEl.addEventListener('change', async () => {
         const file = imageFileEl.files && imageFileEl.files[0];
         if(!file) return;
-        node.data.file = file;
-        node.data.preview = await readFileAsDataUrl(file);
-        imagePreviewImg.src = node.data.preview;
+        
+        // 先显示本地预览
+        const localPreview = await readFileAsDataUrl(file);
+        imagePreviewImg.src = localPreview;
         imagePreviewRow.style.display = 'flex';
+        
+        // 上传到服务器获取永久URL
+        const uploadedUrl = await uploadFile(file);
+        if(uploadedUrl){
+          node.data.url = uploadedUrl;
+          node.data.name = file.name;
+          node.data.preview = uploadedUrl;
+          imagePreviewImg.src = uploadedUrl;
+          showToast('图片上传成功', 'success');
+        } else {
+          // 上传失败，清除预览
+          imagePreviewRow.style.display = 'none';
+          imagePreviewImg.removeAttribute('src');
+        }
         imageFileEl.value = '';
       });
 
       imageClearBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         node.data.file = null;
+        node.data.url = '';
+        node.data.name = '';
         node.data.preview = '';
         imagePreviewRow.style.display = 'none';
         imagePreviewImg.removeAttribute('src');
@@ -2363,6 +2821,20 @@
       renderConnections();
       renderMinimap();
     });
+
+    // 保存按钮点击事件
+    document.getElementById('saveBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      saveWorkflow();
+    });
+
+    // 页面加载时初始化
+    (async function init(){
+      const workflowId = getWorkflowIdFromUrl();
+      if(workflowId){
+        await loadWorkflow(workflowId);
+      }
+    })();
   </script>
 </body>
 </html>

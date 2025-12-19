@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>视频工作流列表</title>
+  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <style>
+    :root{
+      --bg:#ffffff;
+      --panel:#f8f9fa;
+      --border:#e0e0e0;
+      --text:#1a1a1a;
+      --muted:#666666;
+      --primary:#22c55e;
+      --primary-light:#dcfce7;
+      --primary-dark:#16a34a;
+      --danger:#ef4444;
+      --warning:#f59e0b;
+    }
+    *{box-sizing:border-box; margin:0; padding:0;}
+    body{
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+      min-height:100vh;
+    }
+    .container{
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .header{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header-left{
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .brand{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text);
+    }
+    .brand img{
+      width: 32px;
+      height: 32px;
+    }
+    .brand-title{
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .page-title{
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .btn{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+    }
+    .btn:hover{
+      background: var(--primary-dark);
+    }
+    .btn-secondary{
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover{
+      background: #e9ecef;
+    }
+    .btn-danger{
+      background: var(--danger);
+    }
+    .btn-danger:hover{
+      background: #dc2626;
+    }
+    .btn-sm{
+      padding: 6px 12px;
+      font-size: 13px;
+    }
+    .toolbar{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .search-box{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .search-input{
+      padding: 10px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      width: 280px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .search-input:focus{
+      border-color: var(--primary);
+    }
+    .filter-select{
+      padding: 10px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      background: #fff;
+      cursor: pointer;
+      outline: none;
+    }
+    .workflow-grid{
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .workflow-card{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      transition: transform 0.2s, box-shadow 0.2s;
+      cursor: pointer;
+    }
+    .workflow-card:hover{
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+    }
+    .workflow-cover{
+      width: 100%;
+      height: 160px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 48px;
+    }
+    .workflow-cover img{
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .workflow-content{
+      padding: 16px;
+    }
+    .workflow-name{
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .workflow-desc{
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 12px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      min-height: 36px;
+    }
+    .workflow-meta{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .workflow-status{
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .status-enabled{
+      background: var(--primary-light);
+      color: var(--primary-dark);
+    }
+    .status-disabled{
+      background: #fee2e2;
+      color: var(--danger);
+    }
+    .status-draft{
+      background: #fef3c7;
+      color: var(--warning);
+    }
+    .workflow-actions{
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      background: #fff;
+    }
+    .workflow-actions .btn{
+      flex: 1;
+      justify-content: center;
+    }
+    .pagination{
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      margin-top: 32px;
+    }
+    .pagination-btn{
+      padding: 8px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    .pagination-btn:hover:not(:disabled){
+      background: var(--panel);
+    }
+    .pagination-btn:disabled{
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .pagination-info{
+      font-size: 14px;
+      color: var(--muted);
+      margin: 0 16px;
+    }
+    .empty-state{
+      text-align: center;
+      padding: 80px 20px;
+      color: var(--muted);
+    }
+    .empty-state-icon{
+      font-size: 64px;
+      margin-bottom: 16px;
+    }
+    .empty-state-title{
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    .empty-state-desc{
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    .loading{
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+    }
+    .loading-spinner{
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin{
+      to{ transform: rotate(360deg); }
+    }
+    .modal-overlay{
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.2s;
+    }
+    .modal-overlay.active{
+      opacity: 1;
+      visibility: visible;
+    }
+    .modal{
+      background: #fff;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 480px;
+      padding: 24px;
+      transform: scale(0.9);
+      transition: transform 0.2s;
+    }
+    .modal-overlay.active .modal{
+      transform: scale(1);
+    }
+    .modal-title{
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 20px;
+    }
+    .form-group{
+      margin-bottom: 16px;
+    }
+    .form-label{
+      display: block;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+    .form-input{
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-input:focus{
+      border-color: var(--primary);
+    }
+    .form-textarea{
+      min-height: 100px;
+      resize: vertical;
+    }
+    .modal-actions{
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 24px;
+    }
+    .toast{
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--text);
+      color: #fff;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 2000;
+      opacity: 0;
+      transition: all 0.3s;
+    }
+    .toast.show{
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    .toast.error{
+      background: var(--danger);
+    }
+    .toast.success{
+      background: var(--primary);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-left">
+        <a href="/" class="brand">
+          <img src="/files/logo.svg" alt="Logo">
+          <span class="brand-title">AI工具</span>
+        </a>
+        <h1 class="page-title">视频工作流</h1>
+      </div>
+      <button class="btn" onclick="openCreateModal()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        新建工作流
+      </button>
+    </div>
+
+    <div class="toolbar">
+      <div class="search-box">
+        <input type="text" class="search-input" id="searchInput" placeholder="搜索工作流名称..." onkeyup="handleSearch(event)">
+        <select class="filter-select" id="statusFilter" onchange="loadWorkflows()">
+          <option value="">全部状态</option>
+          <option value="1">已启用</option>
+          <option value="0">已禁用</option>
+          <option value="2">草稿</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="workflowContainer">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        <div>加载中...</div>
+      </div>
+    </div>
+
+    <div class="pagination" id="pagination" style="display:none;">
+      <button class="pagination-btn" id="prevBtn" onclick="prevPage()">上一页</button>
+      <span class="pagination-info" id="pageInfo">第 1 页 / 共 1 页</span>
+      <button class="pagination-btn" id="nextBtn" onclick="nextPage()">下一页</button>
+    </div>
+  </div>
+
+  <!-- Create/Edit Modal -->
+  <div class="modal-overlay" id="createModal">
+    <div class="modal">
+      <h2 class="modal-title" id="modalTitle">新建工作流</h2>
+      <form id="workflowForm" onsubmit="handleSubmit(event)">
+        <input type="hidden" id="workflowId">
+        <div class="form-group">
+          <label class="form-label">工作流名称 *</label>
+          <input type="text" class="form-input" id="workflowName" required placeholder="请输入工作流名称">
+        </div>
+        <div class="form-group">
+          <label class="form-label">描述</label>
+          <textarea class="form-input form-textarea" id="workflowDesc" placeholder="请输入工作流描述"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">状态</label>
+          <select class="form-input" id="workflowStatus">
+            <option value="1">启用</option>
+            <option value="2">草稿</option>
+            <option value="0">禁用</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
+          <button type="submit" class="btn">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Confirm Modal -->
+  <div class="modal-overlay" id="deleteModal">
+    <div class="modal">
+      <h2 class="modal-title">确认删除</h2>
+      <p style="color: var(--muted); margin-bottom: 24px;">确定要删除这个工作流吗？此操作不可撤销。</p>
+      <input type="hidden" id="deleteWorkflowId">
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeDeleteModal()">取消</button>
+        <button type="button" class="btn btn-danger" onclick="confirmDelete()">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let currentPage = 1;
+    let pageSize = 10;
+    let totalPages = 1;
+    let searchKeyword = '';
+    let searchTimeout = null;
+
+    function getAuthToken() {
+      return localStorage.getItem('auth_token') || '';
+    }
+
+    async function loadWorkflows() {
+      const container = document.getElementById('workflowContainer');
+      container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>加载中...</div></div>';
+
+      const status = document.getElementById('statusFilter').value;
+      let url = `/api/video-workflow/list?page=${currentPage}&page_size=${pageSize}`;
+      if (status) url += `&status=${status}`;
+      if (searchKeyword) url += `&keyword=${encodeURIComponent(searchKeyword)}`;
+
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': getAuthToken()
+          }
+        });
+        const result = await response.json();
+
+        if (result.code === 0) {
+          renderWorkflows(result.data);
+        } else {
+          showToast(result.message || '加载失败', 'error');
+          container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div><div class="empty-state-title">加载失败</div><div class="empty-state-desc">请刷新页面重试</div></div>';
+        }
+      } catch (error) {
+        showToast('网络错误', 'error');
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div><div class="empty-state-title">网络错误</div><div class="empty-state-desc">请检查网络连接</div></div>';
+      }
+    }
+
+    function renderWorkflows(data) {
+      const container = document.getElementById('workflowContainer');
+      const pagination = document.getElementById('pagination');
+
+      if (!data.data || data.data.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">📋</div>
+            <div class="empty-state-title">暂无工作流</div>
+            <div class="empty-state-desc">点击"新建工作流"按钮创建您的第一个工作流</div>
+            <button class="btn" onclick="openCreateModal()">新建工作流</button>
+          </div>
+        `;
+        pagination.style.display = 'none';
+        return;
+      }
+
+      totalPages = Math.ceil(data.total / pageSize);
+
+      let html = '<div class="workflow-grid">';
+      data.data.forEach(workflow => {
+        const statusClass = workflow.status === 1 ? 'status-enabled' : 
+                           workflow.status === 0 ? 'status-disabled' : 'status-draft';
+        const statusText = workflow.status === 1 ? '已启用' : 
+                          workflow.status === 0 ? '已禁用' : '草稿';
+        
+        const coverHtml = workflow.cover_image 
+          ? `<img src="${workflow.cover_image}" alt="${workflow.name}">`
+          : '🎬';
+
+        const createTime = workflow.create_time ? new Date(workflow.create_time).toLocaleDateString('zh-CN') : '';
+
+        html += `
+          <div class="workflow-card" onclick="enterWorkflow(${workflow.id})">
+            <div class="workflow-cover">${coverHtml}</div>
+            <div class="workflow-content">
+              <div class="workflow-name">${escapeHtml(workflow.name)}</div>
+              <div class="workflow-desc">${escapeHtml(workflow.description || '暂无描述')}</div>
+              <div class="workflow-meta">
+                <span>${createTime}</span>
+                <span class="workflow-status ${statusClass}">${statusText}</span>
+              </div>
+            </div>
+            <div class="workflow-actions" onclick="event.stopPropagation()">
+              <button class="btn btn-secondary btn-sm" onclick="editWorkflow(${workflow.id}, '${escapeHtml(workflow.name)}', '${escapeHtml(workflow.description || '')}', ${workflow.status})">编辑</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteWorkflow(${workflow.id})">删除</button>
+            </div>
+          </div>
+        `;
+      });
+      html += '</div>';
+
+      container.innerHTML = html;
+
+      // Update pagination
+      document.getElementById('pageInfo').textContent = `第 ${currentPage} 页 / 共 ${totalPages} 页 (共 ${data.total} 条)`;
+      document.getElementById('prevBtn').disabled = currentPage <= 1;
+      document.getElementById('nextBtn').disabled = currentPage >= totalPages;
+      pagination.style.display = 'flex';
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function handleSearch(event) {
+      if (searchTimeout) clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        searchKeyword = document.getElementById('searchInput').value.trim();
+        currentPage = 1;
+        loadWorkflows();
+      }, 300);
+    }
+
+    function prevPage() {
+      if (currentPage > 1) {
+        currentPage--;
+        loadWorkflows();
+      }
+    }
+
+    function nextPage() {
+      if (currentPage < totalPages) {
+        currentPage++;
+        loadWorkflows();
+      }
+    }
+
+    function enterWorkflow(id) {
+      window.location.href = `/video-workflow?id=${id}`;
+    }
+
+    function openCreateModal() {
+      document.getElementById('modalTitle').textContent = '新建工作流';
+      document.getElementById('workflowId').value = '';
+      document.getElementById('workflowName').value = '';
+      document.getElementById('workflowDesc').value = '';
+      document.getElementById('workflowStatus').value = '1';
+      document.getElementById('createModal').classList.add('active');
+    }
+
+    function editWorkflow(id, name, desc, status) {
+      document.getElementById('modalTitle').textContent = '编辑工作流';
+      document.getElementById('workflowId').value = id;
+      document.getElementById('workflowName').value = name;
+      document.getElementById('workflowDesc').value = desc;
+      document.getElementById('workflowStatus').value = status;
+      document.getElementById('createModal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('createModal').classList.remove('active');
+    }
+
+    async function handleSubmit(event) {
+      event.preventDefault();
+      
+      const id = document.getElementById('workflowId').value;
+      const name = document.getElementById('workflowName').value.trim();
+      const description = document.getElementById('workflowDesc').value.trim();
+      const status = parseInt(document.getElementById('workflowStatus').value);
+
+      if (!name) {
+        showToast('请输入工作流名称', 'error');
+        return;
+      }
+
+      const data = { name, description, status };
+      const isEdit = !!id;
+      const url = isEdit ? `/api/video-workflow/${id}` : '/api/video-workflow/create';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      try {
+        const response = await fetch(url, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': getAuthToken()
+          },
+          body: JSON.stringify(data)
+        });
+        const result = await response.json();
+
+        if (result.code === 0) {
+          showToast(isEdit ? '更新成功' : '创建成功', 'success');
+          closeModal();
+          loadWorkflows();
+        } else {
+          showToast(result.message || '操作失败', 'error');
+        }
+      } catch (error) {
+        showToast('网络错误', 'error');
+      }
+    }
+
+    function deleteWorkflow(id) {
+      document.getElementById('deleteWorkflowId').value = id;
+      document.getElementById('deleteModal').classList.add('active');
+    }
+
+    function closeDeleteModal() {
+      document.getElementById('deleteModal').classList.remove('active');
+    }
+
+    async function confirmDelete() {
+      const id = document.getElementById('deleteWorkflowId').value;
+      
+      try {
+        const response = await fetch(`/api/video-workflow/${id}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': getAuthToken()
+          }
+        });
+        const result = await response.json();
+
+        if (result.code === 0) {
+          showToast('删除成功', 'success');
+          closeDeleteModal();
+          loadWorkflows();
+        } else {
+          showToast(result.message || '删除失败', 'error');
+        }
+      } catch (error) {
+        showToast('网络错误', 'error');
+      }
+    }
+
+    function showToast(message, type = '') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = 'toast ' + type;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // Close modal on overlay click
+    document.getElementById('createModal').addEventListener('click', function(e) {
+      if (e.target === this) closeModal();
+    });
+    document.getElementById('deleteModal').addEventListener('click', function(e) {
+      if (e.target === this) closeDeleteModal();
+    });
+
+    // Initial load
+    loadWorkflows();
+  </script>
+</body>
+</html>

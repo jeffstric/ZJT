@@ -2533,6 +2533,41 @@ async def get_video_workflow(
         )
 
 
+@app.post('/api/video-workflow/upload')
+async def upload_workflow_asset(
+    file: UploadFile = File(..., description="要上传的图片或视频文件"),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    上传工作流素材（图片或视频）
+    返回可访问的永久URL
+    """
+    try:
+        # 验证文件类型
+        content_type = file.content_type or ""
+        if not (content_type.startswith("image/") or content_type.startswith("video/")):
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "仅支持图片或视频文件"}
+            )
+        
+        # 保存文件并获取URL
+        file_url = _save_uploaded_image(file)
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "上传成功",
+            "data": {"url": file_url}
+        })
+    except Exception as e:
+        logger.error(f"Failed to upload workflow asset: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"上传失败: {str(e)}"}
+        )
+
+
 @app.post('/api/video-workflow/create')
 async def create_video_workflow(
     request: VideoWorkflowCreateRequest,
