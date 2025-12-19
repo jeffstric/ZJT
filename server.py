@@ -1052,6 +1052,117 @@ async def ai_app_run_image(
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
 
 
+@app.post("/api/ai-app-run-image-url")
+async def ai_app_run_image_url(
+    prompt: str = Form("", description="Text prompt for the AI app"),
+    image_url: str = Form(..., description="Image URL (already uploaded to server)"),
+    ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9"),
+    duration_seconds: int = Form(10, description="Duration in seconds"),
+    count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Submit image-to-video task using an already uploaded image URL.
+    This is optimized for workflow where images are already on the server.
+    """
+    try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
+        
+        if not image_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Image URL is required"
+            )
+
+        computing_power = TASK_COMPUTING_POWER[3]
+        if CHECK_AUTH_TOKEN:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+            user_computing_power = response_data.get('computing_power', 0)
+            total_computing_power = computing_power * count
+            if user_computing_power < total_computing_power:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+        
+        project_ids = []
+        
+        for i in range(count):
+            try:
+                transaction_id = str(uuid.uuid4())
+                result = create_image_to_video(prompt, ratio, image_url, duration_seconds)
+                
+                project_id = result.get("id")
+                if not project_id:
+                    logger.error(f"Task {i+1}: No project ID received")
+                    continue
+                
+                project_ids.append(project_id)
+                logger.info(f"Task {i+1} submitted with project_id: {project_id}")
+                
+                if CHECK_AUTH_TOKEN:
+                    headers = {'Authorization': f'Bearer {auth_token}'}
+                    make_perseids_request(
+                        endpoint='user/consume_computing_power',
+                        method='POST',
+                        headers=headers,
+                        data={
+                            'computing_power': computing_power,
+                            'transaction_id': transaction_id
+                        }
+                    )
+                
+                if user_id:
+                    try:
+                        AIToolsModel.create(
+                            prompt=prompt,
+                            user_id=user_id,
+                            type=3,
+                            image_path=image_url,
+                            ratio=ratio,
+                            duration=duration_seconds,
+                            project_id=project_id,
+                            status='processing'
+                        )
+                    except Exception as db_err:
+                        logger.error(f"Failed to save to database: {str(db_err)}")
+                        
+            except Exception as task_err:
+                logger.error(f"Task {i+1} failed: {str(task_err)}")
+                continue
+        
+        if not project_ids:
+            raise HTTPException(status_code=500, detail="所有任务都提交失败")
+        
+        return JSONResponse({
+            "success": True,
+            "project_ids": project_ids,
+            "status": "submitted",
+            "image_url": image_url
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit task: {str(e)}")
+
+
 @app.get('/api/user/computing_power')
 async def get_computing_power(auth_token: str = Header(None, alias="Authorization")):
     """

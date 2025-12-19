@@ -924,6 +924,118 @@
       }
     }
 
+    // 生成视频API调用
+    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio){
+      const userId = localStorage.getItem('user_id');
+      const authToken = getAuthToken();
+      
+      const form = new FormData();
+      
+      // 直接使用image_url，不需要重新上传
+      form.append('image_url', imageUrl);
+      form.append('prompt', prompt || '');
+      form.append('ratio', ratio || '9:16');
+      form.append('duration_seconds', duration || 10);
+      form.append('count', count || 1);
+      
+      if(userId){
+        form.append('user_id', userId);
+      }
+      if(authToken){
+        form.append('auth_token', authToken);
+      }
+
+      const res = await fetch('/api/ai-app-run-image-url', {
+        method: 'POST',
+        body: form
+      });
+      
+      const data = await res.json();
+      if(data.project_ids && data.project_ids.length > 0){
+        return {
+          projectIds: data.project_ids,
+          status: data.status
+        };
+      } else {
+        throw new Error(data.detail || data.message || '提交任务失败');
+      }
+    }
+
+    // 查询视频生成状态
+    async function checkVideoStatus(projectIds){
+      const authToken = getAuthToken();
+      const projectIdsStr = projectIds.join(',');
+      
+      const url = `/api/get-status/${projectIdsStr}` + (authToken ? `?auth_token=${authToken}` : '');
+      const res = await fetch(url);
+      const data = await res.json();
+      
+      if(data.tasks){
+        // 多任务响应
+        const tasks = data.tasks;
+        const allSuccess = tasks.every(t => t.status === 'SUCCESS');
+        const anyFailed = tasks.some(t => t.status === 'FAILED');
+        const anyRunning = tasks.some(t => t.status === 'RUNNING');
+        
+        const results = [];
+        tasks.forEach(task => {
+          if(task.results && task.results.length > 0){
+            results.push(...task.results);
+          }
+        });
+        
+        if(allSuccess){
+          return { status: 'SUCCESS', results };
+        } else if(anyFailed && !anyRunning){
+          return { status: 'FAILED', results, error: '部分任务失败' };
+        } else {
+          return { status: 'RUNNING', results };
+        }
+      } else {
+        // 单任务响应
+        return {
+          status: data.status || 'RUNNING',
+          results: data.results || [],
+          error: data.reason
+        };
+      }
+    }
+
+    // 轮询视频状态
+    function pollVideoStatus(projectIds, onProgress, onComplete, onError){
+      let pollCount = 0;
+      const maxPolls = 60; // 最多轮询60次（10分钟）
+      
+      const poll = async () => {
+        pollCount++;
+        try {
+          const result = await checkVideoStatus(projectIds);
+          
+          if(result.status === 'SUCCESS'){
+            onComplete(result.results);
+          } else if(result.status === 'FAILED'){
+            onError(result.error || '生成失败');
+          } else {
+            onProgress(`生成中... (${pollCount * 10}秒)`);
+            if(pollCount < maxPolls){
+              setTimeout(poll, 10000);
+            } else {
+              onError('生成超时，请稍后查看结果');
+            }
+          }
+        } catch(e){
+          console.error('Poll error:', e);
+          if(pollCount < maxPolls){
+            setTimeout(poll, 10000);
+          } else {
+            onError('查询状态失败');
+          }
+        }
+      };
+      
+      poll();
+    }
+
     // 序列化工作流数据（用于保存）
     function serializeWorkflow(){
       // 只保存必要的数据，排除File对象和临时URL
@@ -1010,6 +1122,57 @@
       } finally {
         saveBtn.disabled = false;
         saveBtnText.textContent = '保存';
+      }
+    }
+
+    // 自动保存（静默保存，不显示提示）
+    async function autoSaveWorkflow(){
+      const workflowId = getWorkflowIdFromUrl();
+      if(!workflowId) return;
+      
+      // 如果没有节点，不自动保存
+      if(state.nodes.length === 0) return;
+
+      try {
+        const workflowData = serializeWorkflow();
+        
+        const response = await fetch(`/api/video-workflow/${workflowId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': getAuthToken()
+          },
+          body: JSON.stringify({
+            workflow_data: workflowData
+          })
+        });
+
+        const result = await response.json();
+        
+        if(result.code === 0){
+          console.log('自动保存成功:', new Date().toLocaleTimeString());
+        } else {
+          console.warn('自动保存失败:', result.message);
+        }
+      } catch(error){
+        console.error('自动保存错误:', error);
+      }
+    }
+
+    // 启动自动保存定时器（每3分钟）
+    let autoSaveTimer = null;
+    function startAutoSave(){
+      if(autoSaveTimer) clearInterval(autoSaveTimer);
+      autoSaveTimer = setInterval(() => {
+        autoSaveWorkflow();
+      }, 3 * 60 * 1000); // 3分钟
+    }
+
+    // 停止自动保存
+    function stopAutoSave(){
+      if(autoSaveTimer){
+        clearInterval(autoSaveTimer);
+        autoSaveTimer = null;
       }
     }
 
@@ -1831,8 +1994,8 @@
         y,
         data: {
           prompt: '',
-          duration: 5,
-          model: 'kling',
+          duration: 10,
+          model: 'sora',
           drawCount: 1,
           motionEnabled: false,
           motion: '',
@@ -1878,17 +2041,18 @@
           <div class="field">
             <div class="label">视频长度</div>
             <select class="duration-select">
-              <option value="5" selected>5秒</option>
-              <option value="10">10秒</option>
+              <option value="10" selected>10秒</option>
+              <option value="15">15秒</option>
             </select>
           </div>
           <div class="field">
             <div class="label">模型</div>
             <select class="model-select">
-              <option value="kling" selected>kling</option>
-              <option value="sora">sora</option>
+              <option value="sora" selected>sora</option>
+              <option value="kling" disabled style="color:#999;">kling (暂未实现)</option>
             </select>
           </div>
+          <!-- 运镜功能暂时隐藏
           <div class="field">
             <div class="label">运镜</div>
             <label class="toggle-row"><input class="motion-enable" type="checkbox" />启用运镜</label>
@@ -1905,6 +2069,7 @@
               </div>
             </div>
           </div>
+          -->
           <div class="field">
             <div class="label">提示词</div>
             <textarea class="prompt" placeholder="请输入提示词..." rows="3"></textarea>
@@ -1932,11 +2097,12 @@
       const promptEl = el.querySelector('.prompt');
       const durationSelect = el.querySelector('.duration-select');
       const modelSelect = el.querySelector('.model-select');
-      const motionEnableEl = el.querySelector('.motion-enable');
-      const motionOptionsEl = el.querySelector('.motion-options');
-      const motionSelect = el.querySelector('.motion-select');
-      const motionHelpIllu = el.querySelector('.motion-help-illu');
-      const motionHelpText = el.querySelector('.motion-help-text');
+      // 运镜功能暂时隐藏，相关元素不存在
+      // const motionEnableEl = el.querySelector('.motion-enable');
+      // const motionOptionsEl = el.querySelector('.motion-options');
+      // const motionSelect = el.querySelector('.motion-select');
+      // const motionHelpIllu = el.querySelector('.motion-help-illu');
+      // const motionHelpText = el.querySelector('.motion-help-text');
       const genBtnMain = el.querySelector('.gen-btn-main');
       const genBtnCaret = el.querySelector('.gen-btn-caret');
       const genMenu = el.querySelector('.gen-menu');
@@ -1961,6 +2127,7 @@
         node.data.model = modelSelect.value;
       });
 
+      /* 运镜功能暂时隐藏
       function setMotionHelp(val){
         if(val === 'pan_left'){
           motionHelpIllu.innerHTML = `
@@ -2037,6 +2204,7 @@
       });
 
       updateMotionUI();
+      */
 
       function updateGenMeta(){
         genCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
@@ -2064,49 +2232,133 @@
         }
       });
 
-      genBtnMain.addEventListener('click', (e) => {
+      genBtnMain.addEventListener('click', async (e) => {
         e.stopPropagation();
 
-        const hasStartFrame = (() => {
-          if(node.data.startFile) return true;
+        // 获取首帧图片URL
+        let startImageUrl = '';
+        if(node.data.startUrl){
+          startImageUrl = node.data.startUrl;
+        } else {
           const startConn = state.imageConnections.find(c => c.to === id && c.portType === 'start');
-          if(!startConn) return false;
-          const fromNode = state.nodes.find(n => n.id === startConn.from);
-          return !!(fromNode && fromNode.type === 'image' && fromNode.data && fromNode.data.file);
-        })();
+          if(startConn){
+            const fromNode = state.nodes.find(n => n.id === startConn.from);
+            if(fromNode && fromNode.type === 'image' && fromNode.data && fromNode.data.url){
+              startImageUrl = fromNode.data.url;
+            }
+          }
+        }
 
-        if(!hasStartFrame){
+        if(!startImageUrl){
           genStatus.style.display = 'block';
           genStatus.style.color = '#dc2626';
-          genStatus.textContent = '请先填写首帧画面（上传图片或连接图片节点到首帧端口）';
+          genStatus.textContent = '请先上传首帧图片';
           return;
         }
 
+        // 禁用按钮
+        genBtnMain.disabled = true;
+        genBtnMain.textContent = '生成中...';
         genStatus.style.color = '';
         genStatus.style.display = 'block';
-        genStatus.textContent = `已触发生成（模型：${node.data.model}，抽卡：X${node.data.drawCount}）`;
+        genStatus.textContent = '正在提交任务...';
 
-        const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
-        const connectedVideoIds = Array.from(new Set(
-          state.connections
-            .filter(c => c.from === id)
-            .map(c => c.to)
-            .filter(toId => {
-              const toNode = state.nodes.find(n => n.id === toId);
-              return toNode && toNode.type === 'video';
-            })
-        ));
-        const missingCount = Math.max(0, desiredCount - connectedVideoIds.length);
-        const prevSelectedId = state.selectedNodeId;
+        try {
+          const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
+          const duration = node.data.duration || 10;
+          const prompt = node.data.prompt || '';
+          const ratio = state.ratio || '9:16';
 
-        for(let i = 0; i < missingCount; i++){
-          const newVideoId = createVideoNode({ x: node.x + 380, y: node.y + i * 260 });
-          state.connections.push({ id: state.nextConnId++, from: id, to: newVideoId });
+          // 调用生成API
+          const result = await generateVideoFromImage(startImageUrl, prompt, duration, desiredCount, ratio);
+          
+          genStatus.textContent = '任务已提交，正在生成视频...';
+          node.data.projectIds = result.projectIds;
+
+          // 创建对应数量的视频节点
+          const connectedVideoIds = Array.from(new Set(
+            state.connections
+              .filter(c => c.from === id)
+              .map(c => c.to)
+              .filter(toId => {
+                const toNode = state.nodes.find(n => n.id === toId);
+                return toNode && toNode.type === 'video';
+              })
+          ));
+          const missingCount = Math.max(0, desiredCount - connectedVideoIds.length);
+          const newVideoNodeIds = [];
+
+          for(let i = 0; i < missingCount; i++){
+            const newVideoId = createVideoNode({ x: node.x + 380, y: node.y + i * 260 });
+            state.connections.push({ id: state.nextConnId++, from: id, to: newVideoId });
+            newVideoNodeIds.push(newVideoId);
+          }
+          
+          // 合并所有视频节点ID
+          const allVideoNodeIds = [...connectedVideoIds, ...newVideoNodeIds];
+          
+          renderConnections();
+          renderMinimap();
+
+          // 轮询状态
+          pollVideoStatus(
+            result.projectIds,
+            (progressText) => {
+              genStatus.textContent = progressText;
+            },
+            (results) => {
+              // 生成成功
+              genStatus.style.color = '#16a34a';
+              genStatus.textContent = `生成完成！共${results.length}个视频`;
+              genBtnMain.disabled = false;
+              genBtnMain.textContent = '生成视频';
+              
+              // 将视频URL分配到视频节点
+              results.forEach((videoUrl, idx) => {
+                if(idx < allVideoNodeIds.length){
+                  const videoNodeId = allVideoNodeIds[idx];
+                  const videoNode = state.nodes.find(n => n.id === videoNodeId);
+                  if(videoNode){
+                    videoNode.data.url = videoUrl;
+                    videoNode.data.name = `视频${idx + 1}`;
+                    // 更新视频节点的DOM显示
+                    const videoEl = canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`);
+                    if(videoEl){
+                      const previewField = videoEl.querySelector('.video-preview-field');
+                      const thumbVideo = videoEl.querySelector('.video-thumb');
+                      const nameEl = videoEl.querySelector('.video-name');
+                      if(previewField && thumbVideo && nameEl){
+                        thumbVideo.src = videoUrl;
+                        thumbVideo.muted = true;
+                        thumbVideo.loop = true;
+                        nameEl.textContent = videoNode.data.name;
+                        previewField.style.display = 'block';
+                      }
+                    }
+                  }
+                }
+              });
+              
+              showToast('视频生成成功！', 'success');
+            },
+            (errorMsg) => {
+              // 生成失败
+              genStatus.style.color = '#dc2626';
+              genStatus.textContent = errorMsg;
+              genBtnMain.disabled = false;
+              genBtnMain.textContent = '生成视频';
+              showToast('视频生成失败: ' + errorMsg, 'error');
+            }
+          );
+
+        } catch(err){
+          console.error('Generate error:', err);
+          genStatus.style.color = '#dc2626';
+          genStatus.textContent = err.message || '生成失败';
+          genBtnMain.disabled = false;
+          genBtnMain.textContent = '生成视频';
+          showToast('视频生成失败: ' + err.message, 'error');
         }
-
-        setSelected(prevSelectedId === null ? id : prevSelectedId);
-        renderConnections();
-        renderMinimap();
       });
 
       deleteBtn.addEventListener('click', (e) => {
@@ -2833,8 +3085,15 @@
       const workflowId = getWorkflowIdFromUrl();
       if(workflowId){
         await loadWorkflow(workflowId);
+        // 启动自动保存
+        startAutoSave();
       }
     })();
+
+    // 页面关闭前保存
+    window.addEventListener('beforeunload', () => {
+      stopAutoSave();
+    });
   </script>
 </body>
 </html>
