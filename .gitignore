@@ -3,3 +3,4 @@ __pycache__/
 server_output/
 upload/
 *.json
+!docs/*.json
