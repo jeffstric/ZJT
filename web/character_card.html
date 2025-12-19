@@ -402,6 +402,15 @@
           historyTotal: 0
         };
       },
+      mounted() {
+        // Read task_id from URL parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const taskId = urlParams.get('task_id');
+        if (taskId) {
+          this.sourceType = 'from_task';
+          this.fromTask = taskId;
+        }
+      },
       computed: {
         canSubmit() {
           if (this.loading) return false;

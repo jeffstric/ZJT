@@ -2056,6 +2056,10 @@
         const resolved = item.ratio || this.model;
         return modelMap[resolved] || resolved || '未知';
       },
+      
+      goToCharacterCard(projectId) {
+        window.location.href = '/character_card.html?task_id=' + projectId;
+      },
     },
     
     beforeUnmount() {
@@ -2197,6 +2201,7 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
                   <button v-if="item.status == 2 && item.type == 3" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="margin-left: 8px;">{{ enhancingVideos[item.id] ? '已修复' : '生成高清视频' }}</button>
+                  <button v-if="item.status == 2 && item.project_id" class="btn" @click="goToCharacterCard(item.project_id)" style="margin-left: 8px;">创建角色卡</button>
                 </div>
               </div>
               
@@ -2679,6 +2684,10 @@
       getDurationText(item) {
         const duration = item?.original_duration ?? item?.duration ?? item?.video_duration ?? (typeof this.durationSeconds === 'number' ? this.durationSeconds : null);
         return duration ? `${duration}秒` : '未知';
+      },
+      
+      goToCharacterCard(projectId) {
+        window.location.href = '/character_card.html?task_id=' + projectId;
       }
     },
     
@@ -2802,6 +2811,7 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <button class="btn secondary" @click="downloadHistoryResult(item)" style="display: inline-block; margin-right: 8px;">查看结果</button>
                   <button v-if="item.status == 2 && item.type == 2" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="display: inline-block;">{{ enhancingVideos[item.id] ? '已修复' : '生成高清视频' }}</button>
+                  <button v-if="item.status == 2 && item.project_id" class="btn" @click="goToCharacterCard(item.project_id)" style="margin-left: 8px;">创建角色卡</button>
                 </div>
               </div>
               
