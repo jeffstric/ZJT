@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>创建角色卡 - 英仙智能AI工具箱</title>
+  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <link rel="stylesheet" href="/css/index.css" />
+  <style>
+    .source-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 12px;
+    }
+    
+    .source-tab {
+      flex: 1;
+      padding: 12px 16px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+    
+    .source-tab.active {
+      background: rgba(34, 197, 94, 0.15);
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    
+    .source-tab:hover:not(.active) {
+      border-color: var(--muted);
+      color: var(--text);
+    }
+    
+    .source-tab-icon {
+      display: block;
+      font-size: 20px;
+      margin-bottom: 4px;
+    }
+    
+    .source-tab-label {
+      font-size: 13px;
+    }
+    
+    .source-tab-hint {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 400;
+      margin-top: 2px;
+    }
+    
+    .time-range-inputs {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    
+    .time-range-inputs .input {
+      width: 100px;
+      text-align: center;
+    }
+    
+    .time-range-separator {
+      color: var(--muted);
+      font-size: 18px;
+    }
+    
+    .hint-text {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+    
+    .character-result {
+      background: rgba(34, 197, 94, 0.1);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      border-radius: 12px;
+      padding: 20px;
+      margin-top: 16px;
+    }
+    
+    .character-card {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
+    
+    .character-avatar {
+      width: 120px;
+      height: 120px;
+      border-radius: 12px;
+      object-fit: cover;
+      border: 2px solid var(--primary);
+    }
+    
+    .character-info {
+      flex: 1;
+    }
+    
+    .character-username {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--primary);
+      margin-bottom: 8px;
+    }
+    
+    .character-id {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 12px;
+      word-break: break-all;
+    }
+    
+    .character-usage {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 13px;
+      color: var(--text);
+    }
+    
+    .character-usage code {
+      background: rgba(34, 197, 94, 0.2);
+      color: var(--primary);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+    }
+    
+    .copy-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      margin-left: 8px;
+      transition: all 0.2s;
+    }
+    
+    .copy-btn:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    
+    .status.success {
+      color: var(--primary);
+    }
+    
+    .raw-response {
+      margin-top: 16px;
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      overflow-x: auto;
+    }
+    
+    .raw-response pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    
+    .toggle-raw {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 4px 0;
+      margin-top: 12px;
+    }
+    
+    .toggle-raw:hover {
+      color: var(--text);
+    }
+
+    @media (max-width: 600px) {
+      .character-card {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+      }
+      
+      .time-range-inputs {
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="container" v-cloak>
+    <div class="card">
+      <header>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <img src="/files/logo.svg" alt="Logo" style="width: 48px; height: 48px;" />
+          <div class="title">创建角色卡</div>
+        </div>
+        <button class="btn secondary" onclick="location.href='/'">返回首页</button>
+      </header>
+
+      <div class="form">
+        <!-- Source Type Selection -->
+        <div class="field">
+          <label class="label">选择来源类型</label>
+          <div class="source-tabs">
+            <button 
+              class="source-tab" 
+              :class="{active: sourceType === 'from_task'}"
+              @click="sourceType = 'from_task'"
+            >
+              <span class="source-tab-icon">🎬</span>
+              <span class="source-tab-label">任务ID</span>
+              <span class="source-tab-hint">支持真人</span>
+            </button>
+            <button 
+              class="source-tab" 
+              :class="{active: sourceType === 'url'}"
+              @click="sourceType = 'url'"
+            >
+              <span class="source-tab-icon">🔗</span>
+              <span class="source-tab-label">视频URL</span>
+              <span class="source-tab-hint">不支持真人</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- From Task Input -->
+        <div class="field" v-if="sourceType === 'from_task'">
+          <label class="label">视频任务ID <span style="color: red;">*</span></label>
+          <input 
+            class="input" 
+            v-model="fromTask" 
+            placeholder="输入已生成的视频任务ID"
+          />
+          <div class="hint-text">例如: 7b904fe9-b6a0-e3e2-ccaf-5542f8070929</div>
+        </div>
+
+        <!-- URL Input -->
+        <div class="field" v-if="sourceType === 'url'">
+          <label class="label">视频URL <span style="color: red;">*</span></label>
+          <input 
+            class="input" 
+            v-model="videoUrl" 
+            placeholder="输入包含角色的视频URL"
+          />
+          <div class="hint-text">注意：通过URL创建的角色不支持真人</div>
+        </div>
+
+        <!-- Timestamps -->
+        <div class="field">
+          <label class="label">角色出现时间范围 <span style="color: red;">*</span></label>
+          <div class="time-range-inputs">
+            <input 
+              class="input" 
+              type="number" 
+              v-model.number="startTime" 
+              placeholder="起始秒"
+              min="0"
+              step="0.1"
+            />
+            <span class="time-range-separator">至</span>
+            <input 
+              class="input" 
+              type="number" 
+              v-model.number="endTime" 
+              placeholder="结束秒"
+              min="0"
+              step="0.1"
+            />
+            <span class="muted">秒</span>
+          </div>
+          <div class="hint-text">时间范围差值必须在 1-3 秒之间</div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="field">
+          <div class="row">
+            <button class="btn" @click="submit" :disabled="!canSubmit">
+              {{ loading ? '创建中...' : '创建角色卡' }}
+            </button>
+            <button class="btn secondary" @click="showHistory = true; fetchHistory()" :disabled="historyLoading">
+              {{ historyLoading ? '加载中...' : '历史记录' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Status -->
+        <div v-if="statusText" class="status" :class="{'success': status==='SUCCESS', 'danger': status==='FAILED'}">
+          {{ statusText }}
+        </div>
+
+        <!-- Error -->
+        <div v-if="error && !loading" class="status danger">{{ error }}</div>
+
+        <!-- Character Result -->
+        <div v-if="characters.length > 0" class="character-result">
+          <h3 style="margin: 0 0 16px 0; color: var(--primary);">🎭 角色卡创建成功 ({{ characters.length }}个)</h3>
+          
+          <div v-for="(char, index) in characters" :key="index" class="character-card" style="margin-bottom: 16px;">
+            <div class="character-info">
+              <div class="character-username">
+                @{{ char.id }}
+                <button class="copy-btn" @click="copyText('@' + char.id)">复制</button>
+              </div>
+              <div class="character-usage">
+                <strong>使用方法：</strong><br/>
+                在提示词中使用 <code>@{{ char.id }}</code> 来引用此角色<br/>
+                <span style="color: var(--muted); font-size: 12px;">
+                  例如：<code>@{{ char.id }} 在一个舞台上跳舞</code>
+                </span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Toggle Raw Response -->
+          <button class="toggle-raw" @click="showRaw = !showRaw">
+            {{ showRaw ? '隐藏' : '显示' }}原始响应
+          </button>
+          <div v-if="showRaw" class="raw-response">
+            <pre>{{ JSON.stringify(rawResponse, null, 2) }}</pre>
+          </div>
+        </div>
+        
+        <!-- History Modal -->
+        <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
+          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
+            <button class="modal-close" @click="closeHistory">×</button>
+            <div class="modal-title">角色卡历史记录</div>
+            <div v-if="historyList.length === 0 && !historyLoading" style="text-align: center; padding: 40px; color: var(--muted);">
+              暂无历史记录
+            </div>
+            <div v-for="(item, idx) in historyList" :key="idx" style="padding: 16px; border-bottom: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                <div style="flex: 1;">
+                  <div style="font-size: 14px; color: var(--text); margin-bottom: 4px;">{{ item.prompt }}</div>
+                  <div style="font-size: 12px; color: var(--muted);">{{ item.message }}</div>
+                  <div v-if="item.result_url && item.status === 2" style="margin-top: 8px;">
+                    <div style="font-size: 14px; color: var(--primary); font-weight: 600;">
+                      {{ item.result_url }}
+                      <button class="copy-btn" @click="copyText(item.result_url)">复制</button>
+                    </div>
+                    <div style="font-size: 12px; color: var(--muted); margin-top: 4px;">
+                      使用方法：在提示词中直接使用上面的角色ID
+                    </div>
+                  </div>
+                </div>
+                <span :style="{color: getHistoryStatusColor(item.status), fontSize: '12px', fontWeight: '600'}">
+                  {{ getHistoryStatusText(item.status) }}
+                </span>
+              </div>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 8px;">
+                创建时间: {{ new Date(item.create_time).toLocaleString() }}
+              </div>
+            </div>
+            <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
+              加载中...
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+  <script>
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          sourceType: 'from_task',
+          fromTask: '',
+          videoUrl: '',
+          startTime: 1,
+          endTime: 3,
+          loading: false,
+          error: '',
+          status: '',
+          taskId: '',
+          characters: [],
+          progress: 0,
+          rawResponse: null,
+          showRaw: false,
+          statusInterval: null,
+          showHistory: false,
+          historyList: [],
+          historyLoading: false,
+          historyPage: 1,
+          historyTotal: 0
+        };
+      },
+      computed: {
+        canSubmit() {
+          if (this.loading) return false;
+          
+          // Check source
+          if (this.sourceType === 'from_task' && !this.fromTask.trim()) return false;
+          if (this.sourceType === 'url' && !this.videoUrl.trim()) return false;
+          
+          // Check timestamps
+          const diff = this.endTime - this.startTime;
+          if (diff < 1 || diff > 3) return false;
+          
+          return true;
+        },
+        statusText() {
+          switch(this.status) {
+            case 'submitted': return '任务已提交，等待处理...';
+            case 'RUNNING': return `正在创建角色卡... ${this.progress}%`;
+            case 'SUCCESS': return '角色卡创建成功！';
+            case 'FAILED': return '创建失败';
+            default: return '';
+          }
+        },
+        timestamps() {
+          return `${this.startTime},${this.endTime}`;
+        }
+      },
+      methods: {
+        async submit() {
+          if (!this.canSubmit) return;
+          
+          this.loading = true;
+          this.error = '';
+          this.status = '';
+          this.characters = [];
+          this.progress = 0;
+          this.rawResponse = null;
+          this.clearStatusCheck();
+          
+          try {
+            const form = new FormData();
+            form.append('timestamps', this.timestamps);
+            
+            if (this.sourceType === 'from_task') {
+              form.append('from_task', this.fromTask.trim());
+            } else {
+              form.append('url', this.videoUrl.trim());
+            }
+            
+            // Add user_id and auth_token from localStorage
+            const userId = localStorage.getItem('user_id');
+            const authToken = localStorage.getItem('auth_token');
+            if (userId) {
+              form.append('user_id', userId);
+            }
+            if (authToken) {
+              form.append('auth_token', authToken);
+            }
+            
+            const res = await axios.post('/api/create-character', form, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            
+            if (res.data.success) {
+              this.taskId = res.data.task_id;
+              this.status = 'submitted';
+              this.startStatusCheck();
+            } else {
+              throw new Error(res.data.message || '创建失败');
+            }
+            
+          } catch (err) {
+            console.error(err);
+            this.error = err?.response?.data?.detail || err?.message || '请求失败';
+            this.loading = false;
+          }
+        },
+        
+        async checkStatus() {
+          if (!this.taskId) return;
+          
+          try {
+            const authToken = localStorage.getItem('auth_token');
+            const params = authToken ? { auth_token: authToken } : {};
+            const res = await axios.get(`/api/character-status/${this.taskId}`, { params });
+            const payload = res.data;
+            
+            this.status = payload.status;
+            this.progress = payload.progress || 0;
+            this.rawResponse = payload.raw_response;
+            
+            if (payload.status === 'SUCCESS') {
+              // characters is an array, get the first one or all
+              this.characters = payload.characters || [];
+              this.loading = false;
+              this.clearStatusCheck();
+            } else if (payload.status === 'FAILED') {
+              this.error = payload.reason || '任务失败';
+              this.loading = false;
+              this.clearStatusCheck();
+            }
+            // Keep polling if still RUNNING
+            
+          } catch (err) {
+            console.error('Status check error:', err);
+          }
+        },
+        
+        startStatusCheck() {
+          this.statusInterval = setInterval(() => {
+            this.checkStatus();
+          }, 3000);
+        },
+        
+        clearStatusCheck() {
+          if (this.statusInterval) {
+            clearInterval(this.statusInterval);
+            this.statusInterval = null;
+          }
+        },
+        
+        copyText(text) {
+          // Use fallback method for better compatibility
+          const textarea = document.createElement('textarea');
+          textarea.value = text;
+          textarea.style.position = 'fixed';
+          textarea.style.left = '-9999px';
+          textarea.style.top = '0';
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          
+          try {
+            const successful = document.execCommand('copy');
+            if (successful) {
+              alert('已复制: ' + text);
+            } else {
+              alert('复制失败，请手动复制: ' + text);
+            }
+          } catch (err) {
+            console.error('复制失败:', err);
+            alert('复制失败，请手动复制: ' + text);
+          }
+          
+          document.body.removeChild(textarea);
+        },
+        
+        async fetchHistory(reset = true) {
+          if (reset) {
+            this.historyPage = 1;
+            this.historyList = [];
+          }
+          
+          const userId = localStorage.getItem('user_id');
+          if (!userId) {
+            this.error = '请先登录';
+            this.showHistory = true;
+            return;
+          }
+          
+          this.historyLoading = true;
+          try {
+            const authToken = localStorage.getItem('auth_token');
+            
+            const res = await axios.get('/api/ai-tools/history', {
+              params: {
+                user_id: parseInt(userId, 10),
+                page: this.historyPage,
+                page_size: 20,
+                type: 8,
+                auth_token: authToken || undefined
+              }
+            });
+            
+            if (res.data.success) {
+              const payload = res.data.data || {};
+              const newItems = payload.data || payload.items || [];
+              this.historyList = reset ? newItems : [...this.historyList, ...newItems];
+              this.historyTotal = payload.total || 0;
+              this.showHistory = true;
+            }
+          } catch (err) {
+            console.error(err);
+            this.error = err?.response?.data?.detail || '获取历史记录失败';
+            this.showHistory = true;
+          } finally {
+            this.historyLoading = false;
+          }
+        },
+        
+        handleHistoryScroll(e) {
+          const { scrollTop, scrollHeight, clientHeight } = e.target;
+          if (scrollHeight - scrollTop - clientHeight < 50 && !this.historyLoading) {
+            this.loadMoreHistory();
+          }
+        },
+        
+        async loadMoreHistory() {
+          if (this.historyList.length >= this.historyTotal) return;
+          this.historyPage++;
+          await this.fetchHistory(false);
+        },
+        
+        closeHistory() {
+          this.showHistory = false;
+          this.historyPage = 1;
+          this.historyList = [];
+        },
+        
+        getHistoryStatusText(status) {
+          const statusMap = {
+            0: '未处理',
+            1: '处理中',
+            2: '处理完成',
+            '-1': '处理失败'
+          };
+          return statusMap[status] || '未知';
+        },
+        
+        getHistoryStatusColor(status) {
+          const colorMap = {
+            0: '#888',
+            1: '#3b82f6',
+            2: '#10b981',
+            '-1': '#ef4444'
+          };
+          return colorMap[status] || '#888';
+        }
+      },
+      beforeUnmount() {
+        this.clearStatusCheck();
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
