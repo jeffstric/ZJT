@@ -1146,9 +1146,9 @@
         if(nodeData.url && nodeData.url.startsWith('blob:')) nodeData.url = '';
         if(nodeData.startUrl && nodeData.startUrl.startsWith('blob:')) nodeData.startUrl = '';
         if(nodeData.endUrl && nodeData.endUrl.startsWith('blob:')) nodeData.endUrl = '';
-        if(nodeData.preview && nodeData.preview.startsWith('data:')) nodeData.preview = nodeData.url || '';
-        if(nodeData.startPreview && nodeData.startPreview.startsWith('data:')) nodeData.startPreview = nodeData.startUrl || '';
-        if(nodeData.endPreview && nodeData.endPreview.startsWith('data:')) nodeData.endPreview = nodeData.endUrl || '';
+        if(nodeData.preview && nodeData.preview.startsWith('data:') && nodeData.url) nodeData.preview = nodeData.url;
+        if(nodeData.startPreview && nodeData.startPreview.startsWith('data:') && nodeData.startUrl) nodeData.startPreview = nodeData.startUrl;
+        if(nodeData.endPreview && nodeData.endPreview.startsWith('data:') && nodeData.endUrl) nodeData.endPreview = nodeData.endUrl;
         
         return {
           id: node.id,
@@ -2831,6 +2831,7 @@
           node.data.preview = uploadedUrl;
           imagePreviewImg.src = uploadedUrl;
           showToast('图片上传成功', 'success');
+          try{ autoSaveWorkflow(); } catch(e){}
         } else {
           // 上传失败，清除预览
           imagePreviewRow.style.display = 'none';

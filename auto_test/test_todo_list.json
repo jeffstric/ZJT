@@ -1910,6 +1910,51 @@
               "selector": ".image-preview-row",
               "expected_result": "图片预览区域显示，包含缩略图和清除按钮",
               "pass": false
+            },
+            {
+              "step": 4,
+              "action": "点击保存按钮",
+              "operation": "click",
+              "selector": "#saveBtn",
+              "expected_result": "触发保存工作流",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "等待保存成功提示",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "保存成功",
+                "time": 10
+              },
+              "expected_result": "出现保存成功 toast",
+              "pass": false
+            },
+            {
+              "step": 6,
+              "action": "刷新页面（模拟下次加载）",
+              "mcp_tool": "mcp1_browser_reload",
+              "mcp_params": {},
+              "expected_result": "页面刷新并重新加载工作流",
+              "pass": false
+            },
+            {
+              "step": 7,
+              "action": "验证图片预览仍然存在",
+              "operation": "verify",
+              "selector": ".image-preview-row",
+              "expected_result": "刷新后图片预览区域仍显示，不应空白",
+              "pass": false
+            },
+            {
+              "step": 8,
+              "action": "验证图片预览 src 非空",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const img = document.querySelector('.image-preview'); return img ? (img.getAttribute('src') || img.src || '') : ''; }"
+              },
+              "verify": "返回值非空，且以 http(s) 或 data:image 开头",
+              "pass": false
             }
           ]
         },
