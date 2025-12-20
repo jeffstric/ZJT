@@ -854,6 +854,51 @@
       zoom: 1,
     };
 
+    function normalizeVideoUrl(item){
+      if(!item) return '';
+      if(typeof item === 'string') return item;
+      if(typeof item === 'object'){
+        return item.url || item.video_url || item.videoUrl || item.file_url || item.fileUrl || item.oss_url || item.ossUrl || item.path || '';
+      }
+      return '';
+    }
+
+    function extractResultsArray(payload){
+      if(!payload) return [];
+      if(Array.isArray(payload)) return payload;
+      if(typeof payload !== 'object') return [];
+
+      if(Array.isArray(payload.results)) return payload.results;
+      if(Array.isArray(payload.result)) return payload.result;
+      if(Array.isArray(payload.videos)) return payload.videos;
+      if(Array.isArray(payload.video_urls)) return payload.video_urls;
+      if(Array.isArray(payload.videoUrls)) return payload.videoUrls;
+
+      if(payload.data){
+        const nested = extractResultsArray(payload.data);
+        if(nested.length) return nested;
+      }
+
+      if(payload.output){
+        const nested = extractResultsArray(payload.output);
+        if(nested.length) return nested;
+      }
+
+      // 兼容某些返回为 { results: { videos: [...] } } 或 { result: { url: ... } }
+      if(payload.results && typeof payload.results === 'object'){
+        const nested = extractResultsArray(payload.results);
+        if(nested.length) return nested;
+        return [payload.results];
+      }
+      if(payload.result && typeof payload.result === 'object'){
+        const nested = extractResultsArray(payload.result);
+        if(nested.length) return nested;
+        return [payload.result];
+      }
+
+      return [];
+    }
+
     const canvasEl = document.getElementById('canvas');
     const canvasContainer = document.getElementById('canvasContainer');
     const canvasWorld = document.getElementById('canvasWorld');
@@ -1017,6 +1062,10 @@
       const url = `/api/get-status/${projectIdsStr}` + (authToken ? `?auth_token=${authToken}` : '');
       const res = await fetch(url);
       const data = await res.json();
+
+      if(TEST_MODE){
+        console.log('[TEST MODE] /api/get-status raw:', data);
+      }
       
       if(data.tasks){
         // 多任务响应
@@ -1027,9 +1076,8 @@
         
         const results = [];
         tasks.forEach(task => {
-          if(task.results && task.results.length > 0){
-            results.push(...task.results);
-          }
+          const arr = extractResultsArray(task);
+          if(arr.length > 0) results.push(...arr);
         });
         
         if(allSuccess){
@@ -1043,7 +1091,7 @@
         // 单任务响应
         return {
           status: data.status || 'RUNNING',
-          results: data.results || [],
+          results: extractResultsArray(data),
           error: data.reason
         };
       }
@@ -1060,7 +1108,7 @@
           const result = await checkVideoStatus(projectIds);
           
           if(result.status === 'SUCCESS'){
-            onComplete(result.results);
+            onComplete(result);
           } else if(result.status === 'FAILED'){
             onError(result.error || '生成失败');
           } else {
@@ -2402,15 +2450,33 @@
             (progressText) => {
               genStatus.textContent = progressText;
             },
-            (results) => {
+            (statusResult) => {
               // 生成成功
+              if(TEST_MODE){
+                console.log('[TEST MODE] onComplete raw result:', statusResult);
+              }
+
+              const rawResults = extractResultsArray(statusResult);
+              const videoUrls = Array.isArray(rawResults)
+                ? rawResults.map(normalizeVideoUrl).filter(Boolean)
+                : [];
               genStatus.style.color = '#16a34a';
-              genStatus.textContent = `生成完成！共${results.length}个视频`;
+
+              if(videoUrls.length === 0){
+                genStatus.style.color = '#dc2626';
+                genStatus.textContent = '生成成功，但未获取到视频地址（results为空或字段不匹配），请刷新后重试或联系管理员';
+                genBtnMain.disabled = false;
+                genBtnMain.textContent = '生成视频';
+                showToast('生成成功但未返回视频地址', 'error');
+                return;
+              }
+
+              genStatus.textContent = `生成完成！共${videoUrls.length}个视频`;
               genBtnMain.disabled = false;
               genBtnMain.textContent = '生成视频';
               
               // 将视频URL分配到视频节点
-              results.forEach((videoUrl, idx) => {
+              videoUrls.forEach((videoUrl, idx) => {
                 if(idx < allVideoNodeIds.length){
                   const videoNodeId = allVideoNodeIds[idx];
                   const videoNode = state.nodes.find(n => n.id === videoNodeId);
@@ -2427,6 +2493,21 @@
                         thumbVideo.src = videoUrl;
                         thumbVideo.muted = true;
                         thumbVideo.loop = true;
+                        thumbVideo.controls = false;
+                        thumbVideo.preload = 'metadata';
+                        thumbVideo.playsInline = true;
+                        thumbVideo.onloadedmetadata = () => {
+                          try{
+                            if(isFinite(thumbVideo.duration) && thumbVideo.duration > 0){
+                              thumbVideo.currentTime = Math.min(0.1, Math.max(0, thumbVideo.duration - 0.1));
+                            }
+                          } catch(e){}
+                          try{
+                            const p = thumbVideo.play();
+                            if(p && typeof p.catch === 'function') p.catch(() => {});
+                          } catch(e){}
+                        };
+                        try{ thumbVideo.load(); } catch(e){}
                         nameEl.textContent = videoNode.data.name;
                         previewField.style.display = 'block';
                       }

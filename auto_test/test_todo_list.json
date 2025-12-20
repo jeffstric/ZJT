@@ -1692,6 +1692,35 @@
               "operation": "verify",
               "expected_result": "根据抽卡次数自动创建对应数量的视频节点，并连接到图生视频节点",
               "pass": false
+            },
+            {
+              "step": 6,
+              "action": "等待生成完成状态",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "生成完成",
+                "time": 120
+              },
+              "expected_result": "状态区域出现「生成完成」文字",
+              "pass": false
+            },
+            {
+              "step": 7,
+              "action": "验证视频预览区域可见",
+              "operation": "verify",
+              "selector": ".video-preview-field",
+              "expected_result": "至少一个视频节点的预览区域显示（display != none）",
+              "pass": false
+            },
+            {
+              "step": 8,
+              "action": "验证视频缩略预览 src 已写入",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const els = Array.from(document.querySelectorAll('.video-thumb')); return els.map(v => v.getAttribute('src') || v.src || '').filter(Boolean); }"
+              },
+              "verify": "返回数组长度 >= 1，且每个元素为 http(s) URL 或包含 .mp4",
+              "pass": false
             }
           ]
         },
