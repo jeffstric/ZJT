@@ -486,9 +486,28 @@
       return localStorage.getItem('auth_token') || '';
     }
 
+    function getUserId() {
+      return localStorage.getItem('user_id') || '';
+    }
+
+    function ensureLoggedIn() {
+      const uid = getUserId();
+      if (!uid) {
+        showToast('请先登录', 'error');
+        return false;
+      }
+      return true;
+    }
+
     async function loadWorkflows() {
       const container = document.getElementById('workflowContainer');
       container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>加载中...</div></div>';
+
+      if (!ensureLoggedIn()) {
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔒</div><div class="empty-state-title">请先登录</div><div class="empty-state-desc">登录后才能查看工作流列表</div><a class="btn" href="/">去登录</a></div>';
+        document.getElementById('pagination').style.display = 'none';
+        return;
+      }
 
       const status = document.getElementById('statusFilter').value;
       let url = `/api/video-workflow/list?page=${currentPage}&page_size=${pageSize}`;
@@ -498,7 +517,8 @@
       try {
         const response = await fetch(url, {
           headers: {
-            'Authorization': getAuthToken()
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
           }
         });
         const result = await response.json();
@@ -634,6 +654,8 @@
 
     async function handleSubmit(event) {
       event.preventDefault();
+
+      if (!ensureLoggedIn()) return;
       
       const id = document.getElementById('workflowId').value;
       const name = document.getElementById('workflowName').value.trim();
@@ -655,7 +677,8 @@
           method,
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': getAuthToken()
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
           },
           body: JSON.stringify(data)
         });
@@ -684,12 +707,15 @@
 
     async function confirmDelete() {
       const id = document.getElementById('deleteWorkflowId').value;
+
+      if (!ensureLoggedIn()) return;
       
       try {
         const response = await fetch(`/api/video-workflow/${id}`, {
           method: 'DELETE',
           headers: {
-            'Authorization': getAuthToken()
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
           }
         });
         const result = await response.json();

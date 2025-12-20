@@ -22,6 +22,17 @@ from duomi_api_requset import create_image_to_video, get_ai_task_result, create_
 from PIL import Image
 from baidu import call_ernie_vl_api
 
+
+def _get_user_id_from_header(user_id: Optional[int]) -> int:
+    if user_id is None:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if isinstance(user_id, str) and not user_id.strip():
+        raise HTTPException(status_code=400, detail="user_id is required")
+    try:
+        return int(user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid user_id")
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(APP_DIR, "qwen_image_edit_api.json")
 COMFYUI_OUTPUT_PATH = '/mnt/disk/ComfyUI/server_output'
@@ -2585,14 +2596,17 @@ async def get_video_workflow_list(
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     order_by: str = Query("create_time", description="排序字段"),
     order_direction: str = Query("DESC", description="排序方向: ASC, DESC"),
-    auth_token: str = Header(None, alias="Authorization")
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     获取视频工作流列表（分页）
     """
     try:
-        # 查询所有工作流（后续可根据用户权限过滤）
-        result = VideoWorkflowModel.list_all(
+        user_id = _get_user_id_from_header(user_id)
+
+        result = VideoWorkflowModel.list_by_user(
+            user_id=user_id,
             page=page,
             page_size=page_size,
             status=status,
@@ -2618,17 +2632,25 @@ async def get_video_workflow_list(
 @app.get('/api/video-workflow/{workflow_id}')
 async def get_video_workflow(
     workflow_id: int,
-    auth_token: str = Header(None, alias="Authorization")
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     获取单个视频工作流详情
     """
     try:
+        user_id = _get_user_id_from_header(user_id)
         workflow = VideoWorkflowModel.get_by_id(workflow_id)
         if not workflow:
             return JSONResponse(
                 status_code=404,
                 content={"code": -1, "message": "工作流不存在"}
+            )
+
+        if getattr(workflow, 'user_id', None) != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={"code": -1, "message": "无权限访问该工作流"}
             )
         
         return JSONResponse({
@@ -2683,13 +2705,14 @@ async def upload_workflow_asset(
 @app.post('/api/video-workflow/create')
 async def create_video_workflow(
     request: VideoWorkflowCreateRequest,
-    auth_token: str = Header(None, alias="Authorization")
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     创建视频工作流
     """
     try:
-        user_id = 0  # 暂时使用默认用户ID
+        user_id = _get_user_id_from_header(user_id)
         
         workflow_id = VideoWorkflowModel.create(
             name=request.name,
@@ -2718,18 +2741,26 @@ async def create_video_workflow(
 async def update_video_workflow(
     workflow_id: int,
     request: VideoWorkflowUpdateRequest,
-    auth_token: str = Header(None, alias="Authorization")
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     更新视频工作流
     """
     try:
+        user_id = _get_user_id_from_header(user_id)
         # 检查工作流是否存在
         workflow = VideoWorkflowModel.get_by_id(workflow_id)
         if not workflow:
             return JSONResponse(
                 status_code=404,
                 content={"code": -1, "message": "工作流不存在"}
+            )
+
+        if getattr(workflow, 'user_id', None) != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={"code": -1, "message": "无权限修改该工作流"}
             )
         
         # 构建更新字段
@@ -2764,18 +2795,26 @@ async def update_video_workflow(
 @app.delete('/api/video-workflow/{workflow_id}')
 async def delete_video_workflow(
     workflow_id: int,
-    auth_token: str = Header(None, alias="Authorization")
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     删除视频工作流
     """
     try:
+        user_id = _get_user_id_from_header(user_id)
         # 检查工作流是否存在
         workflow = VideoWorkflowModel.get_by_id(workflow_id)
         if not workflow:
             return JSONResponse(
                 status_code=404,
                 content={"code": -1, "message": "工作流不存在"}
+            )
+
+        if getattr(workflow, 'user_id', None) != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={"code": -1, "message": "无权限删除该工作流"}
             )
         
         VideoWorkflowModel.delete(workflow_id)

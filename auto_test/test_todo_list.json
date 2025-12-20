@@ -2212,6 +2212,60 @@
           ]
         },
         {
+          "id": "error_011",
+          "name": "登录态缺失user_id访问工作流列表",
+          "description": "回归用例：当 auth_token 存在但 localStorage.user_id 缺失时访问工作流列表页，不应触发 /api/video-workflow/list 导致 400，应提示用户先登录",
+          "priority": "P0",
+          "page_url": "/video-workflow-list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "清除 user_id 但保留 auth_token（模拟异常登录态）",
+              "operation": "set_storage",
+              "key": "auth_token",
+              "value": "{auth_token}",
+              "expected_result": "localStorage.auth_token 被设置，user_id 为空",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "清除 user_id",
+              "operation": "set_storage",
+              "key": "user_id",
+              "value": "",
+              "expected_result": "localStorage.user_id 为空字符串或 null",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "访问工作流列表页",
+              "mcp_tool": "mcp1_browser_navigate",
+              "mcp_params": {
+                "url": "${config.base_url}/video-workflow-list"
+              },
+              "expected_result": "页面显示「请先登录」提示，并提供「去登录」入口",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "获取页面快照验证登录提示",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面包含「请先登录」文字，且不应渲染工作流卡片列表",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "检查网络请求不应出现 400",
+              "mcp_tool": "mcp1_browser_network_requests",
+              "mcp_params": {},
+              "verify": "不应出现 GET /api/video-workflow/list 返回 400 (user_id is required) 的请求；最好不发起该请求",
+              "pass": false
+            }
+          ]
+        },
+        {
           "id": "error_002",
           "name": "未登录访问工作流编辑器",
           "description": "验证未登录用户访问工作流编辑器时的处理",

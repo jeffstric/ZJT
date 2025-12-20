@@ -894,6 +894,10 @@
       return localStorage.getItem('auth_token') || '';
     }
 
+    function getUserId(){
+      return localStorage.getItem('user_id') || '';
+    }
+
     // 显示Toast消息
     function showToast(message, type = ''){
       const toast = document.getElementById('toast');
@@ -914,7 +918,8 @@
         const response = await fetch('/api/video-workflow/upload', {
           method: 'POST',
           headers: {
-            'Authorization': getAuthToken()
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
           },
           body: formData
         });
@@ -1145,7 +1150,8 @@
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': getAuthToken()
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
           },
           body: JSON.stringify({
             workflow_data: workflowData
@@ -1183,7 +1189,8 @@
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': getAuthToken()
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
           },
           body: JSON.stringify({
             workflow_data: workflowData
@@ -1226,7 +1233,8 @@
       try {
         const response = await fetch(`/api/video-workflow/${workflowId}`, {
           headers: {
-            'Authorization': getAuthToken()
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
           }
         });
 
