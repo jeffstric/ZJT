@@ -2882,7 +2882,7 @@
             </select>
           </div>
           <div class="field">
-            <div class="btn-row">
+            <div class="btn-row" style="display: flex; gap: 8px;">
               <div class="gen-container">
                 <button class="gen-btn gen-btn-main image-edit-btn" type="button">编辑图片</button>
                 <button class="gen-btn gen-btn-caret" type="button" aria-label="选择抽卡次数">▾</button>
@@ -2893,6 +2893,7 @@
                   <div class="gen-item" data-count="4">X4</div>
                 </div>
               </div>
+              <button class="gen-btn image-download-btn" type="button" style="border-radius: 10px;">下载图片</button>
             </div>
             <div class="gen-meta image-draw-count-label"></div>
             <div class="muted image-edit-status" style="display:none;"></div>
@@ -2943,6 +2944,7 @@
       const ratioEl = el.querySelector('.image-ratio');
       const modelEl = el.querySelector('.image-model');
       const editBtn = el.querySelector('.image-edit-btn');
+      const downloadBtn = el.querySelector('.image-download-btn');
       const statusEl = el.querySelector('.image-edit-status');
       const drawCountLabel = el.querySelector('.image-draw-count-label');
       const genCaret = el.querySelector('.gen-btn-caret');
@@ -3075,21 +3077,23 @@
               editBtn.disabled = false;
 
               // 为每个生成的图片创建新的图片节点
-              const firstUrl = imageUrls[0];
-              const newNodeId = createImageNode({ x: node.x + 380, y: node.y });
-              const newNode = state.nodes.find(n => n.id === newNodeId);
-              if(newNode){
-                newNode.data.url = firstUrl;
-                newNode.data.preview = firstUrl;
-                newNode.data.name = '编辑结果';
-                const newEl = canvasEl.querySelector(`.node[data-node-id="${newNodeId}"]`);
-                if(newEl){
-                  const newImg = newEl.querySelector('.image-preview');
-                  const newRow = newEl.querySelector('.image-preview-row');
-                  if(newImg) newImg.src = proxyImageUrl(firstUrl);
-                  if(newRow) newRow.style.display = 'flex';
+              imageUrls.forEach((imageUrl, index) => {
+                const offsetY = index * 280; // 每个节点垂直间隔280px
+                const newNodeId = createImageNode({ x: node.x + 380, y: node.y + offsetY });
+                const newNode = state.nodes.find(n => n.id === newNodeId);
+                if(newNode){
+                  newNode.data.url = imageUrl;
+                  newNode.data.preview = imageUrl;
+                  newNode.data.name = imageUrls.length > 1 ? `编辑结果${index + 1}` : '编辑结果';
+                  const newEl = canvasEl.querySelector(`.node[data-node-id="${newNodeId}"]`);
+                  if(newEl){
+                    const newImg = newEl.querySelector('.image-preview');
+                    const newRow = newEl.querySelector('.image-preview-row');
+                    if(newImg) newImg.src = proxyImageUrl(imageUrl);
+                    if(newRow) newRow.style.display = 'flex';
+                  }
                 }
-              }
+              });
 
               try{ autoSaveWorkflow(); } catch(e){}
               renderMinimap();
@@ -3108,6 +3112,30 @@
           editBtn.disabled = false;
           showToast('提交失败: ' + (err.message || ''), 'error');
         }
+      });
+
+      downloadBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if(!node.data.url && !node.data.preview){
+          showToast('没有可下载的图片', 'error');
+          return;
+        }
+        const downloadUrl = node.data.url || node.data.preview;
+        const fileName = node.data.name || 'image.png';
+        
+        // 使用代理下载URL
+        const proxiedUrl = proxyDownloadUrl(downloadUrl, fileName);
+        
+        // 创建隐藏的a标签触发下载
+        const a = document.createElement('a');
+        a.href = proxiedUrl;
+        a.download = fileName;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        
+        showToast('开始下载图片', 'success');
       });
 
       canvasEl.appendChild(el);
