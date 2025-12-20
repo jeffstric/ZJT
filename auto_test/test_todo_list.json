@@ -1,0 +1,2489 @@
+{
+  "title": "视频工作流功能检查清单",
+  "version": "2.0.0",
+  "description": "基于 playwright-mcp 的智能体浏览器自动化测试清单，每个测试步骤对应具体的 MCP 工具调用",
+  "created_at": "2024-12-19",
+  "mcp_tools": {
+    "navigate": "mcp1_browser_navigate",
+    "click": "mcp1_browser_click",
+    "type": "mcp1_browser_type",
+    "snapshot": "mcp1_browser_snapshot",
+    "fill_form": "mcp1_browser_fill_form",
+    "select_option": "mcp1_browser_select_option",
+    "file_upload": "mcp1_browser_file_upload",
+    "wait_for": "mcp1_browser_wait_for",
+    "evaluate": "mcp1_browser_evaluate",
+    "hover": "mcp1_browser_hover",
+    "drag": "mcp1_browser_drag",
+    "press_key": "mcp1_browser_press_key",
+    "screenshot": "mcp1_browser_take_screenshot",
+    "console": "mcp1_browser_console_messages",
+    "network": "mcp1_browser_network_requests"
+  },
+  "config_file": "test_config.json",
+  "config_note": "所有 ${config.xxx} 格式的变量需要从 test_config.json 中读取替换",
+  "test_config": {
+    "base_url": "${config.base_url}",
+    "test_mode_param": "${config.test_mode_param}",
+    "auth_token_key": "auth_token",
+    "user_id_key": "user_id",
+    "credentials": {
+      "phone": "${config.credentials.phone}",
+      "password": "${config.credentials.password}"
+    }
+  },
+  "modules": [
+    {
+      "id": "auth",
+      "name": "用户认证模块",
+      "description": "用户登录、登出功能的测试",
+      "features": [
+        {
+          "id": "auth_001",
+          "name": "用户登录功能",
+          "description": "验证用户可以通过手机号和密码登录系统，登录成功后页面显示用户信息和算力值",
+          "priority": "P0",
+          "page_url": "/",
+          "api_endpoint": "POST /api/auth/login",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "打开首页",
+              "mcp_tool": "mcp1_browser_navigate",
+              "mcp_params": {
+                "url": "${config.base_url}/"
+              },
+              "expected_result": "首页正常加载",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "获取页面快照，查找登录按钮",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面快照中应包含「登录」按钮元素，记录其 ref 值",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "点击登录按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "登录按钮",
+                "ref": "<从快照中获取的ref>"
+              },
+              "expected_result": "弹出登录模态框",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "获取模态框快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "模态框可见，包含手机号输入框、密码输入框、服务条款复选框、登录按钮",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "填写登录表单",
+              "mcp_tool": "mcp1_browser_fill_form",
+              "mcp_params": {
+                "fields": [
+                  {
+                    "name": "手机号输入框",
+                    "type": "textbox",
+                    "ref": "<手机号输入框ref>",
+                    "value": "${config.credentials.phone}"
+                  },
+                  {
+                    "name": "密码输入框",
+                    "type": "textbox",
+                    "ref": "<密码输入框ref>",
+                    "value": "${config.credentials.password}"
+                  },
+                  {
+                    "name": "服务条款复选框",
+                    "type": "checkbox",
+                    "ref": "<复选框ref>",
+                    "value": "true"
+                  }
+                ]
+              },
+              "expected_result": "表单字段正确填写",
+              "pass": false
+            },
+            {
+              "step": 6,
+              "action": "点击登录提交按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "登录提交按钮",
+                "ref": "<登录按钮ref>"
+              },
+              "expected_result": "发起登录请求",
+              "pass": false
+            },
+            {
+              "step": 7,
+              "action": "等待登录完成",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "登出",
+                "time": 5
+              },
+              "expected_result": "页面出现「登出」文字",
+              "pass": false
+            },
+            {
+              "step": 8,
+              "action": "验证登录成功-获取快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面右上角显示「登出」按钮，模态框已关闭",
+              "pass": false
+            },
+            {
+              "step": 9,
+              "action": "验证localStorage中的token",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { return { auth_token: localStorage.getItem('auth_token'), user_id: localStorage.getItem('user_id') }; }"
+              },
+              "verify": "返回结果包含有效的 auth_token 和 user_id",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "auth_002",
+          "name": "用户登出功能",
+          "description": "验证已登录用户可以成功登出，登出后页面恢复未登录状态",
+          "priority": "P1",
+          "page_url": "/",
+          "api_endpoint": "POST /api/auth/logout",
+          "pass": false,
+          "prerequisites": [
+            "auth_001"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "获取页面快照确认已登录",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面快照中应包含「登出」按钮元素",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击登出按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "登出按钮",
+                "ref": "<登出按钮ref>"
+              },
+              "expected_result": "发起登出请求",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "等待页面状态更新",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "登录",
+                "time": 3
+              },
+              "expected_result": "页面出现「登录」文字",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "获取快照验证登出成功",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面显示「登录」按钮，不显示「登出」按钮",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "验证localStorage已清除",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { return { auth_token: localStorage.getItem('auth_token'), user_id: localStorage.getItem('user_id') }; }"
+              },
+              "verify": "auth_token 和 user_id 应为 null",
+              "pass": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workflow_list",
+      "name": "工作流列表页模块",
+      "description": "工作流列表页面的展示、搜索、筛选、分页、CRUD 操作",
+      "features": [
+        {
+          "id": "list_001",
+          "name": "访问工作流列表页",
+          "description": "验证用户可以正常访问工作流列表页面，页面正确加载并显示工作流卡片列表",
+          "priority": "P0",
+          "page_url": "/video-workflow-list",
+          "api_endpoint": "GET /api/video-workflow/list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "导航到工作流列表页",
+              "mcp_tool": "mcp1_browser_navigate",
+              "mcp_params": {
+                "url": "${config.base_url}/video-workflow-list"
+              },
+              "expected_result": "页面正常加载",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "等待页面加载完成",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "视频工作流",
+                "time": 5
+              },
+              "expected_result": "页面标题出现",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "获取页面快照验证结构",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面包含：品牌Logo、「视频工作流」标题、「新建工作流」按钮、搜索框、状态筛选下拉框、工作流卡片列表或空状态提示",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "检查网络请求",
+              "mcp_tool": "mcp1_browser_network_requests",
+              "mcp_params": {},
+              "verify": "存在 GET /api/video-workflow/list 请求且返回成功",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "list_002",
+          "name": "工作流卡片展示",
+          "description": "验证每个工作流卡片正确显示名称、描述、状态标签、创建时间、编辑和删除按钮",
+          "priority": "P0",
+          "page_url": "/video-workflow-list",
+          "pass": false,
+          "prerequisites": [
+            "list_001"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "检查卡片元素",
+              "operation": "verify",
+              "selector": ".workflow-card",
+              "expected_result": "每个卡片包含封面图区域、名称、描述、状态标签、创建时间",
+              "selectors": {
+                "card": ".workflow-card",
+                "cover": ".workflow-cover",
+                "name": ".workflow-name",
+                "description": ".workflow-desc",
+                "status": ".workflow-status",
+                "meta": ".workflow-meta"
+              },
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "检查状态标签样式",
+              "operation": "verify",
+              "expected_result": "启用状态显示绿色(.status-enabled)，禁用状态显示红色(.status-disabled)，草稿状态显示黄色(.status-draft)",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "检查操作按钮",
+              "operation": "verify",
+              "selector": ".workflow-actions",
+              "expected_result": "每个卡片底部有「编辑」和「删除」两个按钮",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "list_003",
+          "name": "搜索工作流功能",
+          "description": "验证用户可以通过关键词搜索工作流，搜索结果根据名称模糊匹配进行过滤",
+          "priority": "P1",
+          "page_url": "/video-workflow-list",
+          "api_endpoint": "GET /api/video-workflow/list?keyword=xxx",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "在搜索框输入关键词",
+              "operation": "type",
+              "selector": "#searchInput",
+              "test_data": "测试",
+              "expected_result": "搜索框显示输入的关键词",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "等待搜索结果",
+              "operation": "wait",
+              "wait_time_ms": 500,
+              "expected_result": "防抖后自动发起带 keyword 参数的 API 请求",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证搜索结果",
+              "operation": "verify",
+              "expected_result": "列表只显示名称包含「测试」的工作流",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "清空搜索框",
+              "operation": "clear",
+              "selector": "#searchInput",
+              "expected_result": "列表恢复显示全部工作流",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "list_004",
+          "name": "状态筛选功能",
+          "description": "验证用户可以按状态（已启用/已禁用/草稿）筛选工作流列表",
+          "priority": "P1",
+          "page_url": "/video-workflow-list",
+          "api_endpoint": "GET /api/video-workflow/list?status=x",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "选择「已启用」状态",
+              "operation": "select",
+              "selector": "#statusFilter",
+              "value": "1",
+              "expected_result": "发起带 status=1 参数的 API 请求，列表只显示已启用的工作流",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "选择「已禁用」状态",
+              "operation": "select",
+              "selector": "#statusFilter",
+              "value": "0",
+              "expected_result": "列表只显示已禁用的工作流",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "选择「草稿」状态",
+              "operation": "select",
+              "selector": "#statusFilter",
+              "value": "2",
+              "expected_result": "列表只显示草稿状态的工作流",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "选择「全部状态」",
+              "operation": "select",
+              "selector": "#statusFilter",
+              "value": "",
+              "expected_result": "列表恢复显示全部工作流",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "list_005",
+          "name": "分页功能",
+          "description": "验证工作流列表支持分页，用户可以通过上一页/下一页按钮切换页面",
+          "priority": "P1",
+          "page_url": "/video-workflow-list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "检查分页控件",
+              "operation": "verify",
+              "selector": "#pagination",
+              "expected_result": "页面底部显示分页控件，包含上一页按钮、页码信息、下一页按钮",
+              "selectors": {
+                "prev_button": "#prevBtn",
+                "page_info": "#pageInfo",
+                "next_button": "#nextBtn"
+              },
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证页码信息格式",
+              "operation": "verify",
+              "selector": "#pageInfo",
+              "expected_result": "显示格式为「第 X 页 / 共 Y 页 (共 Z 条)」",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "点击下一页",
+              "operation": "click",
+              "selector": "#nextBtn",
+              "expected_result": "加载下一页数据，页码信息更新",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "点击上一页",
+              "operation": "click",
+              "selector": "#prevBtn",
+              "expected_result": "返回上一页数据，页码信息更新",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "list_006",
+          "name": "新建工作流功能",
+          "description": "验证用户可以通过模态框新建工作流，输入名称、描述、状态后保存成功",
+          "priority": "P0",
+          "page_url": "/video-workflow-list",
+          "api_endpoint": "POST /api/video-workflow/create",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "获取页面快照找到新建按钮",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面包含「新建工作流」按钮，记录其 ref",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击新建工作流按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "新建工作流按钮",
+                "ref": "<新建按钮ref>"
+              },
+              "expected_result": "弹出模态框",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "等待模态框出现",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "新建工作流",
+                "time": 3
+              },
+              "expected_result": "模态框标题可见",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "获取模态框快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "模态框包含名称输入框、描述文本域、状态选择器、保存和取消按钮",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "填写表单",
+              "mcp_tool": "mcp1_browser_fill_form",
+              "mcp_params": {
+                "fields": [
+                  {
+                    "name": "工作流名称",
+                    "type": "textbox",
+                    "ref": "<名称输入框ref>",
+                    "value": "MCP自动化测试工作流"
+                  },
+                  {
+                    "name": "工作流描述",
+                    "type": "textbox",
+                    "ref": "<描述输入框ref>",
+                    "value": "通过playwright-mcp自动化创建"
+                  }
+                ]
+              },
+              "expected_result": "表单字段填写完成",
+              "pass": false
+            },
+            {
+              "step": 6,
+              "action": "选择状态为草稿",
+              "mcp_tool": "mcp1_browser_select_option",
+              "mcp_params": {
+                "element": "状态选择器",
+                "ref": "<状态选择器ref>",
+                "values": [
+                  "2"
+                ]
+              },
+              "expected_result": "状态选择为草稿",
+              "pass": false
+            },
+            {
+              "step": 7,
+              "action": "点击保存按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "保存按钮",
+                "ref": "<保存按钮ref>"
+              },
+              "expected_result": "发起创建请求",
+              "pass": false
+            },
+            {
+              "step": 8,
+              "action": "等待创建成功",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "textGone": "新建工作流",
+                "time": 5
+              },
+              "expected_result": "模态框关闭",
+              "pass": false
+            },
+            {
+              "step": 9,
+              "action": "验证创建成功",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "列表中显示新创建的「MCP自动化测试工作流」卡片",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "list_007",
+          "name": "编辑工作流基本信息",
+          "description": "验证用户可以编辑工作流的名称、描述、状态等基本信息",
+          "priority": "P0",
+          "page_url": "/video-workflow-list",
+          "api_endpoint": "PUT /api/video-workflow/{id}",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击工作流卡片的编辑按钮",
+              "operation": "click",
+              "selector": ".workflow-card .btn-secondary:has-text('编辑')",
+              "expected_result": "弹出模态框，标题显示「编辑工作流」，表单预填充当前工作流信息",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "修改工作流名称",
+              "operation": "clear_and_type",
+              "selector": "#workflowName",
+              "test_data": "修改后的工作流名称",
+              "expected_result": "名称输入框显示新内容",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "点击保存按钮",
+              "operation": "click",
+              "selector": "#createModal button:has-text('保存')",
+              "expected_result": "发起 PUT /api/video-workflow/{id} 请求",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "验证更新成功",
+              "operation": "verify",
+              "expected_result": "显示「更新成功」Toast 提示，模态框关闭，列表刷新显示更新后的信息",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "list_008",
+          "name": "删除工作流功能",
+          "description": "验证用户可以删除工作流，删除前有确认对话框，删除后工作流从列表中移除",
+          "priority": "P0",
+          "page_url": "/video-workflow-list",
+          "api_endpoint": "DELETE /api/video-workflow/{id}",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击工作流卡片的删除按钮",
+              "operation": "click",
+              "selector": ".workflow-card .btn-danger:has-text('删除')",
+              "expected_result": "弹出删除确认模态框，提示「确定要删除这个工作流吗？此操作不可撤销。」",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击确认删除按钮",
+              "operation": "click",
+              "selector": "#deleteModal .btn-danger:has-text('删除')",
+              "expected_result": "发起 DELETE /api/video-workflow/{id} 请求",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证删除成功",
+              "operation": "verify",
+              "expected_result": "显示「删除成功」Toast 提示，模态框关闭，工作流从列表中移除",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "list_009",
+          "name": "点击卡片进入编辑器",
+          "description": "验证用户点击工作流卡片可以跳转到工作流编辑器页面",
+          "priority": "P0",
+          "page_url": "/video-workflow-list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击工作流卡片主体区域",
+              "operation": "click",
+              "selector": ".workflow-card .workflow-content",
+              "expected_result": "页面跳转到 /video-workflow?id={workflow_id}",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证跳转成功",
+              "operation": "verify",
+              "expected_result": "URL 包含 /video-workflow?id=，编辑器页面正常加载",
+              "pass": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workflow_editor",
+      "name": "工作流编辑器模块",
+      "description": "工作流画布编辑器的核心功能测试，包括画布操作、节点管理、连接线等",
+      "features": [
+        {
+          "id": "editor_001",
+          "name": "访问工作流编辑器页面",
+          "description": "验证用户可以正常访问工作流编辑器页面，页面正确加载并显示画布和工具栏",
+          "priority": "P0",
+          "page_url": "/video-workflow?id={workflow_id}",
+          "api_endpoint": "GET /api/video-workflow/{id}",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "导航到编辑器页面",
+              "mcp_tool": "mcp1_browser_navigate",
+              "mcp_params": {
+                "url": "${config.base_url}/video-workflow?id=1"
+              },
+              "expected_result": "页面开始加载",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "等待画布加载",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "保存",
+                "time": 5
+              },
+              "expected_result": "保存按钮出现",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "获取页面快照验证结构",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面包含：品牌浮动栏、比例选择器(16:9等选项)、「保存」按钮、「添加」按钮、画布容器、缩放控件(+/-按钮和100%显示)、小地图区域",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "检查API请求",
+              "mcp_tool": "mcp1_browser_network_requests",
+              "mcp_params": {},
+              "verify": "存在 GET /api/video-workflow/1 请求",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_002",
+          "name": "视频比例选择功能",
+          "description": "验证用户可以选择不同的视频比例（9:16、3:4、1:1、4:3、16:9），选择后状态正确更新",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "检查比例选择器默认值",
+              "operation": "verify",
+              "selector": "#ratioSelect",
+              "expected_result": "下拉框默认选中 16:9",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "检查可选比例选项",
+              "operation": "verify",
+              "selector": "#ratioSelect option",
+              "expected_result": "下拉框包含5个选项：9:16、3:4、1:1、4:3、16:9",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "选择竖屏比例 9:16",
+              "operation": "select",
+              "selector": "#ratioSelect",
+              "value": "9:16",
+              "expected_result": "比例更新为 9:16，状态正确保存",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "选择方形比例 1:1",
+              "operation": "select",
+              "selector": "#ratioSelect",
+              "value": "1:1",
+              "expected_result": "比例更新为 1:1",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_003",
+          "name": "画布缩放功能",
+          "description": "验证用户可以通过缩放按钮放大/缩小画布，缩放范围为25%-200%，缩放级别正确显示",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "检查初始缩放级别",
+              "operation": "verify",
+              "selector": "#zoomLevel",
+              "expected_result": "显示 100%",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击放大按钮",
+              "operation": "click",
+              "selector": "#zoomInBtn",
+              "expected_result": "缩放级别增加到 110%",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "连续点击放大到最大值",
+              "operation": "click_multiple",
+              "selector": "#zoomInBtn",
+              "times": 10,
+              "expected_result": "缩放级别最大为 200%，继续点击不再增加",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "点击缩小按钮",
+              "operation": "click",
+              "selector": "#zoomOutBtn",
+              "expected_result": "缩放级别减少",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "连续点击缩小到最小值",
+              "operation": "click_multiple",
+              "selector": "#zoomOutBtn",
+              "times": 20,
+              "expected_result": "缩放级别最小为 25%，继续点击不再减少",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_004",
+          "name": "画布平移功能",
+          "description": "验证用户可以通过鼠标拖拽在画布空白区域进行画布平移操作",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "在画布空白区域按下鼠标",
+              "operation": "mousedown",
+              "selector": "#canvasContainer",
+              "expected_result": "光标变为 grabbing，画布容器添加 .panning 类",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "拖动鼠标",
+              "operation": "drag",
+              "start_position": {
+                "x": 400,
+                "y": 300
+              },
+              "end_position": {
+                "x": 500,
+                "y": 400
+              },
+              "expected_result": "整个画布跟随鼠标平移，transform 样式更新",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "释放鼠标",
+              "operation": "mouseup",
+              "expected_result": "画布停止平移，保持在新位置，光标恢复为 grab",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_005",
+          "name": "小地图显示与导航",
+          "description": "验证小地图正确显示节点缩略图和当前视口位置，用户可以通过拖拽小地图视口框快速导航",
+          "priority": "P2",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "检查小地图容器",
+              "operation": "verify",
+              "selector": "#minimap",
+              "expected_result": "小地图显示在画布左下角",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "添加节点后检查小地图",
+              "operation": "verify",
+              "selector": ".minimap-node",
+              "expected_result": "小地图中显示节点缩略方块",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "检查视口框",
+              "operation": "verify",
+              "selector": ".minimap-viewport",
+              "expected_result": "显示红色边框的视口框，表示当前可视区域",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "拖拽视口框",
+              "operation": "drag",
+              "selector": ".minimap-viewport",
+              "expected_result": "画布相应滚动到新位置",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_006",
+          "name": "添加节点菜单显示",
+          "description": "验证点击添加按钮后弹出节点类型选择菜单，菜单包含图生视频、视频、图片、素材库选项",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击添加按钮",
+              "operation": "click",
+              "selector": "#addBtn",
+              "expected_result": "弹出添加菜单",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证菜单内容",
+              "operation": "verify",
+              "selector": "#addMenu",
+              "expected_result": "菜单包含两个分组：「添加节点」和「添加素材」",
+              "selectors": {
+                "menu": "#addMenu",
+                "add_video": "#menuAddVideo",
+                "add_video_node": "#menuAddVideoNode",
+                "add_image": "#menuAddImage",
+                "add_asset": "#menuAddAsset"
+              },
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证节点选项",
+              "operation": "verify",
+              "expected_result": "「添加节点」分组包含：图生视频、视频、图片",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "点击画布其他区域关闭菜单",
+              "operation": "click",
+              "selector": "#canvasContainer",
+              "expected_result": "添加菜单关闭",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_007",
+          "name": "添加图生视频节点",
+          "description": "验证用户可以添加图生视频节点，节点正确显示在画布上，包含首帧画面、尾帧画面、视频长度、模型、提示词等字段",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "获取快照找到添加按钮",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面包含「添加」按钮，记录其 ref",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击添加按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加按钮",
+                "ref": "<添加按钮ref>"
+              },
+              "expected_result": "弹出添加菜单",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "获取菜单快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "菜单包含「图生视频」选项，记录其 ref",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "点击图生视频选项",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "图生视频菜单项",
+                "ref": "<图生视频选项ref>"
+              },
+              "expected_result": "在画布上创建节点",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "等待节点创建",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "图生视频",
+                "time": 3
+              },
+              "expected_result": "节点标题出现",
+              "pass": false
+            },
+            {
+              "step": 6,
+              "action": "获取节点快照验证结构",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "节点包含：「图生视频」标题、首帧画面字段(必填*)、尾帧画面字段(可选)、视频长度下拉框(10秒/15秒)、模型下拉框(sora)、提示词文本框、「生成视频」按钮、抽卡次数下拉",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_008",
+          "name": "添加视频节点",
+          "description": "验证用户可以添加视频节点，节点正确显示在画布上，包含视频上传区域和输入端口",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击添加按钮",
+              "operation": "click",
+              "selector": "#addBtn",
+              "expected_result": "弹出添加菜单",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击视频选项",
+              "operation": "click",
+              "selector": "#menuAddVideoNode",
+              "expected_result": "在画布上创建新的视频节点",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证节点创建",
+              "operation": "verify",
+              "expected_result": "画布上出现新节点，节点标题为「视频」",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "验证节点字段",
+              "operation": "verify",
+              "expected_result": "节点包含：视频文件上传、从素材库选择按钮、输入端口",
+              "selectors": {
+                "video_file": ".video-file",
+                "from_asset_btn": ".video-from-asset",
+                "input_port": ".port.input"
+              },
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_009",
+          "name": "添加图片节点",
+          "description": "验证用户可以添加图片节点，节点正确显示在画布上，包含图片上传区域和输出端口",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击添加按钮",
+              "operation": "click",
+              "selector": "#addBtn",
+              "expected_result": "弹出添加菜单",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击图片选项",
+              "operation": "click",
+              "selector": "#menuAddImage",
+              "expected_result": "在画布上创建新的图片节点",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证节点创建",
+              "operation": "verify",
+              "expected_result": "画布上出现新节点，节点标题为「图片」",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "验证节点字段",
+              "operation": "verify",
+              "expected_result": "节点包含：图片文件上传、输出端口",
+              "selectors": {
+                "image_file": ".image-file",
+                "output_port": ".port.output"
+              },
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_010",
+          "name": "节点拖拽移动",
+          "description": "验证用户可以通过拖拽节点头部移动节点位置，节点位置正确更新",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "editor_007"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "在节点头部按下鼠标",
+              "operation": "mousedown",
+              "selector": ".node-header",
+              "expected_result": "节点被选中，准备拖拽，光标变为 grabbing",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "拖动鼠标移动节点",
+              "operation": "drag",
+              "start_position": {
+                "x": 200,
+                "y": 100
+              },
+              "end_position": {
+                "x": 400,
+                "y": 300
+              },
+              "expected_result": "节点跟随鼠标移动，left/top 样式实时更新",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "释放鼠标",
+              "operation": "mouseup",
+              "expected_result": "节点停留在新位置，位置数据正确保存",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "验证小地图更新",
+              "operation": "verify",
+              "expected_result": "小地图中的节点缩略位置同步更新",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_011",
+          "name": "节点删除功能",
+          "description": "验证用户可以通过点击节点头部的删除按钮删除节点，节点及其相关连接线一并删除",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击节点头部的删除按钮",
+              "operation": "click",
+              "selector": ".node .icon-btn",
+              "expected_result": "节点从画布上移除",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证节点已删除",
+              "operation": "verify",
+              "expected_result": "画布上不再显示该节点",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证相关连接线删除",
+              "operation": "verify",
+              "expected_result": "与该节点相关的所有连接线也被删除",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_012",
+          "name": "节点连接-图生视频到视频",
+          "description": "验证用户可以从图生视频节点的输出端口拖拽连接到视频节点的输入端口，创建贝塞尔曲线连接线",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "editor_007",
+            "editor_008"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "从图生视频节点的输出端口开始拖拽",
+              "operation": "mousedown",
+              "selector": ".node[data-node-id] .port.output",
+              "expected_result": "开始创建连接线，显示虚线预览",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "拖拽到视频节点的输入端口",
+              "operation": "drag",
+              "expected_result": "虚线预览跟随鼠标移动，目标端口高亮显示 .can-connect 类",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "在视频节点输入端口释放鼠标",
+              "operation": "mouseup",
+              "selector": ".port.input",
+              "expected_result": "创建实线连接，连接线为绿色贝塞尔曲线",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "验证连接线创建",
+              "operation": "verify",
+              "selector": "#connectionsSvg path.line",
+              "expected_result": "SVG 中存在连接线路径元素",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_013",
+          "name": "节点连接-图片到图生视频首帧",
+          "description": "验证用户可以从图片节点的输出端口连接到图生视频节点的首帧图片输入端口",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "editor_007",
+            "editor_009"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "从图片节点的输出端口开始拖拽",
+              "operation": "mousedown",
+              "selector": ".node[data-node-id] .port.output",
+              "expected_result": "开始创建图片连接线",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "拖拽到图生视频节点的首帧输入端口",
+              "operation": "drag_to",
+              "selector": ".start-image-port",
+              "expected_result": "首帧端口高亮显示",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "释放鼠标",
+              "operation": "mouseup",
+              "expected_result": "创建蓝色连接线，图片节点的图片作为首帧输入",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_014",
+          "name": "连接线选中与删除",
+          "description": "验证用户可以点击连接线选中，选中后显示删除按钮，点击删除按钮移除连接线",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "editor_012"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击连接线",
+              "operation": "click",
+              "selector": "#connectionsSvg path.hitbox",
+              "expected_result": "连接线变为红色选中状态，添加 .selected 类",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证删除按钮显示",
+              "operation": "verify",
+              "selector": "#connDeleteBtn",
+              "expected_result": "在连接线中点位置显示红色圆形删除按钮",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "点击删除按钮",
+              "operation": "click",
+              "selector": "#connDeleteBtn",
+              "expected_result": "连接线被删除，删除按钮隐藏",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_015",
+          "name": "保存工作流功能",
+          "description": "验证用户点击保存按钮可以将当前工作流状态（节点、连接、视口位置等）保存到服务器",
+          "priority": "P0",
+          "page_url": "/video-workflow?id={workflow_id}",
+          "api_endpoint": "PUT /api/video-workflow/{id}",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击保存按钮",
+              "operation": "click",
+              "selector": "#saveBtn",
+              "expected_result": "按钮显示「保存中...」，按钮禁用",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证API请求",
+              "operation": "verify",
+              "expected_result": "发起 PUT /api/video-workflow/{id} 请求，请求体包含 workflow_data 字段",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证保存成功",
+              "operation": "verify",
+              "expected_result": "显示「保存成功」Toast 提示，按钮恢复为「保存」",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_016",
+          "name": "工作流数据恢复",
+          "description": "验证用户重新打开已保存的工作流时，节点、连接线、视口位置等数据正确恢复",
+          "priority": "P0",
+          "page_url": "/video-workflow?id={workflow_id}",
+          "pass": false,
+          "prerequisites": [
+            "editor_015"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "刷新页面或重新访问工作流",
+              "operation": "navigate",
+              "target_url": "/video-workflow?id={saved_workflow_id}",
+              "expected_result": "页面正常加载",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证节点恢复",
+              "operation": "verify",
+              "expected_result": "之前保存的所有节点正确显示在画布上，位置与保存时一致",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证连接线恢复",
+              "operation": "verify",
+              "expected_result": "之前保存的所有连接线正确显示",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "验证节点数据恢复",
+              "operation": "verify",
+              "expected_result": "节点的字段值（如提示词、图片URL等）正确恢复",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "验证视口位置恢复",
+              "operation": "verify",
+              "expected_result": "画布缩放级别和平移位置与保存时一致",
+              "pass": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "node_operations",
+      "name": "节点操作模块",
+      "description": "各类节点的具体操作功能测试，包括图片上传、参数设置、视频生成等",
+      "features": [
+        {
+          "id": "node_001",
+          "name": "图生视频节点-上传首帧图片",
+          "description": "验证用户可以在图生视频节点上传首帧图片，图片上传到服务器后显示预览",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/video-workflow/upload",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "获取节点快照找到文件输入",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "图生视频节点中包含首帧画面文件输入区域",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击首帧画面文件输入触发文件选择",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "首帧画面文件输入",
+                "ref": "<文件输入ref>"
+              },
+              "expected_result": "触发文件选择器",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "上传测试图片文件",
+              "mcp_tool": "mcp1_browser_file_upload",
+              "mcp_params": {
+                "paths": [
+                  "g:/code/comfyui_server/test_assets/test_image.jpg"
+                ]
+              },
+              "expected_result": "文件开始上传",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "等待上传完成",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "首帧图片上传成功",
+                "time": 10
+              },
+              "expected_result": "Toast提示出现",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "获取快照验证预览",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "首帧预览区域可见，显示图片缩略图和「清除」按钮",
+              "pass": false
+            },
+            {
+              "step": 6,
+              "action": "检查上传API请求",
+              "mcp_tool": "mcp1_browser_network_requests",
+              "mcp_params": {},
+              "verify": "存在 POST /api/video-workflow/upload 请求且返回成功",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_002",
+          "name": "图生视频节点-清除首帧图片",
+          "description": "验证用户可以清除已上传的首帧图片",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "node_001"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击清除按钮",
+              "operation": "click",
+              "selector": ".start-clear",
+              "expected_result": "图片被清除",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证预览隐藏",
+              "operation": "verify",
+              "expected_result": "预览区域隐藏，首帧端口恢复可连接状态",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_003",
+          "name": "图生视频节点-上传尾帧图片",
+          "description": "验证用户可以上传可选的尾帧图片",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/video-workflow/upload",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击尾帧画面文件输入",
+              "operation": "click",
+              "selector": ".end-file",
+              "expected_result": "打开文件选择器",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "选择图片文件并上传",
+              "operation": "upload",
+              "selector": ".end-file",
+              "test_file": "test_end_image.jpg",
+              "expected_result": "文件上传成功",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证预览显示",
+              "operation": "verify",
+              "selector": ".end-preview-row",
+              "expected_result": "尾帧预览区域显示，图片可见",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_004",
+          "name": "图生视频节点-设置视频长度",
+          "description": "验证用户可以选择视频长度（10秒或15秒）",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "检查视频长度默认值",
+              "operation": "verify",
+              "selector": ".duration-select",
+              "expected_result": "默认选中 10秒",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "选择15秒",
+              "operation": "select",
+              "selector": ".duration-select",
+              "value": "15",
+              "expected_result": "下拉框更新为 15秒",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_005",
+          "name": "图生视频节点-选择模型",
+          "description": "验证用户可以选择视频生成模型（sora/kling）",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "检查模型默认值",
+              "operation": "verify",
+              "selector": ".model-select",
+              "expected_result": "默认选中 sora",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "检查kling选项状态",
+              "operation": "verify",
+              "expected_result": "kling 选项显示为禁用状态（暂未实现）",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_006",
+          "name": "图生视频节点-输入提示词",
+          "description": "验证用户可以在提示词文本框中输入视频生成提示词",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "在提示词文本框输入内容",
+              "operation": "type",
+              "selector": ".prompt",
+              "test_data": "一只可爱的猫咪在草地上奔跑",
+              "expected_result": "文本正确显示在输入框中",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证数据保存",
+              "operation": "verify",
+              "expected_result": "提示词数据保存到节点状态中",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_007",
+          "name": "图生视频节点-选择抽卡次数",
+          "description": "验证用户可以通过下拉菜单选择抽卡次数（X1-X4）",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击抽卡次数下拉按钮",
+              "operation": "click",
+              "selector": ".gen-btn-caret",
+              "expected_result": "弹出抽卡次数菜单",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证菜单选项",
+              "operation": "verify",
+              "selector": ".gen-menu",
+              "expected_result": "菜单包含 X1、X2、X3、X4 四个选项",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "选择X2",
+              "operation": "click",
+              "selector": ".gen-item[data-count='2']",
+              "expected_result": "菜单关闭，抽卡次数标签更新为「抽卡次数：X2」",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_008",
+          "name": "图生视频节点-生成视频",
+          "description": "验证用户点击生成视频按钮后，系统调用API生成视频，并自动创建视频节点接收结果",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/ai-app-run-image-url",
+          "pass": false,
+          "prerequisites": [
+            "node_001"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "确保首帧图片已上传",
+              "operation": "verify",
+              "selector": ".start-preview",
+              "expected_result": "首帧预览图片可见",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击生成视频按钮",
+              "operation": "click",
+              "selector": ".gen-btn-main",
+              "expected_result": "按钮变为「生成中...」状态，禁用",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证API请求",
+              "operation": "verify",
+              "expected_result": "发起 POST /api/ai-app-run-image-url 请求，包含 image_url、prompt、ratio、duration_seconds、count 参数",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "验证状态显示",
+              "operation": "verify",
+              "selector": ".gen-status",
+              "expected_result": "显示「正在提交任务...」状态文字",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "验证视频节点自动创建",
+              "operation": "verify",
+              "expected_result": "根据抽卡次数自动创建对应数量的视频节点，并连接到图生视频节点",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_009",
+          "name": "图生视频节点-生成失败提示",
+          "description": "验证当首帧图片未上传时点击生成，显示错误提示",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "确保首帧图片未上传",
+              "operation": "verify",
+              "expected_result": "首帧预览区域隐藏",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击生成视频按钮",
+              "operation": "click",
+              "selector": ".gen-btn-main",
+              "expected_result": "不发起API请求",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证错误提示",
+              "operation": "verify",
+              "selector": ".gen-status",
+              "expected_result": "显示红色错误文字「请先上传首帧图片」",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_010",
+          "name": "视频节点-上传本地视频",
+          "description": "验证用户可以在视频节点上传本地视频文件",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击视频文件输入",
+              "operation": "click",
+              "selector": ".video-file",
+              "expected_result": "打开文件选择器",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "选择视频文件",
+              "operation": "upload",
+              "selector": ".video-file",
+              "test_file": "test_video.mp4",
+              "expected_result": "视频加载成功",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证预览显示",
+              "operation": "verify",
+              "selector": ".video-preview-field",
+              "expected_result": "视频预览区域显示，包含播放按钮、放大按钮、下载按钮、清除按钮",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_011",
+          "name": "视频节点-播放控制",
+          "description": "验证用户可以在视频节点内播放/暂停视频",
+          "priority": "P2",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "node_010"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击播放按钮",
+              "operation": "click",
+              "selector": ".vp-play",
+              "expected_result": "视频开始播放，按钮图标变为暂停图标",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击暂停按钮",
+              "operation": "click",
+              "selector": ".vp-play",
+              "expected_result": "视频暂停，按钮图标恢复为播放图标",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_012",
+          "name": "视频节点-下载视频",
+          "description": "验证用户可以下载视频节点中的视频文件",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "api_endpoint": "GET /api/download",
+          "pass": false,
+          "prerequisites": [
+            "node_010"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击下载按钮",
+              "operation": "click",
+              "selector": ".video-download",
+              "expected_result": "触发下载请求",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证下载",
+              "operation": "verify",
+              "expected_result": "打开 /api/download?url=xxx&filename=xxx 下载链接，显示「开始下载」Toast",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_013",
+          "name": "视频节点-清除视频",
+          "description": "验证用户可以清除视频节点中的视频",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "node_010"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击清除按钮",
+              "operation": "click",
+              "selector": ".video-clear",
+              "expected_result": "视频被清除",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证预览隐藏",
+              "operation": "verify",
+              "expected_result": "视频预览区域隐藏，恢复到初始状态",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_014",
+          "name": "图片节点-上传图片",
+          "description": "验证用户可以在图片节点上传图片文件",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击图片文件输入",
+              "operation": "click",
+              "selector": ".image-file",
+              "expected_result": "打开文件选择器",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "选择图片文件",
+              "operation": "upload",
+              "selector": ".image-file",
+              "test_file": "test_image.png",
+              "expected_result": "图片上传成功",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证预览显示",
+              "operation": "verify",
+              "selector": ".image-preview-row",
+              "expected_result": "图片预览区域显示，包含缩略图和清除按钮",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_015",
+          "name": "图片预览放大功能",
+          "description": "验证用户点击图片预览可以打开图片模态框查看大图",
+          "priority": "P2",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "node_001"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击首帧预览图片",
+              "operation": "click",
+              "selector": ".start-preview",
+              "expected_result": "打开图片模态框",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证模态框显示",
+              "operation": "verify",
+              "selector": "#imageModal",
+              "expected_result": "模态框可见，标题显示「首帧预览」，图片以大尺寸显示",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "点击关闭按钮",
+              "operation": "click",
+              "selector": "#imageModalClose",
+              "expected_result": "模态框关闭",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "node_016",
+          "name": "视频预览放大功能",
+          "description": "验证用户点击视频放大按钮可以打开视频模态框全屏播放",
+          "priority": "P2",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "prerequisites": [
+            "node_010"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击视频放大按钮",
+              "operation": "click",
+              "selector": ".vp-zoom",
+              "expected_result": "打开视频模态框",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证模态框显示",
+              "operation": "verify",
+              "selector": "#videoModal",
+              "expected_result": "模态框可见，视频自动开始播放",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "点击关闭按钮",
+              "operation": "click",
+              "selector": "#videoModalClose",
+              "expected_result": "模态框关闭，视频暂停",
+              "pass": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "name": "API接口模块",
+      "description": "后端API接口的直接测试，验证请求参数和响应格式",
+      "features": [
+        {
+          "id": "api_001",
+          "name": "获取工作流列表API",
+          "description": "验证 GET /api/video-workflow/list 接口正确返回分页工作流列表数据",
+          "priority": "P0",
+          "api_endpoint": "GET /api/video-workflow/list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "发起GET请求",
+              "operation": "api_request",
+              "method": "GET",
+              "url": "/api/video-workflow/list?page=1&page_size=10",
+              "headers": {
+                "Authorization": "{auth_token}"
+              },
+              "expected_result": "返回200状态码",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证响应结构",
+              "operation": "verify_response",
+              "expected_result": "响应包含 code=0, message, data 字段",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证data字段",
+              "operation": "verify_response",
+              "expected_result": "data 包含 total, page, page_size, data 子字段，data是数组",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "api_002",
+          "name": "获取单个工作流API",
+          "description": "验证 GET /api/video-workflow/{id} 接口正确返回工作流详情",
+          "priority": "P0",
+          "api_endpoint": "GET /api/video-workflow/{id}",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "发起GET请求",
+              "operation": "api_request",
+              "method": "GET",
+              "url": "/api/video-workflow/1",
+              "headers": {
+                "Authorization": "{auth_token}"
+              },
+              "expected_result": "返回200状态码",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证响应结构",
+              "operation": "verify_response",
+              "expected_result": "响应包含 code=0, data 字段",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证工作流数据",
+              "operation": "verify_response",
+              "expected_result": "data 包含 id, name, description, cover_image, user_id, status, workflow_data, create_time, update_time 字段",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "api_003",
+          "name": "创建工作流API",
+          "description": "验证 POST /api/video-workflow/create 接口正确创建新工作流",
+          "priority": "P0",
+          "api_endpoint": "POST /api/video-workflow/create",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "发起POST请求",
+              "operation": "api_request",
+              "method": "POST",
+              "url": "/api/video-workflow/create",
+              "headers": {
+                "Authorization": "{auth_token}",
+                "Content-Type": "application/json"
+              },
+              "body": {
+                "name": "API测试工作流",
+                "description": "通过API创建",
+                "status": 2
+              },
+              "expected_result": "返回200状态码",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证响应",
+              "operation": "verify_response",
+              "expected_result": "响应包含 code=0, message='创建成功', data.id 为新创建的ID",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "api_004",
+          "name": "更新工作流API",
+          "description": "验证 PUT /api/video-workflow/{id} 接口正确更新工作流",
+          "priority": "P0",
+          "api_endpoint": "PUT /api/video-workflow/{id}",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "发起PUT请求",
+              "operation": "api_request",
+              "method": "PUT",
+              "url": "/api/video-workflow/1",
+              "headers": {
+                "Authorization": "{auth_token}",
+                "Content-Type": "application/json"
+              },
+              "body": {
+                "name": "更新后的名称",
+                "workflow_data": {
+                  "version": "1.0",
+                  "nodes": []
+                }
+              },
+              "expected_result": "返回200状态码",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证响应",
+              "operation": "verify_response",
+              "expected_result": "响应包含 code=0, message='更新成功'",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "api_005",
+          "name": "删除工作流API",
+          "description": "验证 DELETE /api/video-workflow/{id} 接口正确删除工作流",
+          "priority": "P0",
+          "api_endpoint": "DELETE /api/video-workflow/{id}",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "发起DELETE请求",
+              "operation": "api_request",
+              "method": "DELETE",
+              "url": "/api/video-workflow/{test_id}",
+              "headers": {
+                "Authorization": "{auth_token}"
+              },
+              "expected_result": "返回200状态码",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证响应",
+              "operation": "verify_response",
+              "expected_result": "响应包含 code=0, message='删除成功'",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "验证删除生效",
+              "operation": "api_request",
+              "method": "GET",
+              "url": "/api/video-workflow/{test_id}",
+              "expected_result": "返回错误，工作流不存在",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "api_006",
+          "name": "上传文件API",
+          "description": "验证 POST /api/video-workflow/upload 接口正确上传图片或视频文件",
+          "priority": "P0",
+          "api_endpoint": "POST /api/video-workflow/upload",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "发起文件上传请求",
+              "operation": "api_request",
+              "method": "POST",
+              "url": "/api/video-workflow/upload",
+              "headers": {
+                "Authorization": "{auth_token}"
+              },
+              "body_type": "multipart/form-data",
+              "file_field": "file",
+              "test_file": "test_image.jpg",
+              "expected_result": "返回200状态码",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "验证响应",
+              "operation": "verify_response",
+              "expected_result": "响应包含 code=0, data.url 为上传后的文件URL",
+              "pass": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "error_handling",
+      "name": "错误处理与边界场景",
+      "description": "验证系统对各种错误情况和边界场景的处理能力",
+      "features": [
+        {
+          "id": "error_001",
+          "name": "未登录访问工作流列表",
+          "description": "验证未登录用户访问工作流列表页时显示登录提示或跳转",
+          "priority": "P1",
+          "page_url": "/video-workflow-list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "清除登录状态",
+              "operation": "clear_storage",
+              "expected_result": "localStorage 中 auth_token 和 user_id 被清除",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "访问工作流列表页",
+              "operation": "navigate",
+              "target_url": "/video-workflow-list",
+              "expected_result": "页面显示需要登录的提示，或跳转到登录页",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_002",
+          "name": "未登录访问工作流编辑器",
+          "description": "验证未登录用户访问工作流编辑器时的处理",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "清除登录状态",
+              "operation": "clear_storage",
+              "expected_result": "登录状态被清除",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "访问工作流编辑器",
+              "operation": "navigate",
+              "target_url": "/video-workflow?id=1",
+              "expected_result": "提示需要登录或跳转到登录页",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_003",
+          "name": "访问不存在的工作流",
+          "description": "验证用户访问不存在的工作流ID时显示适当错误提示",
+          "priority": "P1",
+          "page_url": "/video-workflow?id=99999",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "访问不存在的工作流",
+              "operation": "navigate",
+              "target_url": "/video-workflow?id=99999",
+              "expected_result": "显示错误提示「工作流不存在」或跳转到列表页",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_004",
+          "name": "上传无效文件类型",
+          "description": "验证用户上传非图片/视频文件时显示错误提示",
+          "priority": "P2",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "尝试上传txt文件",
+              "operation": "upload",
+              "selector": ".start-file",
+              "test_file": "test.txt",
+              "expected_result": "显示错误提示，文件未被接受",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_005",
+          "name": "网络错误处理",
+          "description": "验证网络请求失败时显示适当的错误提示",
+          "priority": "P2",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "模拟网络断开",
+              "operation": "network_offline",
+              "expected_result": "网络状态变为离线",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "尝试保存工作流",
+              "operation": "click",
+              "selector": "#saveBtn",
+              "expected_result": "显示网络错误提示 Toast",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_006",
+          "name": "工作流名称为空验证",
+          "description": "验证创建工作流时名称为空显示验证错误",
+          "priority": "P1",
+          "page_url": "/video-workflow-list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击新建工作流",
+              "operation": "click",
+              "selector": "button:has-text('新建工作流')",
+              "expected_result": "弹出模态框",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "不输入名称直接点击保存",
+              "operation": "click",
+              "selector": "#createModal button:has-text('保存')",
+              "expected_result": "显示验证错误「请输入工作流名称」，不发起API请求",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_007",
+          "name": "删除确认取消",
+          "description": "验证用户在删除确认框点击取消时不执行删除操作",
+          "priority": "P1",
+          "page_url": "/video-workflow-list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击删除按钮",
+              "operation": "click",
+              "selector": ".workflow-card .btn-danger:has-text('删除')",
+              "expected_result": "弹出删除确认框",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击取消按钮",
+              "operation": "click",
+              "selector": "#deleteModal .btn-secondary:has-text('取消')",
+              "expected_result": "模态框关闭，工作流未被删除",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_008",
+          "name": "视频生成超时处理",
+          "description": "验证视频生成轮询超时后显示适当提示",
+          "priority": "P2",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "触发视频生成",
+              "operation": "trigger_generate",
+              "expected_result": "开始轮询视频状态",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "等待轮询超时",
+              "operation": "wait",
+              "wait_time_ms": 300000,
+              "expected_result": "超时后显示错误提示，按钮恢复可点击状态",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_009",
+          "name": "Token过期处理",
+          "description": "验证用户Token过期后请求返回401时的处理",
+          "priority": "P1",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "设置过期Token",
+              "operation": "set_storage",
+              "key": "auth_token",
+              "value": "expired_token",
+              "expected_result": "Token被设置为过期值",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "发起API请求",
+              "operation": "navigate",
+              "target_url": "/video-workflow-list",
+              "expected_result": "API返回401，提示用户重新登录",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "error_010",
+          "name": "模态框外点击关闭",
+          "description": "验证点击模态框外部区域可以关闭模态框",
+          "priority": "P2",
+          "page_url": "/video-workflow-list",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "打开新建模态框",
+              "operation": "click",
+              "selector": "button:has-text('新建工作流')",
+              "expected_result": "模态框可见",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击模态框遮罩层",
+              "operation": "click",
+              "selector": ".modal-overlay",
+              "expected_result": "模态框关闭",
+              "pass": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_modules": 6,
+    "total_features": 50,
+    "priority_breakdown": {
+      "P0": 22,
+      "P1": 20,
+      "P2": 8
+    },
+    "pass_level": "每个 test_step 都有独立的 pass 字段，智能体可以逐步验证每个小步骤",
+    "note": "所有 test_step 的 pass 字段均设置为 false，智能体完成每个步骤后将其设置为 true"
+  },
+  "mcp_usage_guide": {
+    "description": "使用 playwright-mcp 执行测试的工作流程说明",
+    "workflow": [
+      {
+        "step": 1,
+        "action": "调用 mcp1_browser_snapshot 获取页面快照",
+        "purpose": "获取页面当前状态的可访问性树，从中提取元素的 ref 值"
+      },
+      {
+        "step": 2,
+        "action": "从快照中识别目标元素的 ref",
+        "purpose": "ref 是 playwright-mcp 识别元素的唯一标识符"
+      },
+      {
+        "step": 3,
+        "action": "使用具体的 mcp 工具执行操作",
+        "purpose": "如 mcp1_browser_click、mcp1_browser_type 等"
+      },
+      {
+        "step": 4,
+        "action": "调用 mcp1_browser_wait_for 等待页面状态变化",
+        "purpose": "确保异步操作完成"
+      },
+      {
+        "step": 5,
+        "action": "再次调用 mcp1_browser_snapshot 验证结果",
+        "purpose": "检查操作是否成功，页面是否达到预期状态"
+      }
+    ],
+    "key_tools": {
+      "mcp1_browser_navigate": "导航到指定URL，参数: {url: string}",
+      "mcp1_browser_snapshot": "获取页面可访问性快照，无参数，返回页面元素树和ref",
+      "mcp1_browser_click": "点击元素，参数: {element: string, ref: string}",
+      "mcp1_browser_type": "在元素中输入文本，参数: {element: string, ref: string, text: string}",
+      "mcp1_browser_fill_form": "填充多个表单字段，参数: {fields: [{name, type, ref, value}]}",
+      "mcp1_browser_select_option": "选择下拉选项，参数: {element: string, ref: string, values: string[]}",
+      "mcp1_browser_file_upload": "上传文件，参数: {paths: string[]}",
+      "mcp1_browser_wait_for": "等待文本出现/消失，参数: {text?: string, textGone?: string, time?: number}",
+      "mcp1_browser_evaluate": "执行JavaScript代码，参数: {function: string}",
+      "mcp1_browser_network_requests": "获取网络请求列表",
+      "mcp1_browser_console_messages": "获取控制台消息",
+      "mcp1_browser_take_screenshot": "截图，参数: {filename?: string, fullPage?: boolean}"
+    },
+    "ref_note": "测试步骤中的 <xxx_ref> 占位符需要在运行时从 mcp1_browser_snapshot 的返回结果中动态获取"
+  }
+}

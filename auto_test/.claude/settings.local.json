@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"\nimport json\nimport os\n\n# 读取原始测试清单\nwith open\\(''test_todo_list.json'', ''r'', encoding=''utf-8''\\) as f:\n    data = json.load\\(f\\)\n\n# 递归重置所有pass字段为false\ndef reset_pass_fields\\(obj\\):\n    if isinstance\\(obj, dict\\):\n        for key, value in obj.items\\(\\):\n            if key == ''pass'':\n                obj[key] = False\n            else:\n                reset_pass_fields\\(value\\)\n    elif isinstance\\(obj, list\\):\n        for item in obj:\n            reset_pass_fields\\(item\\)\n\nreset_pass_fields\\(data\\)\n\n# 创建新的会话文件\nsession_file = f''test_sessions/session_20251220_111734.json''\nwith open\\(session_file, ''w'', encoding=''utf-8''\\) as f:\n    json.dump\\(data, f, ensure_ascii=False, indent=2\\)\n\nprint\\(f''Created new session file: {session_file}''\\)\n\")",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_fill_form",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_evaluate",
+      "mcp__playwright__browser_network_requests",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_type",
+      "mcp__playwright__browser_wait_for",
+      "Skill(test-module)",
+      "mcp__playwright__browser_select_option",
+      "mcp__playwright__browser_close"
+    ]
+  }
+}

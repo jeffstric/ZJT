@@ -1,0 +1,16 @@
+{
+  "base_url": "http://localhost:8000",
+  "test_mode_param": "?test=1",
+  "credentials": {
+    "phone": "13800138000",
+    "password": "your_password_here"
+  },
+  "test_assets": {
+    "test_image": "g:/code/comfyui_server/test_assets/test_image.jpg"
+  },
+  "timeouts": {
+    "page_load": 10,
+    "api_response": 5,
+    "file_upload": 15
+  }
+}
