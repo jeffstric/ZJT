@@ -20,7 +20,7 @@ from model import AIToolsModel, VideoWorkflowModel
 import uuid
 from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character, get_character_task_result
 from PIL import Image
-from baidu import call_ernie_vl_api
+from llm import call_ernie_vl_api
 
 
 def _get_user_id_from_header(user_id: Optional[int]) -> int:

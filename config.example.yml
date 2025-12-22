@@ -37,3 +37,14 @@ duomi:
 bin:
   ffmpeg: "/usr/bin/ffmpeg"
   ffprobe: "/usr/bin/ffprobe"
+
+# LLM configuration
+llm:
+  baidu:
+    api_key: "bce-v3/xxxx"
+    api_url: "https://qianfan.baidubce.com/v2/chat/completions"
+    model: "ernie-4.5-turbo-vl-latest"
+  qwen:
+    api_key: "sk-xxxx"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-plus"
