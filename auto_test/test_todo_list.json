@@ -906,6 +906,111 @@
         },
         {
           "id": "editor_006",
+          "name": "时间轴视频剪辑功能",
+          "description": "验证用户可以打开剪辑对话框，调整视频起点和终点，预览剪辑效果，并保存剪辑设置",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "添加视频到时间轴",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加到时间轴按钮",
+                "ref": "<视频节点的添加到时间轴按钮ref>"
+              },
+              "expected_result": "视频片段出现在时间轴中",
+              "pass": false
+            },
+            {
+              "step": 2,
+              "action": "点击时间轴片段的剪切按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "剪切按钮",
+                "ref": "<时间轴片段剪切按钮ref>"
+              },
+              "expected_result": "弹出剪辑对话框",
+              "pass": false
+            },
+            {
+              "step": 3,
+              "action": "等待视频下载完成",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "视频已就绪",
+                "time": 30
+              },
+              "expected_result": "加载提示消失，视频预览和时间轴缩略图显示",
+              "pass": false
+            },
+            {
+              "step": 4,
+              "action": "拖动起点滑块",
+              "mcp_tool": "mcp1_browser_drag",
+              "mcp_params": {
+                "element": "起点滑块",
+                "ref": "<trimStartHandle ref>",
+                "offset_x": 100
+              },
+              "expected_result": "起点时间更新，视频画面跳转到新起点",
+              "pass": false
+            },
+            {
+              "step": 5,
+              "action": "拖动终点滑块",
+              "mcp_tool": "mcp1_browser_drag",
+              "mcp_params": {
+                "element": "终点滑块",
+                "ref": "<trimEndHandle ref>",
+                "offset_x": -100
+              },
+              "expected_result": "终点时间更新，剪辑时长显示更新",
+              "pass": false
+            },
+            {
+              "step": 6,
+              "action": "点击预览剪辑效果按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "预览剪辑效果按钮",
+                "ref": "<trimPlayBtn ref>"
+              },
+              "expected_result": "视频从起点开始播放，到达终点自动停止并保留在终点画面",
+              "pass": false
+            },
+            {
+              "step": 7,
+              "action": "验证播放控制",
+              "mcp_tool": "mcp1_browser_console_messages",
+              "mcp_params": {},
+              "verify": "控制台输出包含'开始播放'和'到达终点'日志",
+              "pass": false
+            },
+            {
+              "step": 8,
+              "action": "点击确定剪切按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "确定剪切按钮",
+                "ref": "<confirmTrim ref>"
+              },
+              "expected_result": "剪辑设置保存，对话框关闭，时间轴总时长更新为剪辑后的时长",
+              "pass": false
+            },
+            {
+              "step": 9,
+              "action": "验证时间轴总时长格式",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "时间轴总时长显示格式为 M:SS.XX（两位小数）",
+              "pass": false
+            }
+          ]
+        },
+        {
+          "id": "editor_007",
           "name": "添加节点菜单显示",
           "description": "验证点击添加按钮后弹出节点类型选择菜单，菜单包含图生视频、视频、图片、素材库选项",
           "priority": "P0",
