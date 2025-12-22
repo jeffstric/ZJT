@@ -1474,6 +1474,7 @@
         node.data.startUrl = nodeData.data.startUrl || '';
         node.data.endUrl = nodeData.data.endUrl || '';
         node.data.duration = nodeData.data.duration || 15;
+        node.data.ratio = nodeData.data.ratio || state.ratio || '16:9';
         node.data.model = nodeData.data.model || 'sora';
         node.data.drawCount = nodeData.data.drawCount || 1;
         node.data.motionLevel = nodeData.data.motionLevel || 5;
@@ -1489,6 +1490,10 @@
           // 更新时长选择
           const durationSelect = el.querySelector('.duration-select');
           if(durationSelect) durationSelect.value = node.data.duration;
+          
+          // 更新比例选择
+          const ratioSelect = el.querySelector('.ratio-select');
+          if(ratioSelect) ratioSelect.value = node.data.ratio;
           
           // 更新模型选择
           const modelSelect = el.querySelector('.model-select');
@@ -2224,6 +2229,7 @@
         data: {
           prompt: '',
           duration: 15,
+          ratio: state.ratio || '16:9',
           model: 'sora',
           drawCount: 1,
           motionEnabled: false,
@@ -2272,6 +2278,16 @@
             <select class="duration-select">
               <option value="10" selected>10秒</option>
               <option value="15">15秒</option>
+            </select>
+          </div>
+          <div class="field">
+            <div class="label">视频比例</div>
+            <select class="ratio-select">
+              <option value="9:16">9:16</option>
+              <option value="3:4">3:4</option>
+              <option value="1:1">1:1</option>
+              <option value="4:3">4:3</option>
+              <option value="16:9">16:9</option>
             </select>
           </div>
           <div class="field">
@@ -2325,6 +2341,7 @@
       const deleteBtn = el.querySelector('.icon-btn');
       const promptEl = el.querySelector('.prompt');
       const durationSelect = el.querySelector('.duration-select');
+      const ratioSelect = el.querySelector('.ratio-select');
       const modelSelect = el.querySelector('.model-select');
       // 运镜功能暂时隐藏，相关元素不存在
       // const motionEnableEl = el.querySelector('.motion-enable');
@@ -2349,6 +2366,11 @@
 
       durationSelect.addEventListener('change', () => {
         node.data.duration = Number(durationSelect.value);
+      });
+
+      ratioSelect.value = node.data.ratio;
+      ratioSelect.addEventListener('change', () => {
+        node.data.ratio = ratioSelect.value;
       });
 
       modelSelect.value = node.data.model;
@@ -2496,7 +2518,7 @@
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
           const duration = node.data.duration || 10;
           const prompt = node.data.prompt || '';
-          const ratio = state.ratio || '9:16';
+          const ratio = node.data.ratio || state.ratio || '9:16';
           
           console.log('[DEBUG] 生成视频参数:', { drawCount: node.data.drawCount, desiredCount, duration, prompt, ratio });
 
