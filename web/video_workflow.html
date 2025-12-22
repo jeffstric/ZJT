@@ -514,6 +514,13 @@
       font-size: 12px;
       color: var(--muted);
     }
+    .video-name{
+      max-width: 200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: help;
+    }
     input[type="file"]{
       width:100%;
       background: var(--panel);
@@ -1498,7 +1505,7 @@
                draggable="true"
                style="position: absolute; left: ${startTime * 10}px; width: ${width}px;">
             <video class="timeline-clip-thumb" src="${proxyDownloadUrl(clip.url)}" muted preload="metadata"></video>
-            <div class="timeline-clip-name">${clip.name}</div>
+            <div class="timeline-clip-name" title="${clip.name}">${clip.name}</div>
             <div class="timeline-clip-duration">${clip.duration}s</div>
             <div class="timeline-clip-actions">
               <button class="vp-btn clip-remove-btn" title="移除">×</button>
@@ -2186,6 +2193,7 @@
       if(node && nodeData.data){
         node.data.url = nodeData.data.url || '';
         node.data.name = nodeData.data.name || '';
+        node.data.duration = nodeData.data.duration || 0;
         // 如果有URL，显示预览
         if(node.data.url){
           const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -2198,7 +2206,17 @@
               thumbVideo.muted = true;
               thumbVideo.loop = true;
               nameEl.textContent = node.data.name;
+              nameEl.title = node.data.name;
               previewField.style.display = 'block';
+              
+              // 如果没有时长，尝试从视频获取
+              if(!node.data.duration){
+                thumbVideo.addEventListener('loadedmetadata', () => {
+                  if(thumbVideo.duration && isFinite(thumbVideo.duration)){
+                    node.data.duration = Math.round(thumbVideo.duration);
+                  }
+                }, { once: true });
+              }
             }
           }
         }
@@ -2352,12 +2370,37 @@
     }
 
     function removeNode(id){
+      const node = state.nodes.find(n => n.id === id);
+      
+      // 检查视频节点是否在时间轴中
+      if(node && node.type === 'video'){
+        const clipsInTimeline = state.timeline.clips.filter(c => c.nodeId === id);
+        
+        if(clipsInTimeline.length > 0){
+          // 有片段在时间轴中，需要确认
+          const confirmMsg = `该视频节点在时间轴中有 ${clipsInTimeline.length} 个片段，删除节点将同时删除这些片段。确定要删除吗？`;
+          if(!confirm(confirmMsg)){
+            return; // 用户取消删除
+          }
+          
+          // 用户确认删除，移除时间轴中的所有相关片段
+          state.timeline.clips = state.timeline.clips.filter(c => c.nodeId !== id);
+          state.timeline.clips.forEach((c, index) => {
+            c.order = index;
+          });
+          renderTimeline();
+        }
+        
+        // 清理视频URL
+        if(node.data && node.data.url){
+          try{ URL.revokeObjectURL(node.data.url); } catch(e){}
+        }
+      }
+      
       // 清除该节点相关的图片连接
       state.imageConnections = state.imageConnections.filter(c => c.from !== id && c.to !== id);
-      const node = state.nodes.find(n => n.id === id);
-      if(node && node.type === 'video' && node.data && node.data.url){
-        try{ URL.revokeObjectURL(node.data.url); } catch(e){}
-      }
+      
+      // 删除节点
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
       const el = canvasEl.querySelector(`.node[data-node-id="${id}"]`);
@@ -2366,6 +2409,9 @@
       renderConnections();
       renderMinimap();
       renderImageConnections();
+      
+      // 自动保存
+      try{ autoSaveWorkflow(); } catch(e){}
     }
 
     function createVideoNode(opts){
@@ -2499,6 +2545,7 @@
           thumbVideo.loop = true;
           thumbVideo.controls = false;
           nameEl.textContent = node.data.name;
+          nameEl.title = node.data.name;
           previewField.style.display = 'block';
           
           // 获取视频时长
@@ -2514,11 +2561,31 @@
         }
       }
 
-      fileEl.addEventListener('change', () => {
+      fileEl.addEventListener('change', async () => {
         const file = fileEl.files && fileEl.files[0];
         if(!file) return;
+        
+        // 先显示本地预览
         setVideoFromFile(file);
         fileEl.value = '';
+        
+        // 立即上传到服务器获取永久URL
+        try {
+          showToast('正在上传视频...', 'info');
+          const permanentUrl = await uploadFile(file);
+          if(permanentUrl){
+            // 更新为服务器URL
+            node.data.url = permanentUrl;
+            thumbVideo.src = proxyDownloadUrl(permanentUrl);
+            showToast('视频上传成功', 'success');
+            
+            // 自动保存工作流
+            try{ autoSaveWorkflow(); } catch(e){}
+          }
+        } catch(error){
+          console.error('视频上传失败:', error);
+          showToast('视频上传失败，刷新页面后将丢失', 'error');
+        }
       });
 
       fromAssetBtn.addEventListener('click', (e) => {
@@ -3326,6 +3393,7 @@
                       };
                       try{ thumbVideo.load(); } catch(e){}
                       nameEl.textContent = videoNode.data.name;
+                      nameEl.title = videoNode.data.name;
                       previewField.style.display = 'block';
                     }
                     
