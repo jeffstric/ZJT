@@ -33,9 +33,10 @@ while (还有未完成模块) {
     2. 运行 python test_navigator.py --list 找到未完成模块
     3. 创建 Task: "执行 /test-module {模块ID}"
     4. 等待 Task 完成
-    5. 再次运行 python test_navigator.py --status 检查更新
-    6. 如果更新，继续下一模块
-    7. 如果未更新，报告问题并停止
+    5. 验证模块是否真正完成（参考 module-completion-check.md）
+    6. 确认步骤完成率为 100% 才认为模块完成
+    7. 如果未完成，要求继续测试剩余步骤
+    8. 模块真正完成后，继续下一模块
 }
 ```
 
