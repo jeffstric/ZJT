@@ -1491,8 +1491,8 @@
         return sum + actualDuration;
       }, 0);
       const minutes = Math.floor(totalDuration / 60);
-      const seconds = totalDuration % 60;
-      totalDurationEl.textContent = `总时长: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+      const seconds = (totalDuration % 60).toFixed(2);
+      totalDurationEl.textContent = `总时长: ${minutes}:${seconds.padStart(5, '0')}`;
       
       renderTimelineRuler(ruler, totalDuration);
       
@@ -1990,7 +1990,7 @@
       };
       
       // 更新UI显示
-      const updateUI = () => {
+      const updateUI = (updateVideoTime = false) => {
         const trackWidth = trackContainer.offsetWidth;
         const startPercent = (currentStart / clip.duration) * 100;
         const endPercent = (currentEnd / clip.duration) * 100;
@@ -2008,8 +2008,8 @@
         endTimeDisplay.textContent = currentEnd.toFixed(1);
         durationDisplay.textContent = (currentEnd - currentStart).toFixed(1);
         
-        // 更新视频当前时间
-        if(!isPlaying){
+        // 只在明确指定时才更新视频时间
+        if(updateVideoTime && !isPlaying){
           video.currentTime = currentStart;
         }
       };
@@ -2078,13 +2078,16 @@
         
         if(isDraggingStart){
           currentStart = Math.max(0, Math.min(time, currentEnd - 0.1));
-          video.currentTime = currentStart;
+          // 拖动起点时更新视频画面到起点
+          if(!isPlaying){
+            video.currentTime = currentStart;
+          }
         } else if(isDraggingEnd){
           currentEnd = Math.max(currentStart + 0.1, Math.min(time, clip.duration));
-          video.currentTime = currentEnd;
+          // 拖动终点时不更新视频画面
         }
         
-        updateUI();
+        updateUI(false);
       };
       
       // 鼠标释放事件
@@ -2117,10 +2120,10 @@
       video.addEventListener('timeupdate', () => {
         if(isPlaying && video.currentTime >= currentEnd){
           video.pause();
-          video.currentTime = currentStart;
+          // 保留在终点画面，不回到起点
           isPlaying = false;
           playBtn.textContent = '▶ 预览剪辑效果';
-          console.log(`到达终点: ${video.currentTime.toFixed(2)}s >= ${currentEnd.toFixed(2)}s, 已暂停`);
+          console.log(`到达终点: ${video.currentTime.toFixed(2)}s >= ${currentEnd.toFixed(2)}s, 已暂停并保留在终点画面`);
         }
       });
       
@@ -2694,7 +2697,8 @@
               thumbVideo.src = proxyDownloadUrl(node.data.url);
               thumbVideo.muted = true;
               thumbVideo.loop = true;
-              nameEl.textContent = node.data.name;
+              const displayName = node.data.name.length > 10 ? node.data.name.substring(0, 10) + '...' : node.data.name;
+              nameEl.textContent = displayName;
               nameEl.title = node.data.name;
               previewField.style.display = 'block';
               
@@ -2952,7 +2956,7 @@
             <div class="preview-row" style="margin-top: 8px; justify-content: space-between;">
               <div class="gen-meta video-name"></div>
               <div style="display: flex; gap: 8px;">
-                <button class="mini-btn video-add-timeline" type="button">添加到时间轴</button>
+                <button class="mini-btn video-add-timeline" type="button">加时间轴</button>
                 <button class="mini-btn video-download" type="button">下载</button>
                 <button class="mini-btn video-clear" type="button">清除</button>
               </div>
@@ -3033,7 +3037,8 @@
           thumbVideo.muted = true;
           thumbVideo.loop = true;
           thumbVideo.controls = false;
-          nameEl.textContent = node.data.name;
+          const displayName = node.data.name.length > 10 ? node.data.name.substring(0, 10) + '...' : node.data.name;
+          nameEl.textContent = displayName;
           nameEl.title = node.data.name;
           previewField.style.display = 'block';
           
@@ -3881,7 +3886,8 @@
                         } catch(e){}
                       };
                       try{ thumbVideo.load(); } catch(e){}
-                      nameEl.textContent = videoNode.data.name;
+                      const displayName = videoNode.data.name.length > 10 ? videoNode.data.name.substring(0, 10) + '...' : videoNode.data.name;
+                      nameEl.textContent = displayName;
                       nameEl.title = videoNode.data.name;
                       previewField.style.display = 'block';
                     }
