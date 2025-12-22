@@ -171,9 +171,11 @@ def generate_html_report():
         .priority-p2 {{ background: #e6fffa; color: #2c7a7b; }}
         .no-failures {{ text-align: center; color: #38a169; font-size: 1.1em; padding: 20px; }}
         .failure-summary {{ background: #f7fafc; padding: 15px; border-radius: 8px; margin-bottom: 20px; }}
-        .collapsible {{ cursor: pointer; user-select: none; }}
-        .collapsible:hover {{ background: #f7fafc; }}
-        .collapse-content {{ display: none; }}
+        .collapsible {{ cursor: pointer; user-select: none; padding: 10px; background: #f8f9fa; border-radius: 4px; margin: 5px 0; }}
+        .collapsible:hover {{ background: #e9ecef; }}
+        .collapsible::before {{ content: '▶ '; font-size: 0.8em; margin-right: 5px; }}
+        .collapsible.active::before {{ content: '▼ '; }}
+        .collapse-content {{ display: none; padding: 10px; border-left: 3px solid #dee2e6; margin-left: 10px; }}
         .collapse-content.active {{ display: block; }}
         .test-header {{ background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
         .test-title {{ font-size: 1.8em; color: #2c3e50; margin: 0 0 10px 0; }}
@@ -194,11 +196,39 @@ def generate_html_report():
         <div class="summary">
 """
     
-    # 计算总体统计
+    # 计算总体统计 - 根据实际测试完成情况重新计算状态
     total_modules = len(progress.get('modules', []))
-    completed_modules = sum(1 for m in progress.get('modules', []) if m.get('status') == 'completed')
-    in_progress_modules = sum(1 for m in progress.get('modules', []) if m.get('status') == 'in_progress')
-    pending_modules = sum(1 for m in progress.get('modules', []) if m.get('status') == 'pending')
+    completed_modules = 0
+    in_progress_modules = 0
+    pending_modules = 0
+    
+    for module in progress.get('modules', []):
+        module_id = module['id']
+        original_status = module.get('status', 'pending')
+        
+        # 根据实际测试数据重新判断状态
+        if module_id in stats:
+            module_stats = stats[module_id]
+            features_total = module_stats['features']['total']
+            features_passed = module_stats['features']['passed']
+            steps_total = module_stats['steps']['total']
+            steps_passed = module_stats['steps']['passed']
+            
+            # 只有当所有功能和步骤都完成时才算已完成
+            if features_total > 0 and features_passed == features_total and steps_total > 0 and steps_passed == steps_total:
+                completed_modules += 1
+            elif features_passed > 0 or steps_passed > 0:
+                in_progress_modules += 1
+            else:
+                pending_modules += 1
+        else:
+            # 没有测试数据，按原状态计算
+            if original_status == 'completed':
+                completed_modules += 1
+            elif original_status == 'in_progress':
+                in_progress_modules += 1
+            else:
+                pending_modules += 1
     
     # 统计总失败数
     total_failed_features = sum(len(module_stats.get('failed_features', [])) for module_stats in stats.values())
@@ -230,7 +260,7 @@ def generate_html_report():
         html_content += f"""
         <div class="failures-section">
             <div class="failure-alert">
-                <div class="failure-title">⚠️ 发现 {total_failed_features} 个功能失败，{total_failed_steps} 个步骤失败</div>
+                <div class="failure-title">[WARNING] 发现 {total_failed_features} 个功能失败，{total_failed_steps} 个步骤失败</div>
                 <div class="failure-summary">
                     <strong>需要关注的失败项目：</strong>
                     <ul>
@@ -259,17 +289,34 @@ def generate_html_report():
 """
     
     html_content += """
-        <h2>📊 模块详情</h2>
+        <h2>[MODULES] 模块详情</h2>
 """
     
     # 模块详情
     for module in progress.get('modules', []):
         module_id = module['id']
         module_name = module['name']
-        status = module.get('status', 'pending')
+        original_status = module.get('status', 'pending')
         
-        status_class = f"status-{status.replace('_', '-')}"
-        status_text = {'completed': '✅ 已完成', 'in_progress': '🔄 进行中', 'pending': '⏳ 待测试'}.get(status, status)
+        # 根据实际测试数据重新判断状态
+        actual_status = original_status
+        if module_id in stats:
+            module_stats = stats[module_id]
+            features_total = module_stats['features']['total']
+            features_passed = module_stats['features']['passed']
+            steps_total = module_stats['steps']['total']
+            steps_passed = module_stats['steps']['passed']
+            
+            # 重新计算实际状态
+            if features_total > 0 and features_passed == features_total and steps_total > 0 and steps_passed == steps_total:
+                actual_status = 'completed'
+            elif features_passed > 0 or steps_passed > 0:
+                actual_status = 'in_progress'
+            else:
+                actual_status = 'pending'
+        
+        status_class = f"status-{actual_status.replace('_', '-')}"
+        status_text = {'completed': '[DONE] 已完成', 'in_progress': '[RUNNING] 进行中', 'pending': '[PENDING] 待测试'}.get(actual_status, actual_status)
         
         html_content += f"""
         <div class="module">
@@ -317,49 +364,59 @@ def generate_html_report():
         </div>
 """
         
-        # 如果有失败的功能，显示详细失败信息
+        # 如果有失败的功能，显示详细失败信息（可折叠）
         if module_id in stats and stats[module_id].get('failed_features'):
             failed_features = stats[module_id]['failed_features']
+            failure_count = len(failed_features)
             html_content += f"""
                 <div class="failures-section">
-                    <h4 style="color: #c53030; margin-top: 20px;">❌ 失败项目详情</h4>
+                    <div class="collapsible" onclick="toggleCollapse(this)">
+                        [ERROR] 失败项目详情 ({failure_count} 个失败项) - 点击展开/收起
+                    </div>
+                    <div class="collapse-content">
 """
             
             for failed_feature in failed_features:
                 priority_class = f"priority-{failed_feature['priority'].lower()}"
                 html_content += f"""
-                    <div class="failure-item">
-                        <div class="failure-header">
-                            🔴 {failed_feature['id']} - {failed_feature['name']}
-                            <span class="priority-badge {priority_class}">{failed_feature['priority']}</span>
-                        </div>
-                        <div class="failure-details">
-                            <strong>描述:</strong> {failed_feature['description']}<br>
-                            <strong>进度:</strong> {failed_feature['passed_steps']}/{failed_feature['total_steps']} 步骤通过
-                        </div>
+                        <div class="failure-item">
+                            <div class="failure-header">
+                                [FAILED] {failed_feature['id']} - {failed_feature['name']}
+                                <span class="priority-badge {priority_class}">{failed_feature['priority']}</span>
+                            </div>
+                            <div class="failure-details">
+                                <strong>描述:</strong> {failed_feature['description']}<br>
+                                <strong>进度:</strong> {failed_feature['passed_steps']}/{failed_feature['total_steps']} 步骤通过
+                            </div>
 """
                 
-                # 显示失败的步骤
+                # 显示失败的步骤（也可折叠）
                 if failed_feature['failed_steps']:
-                    html_content += """
-                        <div style="margin-top: 10px;">
-                            <strong>失败步骤:</strong>
-                        </div>
+                    step_count = len(failed_feature['failed_steps'])
+                    html_content += f"""
+                            <div class="collapsible" onclick="toggleCollapse(this)" style="margin-top: 10px; font-size: 0.9em;">
+                                失败步骤详情 ({step_count} 个失败步骤) - 点击展开/收起
+                            </div>
+                            <div class="collapse-content">
 """
                     for step in failed_feature['failed_steps']:
                         html_content += f"""
-                        <div class="error-message">
-                            <strong>步骤 {step['step']}:</strong> {step['action']}<br>
-                            <strong>错误:</strong> {step['error']}<br>
-                            <strong>期望结果:</strong> {step['expected_result']}
-                        </div>
+                                <div class="error-message">
+                                    <strong>步骤 {step['step']}:</strong> {step['action']}<br>
+                                    <strong>错误:</strong> {step['error']}<br>
+                                    <strong>期望结果:</strong> {step['expected_result']}
+                                </div>
+"""
+                    html_content += """
+                            </div>
 """
                 
                 html_content += """
-                    </div>
+                        </div>
 """
             
             html_content += """
+                    </div>
                 </div>
 """
     
@@ -367,9 +424,17 @@ def generate_html_report():
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     html_content += f"""
         <div class="timestamp">
-            📅 报告生成时间: {current_time}
+            [TIME] 报告生成时间: {current_time}
         </div>
     </div>
+    
+    <script>
+        function toggleCollapse(element) {{
+            element.classList.toggle('active');
+            var content = element.nextElementSibling;
+            content.classList.toggle('active');
+        }}
+    </script>
 </body>
 </html>
 """
