@@ -111,7 +111,7 @@ def generate_html_report():
     session_data = get_latest_session()
     
     if not progress:
-        return "❌ 未找到 test_progress.json 文件"
+        return "[ERROR] 未找到 test_progress.json 文件"
     
     # 统计数据
     stats = count_features(session_data) if session_data else {}
@@ -379,7 +379,7 @@ def generate_html_report():
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     
-    return f"✅ 测试报告已生成: {os.path.abspath(report_path)}"
+    return f"[SUCCESS] 测试报告已生成: {os.path.abspath(report_path)}"
 
 if __name__ == "__main__":
     result = generate_html_report()
