@@ -1093,37 +1093,52 @@
       }
       
       if(data.tasks){
-        // 多任务响应
+        // 多任务响应 - 返回每个任务的详细状态
         const tasks = data.tasks;
         const allSuccess = tasks.every(t => t.status === 'SUCCESS');
         const anyFailed = tasks.some(t => t.status === 'FAILED');
         const anyRunning = tasks.some(t => t.status === 'RUNNING');
         
-        const results = [];
-        tasks.forEach(task => {
-          const arr = extractResultsArray(task);
-          if(arr.length > 0) results.push(...arr);
+        // 为每个任务提取结果和错误信息
+        const taskDetails = tasks.map(task => {
+          const results = extractResultsArray(task);
+          return {
+            status: task.status || 'RUNNING',
+            result: results.length > 0 ? results[0] : null,
+            error: task.reason || task.error || null
+          };
         });
         
+        // 全局状态判断
+        let globalStatus = 'RUNNING';
         if(allSuccess){
-          return { status: 'SUCCESS', results };
+          globalStatus = 'SUCCESS';
         } else if(anyFailed && !anyRunning){
-          return { status: 'FAILED', results, error: '部分任务失败' };
-        } else {
-          return { status: 'RUNNING', results };
+          globalStatus = 'FAILED';
         }
+        
+        return { 
+          status: globalStatus, 
+          tasks: taskDetails,
+          error: anyFailed ? '部分任务失败' : null
+        };
       } else {
         // 单任务响应
+        const results = extractResultsArray(data);
         return {
           status: data.status || 'RUNNING',
-          results: extractResultsArray(data),
-          error: data.reason
+          tasks: [{
+            status: data.status || 'RUNNING',
+            result: results.length > 0 ? results[0] : null,
+            error: data.reason || data.error || null
+          }],
+          error: data.reason || data.error
         };
       }
     }
 
     // 轮询视频状态
-    function pollVideoStatus(projectIds, onProgress, onComplete, onError){
+    function pollVideoStatus(projectIds, onProgress, onComplete, onError, onTaskUpdate){
       let pollCount = 0;
       const maxPolls = 60; // 最多轮询60次（10分钟）
       
@@ -1132,10 +1147,15 @@
         try {
           const result = await checkVideoStatus(projectIds);
           
-          if(result.status === 'SUCCESS'){
+          // 如果有任务更新回调，实时更新每个任务的状态
+          if(onTaskUpdate && result.tasks){
+            onTaskUpdate(result.tasks);
+          }
+          
+          if(result.status === 'SUCCESS' || result.status === 'FAILED'){
+            // SUCCESS或FAILED都表示所有任务已完成，调用onComplete处理
+            // onComplete会根据每个任务的详细状态来更新视频节点
             onComplete(result);
-          } else if(result.status === 'FAILED'){
-            onError(result.error || '生成失败');
           } else {
             onProgress(`生成中... (${pollCount * 10}秒)`);
             if(pollCount < maxPolls){
@@ -1785,6 +1805,9 @@
               </div>
             </div>
           </div>
+          <div class="field video-status-field" style="display:none;">
+            <div class="gen-meta video-status"></div>
+          </div>
         </div>
       `;
 
@@ -1800,6 +1823,8 @@
       const nameEl = el.querySelector('.video-name');
       const downloadBtn = el.querySelector('.video-download');
       const clearBtn = el.querySelector('.video-clear');
+      const statusField = el.querySelector('.video-status-field');
+      const statusEl = el.querySelector('.video-status');
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2555,6 +2580,20 @@
           renderConnections();
           renderMinimap();
 
+          // 为每个视频节点初始化状态显示
+          allVideoNodeIds.forEach((videoNodeId, idx) => {
+            const videoEl = canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`);
+            if(videoEl){
+              const statusField = videoEl.querySelector('.video-status-field');
+              const statusEl = videoEl.querySelector('.video-status');
+              if(statusField && statusEl){
+                statusField.style.display = 'block';
+                statusEl.style.color = '';
+                statusEl.textContent = '生成中...';
+              }
+            }
+          });
+
           // 轮询状态
           pollVideoStatus(
             result.projectIds,
@@ -2562,80 +2601,161 @@
               genStatus.textContent = progressText;
             },
             (statusResult) => {
-              // 生成成功
+              // 生成完成（可能部分成功部分失败）
               if(TEST_MODE){
                 console.log('[TEST MODE] onComplete raw result:', statusResult);
               }
 
-              const rawResults = extractResultsArray(statusResult);
-              const videoUrls = Array.isArray(rawResults)
-                ? rawResults.map(normalizeVideoUrl).filter(Boolean)
-                : [];
-              genStatus.style.color = '#16a34a';
-
-              if(videoUrls.length === 0){
-                genStatus.style.color = '#dc2626';
-                genStatus.textContent = '生成成功，但未获取到视频地址（results为空或字段不匹配），请刷新后重试或联系管理员';
-                genBtnMain.disabled = false;
-                genBtnMain.textContent = '生成视频';
-                showToast('生成成功但未返回视频地址', 'error');
-                return;
-              }
-
-              genStatus.textContent = `生成完成！共${videoUrls.length}个视频`;
               genBtnMain.disabled = false;
               genBtnMain.textContent = '生成视频';
               
-              // 将视频URL分配到视频节点
-              videoUrls.forEach((videoUrl, idx) => {
-                if(idx < allVideoNodeIds.length){
-                  const videoNodeId = allVideoNodeIds[idx];
-                  const videoNode = state.nodes.find(n => n.id === videoNodeId);
-                  if(videoNode){
+              const tasks = statusResult.tasks || [];
+              let successCount = 0;
+              let failedCount = 0;
+              
+              // 为每个视频节点独立处理结果
+              tasks.forEach((task, idx) => {
+                if(idx >= allVideoNodeIds.length) return;
+                
+                const videoNodeId = allVideoNodeIds[idx];
+                const videoNode = state.nodes.find(n => n.id === videoNodeId);
+                const videoEl = canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`);
+                
+                if(!videoNode || !videoEl) return;
+                
+                const statusField = videoEl.querySelector('.video-status-field');
+                const statusEl = videoEl.querySelector('.video-status');
+                const previewField = videoEl.querySelector('.video-preview-field');
+                const thumbVideo = videoEl.querySelector('.video-thumb');
+                const nameEl = videoEl.querySelector('.video-name');
+                
+                if(task.status === 'SUCCESS' && task.result){
+                  // 成功：显示视频
+                  successCount++;
+                  const videoUrl = normalizeVideoUrl(task.result);
+                  
+                  if(videoUrl){
                     videoNode.data.url = videoUrl;
                     videoNode.data.name = `视频${idx + 1}`;
-                    // 更新视频节点的DOM显示
-                    const videoEl = canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`);
-                    if(videoEl){
-                      const previewField = videoEl.querySelector('.video-preview-field');
-                      const thumbVideo = videoEl.querySelector('.video-thumb');
-                      const nameEl = videoEl.querySelector('.video-name');
-                      if(previewField && thumbVideo && nameEl){
-                        thumbVideo.src = proxyDownloadUrl(videoUrl);
-                        thumbVideo.muted = true;
-                        thumbVideo.loop = true;
-                        thumbVideo.controls = false;
-                        thumbVideo.preload = 'metadata';
-                        thumbVideo.playsInline = true;
-                        thumbVideo.onloadedmetadata = () => {
-                          try{
-                            if(isFinite(thumbVideo.duration) && thumbVideo.duration > 0){
-                              thumbVideo.currentTime = Math.min(0.1, Math.max(0, thumbVideo.duration - 0.1));
-                            }
-                          } catch(e){}
-                          try{
-                            const p = thumbVideo.play();
-                            if(p && typeof p.catch === 'function') p.catch(() => {});
-                          } catch(e){}
-                        };
-                        try{ thumbVideo.load(); } catch(e){}
-                        nameEl.textContent = videoNode.data.name;
-                        previewField.style.display = 'block';
-                      }
+                    
+                    if(previewField && thumbVideo && nameEl){
+                      thumbVideo.src = proxyDownloadUrl(videoUrl);
+                      thumbVideo.muted = true;
+                      thumbVideo.loop = true;
+                      thumbVideo.controls = false;
+                      thumbVideo.preload = 'metadata';
+                      thumbVideo.playsInline = true;
+                      thumbVideo.onloadedmetadata = () => {
+                        try{
+                          if(isFinite(thumbVideo.duration) && thumbVideo.duration > 0){
+                            thumbVideo.currentTime = Math.min(0.1, Math.max(0, thumbVideo.duration - 0.1));
+                          }
+                        } catch(e){}
+                        try{
+                          const p = thumbVideo.play();
+                          if(p && typeof p.catch === 'function') p.catch(() => {});
+                        } catch(e){}
+                      };
+                      try{ thumbVideo.load(); } catch(e){}
+                      nameEl.textContent = videoNode.data.name;
+                      previewField.style.display = 'block';
+                    }
+                    
+                    if(statusField && statusEl){
+                      statusEl.style.color = '#16a34a';
+                      statusEl.textContent = '✓ 生成成功';
+                    }
+                  } else {
+                    if(statusField && statusEl){
+                      statusEl.style.color = '#dc2626';
+                      statusEl.textContent = '✗ 生成成功但未返回视频地址';
                     }
                   }
+                } else if(task.status === 'FAILED'){
+                  // 失败：只统计失败数量，不修改状态显示（状态已在onTaskUpdate中设置）
+                  failedCount++;
+                  // 不再修改statusEl，保留onTaskUpdate中设置的详细错误信息
                 }
               });
               
-              showToast('视频生成成功！', 'success');
+              // 更新图生视频节点的总体状态（智能判断）
+              const totalCount = successCount + failedCount;
+              if(successCount === totalCount && successCount > 0){
+                // 全部成功
+                genStatus.style.color = '#16a34a';
+                genStatus.textContent = `全部成功！共${successCount}个视频`;
+                showToast('视频生成成功！', 'success');
+              } else if(failedCount === totalCount && failedCount > 0){
+                // 全部失败
+                genStatus.style.color = '#dc2626';
+                genStatus.textContent = `全部失败：${failedCount}个任务失败`;
+                showToast('视频生成失败', 'error');
+              } else if(successCount > 0 && failedCount > 0){
+                // 部分成功部分失败
+                genStatus.style.color = '#f59e0b';
+                genStatus.textContent = `部分成功：${successCount}个成功，${failedCount}个失败`;
+                showToast(`部分成功：${successCount}个成功，${failedCount}个失败`, 'error');
+              } else {
+                genStatus.style.color = '#dc2626';
+                genStatus.textContent = '生成完成但未获取到有效结果';
+                showToast('生成完成但未获取到有效结果', 'error');
+              }
             },
             (errorMsg) => {
-              // 生成失败
+              // 轮询或请求失败
               genStatus.style.color = '#dc2626';
               genStatus.textContent = errorMsg;
               genBtnMain.disabled = false;
               genBtnMain.textContent = '生成视频';
+              
+              // 更新所有视频节点状态为失败
+              allVideoNodeIds.forEach((videoNodeId) => {
+                const videoEl = canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`);
+                if(videoEl){
+                  const statusField = videoEl.querySelector('.video-status-field');
+                  const statusEl = videoEl.querySelector('.video-status');
+                  if(statusField && statusEl){
+                    statusField.style.display = 'block';
+                    statusEl.style.color = '#dc2626';
+                    statusEl.textContent = `✗ ${errorMsg}`;
+                  }
+                }
+              });
+              
               showToast('视频生成失败: ' + errorMsg, 'error');
+            },
+            // 实时更新每个任务的状态（新增的回调）
+            (tasks) => {
+              tasks.forEach((task, idx) => {
+                if(idx >= allVideoNodeIds.length) return;
+                
+                const videoNodeId = allVideoNodeIds[idx];
+                const videoEl = canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`);
+                
+                if(!videoEl) return;
+                
+                const statusField = videoEl.querySelector('.video-status-field');
+                const statusEl = videoEl.querySelector('.video-status');
+                
+                if(!statusField || !statusEl) return;
+                
+                // 只更新已经完成（成功或失败）的任务状态
+                if(task.status === 'FAILED'){
+                  statusField.style.display = 'block';
+                  statusEl.style.color = '#dc2626';
+                  statusEl.textContent = `✗ 生成失败: ${task.error || '未知错误'}`;
+                } else if(task.status === 'SUCCESS' && task.result){
+                  // 成功的任务在这里只更新状态文本，视频加载留给onComplete处理
+                  statusField.style.display = 'block';
+                  statusEl.style.color = '#16a34a';
+                  statusEl.textContent = '✓ 生成成功，加载中...';
+                } else if(task.status === 'RUNNING'){
+                  // 运行中的任务保持"生成中..."状态
+                  statusField.style.display = 'block';
+                  statusEl.style.color = '';
+                  statusEl.textContent = '生成中...';
+                }
+              });
             }
           );
 
@@ -3136,7 +3256,7 @@
         }
       });
 
-      downloadBtn.addEventListener('click', (e) => {
+      downloadBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         if(!node.data.url && !node.data.preview){
           showToast('没有可下载的图片', 'error');
@@ -3145,19 +3265,37 @@
         const downloadUrl = node.data.url || node.data.preview;
         const fileName = node.data.name || 'image.png';
         
-        // 使用代理下载URL
-        const proxiedUrl = proxyDownloadUrl(downloadUrl, fileName);
-        
-        // 创建隐藏的a标签触发下载
-        const a = document.createElement('a');
-        a.href = proxiedUrl;
-        a.download = fileName;
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        
-        showToast('开始下载图片', 'success');
+        // 图片直接下载，不需要后端代理
+        // 如果是跨域图片，使用fetch+blob方式下载
+        try {
+          if(downloadUrl.startsWith('data:') || downloadUrl.startsWith('blob:') || isSameOriginUrl(downloadUrl)){
+            // data URL、blob URL 或同源图片，直接下载
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = fileName;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          } else {
+            // 跨域图片，使用fetch+blob方式下载
+            const response = await fetch(proxyImageUrl(downloadUrl));
+            const blob = await response.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = blobUrl;
+            a.download = fileName;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+          }
+          showToast('开始下载图片', 'success');
+        } catch(error) {
+          console.error('下载图片失败:', error);
+          showToast('下载图片失败', 'error');
+        }
       });
 
       canvasEl.appendChild(el);
