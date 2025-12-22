@@ -1,1 +1,2 @@
 1. 新增、调整功能后，或者发现bug后，请结合 auto_test/test_todo_list.json 中的测试用例，判断是否需要添加或者调整测试用例。
+2. auto_test/test_todo_list.json 是提供给智能体调用playwright进行端到端自动化测试的测试用例清单，而非单元测试用例，用于验证完整业务流程。
