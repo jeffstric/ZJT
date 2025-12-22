@@ -1,87 +1,55 @@
 # 测试工作流规范
 
-## 多智能体架构
+## 🔧 核心工具：test_navigator.py
 
-本项目支持两种运行模式：
+**使用 Python 脚本获取下一个测试项和标记完成，避免上下文溢出！**
 
-### 模式 1: 单智能体 + 外部脚本
+```bash
+# 查看所有模块进度
+python test_navigator.py --list
+
+# 查看整体进度统计
+python test_navigator.py --status
+
+# 获取下一个待测试项（全局）
+python test_navigator.py
+
+# 获取指定模块的下一个测试
+python test_navigator.py --module node_operations
+
+# 查看某个功能的详细步骤
+python test_navigator.py --feature node_005
+
+# ⭐ 标记当前步骤为通过（必须指定模块）
+python test_navigator.py --pass-current --module node_operations
+
+# ⭐ 标记指定功能的某个步骤为通过
+python test_navigator.py --pass node_005 1
+
+# ⭐ 标记指定功能的所有步骤为通过
+python test_navigator.py --pass node_005
 ```
-run_all_tests.ps1 → 循环调用 claude /run-test
-```
-
-### 模式 2: 多智能体协作（推荐）
-```
-/orchestrator (项目经理)
-    ├── Task: /test-module auth
-    ├── Task: /test-module workflow_list
-    ├── Task: /test-module workflow_editor
-    └── Task: /test-module node_operations
-```
-
-**项目经理智能体** (`/orchestrator`):
-- 读取进度，调度任务
-- 为每个模块创建 Task
-- 等待结果，更新进度
-
-**测试工程师智能体** (`/test-module {模块ID}`):
-- 执行指定模块的测试
-- 更新会话文件和进度
-- 返回测试结果
 
 ## ⚠️ 上下文管理模式
 
-**重要**: 为避免上下文溢出，每个**模块**完成后结束当前会话，由用户重新运行命令继续。
+**重要**: 为避免上下文溢出：
+1. **不要读取完整的 test_todo_list.json**（3882行太大）
+2. **使用 test_navigator.py** 获取精确的下一个测试步骤
+3. 每个模块完成后结束会话，重新运行继续
 
 ### 执行规则
 
-1. 每次运行只测试**一个模块**（或大模块的一个子集）
-2. 模块内的 features 持续执行，不询问用户
-3. **大模块拆分规则**：如果模块 features 超过 5 个，按以下方式拆分：
-   - `workflow_editor`: 拆分为 3 批
-     - 批次 1: editor_001 ~ editor_006（基础功能）
-     - 批次 2: editor_007 ~ editor_011（节点操作）
-     - 批次 3: editor_012 ~ editor_016（连接和保存）
-   - `node_operations`: 按 features 数量类似拆分
-4. 当前批次完成后：
-   - 更新 `test_progress.json`
-   - **结束会话**，输出提示
-5. 用户重新运行 `/run-test`，从下一批次继续（全新上下文）
-
-### 大模块拆分示例
-
-```json
-{
-  "current_module_index": 2,
-  "current_batch": 1,
-  "modules": [
-    { "id": "auth", "status": "completed" },
-    { "id": "workflow_list", "status": "completed" },
-    { "id": "workflow_editor", "status": "in_progress", "batches": 3 },
-    { "id": "node_operations", "status": "pending" }
-  ]
-}
-```
-
-### 进度文件
-
-`test_progress.json` 记录当前进度：
-```json
-{
-  "current_module_index": 0,
-  "modules": [
-    { "id": "auth", "status": "pending" },
-    { "id": "workflow_list", "status": "pending" }
-  ]
-}
-```
+1. 每次运行只测试**一个模块**
+2. 使用 `python test_navigator.py --module <ID>` 获取当前模块的下一个测试
+3. 模块完成后结束会话，用户重新运行继续
 
 ## 文件职责
 
 | 文件 | 用途 | 是否修改 |
 |------|------|---------|
-| `test_todo_list.json` | 主测试清单模板 | ❌ 不修改 |
+| `test_todo_list.json` | 主测试清单模板 | ❌ 不修改，不要读取（太大） |
+| `test_navigator.py` | 测试导航脚本 | ❌ 只执行，获取下一个测试 |
 | `test_config.json` | 配置文件（凭证、URL） | ❌ 只读取 |
-| `test_progress.json` | 模块进度索引 | ✅ 模块完成后更新 |
 | `test_sessions/session_*.json` | 当前测试会话 | ✅ 执行测试时修改这个 |
 
 ## 核心规则
@@ -90,23 +58,25 @@ run_all_tests.ps1 → 循环调用 claude /run-test
 
 `test_todo_list.json` 是模板文件，保持所有 `pass: false` 状态，用于创建新会话。
 
-### 2. 测试流程
+### 2. 测试流程（使用 test_navigator.py）
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  1. 读取 test_config.json 获取配置                       │
+│  1. 运行 python test_navigator.py --status 查看进度      │
 ├─────────────────────────────────────────────────────────┤
-│  2. 检查 test_sessions/ 目录是否有未完成的会话            │
-│     - 如果有：继续使用该会话文件                          │
-│     - 如果没有：从 test_todo_list.json 复制创建新会话     │
+│  2. 运行 python test_navigator.py --module <ID>         │
+│     获取当前模块的下一个待测试项                          │
 ├─────────────────────────────────────────────────────────┤
-│  3. 在会话文件中找到第一个 pass: false 的测试项           │
+│  3. 根据脚本输出执行测试步骤                              │
+│     - 使用 MCP 工具执行操作                              │
+│     - 验证预期结果                                       │
 ├─────────────────────────────────────────────────────────┤
-│  4. 执行测试步骤                                         │
+│  4. 【立即】更新会话文件，将 pass 改为 true               │
 ├─────────────────────────────────────────────────────────┤
-│  5. 【立即】将通过的步骤 pass 改为 true（修改会话文件）    │
+│  5. 再次运行 test_navigator.py 获取下一个测试            │
+│     循环执行直到模块完成                                  │
 ├─────────────────────────────────────────────────────────┤
-│  6. 继续下一个步骤，循环执行                              │
+│  6. 模块完成后结束会话，用户重新运行继续下一模块           │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -120,21 +90,10 @@ test_sessions/session_YYYYMMDD_HHMMSS.json
 
 ### 4. 查找当前会话
 
-```python
-# 伪代码
-sessions = list_files("test_sessions/*.json")
-if sessions:
-    current_session = sessions[-1]  # 最新的会话
-else:
-    current_session = create_new_session()
-```
-
-### 5. 创建新会话
-
-1. 读取 `test_todo_list.json` 全部内容
-2. 生成时间戳文件名
-3. 写入 `test_sessions/session_{timestamp}.json`
-4. 返回新会话文件路径
+**使用 test_navigator.py 自动处理**，脚本会：
+1. 自动查找最新的会话文件
+2. 如果没有会话，提示创建新会话
+3. 输出当前待测试项的完整信息
 
 ## 状态更新规则
 

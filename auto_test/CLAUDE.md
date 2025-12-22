@@ -7,6 +7,7 @@
 ```
 auto_test/
 ├── CLAUDE.md                    # 本文件 - Claude Code 项目说明
+├── test_navigator.py            # ⭐ 核心工具 - 测试导航脚本（避免上下文溢出）
 ├── test_config.example.json     # 配置文件模板（可提交到git）
 ├── test_config.json             # 实际配置文件（不提交到git，包含敏感信息）
 ├── test_todo_list.json          # 测试清单模板（不要修改！）
@@ -16,6 +17,7 @@ auto_test/
     │   └── test-workflow.md     # ⭐ 测试工作流规范（必读）
     └── commands/                # 自定义命令
         ├── run-test.md          # 执行测试
+        ├── orchestrator.md      # 项目经理调度器
         ├── new-test-session.md  # 新建测试会话
         └── check-status.md      # 检查测试状态
 ```
@@ -25,9 +27,10 @@ auto_test/
 **开始任何测试操作前，必须先阅读 `.claude/skills/test-workflow.md`**
 
 核心原则：
-1. `test_todo_list.json` 是模板，**永远不要修改**
-2. 所有测试进度保存在 `test_sessions/session_*.json`
-3. 每个步骤通过后**立即**更新会话文件
+1. **使用 `test_navigator.py` 脚本**，避免直接读取大型 JSON 文件
+2. `test_todo_list.json` 是模板，**永远不要修改**
+3. 所有测试进度保存在 `test_sessions/session_*.json`
+4. 每个步骤通过后**立即**更新会话文件
 
 ## 配置文件说明
 
@@ -71,6 +74,36 @@ auto_test/
 }
 ```
 
+## 🔧 核心工具：test_navigator.py
+
+**重要：使用 Python 脚本获取测试信息，避免上下文溢出！**
+
+```bash
+# 查看整体测试进度
+python test_navigator.py --status
+
+# 查看所有模块状态
+python test_navigator.py --list
+
+# 获取下一个待测试项
+python test_navigator.py
+
+# 获取指定模块的下一个测试
+python test_navigator.py --module node_operations
+
+# 查看某个功能的详细步骤
+python test_navigator.py --feature node_005
+
+# 标记当前步骤为通过（必须指定模块）
+python test_navigator.py --pass-current --module <模块ID>
+
+# 标记指定功能的某个步骤为通过
+python test_navigator.py --pass node_005 1
+
+# 标记指定功能的所有步骤为通过
+python test_navigator.py --pass node_005
+```
+
 ## 测试执行流程
 
 ### 1. 读取配置
@@ -79,14 +112,23 @@ auto_test/
 - 登录凭证
 - 测试资源路径
 
-### 2. 执行测试
-按照 `test_todo_list.json` 中的步骤执行：
+### 2. 获取下一个测试项
+**使用脚本而不是直接读取 JSON**：
+```bash
+python test_navigator.py --module <模块ID>
+```
+
+### 3. 执行测试
+根据脚本输出的步骤信息：
 - 使用 `mcp1_browser_snapshot` 获取页面元素的 ref
 - 使用对应的 MCP 工具执行操作
 - 验证预期结果
 
-### 3. 更新状态
-测试通过后，将 `pass` 字段更新为 `true`
+### 4. 标记完成
+**使用脚本更新状态**：
+```bash
+python test_navigator.py --pass-current --module <模块ID>
+```
 
 ## 可用命令
 

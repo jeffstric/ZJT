@@ -2,46 +2,58 @@
 
 你是一个自动化测试智能体，负责执行 playwright-mcp 浏览器测试。
 
-**⚠️ 必读**: 先阅读 `.claude/skills/test-workflow.md` 了解完整的测试工作流规范。
+## 🔴 核心原则：使用 test_navigator.py 避免上下文溢出
 
-## 🔴 上下文管理模式
-
-**每次只测试一个模块，模块完成后结束会话，避免上下文溢出！**
+**不要读取完整的 test_todo_list.json（3882行太大）！使用脚本获取下一个测试项。**
 
 ## 执行流程
 
-### 步骤 0：确认测试模式（首次启动时）
+### 步骤 1：查看测试进度
 
-**在开始测试前，必须先询问用户：**
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔧 测试模式确认
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-是否使用测试模式（URL 带 &test=1 参数）？
-
-- 测试模式：使用模拟接口，速度快，无成本
-- 真实模式：使用真实接口，速度慢，有成本
-
-请回复：
-  1. 测试模式（推荐）
-  2. 真实模式
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```bash
+python test_navigator.py --status
 ```
 
-根据用户选择，在所有 URL 后追加或不追加 `&test=1` 参数。
+### 步骤 2：获取下一个待测试项
 
-### 步骤 1-6：正常流程
+```bash
+# 全局下一个测试
+python test_navigator.py
 
-1. **读取进度**: 读取 `test_progress.json` 获取 `current_module_index`
-2. **读取配置**: 读取 `test_config.json` 获取 URL、凭证
-3. **确定当前模块**: 根据 `current_module_index` 确定要测试的模块 ID
-4. **读取会话文件**: 在 `test_sessions/` 找最新会话，只读取当前模块的 features
-5. **执行当前模块**: 测试该模块所有 features，每步通过后立即更新会话文件
-6. **模块完成后**:
-   - 更新 `test_progress.json`: 该模块 status 改为 `completed`，`current_module_index + 1`
-   - **结束会话**，输出提示让用户重新运行
+# 或指定模块
+python test_navigator.py --module node_operations
+```
+
+### 步骤 3：读取配置
+
+读取 `test_config.json` 获取 URL、凭证等配置。
+
+### 步骤 4：执行测试
+
+根据 test_navigator.py 输出的步骤信息：
+1. 使用 MCP 工具执行操作
+2. 验证预期结果
+
+### 步骤 5：标记步骤为通过
+
+```bash
+# 标记当前步骤为通过（必须指定模块）
+python test_navigator.py --pass-current --module <模块ID>
+
+# 或指定功能和步骤
+python test_navigator.py --pass node_005 1
+
+# 或标记整个功能为通过
+python test_navigator.py --pass node_005
+```
+
+### 步骤 6：循环执行
+
+再次运行 `python test_navigator.py` 获取下一个测试，循环直到模块完成。
+
+### 步骤 7：模块完成后结束会话
+
+输出完成信息，让用户重新运行继续下一模块。
 
 ### URL 拼接规则
 
@@ -101,6 +113,22 @@ mcp1_browser_network_requests - 检查网络请求
 
 ## 开始执行
 
-请先读取 `test_config.json` 和 `test_todo_list.json`，然后找到第一个 `pass: false` 的测试项开始执行。
+**⚠️ 重要：使用 test_navigator.py 确保不遗漏测试用例**
+
+```bash
+# 1. 先查看整体进度
+python test_navigator.py --status
+
+# 2. 获取下一个待测试项
+python test_navigator.py
+
+# 3. 或指定模块测试
+python test_navigator.py --module <模块ID>
+```
+
+**test_navigator.py 会自动：**
+- 读取会话文件，找到第一个 `pass: false` 的测试项
+- 输出完整的测试步骤信息
+- 确保不遗漏任何测试用例（包括 node_005 到 node_009）
 
 $ARGUMENTS
