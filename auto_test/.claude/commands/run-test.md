@@ -51,7 +51,25 @@ python test_navigator.py --pass node_005
 
 再次运行 `python test_navigator.py` 获取下一个测试，循环直到模块完成。
 
-### 步骤 7：模块完成后结束会话
+### 步骤 7：验证模块完成
+
+**重要：在结束会话前，必须验证模块是否真正完成！**
+
+阅读 `.claude/skills/module-completion-check.md` 并执行验证：
+
+```bash
+# 1. 检查模块状态
+python test_navigator.py --list
+
+# 2. 验证无待测试项
+python test_navigator.py --module <模块ID>
+
+# 3. 确认步骤完成率为 100%
+```
+
+**只有在步骤显示 X/X（100%）时才能结束会话！**
+
+### 步骤 8：模块完成后结束会话
 
 输出完成信息，让用户重新运行继续下一模块。
 
