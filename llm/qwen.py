@@ -53,6 +53,8 @@ async def call_qwen_chat_async(messages, model=None, temperature=0.7, max_tokens
     """
     异步调用通义千问API进行对话
     
+    使用 asyncio.to_thread 在线程池中执行同步调用，避免阻塞事件循环
+    
     Args:
         messages: 消息列表，格式为 [{"role": "user", "content": "你好"}, ...]
         model: 模型名称，默认使用配置文件中的模型
@@ -62,4 +64,5 @@ async def call_qwen_chat_async(messages, model=None, temperature=0.7, max_tokens
     Returns:
         API响应的内容字符串
     """
-    return call_qwen_chat(messages, model, temperature, max_tokens)
+    import asyncio
+    return await asyncio.to_thread(call_qwen_chat, messages, model, temperature, max_tokens)
