@@ -1,4 +1,4 @@
-{
+﻿{
   "title": "视频工作流功能检查清单",
   "version": "2.0.0",
   "description": "基于 playwright-mcp 的智能体浏览器自动化测试清单，每个测试步骤对应具体的 MCP 工具调用",
@@ -46,6 +46,7 @@
           "page_url": "/",
           "api_endpoint": "POST /api/auth/login",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -55,7 +56,8 @@
                 "url": "${config.base_url}/"
               },
               "expected_result": "首页正常加载",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -63,7 +65,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面快照中应包含「登录」按钮元素，记录其 ref 值",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -74,7 +77,8 @@
                 "ref": "<从快照中获取的ref>"
               },
               "expected_result": "弹出登录模态框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -82,7 +86,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "模态框可见，包含手机号输入框、密码输入框、服务条款复选框、登录按钮",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -111,7 +116,8 @@
                 ]
               },
               "expected_result": "表单字段正确填写",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -122,7 +128,8 @@
                 "ref": "<登录按钮ref>"
               },
               "expected_result": "发起登录请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -133,7 +140,8 @@
                 "time": 5
               },
               "expected_result": "页面出现「登出」文字",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 8,
@@ -141,7 +149,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面右上角显示「登出」按钮，模态框已关闭",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 9,
@@ -151,7 +160,8 @@
                 "function": "() => { return { auth_token: localStorage.getItem('auth_token'), user_id: localStorage.getItem('user_id') }; }"
               },
               "verify": "返回结果包含有效的 auth_token 和 user_id",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -163,6 +173,7 @@
           "page_url": "/",
           "api_endpoint": "POST /api/auth/logout",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "auth_001"
           ],
@@ -173,7 +184,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面快照中应包含「登出」按钮元素",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -184,7 +196,8 @@
                 "ref": "<登出按钮ref>"
               },
               "expected_result": "发起登出请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -195,7 +208,8 @@
                 "time": 3
               },
               "expected_result": "页面出现「登录」文字",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -203,7 +217,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面显示「登录」按钮，不显示「登出」按钮",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -213,7 +228,8 @@
                 "function": "() => { return { auth_token: localStorage.getItem('auth_token'), user_id: localStorage.getItem('user_id') }; }"
               },
               "verify": "auth_token 和 user_id 应为 null",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         }
@@ -232,6 +248,7 @@
           "page_url": "/video-workflow-list",
           "api_endpoint": "GET /api/video-workflow/list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -241,7 +258,8 @@
                 "url": "${config.base_url}/video-workflow-list"
               },
               "expected_result": "页面正常加载",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -252,7 +270,8 @@
                 "time": 5
               },
               "expected_result": "页面标题出现",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -260,7 +279,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面包含：品牌Logo、「视频工作流」标题、「新建工作流」按钮、搜索框、状态筛选下拉框、工作流卡片列表或空状态提示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -268,7 +288,8 @@
               "mcp_tool": "mcp1_browser_network_requests",
               "mcp_params": {},
               "verify": "存在 GET /api/video-workflow/list 请求且返回成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -279,6 +300,7 @@
           "priority": "P0",
           "page_url": "/video-workflow-list",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "list_001"
           ],
@@ -297,14 +319,16 @@
                 "status": ".workflow-status",
                 "meta": ".workflow-meta"
               },
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "检查状态标签样式",
               "operation": "verify",
               "expected_result": "启用状态显示绿色(.status-enabled)，禁用状态显示红色(.status-disabled)，草稿状态显示黄色(.status-draft)",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -312,7 +336,8 @@
               "operation": "verify",
               "selector": ".workflow-actions",
               "expected_result": "每个卡片底部有「编辑」和「删除」两个按钮",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -324,6 +349,7 @@
           "page_url": "/video-workflow-list",
           "api_endpoint": "GET /api/video-workflow/list?keyword=xxx",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -332,7 +358,8 @@
               "selector": "#searchInput",
               "test_data": "测试",
               "expected_result": "搜索框显示输入的关键词",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -340,14 +367,16 @@
               "operation": "wait",
               "wait_time_ms": 500,
               "expected_result": "防抖后自动发起带 keyword 参数的 API 请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证搜索结果",
               "operation": "verify",
               "expected_result": "列表只显示名称包含「测试」的工作流",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -355,7 +384,8 @@
               "operation": "clear",
               "selector": "#searchInput",
               "expected_result": "列表恢复显示全部工作流",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -367,6 +397,7 @@
           "page_url": "/video-workflow-list",
           "api_endpoint": "GET /api/video-workflow/list?status=x",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -375,7 +406,8 @@
               "selector": "#statusFilter",
               "value": "1",
               "expected_result": "发起带 status=1 参数的 API 请求，列表只显示已启用的工作流",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -384,7 +416,8 @@
               "selector": "#statusFilter",
               "value": "0",
               "expected_result": "列表只显示已禁用的工作流",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -393,7 +426,8 @@
               "selector": "#statusFilter",
               "value": "2",
               "expected_result": "列表只显示草稿状态的工作流",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -402,7 +436,8 @@
               "selector": "#statusFilter",
               "value": "",
               "expected_result": "列表恢复显示全部工作流",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -413,6 +448,7 @@
           "priority": "P1",
           "page_url": "/video-workflow-list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -425,7 +461,8 @@
                 "page_info": "#pageInfo",
                 "next_button": "#nextBtn"
               },
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -433,7 +470,8 @@
               "operation": "verify",
               "selector": "#pageInfo",
               "expected_result": "显示格式为「第 X 页 / 共 Y 页 (共 Z 条)」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -441,7 +479,8 @@
               "operation": "click",
               "selector": "#nextBtn",
               "expected_result": "加载下一页数据，页码信息更新",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -449,7 +488,8 @@
               "operation": "click",
               "selector": "#prevBtn",
               "expected_result": "返回上一页数据，页码信息更新",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -461,6 +501,7 @@
           "page_url": "/video-workflow-list",
           "api_endpoint": "POST /api/video-workflow/create",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -468,7 +509,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面包含「新建工作流」按钮，记录其 ref",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -479,7 +521,8 @@
                 "ref": "<新建按钮ref>"
               },
               "expected_result": "弹出模态框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -490,7 +533,8 @@
                 "time": 3
               },
               "expected_result": "模态框标题可见",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -498,7 +542,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "模态框包含名称输入框、描述文本域、状态选择器、保存和取消按钮",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -521,7 +566,8 @@
                 ]
               },
               "expected_result": "表单字段填写完成",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -535,7 +581,8 @@
                 ]
               },
               "expected_result": "状态选择为草稿",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -546,7 +593,8 @@
                 "ref": "<保存按钮ref>"
               },
               "expected_result": "发起创建请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 8,
@@ -557,7 +605,8 @@
                 "time": 5
               },
               "expected_result": "模态框关闭",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 9,
@@ -565,7 +614,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "列表中显示新创建的「MCP自动化测试工作流」卡片",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -577,6 +627,7 @@
           "page_url": "/video-workflow-list",
           "api_endpoint": "PUT /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -584,7 +635,8 @@
               "operation": "click",
               "selector": ".workflow-card .btn-secondary:has-text('编辑')",
               "expected_result": "弹出模态框，标题显示「编辑工作流」，表单预填充当前工作流信息",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -593,7 +645,8 @@
               "selector": "#workflowName",
               "test_data": "修改后的工作流名称",
               "expected_result": "名称输入框显示新内容",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -601,14 +654,16 @@
               "operation": "click",
               "selector": "#createModal button:has-text('保存')",
               "expected_result": "发起 PUT /api/video-workflow/{id} 请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
               "action": "验证更新成功",
               "operation": "verify",
               "expected_result": "显示「更新成功」Toast 提示，模态框关闭，列表刷新显示更新后的信息",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -620,6 +675,7 @@
           "page_url": "/video-workflow-list",
           "api_endpoint": "DELETE /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -627,7 +683,8 @@
               "operation": "click",
               "selector": ".workflow-card .btn-danger:has-text('删除')",
               "expected_result": "弹出删除确认模态框，提示「确定要删除这个工作流吗？此操作不可撤销。」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -635,14 +692,16 @@
               "operation": "click",
               "selector": "#deleteModal .btn-danger:has-text('删除')",
               "expected_result": "发起 DELETE /api/video-workflow/{id} 请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证删除成功",
               "operation": "verify",
               "expected_result": "显示「删除成功」Toast 提示，模态框关闭，工作流从列表中移除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -653,6 +712,7 @@
           "priority": "P0",
           "page_url": "/video-workflow-list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -660,14 +720,16 @@
               "operation": "click",
               "selector": ".workflow-card .workflow-content",
               "expected_result": "页面跳转到 /video-workflow?id={workflow_id}",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证跳转成功",
               "operation": "verify",
               "expected_result": "URL 包含 /video-workflow?id=，编辑器页面正常加载",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         }
@@ -686,6 +748,7 @@
           "page_url": "/video-workflow?id={workflow_id}",
           "api_endpoint": "GET /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -695,7 +758,8 @@
                 "url": "${config.base_url}/video-workflow?id=1"
               },
               "expected_result": "页面开始加载",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -706,7 +770,8 @@
                 "time": 5
               },
               "expected_result": "保存按钮出现",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -714,7 +779,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面包含：品牌浮动栏、比例选择器(16:9等选项)、「保存」按钮、「添加」按钮、画布容器、缩放控件(+/-按钮和100%显示)、小地图区域",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -722,7 +788,8 @@
               "mcp_tool": "mcp1_browser_network_requests",
               "mcp_params": {},
               "verify": "存在 GET /api/video-workflow/1 请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -733,6 +800,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -740,7 +808,8 @@
               "operation": "verify",
               "selector": "#ratioSelect",
               "expected_result": "下拉框默认选中 16:9",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -748,7 +817,8 @@
               "operation": "verify",
               "selector": "#ratioSelect option",
               "expected_result": "下拉框包含5个选项：9:16、3:4、1:1、4:3、16:9",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -757,7 +827,8 @@
               "selector": "#ratioSelect",
               "value": "9:16",
               "expected_result": "比例更新为 9:16，状态正确保存",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -766,7 +837,8 @@
               "selector": "#ratioSelect",
               "value": "1:1",
               "expected_result": "比例更新为 1:1",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -777,6 +849,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -784,7 +857,8 @@
               "operation": "verify",
               "selector": "#zoomLevel",
               "expected_result": "显示 100%",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -792,7 +866,8 @@
               "operation": "click",
               "selector": "#zoomInBtn",
               "expected_result": "缩放级别增加到 110%",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -801,7 +876,8 @@
               "selector": "#zoomInBtn",
               "times": 10,
               "expected_result": "缩放级别最大为 200%，继续点击不再增加",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -809,7 +885,8 @@
               "operation": "click",
               "selector": "#zoomOutBtn",
               "expected_result": "缩放级别减少",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -818,7 +895,8 @@
               "selector": "#zoomOutBtn",
               "times": 20,
               "expected_result": "缩放级别最小为 25%，继续点击不再减少",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -829,6 +907,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -836,7 +915,8 @@
               "operation": "mousedown",
               "selector": "#canvasContainer",
               "expected_result": "光标变为 grabbing，画布容器添加 .panning 类",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -851,14 +931,16 @@
                 "y": 400
               },
               "expected_result": "整个画布跟随鼠标平移，transform 样式更新",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "释放鼠标",
               "operation": "mouseup",
               "expected_result": "画布停止平移，保持在新位置，光标恢复为 grab",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -869,6 +951,7 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -876,7 +959,8 @@
               "operation": "verify",
               "selector": "#minimap",
               "expected_result": "小地图显示在画布左下角",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -884,7 +968,8 @@
               "operation": "verify",
               "selector": ".minimap-node",
               "expected_result": "小地图中显示节点缩略方块",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -892,7 +977,8 @@
               "operation": "verify",
               "selector": ".minimap-viewport",
               "expected_result": "显示红色边框的视口框，表示当前可视区域",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -900,7 +986,8 @@
               "operation": "drag",
               "selector": ".minimap-viewport",
               "expected_result": "画布相应滚动到新位置",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -911,6 +998,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -921,7 +1009,8 @@
                 "ref": "<视频节点的添加到时间轴按钮ref>"
               },
               "expected_result": "视频片段出现在时间轴中",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -932,7 +1021,8 @@
                 "ref": "<时间轴片段剪切按钮ref>"
               },
               "expected_result": "弹出剪辑对话框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -943,7 +1033,8 @@
                 "time": 30
               },
               "expected_result": "加载提示消失，视频预览和时间轴缩略图显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -955,7 +1046,8 @@
                 "offset_x": 100
               },
               "expected_result": "起点时间更新，视频画面跳转到新起点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -967,7 +1059,8 @@
                 "offset_x": -100
               },
               "expected_result": "终点时间更新，剪辑时长显示更新",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -978,7 +1071,8 @@
                 "ref": "<trimPlayBtn ref>"
               },
               "expected_result": "视频从起点开始播放，到达终点自动停止并保留在终点画面",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -986,7 +1080,8 @@
               "mcp_tool": "mcp1_browser_console_messages",
               "mcp_params": {},
               "verify": "控制台输出包含'开始播放'和'到达终点'日志",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 8,
@@ -997,7 +1092,8 @@
                 "ref": "<confirmTrim ref>"
               },
               "expected_result": "剪辑设置保存，对话框关闭，时间轴总时长更新为剪辑后的时长",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 9,
@@ -1005,7 +1101,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "时间轴总时长显示格式为 M:SS.XX（两位小数）",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1016,6 +1113,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1023,7 +1121,8 @@
               "operation": "click",
               "selector": "#addBtn",
               "expected_result": "弹出添加菜单",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1038,14 +1137,16 @@
                 "add_image": "#menuAddImage",
                 "add_asset": "#menuAddAsset"
               },
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证节点选项",
               "operation": "verify",
               "expected_result": "「添加节点」分组包含：图生视频、视频、图片",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -1053,7 +1154,8 @@
               "operation": "click",
               "selector": "#canvasContainer",
               "expected_result": "添加菜单关闭",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1064,6 +1166,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1071,7 +1174,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面包含「添加」按钮，记录其 ref",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1082,7 +1186,8 @@
                 "ref": "<添加按钮ref>"
               },
               "expected_result": "弹出添加菜单",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -1090,7 +1195,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "菜单包含「图生视频」选项，记录其 ref",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -1101,7 +1207,8 @@
                 "ref": "<图生视频选项ref>"
               },
               "expected_result": "在画布上创建节点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -1112,7 +1219,8 @@
                 "time": 3
               },
               "expected_result": "节点标题出现",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -1120,7 +1228,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "节点包含：「图生视频」标题、首帧画面字段(必填*)、尾帧画面字段(可选)、视频长度下拉框(10秒/15秒)、模型下拉框(sora)、提示词文本框、「生成视频」按钮、抽卡次数下拉",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1131,6 +1240,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1138,7 +1248,8 @@
               "operation": "click",
               "selector": "#addBtn",
               "expected_result": "弹出添加菜单",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1146,14 +1257,16 @@
               "operation": "click",
               "selector": "#menuAddVideoNode",
               "expected_result": "在画布上创建新的视频节点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证节点创建",
               "operation": "verify",
               "expected_result": "画布上出现新节点，节点标题为「视频」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -1165,7 +1278,8 @@
                 "from_asset_btn": ".video-from-asset",
                 "input_port": ".port.input"
               },
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1176,6 +1290,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1183,7 +1298,8 @@
               "operation": "click",
               "selector": "#addBtn",
               "expected_result": "弹出添加菜单",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1191,14 +1307,16 @@
               "operation": "click",
               "selector": "#menuAddImage",
               "expected_result": "在画布上创建新的图片节点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证节点创建",
               "operation": "verify",
               "expected_result": "画布上出现新节点，节点标题为「图片」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -1209,7 +1327,8 @@
                 "image_file": ".image-file",
                 "output_port": ".port.output"
               },
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1220,6 +1339,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "editor_007"
           ],
@@ -1230,7 +1350,8 @@
               "operation": "mousedown",
               "selector": ".node-header",
               "expected_result": "节点被选中，准备拖拽，光标变为 grabbing",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1245,21 +1366,24 @@
                 "y": 300
               },
               "expected_result": "节点跟随鼠标移动，left/top 样式实时更新",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "释放鼠标",
               "operation": "mouseup",
               "expected_result": "节点停留在新位置，位置数据正确保存",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
               "action": "验证小地图更新",
               "operation": "verify",
               "expected_result": "小地图中的节点缩略位置同步更新",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1270,6 +1394,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1277,21 +1402,24 @@
               "operation": "click",
               "selector": ".node .icon-btn",
               "expected_result": "节点从画布上移除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证节点已删除",
               "operation": "verify",
               "expected_result": "画布上不再显示该节点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证相关连接线删除",
               "operation": "verify",
               "expected_result": "与该节点相关的所有连接线也被删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1302,6 +1430,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "editor_007",
             "editor_009"
@@ -1313,14 +1442,16 @@
               "operation": "mousedown",
               "selector": ".node[data-node-id] .port.output",
               "expected_result": "开始创建连接线，显示虚线预览",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "拖拽到视频节点的输入端口",
               "operation": "drag",
               "expected_result": "虚线预览跟随鼠标移动，目标端口高亮显示 .can-connect 类",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -1328,7 +1459,8 @@
               "operation": "mouseup",
               "selector": ".port.input",
               "expected_result": "创建实线连接，连接线为绿色贝塞尔曲线",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -1336,7 +1468,8 @@
               "operation": "verify",
               "selector": "#connectionsSvg path.line",
               "expected_result": "SVG 中存在连接线路径元素",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1347,6 +1480,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "editor_007",
             "editor_010"
@@ -1358,7 +1492,8 @@
               "operation": "mousedown",
               "selector": ".node[data-node-id] .port.output",
               "expected_result": "开始创建图片连接线",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1366,14 +1501,16 @@
               "operation": "drag_to",
               "selector": ".start-image-port",
               "expected_result": "首帧端口高亮显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "释放鼠标",
               "operation": "mouseup",
               "expected_result": "创建蓝色连接线，图片节点的图片作为首帧输入",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1384,6 +1521,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "editor_013"
           ],
@@ -1394,7 +1532,8 @@
               "operation": "click",
               "selector": "#connectionsSvg path.hitbox",
               "expected_result": "连接线变为红色选中状态，添加 .selected 类",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1402,7 +1541,8 @@
               "operation": "verify",
               "selector": "#connDeleteBtn",
               "expected_result": "在连接线中点位置显示红色圆形删除按钮",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -1410,7 +1550,8 @@
               "operation": "click",
               "selector": "#connDeleteBtn",
               "expected_result": "连接线被删除，删除按钮隐藏",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1422,6 +1563,7 @@
           "page_url": "/video-workflow?id={workflow_id}",
           "api_endpoint": "PUT /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1429,21 +1571,24 @@
               "operation": "click",
               "selector": "#saveBtn",
               "expected_result": "按钮显示「保存中...」，按钮禁用",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证API请求",
               "operation": "verify",
               "expected_result": "发起 PUT /api/video-workflow/{id} 请求，请求体包含 workflow_data 字段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证保存成功",
               "operation": "verify",
               "expected_result": "显示「保存成功」Toast 提示，按钮恢复为「保存」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1454,6 +1599,7 @@
           "priority": "P0",
           "page_url": "/video-workflow?id={workflow_id}",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "editor_016"
           ],
@@ -1464,35 +1610,40 @@
               "operation": "navigate",
               "target_url": "/video-workflow?id={saved_workflow_id}",
               "expected_result": "页面正常加载",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证节点恢复",
               "operation": "verify",
               "expected_result": "之前保存的所有节点正确显示在画布上，位置与保存时一致",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证连接线恢复",
               "operation": "verify",
               "expected_result": "之前保存的所有连接线正确显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
               "action": "验证节点数据恢复",
               "operation": "verify",
               "expected_result": "节点的字段值（如提示词、图片URL等）正确恢复",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
               "action": "验证视口位置恢复",
               "operation": "verify",
               "expected_result": "画布缩放级别和平移位置与保存时一致",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         }
@@ -1511,6 +1662,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/video-workflow/upload",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1518,7 +1670,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "图生视频节点中包含首帧画面文件输入区域",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1529,7 +1682,8 @@
                 "ref": "<文件输入ref>"
               },
               "expected_result": "触发文件选择器",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -1541,7 +1695,8 @@
                 ]
               },
               "expected_result": "文件开始上传",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -1552,7 +1707,8 @@
                 "time": 10
               },
               "expected_result": "Toast提示出现",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -1560,7 +1716,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "首帧预览区域可见，显示图片缩略图和「清除」按钮",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -1568,7 +1725,8 @@
               "mcp_tool": "mcp1_browser_network_requests",
               "mcp_params": {},
               "verify": "存在 POST /api/video-workflow/upload 请求且返回成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1579,6 +1737,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "node_001"
           ],
@@ -1589,14 +1748,16 @@
               "operation": "click",
               "selector": ".start-clear",
               "expected_result": "图片被清除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证预览隐藏",
               "operation": "verify",
               "expected_result": "预览区域隐藏，首帧端口恢复可连接状态",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1608,6 +1769,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/video-workflow/upload",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1615,7 +1777,8 @@
               "operation": "click",
               "selector": ".end-file",
               "expected_result": "打开文件选择器",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1624,7 +1787,8 @@
               "selector": ".end-file",
               "test_file": "test_end_image.jpg",
               "expected_result": "文件上传成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -1632,7 +1796,8 @@
               "operation": "verify",
               "selector": ".end-preview-row",
               "expected_result": "尾帧预览区域显示，图片可见",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1643,6 +1808,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1650,7 +1816,8 @@
               "operation": "verify",
               "selector": ".duration-select",
               "expected_result": "默认选中 10秒",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1659,7 +1826,8 @@
               "selector": ".duration-select",
               "value": "15",
               "expected_result": "下拉框更新为 15秒",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1670,6 +1838,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1677,14 +1846,16 @@
               "operation": "verify",
               "selector": ".model-select",
               "expected_result": "默认选中 sora",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "检查kling选项状态",
               "operation": "verify",
               "expected_result": "kling 选项显示为禁用状态（暂未实现）",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1695,6 +1866,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1703,14 +1875,16 @@
               "selector": ".prompt",
               "test_data": "一只可爱的猫咪在草地上奔跑",
               "expected_result": "文本正确显示在输入框中",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证数据保存",
               "operation": "verify",
               "expected_result": "提示词数据保存到节点状态中",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1721,6 +1895,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1728,7 +1903,8 @@
               "operation": "click",
               "selector": ".gen-btn-caret",
               "expected_result": "弹出抽卡次数菜单",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1736,7 +1912,8 @@
               "operation": "verify",
               "selector": ".gen-menu",
               "expected_result": "菜单包含 X1、X2、X3、X4 四个选项",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -1744,7 +1921,8 @@
               "operation": "click",
               "selector": ".gen-item[data-count='2']",
               "expected_result": "菜单关闭，抽卡次数标签更新为「抽卡次数：X2」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1756,6 +1934,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/ai-app-run-image-url",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "node_001"
           ],
@@ -1766,7 +1945,8 @@
               "operation": "verify",
               "selector": ".start-preview",
               "expected_result": "首帧预览图片可见",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1774,14 +1954,16 @@
               "operation": "click",
               "selector": ".gen-btn-main",
               "expected_result": "按钮变为「生成中...」状态，禁用",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证API请求",
               "operation": "verify",
               "expected_result": "发起 POST /api/ai-app-run-image-url 请求，包含 image_url、prompt、ratio、duration_seconds、count 参数",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -1789,14 +1971,16 @@
               "operation": "verify",
               "selector": ".gen-status",
               "expected_result": "显示「正在提交任务...」状态文字",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
               "action": "验证视频节点自动创建",
               "operation": "verify",
               "expected_result": "根据抽卡次数自动创建对应数量的视频节点，并连接到图生视频节点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -1807,7 +1991,8 @@
                 "time": 120
               },
               "expected_result": "状态区域出现「生成完成」文字",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -1815,7 +2000,8 @@
               "operation": "verify",
               "selector": ".video-preview-field",
               "expected_result": "至少一个视频节点的预览区域显示（display != none）",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 8,
@@ -1825,7 +2011,8 @@
                 "function": "() => { const els = Array.from(document.querySelectorAll('.video-thumb')); return els.map(v => v.getAttribute('src') || v.src || '').filter(Boolean); }"
               },
               "verify": "返回数组长度 >= 1，且每个元素为 http(s) URL 或包含 .mp4",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1836,13 +2023,15 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "确保首帧图片未上传",
               "operation": "verify",
               "expected_result": "首帧预览区域隐藏",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1850,7 +2039,8 @@
               "operation": "click",
               "selector": ".gen-btn-main",
               "expected_result": "不发起API请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -1858,7 +2048,8 @@
               "operation": "verify",
               "selector": ".gen-status",
               "expected_result": "显示红色错误文字「请先上传首帧图片」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1870,13 +2061,15 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/ai-app-run-image-url, GET /api/get-status/{projectIds}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "上传首帧图片并选择抽卡次数X2",
               "operation": "upload_and_select",
               "expected_result": "首帧图片上传成功，抽卡次数显示为X2",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1884,7 +2077,8 @@
               "operation": "click",
               "selector": ".gen-btn-main",
               "expected_result": "自动创建2个视频节点并连接，显示生成中状态",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -1892,14 +2086,16 @@
               "operation": "wait_for_completion",
               "timeout": 180000,
               "expected_result": "所有视频任务完成（成功或失败）",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
               "action": "验证每个视频节点状态独立显示",
               "operation": "verify",
               "expected_result": "每个视频节点下方显示各自的状态：成功显示绿色✓和视频预览，失败显示红色✗和具体错误原因",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -1907,14 +2103,16 @@
               "operation": "verify",
               "selector": ".gen-status",
               "expected_result": "根据实际结果显示：全部成功显示绿色，全部失败显示红色，部分成功显示橙色并注明数量",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
               "action": "验证失败视频节点的错误信息未被覆盖",
               "operation": "verify",
               "expected_result": "失败的视频节点保持显示详细错误原因，不会被替换为汇总信息",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1926,13 +2124,15 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/ai-app-run-image-url",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "创建图片节点并上传图片",
               "operation": "create_and_upload",
               "expected_result": "图片节点创建成功，图片上传完成",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1940,14 +2140,16 @@
               "operation": "create_node",
               "node_type": "image_to_video",
               "expected_result": "图生视频节点创建成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "连接图片节点到图生视频节点的首帧端口",
               "operation": "connect_nodes",
               "expected_result": "连接线显示正常",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -1955,7 +2157,8 @@
               "operation": "click",
               "selector": ".gen-btn-main",
               "expected_result": "开始生成视频，创建视频节点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -1963,14 +2166,16 @@
               "operation": "verify",
               "selector": ".image-conn-group",
               "expected_result": "图片节点到图生视频节点的连接线仍然显示，未消失",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
               "action": "验证视频连接线正常显示",
               "operation": "verify",
               "expected_result": "图生视频节点到视频节点的连接线正常显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -1982,6 +2187,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "无",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -1989,7 +2195,8 @@
               "operation": "create_node",
               "node_type": "image_to_video",
               "expected_result": "图生视频节点创建成功，默认模型为sora",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -1997,7 +2204,8 @@
               "operation": "verify",
               "selector": ".ratio-select option",
               "expected_result": "比例下拉框只显示9:16和16:9两个选项",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -2006,14 +2214,16 @@
               "selector": ".ratio-select",
               "value": "16:9",
               "expected_result": "比例成功设置为16:9",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
               "action": "保存并重新加载工作流",
               "operation": "save_and_reload",
               "expected_result": "工作流保存成功并重新加载",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -2021,7 +2231,8 @@
               "operation": "verify",
               "selector": ".ratio-select",
               "expected_result": "比例选项仍然只有9:16和16:9，当前值为16:9",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2033,13 +2244,15 @@
           "page_url": "/video-workflow",
           "api_endpoint": "PUT /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "创建图生视频节点并设置比例为9:16",
               "operation": "create_and_set",
               "expected_result": "节点创建成功，比例设置为9:16",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2047,14 +2260,16 @@
               "operation": "click",
               "selector": "#saveBtn",
               "expected_result": "工作流保存成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "刷新页面重新加载工作流",
               "operation": "reload",
               "expected_result": "页面刷新，工作流重新加载",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -2062,21 +2277,24 @@
               "operation": "verify",
               "selector": ".ratio-select",
               "expected_result": "比例选择框的值为9:16",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
               "action": "修改比例为16:9并再次保存",
               "operation": "change_and_save",
               "expected_result": "比例修改为16:9并保存成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
               "action": "再次刷新页面验证比例持久化",
               "operation": "reload_and_verify",
               "expected_result": "比例恢复为16:9，确认持久化成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2087,6 +2305,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2094,7 +2313,8 @@
               "operation": "click",
               "selector": ".video-file",
               "expected_result": "打开文件选择器",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2103,7 +2323,8 @@
               "selector": ".video-file",
               "test_file": "test_video.mp4",
               "expected_result": "视频加载成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -2111,7 +2332,8 @@
               "operation": "verify",
               "selector": ".video-preview-field",
               "expected_result": "视频预览区域显示，包含播放按钮、放大按钮、下载按钮、清除按钮",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2122,6 +2344,7 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "node_010"
           ],
@@ -2132,7 +2355,8 @@
               "operation": "click",
               "selector": ".vp-play",
               "expected_result": "视频开始播放，按钮图标变为暂停图标",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2140,7 +2364,8 @@
               "operation": "click",
               "selector": ".vp-play",
               "expected_result": "视频暂停，按钮图标恢复为播放图标",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2152,6 +2377,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "GET /api/download",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "node_010"
           ],
@@ -2162,14 +2388,16 @@
               "operation": "click",
               "selector": ".video-download",
               "expected_result": "触发下载请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证下载",
               "operation": "verify",
               "expected_result": "打开 /api/download?url=xxx&filename=xxx 下载链接，显示「开始下载」Toast",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2180,6 +2408,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "node_010"
           ],
@@ -2190,14 +2419,16 @@
               "operation": "click",
               "selector": ".video-clear",
               "expected_result": "视频被清除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证预览隐藏",
               "operation": "verify",
               "expected_result": "视频预览区域隐藏，恢复到初始状态",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2208,6 +2439,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2215,7 +2447,8 @@
               "operation": "click",
               "selector": ".image-file",
               "expected_result": "打开文件选择器",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2224,7 +2457,8 @@
               "selector": ".image-file",
               "test_file": "test_image.png",
               "expected_result": "图片上传成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -2232,7 +2466,8 @@
               "operation": "verify",
               "selector": ".image-preview-row",
               "expected_result": "图片预览区域显示，包含缩略图和清除按钮",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -2240,7 +2475,8 @@
               "operation": "click",
               "selector": "#saveBtn",
               "expected_result": "触发保存工作流",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -2251,7 +2487,8 @@
                 "time": 10
               },
               "expected_result": "出现保存成功 toast",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -2259,7 +2496,8 @@
               "mcp_tool": "mcp1_browser_reload",
               "mcp_params": {},
               "expected_result": "页面刷新并重新加载工作流",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -2267,7 +2505,8 @@
               "operation": "verify",
               "selector": ".image-preview-row",
               "expected_result": "刷新后图片预览区域仍显示，不应空白",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 8,
@@ -2277,7 +2516,8 @@
                 "function": "() => { const img = document.querySelector('.image-preview'); return img ? (img.getAttribute('src') || img.src || '') : ''; }"
               },
               "verify": "返回值非空，且以 http(s) 或 data:image 开头",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2288,6 +2528,7 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "node_001"
           ],
@@ -2298,7 +2539,8 @@
               "operation": "click",
               "selector": ".start-preview",
               "expected_result": "打开图片模态框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2306,7 +2548,8 @@
               "operation": "verify",
               "selector": "#imageModal",
               "expected_result": "模态框可见，标题显示「首帧预览」，图片以大尺寸显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -2314,7 +2557,8 @@
               "operation": "click",
               "selector": "#imageModalClose",
               "expected_result": "模态框关闭",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2325,6 +2569,7 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "prerequisites": [
             "node_010"
           ],
@@ -2335,7 +2580,8 @@
               "operation": "click",
               "selector": ".vp-zoom",
               "expected_result": "打开视频模态框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2343,7 +2589,8 @@
               "operation": "verify",
               "selector": "#videoModal",
               "expected_result": "模态框可见，视频自动开始播放",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -2351,7 +2598,8 @@
               "operation": "click",
               "selector": "#videoModalClose",
               "expected_result": "模态框关闭，视频暂停",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2363,6 +2611,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/image-edit",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2370,7 +2619,8 @@
               "operation": "click",
               "selector": "#addBtn",
               "expected_result": "弹出添加节点菜单",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2378,7 +2628,8 @@
               "operation": "click",
               "selector": "#menuAddImage",
               "expected_result": "画布上创建图片节点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -2387,7 +2638,8 @@
               "selector": ".image-file",
               "test_file": "test_image.png",
               "expected_result": "显示图片预览",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -2396,7 +2648,8 @@
               "selector": ".image-prompt",
               "value": "把这张图改成赛博朋克风格",
               "expected_result": "提示词输入框有内容",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -2404,7 +2657,8 @@
               "operation": "click",
               "selector": ".gen-btn-caret",
               "expected_result": "显示抽卡次数下拉菜单",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -2412,7 +2666,8 @@
               "operation": "click",
               "selector": ".gen-item[data-count='2']",
               "expected_result": "抽卡次数设置为X2",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -2420,7 +2675,8 @@
               "operation": "click",
               "selector": ".image-edit-btn",
               "expected_result": "触发图片编辑任务提交",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 8,
@@ -2431,7 +2687,8 @@
                 "time": 180
               },
               "expected_result": "图片节点显示生成完成状态",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 9,
@@ -2441,7 +2698,8 @@
                 "function": "() => { const s = window.state; if(!s || !Array.isArray(s.nodes)) return { count: 0 }; return { count: s.nodes.filter(n => n.type === 'image').length }; }"
               },
               "verify": "count >= 2 (原始节点 + 至少1个新节点)",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 10,
@@ -2451,7 +2709,8 @@
                 "function": "() => { const imgs = Array.from(document.querySelectorAll('.image-preview')); const srcs = imgs.map(i => i.getAttribute('src') || i.src || '').filter(Boolean); return { count: srcs.length, srcs: srcs.slice(0, 3) }; }"
               },
               "verify": "count >= 2，且 srcs 数组元素以 http(s) 或 /api/proxy-image 开头",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 11,
@@ -2461,7 +2720,8 @@
                 "function": "() => { const label = document.querySelector('.image-draw-count-label'); return { text: label ? label.textContent : '', exists: !!label }; }"
               },
               "verify": "exists 为 true 且 text 包含 'X2'",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         }
@@ -2479,6 +2739,7 @@
           "priority": "P0",
           "api_endpoint": "GET /api/video-workflow/list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2490,21 +2751,24 @@
                 "Authorization": "{auth_token}"
               },
               "expected_result": "返回200状态码",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证响应结构",
               "operation": "verify_response",
               "expected_result": "响应包含 code=0, message, data 字段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证data字段",
               "operation": "verify_response",
               "expected_result": "data 包含 total, page, page_size, data 子字段，data是数组",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2515,6 +2779,7 @@
           "priority": "P0",
           "api_endpoint": "GET /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2526,21 +2791,24 @@
                 "Authorization": "{auth_token}"
               },
               "expected_result": "返回200状态码",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证响应结构",
               "operation": "verify_response",
               "expected_result": "响应包含 code=0, data 字段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证工作流数据",
               "operation": "verify_response",
               "expected_result": "data 包含 id, name, description, cover_image, user_id, status, workflow_data, create_time, update_time 字段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2551,6 +2819,7 @@
           "priority": "P0",
           "api_endpoint": "POST /api/video-workflow/create",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2568,14 +2837,16 @@
                 "status": 2
               },
               "expected_result": "返回200状态码",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证响应",
               "operation": "verify_response",
               "expected_result": "响应包含 code=0, message='创建成功', data.id 为新创建的ID",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2586,6 +2857,7 @@
           "priority": "P0",
           "api_endpoint": "PUT /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2605,14 +2877,16 @@
                 }
               },
               "expected_result": "返回200状态码",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证响应",
               "operation": "verify_response",
               "expected_result": "响应包含 code=0, message='更新成功'",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2623,6 +2897,7 @@
           "priority": "P0",
           "api_endpoint": "DELETE /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2634,14 +2909,16 @@
                 "Authorization": "{auth_token}"
               },
               "expected_result": "返回200状态码",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证响应",
               "operation": "verify_response",
               "expected_result": "响应包含 code=0, message='删除成功'",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -2650,7 +2927,8 @@
               "method": "GET",
               "url": "/api/video-workflow/{test_id}",
               "expected_result": "返回错误，工作流不存在",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2661,6 +2939,7 @@
           "priority": "P0",
           "api_endpoint": "POST /api/video-workflow/upload",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2675,14 +2954,16 @@
               "file_field": "file",
               "test_file": "test_image.jpg",
               "expected_result": "返回200状态码",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "验证响应",
               "operation": "verify_response",
               "expected_result": "响应包含 code=0, data.url 为上传后的文件URL",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         }
@@ -2700,13 +2981,15 @@
           "priority": "P1",
           "page_url": "/video-workflow-list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "清除登录状态",
               "operation": "clear_storage",
               "expected_result": "localStorage 中 auth_token 和 user_id 被清除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2714,7 +2997,8 @@
               "operation": "navigate",
               "target_url": "/video-workflow-list",
               "expected_result": "页面显示需要登录的提示，或跳转到登录页",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2725,6 +3009,7 @@
           "priority": "P0",
           "page_url": "/video-workflow-list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2733,7 +3018,8 @@
               "key": "auth_token",
               "value": "{auth_token}",
               "expected_result": "localStorage.auth_token 被设置，user_id 为空",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2742,7 +3028,8 @@
               "key": "user_id",
               "value": "",
               "expected_result": "localStorage.user_id 为空字符串或 null",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -2752,7 +3039,8 @@
                 "url": "${config.base_url}/video-workflow-list"
               },
               "expected_result": "页面显示「请先登录」提示，并提供「去登录」入口",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -2760,7 +3048,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "页面包含「请先登录」文字，且不应渲染工作流卡片列表",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -2768,7 +3057,8 @@
               "mcp_tool": "mcp1_browser_network_requests",
               "mcp_params": {},
               "verify": "不应出现 GET /api/video-workflow/list 返回 400 (user_id is required) 的请求；最好不发起该请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2779,13 +3069,15 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "清除登录状态",
               "operation": "clear_storage",
               "expected_result": "登录状态被清除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2793,7 +3085,8 @@
               "operation": "navigate",
               "target_url": "/video-workflow?id=1",
               "expected_result": "提示需要登录或跳转到登录页",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2804,6 +3097,7 @@
           "priority": "P1",
           "page_url": "/video-workflow?id=99999",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2811,7 +3105,8 @@
               "operation": "navigate",
               "target_url": "/video-workflow?id=99999",
               "expected_result": "显示错误提示「工作流不存在」或跳转到列表页",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2822,6 +3117,7 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2830,7 +3126,8 @@
               "selector": ".start-file",
               "test_file": "test.txt",
               "expected_result": "显示错误提示，文件未被接受",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2841,13 +3138,15 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "模拟网络断开",
               "operation": "network_offline",
               "expected_result": "网络状态变为离线",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2855,7 +3154,8 @@
               "operation": "click",
               "selector": "#saveBtn",
               "expected_result": "显示网络错误提示 Toast",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2866,6 +3166,7 @@
           "priority": "P1",
           "page_url": "/video-workflow-list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2873,7 +3174,8 @@
               "operation": "click",
               "selector": "button:has-text('新建工作流')",
               "expected_result": "弹出模态框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2881,7 +3183,8 @@
               "operation": "click",
               "selector": "#createModal button:has-text('保存')",
               "expected_result": "显示验证错误「请输入工作流名称」，不发起API请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2892,6 +3195,7 @@
           "priority": "P1",
           "page_url": "/video-workflow-list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2899,7 +3203,8 @@
               "operation": "click",
               "selector": ".workflow-card .btn-danger:has-text('删除')",
               "expected_result": "弹出删除确认框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2907,7 +3212,8 @@
               "operation": "click",
               "selector": "#deleteModal .btn-secondary:has-text('取消')",
               "expected_result": "模态框关闭，工作流未被删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2918,13 +3224,15 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "触发视频生成",
               "operation": "trigger_generate",
               "expected_result": "开始轮询视频状态",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2932,7 +3240,8 @@
               "operation": "wait",
               "wait_time_ms": 300000,
               "expected_result": "超时后显示错误提示，按钮恢复可点击状态",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2942,6 +3251,7 @@
           "description": "验证用户Token过期后请求返回401时的处理",
           "priority": "P1",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2950,7 +3260,8 @@
               "key": "auth_token",
               "value": "expired_token",
               "expected_result": "Token被设置为过期值",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2958,7 +3269,8 @@
               "operation": "navigate",
               "target_url": "/video-workflow-list",
               "expected_result": "API返回401，提示用户重新登录",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -2969,6 +3281,7 @@
           "priority": "P2",
           "page_url": "/video-workflow-list",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -2976,7 +3289,8 @@
               "operation": "click",
               "selector": "button:has-text('新建工作流')",
               "expected_result": "模态框可见",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -2984,7 +3298,8 @@
               "operation": "click",
               "selector": ".modal-overlay",
               "expected_result": "模态框关闭",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         }
@@ -3002,17 +3317,23 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
-          "prerequisites": ["editor_009"],
+          "remark": "",
+          "prerequisites": [
+            "editor_009"
+          ],
           "test_steps": [
             {
               "step": 1,
               "action": "创建视频节点并上传视频",
               "mcp_tool": "mcp1_browser_file_upload",
               "mcp_params": {
-                "paths": ["${config.test_video_path}"]
+                "paths": [
+                  "${config.test_video_path}"
+                ]
               },
               "expected_result": "视频上传成功，节点显示视频预览",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3020,7 +3341,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "视频节点包含「添加到时间轴」按钮，记录其 ref",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3031,7 +3353,8 @@
                 "ref": "<添加到时间轴按钮ref>"
               },
               "expected_result": "视频添加到时间轴",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3042,7 +3365,8 @@
                 "time": 3
               },
               "expected_result": "时间轴面板出现",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -3050,7 +3374,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "时间轴面板包含：标题「时间轴」、总时长显示、操作提示「拖拽调整顺序 | 按住Shift拖拽可替换」、清空按钮、收起按钮、时间刻度尺、视频轨道、视频片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -3060,7 +3385,8 @@
                 "function": "() => { const canvas = document.getElementById('canvasContainer'); return canvas.classList.contains('timeline-visible'); }"
               },
               "verify": "画布容器包含 timeline-visible 类",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3071,13 +3397,15 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加视频到时间轴",
               "operation": "按 timeline_001 的步骤添加视频",
               "expected_result": "视频添加成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3087,7 +3415,8 @@
                 "function": "() => { const clip = document.querySelector('.timeline-clip'); if (!clip) return null; const width = parseInt(clip.style.width); const duration = parseInt(clip.querySelector('.timeline-clip-duration').textContent); return { width, duration, ratio: width / duration }; }"
               },
               "verify": "视频片段宽度 = 时长 × 10px，比例为 10",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3095,7 +3424,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "总时长显示格式为「总时长: M:SS」，数值与视频实际时长一致",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3105,7 +3435,8 @@
                 "function": "() => { const marks = document.querySelectorAll('.ruler-mark'); return Array.from(marks).map(m => m.textContent); }"
               },
               "verify": "时间刻度按5秒或10秒间隔显示（根据总时长）",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3116,20 +3447,23 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "第一次添加视频",
               "operation": "点击添加到时间轴按钮",
               "expected_result": "视频添加成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "第二次添加同一视频",
               "operation": "再次点击添加到时间轴按钮",
               "expected_result": "视频再次添加成功，不显示错误提示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3139,7 +3473,8 @@
                 "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
               },
               "verify": "返回值为 2",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3147,7 +3482,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "总时长显示为单个视频时长的2倍",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3158,13 +3494,15 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加多个不同时长的视频",
               "operation": "添加3个视频，时长分别为5秒、10秒、8秒",
               "expected_result": "3个视频都添加到时间轴",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3174,14 +3512,16 @@
                 "function": "() => { const clips = Array.from(document.querySelectorAll('.timeline-clip')); return clips.map(c => ({ left: parseInt(c.style.left), width: parseInt(c.style.width), duration: parseInt(c.querySelector('.timeline-clip-duration').textContent) })); }"
               },
               "verify": "第1个片段 left=0, 第2个片段 left=第1个的时长×10, 第3个片段 left=(第1个+第2个)的时长×10",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证片段末尾对齐刻度",
               "operation": "计算每个片段的 left + width",
               "verify": "片段1末尾=5秒刻度(50px), 片段2末尾=15秒刻度(150px), 片段3末尾=23秒刻度(230px)",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3192,13 +3532,15 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加3个视频到时间轴",
               "operation": "添加视频A、B、C",
               "expected_result": "时间轴显示 A B C",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3210,7 +3552,8 @@
                 "targetPosition": "left"
               },
               "expected_result": "拖拽过程中显示蓝色插入指示器",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3220,7 +3563,8 @@
                 "function": "() => { const clips = Array.from(document.querySelectorAll('.timeline-clip')); return clips.map(c => c.querySelector('.timeline-clip-name').textContent); }"
               },
               "verify": "顺序变为 B A C",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3230,7 +3574,8 @@
                 "function": "() => { const clips = Array.from(document.querySelectorAll('.timeline-clip')); return clips.map(c => parseInt(c.style.left)); }"
               },
               "verify": "每个片段的 left 值根据新顺序重新计算",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3241,13 +3586,15 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加3个视频到时间轴",
               "operation": "添加视频A、B、C",
               "expected_result": "时间轴显示 A B C",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3257,14 +3604,16 @@
                 "function": "() => { const clipA = document.querySelector('.timeline-clip:nth-child(1)'); const clipB = document.querySelector('.timeline-clip:nth-child(2)'); const dragEvent = new DragEvent('dragstart', { dataTransfer: new DataTransfer(), shiftKey: false }); clipA.dispatchEvent(dragEvent); const overEvent = new DragEvent('dragover', { dataTransfer: dragEvent.dataTransfer, shiftKey: true }); clipB.dispatchEvent(overEvent); return clipB.classList.contains('drop-target'); }"
               },
               "verify": "目标片段B显示高亮（drop-target类）",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "释放鼠标完成替换",
               "operation": "模拟drop事件",
               "expected_result": "B的内容变为A的内容，A从时间轴删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3274,7 +3623,8 @@
                 "function": "() => { const clips = Array.from(document.querySelectorAll('.timeline-clip')); return { count: clips.length, names: clips.map(c => c.querySelector('.timeline-clip-name').textContent) }; }"
               },
               "verify": "片段数量为2，顺序为 B(A的内容) C",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -3282,7 +3632,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "总时长减少了被删除视频的时长",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3293,13 +3644,15 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加视频到时间轴",
               "operation": "添加2个视频",
               "expected_result": "时间轴显示2个片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3310,7 +3663,8 @@
                 "ref": "<第一个片段ref>"
               },
               "expected_result": "片段显示选中状态（蓝色边框）",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3320,7 +3674,8 @@
                 "function": "() => { const clip = document.querySelector('.timeline-clip.selected'); return clip !== null; }"
               },
               "verify": "返回 true",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3330,7 +3685,8 @@
                 "key": "Delete"
               },
               "expected_result": "片段从时间轴删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -3340,7 +3696,8 @@
                 "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
               },
               "verify": "片段数量减1",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3351,13 +3708,15 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加视频到时间轴",
               "operation": "添加1个视频",
               "expected_result": "时间轴显示1个片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3368,7 +3727,8 @@
                 "ref": "<片段ref>"
               },
               "expected_result": "显示移除按钮（×）",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3376,7 +3736,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "片段操作区域包含移除按钮，记录其 ref",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3387,7 +3748,8 @@
                 "ref": "<移除按钮ref>"
               },
               "expected_result": "片段从时间轴删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -3397,7 +3759,8 @@
                 "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
               },
               "verify": "片段数量为0",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3408,13 +3771,15 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加多个视频到时间轴",
               "operation": "添加3个视频",
               "expected_result": "时间轴显示3个片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3422,7 +3787,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "时间轴头部包含「清空」按钮，记录其 ref",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3433,14 +3799,16 @@
                 "ref": "<清空按钮ref>"
               },
               "expected_result": "弹出确认对话框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
               "action": "确认清空",
               "operation": "点击确认按钮",
               "expected_result": "所有片段被删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -3450,7 +3818,8 @@
                 "function": "() => { return { clipCount: document.querySelectorAll('.timeline-clip').length, containerVisible: document.getElementById('timelineContainer').style.display !== 'none' }; }"
               },
               "verify": "片段数量为0，时间轴容器隐藏",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3461,13 +3830,15 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加视频到时间轴",
               "operation": "添加1个视频",
               "expected_result": "时间轴显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3478,7 +3849,8 @@
                 "ref": "<收起按钮ref>"
               },
               "expected_result": "时间轴面板隐藏，展开按钮显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3488,7 +3860,8 @@
                 "function": "() => { return { containerVisible: document.getElementById('timelineContainer').style.display !== 'none', expandBtnVisible: document.getElementById('timelineExpandBtn').style.display !== 'none' }; }"
               },
               "verify": "时间轴容器隐藏，展开按钮显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3499,7 +3872,8 @@
                 "ref": "<展开按钮ref>"
               },
               "expected_result": "时间轴面板重新显示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -3507,7 +3881,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "时间轴面板可见，包含之前添加的视频片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3519,13 +3894,15 @@
           "page_url": "/video-workflow",
           "api_endpoint": "PUT /api/video-workflow/{id}",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加视频到时间轴",
               "operation": "添加2个视频",
               "expected_result": "时间轴显示2个片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3536,7 +3913,8 @@
                 "ref": "<保存按钮ref>"
               },
               "expected_result": "发起保存请求",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3547,7 +3925,8 @@
                 "time": 5
               },
               "expected_result": "显示保存成功提示",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3557,7 +3936,8 @@
                 "function": "() => { location.reload(); }"
               },
               "expected_result": "页面重新加载",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
@@ -3568,7 +3948,8 @@
                 "time": 5
               },
               "expected_result": "编辑器加载完成",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
@@ -3578,7 +3959,8 @@
                 "function": "() => { return { clipCount: document.querySelectorAll('.timeline-clip').length, timelineVisible: document.getElementById('timelineContainer').style.display !== 'none' }; }"
               },
               "verify": "时间轴显示，包含2个片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -3588,7 +3970,8 @@
                 "function": "() => { const clips = Array.from(document.querySelectorAll('.timeline-clip')); return clips.map(c => ({ name: c.querySelector('.timeline-clip-name').textContent, duration: c.querySelector('.timeline-clip-duration').textContent, left: c.style.left, width: c.style.width })); }"
               },
               "verify": "片段名称、时长、位置、宽度与保存前一致",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3599,13 +3982,15 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "添加短时长视频",
               "operation": "添加5秒的视频",
               "expected_result": "片段宽度为50px",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3615,14 +4000,16 @@
                 "function": "() => { const thumb = document.querySelector('.timeline-clip-thumb'); const style = window.getComputedStyle(thumb); return { objectFit: style.objectFit, width: style.width, height: style.height }; }"
               },
               "verify": "object-fit 为 cover，宽高为 100%",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "验证视频不变形",
               "operation": "目视检查",
               "expected_result": "视频内容保持原始比例，只显示左侧部分，不压缩变形",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3633,13 +4020,15 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "创建视频节点并添加到时间轴",
               "operation": "创建视频节点，上传视频，添加到时间轴",
               "expected_result": "视频节点创建成功，时间轴显示1个片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3649,7 +4038,8 @@
                 "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
               },
               "verify": "返回值为 1",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3657,7 +4047,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "视频节点包含删除按钮（×），记录其 ref",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3668,21 +4059,24 @@
                 "ref": "<删除按钮ref>"
               },
               "expected_result": "弹出确认对话框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
               "action": "验证确认对话框内容",
               "operation": "检查对话框文本",
               "expected_result": "对话框提示「该视频节点在时间轴中有 1 个片段，删除节点将同时删除这些片段。确定要删除吗？」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
               "action": "点击取消按钮",
               "operation": "取消删除",
               "expected_result": "对话框关闭，节点未被删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -3692,14 +4086,16 @@
                 "function": "() => { return { nodeExists: document.querySelector('.node[data-node-id]') !== null, clipCount: document.querySelectorAll('.timeline-clip').length }; }"
               },
               "verify": "节点存在，时间轴片段数量仍为 1",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 8,
               "action": "再次点击删除按钮并确认",
               "operation": "点击删除按钮，在确认对话框中点击确定",
               "expected_result": "节点被删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 9,
@@ -3709,7 +4105,8 @@
                 "function": "() => { return { clipCount: document.querySelectorAll('.timeline-clip').length, timelineVisible: document.getElementById('timelineContainer').style.display !== 'none' }; }"
               },
               "verify": "时间轴片段数量为 0，时间轴容器隐藏",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3720,20 +4117,23 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "创建视频节点",
               "operation": "创建视频节点并上传视频",
               "expected_result": "视频节点创建成功",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
               "action": "多次添加到时间轴",
               "operation": "点击3次「添加到时间轴」按钮",
               "expected_result": "时间轴显示3个相同的片段",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
@@ -3743,28 +4143,32 @@
                 "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
               },
               "verify": "返回值为 3",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
               "action": "点击视频节点删除按钮",
               "operation": "点击删除按钮",
               "expected_result": "弹出确认对话框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 5,
               "action": "验证确认对话框显示片段数量",
               "operation": "检查对话框文本",
               "expected_result": "对话框提示「该视频节点在时间轴中有 3 个片段，删除节点将同时删除这些片段。确定要删除吗？」",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 6,
               "action": "确认删除",
               "operation": "点击确定按钮",
               "expected_result": "节点被删除",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 7,
@@ -3774,7 +4178,8 @@
                 "function": "() => { return { clipCount: document.querySelectorAll('.timeline-clip').length, timelineVisible: document.getElementById('timelineContainer').style.display !== 'none' }; }"
               },
               "verify": "时间轴片段数量为 0，时间轴容器隐藏",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         },
@@ -3785,13 +4190,15 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
               "action": "创建视频节点但不添加到时间轴",
               "operation": "创建视频节点并上传视频，不点击添加到时间轴",
               "expected_result": "视频节点创建成功，时间轴为空",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 2,
@@ -3801,14 +4208,16 @@
                 "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
               },
               "verify": "返回值为 0",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 3,
               "action": "点击视频节点删除按钮",
               "operation": "点击删除按钮",
               "expected_result": "节点直接被删除，不弹出确认对话框",
-              "pass": false
+              "pass": false,
+              "remark": ""
             },
             {
               "step": 4,
@@ -3816,7 +4225,8 @@
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
               "verify": "画布上不存在该视频节点",
-              "pass": false
+              "pass": false,
+              "remark": ""
             }
           ]
         }
