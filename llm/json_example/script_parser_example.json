@@ -16,24 +16,28 @@
     {
       "id": "loc_001",
       "name": "公寓厨房",
+      "parent_id": null,
       "type": "室内",
       "description": "简约现代的小厨房，白色橱柜，大理石台面",
       "time_of_day": "早晨7点",
       "weather": null,
       "atmosphere": "清新、宁静",
       "environment_sound": "咖啡机声、鸟鸣声",
-      "background_music": "轻柔的晨间音乐"
+      "background_music": "轻柔的晨间音乐",
+      "level": 0
     },
     {
       "id": "loc_002",
       "name": "客厅",
+      "parent_id": null,
       "type": "室内",
       "description": "温馨的小客厅，沙发、茶几、落地窗",
       "time_of_day": "早晨7点",
       "weather": null,
       "atmosphere": "舒适、放松",
       "environment_sound": "轻微的交通声",
-      "background_music": "轻柔的晨间音乐"
+      "background_music": "轻柔的晨间音乐",
+      "level": 0
     }
   ],
   "shot_groups": [
