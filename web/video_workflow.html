@@ -5,1026 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>视频工作流</title>
   <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
-  <style>
-    :root{
-      --bg:#ffffff;
-      --panel:#f8f9fa;
-      --border:#e0e0e0;
-      --text:#1a1a1a;
-      --muted:#666666;
-      --primary:#22c55e;
-      --primary-light:#dcfce7;
-      --danger:#ef4444;
-    }
-    *{box-sizing:border-box;}
-    body{
-      margin:0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-      background: var(--bg);
-      color: var(--text);
-      min-height:100vh;
-    }
-    .topbar{
-      display:none;
-    }
-    .brand{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      cursor: pointer;
-      text-decoration: none;
-    }
-    .brand:hover{ opacity: 0.8; }
-    .brand img{width:28px;height:28px;}
-    .brand-title{font-weight:900; letter-spacing:0.3px; color: var(--text);}
-    .top-actions{display:flex; align-items:center; gap:10px;}
-    .btn{
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      padding: 10px 16px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: opacity 0.15s;
-    }
-    .btn:hover{ opacity: 0.9; }
-    .btn.secondary{
-      background: var(--panel);
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-    .shell{
-      padding: 0;
-    }
-    .ratio-label{
-      color: var(--muted);
-      font-size: 13px;
-      font-weight: 700;
-    }
-    select{
-      background: #fff;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 12px;
-      outline: none;
-      cursor: pointer;
-    }
-    .canvas-container{
-      margin-top: 0;
-      position: relative;
-      min-height: 100vh;
-      background: #fafafa;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      overflow: hidden;
-      cursor: grab;
-    }
-    .brand-floating{
-      position: absolute;
-      top: 12px;
-      left: 12px;
-      z-index: 46;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      background: rgba(255,255,255,0.95);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 8px 10px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.10);
-      backdrop-filter: blur(6px);
-    }
-    .brand-floating .brand{
-      gap: 8px;
-    }
-    .brand-floating .brand img{width:22px;height:22px;}
-    .brand-floating .brand-title{font-weight:800;}
-    .ratio-floating{
-      position: absolute;
-      top: 12px;
-      right: 12px;
-      z-index: 46;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(255,255,255,0.95);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 8px 10px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.10);
-      backdrop-filter: blur(6px);
-    }
-    .ratio-floating .ratio-label{
-      font-weight: 600;
-    }
-    .save-btn{
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 8px 14px;
-      font-size: 13px;
-    }
-    .save-btn:disabled{
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    .toast{
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%) translateY(100px);
-      background: transparent;
-      color: #333;
-      padding: 0;
-      font-size: 14px;
-      font-weight: 500;
-      z-index: 2000;
-      opacity: 0;
-      transition: all 0.3s;
-      pointer-events: none;
-      text-shadow: 0 1px 2px rgba(255,255,255,0.8);
-    }
-    .toast.show{
-      transform: translateX(-50%) translateY(0);
-      opacity: 1;
-    }
-    .toast.error{ color: #dc2626; }
-    .toast.success{ color: #16a34a; }
-    .canvas-container.panning{
-      cursor: grabbing;
-    }
-    .canvas-world{
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      transform-origin: 0 0;
-    }
-    .canvas{
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 10000px;
-      height: 10000px;
-    }
-    svg.connections{
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 10000px;
-      height: 10000px;
-      pointer-events: none;
-      z-index: 11;
-    }
-    svg.connections path.hitbox{
-      fill: none;
-      stroke: transparent;
-      stroke-width: 20;
-      stroke-linecap: round;
-      pointer-events: stroke;
-      cursor: pointer;
-    }
-    svg.connections path.line{
-      fill: none;
-      stroke: var(--primary);
-      stroke-width: 3;
-      stroke-linecap: round;
-      pointer-events: none;
-      transition: stroke 0.15s, stroke-width 0.15s;
-    }
-    svg.connections path.line.hover{
-      stroke-width: 5;
-    }
-    svg.connections path.line.selected{
-      stroke: var(--danger);
-      stroke-width: 5;
-    }
-    svg.connections path.temp{
-      fill: none;
-      stroke: #999;
-      stroke-width: 2;
-      stroke-dasharray: 5,5;
-      pointer-events: none;
-    }
-
-    .conn-delete-btn{
-      position: absolute;
-      width: 24px;
-      height: 24px;
-      background: var(--danger);
-      color: #fff;
-      border: none;
-      border-radius: 50%;
-      font-size: 14px;
-      font-weight: bold;
-      cursor: pointer;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      z-index: 30;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    }
-    .conn-delete-btn:hover{
-      background: #dc2626;
-    }
-
-    .zoom-controls{
-      position: absolute;
-      left: 12px;
-      bottom: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      z-index: 40;
-    }
-    .zoom-btn{
-      width: 32px;
-      height: 32px;
-      background: #fff;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 18px;
-      font-weight: bold;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    }
-    .zoom-btn:hover{
-      background: var(--panel);
-    }
-    .zoom-level{
-      background: #fff;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 4px 8px;
-      font-size: 12px;
-      font-weight: 600;
-      text-align: center;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    }
-
-    .minimap{
-      position: absolute;
-      left: 12px;
-      bottom: 120px;
-      width: 180px;
-      height: 120px;
-      background: #fff;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-      z-index: 40;
-      overflow: hidden;
-    }
-
-    .add-btn-container{
-      position: absolute;
-      left: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      z-index: 45;
-    }
-    .add-btn{
-      width: 44px;
-      height: 44px;
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      border-radius: 50%;
-      font-size: 24px;
-      font-weight: bold;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 2px 8px rgba(34,197,94,0.4);
-      transition: transform 0.15s, box-shadow 0.15s;
-    }
-    .add-btn:hover{
-      transform: scale(1.1);
-      box-shadow: 0 4px 12px rgba(34,197,94,0.5);
-    }
-    .add-menu{
-      display: none;
-      position: absolute;
-      left: 52px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: #fff;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-      min-width: 160px;
-      overflow: hidden;
-    }
-    .add-menu.show{ display: block; }
-    .add-menu-group{
-      padding: 8px 0;
-    }
-    .add-menu-group:not(:last-child){
-      border-bottom: 1px solid var(--border);
-    }
-    .add-menu-label{
-      padding: 6px 14px;
-      font-size: 11px;
-      font-weight: 500;
-      color: var(--muted);
-      text-transform: uppercase;
-    }
-    .add-menu-item{
-      padding: 10px 14px;
-      font-size: 14px;
-      color: var(--text);
-      cursor: pointer;
-      transition: background 0.1s;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .add-menu-item:hover{
-      background: var(--panel);
-    }
-    .add-menu-icon{
-      width: 18px;
-      height: 18px;
-      flex: 0 0 18px;
-      color: #111827;
-      opacity: 0.9;
-    }
-    .add-menu-text{
-      display: block;
-      line-height: 1.1;
-    }
-    .minimap-content{
-      position: relative;
-      width: 100%;
-      height: 100%;
-    }
-    .minimap-node{
-      position: absolute;
-      background: var(--primary);
-      border-radius: 2px;
-      opacity: 0.7;
-    }
-    .minimap-viewport{
-      position: absolute;
-      border: 2px solid var(--danger);
-      background: rgba(239,68,68,0.1);
-      border-radius: 2px;
-      cursor: move;
-    }
-    .minimap-line{
-      position: absolute;
-      height: 2px;
-      background: var(--primary);
-      opacity: 0.5;
-      transform-origin: left center;
-    }
-
-    .node{
-      position:absolute;
-      width: 300px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: #fff;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-      user-select:none;
-      z-index: 20; /* 提高节点层级，确保拖拽时在连接线之上 */
-    }
-    .node.selected{
-      border-color: var(--primary);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 0 0 2px var(--primary-light);
-    }
-    .node-header{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      padding: 10px 12px;
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
-      border-radius: 12px 12px 0 0;
-      cursor: grab;
-    }
-    .node-title{font-weight: 800; font-size: 14px; color: var(--text);}
-    .icon-btn{
-      background: transparent;
-      border: 0;
-      color: var(--text);
-      font-size: 18px;
-      cursor: pointer;
-      padding: 2px 6px;
-      border-radius: 4px;
-    }
-    .icon-btn:hover{
-      color: var(--primary);
-    }
-    .icon-btn:hover{ background: rgba(0,0,0,0.05); }
-    .node-body{ padding: 12px; display:flex; flex-direction:column; gap:12px; }
-    .field{ display:flex; flex-direction:column; gap:6px; }
-    .field.btn-row{
-      flex-direction: row;
-      justify-content: flex-end;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .label{ color: var(--muted); font-size:12px; font-weight:700; }
-    .label .req{ color: var(--danger); margin-left: 4px; }
-    .motion-help{
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #fff;
-    }
-    .toggle-row{
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: var(--text);
-      user-select: none;
-    }
-    .toggle-row input{ transform: translateY(1px); }
-    .motion-options{ display: none; }
-    .motion-help svg{
-      width: 120px;
-      height: 44px;
-      flex: 0 0 auto;
-    }
-    .motion-help-text{
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.2;
-    }
-    .gen-container{
-      position: relative;
-      display: inline-flex;
-      align-items: stretch;
-    }
-    .gen-btn{
-      border: 1px solid var(--primary);
-      background: var(--primary);
-      color: #fff;
-      padding: 9px 12px;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      line-height: 1;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .gen-btn:hover{ opacity: 0.95; }
-    .gen-btn-main{
-      border-radius: 10px 0 0 10px;
-    }
-    .gen-btn-caret{
-      width: 38px;
-      border-left: 1px solid rgba(255,255,255,0.35);
-      border-radius: 0 10px 10px 0;
-      padding: 9px 0;
-    }
-    .gen-menu{
-      position: absolute;
-      top: calc(100% + 6px);
-      left: 0;
-      min-width: 140px;
-      background: #fff;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.14);
-      overflow: hidden;
-      display: none;
-      z-index: 60;
-    }
-    .gen-menu.show{ display: block; }
-    .gen-item{
-      padding: 10px 12px;
-      font-size: 13px;
-      color: var(--text);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .gen-item:hover{ background: var(--panel); }
-    .gen-meta{
-      margin-top: 6px;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .video-name{
-      max-width: 200px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      cursor: help;
-    }
-    input[type="file"]{
-      width:100%;
-      background: var(--panel);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px;
-      font-size: 12px;
-    }
-    textarea{
-      width:100%;
-      background: #fff;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      outline: none;
-      resize: vertical;
-      font-size: 13px;
-    }
-    .source-select, .image-node-select{
-      width: 100%;
-      background: #fff;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px;
-      font-size: 12px;
-      cursor: pointer;
-    }
-    .upload-area, .node-ref-area{
-      margin-top: 6px;
-    }
-    textarea:focus{ border-color: var(--primary); }
-    .preview-row{ display:flex; align-items:center; gap:10px; margin-top: 6px; }
-    .preview{
-      width:60px;
-      height:60px;
-      object-fit:cover;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-    }
-    .video-preview{
-      position: relative;
-      width: 100%;
-      height: 170px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #000;
-      overflow: hidden;
-    }
-    .video-preview video{
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      display: block;
-      background: #000;
-    }
-    .video-preview-actions{
-      position: absolute;
-      left: 10px;
-      right: 10px;
-      bottom: 10px;
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      pointer-events: none;
-    }
-    .video-preview-actions .vp-btn{
-      pointer-events: auto;
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.35);
-      background: rgba(0,0,0,0.55);
-      color: #fff;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 16px;
-      line-height: 1;
-      backdrop-filter: blur(6px);
-    }
-    .video-preview-actions .vp-btn:hover{ background: rgba(0,0,0,0.65); }
-    .modal{
-      position: fixed;
-      inset: 0;
-      display: none;
-      align-items: center;
-      justify-content: center;
-      background: rgba(0,0,0,0.55);
-      z-index: 999;
-    }
-    .modal.show{ display: flex; }
-    .modal-card{
-      width: min(920px, calc(100vw - 32px));
-      background: #111;
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 14px;
-      overflow: hidden;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.35);
-    }
-    .modal-header{
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 12px;
-      color: #fff;
-      background: rgba(0,0,0,0.35);
-    }
-    .modal-title{ font-size: 13px; font-weight: 700; }
-    .modal-close{
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      border: none;
-      background: rgba(255,255,255,0.08);
-      color: #fff;
-      cursor: pointer;
-      font-size: 18px;
-      line-height: 1;
-    }
-    .modal-close:hover{ background: rgba(255,255,255,0.12); }
-    .modal-body{
-      background: #000;
-    }
-    .modal-body video{
-      width: 100%;
-      height: min(70vh, 560px);
-      display: block;
-    }
-    .modal-body img{
-      width: 100%;
-      height: auto;
-      max-height: min(70vh, 560px);
-      display: block;
-      object-fit: contain;
-    }
-    /* 分镜模态框使用浅色背景，提升可读性 */
-    #shotGroupModal .modal-card,
-    #shotDetailModal .modal-card{
-      background: #ffffff;
-      color: #111827;
-      border: 1px solid #e5e7eb;
-      box-shadow: 0 14px 40px rgba(0,0,0,0.16);
-    }
-    #shotGroupEditModal .modal-card{
-      background: #ffffff;
-      color: #111827;
-      border: 1px solid #e5e7eb;
-      box-shadow: 0 14px 40px rgba(0,0,0,0.16);
-    }
-    #shotGroupModal .modal-header,
-    #shotDetailModal .modal-header{
-      background: #f8fafc;
-      border-bottom: 1px solid #e5e7eb;
-    }
-    #shotGroupEditModal .modal-header{
-      background: #f8fafc;
-      border-bottom: 1px solid #e5e7eb;
-    }
-    #shotGroupModal .modal-title,
-    #shotDetailModal .modal-title{
-      color: #0f172a;
-    }
-    #shotGroupEditModal .modal-title{
-      color: #0f172a;
-    }
-    #shotGroupModal .modal-body,
-    #shotDetailModal .modal-body{
-      background: #ffffff;
-    }
-    #shotGroupEditModal .modal-body{
-      background: #ffffff;
-    }
-
-    #shotGroupModalContent,
-    #shotDetailModalContent,
-    #shotGroupEditModalContent{
-      padding: 16px;
-    }
-
-    #shotGroupModal table{
-      border-radius: 10px;
-      overflow: hidden;
-      border: 1px solid #e5e7eb;
-    }
-    #shotGroupModal table th{
-      background: #f1f5f9;
-      font-size: 12px;
-      letter-spacing: 0.2px;
-    }
-    #shotGroupModal table td{
-      background: #ffffff;
-    }
-    #shotGroupModal table th,
-    #shotGroupModal table td{
-      color: #0f172a;
-      padding: 10px;
-    }
-    #shotGroupModal table tbody tr:nth-child(2n){
-      background: #f8fafc;
-    }
-
-    #shotGroupEditModal input,
-    #shotGroupEditModal textarea{
-      background: #ffffff;
-      color: #0f172a;
-      border: 1px solid #d1d5db;
-      outline: none;
-    }
-    #shotGroupEditModal input:focus,
-    #shotGroupEditModal textarea:focus{
-      border-color: #93c5fd;
-      box-shadow: 0 0 0 3px rgba(59,130,246,0.18);
-    }
-    #shotGroupEditModal label{
-      color: #0f172a;
-    }
-    .preview{ cursor: zoom-in; }
-    .mini-btn{
-      background: var(--panel);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 4px 10px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .mini-btn:hover{
-      background: var(--panel-hover);
-      border-color: var(--primary-light);
-    }
-    .mini-btn.secondary{
-      background: #f3f4f6;
-      color: #111827;
-      border-color: #e5e7eb;
-    }
-    .mini-btn + .mini-btn{
-      margin-left: 8px;
-    }
-    .shot-group-empty{
-      padding: 12px;
-      border-radius: 8px;
-      text-align: center;
-      color: #94a3b8;
-      background: #f8fafc;
-      border: 1px dashed #cbd5f5;
-      font-size: 12px;
-    }
-    .port{
-      position: absolute;
-      width: 18px;
-      height: 18px;
-      background: transparent;
-      border: 3px solid var(--primary);
-      border-radius: 50%;
-      cursor: crosshair;
-      z-index: 20;
-      transition: transform 0.15s, background 0.15s, box-shadow 0.15s;
-    }
-    .port.input{ left: -9px; top: 50%; transform: translateY(-50%); }
-    .port.output{ right: -9px; top: 50%; transform: translateY(-50%); }
-    .port:hover{ 
-      background: var(--primary-light); 
-      transform: translateY(-50%) scale(1.2);
-    }
-    .port.can-connect{
-      background: var(--primary-light);
-      box-shadow: 0 0 0 4px rgba(34,197,94,0.3);
-      transform: translateY(-50%) scale(1.3);
-    }
-    .port.disabled{
-      background: #ccc;
-      border-color: #999;
-      cursor: not-allowed;
-      opacity: 0.6;
-    }
-    .port.disabled:hover{
-      transform: translateY(-50%);
-      background: #ccc;
-    }
-    .port.start-image-port{
-      left: -9px;
-      top: 72px;
-      transform: translateY(-50%);
-      border-color: #3b82f6;
-    }
-    .port.end-image-port{
-      left: -9px;
-      top: 152px;
-      transform: translateY(-50%);
-      border-color: #3b82f6;
-    }
-    .port.start-image-port:hover,
-    .port.end-image-port:hover{
-      background: #93c5fd;
-      transform: translateY(-50%) scale(1.2);
-    }
-    .port.start-image-port.can-connect,
-    .port.end-image-port.can-connect{
-      background: #93c5fd;
-      box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
-      transform: translateY(-50%) scale(1.3);
-    }
-
-    /* 时间轴样式 */
-    .timeline-container {
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      height: 200px;
-      background: #fff;
-      border-top: 2px solid var(--border);
-      box-shadow: 0 -4px 12px rgba(0,0,0,0.08);
-      z-index: 100;
-      display: flex;
-      flex-direction: column;
-    }
-    .timeline-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 16px;
-      border-bottom: 1px solid var(--border);
-      background: var(--panel);
-      min-height: 40px;
-    }
-    .timeline-header-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .timeline-title {
-      font-weight: 700;
-      font-size: 14px;
-    }
-    .timeline-total-duration {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .timeline-header-right {
-      display: flex;
-      gap: 8px;
-    }
-    .timeline-ruler {
-      height: 24px;
-      background: #f5f5f5;
-      position: relative;
-      border-bottom: 1px solid var(--border);
-      overflow: hidden;
-    }
-    .ruler-mark {
-      position: absolute;
-      top: 0;
-      font-size: 10px;
-      color: var(--muted);
-      padding: 2px 4px;
-      white-space: nowrap;
-    }
-    .timeline-tracks {
-      flex: 1;
-      overflow-x: auto;
-      overflow-y: hidden;
-      background: #fafafa;
-    }
-    .timeline-track {
-      height: 100%;
-      position: relative;
-      padding: 12px;
-      min-width: max-content;
-    }
-    .timeline-clip {
-      height: 100px;
-      min-width: 50px;
-      background: #000;
-      border-radius: 8px;
-      overflow: hidden;
-      cursor: grab;
-      position: absolute;
-      border: 2px solid transparent;
-      transition: border-color 0.15s, transform 0.15s;
-    }
-    .timeline-clip:hover {
-      border-color: var(--primary);
-      transform: translateY(-2px);
-    }
-    .timeline-clip.selected {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 2px var(--primary-light);
-    }
-    .timeline-clip.dragging {
-      opacity: 0.5;
-      cursor: grabbing;
-    }
-    .timeline-clip.drop-target {
-      border-color: #3b82f6;
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
-      animation: pulse 0.8s ease-in-out infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { transform: translateY(-2px) scale(1); }
-      50% { transform: translateY(-2px) scale(1.05); }
-    }
-    .timeline-drop-indicator {
-      position: absolute;
-      top: 0;
-      bottom: 0;
-      width: 4px;
-      background: #3b82f6;
-      box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
-      z-index: 1000;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.15s;
-    }
-    .timeline-drop-indicator.show {
-      opacity: 1;
-    }
-    .timeline-clip-thumb {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-      pointer-events: none;
-    }
-    .timeline-clip-duration {
-      position: absolute;
-      bottom: 4px;
-      left: 4px;
-      background: rgba(0,0,0,0.7);
-      color: #fff;
-      font-size: 10px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-weight: 600;
-    }
-    .timeline-clip-name {
-      position: absolute;
-      top: 4px;
-      left: 4px;
-      right: 4px;
-      background: rgba(0,0,0,0.7);
-      color: #fff;
-      font-size: 10px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-weight: 600;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .timeline-clip-actions {
-      position: absolute;
-      top: 4px;
-      right: 4px;
-      display: none;
-      gap: 4px;
-    }
-    .timeline-clip:hover .timeline-clip-actions {
-      display: flex;
-    }
-    .timeline-clip-actions .vp-btn {
-      width: 24px;
-      height: 24px;
-      font-size: 14px;
-    }
-    .timeline-expand-btn {
-      position: fixed;
-      bottom: 12px;
-      right: 12px;
-      z-index: 99;
-      background: var(--primary);
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      padding: 8px 14px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      box-shadow: 0 2px 8px rgba(34,197,94,0.4);
-    }
-    .timeline-expand-btn:hover {
-      opacity: 0.9;
-    }
-    .canvas-container.timeline-visible {
-      padding-bottom: 200px;
-    }
-  </style>
+  <link rel="stylesheet" href="/css/video_workflow.css" />
 </head>
 <body>
   <div class="shell">
@@ -1104,6 +85,20 @@
           </div>
           <div class="add-menu-group">
             <div class="add-menu-label">添加素材</div>
+            <div class="add-menu-item" id="menuAddCharacter">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <circle cx="12" cy="8" r="3" stroke="currentColor" stroke-width="2"/>
+                <path d="M6 21C6 17.6863 8.68629 15 12 15C15.3137 15 18 17.6863 18 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">角色</span>
+            </div>
+            <div class="add-menu-item" id="menuAddLocation">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M12 2C8.13 2 5 5.13 5 9C5 14.25 12 22 12 22C12 22 19 14.25 19 9C19 5.13 15.87 2 12 2Z" stroke="currentColor" stroke-width="2"/>
+                <circle cx="12" cy="9" r="2.5" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              <span class="add-menu-text">场景</span>
+            </div>
             <div class="add-menu-item" id="menuAddAsset">
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <path d="M6 8C6 6.89543 6.89543 6 8 6H20V18C20 19.1046 19.1046 20 18 20H8C6.89543 20 6 19.1046 6 18V8Z" stroke="currentColor" stroke-width="2" />
@@ -1238,6 +233,238 @@
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
         <button class="mini-btn secondary" id="styleCancelBtn" type="button">取消</button>
         <button class="mini-btn" id="styleSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 角色选择模态框 -->
+  <div class="modal" id="characterModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">选择角色</div>
+        <button class="modal-close" id="characterModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">选择世界</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <select id="characterWorldSelect" style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+                <option value="">请先选择世界...</option>
+              </select>
+              <a id="characterCreateWorldBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #22c55e; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#22c55e'" onmouseout="this.style.borderColor='transparent'">创建世界</a>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">搜索角色</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="characterSearchInput" placeholder="输入角色名称搜索..." style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+              <a id="createCharacterBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #3b82f6; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'">创建角色</a>
+            </div>
+          </div>
+          <div id="characterList" style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
+            <div style="text-align: center; color: #9ca3af; padding: 40px 20px;">
+              请先选择世界
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景选择模态框 -->
+  <div class="modal" id="locationModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">选择场景</div>
+        <button class="modal-close" id="locationModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">选择世界</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <select id="locationWorldSelect" style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+                <option value="">请先选择世界...</option>
+              </select>
+              <a id="locationCreateWorldBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #22c55e; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#22c55e'" onmouseout="this.style.borderColor='transparent'">创建世界</a>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">搜索场景</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="locationSearchInput" placeholder="输入场景名称搜索..." style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+              <a id="createLocationBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #3b82f6; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'">创建场景</a>
+            </div>
+          </div>
+          <div id="locationList" style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
+            <div style="text-align: center; color: #9ca3af; padding: 40px 20px;">
+              请先选择世界
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建角色模态框 -->
+  <div class="modal" id="createCharacterModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">创建角色</div>
+        <button class="modal-close" id="createCharacterModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">角色名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createCharacterNameInput" placeholder="请输入角色名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">年龄</label>
+            <input type="text" id="createCharacterAgeInput" placeholder="请输入年龄..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">身份/职业</label>
+            <input type="text" id="createCharacterIdentityInput" placeholder="请输入身份或职业..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">性格</label>
+            <textarea id="createCharacterPersonalityInput" placeholder="请输入性格描述..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">行为习惯</label>
+            <textarea id="createCharacterBehaviorInput" placeholder="请输入行为习惯..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">其他信息</label>
+            <textarea id="createCharacterOtherInfoInput" placeholder="请输入其他信息..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="createCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考音频</label>
+            <input type="file" id="createCharacterVoiceInput" accept="audio/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createCharacterCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="createCharacterSaveBtn" type="button">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建场景模态框 -->
+  <div class="modal" id="createLocationModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">创建场景</div>
+        <button class="modal-close" id="createLocationModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">场景名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createLocationNameInput" placeholder="请输入场景名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">场景描述</label>
+            <textarea id="createLocationDescInput" placeholder="请输入场景描述..." rows="4" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="createLocationImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createLocationCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="createLocationSaveBtn" type="button">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建世界模态框 -->
+  <div class="modal" id="createWorldModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 500px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">创建世界</div>
+        <button class="modal-close" id="createWorldModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">世界名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createWorldNameInput" placeholder="请输入世界名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">世界描述</label>
+            <textarea id="createWorldDescInput" placeholder="请输入世界描述..." rows="4" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createWorldCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="createWorldSaveBtn" type="button">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑角色模态框 -->
+  <div class="modal" id="editCharacterModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">编辑角色</div>
+        <button class="modal-close" id="editCharacterModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">角色名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="editCharacterNameInput" placeholder="请输入角色名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">年龄</label>
+            <input type="text" id="editCharacterAgeInput" placeholder="请输入年龄..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">身份/职业</label>
+            <input type="text" id="editCharacterIdentityInput" placeholder="请输入身份或职业..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">性格</label>
+            <textarea id="editCharacterPersonalityInput" placeholder="请输入性格描述..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">行为习惯</label>
+            <textarea id="editCharacterBehaviorInput" placeholder="请输入行为习惯..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">其他信息</label>
+            <textarea id="editCharacterOtherInfoInput" placeholder="请输入其他信息..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="editCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <div id="editCharacterImagePreview" style="margin-top: 8px; display: none;">
+              <img id="editCharacterImagePreviewImg" style="max-width: 100%; height: auto; border-radius: 8px;" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考音频</label>
+            <input type="file" id="editCharacterVoiceInput" accept="audio/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <div id="editCharacterVoicePreview" style="margin-top: 8px; display: none;">
+              <audio id="editCharacterVoicePreviewAudio" controls style="width: 100%;"></audio>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="editCharacterCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="editCharacterSaveBtn" type="button">保存</button>
       </div>
     </div>
   </div>
@@ -2751,6 +1978,10 @@
         createScriptNodeWithData(nodeData);
       } else if(nodeData.type === 'shot_group'){
         createShotGroupNodeWithData(nodeData);
+      } else if(nodeData.type === 'character'){
+        createCharacterNodeWithData(nodeData);
+      } else if(nodeData.type === 'location'){
+        createLocationNodeWithData(nodeData);
       }
     }
 
@@ -5794,12 +5025,13 @@
       const node = {
         id,
         type: 'shot_group',
-        title: shotGroupData.group_id || '分镜组',
+        title: shotGroupData.groupName || shotGroupData.group_name || '分镜组',
         x,
         y,
         data: {
           groupId: shotGroupData.group_id || '',
           group_id: shotGroupData.group_id || '',
+          groupName: shotGroupData.groupName || shotGroupData.group_name || '',
           shots: shotGroupData.shots || [],
           scriptData: scriptData,
         }
@@ -5946,6 +5178,16 @@
     document.getElementById('menuAddScript').addEventListener('click', () => {
       createScriptNode();
       renderMinimap();
+      addMenu.classList.remove('show');
+    });
+
+    document.getElementById('menuAddCharacter').addEventListener('click', () => {
+      openCharacterModal();
+      addMenu.classList.remove('show');
+    });
+
+    document.getElementById('menuAddLocation').addEventListener('click', () => {
+      openLocationModal();
       addMenu.classList.remove('show');
     });
 
@@ -6389,6 +5631,1055 @@
         renderTimeline();
         showToast('时间轴已清空', 'success');
         try{ autoSaveWorkflow(); } catch(e){}
+      }
+    });
+
+    // ========== 角色和场景选择功能 ==========
+    
+    // 打开角色选择模态框
+    async function openCharacterModal() {
+      const modal = document.getElementById('characterModal');
+      const worldSelect = document.getElementById('characterWorldSelect');
+      
+      // 加载世界列表
+      await loadWorlds(worldSelect);
+      
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+    
+    // 打开场景选择模态框
+    async function openLocationModal() {
+      const modal = document.getElementById('locationModal');
+      const worldSelect = document.getElementById('locationWorldSelect');
+      
+      // 加载世界列表
+      await loadWorlds(worldSelect);
+      
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+    
+    // 加载世界列表
+    async function loadWorlds(selectElement) {
+      try {
+        const response = await fetch('/api/worlds', {
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          }
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data && result.data.data) {
+          selectElement.innerHTML = '<option value="">请选择世界...</option>';
+          result.data.data.forEach(world => {
+            const option = document.createElement('option');
+            option.value = world.id;
+            option.textContent = world.name;
+            selectElement.appendChild(option);
+          });
+        }
+      } catch (error) {
+        console.error('加载世界列表失败:', error);
+        showToast('加载世界列表失败', 'error');
+      }
+    }
+    
+    // 加载角色列表
+    async function loadCharacters(worldId, keyword = '') {
+      const listEl = document.getElementById('characterList');
+      
+      if (!worldId) {
+        listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">请先选择世界</div>';
+        return;
+      }
+      
+      listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">加载中...</div>';
+      
+      try {
+        const url = new URL('/api/characters', window.location.origin);
+        url.searchParams.append('world_id', worldId);
+        if (keyword) url.searchParams.append('keyword', keyword);
+        
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          }
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data && result.data.data) {
+          if (result.data.data.length === 0) {
+            listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">暂无角色</div>';
+            return;
+          }
+          
+          listEl.innerHTML = result.data.data.map(character => `
+            <div class="character-item" data-character-id="${character.id}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+              <div style="display: flex; gap: 12px; align-items: start;">
+                ${character.reference_image ? `<img src="${character.reference_image}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                <div style="flex: 1;">
+                  <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(character.name)}</div>
+                  ${character.age ? `<div style="font-size: 12px; color: #666; margin-bottom: 2px;">年龄: ${escapeHtml(character.age)}</div>` : ''}
+                  ${character.identity ? `<div style="font-size: 12px; color: #666;">${escapeHtml(character.identity)}</div>` : ''}
+                </div>
+              </div>
+            </div>
+          `).join('');
+          
+          // 添加点击事件
+          listEl.querySelectorAll('.character-item').forEach(item => {
+            item.addEventListener('click', () => {
+              const characterId = item.dataset.characterId;
+              const character = result.data.data.find(c => c.id == characterId);
+              if (character) {
+                createCharacterNode(character);
+                document.getElementById('characterModal').classList.remove('show');
+                renderMinimap();
+              }
+            });
+            
+            item.addEventListener('mouseenter', () => {
+              item.style.background = '#f8fafc';
+              item.style.borderColor = '#22c55e';
+            });
+            
+            item.addEventListener('mouseleave', () => {
+              item.style.background = '';
+              item.style.borderColor = '#e5e7eb';
+            });
+          });
+        }
+      } catch (error) {
+        console.error('加载角色列表失败:', error);
+        listEl.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 40px 20px;">加载失败</div>';
+      }
+    }
+    
+    // 加载场景列表
+    async function loadLocations(worldId, keyword = '') {
+      const listEl = document.getElementById('locationList');
+      
+      if (!worldId) {
+        listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">请先选择世界</div>';
+        return;
+      }
+      
+      listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">加载中...</div>';
+      
+      try {
+        const url = new URL('/api/locations', window.location.origin);
+        url.searchParams.append('world_id', worldId);
+        if (keyword) url.searchParams.append('keyword', keyword);
+        
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          }
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data && result.data.data) {
+          if (result.data.data.length === 0) {
+            listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">暂无场景</div>';
+            return;
+          }
+          
+          listEl.innerHTML = result.data.data.map(location => `
+            <div class="location-item" data-location-id="${location.id}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+              <div style="display: flex; gap: 12px; align-items: start;">
+                ${location.reference_image ? `<img src="${location.reference_image}" style="width: 80px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 80px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                <div style="flex: 1;">
+                  <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(location.name)}</div>
+                  ${location.description ? `<div style="font-size: 12px; color: #666; line-height: 1.4;">${escapeHtml(location.description.slice(0, 100))}${location.description.length > 100 ? '...' : ''}</div>` : ''}
+                </div>
+              </div>
+            </div>
+          `).join('');
+          
+          // 添加点击事件
+          listEl.querySelectorAll('.location-item').forEach(item => {
+            item.addEventListener('click', () => {
+              const locationId = item.dataset.locationId;
+              const location = result.data.data.find(l => l.id == locationId);
+              if (location) {
+                createLocationNode(location);
+                document.getElementById('locationModal').classList.remove('show');
+                renderMinimap();
+              }
+            });
+            
+            item.addEventListener('mouseenter', () => {
+              item.style.background = '#f8fafc';
+              item.style.borderColor = '#22c55e';
+            });
+            
+            item.addEventListener('mouseleave', () => {
+              item.style.background = '';
+              item.style.borderColor = '#e5e7eb';
+            });
+          });
+        }
+      } catch (error) {
+        console.error('加载场景列表失败:', error);
+        listEl.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 40px 20px;">加载失败</div>';
+      }
+    }
+    
+    // 带数据创建角色节点（用于恢复工作流）
+    function createCharacterNodeWithData(nodeData) {
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      const id = state.nextNodeId++;
+      const node = {
+        id,
+        type: 'character',
+        title: nodeData.title || nodeData.data.name,
+        x: nodeData.x,
+        y: nodeData.y,
+        data: nodeData.data
+      };
+      state.nodes.push(node);
+      
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.nodeId = String(id);
+      el.style.left = node.x + 'px';
+      el.style.top = node.y + 'px';
+      
+      const character = nodeData.data;
+      el.innerHTML = `
+        <div class="node-header">
+          <div class="node-title">角色: ${escapeHtml(character.name)}</div>
+          <button class="icon-btn" data-action="delete" title="删除">×</button>
+        </div>
+        <div class="node-body">
+          ${character.reference_image ? `
+            <div class="field">
+              <div class="label">参考图</div>
+              <img src="${character.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            </div>
+          ` : ''}
+          ${character.age ? `<div class="field"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
+          ${character.identity ? `<div class="field"><div class="label">身份/职业</div><div>${escapeHtml(character.identity)}</div></div>` : ''}
+          ${character.personality ? `<div class="field"><div class="label">性格</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.personality.slice(0, 100))}${character.personality.length > 100 ? '...' : ''}</div></div>` : ''}
+          ${character.behavior ? `<div class="field"><div class="label">行为习惯</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.behavior.slice(0, 100))}${character.behavior.length > 100 ? '...' : ''}</div></div>` : ''}
+          ${character.other_info ? `<div class="field"><div class="label">其他信息</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.other_info.slice(0, 100))}${character.other_info.length > 100 ? '...' : ''}</div></div>` : ''}
+          <div class="field btn-row">
+            <button class="mini-btn character-edit-btn" type="button">编辑</button>
+          </div>
+        </div>
+        <div class="port output" data-port="output" title="输出"></div>
+      `;
+      
+      canvasEl.appendChild(el);
+      
+      // 绑定事件
+      const headerEl = el.querySelector('.node-header');
+      const deleteBtn = el.querySelector('[data-action="delete"]');
+      const editBtn = el.querySelector('.character-edit-btn');
+      const outputPort = el.querySelector('.port.output');
+      
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeNode(id);
+      });
+      
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openCharacterEditModal(id, character);
+      });
+      
+      el.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.stopPropagation();
+        setSelected(id);
+      });
+      
+      headerEl.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setSelected(id);
+        state.drag = {
+          nodeId: id,
+          startX: e.clientX,
+          startY: e.clientY,
+          origX: node.x,
+          origY: node.y
+        };
+      });
+      
+      if(outputPort) {
+        outputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+    }
+    
+    // 创建角色节点
+    function createCharacterNode(character) {
+      const id = state.nextNodeId++;
+      const x = 60 + (state.nodes.length % 3) * 340;
+      const y = 60 + Math.floor(state.nodes.length / 3) * 280;
+      
+      const node = {
+        id,
+        type: 'character',
+        title: character.name,
+        x,
+        y,
+        data: character
+      };
+      state.nodes.push(node);
+      
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.nodeId = String(id);
+      el.style.left = node.x + 'px';
+      el.style.top = node.y + 'px';
+      
+      el.innerHTML = `
+        <div class="node-header">
+          <div class="node-title">角色: ${escapeHtml(character.name)}</div>
+          <button class="icon-btn" data-action="delete" title="删除">×</button>
+        </div>
+        <div class="node-body">
+          ${character.reference_image ? `
+            <div class="field">
+              <div class="label">参考图</div>
+              <img src="${character.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            </div>
+          ` : ''}
+          ${character.age ? `<div class="field"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
+          ${character.identity ? `<div class="field"><div class="label">身份/职业</div><div>${escapeHtml(character.identity)}</div></div>` : ''}
+          ${character.personality ? `<div class="field"><div class="label">性格</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.personality.slice(0, 100))}${character.personality.length > 100 ? '...' : ''}</div></div>` : ''}
+          ${character.behavior ? `<div class="field"><div class="label">行为习惯</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.behavior.slice(0, 100))}${character.behavior.length > 100 ? '...' : ''}</div></div>` : ''}
+          ${character.other_info ? `<div class="field"><div class="label">其他信息</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.other_info.slice(0, 100))}${character.other_info.length > 100 ? '...' : ''}</div></div>` : ''}
+          <div class="field btn-row">
+            <button class="mini-btn character-edit-btn" type="button">编辑</button>
+          </div>
+        </div>
+        <div class="port output" data-port="output" title="输出"></div>
+      `;
+      
+      canvasEl.appendChild(el);
+      
+      // 绑定事件
+      const headerEl = el.querySelector('.node-header');
+      const deleteBtn = el.querySelector('[data-action="delete"]');
+      const editBtn = el.querySelector('.character-edit-btn');
+      const outputPort = el.querySelector('.port.output');
+      
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeNode(id);
+      });
+      
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openCharacterEditModal(id, character);
+      });
+      
+      el.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.stopPropagation();
+        setSelected(id);
+      });
+      
+      headerEl.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setSelected(id);
+        state.drag = {
+          nodeId: id,
+          startX: e.clientX,
+          startY: e.clientY,
+          origX: node.x,
+          origY: node.y
+        };
+      });
+      
+      if(outputPort) {
+        outputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      
+      setSelected(id);
+      showToast('角色已添加', 'success');
+      try { autoSaveWorkflow(); } catch(e) {}
+    }
+    
+    // 带数据创建场景节点（用于恢复工作流）
+    function createLocationNodeWithData(nodeData) {
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      const id = state.nextNodeId++;
+      const node = {
+        id,
+        type: 'location',
+        title: nodeData.title || nodeData.data.name,
+        x: nodeData.x,
+        y: nodeData.y,
+        data: nodeData.data
+      };
+      state.nodes.push(node);
+      
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.nodeId = String(id);
+      el.style.left = node.x + 'px';
+      el.style.top = node.y + 'px';
+      
+      const location = nodeData.data;
+      el.innerHTML = `
+        <div class="node-header">
+          <div class="node-title">场景: ${escapeHtml(location.name)}</div>
+          <button class="icon-btn" data-action="delete" title="删除">×</button>
+        </div>
+        <div class="node-body">
+          ${location.reference_image ? `
+            <div class="field">
+              <div class="label">参考图</div>
+              <img src="${location.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            </div>
+          ` : ''}
+          ${location.description ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(location.description)}</div></div>` : ''}
+        </div>
+        <div class="port output" data-port="output" title="输出"></div>
+      `;
+      
+      canvasEl.appendChild(el);
+      
+      // 绑定事件
+      const headerEl = el.querySelector('.node-header');
+      const deleteBtn = el.querySelector('[data-action="delete"]');
+      const outputPort = el.querySelector('.port.output');
+      
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeNode(id);
+      });
+      
+      el.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.stopPropagation();
+        setSelected(id);
+      });
+      
+      headerEl.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setSelected(id);
+        state.drag = {
+          nodeId: id,
+          startX: e.clientX,
+          startY: e.clientY,
+          origX: node.x,
+          origY: node.y
+        };
+      });
+      
+      if(outputPort) {
+        outputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+    }
+    
+    // 创建场景节点
+    function createLocationNode(location) {
+      const id = state.nextNodeId++;
+      const x = 60 + (state.nodes.length % 3) * 340;
+      const y = 60 + Math.floor(state.nodes.length / 3) * 280;
+      
+      const node = {
+        id,
+        type: 'location',
+        title: location.name,
+        x,
+        y,
+        data: location
+      };
+      state.nodes.push(node);
+      
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.nodeId = String(id);
+      el.style.left = node.x + 'px';
+      el.style.top = node.y + 'px';
+      
+      el.innerHTML = `
+        <div class="node-header">
+          <div class="node-title">场景: ${escapeHtml(location.name)}</div>
+          <button class="icon-btn" data-action="delete" title="删除">×</button>
+        </div>
+        <div class="node-body">
+          ${location.reference_image ? `
+            <div class="field">
+              <div class="label">参考图</div>
+              <img src="${location.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            </div>
+          ` : ''}
+          ${location.description ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(location.description)}</div></div>` : ''}
+        </div>
+        <div class="port output" data-port="output" title="输出"></div>
+      `;
+      
+      canvasEl.appendChild(el);
+      
+      // 绑定事件
+      const headerEl = el.querySelector('.node-header');
+      const deleteBtn = el.querySelector('[data-action="delete"]');
+      const outputPort = el.querySelector('.port.output');
+      
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeNode(id);
+      });
+      
+      el.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.stopPropagation();
+        setSelected(id);
+      });
+      
+      headerEl.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setSelected(id);
+        state.drag = {
+          nodeId: id,
+          startX: e.clientX,
+          startY: e.clientY,
+          origX: node.x,
+          origY: node.y
+        };
+      });
+      
+      if(outputPort) {
+        outputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      
+      setSelected(id);
+      showToast('场景已添加', 'success');
+      try { autoSaveWorkflow(); } catch(e) {}
+    }
+    
+    // 角色模态框事件
+    document.getElementById('characterModalClose').addEventListener('click', () => {
+      document.getElementById('characterModal').classList.remove('show');
+    });
+    
+    document.getElementById('characterWorldSelect').addEventListener('change', (e) => {
+      loadCharacters(e.target.value);
+    });
+    
+    document.getElementById('characterSearchInput').addEventListener('input', (e) => {
+      const worldId = document.getElementById('characterWorldSelect').value;
+      if (worldId) {
+        loadCharacters(worldId, e.target.value);
+      }
+    });
+    
+    // 场景模态框事件
+    document.getElementById('locationModalClose').addEventListener('click', () => {
+      document.getElementById('locationModal').classList.remove('show');
+    });
+    
+    document.getElementById('locationWorldSelect').addEventListener('change', (e) => {
+      loadLocations(e.target.value);
+    });
+    
+    document.getElementById('locationSearchInput').addEventListener('input', (e) => {
+      const worldId = document.getElementById('locationWorldSelect').value;
+      if (worldId) {
+        loadLocations(worldId, e.target.value);
+      }
+    });
+    
+    // 点击模态框背景关闭
+    document.getElementById('characterModal').addEventListener('click', (e) => {
+      if (e.target.id === 'characterModal') {
+        document.getElementById('characterModal').classList.remove('show');
+      }
+    });
+    
+    document.getElementById('locationModal').addEventListener('click', (e) => {
+      if (e.target.id === 'locationModal') {
+        document.getElementById('locationModal').classList.remove('show');
+      }
+    });
+    
+    // ========== 创建世界功能 ==========
+    
+    let currentWorldSelectElement = null; // 记录当前是从哪个下拉框打开的创建世界
+    
+    // 打开创建世界模态框
+    function openCreateWorldModal(selectElement) {
+      currentWorldSelectElement = selectElement;
+      document.getElementById('createWorldNameInput').value = '';
+      document.getElementById('createWorldDescInput').value = '';
+      document.getElementById('createWorldModal').classList.add('show');
+    }
+    
+    // 创建世界
+    async function createWorld() {
+      const nameInput = document.getElementById('createWorldNameInput');
+      const descInput = document.getElementById('createWorldDescInput');
+      const saveBtn = document.getElementById('createWorldSaveBtn');
+      
+      const name = nameInput.value.trim();
+      if (!name) {
+        showToast('请输入世界名称', 'error');
+        nameInput.focus();
+        return;
+      }
+      
+      saveBtn.disabled = true;
+      saveBtn.textContent = '创建中...';
+      
+      try {
+        const response = await fetch('/api/worlds', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          },
+          body: JSON.stringify({
+            name: name,
+            description: descInput.value.trim() || null
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data) {
+          showToast('世界创建成功', 'success');
+          
+          // 关闭创建世界模态框
+          document.getElementById('createWorldModal').classList.remove('show');
+          
+          // 重新加载世界列表
+          if (currentWorldSelectElement) {
+            await loadWorlds(currentWorldSelectElement);
+            // 自动选中新创建的世界
+            currentWorldSelectElement.value = result.data.id;
+            
+            // 触发change事件以加载对应的角色或场景列表
+            const event = new Event('change');
+            currentWorldSelectElement.dispatchEvent(event);
+          }
+        } else {
+          showToast(result.message || '创建失败', 'error');
+        }
+      } catch (error) {
+        console.error('创建世界失败:', error);
+        showToast('创建世界失败', 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '创建';
+      }
+    }
+    
+    // 创建世界按钮事件
+    document.getElementById('characterCreateWorldBtn').addEventListener('click', () => {
+      openCreateWorldModal(document.getElementById('characterWorldSelect'));
+    });
+    
+    document.getElementById('locationCreateWorldBtn').addEventListener('click', () => {
+      openCreateWorldModal(document.getElementById('locationWorldSelect'));
+    });
+    
+    // 创建世界模态框事件
+    document.getElementById('createWorldModalClose').addEventListener('click', () => {
+      document.getElementById('createWorldModal').classList.remove('show');
+    });
+    
+    document.getElementById('createWorldCancelBtn').addEventListener('click', () => {
+      document.getElementById('createWorldModal').classList.remove('show');
+    });
+    
+    document.getElementById('createWorldSaveBtn').addEventListener('click', () => {
+      createWorld();
+    });
+    
+    // 点击模态框背景关闭
+    document.getElementById('createWorldModal').addEventListener('click', (e) => {
+      if (e.target.id === 'createWorldModal') {
+        document.getElementById('createWorldModal').classList.remove('show');
+      }
+    });
+    
+    // 回车键创建世界
+    document.getElementById('createWorldNameInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        createWorld();
+      }
+    });
+    
+    // ========== 创建角色功能 ==========
+    
+    // 打开创建角色模态框
+    function openCreateCharacterModal() {
+      const worldId = document.getElementById('characterWorldSelect').value;
+      if (!worldId) {
+        showToast('请先选择世界', 'error');
+        return;
+      }
+      
+      document.getElementById('createCharacterNameInput').value = '';
+      document.getElementById('createCharacterAgeInput').value = '';
+      document.getElementById('createCharacterIdentityInput').value = '';
+      document.getElementById('createCharacterPersonalityInput').value = '';
+      document.getElementById('createCharacterBehaviorInput').value = '';
+      document.getElementById('createCharacterOtherInfoInput').value = '';
+      document.getElementById('createCharacterImageInput').value = '';
+      document.getElementById('createCharacterVoiceInput').value = '';
+      document.getElementById('createCharacterModal').classList.add('show');
+    }
+    
+    // 创建角色
+    async function createCharacter() {
+      const worldId = document.getElementById('characterWorldSelect').value;
+      const nameInput = document.getElementById('createCharacterNameInput');
+      const ageInput = document.getElementById('createCharacterAgeInput');
+      const identityInput = document.getElementById('createCharacterIdentityInput');
+      const personalityInput = document.getElementById('createCharacterPersonalityInput');
+      const behaviorInput = document.getElementById('createCharacterBehaviorInput');
+      const otherInfoInput = document.getElementById('createCharacterOtherInfoInput');
+      const imageInput = document.getElementById('createCharacterImageInput');
+      const voiceInput = document.getElementById('createCharacterVoiceInput');
+      const saveBtn = document.getElementById('createCharacterSaveBtn');
+      
+      const name = nameInput.value.trim();
+      if (!name) {
+        showToast('请输入角色名称', 'error');
+        nameInput.focus();
+        return;
+      }
+      
+      saveBtn.disabled = true;
+      saveBtn.textContent = '创建中...';
+      
+      try {
+        const formData = new FormData();
+        formData.append('world_id', worldId);
+        formData.append('name', name);
+        if (ageInput.value.trim()) formData.append('age', ageInput.value.trim());
+        if (identityInput.value.trim()) formData.append('identity', identityInput.value.trim());
+        if (personalityInput.value.trim()) formData.append('personality', personalityInput.value.trim());
+        if (behaviorInput.value.trim()) formData.append('behavior', behaviorInput.value.trim());
+        if (otherInfoInput.value.trim()) formData.append('other_info', otherInfoInput.value.trim());
+        if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
+        if (voiceInput.files.length > 0) formData.append('default_voice', voiceInput.files[0]);
+        
+        const response = await fetch('/api/characters', {
+          method: 'POST',
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          },
+          body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data) {
+          showToast('角色创建成功', 'success');
+          
+          document.getElementById('createCharacterModal').classList.remove('show');
+          
+          loadCharacters(worldId);
+        } else {
+          showToast(result.message || '创建失败', 'error');
+        }
+      } catch (error) {
+        console.error('创建角色失败:', error);
+        showToast('创建角色失败', 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '创建';
+      }
+    }
+    
+    // 创建角色按钮事件
+    document.getElementById('createCharacterBtn').addEventListener('click', () => {
+      openCreateCharacterModal();
+    });
+    
+    // 创建角色模态框事件
+    document.getElementById('createCharacterModalClose').addEventListener('click', () => {
+      document.getElementById('createCharacterModal').classList.remove('show');
+    });
+    
+    document.getElementById('createCharacterCancelBtn').addEventListener('click', () => {
+      document.getElementById('createCharacterModal').classList.remove('show');
+    });
+    
+    document.getElementById('createCharacterSaveBtn').addEventListener('click', () => {
+      createCharacter();
+    });
+    
+    document.getElementById('createCharacterModal').addEventListener('click', (e) => {
+      if (e.target.id === 'createCharacterModal') {
+        document.getElementById('createCharacterModal').classList.remove('show');
+      }
+    });
+    
+    // ========== 创建场景功能 ==========
+    
+    // 打开创建场景模态框
+    function openCreateLocationModal() {
+      const worldId = document.getElementById('locationWorldSelect').value;
+      if (!worldId) {
+        showToast('请先选择世界', 'error');
+        return;
+      }
+      
+      document.getElementById('createLocationNameInput').value = '';
+      document.getElementById('createLocationDescInput').value = '';
+      document.getElementById('createLocationImageInput').value = '';
+      document.getElementById('createLocationModal').classList.add('show');
+    }
+    
+    // 创建场景
+    async function createLocation() {
+      const worldId = document.getElementById('locationWorldSelect').value;
+      const nameInput = document.getElementById('createLocationNameInput');
+      const descInput = document.getElementById('createLocationDescInput');
+      const imageInput = document.getElementById('createLocationImageInput');
+      const saveBtn = document.getElementById('createLocationSaveBtn');
+      
+      const name = nameInput.value.trim();
+      if (!name) {
+        showToast('请输入场景名称', 'error');
+        nameInput.focus();
+        return;
+      }
+      
+      saveBtn.disabled = true;
+      saveBtn.textContent = '创建中...';
+      
+      try {
+        const formData = new FormData();
+        formData.append('world_id', worldId);
+        formData.append('name', name);
+        if (descInput.value.trim()) formData.append('description', descInput.value.trim());
+        if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
+        
+        const response = await fetch('/api/locations', {
+          method: 'POST',
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          },
+          body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data) {
+          showToast('场景创建成功', 'success');
+          
+          document.getElementById('createLocationModal').classList.remove('show');
+          
+          loadLocations(worldId);
+        } else {
+          showToast(result.message || '创建失败', 'error');
+        }
+      } catch (error) {
+        console.error('创建场景失败:', error);
+        showToast('创建场景失败', 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '创建';
+      }
+    }
+    
+    // 创建场景按钮事件
+    document.getElementById('createLocationBtn').addEventListener('click', () => {
+      openCreateLocationModal();
+    });
+    
+    // 创建场景模态框事件
+    document.getElementById('createLocationModalClose').addEventListener('click', () => {
+      document.getElementById('createLocationModal').classList.remove('show');
+    });
+    
+    document.getElementById('createLocationCancelBtn').addEventListener('click', () => {
+      document.getElementById('createLocationModal').classList.remove('show');
+    });
+    
+    document.getElementById('createLocationSaveBtn').addEventListener('click', () => {
+      createLocation();
+    });
+    
+    document.getElementById('createLocationModal').addEventListener('click', (e) => {
+      if (e.target.id === 'createLocationModal') {
+        document.getElementById('createLocationModal').classList.remove('show');
+      }
+    });
+
+    // ========== 编辑角色功能 ==========
+    
+    let currentEditingCharacterNodeId = null;
+    
+    // 打开角色编辑模态框
+    function openCharacterEditModal(nodeId, character) {
+      currentEditingCharacterNodeId = nodeId;
+      
+      document.getElementById('editCharacterNameInput').value = character.name || '';
+      document.getElementById('editCharacterAgeInput').value = character.age || '';
+      document.getElementById('editCharacterIdentityInput').value = character.identity || '';
+      document.getElementById('editCharacterPersonalityInput').value = character.personality || '';
+      document.getElementById('editCharacterBehaviorInput').value = character.behavior || '';
+      document.getElementById('editCharacterOtherInfoInput').value = character.other_info || '';
+      
+      const imagePreview = document.getElementById('editCharacterImagePreview');
+      const imagePreviewImg = document.getElementById('editCharacterImagePreviewImg');
+      if (character.reference_image) {
+        imagePreviewImg.src = character.reference_image;
+        imagePreview.style.display = 'block';
+      } else {
+        imagePreview.style.display = 'none';
+      }
+      
+      const voicePreview = document.getElementById('editCharacterVoicePreview');
+      const voicePreviewAudio = document.getElementById('editCharacterVoicePreviewAudio');
+      if (character.default_voice) {
+        voicePreviewAudio.src = character.default_voice;
+        voicePreview.style.display = 'block';
+      } else {
+        voicePreview.style.display = 'none';
+      }
+      
+      document.getElementById('editCharacterModal').classList.add('show');
+    }
+    
+    // 保存角色编辑
+    async function saveCharacterEdit() {
+      const nameInput = document.getElementById('editCharacterNameInput');
+      const ageInput = document.getElementById('editCharacterAgeInput');
+      const identityInput = document.getElementById('editCharacterIdentityInput');
+      const personalityInput = document.getElementById('editCharacterPersonalityInput');
+      const behaviorInput = document.getElementById('editCharacterBehaviorInput');
+      const otherInfoInput = document.getElementById('editCharacterOtherInfoInput');
+      const imageInput = document.getElementById('editCharacterImageInput');
+      const voiceInput = document.getElementById('editCharacterVoiceInput');
+      const saveBtn = document.getElementById('editCharacterSaveBtn');
+      
+      const name = nameInput.value.trim();
+      if (!name) {
+        showToast('请输入角色名称', 'error');
+        nameInput.focus();
+        return;
+      }
+      
+      const node = state.nodes.find(n => n.id === currentEditingCharacterNodeId);
+      if (!node || !node.data || !node.data.id) {
+        showToast('找不到角色信息', 'error');
+        return;
+      }
+      
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中...';
+      
+      try {
+        const formData = new FormData();
+        formData.append('character_id', node.data.id);
+        formData.append('name', name);
+        if (ageInput.value.trim()) formData.append('age', ageInput.value.trim());
+        if (identityInput.value.trim()) formData.append('identity', identityInput.value.trim());
+        if (personalityInput.value.trim()) formData.append('personality', personalityInput.value.trim());
+        if (behaviorInput.value.trim()) formData.append('behavior', behaviorInput.value.trim());
+        if (otherInfoInput.value.trim()) formData.append('other_info', otherInfoInput.value.trim());
+        if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
+        if (voiceInput.files.length > 0) formData.append('default_voice', voiceInput.files[0]);
+        
+        const response = await fetch('/api/characters/update', {
+          method: 'POST',
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          },
+          body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0) {
+          showToast('角色更新成功', 'success');
+          node.data = result.data;
+          node.title = result.data.name;
+          
+          const el = canvasEl.querySelector(`.node[data-node-id="${currentEditingCharacterNodeId}"]`);
+          if (el) {
+            el.querySelector('.node-title').textContent = `角色: ${result.data.name}`;
+          }
+          
+          document.getElementById('editCharacterModal').classList.remove('show');
+          currentEditingCharacterNodeId = null;
+          try { autoSaveWorkflow(); } catch(e) {}
+        } else {
+          showToast(result.message || '更新失败', 'error');
+        }
+      } catch (error) {
+        console.error('更新角色失败:', error);
+        showToast('更新失败', 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存';
+      }
+    }
+    
+    document.getElementById('editCharacterModalClose').addEventListener('click', () => {
+      document.getElementById('editCharacterModal').classList.remove('show');
+      currentEditingCharacterNodeId = null;
+    });
+    
+    document.getElementById('editCharacterCancelBtn').addEventListener('click', () => {
+      document.getElementById('editCharacterModal').classList.remove('show');
+      currentEditingCharacterNodeId = null;
+    });
+    
+    document.getElementById('editCharacterSaveBtn').addEventListener('click', saveCharacterEdit);
+    
+    document.getElementById('editCharacterModal').addEventListener('click', (e) => {
+      if (e.target.id === 'editCharacterModal') {
+        document.getElementById('editCharacterModal').classList.remove('show');
+        currentEditingCharacterNodeId = null;
       }
     });
 

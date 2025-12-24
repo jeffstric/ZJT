@@ -17,6 +17,9 @@ from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskSt
 from config_util import get_config_path, is_dev_environment
 from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
 from model import AIToolsModel, VideoWorkflowModel
+from model.world import WorldModel
+from model.character import CharacterModel
+from model.location import LocationModel
 import uuid
 from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character, get_character_task_result
 from PIL import Image
@@ -2911,6 +2914,447 @@ app.mount("/files", StaticFiles(directory=files_dir), name="files")
 static_dir = os.path.join(APP_DIR, "web")
 if not os.path.exists(static_dir):
     os.makedirs(static_dir, exist_ok=True)
+
+@app.get('/api/worlds')
+async def get_worlds(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取世界列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        result = WorldModel.list_by_user(
+            user_id=user_id,
+            page=page,
+            page_size=page_size
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get worlds: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+class CreateWorldRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+@app.post('/api/worlds')
+async def create_world(
+    request: CreateWorldRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    创建世界
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not request.name or not request.name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '世界名称不能为空',
+                    'data': None
+                }
+            )
+        
+        world_id = WorldModel.create(
+            name=request.name.strip(),
+            user_id=user_id,
+            description=request.description
+        )
+        
+        world = WorldModel.get_by_id(world_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '创建成功',
+                'data': world.to_dict() if world else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to create world: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.get('/api/characters')
+async def get_characters(
+    world_id: int = Query(..., description="世界ID"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取角色列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        result = CharacterModel.list_by_world(
+            world_id=world_id,
+            page=page,
+            page_size=page_size,
+            keyword=keyword
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get characters: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/characters')
+async def create_character(
+    world_id: int = Form(..., description="世界ID"),
+    name: str = Form(..., description="角色名称"),
+    age: Optional[str] = Form(None, description="年龄"),
+    identity: Optional[str] = Form(None, description="身份/职业"),
+    personality: Optional[str] = Form(None, description="性格"),
+    behavior: Optional[str] = Form(None, description="行为习惯"),
+    other_info: Optional[str] = Form(None, description="其他信息"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    default_voice: Optional[UploadFile] = File(None, description="参考音频"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    创建角色
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not name or not name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '角色名称不能为空',
+                    'data': None
+                }
+            )
+        
+        # 处理图片上传
+        image_path = None
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"character_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            char_upload_dir = os.path.join(upload_dir, "character", "pic")
+            os.makedirs(char_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(char_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await reference_image.read()
+                f.write(content)
+            
+            image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
+        
+        # 处理音频上传
+        voice_path = None
+        if default_voice and default_voice.filename:
+            file_ext = os.path.splitext(default_voice.filename)[1]
+            filename = f"character_voice_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            voice_upload_dir = os.path.join(upload_dir, "character", "voice")
+            os.makedirs(voice_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(voice_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await default_voice.read()
+                f.write(content)
+            
+            voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
+        
+        character_id = CharacterModel.create(
+            world_id=world_id,
+            name=name.strip(),
+            user_id=user_id,
+            age=age.strip() if age else None,
+            identity=identity.strip() if identity else None,
+            personality=personality.strip() if personality else None,
+            behavior=behavior.strip() if behavior else None,
+            other_info=other_info.strip() if other_info else None,
+            reference_image=image_path,
+            default_voice=voice_path
+        )
+        
+        character = CharacterModel.get_by_id(character_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '创建成功',
+                'data': character.to_dict() if character else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to create character: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/characters/update')
+async def update_character(
+    character_id: int = Form(..., description="角色ID"),
+    name: str = Form(..., description="角色名称"),
+    age: Optional[str] = Form(None, description="年龄"),
+    identity: Optional[str] = Form(None, description="身份/职业"),
+    personality: Optional[str] = Form(None, description="性格"),
+    behavior: Optional[str] = Form(None, description="行为习惯"),
+    other_info: Optional[str] = Form(None, description="其他信息"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    default_voice: Optional[UploadFile] = File(None, description="参考音频"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    更新角色
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not name or not name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '角色名称不能为空',
+                    'data': None
+                }
+            )
+        
+        # 处理图片上传
+        image_path = None
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"character_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            char_upload_dir = os.path.join(upload_dir, "character", "pic")
+            os.makedirs(char_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(char_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await reference_image.read()
+                f.write(content)
+            
+            image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
+        
+        # 处理音频上传
+        voice_path = None
+        if default_voice and default_voice.filename:
+            file_ext = os.path.splitext(default_voice.filename)[1]
+            filename = f"character_voice_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            voice_upload_dir = os.path.join(upload_dir, "character", "voice")
+            os.makedirs(voice_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(voice_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await default_voice.read()
+                f.write(content)
+            
+            voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
+        
+        # 构建更新字段
+        update_fields = {
+            'name': name.strip(),
+            'age': age.strip() if age else None,
+            'identity': identity.strip() if identity else None,
+            'personality': personality.strip() if personality else None,
+            'behavior': behavior.strip() if behavior else None,
+            'other_info': other_info.strip() if other_info else None,
+        }
+        
+        if image_path:
+            update_fields['reference_image'] = image_path
+        if voice_path:
+            update_fields['default_voice'] = voice_path
+        
+        CharacterModel.update(character_id, **update_fields)
+        
+        character = CharacterModel.get_by_id(character_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '更新成功',
+                'data': character.to_dict() if character else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to update character: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.get('/api/locations')
+async def get_locations(
+    world_id: int = Query(..., description="世界ID"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取场景列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        result = LocationModel.list_by_world(
+            world_id=world_id,
+            page=page,
+            page_size=page_size,
+            keyword=keyword
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get locations: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/locations')
+async def create_location(
+    world_id: int = Form(..., description="世界ID"),
+    name: str = Form(..., description="场景名称"),
+    description: Optional[str] = Form(None, description="场景描述"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    创建场景
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not name or not name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '场景名称不能为空',
+                    'data': None
+                }
+            )
+        
+        # 处理图片上传
+        image_path = None
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"location_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            loc_upload_dir = os.path.join(upload_dir, "location", "pic")
+            os.makedirs(loc_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(loc_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await reference_image.read()
+                f.write(content)
+            
+            image_path = f"{SERVER_HOST}/upload/location/pic/{filename}"
+        
+        location_id = LocationModel.create(
+            world_id=world_id,
+            name=name.strip(),
+            user_id=user_id,
+            description=description.strip() if description else None,
+            reference_image=image_path
+        )
+        
+        location = LocationModel.get_by_id(location_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '创建成功',
+                'data': location.to_dict() if location else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to create location: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
 
 @app.get("/video-workflow-list")
 async def serve_video_workflow_list():
