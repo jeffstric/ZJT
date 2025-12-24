@@ -16,7 +16,7 @@ from config_util import get_config_path
 # ============================================================
 # 设置为 True 启用详细日志记录（保存所有LLM请求和响应到文件）
 # 设置为 False 禁用文件日志记录（仅保留控制台日志）
-ENABLE_SCRIPT_PARSER_LOGGING = False
+ENABLE_SCRIPT_PARSER_LOGGING = True
 
 def _save_log_file(log_dir, filename, content):
     """
@@ -36,18 +36,19 @@ with open(os.path.join(APP_DIR, config_file), 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 # 剧本解析的系统提示词
-SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和分镜师，擅长将剧本拆解为人物、场景和分镜。
-你需要根据输入的剧本内容，输出结构化的JSON格式数据。
+SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和分镜师,擅长将剧本拆解为人物、场景和分镜。
+你需要根据输入的剧本内容,输出结构化的JSON格式数据。
 
 输出要求：
 1. 必须严格按照指定的JSON格式输出
-2. 分镜组默认每个15秒，可根据剧情需要调整
-3. 人物信息要完整，包括角色定位和描述
-4. 场景信息要详细，包括时间、天气、氛围、环境音、背景音乐等
+2. 分镜组默认每个15秒,可根据剧情需要调整
+3. 人物信息要完整,包括角色定位和描述
+4. 场景信息要详细,包括时间、天气、氛围、环境音、背景音乐等
 5. 分镜要包含镜头类型、运动方式、对话、动作等详细信息
-6. opening_frame_description是最关键字段，用于AI生成首帧图像，必须非常详细描述镜头起始画面（包括人物位置、姿态、表情、场景布局、光线效果、构图信息等）
+6. opening_frame_description是最关键字段,用于AI生成首帧图像,必须非常详细描述镜头起始画面（包括人物位置、姿态、表情、场景布局、光线效果、构图信息等）
 7. 确保所有ID引用关系正确（如shot中的location_id和character_id要对应）
-8. 只输出纯JSON内容，不要添加```json```标记或任何解释性文字
+8. 只输出纯JSON内容,不要添加```json```标记或任何解释性文字
+9. **【重要】在shot节点的所有文本字段中,只要涉及角色名称,必须用【【角色名】】格式包裹,便于后续匹配角色库**
 
 ID格式规范：
 - shot_id: s001-s999（最多10位字符）
@@ -91,18 +92,18 @@ JSON_FORMAT_EXAMPLE = """{
       "location_id": "loc_001",
       "shot_type": "远景/中景/近景/特写",
       "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
-      "description": "镜头简要描述",
-      "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像，必须详细到能让AI准确还原画面，包括：人物位置、姿态、表情、服装；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等）",
-      "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化）",
+      "description": "镜头简要描述（涉及角色时用【【角色名】】格式）",
+      "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：人物位置、姿态、表情、服装；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及角色时用【【角色名】】格式）",
+      "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式）",
       "characters_present": ["char_001"],
       "dialogue": [
         {
           "character_id": "char_001",
-          "character_name": "人物名称",
+          "character_name": "【【人物名称】】",
           "text": "对话内容"
         }
       ],
-      "action": "动作描述",
+      "action": "动作描述（涉及角色时用【【角色名】】格式）",
       "mood": "情绪氛围",
       "environment_sound": "环境音（场景中的自然声音，如脚步声、车辆声等）",
       "background_music": "背景音乐（配乐，如钢琴曲、爵士乐等）",
@@ -211,8 +212,15 @@ async def parse_script_to_shots(
    - 必须包含：场景布局、物品摆放、光线方向和强度
    - 必须包含：构图信息（如三分法、景深、视角等）
    - 描述要具体到能让AI准确还原画面
+   - **涉及角色名称时必须用【【角色名】】格式包裹**
 
-6. **输出格式**：
+6. **角色名称格式要求（非常重要）**：
+   - 在shot节点的所有文本字段中（description、opening_frame_description、scene_detail、action、dialogue.character_name等）
+   - 只要涉及角色名称，必须用【【角色名】】格式包裹
+   - 例如："【【小李】】走进房间"、"【【张医生】】正在看病历"
+   - 这样便于后续系统匹配角色库
+
+7. **输出格式**：
    - 必须严格按照以下JSON格式输出
    - 确保所有ID引用关系正确
    - 只输出纯JSON内容
