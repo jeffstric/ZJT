@@ -22,6 +22,7 @@ from duomi_api_requset import create_image_to_video, get_ai_task_result, create_
 from PIL import Image
 from baidu import call_ernie_vl_api
 from task.scheduler import init_scheduler
+from config.constant import TASK_COMPUTING_POWER
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(APP_DIR, "qwen_image_edit_api.json")
@@ -44,19 +45,6 @@ API_KEY = config["runninghub"]["api_key"]
 
 # Default ComfyUI server address; can be overridden by request field
 DEFAULT_COMFYUI_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188/")
-
-# Type to computing power mapping
-# 1: 图片编辑, 2: AI视频生成, 3: 图片生成视频, 4: 高清放大, 5: ai视频高清修复, 6: 图生视频高清修复，7：图片编辑(nano-banana-pro), 8: 创建角色卡
-TASK_COMPUTING_POWER = {
-    1: 2,
-    2: 20,
-    3: 20,
-    4: 1,
-    5: 10,
-    6: 10,
-    7: 6,
-    8: 20
-}
 
 app = FastAPI(title="ComfyUI Qwen Image Edit Proxy")
 
@@ -527,14 +515,6 @@ async def image_edit(
             #用uuid生成交易id
             transaction_id = str(uuid.uuid4())
 
-            response = create_ai_image(model, prompt, ratio, image_urls)
-            logger.info(response)
-            project_id = response.get("data", {}).get("task_id")
-            if not project_id:
-                logger.error("Failed to create project")
-                continue
-            project_ids.append(project_id)
-
             if CHECK_AUTH_TOKEN:
                 #发起请求，扣除算力
                 success, message, response_data = make_perseids_request(
@@ -558,16 +538,16 @@ async def image_edit(
                 try:
                     # Store multiple image URLs as comma-separated string
                     image_path_str = ','.join(image_urls) if isinstance(image_urls, list) else image_urls
-                    AIToolsModel.create(
+                    id = AIToolsModel.create(
                         prompt=prompt,
                         user_id=user_id,
                         type=image_edit_type,  # 1-图片编辑
                         image_path=image_path_str,
                         ratio=ratio,
-                        project_id=project_id,
                         transaction_id=transaction_id,
-                        status=1
+                        status=0
                     )
+                    project_ids.append(id)
                 except Exception as db_error:
                     logger.error(f"Failed to create database record: {db_error}")
                     # Don't fail the request if database insert fails
@@ -687,102 +667,33 @@ async def get_status(
 
         for pid in project_ids:
             # Query database to get task type
-            task_record = AIToolsModel.get_by_project_id(pid)
+            task_record = AIToolsModel.get_by_id(pid)
             
-            # Determine if this is a video task (type 2 or 3)
-            is_video = task_record and task_record.type in [2, 3]
-            
-            result = get_ai_task_result(pid, is_video)
-
-            # Check if API call was successful
-            if result.get("code") != 0:
-                error_msg = result.get("msg", "Unknown error")
-                raise HTTPException(status_code=500, detail=f"Failed to get task result: {error_msg}")
-
-            data = result.get("data", {})
-            task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-            media_url = data.get("mediaUrl")
-            reason = data.get("reason")
-            # Calculate task cost time
-            task_cost_time = None
             if task_record and task_record.create_time:
                 # Calculate time difference in seconds
                 from datetime import datetime
                 current_time = datetime.now()
                 time_diff = current_time - task_record.create_time
                 task_cost_time = int(time_diff.total_seconds())
-
+            status = task_record.status
+            reason = task_record.message
             status_str = "RUNNING"
             results_payload = []
             reason_payload = None
 
             # Update database based on status
-            if task_status == 1:  # Success
+            if status == 2:  # Success
                 status_str = "SUCCESS"
-                try:
-                    AIToolsModel.update_by_project_id(
-                        project_id=pid,
-                        result_url=media_url,
-                        status=2  # 2-处理完成
-                    )
-                except Exception as db_error:
-                    logger.error(f"Failed to update database record: {db_error}")
-
+                
                 if media_url:
                     results_payload = [{
                         "file_url": media_url,
                         "task_cost_time": task_cost_time
                     }]
 
-            elif task_status == 2:  # Failed
+            elif status == -1:  # Failed
                 status_str = "FAILED"
-                logger.info(f"Task failed: {reason}")
-                if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
-                    reason = "图片包含真人，无法处理"
-                elif reason and "This content may violate our guardrails concerning similarity to third-party content. " in reason:
-                    reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
-                
-                # Check if task has already been marked as failed
-                already_failed = task_record and task_record.status == -1
-                
-                if not already_failed:
-                    # Only update status and refund if not already processed
-                    try:
-                        AIToolsModel.update_by_project_id(
-                            project_id=pid,
-                            status=-1,  # -1-处理失败
-                            message=reason
-                        )
-                    except Exception as db_error:
-                        logger.error(f"Failed to update database record: {db_error}")
-                    
-                    if CHECK_AUTH_TOKEN and auth_token and task_record is not None:
-                        # 生成交易ID
-                        transaction_id = str(uuid.uuid4())
-                        headers = {'Authorization': f'Bearer {auth_token}'}
-                        #发起请求，增加算力
-                        type = task_record.type
-                        computing_power = TASK_COMPUTING_POWER[type]
-                        success, message, response_data = make_perseids_request(
-                            endpoint='user/calculate_computing_power',
-                            method='POST',
-                            headers=headers,
-                            data={
-                                "computing_power": computing_power,
-                                "behavior": "increase",
-                                "transaction_id": transaction_id
-                            }
-                        )
-                        if success:
-                            logger.info(f"Successfully refunded {computing_power} computing power for failed task {pid}, transaction_id: {transaction_id}")
-                        else:
-                            logger.error(f"Failed to refund computing power for task {pid}: {message}")
-                else:
-                    logger.info(f"Task {pid} already marked as failed (status=-1), skipping status update and refund")
-
                 reason_payload = reason
-
-            # task_status == 0 or unknown -> RUNNING by default
 
             tasks_response.append({
                 "project_id": pid,
@@ -860,16 +771,6 @@ async def ai_app_run(
         for _ in range(count):
             # 用uuid生成交易id
             transaction_id = str(uuid.uuid4())
-
-            # Submit task (async, return immediately)
-            result = create_image_to_video(prompt, ratio, None, duration_seconds)
-            logger.info(f"Submit task result: {result}")
-            # Get project_id from new API response format
-            project_id = result.get("id")
-            if not project_id:
-                raise HTTPException(status_code=500, detail="未获得任务id")
-            project_ids.append(project_id)
-
             if CHECK_AUTH_TOKEN:
                 #发起请求，增加算力
                 success, message, response_data = make_perseids_request(
@@ -891,15 +792,15 @@ async def ai_app_run(
             # Create database record for each project
             if user_id:
                 try:
-                    AIToolsModel.create(
+                    id = AIToolsModel.create(
                         prompt=prompt,
                         user_id=user_id,
                         type=2,  # 2-AI视频生成
                         ratio=ratio,
-                        project_id=project_id,
                         transaction_id=transaction_id,
-                        status=1
+                        status=0
                     )
+                    project_ids.append(id)
                 except Exception as db_error:
                     logger.error(f"Failed to create database record: {db_error}")
                     # Don't fail the request if database insert fails
@@ -988,17 +889,6 @@ async def ai_app_run_image(
                 # Generate unique transaction ID for each task
                 transaction_id = str(uuid.uuid4())
                 
-                # Submit task (async, return immediately)
-                result = create_image_to_video(prompt, ratio, image_url, duration_seconds)
-                
-                # Get project_id from new API response format
-                project_id = result.get("id")
-                if not project_id:
-                    logger.error(f"Task {i+1}: No project ID received")
-                    continue  # Continue with next task
-                
-                project_ids.append(project_id)
-                
                 # Deduct computing power for each task
                 if CHECK_AUTH_TOKEN:
                     success, message, response_data = make_perseids_request(
@@ -1018,17 +908,17 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
-                        AIToolsModel.create(
+                        id = AIToolsModel.create(
                             prompt=prompt,
                             user_id=user_id,
                             type=3,  # 3-图片生成视频
                             image_path=image_url,
                             ratio=ratio,
                             duration=duration_seconds,
-                            project_id=project_id,
                             transaction_id=transaction_id,
-                            status=1
+                            status=0
                         )
+                        project_ids.append(id)
                     except Exception as db_error:
                         logger.error(f"Failed to create database record for task {i+1}: {db_error}")
                         # Don't fail the request if database insert fails
@@ -1535,54 +1425,6 @@ async def get_ai_tools_history(
                             computing_power = TASK_COMPUTING_POWER[task.type]
                             total_refund_power += computing_power
                             logger.info(f"Upscale task {task.project_id} failed, will refund {computing_power} computing power")
-                    else:
-                        # Determine if this is a video task (type 2 or 3)
-                        is_video = task.type in [2, 3]
-                        
-                        result = get_ai_task_result(task.project_id, is_video)
-                        
-                        # Ensure we received a valid response
-                        if not result or not isinstance(result, dict):
-                            logger.error(f"Failed to get task result for {task.project_id}: invalid response type {type(result).__name__}")
-                            continue
-                        
-                        # Check if API call was successful
-                        if result.get("code") != 0:
-                            logger.error(f"Failed to get task result for {task.project_id}: {result.get('msg')}")
-                            continue
-                        
-                        data = result.get("data", {})
-                        task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-                        media_url = data.get("mediaUrl")
-                        reason = data.get("reason")
-                        
-                        if task_status == 1:  # Success
-                            AIToolsModel.update_by_project_id(
-                                project_id=task.project_id,
-                                result_url=media_url,
-                                status=2  # 处理完成
-                            )
-                            updated_count += 1
-                            logger.info(f"Task {task.project_id} completed successfully")
-                                
-                        elif task_status == 2:  # Failed
-                            if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
-                                reason = "图片包含真人，无法处理"
-                            elif reason and "This content may violate our guardrails concerning similarity to third-party content. " in reason:
-                                reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
-                            # Update status to failed
-                            AIToolsModel.update_by_project_id(
-                                project_id=task.project_id,
-                                status=-1,  # 处理失败
-                                message=reason
-                            )
-                            updated_count += 1
-                            # 累计需要补回的算力
-                            computing_power = TASK_COMPUTING_POWER[task.type]
-                            total_refund_power += computing_power
-                            logger.info(f"Task {task.project_id} failed: {reason}, will refund {computing_power} computing power")
-                        
-                        # If task_status == 0 (in progress), keep status as 1 (processing)
                     
                 except Exception as task_error:
                     logger.error(f"Failed to check status for task {task.project_id}: {task_error}")

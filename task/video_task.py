@@ -3,6 +3,15 @@ Video generation task processing
 """
 import logging
 from datetime import datetime, timedelta
+import uuid
+from perseids_client import make_perseids_request
+from config.constant import TASK_COMPUTING_POWER
+
+from duomi_api_requset import (
+    create_ai_image,
+    create_image_to_video,
+    get_ai_task_result,
+)
 from model import TasksModel, AIToolsModel
 from config.constant import TASK_TYPE_GENERATE_VIDEO
 
@@ -26,24 +35,208 @@ def calculate_next_retry_delay(try_count):
     return min(delay_seconds, max_delay)
 
 
+def _submit_new_task(ai_tool):
+    """
+    Submit a new task to external API (status == 0)
+    
+    Args:
+        ai_tool: AITool object
+    
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    ai_tool_type = ai_tool.type
+    task_id = ai_tool.id
+    
+    # Parse image_urls from comma-separated string to array
+    image_urls = None
+    if ai_tool.image_path:
+        if isinstance(ai_tool.image_path, str):
+            image_urls = [url.strip() for url in ai_tool.image_path.split(',') if url.strip()]
+        else:
+            image_urls = ai_tool.image_path
+    
+    if ai_tool_type in [1, 7]:
+        if ai_tool_type == 1:
+            model = "gemini-2.5-pro-image-preview"
+        else:
+            model = "gemini-3-pro-image-preview"
+        response = create_ai_image(model, ai_tool.prompt, ai_tool.ratio, image_urls)
+        logger.info(response)
+        project_id = response.get("data", {}).get("task_id")
+    elif ai_tool_type in [2, 3]:
+        result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, image_urls, ai_tool.duration_seconds)
+        logger.info(f"Submit task result: {result}")
+        project_id = result.get("id")
+    else:
+        logger.error(f"Unsupported ai_tool_type: {ai_tool_type}")
+        return False
+    
+    if not project_id:
+        logger.error("Failed to create project")
+        return False
+    
+    AIToolsModel.update(task_id, project_id=project_id, status=1)
+    TasksModel.update_by_task_id(task_id, status=1)
+    logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
+    return True
+
+
+def _check_task_status(ai_tool):
+    """
+    Check task status from external API (status == 1)
+    
+    Args:
+        ai_tool: AITool object
+    
+    Returns:
+        bool: True if task completed (success or failed), False if still processing
+    """
+    project_id = ai_tool.project_id
+    ai_tool_type = ai_tool.type
+    task_id = ai_tool.id
+    
+    if not project_id:
+        logger.error(f"AI tool {task_id} has no project_id while status=1")
+        return False
+
+    is_video = ai_tool_type in [2, 3]
+    result = get_ai_task_result(project_id, is_video)
+    
+    if not isinstance(result, dict):
+        logger.error(f"Unexpected task result format for project {project_id}: {result}")
+        return False
+
+    if result.get("code") != 0:
+        error_msg = result.get("msg", "Unknown error")
+        logger.error(f"Failed to get task result: {error_msg}")
+        return False
+
+    data = result.get("data", {})
+    task_status = data.get("status")  # 0-进行中 1-成功 2-失败
+    media_url = data.get("mediaUrl")
+    reason = data.get("reason")
+
+    if task_status == 1:
+        return _handle_task_success(project_id, task_id, media_url)
+    elif task_status == 2:
+        return _handle_task_failure(project_id, task_id, ai_tool_type, reason)
+    else:
+        logger.info(f"Task {project_id} still processing (status={task_status})")
+        return False
+
+
+def _handle_task_success(project_id, task_id, media_url):
+    """
+    Handle successful task completion
+    
+    Args:
+        project_id: Project ID
+        task_id: Task ID
+        media_url: Result media URL
+    
+    Returns:
+        bool: True if handled successfully
+    """
+    try:
+        AIToolsModel.update_by_project_id(
+            project_id=project_id,
+            result_url=media_url,
+            status=2
+        )
+        TasksModel.update_by_task_id(task_id, status=2)
+        logger.info(f"Task {project_id} completed successfully")
+        return True
+    except Exception as db_error:
+        logger.error(f"Failed to update records for success task {project_id}: {db_error}")
+        return False
+
+
+def _handle_task_failure(project_id, task_id, ai_tool_type, reason):
+    """
+    Handle failed task
+    
+    Args:
+        project_id: Project ID
+        task_id: Task ID
+        ai_tool_type: AI tool type
+        reason: Failure reason
+    
+    Returns:
+        bool: True if handled successfully
+    """
+    # Translate error messages
+    if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
+        reason = "图片包含真人，无法处理"
+    elif reason and "This content may violate our guardrails concerning similarity to third-party content. " in reason:
+        reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
+
+    try:
+        AIToolsModel.update_by_project_id(
+            project_id=project_id,
+            status=-1,
+            message=reason
+        )
+        TasksModel.update_by_task_id(task_id, status=-1)
+    except Exception as db_error:
+        logger.error(f"Failed to update records for failed task {project_id}: {db_error}")
+        return False
+    
+    # Refund computing power (note: auth_token not available in background task)
+    try:
+        transaction_id = str(uuid.uuid4())
+        computing_power = TASK_COMPUTING_POWER.get(ai_tool_type)
+        
+        if computing_power:
+            transaction_id = str(uuid.uuid4())
+            headers = {'Authorization': f'Bearer {auth_token}'}
+                        
+            # 发起请求，增加算力（补回）
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "increase",
+                    "transaction_id": transaction_id
+                }
+            )
+            if success:
+                logger.info(f"Task {project_id} failed, computing power refund ({computing_power}) processed successfully")
+            else:
+                logger.error(f"Task {project_id} failed, computing power refund ({computing_power}) failed: {message}")
+    except Exception as refund_error:
+        logger.error(f"Failed to process refund for task {project_id}: {refund_error}")
+    
+    logger.info(f"Task {project_id} failed: {reason}")
+    return True
+
+
 def process_generate_video(task):
     """Process video generation task logic"""
     try:
         logger.info(f"Processing video generation task: {task.task_id}")
         ai_tool = AIToolsModel.get_by_id(task.task_id)
+        logger.info(f"AI tool {task.task_id} is {ai_tool}")
+        
         if not ai_tool:
             logger.error(f"Failed to get AI tool record by ID {task.task_id}")
-            return False, -1
-        if ai_tool.status == 0:
-            logger.info(f"AI tool {task.task_id} is not ready")
-            return False, 0
-        elif ai_tool.status == 1:
-            logger.info()
-        return True
+            return False
+        
+        status = ai_tool.status
+        
+        if status == 0:
+            return _submit_new_task(ai_tool)
+        elif status == 1:
+            return _check_task_status(ai_tool)
+        else:
+            logger.warning(f"Unexpected status {status} for task {task.task_id}")
+            return False
         
     except Exception as e:
         logger.error(f"Failed to process video generation task: {str(e)}")
-        return False, -1
+        return False
 
 
 def process_task_with_retry(task_type, process_func):
@@ -81,12 +274,10 @@ def process_task_with_retry(task_type, process_func):
                     logger.info(f"Updated task {task.task_id} status to 1 (处理中)")
                 
                 # Call the specific processing function
-                success,status = process_func(task)
+                success= process_func(task)
                 processed_count += 1
                 
                 if success:
-                    # Success - update status to 2 (处理完成)
-                    TasksModel.update_by_task_id(task.task_id, status=status)
                     logger.info(f"Task completed successfully: {task.task_id}, status updated to 2 (处理完成)")
                     success_count += 1
                 else:
