@@ -3682,6 +3682,32 @@
       if(!node) return;
 
       if(!Array.isArray(node.data.shots)) node.data.shots = [];
+      
+      // 获取镜头组最大时长
+      let maxGroupDuration = 15;
+      const incomingConns = state.connections.filter(c => c.to === currentEditingNodeId);
+      if(incomingConns.length > 0){
+        const scriptNode = state.nodes.find(n => n.id === incomingConns[0].from);
+        if(scriptNode && scriptNode.type === 'script' && scriptNode.data.maxGroupDuration){
+          maxGroupDuration = scriptNode.data.maxGroupDuration;
+        }
+      }
+      
+      // 计算当前所有分镜的总时长
+      const currentTotalDuration = node.data.shots.reduce((sum, shot) => {
+        const dur = parseFloat(shot.duration) || 0;
+        return sum + dur;
+      }, 0);
+      
+      // 新分镜默认时长
+      const newShotDuration = 5.0;
+      
+      // 检查是否会超过最大时长
+      if(currentTotalDuration + newShotDuration > maxGroupDuration){
+        alert(`无法添加新分镜：当前总时长 ${currentTotalDuration.toFixed(1)}秒，添加新分镜(${newShotDuration}秒)后将超过镜头组最大时长 ${maxGroupDuration}秒`);
+        return;
+      }
+      
       const idx = (typeof insertIndex === 'number' && !Number.isNaN(insertIndex))
         ? Math.max(0, Math.min(insertIndex, node.data.shots.length))
         : node.data.shots.length;

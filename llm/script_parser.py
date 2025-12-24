@@ -16,7 +16,7 @@ from config_util import get_config_path
 # ============================================================
 # 设置为 True 启用详细日志记录（保存所有LLM请求和响应到文件）
 # 设置为 False 禁用文件日志记录（仅保留控制台日志）
-ENABLE_SCRIPT_PARSER_LOGGING = True
+ENABLE_SCRIPT_PARSER_LOGGING = False
 
 def _save_log_file(log_dir, filename, content):
     """
@@ -36,17 +36,24 @@ with open(os.path.join(APP_DIR, config_file), 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)
 
 # 剧本解析的系统提示词
-SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师，擅长将剧本拆解为人物、场景和分镜。
+SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和分镜师，擅长将剧本拆解为人物、场景和分镜。
 你需要根据输入的剧本内容，输出结构化的JSON格式数据。
 
 输出要求：
 1. 必须严格按照指定的JSON格式输出
 2. 分镜组默认每个15秒，可根据剧情需要调整
 3. 人物信息要完整，包括角色定位和描述
-4. 场景信息要详细，包括时间、天气、氛围等
+4. 场景信息要详细，包括时间、天气、氛围、环境音、背景音乐等
 5. 分镜要包含镜头类型、运动方式、对话、动作等详细信息
-6. 确保所有ID引用关系正确（如shot中的location_id和character_id要对应）
-7. 只输出JSON内容，不要有任何其他文字说明
+6. opening_frame_description是最关键字段，用于AI生成首帧图像，必须非常详细描述镜头起始画面（包括人物位置、姿态、表情、场景布局、光线效果、构图信息等）
+7. 确保所有ID引用关系正确（如shot中的location_id和character_id要对应）
+8. 只输出纯JSON内容，不要添加```json```标记或任何解释性文字
+
+ID格式规范：
+- shot_id: s001-s999（最多10位字符）
+- character_id: char_001-char_999
+- location_id: loc_001-loc_999
+- group_id: grp_001-grp_999
 """
 
 # JSON格式示例模板
@@ -68,21 +75,25 @@ JSON_FORMAT_EXAMPLE = """{
       "id": "loc_001",
       "name": "场景名称",
       "type": "室内/室外",
-      "description": "场景详细描述",
-      "time_of_day": "时间段",
-      "weather": "天气",
-      "atmosphere": "氛围"
+      "description": "场景详细描述（必须非常详细，包括环境布局、物品摆设、光线、色调等）",
+      "time_of_day": "具体时间段（如'下午3点左右'、'傍晚日落时分'）",
+      "weather": "天气（室外必填，室内填null）",
+      "atmosphere": "氛围",
+      "environment_sound": "环境音描述（如'街道车辆声、行人脚步声'）",
+      "background_music": "背景音乐描述（如'轻快的爵士乐'）"
     }
   ],
   "shots": [
     {
       "shot_id": "shot_001",
       "shot_number": 1,
-      "duration": 15.0,
+      "duration": 5.0,
       "location_id": "loc_001",
       "shot_type": "远景/中景/近景/特写",
       "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
-      "description": "镜头描述",
+      "description": "镜头简要描述",
+      "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像，必须详细到能让AI准确还原画面，包括：人物位置、姿态、表情、服装；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等）",
+      "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化）",
       "characters_present": ["char_001"],
       "dialogue": [
         {
@@ -93,6 +104,8 @@ JSON_FORMAT_EXAMPLE = """{
       ],
       "action": "动作描述",
       "mood": "情绪氛围",
+      "environment_sound": "环境音（场景中的自然声音，如脚步声、车辆声等）",
+      "background_music": "背景音乐（配乐，如钢琴曲、爵士乐等）",
       "audio_notes": "音频备注"
     }
   ],
@@ -170,19 +183,41 @@ async def parse_script_to_shots(
      * 动作镜头：根据动作复杂度，通常5-12秒
    - 每个shot_group内的镜头时长应该有变化，不要都一样
 
-3. **结构要求**：
-   - 必须使用 "shot_groups" 数组，每个分镜组包含 "shots" 数组
-   - 禁止直接在顶层使用 "shots" 数组
+3. **结构要求（非常重要）**：
+   - 【必须】使用 "shot_groups" 数组结构，不能直接返回 "shots" 数组
+   - 每个shot_group包含 "group_id"、"group_name" 和 "shots" 数组
    - 每个shot必须嵌套在某个shot_group的shots数组中
+   
+   正确示例：
+   "shot_groups": [
+     {{
+       "group_id": "grp_001",
+       "group_name": "开场镜头",
+       "shots": [{{"shot_id": "s001", ...}}, {{"shot_id": "s002", ...}}]
+     }}
+   ]
+   
+   错误示例（禁止）：
+   "shots": [{{"shot_id": "s001", ...}}]
 
 4. **时长要求（非常重要）**：
    - 每个shot必须包含duration字段，单位为秒，类型为float
    - 每个shot_group的总时长不得超过max_group_duration秒
 
-5. **输出格式**：
+5. **opening_frame_description要求（最关键）**：
+   - 这是用于AI生成首帧图像的最关键字段
+   - 必须详细描述镜头开始时的静态画面
+   - 必须包含：人物位置、姿态、表情、服装
+   - 必须包含：场景布局、物品摆放、光线方向和强度
+   - 必须包含：构图信息（如三分法、景深、视角等）
+   - 描述要具体到能让AI准确还原画面
+
+6. **输出格式**：
    - 必须严格按照以下JSON格式输出
    - 确保所有ID引用关系正确
-   - 只输出JSON内容，不要有markdown代码块标记
+   - 只输出纯JSON内容
+   - 不要添加```json```标记
+   - 不要添加任何解释性文字
 
 JSON格式示例：
 {JSON_FORMAT_EXAMPLE}
