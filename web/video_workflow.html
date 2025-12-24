@@ -396,7 +396,7 @@
       background: #fff;
       box-shadow: 0 4px 12px rgba(0,0,0,0.08);
       user-select:none;
-      z-index: 10;
+      z-index: 20; /* 提高节点层级，确保拖拽时在连接线之上 */
     }
     .node.selected{
       border-color: var(--primary);
@@ -417,15 +417,25 @@
     .icon-btn{
       background: transparent;
       border: 0;
-      color: var(--muted);
+      color: var(--text);
       font-size: 18px;
       cursor: pointer;
       padding: 2px 6px;
       border-radius: 4px;
     }
+    .icon-btn:hover{
+      color: var(--primary);
+    }
     .icon-btn:hover{ background: rgba(0,0,0,0.05); }
     .node-body{ padding: 12px; display:flex; flex-direction:column; gap:12px; }
     .field{ display:flex; flex-direction:column; gap:6px; }
+    .field.btn-row{
+      flex-direction: row;
+      justify-content: flex-end;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .label{ color: var(--muted); font-size:12px; font-weight:700; }
     .label .req{ color: var(--danger); margin-left: 4px; }
     .motion-help{
@@ -634,10 +644,10 @@
     }
     .modal-title{ font-size: 13px; font-weight: 700; }
     .modal-close{
-      width: 34px;
-      height: 34px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.18);
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: none;
       background: rgba(255,255,255,0.08);
       color: #fff;
       cursor: pointer;
@@ -660,6 +670,34 @@
       display: block;
       object-fit: contain;
     }
+    /* 分镜模态框使用浅色背景，提升可读性 */
+    #shotGroupModal .modal-card,
+    #shotDetailModal .modal-card{
+      background: #ffffff;
+      color: #111827;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 14px 40px rgba(0,0,0,0.16);
+    }
+    #shotGroupModal .modal-header,
+    #shotDetailModal .modal-header{
+      background: #f8fafc;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    #shotGroupModal .modal-title,
+    #shotDetailModal .modal-title{
+      color: #0f172a;
+    }
+    #shotGroupModal .modal-body,
+    #shotDetailModal .modal-body{
+      background: #ffffff;
+    }
+    #shotGroupModal table th,
+    #shotGroupModal table td{
+      color: #0f172a;
+    }
+    #shotGroupModal table tbody tr:nth-child(2n){
+      background: #f8fafc;
+    }
     .preview{ cursor: zoom-in; }
     .mini-btn{
       background: var(--panel);
@@ -671,8 +709,27 @@
       font-weight: 600;
       cursor: pointer;
     }
-    .mini-btn:hover{ background: #eee; }
-
+    .mini-btn:hover{
+      background: var(--panel-hover);
+      border-color: var(--primary-light);
+    }
+    .mini-btn.secondary{
+      background: #f3f4f6;
+      color: #111827;
+      border-color: #e5e7eb;
+    }
+    .mini-btn + .mini-btn{
+      margin-left: 8px;
+    }
+    .shot-group-empty{
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      color: #94a3b8;
+      background: #f8fafc;
+      border: 1px dashed #cbd5f5;
+      font-size: 12px;
+    }
     .port{
       position: absolute;
       width: 18px;
@@ -973,10 +1030,15 @@
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <path d="M9 5H7C5.89543 5 5 5.89543 5 7V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V7C19 5.89543 18.1046 5 17 5H15" stroke="currentColor" stroke-width="2"/>
                 <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" stroke-width="2"/>
-                <line x1="9" y1="12" x2="15" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                <line x1="9" y1="16" x2="15" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
               </svg>
               <span class="add-menu-text">剧本</span>
+            </div>
+            <div class="add-menu-item" id="menuAddShotGroup">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="2" />
+                <path d="M6 9H18M6 12H14M6 15H12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">分镜组</span>
             </div>
           </div>
           <div class="add-menu-group">
@@ -1031,6 +1093,30 @@
       </div>
       <div class="modal-body">
         <img id="imageModalImg" alt="" />
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="shotGroupModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 1200px; width: 90%;">
+      <div class="modal-header">
+        <div class="modal-title" id="shotGroupModalTitle">分镜组详情</div>
+        <button class="modal-close" id="shotGroupModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+        <div id="shotGroupModalContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="shotDetailModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 800px;">
+      <div class="modal-header">
+        <div class="modal-title" id="shotDetailModalTitle">分镜详情</div>
+        <button class="modal-close" id="shotDetailModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+        <div id="shotDetailModalContent"></div>
       </div>
     </div>
   </div>
@@ -2528,6 +2614,10 @@
         nodeData.type = 'image';
         nodeData.data.url = nodeData.data.imageUrl || nodeData.data.url || '';
         createImageNodeWithData(nodeData);
+      } else if(nodeData.type === 'script'){
+        createScriptNodeWithData(nodeData);
+      } else if(nodeData.type === 'shot_group'){
+        createShotGroupNodeWithData(nodeData);
       }
     }
 
@@ -2767,6 +2857,61 @@
           }
         }
       }
+    }
+
+    // 带数据创建剧本节点
+    function createScriptNodeWithData(nodeData){
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      createScriptNode({ x: nodeData.x, y: nodeData.y });
+      
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+      
+      const node = state.nodes.find(n => n.id === nodeData.id);
+      if(node && nodeData.data){
+        node.data.scriptContent = nodeData.data.scriptContent || '';
+        node.data.name = nodeData.data.name || '';
+        node.data.maxGroupDuration = nodeData.data.maxGroupDuration || 15;
+        node.data.parsedData = nodeData.data.parsedData || null;
+        
+        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+        if(el){
+          const textareaEl = el.querySelector('.script-textarea');
+          const durationSelectEl = el.querySelector('.script-duration-select');
+          const splitBtn = el.querySelector('.script-split-btn');
+          const infoField = el.querySelector('.script-info-field');
+          const nameEl = el.querySelector('.script-name');
+          const lengthEl = el.querySelector('.script-length');
+          const charCountEl = el.querySelector('.script-char-count');
+          
+          if(textareaEl) textareaEl.value = node.data.scriptContent;
+          if(durationSelectEl) durationSelectEl.value = String(node.data.maxGroupDuration);
+          
+          if(node.data.scriptContent && node.data.scriptContent.trim().length > 0){
+            if(splitBtn) splitBtn.disabled = false;
+            if(nameEl) nameEl.textContent = node.data.name || '来源: 已加载';
+            if(lengthEl) lengthEl.textContent = `长度: ${node.data.scriptContent.length} 字符`;
+            if(infoField) infoField.style.display = 'block';
+            if(charCountEl) charCountEl.textContent = `${node.data.scriptContent.length}/2000`;
+          }
+        }
+      }
+    }
+
+    // 带数据创建分镜组节点
+    function createShotGroupNodeWithData(nodeData){
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      createShotGroupNode({ 
+        x: nodeData.x, 
+        y: nodeData.y,
+        shotGroupData: nodeData.data || {},
+        scriptData: nodeData.data.scriptData || {}
+      });
+      
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
     }
 
     function renderMinimap(){
@@ -3214,6 +3359,180 @@
       if(e.target === imageModal) closeImageModal();
     });
 
+    const shotGroupModal = document.getElementById('shotGroupModal');
+    const shotGroupModalClose = document.getElementById('shotGroupModalClose');
+    const shotGroupModalContent = document.getElementById('shotGroupModalContent');
+    const shotGroupModalTitle = document.getElementById('shotGroupModalTitle');
+    
+    const shotDetailModal = document.getElementById('shotDetailModal');
+    const shotDetailModalClose = document.getElementById('shotDetailModalClose');
+    const shotDetailModalContent = document.getElementById('shotDetailModalContent');
+    const shotDetailModalTitle = document.getElementById('shotDetailModalTitle');
+
+    function openShotGroupModal(shotGroupData){
+      shotGroupModalTitle.textContent = `分镜组详情 - ${shotGroupData.groupName || '未命名'}`;
+      shotGroupModalContent.innerHTML = renderShotGroupTable(shotGroupData);
+      shotGroupModal.classList.add('show');
+      shotGroupModal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeShotGroupModal(){
+      shotGroupModal.classList.remove('show');
+      shotGroupModal.setAttribute('aria-hidden', 'true');
+    }
+
+    function openShotDetailModal(shot){
+      shotDetailModalTitle.textContent = `分镜详情 - ${shot.shot_id || ''}`;
+      shotDetailModalContent.innerHTML = renderShotDetail(shot);
+      shotDetailModal.classList.add('show');
+      shotDetailModal.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeShotDetailModal(){
+      shotDetailModal.classList.remove('show');
+      shotDetailModal.setAttribute('aria-hidden', 'true');
+    }
+
+    shotGroupModalClose.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeShotGroupModal();
+    });
+    shotGroupModal.addEventListener('click', (e) => {
+      if(e.target === shotGroupModal) closeShotGroupModal();
+    });
+
+    shotDetailModalClose.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeShotDetailModal();
+    });
+    shotDetailModal.addEventListener('click', (e) => {
+      if(e.target === shotDetailModal) closeShotDetailModal();
+    });
+
+    function renderShotGroupTable(shotGroupData){
+      const shots = shotGroupData.shots || [];
+      if(shots.length === 0){
+        return '<p style="text-align: center; color: #999;">暂无分镜数据</p>';
+      }
+
+      let tableHtml = `
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <thead>
+            <tr style="background: #f5f5f5; border-bottom: 2px solid #ddd;">
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">镜头ID</th>
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">时间范围</th>
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">镜头类型</th>
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">运镜</th>
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">描述</th>
+              <th style="padding: 10px; text-align: center; border: 1px solid #ddd; width: 60px;">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      shots.forEach((shot, index) => {
+        const shotId = shot.shot_id || `shot_${index + 1}`;
+        const timeRange = shot.time_range || '-';
+        const shotType = shot.shot_type || '-';
+        const cameraMovement = shot.camera_movement || '-';
+        const description = shot.description || '-';
+        
+        tableHtml += `
+          <tr style="border-bottom: 1px solid #eee;">
+            <td style="padding: 10px; border: 1px solid #ddd; font-weight: 600;">${shotId}</td>
+            <td style="padding: 10px; border: 1px solid #ddd;">${timeRange}</td>
+            <td style="padding: 10px; border: 1px solid #ddd;">${shotType}</td>
+            <td style="padding: 10px; border: 1px solid #ddd;">${cameraMovement}</td>
+            <td style="padding: 10px; border: 1px solid #ddd; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${description}</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">
+              <button class="mini-btn view-shot-detail" data-shot-index="${index}" style="padding: 4px 8px; font-size: 12px;">👁️ 查看</button>
+            </td>
+          </tr>
+        `;
+      });
+
+      tableHtml += `
+          </tbody>
+        </table>
+      `;
+
+      setTimeout(() => {
+        document.querySelectorAll('.view-shot-detail').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const index = parseInt(btn.dataset.shotIndex);
+            if(shots[index]){
+              openShotDetailModal(shots[index]);
+            }
+          });
+        });
+      }, 0);
+
+      return tableHtml;
+    }
+
+    function renderShotDetail(shot){
+      const fieldMap = {
+        'shot_id': '镜头ID',
+        'shot_number': '镜头编号',
+        'time_range': '时间范围',
+        'duration': '时长',
+        'location_id': '场景ID',
+        'shot_type': '镜头类型',
+        'camera_movement': '运镜方式',
+        'description': '描述',
+        'opening_frame_description': '起始画面描述',
+        'scene_detail': '场景细节',
+        'characters_present': '出场角色',
+        'dialogue': '对话',
+        'action': '动作',
+        'mood': '情绪',
+        'environment_sound': '环境音',
+        'background_music': '背景音乐'
+      };
+
+      let html = '<div style="font-size: 14px;">';
+
+      for(const [key, label] of Object.entries(fieldMap)){
+        if(shot[key] !== undefined && shot[key] !== null){
+          let value = shot[key];
+          
+          if(key === 'characters_present' && Array.isArray(value)){
+            value = value.join(', ');
+          } else if(key === 'dialogue' && Array.isArray(value)){
+            value = value.map(d => {
+              return `<div style="margin: 5px 0; padding: 8px; background: #f8f9fa; border-radius: 4px;">
+                <strong>${d.character_name || d.character_id}:</strong> ${d.text || ''} 
+                <span style="color: #666; font-size: 12px;">(${d.timestamp || ''})</span>
+              </div>`;
+            }).join('');
+          } else if(typeof value === 'object'){
+            value = JSON.stringify(value, null, 2);
+          }
+
+          html += `
+            <div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #eee;">
+              <div style="font-weight: 600; color: #333; margin-bottom: 5px;">${label}</div>
+              <div style="color: #666; line-height: 1.6;">${value}</div>
+            </div>
+          `;
+        }
+      }
+
+      html += '</div>';
+      return html;
+    }
+
+    function escapeHtml(value){
+      if(value === null || value === undefined) return '';
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     function getNodeCenter(nodeId){
       const node = state.nodes.find(n => n.id === nodeId);
       if(!node) return {x:0, y:0};
@@ -3231,6 +3550,18 @@
       if(!node) return {x:0, y:0};
       const el = canvasEl.querySelector(`.node[data-node-id="${nid}"]`);
       if(!el) return {x: node.x, y: node.y};
+      const portEl = el.querySelector('.port.output');
+      if(portEl){
+        // 获取端口相对于节点的偏移位置
+        const portRect = portEl.getBoundingClientRect();
+        const nodeRect = el.getBoundingClientRect();
+        const offsetX = (portRect.left - nodeRect.left + portRect.width / 2) / state.zoom;
+        const offsetY = (portRect.top - nodeRect.top + portRect.height / 2) / state.zoom;
+        return {
+          x: node.x + offsetX,
+          y: node.y + offsetY
+        };
+      }
       return {
         x: node.x + el.offsetWidth,
         y: node.y + el.offsetHeight / 2
@@ -3243,6 +3574,18 @@
       if(!node) return {x:0, y:0};
       const el = canvasEl.querySelector(`.node[data-node-id="${nid}"]`);
       if(!el) return {x: node.x, y: node.y};
+      const portEl = el.querySelector('.port.input');
+      if(portEl){
+        // 获取端口相对于节点的偏移位置
+        const portRect = portEl.getBoundingClientRect();
+        const nodeRect = el.getBoundingClientRect();
+        const offsetX = (portRect.left - nodeRect.left + portRect.width / 2) / state.zoom;
+        const offsetY = (portRect.top - nodeRect.top + portRect.height / 2) / state.zoom;
+        return {
+          x: node.x + offsetX,
+          y: node.y + offsetY
+        };
+      }
       return {
         x: node.x,
         y: node.y + el.offsetHeight / 2
@@ -4611,6 +4954,7 @@
 
       const headerEl = el.querySelector('.node-header');
       const deleteBtn = el.querySelector('.icon-btn');
+      const outputPort = el.querySelector('.port.output');
       const textareaEl = el.querySelector('.script-textarea');
       const fileEl = el.querySelector('.script-file');
       const durationSelectEl = el.querySelector('.script-duration-select');
@@ -4674,6 +5018,12 @@
           origX: node.x,
           origY: node.y,
         };
+      });
+
+      outputPort.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
       });
 
       // 时长选择监听
@@ -4760,14 +5110,24 @@
               result.data.shot_groups.forEach((shotGroup, index) => {
                 const offsetX = 400;
                 const offsetY = index * 320;
-                createShotGroupNode({
+                const shotGroupNodeId = createShotGroupNode({
                   x: node.x + offsetX,
                   y: node.y + offsetY,
                   shotGroupData: shotGroup,
                   scriptData: result.data
                 });
+                
+                // 创建从剧本节点到分镜组节点的连线
+                if(shotGroupNodeId) {
+                  state.connections.push({
+                    id: state.nextConnId++,
+                    from: id,
+                    to: shotGroupNodeId
+                  });
+                }
               });
               
+              renderConnections();
               renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }
@@ -4826,14 +5186,15 @@
         const duration = shot.time_range || '未知';
         return `
           <div style="padding: 8px; background: #f8f9fa; border-radius: 6px; margin-bottom: 6px; font-size: 12px;">
-            <div style="font-weight: 700; margin-bottom: 4px;">${shot.shot_id} - ${shot.description}</div>
-            <div style="color: #666; font-size: 11px;">时长: ${duration} | ${shot.shot_type} | ${shot.camera_movement}</div>
-            <div style="color: #666; font-size: 11px; margin-top: 2px;">起始画面: ${(shot.opening_frame_description || '').substring(0, 60)}...</div>
+            <div style="font-weight: 700; margin-bottom: 4px;">${escapeHtml(shot.shot_id || `镜头${idx+1}`)} - ${escapeHtml(shot.description || '')}</div>
+            <div style="color: #666; font-size: 11px;">时长: ${escapeHtml(duration)} | ${escapeHtml(shot.shot_type || '')} | ${escapeHtml(shot.camera_movement || '')}</div>
+            <div style="color: #666; font-size: 11px; margin-top: 2px;">起始画面: ${escapeHtml((shot.opening_frame_description || '').slice(0, 60))}...</div>
           </div>
         `;
       }).join('');
 
       el.innerHTML = `
+        <div class="port input" title="输入（连接剧本节点）"></div>
         <div class="port output" title="输出"></div>
         <div class="node-header">
           <div class="node-title">${node.title}</div>
@@ -4856,6 +5217,8 @@
       const headerEl = el.querySelector('.node-header');
       const deleteBtn = el.querySelector('.icon-btn');
       const detailBtn = el.querySelector('.shot-group-detail-btn');
+      const inputPort = el.querySelector('.port.input');
+      const outputPort = el.querySelector('.port.output');
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -4880,20 +5243,34 @@
         };
       });
 
+      inputPort.addEventListener('mouseup', (e) => {
+        if(state.connecting && state.connecting.fromId !== id){
+          const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
+          if(fromNode && fromNode.type === 'script'){
+            const exists = state.connections.some(c => c.from === state.connecting.fromId && c.to === id);
+            if(!exists){
+              state.connections.push({
+                id: state.nextConnId++,
+                from: state.connecting.fromId,
+                to: id
+              });
+              renderConnections();
+              try{ autoSaveWorkflow(); } catch(e){}
+            }
+          }
+        }
+        state.connecting = null;
+      });
+
+      outputPort.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+      });
+
       detailBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        // 显示详细信息
-        const detailText = JSON.stringify(node.data, null, 2);
-        const blob = new Blob([detailText], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${node.data.groupId}_detail.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        showToast('分镜组详情已下载', 'success');
+        openShotGroupModal(node.data);
       });
 
       canvasEl.appendChild(el);
@@ -5047,8 +5424,8 @@
       if(state.panning){
         const dx = e.clientX - state.panning.startX;
         const dy = e.clientY - state.panning.startY;
-        state.panX = state.panning.origPanX + dx;
-        state.panY = state.panning.origPanY + dy;
+        state.panX = Math.min(0, state.panning.origPanX + dx);
+        state.panY = Math.min(0, state.panning.origPanY + dy);
         applyTransform();
         renderImageConnections();
         // 更新删除按钮位置（如果有选中的连接线）
@@ -5062,8 +5439,8 @@
         if(!n) return;
         const dx = e.clientX - state.drag.startX;
         const dy = e.clientY - state.drag.startY;
-        n.x = state.drag.origX + dx;
-        n.y = state.drag.origY + dy;
+        n.x = Math.max(20, state.drag.origX + dx);
+        n.y = Math.max(20, state.drag.origY + dy);
         const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
         if(el){
           el.style.left = n.x + 'px';
@@ -5124,11 +5501,13 @@
 
         
         // 如果从图生视频节点拖拽，查找视频节点输入端口
-        if(fromNode && fromNode.type === 'image_to_video'){
+        // 如果从剧本节点拖拽，查找分镜组节点输入端口
+        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'script')){
           let nearestPort = null;
           let nearestDist = 50;
+          const targetType = fromNode.type === 'image_to_video' ? 'video' : 'shot_group';
           for(const node of state.nodes){
-            if(node.type !== 'video') continue;
+            if(node.type !== targetType) continue;
             const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
             if(!toEl) continue;
             const portEl = toEl.querySelector('.port.input');
@@ -5139,7 +5518,7 @@
             const dist = Math.sqrt(Math.pow(toX - portX, 2) + Math.pow(toY - portY, 2));
             if(dist < nearestDist){
               nearestDist = dist;
-              nearestPort = { nodeId: node.id };
+              nearestPort = { nodeId: node.id, x: portX, y: portY };
             }
           }
         }
@@ -5324,8 +5703,8 @@
       const canvasY = (clickY - MINIMAP_PADDING) / scale + minY;
       
       // 将该位置移动到视口中心
-      state.panX = -(canvasX - containerRect.width / state.zoom / 2) * state.zoom;
-      state.panY = -(canvasY - containerRect.height / state.zoom / 2) * state.zoom;
+      state.panX = Math.min(0, -(canvasX - containerRect.width / state.zoom / 2) * state.zoom);
+      state.panY = Math.min(0, -(canvasY - containerRect.height / state.zoom / 2) * state.zoom);
       
       applyTransform();
       renderConnections();
