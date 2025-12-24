@@ -1765,7 +1765,185 @@
         },
         {
           "id": "editor_018",
-          "name": "剧本解析-分镜组duration字段验证",
+          "name": "剧本节点拆分生成分镜组",
+          "description": "验证用户在剧本节点中输入剧本内容后，点击拆分按钮可以成功调用API并生成多个分镜组节点",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/parse-script",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "添加剧本节点",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加按钮",
+                "ref": "<添加按钮ref>"
+              },
+              "expected_result": "显示节点菜单",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "选择剧本节点",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "剧本节点菜单项",
+                "ref": "<剧本节点菜单ref>"
+              },
+              "expected_result": "画布上创建剧本节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "在剧本节点中输入剧本内容",
+              "mcp_tool": "mcp1_browser_type",
+              "mcp_params": {
+                "element": "剧本文本域",
+                "ref": "<剧本文本域ref>",
+                "text": "第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下，说：新的一天开始了。随后他望向窗外，听到鸟鸣与远处车辆声。第二幕：同一地点，阳光更强，小李放下杯子起身整理桌面，准备开始工作。"
+              },
+              "expected_result": "剧本内容显示在文本域中",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "点击拆分分镜组按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "拆分分镜组按钮",
+                "ref": "<拆分按钮ref>"
+              },
+              "expected_result": "按钮显示加载状态",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "等待API调用完成",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "拆分完成",
+                "time": 30
+              },
+              "expected_result": "显示成功提示或按钮恢复正常状态",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证生成的分镜组节点",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => {\n  const shotGroupNodes = document.querySelectorAll('.node[data-node-id]');\n  let shotGroupCount = 0;\n  shotGroupNodes.forEach(node => {\n    const title = node.querySelector('.node-title');\n    if (title && title.textContent.includes('分镜组')) {\n      shotGroupCount++;\n    }\n  });\n  return { ok: shotGroupCount > 0, shot_group_count: shotGroupCount };\n}"
+              },
+              "verify": "返回结果 ok=true 且 shot_group_count >= 1，表示至少生成了一个分镜组节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 7,
+              "action": "验证API请求",
+              "mcp_tool": "mcp1_browser_network_requests",
+              "mcp_params": {},
+              "verify": "存在 POST /api/parse-script 请求，响应状态为200，响应体包含 shot_groups 数组",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_019",
+          "name": "画布边界限制",
+          "description": "验证画布不允许向左边和上边无限拓展，所有节点坐标必须为正数，拖拽和平移时受到边界限制",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "添加一个测试节点",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加按钮",
+                "ref": "<添加按钮ref>"
+              },
+              "expected_result": "显示节点菜单",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "选择图片节点",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "图片节点菜单项",
+                "ref": "<图片节点菜单ref>"
+              },
+              "expected_result": "画布上创建图片节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "尝试将节点拖拽到左上角外",
+              "mcp_tool": "mcp1_browser_drag",
+              "mcp_params": {
+                "element": "节点",
+                "ref": "<节点ref>",
+                "target_x": -100,
+                "target_y": -100
+              },
+              "expected_result": "节点被限制在边界内",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证节点坐标非负",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => {\n  const nodes = document.querySelectorAll('.node[data-node-id]');\n  let allPositive = true;\n  let minX = Infinity;\n  let minY = Infinity;\n  nodes.forEach(node => {\n    const x = parseInt(node.style.left) || 0;\n    const y = parseInt(node.style.top) || 0;\n    if (x < 0 || y < 0) allPositive = false;\n    minX = Math.min(minX, x);\n    minY = Math.min(minY, y);\n  });\n  return { ok: allPositive, min_x: minX, min_y: minY };\n}"
+              },
+              "verify": "返回结果 ok=true，min_x >= 0 且 min_y >= 0",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "尝试向左上方平移画布",
+              "mcp_tool": "mcp1_browser_drag",
+              "mcp_params": {
+                "element": "画布",
+                "ref": "<画布ref>",
+                "target_x": 500,
+                "target_y": 500
+              },
+              "expected_result": "画布平移受到限制",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证画布平移限制",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => {\n  const state = window.state || {};\n  const panX = state.panX || 0;\n  const panY = state.panY || 0;\n  return { ok: panX <= 0 && panY <= 0, pan_x: panX, pan_y: panY };\n}"
+              },
+              "verify": "返回结果 ok=true，pan_x <= 0 且 pan_y <= 0（画布不能向右下方平移超出原点）",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_020",
+          "name": "剧本解析-duration字段验证",
           "description": "验证调用 /api/parse-script 解析剧本后，每个shot都包含duration字段（float类型，单位为秒）",
           "priority": "P0",
           "page_url": "/video-workflow",
@@ -1781,6 +1959,121 @@
                 "function": "async () => {\n  const script = '第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下，说：新的一天开始了。随后他望向窗外，听到鸟鸣与远处车辆声。第二幕：同一地点，阳光更强，小李放下杯子起身整理桌面。';\n  const resp = await fetch('/api/parse-script', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ script_content: script, max_group_duration: 15 })\n  });\n  const json = await resp.json();\n  const groups = json && json.data && json.data.shot_groups ? json.data.shot_groups : [];\n  let allShotsHaveDuration = true;\n  let shotCount = 0;\n  let missingDuration = [];\n  for (const group of groups) {\n    if (group.shots && Array.isArray(group.shots)) {\n      for (const shot of group.shots) {\n        shotCount++;\n        if (typeof shot.duration !== 'number' || shot.duration <= 0) {\n          allShotsHaveDuration = false;\n          missingDuration.push(shot.shot_id || 'unknown');\n        }\n      }\n    }\n  }\n  return { ok: allShotsHaveDuration, group_count: groups.length, shot_count: shotCount, missing_duration: missingDuration, response_code: json ? json.code : null };\n}"
               },
               "verify": "返回结果 ok=true；所有shot都必须包含有效的duration字段（数字类型且大于0）",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_021",
+          "name": "剧本解析-shot_groups结构验证",
+          "description": "验证API返回的数据必须使用shot_groups结构，不能直接返回shots数组",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/parse-script",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "调用API并验证返回结构",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const script = '第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下，说：新的一天开始了。';\n  const resp = await fetch('/api/parse-script', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ script_content: script, max_group_duration: 15 })\n  });\n  const json = await resp.json();\n  const data = json.data || {};\n  const hasShotGroups = Array.isArray(data.shot_groups);\n  const hasDirectShots = Array.isArray(data.shots);\n  let allGroupsHaveShots = true;\n  if (hasShotGroups) {\n    data.shot_groups.forEach(group => {\n      if (!Array.isArray(group.shots)) allGroupsHaveShots = false;\n    });\n  }\n  return { ok: hasShotGroups && !hasDirectShots && allGroupsHaveShots, has_shot_groups: hasShotGroups, has_direct_shots: hasDirectShots, all_groups_have_shots: allGroupsHaveShots };\n}"
+              },
+              "verify": "返回结果 ok=true，has_shot_groups=true，has_direct_shots=false，all_groups_have_shots=true",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_022",
+          "name": "剧本解析-opening_frame_description详细度验证",
+          "description": "验证每个shot的opening_frame_description字段包含详细的画面描述，长度足够且包含关键信息",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/parse-script",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "调用API并验证opening_frame_description详细度",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const script = '第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下，说：新的一天开始了。随后他望向窗外，听到鸟鸣与远处车辆声。';\n  const resp = await fetch('/api/parse-script', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ script_content: script, max_group_duration: 15 })\n  });\n  const json = await resp.json();\n  const groups = json && json.data && json.data.shot_groups ? json.data.shot_groups : [];\n  let allDetailed = true;\n  let minLength = Infinity;\n  let tooShort = [];\n  for (const group of groups) {\n    if (group.shots && Array.isArray(group.shots)) {\n      for (const shot of group.shots) {\n        const desc = shot.opening_frame_description || '';\n        const len = desc.length;\n        minLength = Math.min(minLength, len);\n        if (len < 50) {\n          allDetailed = false;\n          tooShort.push(shot.shot_id);\n        }\n      }\n    }\n  }\n  return { ok: allDetailed, min_length: minLength === Infinity ? 0 : minLength, too_short: tooShort };\n}"
+              },
+              "verify": "返回结果 ok=true，min_length >= 50（每个opening_frame_description至少50个字符）",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_023",
+          "name": "剧本解析-locations字段完整性验证",
+          "description": "验证locations包含必要字段：environment_sound和background_music",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/parse-script",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "调用API并验证locations字段",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const script = '第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下。';\n  const resp = await fetch('/api/parse-script', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ script_content: script, max_group_duration: 15 })\n  });\n  const json = await resp.json();\n  const locations = json && json.data && json.data.locations ? json.data.locations : [];\n  let allComplete = true;\n  let missingFields = [];\n  locations.forEach(loc => {\n    if (!loc.hasOwnProperty('environment_sound')) {\n      allComplete = false;\n      missingFields.push({ id: loc.id, missing: 'environment_sound' });\n    }\n    if (!loc.hasOwnProperty('background_music')) {\n      allComplete = false;\n      missingFields.push({ id: loc.id, missing: 'background_music' });\n    }\n  });\n  return { ok: allComplete, location_count: locations.length, missing_fields: missingFields };\n}"
+              },
+              "verify": "返回结果 ok=true，所有location都包含environment_sound和background_music字段",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_024",
+          "name": "剧本解析-shots字段完整性验证",
+          "description": "验证shots包含必要字段：scene_detail、environment_sound、background_music",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/parse-script",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "调用API并验证shots字段",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const script = '第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下。';\n  const resp = await fetch('/api/parse-script', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ script_content: script, max_group_duration: 15 })\n  });\n  const json = await resp.json();\n  const groups = json && json.data && json.data.shot_groups ? json.data.shot_groups : [];\n  let allComplete = true;\n  let missingFields = [];\n  for (const group of groups) {\n    if (group.shots && Array.isArray(group.shots)) {\n      for (const shot of group.shots) {\n        if (!shot.hasOwnProperty('scene_detail')) {\n          allComplete = false;\n          missingFields.push({ shot_id: shot.shot_id, missing: 'scene_detail' });\n        }\n        if (!shot.hasOwnProperty('environment_sound')) {\n          allComplete = false;\n          missingFields.push({ shot_id: shot.shot_id, missing: 'environment_sound' });\n        }\n        if (!shot.hasOwnProperty('background_music')) {\n          allComplete = false;\n          missingFields.push({ shot_id: shot.shot_id, missing: 'background_music' });\n        }\n      }\n    }\n  }\n  return { ok: allComplete, missing_fields: missingFields };\n}"
+              },
+              "verify": "返回结果 ok=true，所有shot都包含scene_detail、environment_sound、background_music字段",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_025",
+          "name": "剧本解析-ID格式规范验证",
+          "description": "验证返回的ID格式符合规范：shot_id(s001-s999)、character_id(char_001)、location_id(loc_001)、group_id(grp_001)",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/parse-script",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "调用API并验证ID格式",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const script = '第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下。';\n  const resp = await fetch('/api/parse-script', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ script_content: script, max_group_duration: 15 })\n  });\n  const json = await resp.json();\n  const data = json.data || {};\n  let allValid = true;\n  let invalidIds = [];\n  \n  (data.characters || []).forEach(char => {\n    if (!/^char_\\d{3}$/.test(char.id)) {\n      allValid = false;\n      invalidIds.push({ type: 'character', id: char.id });\n    }\n  });\n  \n  (data.locations || []).forEach(loc => {\n    if (!/^loc_\\d{3}$/.test(loc.id)) {\n      allValid = false;\n      invalidIds.push({ type: 'location', id: loc.id });\n    }\n  });\n  \n  (data.shot_groups || []).forEach(group => {\n    if (!/^grp_\\d{3}$/.test(group.group_id)) {\n      allValid = false;\n      invalidIds.push({ type: 'group', id: group.group_id });\n    }\n    (group.shots || []).forEach(shot => {\n      if (!/^s\\d{3}$/.test(shot.shot_id) && !/^shot_\\d{3}$/.test(shot.shot_id)) {\n        allValid = false;\n        invalidIds.push({ type: 'shot', id: shot.shot_id });\n      }\n    });\n  });\n  \n  return { ok: allValid, invalid_ids: invalidIds };\n}"
+              },
+              "verify": "返回结果 ok=true，所有ID格式符合规范",
               "pass": false,
               "remark": ""
             }
