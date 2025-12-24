@@ -4663,16 +4663,850 @@
           ]
         }
       ]
+    },
+    {
+      "id": "world_management",
+      "name": "世界管理模块",
+      "description": "工作流编辑器中的世界创建、选择、节点添加功能测试",
+      "features": [
+        {
+          "id": "world_001",
+          "name": "创建世界功能",
+          "description": "验证用户可以通过模态框创建新世界，输入世界名称和描述后保存成功",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/worlds/create",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "获取页面快照找到世界按钮",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "页面包含「世界」按钮，记录其 ref",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击世界按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "世界按钮",
+                "ref": "<世界按钮ref>"
+              },
+              "expected_result": "弹出世界选择下拉框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "获取下拉框快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "下拉框包含「新建世界」选项，记录其 ref",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "点击新建世界选项",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "新建世界选项",
+                "ref": "<新建世界选项ref>"
+              },
+              "expected_result": "弹出创建世界模态框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "等待模态框出现",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "新建世界",
+                "time": 3
+              },
+              "expected_result": "模态框标题可见",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "填写世界信息",
+              "mcp_tool": "mcp1_browser_fill_form",
+              "mcp_params": {
+                "fields": [
+                  {
+                    "name": "世界名称",
+                    "type": "textbox",
+                    "ref": "<名称输入框ref>",
+                    "value": "测试世界"
+                  },
+                  {
+                    "name": "世界描述",
+                    "type": "textbox",
+                    "ref": "<描述输入框ref>",
+                    "value": "这是一个自动化测试创建的世界"
+                  }
+                ]
+              },
+              "expected_result": "表单字段填写完成",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 7,
+              "action": "点击保存按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "保存按钮",
+                "ref": "<保存按钮ref>"
+              },
+              "expected_result": "发起创建请求",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 8,
+              "action": "等待创建成功",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "创建成功",
+                "time": 5
+              },
+              "expected_result": "显示成功提示",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 9,
+              "action": "验证世界已选中",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "世界按钮显示「测试世界」",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "world_002",
+          "name": "选择已有世界",
+          "description": "验证用户可以从下拉框选择已创建的世界",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "GET /api/worlds/list",
+          "pass": false,
+          "remark": "",
+          "prerequisites": ["world_001"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击世界按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "世界按钮",
+                "ref": "<世界按钮ref>"
+              },
+              "expected_result": "弹出世界选择下拉框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "获取下拉框快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "下拉框显示已创建的世界列表",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "选择世界",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "世界选项",
+                "ref": "<世界选项ref>"
+              },
+              "expected_result": "世界被选中，下拉框关闭",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证世界已选中",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "世界按钮显示选中的世界名称",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "world_003",
+          "name": "添加世界节点到画布",
+          "description": "验证选中世界后可以将世界节点添加到画布，节点显示世界信息",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "prerequisites": ["world_002"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击添加按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加按钮",
+                "ref": "<添加按钮ref>"
+              },
+              "expected_result": "弹出添加菜单",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "获取菜单快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "菜单包含「世界」选项，记录其 ref",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "点击世界选项",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "世界菜单项",
+                "ref": "<世界选项ref>"
+              },
+              "expected_result": "在画布上创建世界节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "等待节点创建",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "世界",
+                "time": 3
+              },
+              "expected_result": "节点标题出现",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "获取节点快照验证结构",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "节点包含：「世界」标题、世界名称、世界描述、输出端口",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "character_management",
+      "name": "角色管理模块",
+      "description": "工作流编辑器中的角色创建、编辑、节点添加、音频试听功能测试",
+      "features": [
+        {
+          "id": "character_001",
+          "name": "创建角色功能",
+          "description": "验证用户可以创建新角色，输入角色信息、上传参考图和参考音频后保存成功",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/characters/create",
+          "pass": false,
+          "remark": "",
+          "prerequisites": ["world_001"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击角色按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "角色按钮",
+                "ref": "<角色按钮ref>"
+              },
+              "expected_result": "弹出角色选择下拉框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击新建角色选项",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "新建角色选项",
+                "ref": "<新建角色选项ref>"
+              },
+              "expected_result": "弹出创建角色模态框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "填写角色基本信息",
+              "mcp_tool": "mcp1_browser_fill_form",
+              "mcp_params": {
+                "fields": [
+                  {
+                    "name": "角色名称",
+                    "type": "textbox",
+                    "ref": "<名称输入框ref>",
+                    "value": "测试角色"
+                  },
+                  {
+                    "name": "年龄",
+                    "type": "textbox",
+                    "ref": "<年龄输入框ref>",
+                    "value": "25"
+                  },
+                  {
+                    "name": "身份",
+                    "type": "textbox",
+                    "ref": "<身份输入框ref>",
+                    "value": "程序员"
+                  },
+                  {
+                    "name": "性格",
+                    "type": "textbox",
+                    "ref": "<性格输入框ref>",
+                    "value": "开朗、乐观"
+                  }
+                ]
+              },
+              "expected_result": "表单字段填写完成",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "上传参考图",
+              "mcp_tool": "mcp1_browser_file_upload",
+              "mcp_params": {
+                "paths": ["g:/code/comfyui_server/test_assets/character_image.jpg"]
+              },
+              "expected_result": "图片上传成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "上传参考音频",
+              "mcp_tool": "mcp1_browser_file_upload",
+              "mcp_params": {
+                "paths": ["g:/code/comfyui_server/test_assets/character_voice.mp3"]
+              },
+              "expected_result": "音频上传成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证音频预览播放器显示",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "音频预览区域可见，显示音频播放器控件",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 7,
+              "action": "点击保存按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "保存按钮",
+                "ref": "<保存按钮ref>"
+              },
+              "expected_result": "发起创建请求",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 8,
+              "action": "等待创建成功",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "创建成功",
+                "time": 5
+              },
+              "expected_result": "显示成功提示",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "character_002",
+          "name": "音频试听功能",
+          "description": "验证用户在创建角色时选择音频文件后可以试听音频",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "打开创建角色模态框",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "新建角色按钮",
+                "ref": "<新建角色按钮ref>"
+              },
+              "expected_result": "模态框打开",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "选择音频文件",
+              "mcp_tool": "mcp1_browser_file_upload",
+              "mcp_params": {
+                "paths": ["g:/code/comfyui_server/test_assets/test_voice.mp3"]
+              },
+              "expected_result": "音频文件选择成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "验证音频播放器自动显示",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "音频预览区域从隐藏变为可见，包含audio元素和播放控件",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证音频可以播放",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const audio = document.getElementById('createCharacterVoicePreviewAudio'); return { hasSource: !!audio.src, canPlay: audio.readyState >= 2 }; }"
+              },
+              "verify": "音频元素有src且readyState表示可以播放",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "character_003",
+          "name": "编辑角色功能",
+          "description": "验证用户可以编辑已创建的角色，修改信息、更换参考图和音频",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "PUT /api/characters/update",
+          "pass": false,
+          "remark": "",
+          "prerequisites": ["character_001"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "添加角色节点到画布",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加角色节点",
+                "ref": "<添加角色ref>"
+              },
+              "expected_result": "角色节点创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击角色节点的编辑按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "编辑按钮",
+                "ref": "<编辑按钮ref>"
+              },
+              "expected_result": "弹出编辑角色模态框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "验证表单预填充",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "模态框显示「编辑角色」标题，表单字段预填充角色信息，参考图和音频预览显示",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "修改角色性格",
+              "mcp_tool": "mcp1_browser_type",
+              "mcp_params": {
+                "element": "性格输入框",
+                "ref": "<性格输入框ref>",
+                "text": "沉稳、内敛"
+              },
+              "expected_result": "性格字段更新",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "更换参考音频",
+              "mcp_tool": "mcp1_browser_file_upload",
+              "mcp_params": {
+                "paths": ["g:/code/comfyui_server/test_assets/new_voice.mp3"]
+              },
+              "expected_result": "新音频文件选择成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证音频预览更新",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const audio = document.getElementById('editCharacterVoicePreviewAudio'); return { srcChanged: audio.src.includes('blob:'), visible: document.getElementById('editCharacterVoicePreview').style.display !== 'none' }; }"
+              },
+              "verify": "音频播放器src更新为新的blob URL，预览区域保持可见",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 7,
+              "action": "点击保存按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "保存按钮",
+                "ref": "<保存按钮ref>"
+              },
+              "expected_result": "发起更新请求",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 8,
+              "action": "等待更新成功",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "更新成功",
+                "time": 5
+              },
+              "expected_result": "显示成功提示，模态框关闭",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "character_004",
+          "name": "添加角色节点到画布",
+          "description": "验证选中角色后可以将角色节点添加到画布，节点显示角色信息和编辑按钮",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "prerequisites": ["character_001"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击添加按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加按钮",
+                "ref": "<添加按钮ref>"
+              },
+              "expected_result": "弹出添加菜单",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击角色选项",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "角色菜单项",
+                "ref": "<角色选项ref>"
+              },
+              "expected_result": "在画布上创建角色节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "获取节点快照验证结构",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "节点包含：「角色」标题、角色名称、年龄、身份、性格、行为习惯、参考图预览、编辑按钮、输出端口",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证编辑按钮存在",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "节点包含编辑按钮（铅笔图标）",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "location_management",
+      "name": "场景管理模块",
+      "description": "工作流编辑器中的场景创建、编辑、节点添加功能测试",
+      "features": [
+        {
+          "id": "location_001",
+          "name": "创建场景功能",
+          "description": "验证用户可以创建新场景，输入场景信息后保存成功",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/locations/create",
+          "pass": false,
+          "remark": "",
+          "prerequisites": ["world_001"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击场景按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "场景按钮",
+                "ref": "<场景按钮ref>"
+              },
+              "expected_result": "弹出场景选择下拉框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击新建场景选项",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "新建场景选项",
+                "ref": "<新建场景选项ref>"
+              },
+              "expected_result": "弹出创建场景模态框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "填写场景信息",
+              "mcp_tool": "mcp1_browser_fill_form",
+              "mcp_params": {
+                "fields": [
+                  {
+                    "name": "场景名称",
+                    "type": "textbox",
+                    "ref": "<名称输入框ref>",
+                    "value": "测试咖啡厅"
+                  },
+                  {
+                    "name": "场景描述",
+                    "type": "textbox",
+                    "ref": "<描述输入框ref>",
+                    "value": "一个温馨的咖啡厅，有柔和的灯光和舒适的座位"
+                  },
+                  {
+                    "name": "环境音效",
+                    "type": "textbox",
+                    "ref": "<环境音效输入框ref>",
+                    "value": "咖啡机声、轻柔的交谈声"
+                  },
+                  {
+                    "name": "背景音乐",
+                    "type": "textbox",
+                    "ref": "<背景音乐输入框ref>",
+                    "value": "轻音乐"
+                  }
+                ]
+              },
+              "expected_result": "表单字段填写完成",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "点击保存按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "保存按钮",
+                "ref": "<保存按钮ref>"
+              },
+              "expected_result": "发起创建请求",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "等待创建成功",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "创建成功",
+                "time": 5
+              },
+              "expected_result": "显示成功提示",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "location_002",
+          "name": "编辑场景功能",
+          "description": "验证用户可以编辑已创建的场景，修改场景信息",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "PUT /api/locations/update",
+          "pass": false,
+          "remark": "",
+          "prerequisites": ["location_001"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "添加场景节点到画布",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加场景节点",
+                "ref": "<添加场景ref>"
+              },
+              "expected_result": "场景节点创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击场景节点的编辑按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "编辑按钮",
+                "ref": "<编辑按钮ref>"
+              },
+              "expected_result": "弹出编辑场景模态框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "验证表单预填充",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "模态框显示「编辑场景」标题，表单字段预填充场景信息",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "修改场景描述",
+              "mcp_tool": "mcp1_browser_type",
+              "mcp_params": {
+                "element": "描述输入框",
+                "ref": "<描述输入框ref>",
+                "text": "一个现代化的咖啡厅，装修简约时尚"
+              },
+              "expected_result": "描述字段更新",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "点击保存按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "保存按钮",
+                "ref": "<保存按钮ref>"
+              },
+              "expected_result": "发起更新请求",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "等待更新成功",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "更新成功",
+                "time": 5
+              },
+              "expected_result": "显示成功提示，模态框关闭",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "location_003",
+          "name": "添加场景节点到画布",
+          "description": "验证选中场景后可以将场景节点添加到画布，节点显示场景信息和编辑按钮",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "prerequisites": ["location_001"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "点击添加按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加按钮",
+                "ref": "<添加按钮ref>"
+              },
+              "expected_result": "弹出添加菜单",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击场景选项",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "场景菜单项",
+                "ref": "<场景选项ref>"
+              },
+              "expected_result": "在画布上创建场景节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "获取节点快照验证结构",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "节点包含：「场景」标题、场景名称、场景描述、环境音效、背景音乐、编辑按钮、输出端口",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        }
+      ]
     }
   ],
   "summary": {
-    "total_modules": 7,
-    "total_features": 65,
+    "total_modules": 10,
+    "total_features": 78,
     "priority_breakdown": {
-      "P0": 23,
-      "P1": 22,
+      "P0": 32,
+      "P1": 24,
       "P2": 8
     },
+    "new_modules_added": "新增世界管理、角色管理、场景管理三个模块，共13个测试用例",
+    "latest_update": "2024-12-24",
+    "coverage": "覆盖用户认证、工作流列表、工作流编辑器、节点操作、剧本解析、时间轴、世界管理、角色管理、场景管理等核心功能",
     "pass_level": "每个 test_step 都有独立的 pass 字段，智能体可以逐步验证每个小步骤",
     "note": "所有 test_step 的 pass 字段均设置为 false，智能体完成每个步骤后将其设置为 true"
   },
