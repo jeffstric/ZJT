@@ -25,7 +25,33 @@ python test_navigator.py --list
 
 # 获取下一个待测试项
 python test_navigator.py
+
+# 获取下一个待测试项（跳过已处理的测试）
+python test_navigator.py --skip-processed
 ```
+
+## is_processed 字段说明
+
+测试用例有两个状态字段：
+- **pass**: 表示测试是否成功通过
+- **is_processed**: 表示测试是否已经执行过（无论成功还是失败）
+
+### 标记测试状态
+
+**必须同时设置 `--set-pass` 和 `--set-processed` 两个参数：**
+
+```bash
+# 标记功能为通过且已处理
+python test_navigator.py --mark node_005 --set-pass true --set-processed true
+
+# 标记功能为失败但已处理（跳过后续测试）
+python test_navigator.py --mark node_005 --set-pass false --set-processed true
+
+# 获取下一个测试时跳过已处理的项
+python test_navigator.py --skip-processed
+```
+
+**注意**: 使用 `--skip-processed` 可以跳过 `is_processed=true` 的测试，而不必将 `pass` 设置为 `true`。这样可以区分"测试通过"和"测试已执行但跳过"两种状态。
 
 ## 你的职责
 
@@ -37,7 +63,7 @@ python test_navigator.py
 
 ## 执行流程
 
-**🔄 自动循环执行，不要停止！**
+**🔄 通过 Task 调度测试工程师，自动循环！**
 
 ```
 LOOP_START:
@@ -45,13 +71,15 @@ LOOP_START:
     2. 如果 100% 完成 → 生成报告并停止
     3. 如果 连续失败超过5次 → 报告错误并停止
     4. python test_navigator.py  # 获取下一个待测试功能
-    5. 直接执行该功能的所有测试步骤（使用 MCP 工具）
-    6. 标记完成：python test_navigator.py --pass <feature_id>
+    5. 创建 Task 分配给测试工程师：
+       Task("测试功能 <feature_id>", "/test-module <feature_id>")
+    6. 等待 Task 完成，收到测试工程师返回的结果
     7. 不要输出总结！不要询问用户！
-    8. GOTO LOOP_START  # 立即继续下一个功能
+    8. GOTO LOOP_START  # 立即创建下一个 Task
 ```
 
-**关键：步骤7和8是强制的！完成一个功能后必须立即继续下一个，不要停下来！**
+**重要：项目经理不要自己执行测试！通过 Task 分配给测试工程师！**
+**Task 完成后，项目经理会自动收到结果，然后继续循环创建下一个 Task！**
 
 ## 🛑 何时停止
 
@@ -113,7 +141,7 @@ python generate_report.py
 
 ## 开始调度
 
-**立即开始自动循环测试！**
+**立即开始自动循环调度！**
 
 ```bash
 # 1. 检查进度
@@ -122,14 +150,18 @@ python test_navigator.py --status
 # 2. 获取下一个功能
 python test_navigator.py
 
-# 3. 执行测试步骤（使用 MCP 工具）
+# 3. 创建 Task 分配给测试工程师
+Task("测试功能 <feature_id>", "/test-module <feature_id>")
 
-# 4. 标记完成
-python test_navigator.py --pass <feature_id>
+# 4. 等待 Task 完成（测试工程师会返回结果）
 
-# 5. 不要停！立即回到步骤1继续下一个功能
+# 5. 收到结果后，立即回到步骤1继续下一个功能
 ```
 
-**记住：这是一个无限循环，只有在达到停止条件时才退出！**
+**记住：**
+- 项目经理只负责调度，不直接执行测试
+- 通过 Task 分配给测试工程师执行
+- Task 完成后自动收到结果，继续循环
+- 只有在达到停止条件时才退出！
 
 $ARGUMENTS

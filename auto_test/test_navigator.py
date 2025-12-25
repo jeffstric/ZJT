@@ -12,7 +12,9 @@
     python test_navigator.py --feature node_005 # 显示指定功能的详细信息
     python test_navigator.py --pass node_005 1  # 标记 node_005 的步骤1为通过
     python test_navigator.py --pass node_005    # 标记 node_005 的所有步骤为通过
-    python test_navigator.py --pass node_005 1 --remark "测试通过，界面显示正常"  # 标记步骤为通过并添加备注
+    python test_navigator.py --mark node_005 1 --set-pass true --set-processed true  # 标记步骤状态
+    python test_navigator.py --mark node_005 --set-pass false --set-processed true    # 标记整个功能为已处理但未通过
+    python test_navigator.py --skip-processed   # 跳过已处理(is_processed=true)的测试
 """
 
 import json
@@ -88,8 +90,13 @@ class TestNavigator:
 
         return modules
 
-    def get_next_test(self, module_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """获取下一个待测试项"""
+    def get_next_test(self, module_id: Optional[str] = None, skip_processed: bool = False) -> Optional[Dict[str, Any]]:
+        """获取下一个待测试项
+
+        Args:
+            module_id: 指定模块ID，只查找该模块
+            skip_processed: 如果为True，跳过is_processed=True的测试（即使pass=False）
+        """
         data, session_file = self.load_test_data()
 
         for module in data.get("modules", []):
@@ -100,10 +107,16 @@ class TestNavigator:
             for feature in module.get("features", []):
                 if feature.get("pass", False):
                     continue
+                # 如果启用skip_processed，跳过已处理的feature
+                if skip_processed and feature.get("is_processed", False):
+                    continue
 
                 # 找到第一个未通过的步骤
                 for step in feature.get("test_steps", []):
                     if not step.get("pass", False):
+                        # 如果启用skip_processed，跳过已处理的step
+                        if skip_processed and step.get("is_processed", False):
+                            continue
                         return {
                             "module_id": module.get("id"),
                             "module_name": module.get("name"),
@@ -144,11 +157,19 @@ class TestNavigator:
 
         return None
 
-    def mark_step_passed(self, feature_id: str, step_num: Optional[int] = None, remark: Optional[str] = None) -> bool:
-        """标记指定步骤或整个功能为通过"""
+    def mark_step(self, feature_id: str, set_pass: bool, set_processed: bool, step_num: Optional[int] = None, remark: Optional[str] = None) -> bool:
+        """标记指定步骤或整个功能的状态
+
+        Args:
+            feature_id: 功能ID
+            set_pass: 必填，设置pass字段的值
+            set_processed: 必填，设置is_processed字段的值
+            step_num: 可选，步骤号。不传则标记整个功能
+            remark: 可选，备注信息
+        """
         session_file = self._get_latest_session()
         if not session_file:
-            print("❌ 错误: 没有找到会话文件")
+            print("[ERROR] 没有找到会话文件")
             return False
 
         with open(session_file, 'r', encoding='utf-8') as f:
@@ -163,12 +184,16 @@ class TestNavigator:
                         # 标记单个步骤
                         for step in feature.get("test_steps", []):
                             if step.get("step") == step_num:
-                                step["pass"] = True
+                                step["pass"] = set_pass
+                                step["is_processed"] = set_processed
                                 if remark:
                                     step["remark"] = remark
-                                    print(f"[PASS] 已标记 {feature_id} 步骤 {step_num} 为通过，备注: {remark}")
-                                else:
-                                    print(f"[PASS] 已标记 {feature_id} 步骤 {step_num} 为通过")
+                                pass_str = "PASS" if set_pass else "FAIL"
+                                proc_str = "PROCESSED" if set_processed else "UNPROCESSED"
+                                msg = f"[MARK] 已标记 {feature_id} 步骤 {step_num}: pass={set_pass}, is_processed={set_processed}"
+                                if remark:
+                                    msg += f", 备注: {remark}"
+                                print(msg)
                                 break
                         else:
                             print(f"[ERROR] 未找到步骤 {step_num}")
@@ -176,19 +201,26 @@ class TestNavigator:
                     else:
                         # 标记所有步骤
                         for step in feature.get("test_steps", []):
-                            step["pass"] = True
+                            step["pass"] = set_pass
+                            step["is_processed"] = set_processed
                             if remark:
                                 step["remark"] = remark
+                        msg = f"[MARK] 已标记 {feature_id} 的所有步骤: pass={set_pass}, is_processed={set_processed}"
                         if remark:
-                            print(f"[PASS] 已标记 {feature_id} 的所有步骤为通过，备注: {remark}")
-                        else:
-                            print(f"[PASS] 已标记 {feature_id} 的所有步骤为通过")
+                            msg += f", 备注: {remark}"
+                        print(msg)
 
                     # 检查是否所有步骤都通过，如果是则标记功能为通过
                     all_passed = all(s.get("pass", False) for s in feature.get("test_steps", []))
                     if all_passed:
                         feature["pass"] = True
-                        print(f"[DONE] 功能 {feature_id} 已全部完成！")
+                        print(f"[DONE] 功能 {feature_id} 已全部通过!")
+
+                    # 检查是否所有步骤都已处理
+                    all_processed = all(s.get("is_processed", False) for s in feature.get("test_steps", []))
+                    if all_processed:
+                        feature["is_processed"] = True
+                        print(f"[INFO] 功能 {feature_id} 已全部标记为已处理")
                     break
             if found:
                 break
@@ -203,17 +235,6 @@ class TestNavigator:
 
         print(f"[SAVE] 已更新会话文件: {session_file}")
         return True
-
-    def mark_current_step_passed(self, module_id: Optional[str] = None, remark: Optional[str] = None) -> bool:
-        """标记当前待测试的步骤为通过"""
-        next_test = self.get_next_test(module_id)
-        if not next_test:
-            print("[DONE] 没有待测试的步骤")
-            return False
-
-        feature_id = next_test['feature_id']
-        step_num = next_test['step_index']
-        return self.mark_step_passed(feature_id, step_num, remark)
 
     def get_status(self) -> Dict[str, Any]:
         """获取整体测试进度统计"""
@@ -279,9 +300,9 @@ def print_modules(navigator: TestNavigator):
     print("=" * 60 + "\n")
 
 
-def print_next_test(navigator: TestNavigator, module_id: Optional[str] = None):
+def print_next_test(navigator: TestNavigator, module_id: Optional[str] = None, skip_processed: bool = False):
     """打印下一个待测试项"""
-    next_test = navigator.get_next_test(module_id)
+    next_test = navigator.get_next_test(module_id, skip_processed)
 
     if not next_test:
         if module_id:
@@ -423,8 +444,9 @@ def main():
   python test_navigator.py --module auth      # 筛选指定模块的下一个测试
   python test_navigator.py --status           # 显示测试进度统计
   python test_navigator.py --feature node_005 # 显示指定功能的详细信息
-  python test_navigator.py --pass node_005 1 --remark "界面显示正常" # 标记步骤通过并添加备注
-  python test_navigator.py --pass-current --module auth --remark "登录功能正常" # 标记当前步骤通过并添加备注
+  python test_navigator.py --mark node_005 1 --set-pass true --set-processed true  # 标记步骤状态
+  python test_navigator.py --mark node_005 --set-pass false --set-processed true   # 标记整个功能
+  python test_navigator.py --skip-processed   # 跳过已处理的测试
         """
     )
 
@@ -432,9 +454,11 @@ def main():
     parser.add_argument('--module', '-m', type=str, help='筛选指定模块的下一个测试')
     parser.add_argument('--status', '-s', action='store_true', help='显示测试进度统计')
     parser.add_argument('--feature', '-f', type=str, help='显示指定功能的详细信息')
-    parser.add_argument('--pass', '-p', nargs='+', metavar=('FEATURE_ID', 'STEP'), dest='mark_pass', help='标记步骤为通过。用法: --pass feature_id [step_num]')
-    parser.add_argument('--pass-current', '-c', action='store_true', help='标记当前待测试的步骤为通过')
-    parser.add_argument('--remark', '-r', type=str, help='为标记通过的步骤添加备注信息')
+    parser.add_argument('--mark', nargs='+', metavar=('FEATURE_ID', 'STEP'), help='标记步骤状态。用法: --mark feature_id [step_num]，必须配合 --set-pass 和 --set-processed 使用')
+    parser.add_argument('--set-pass', type=str, choices=['true', 'false'], help='必填，设置pass字段的值')
+    parser.add_argument('--set-processed', type=str, choices=['true', 'false'], help='必填，设置is_processed字段的值')
+    parser.add_argument('--remark', '-r', type=str, help='为标记的步骤添加备注信息')
+    parser.add_argument('--skip-processed', action='store_true', help='跳过已处理(is_processed=True)的测试项')
 
     args = parser.parse_args()
 
@@ -447,22 +471,23 @@ def main():
             print_status(navigator)
         elif args.feature:
             print_feature_detail(navigator, args.feature)
-        elif args.mark_pass:
-            feature_id = args.mark_pass[0]
-            step_num = int(args.mark_pass[1]) if len(args.mark_pass) > 1 else None
-            remark = args.remark
-            navigator.mark_step_passed(feature_id, step_num, remark)
-        elif args.pass_current:
-            if not args.module:
-                print("[ERROR] --pass-current 必须配合 --module 使用")
-                print("   用法: python test_navigator.py --pass-current --module <模块ID>")
+        elif args.mark:
+            # 检查必填参数
+            if args.set_pass is None or args.set_processed is None:
+                print("[ERROR] --mark 必须配合 --set-pass 和 --set-processed 使用")
+                print("   用法: python test_navigator.py --mark <feature_id> [step_num] --set-pass <true|false> --set-processed <true|false>")
+                print("   示例: python test_navigator.py --mark node_005 1 --set-pass true --set-processed true")
                 sys.exit(1)
+            feature_id = args.mark[0]
+            step_num = int(args.mark[1]) if len(args.mark) > 1 else None
+            set_pass = args.set_pass.lower() == 'true'
+            set_processed = args.set_processed.lower() == 'true'
             remark = args.remark
-            navigator.mark_current_step_passed(args.module, remark)
+            navigator.mark_step(feature_id, set_pass, set_processed, step_num, remark)
         elif args.module:
-            print_next_test(navigator, args.module)
+            print_next_test(navigator, args.module, args.skip_processed)
         else:
-            print_next_test(navigator)
+            print_next_test(navigator, skip_processed=args.skip_processed)
     except FileNotFoundError as e:
         print(f"\n[ERROR] 找不到测试文件 - {e}")
         sys.exit(1)
