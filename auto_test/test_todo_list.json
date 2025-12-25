@@ -2078,6 +2078,294 @@
               "remark": ""
             }
           ]
+        },
+        {
+          "id": "editor_026",
+          "name": "剧本解析-场景自动匹配功能验证",
+          "description": "验证剧本解析时自动匹配数据库场景，每个shot包含db_location_id、db_location_pic、location_name字段",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/parse-script",
+          "pass": false,
+          "remark": "测试场景匹配的核心逻辑，包括直接匹配、父场景匹配、权限验证",
+          "prerequisites": ["需要先创建测试用的世界和场景数据"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "准备测试数据-创建世界",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const resp = await fetch('/api/world', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json', 'Authorization': localStorage.getItem('auth_token'), 'X-User-Id': localStorage.getItem('user_id') },\n    body: JSON.stringify({ name: '测试世界_场景匹配', description: '用于测试场景自动匹配功能' })\n  });\n  const json = await resp.json();\n  window.testWorldId = json.data?.id;\n  return { ok: json.code === 0, world_id: window.testWorldId };\n}"
+              },
+              "verify": "成功创建测试世界，返回world_id",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "准备测试数据-创建根场景",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const resp = await fetch('/api/location', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json', 'Authorization': localStorage.getItem('auth_token'), 'X-User-Id': localStorage.getItem('user_id') },\n    body: JSON.stringify({ world_id: window.testWorldId, name: '测试客厅', description: '用于测试的客厅场景', parent_id: null, reference_image: 'http://example.com/living_room.jpg' })\n  });\n  const json = await resp.json();\n  window.testLocationId = json.data?.id;\n  return { ok: json.code === 0, location_id: window.testLocationId };\n}"
+              },
+              "verify": "成功创建根场景，返回location_id",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "调用剧本解析API",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const script = '第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下。';\n  const resp = await fetch('/api/parse-script', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json', 'Authorization': localStorage.getItem('auth_token'), 'X-User-Id': localStorage.getItem('user_id') },\n    body: JSON.stringify({ script_content: script, max_group_duration: 15, world_id: window.testWorldId })\n  });\n  const json = await resp.json();\n  window.testParsedData = json.data;\n  return { ok: json.code === 0, data: json.data };\n}"
+              },
+              "verify": "剧本解析成功，返回shot_groups和locations数据",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证场景匹配字段存在",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const data = window.testParsedData;\n  if (!data || !data.shot_groups || data.shot_groups.length === 0) {\n    return { ok: false, error: '没有shot_groups数据' };\n  }\n  \n  const firstGroup = data.shot_groups[0];\n  if (!firstGroup.shots || firstGroup.shots.length === 0) {\n    return { ok: false, error: '没有shots数据' };\n  }\n  \n  const firstShot = firstGroup.shots[0];\n  const hasFields = 'db_location_id' in firstShot && 'db_location_pic' in firstShot && 'location_name' in firstShot;\n  \n  return {\n    ok: hasFields,\n    shot_data: {\n      db_location_id: firstShot.db_location_id,\n      db_location_pic: firstShot.db_location_pic,\n      location_name: firstShot.location_name,\n      location_id: firstShot.location_id\n    }\n  };\n}"
+              },
+              "verify": "每个shot包含db_location_id、db_location_pic、location_name字段",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "验证场景匹配逻辑正确性",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  const data = window.testParsedData;\n  const locations = data.locations || [];\n  const shots = data.shot_groups[0].shots || [];\n  \n  let matchResults = [];\n  for (const shot of shots) {\n    const location = locations.find(loc => loc.id === shot.location_id);\n    const hasDbId = location && location.location_db_id === window.testLocationId;\n    const shotHasMatch = shot.db_location_id === window.testLocationId;\n    \n    matchResults.push({\n      shot_id: shot.shot_id,\n      location_id: shot.location_id,\n      expected_match: hasDbId,\n      actual_match: shotHasMatch,\n      db_location_id: shot.db_location_id,\n      location_name: shot.location_name\n    });\n  }\n  \n  const allCorrect = matchResults.every(r => r.expected_match === r.actual_match);\n  return { ok: allCorrect, results: matchResults };\n}"
+              },
+              "verify": "场景匹配逻辑正确，匹配到的场景ID与预期一致",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "清理测试数据",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "async () => {\n  await fetch(`/api/location/${window.testLocationId}`, {\n    method: 'DELETE',\n    headers: { 'Authorization': localStorage.getItem('auth_token'), 'X-User-Id': localStorage.getItem('user_id') }\n  });\n  await fetch(`/api/world/${window.testWorldId}`, {\n    method: 'DELETE',\n    headers: { 'Authorization': localStorage.getItem('auth_token'), 'X-User-Id': localStorage.getItem('user_id') }\n  });\n  return { ok: true };\n}"
+              },
+              "verify": "测试数据清理完成",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_027",
+          "name": "分镜组节点-场景信息显示",
+          "description": "验证分镜组节点创建后，详情页面正确显示参考场景信息（图片、名称）",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "验证前端正确显示后端匹配的场景信息",
+          "prerequisites": ["editor_026"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建剧本节点并解析",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加按钮",
+                "ref": "<添加按钮ref>"
+              },
+              "expected_result": "弹出添加菜单",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "选择剧本节点",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "剧本选项",
+                "ref": "<剧本选项ref>"
+              },
+              "expected_result": "创建剧本节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "输入剧本内容",
+              "mcp_tool": "mcp1_browser_type",
+              "mcp_params": {
+                "element": "剧本内容输入框",
+                "ref": "<剧本输入框ref>",
+                "text": "第一幕：清晨，客厅。小李端着咖啡走向沙发并坐下。"
+              },
+              "expected_result": "剧本内容已输入",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "点击拆分分镜组按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "拆分分镜组按钮",
+                "ref": "<拆分按钮ref>"
+              },
+              "expected_result": "调用API解析剧本并创建分镜组节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "等待分镜组节点创建",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "分镜组",
+                "time": 10
+              },
+              "expected_result": "分镜组节点已创建",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "点击分镜组节点的详情按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "分镜组详情按钮",
+                "ref": "<详情按钮ref>"
+              },
+              "expected_result": "打开分镜组详情弹窗",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 7,
+              "action": "获取详情弹窗快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "弹窗包含：参考场景区域、场景卡片（带图片和名称）、分镜列表、参考场景列",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 8,
+              "action": "验证参考场景显示",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => {\n  const modal = document.getElementById('shotGroupModal');\n  if (!modal || !modal.classList.contains('show')) {\n    return { ok: false, error: '详情弹窗未打开' };\n  }\n  \n  const content = modal.querySelector('#shotGroupModalContent');\n  const hasReferenceSection = content.innerHTML.includes('参考场景');\n  const hasLocationImage = content.querySelector('img[alt*=\"参考\"]') !== null;\n  \n  return {\n    ok: hasReferenceSection && hasLocationImage,\n    has_reference_section: hasReferenceSection,\n    has_location_image: hasLocationImage\n  };\n}"
+              },
+              "verify": "参考场景区域正确显示，包含场景图片和名称",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_028",
+          "name": "分镜组节点-场景选择功能",
+          "description": "验证用户可以在分镜组详情页面和编辑页面选择/更改参考场景",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "验证场景选择弹窗和场景更新功能",
+          "prerequisites": ["editor_027"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "在详情页面点击选择场景按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "选择场景按钮",
+                "ref": "<选择场景按钮ref>"
+              },
+              "expected_result": "打开场景选择弹窗",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "获取场景选择弹窗快照",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "弹窗包含：世界选择下拉框、搜索输入框、场景列表",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "选择世界",
+              "mcp_tool": "mcp1_browser_select_option",
+              "mcp_params": {
+                "element": "世界选择下拉框",
+                "ref": "<世界选择ref>",
+                "values": ["<测试世界ID>"]
+              },
+              "expected_result": "加载该世界的场景列表",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "等待场景列表加载",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "测试客厅",
+                "time": 5
+              },
+              "expected_result": "场景列表显示场景卡片",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "验证场景卡片结构",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => {\n  const locationList = document.getElementById('locationList');\n  if (!locationList) return { ok: false, error: '场景列表未找到' };\n  \n  const cards = locationList.querySelectorAll('.location-card');\n  if (cards.length === 0) return { ok: false, error: '没有场景卡片' };\n  \n  const firstCard = cards[0];\n  const hasImage = firstCard.querySelector('img') !== null;\n  const hasName = firstCard.textContent.includes('测试客厅');\n  const hasId = firstCard.textContent.includes('ID:');\n  \n  return {\n    ok: hasImage && hasName && hasId,\n    card_count: cards.length,\n    has_image: hasImage,\n    has_name: hasName,\n    has_id: hasId\n  };\n}"
+              },
+              "verify": "场景卡片包含图片、名称、描述、ID",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "点击场景卡片选择场景",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "场景卡片",
+                "ref": "<场景卡片ref>"
+              },
+              "expected_result": "场景选择成功，弹窗关闭，详情页面更新",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 7,
+              "action": "等待成功提示",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "场景设置成功",
+                "time": 3
+              },
+              "expected_result": "显示成功提示",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 8,
+              "action": "验证场景已更新",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => {\n  const modal = document.getElementById('shotGroupModal');\n  const content = modal.querySelector('#shotGroupModalContent');\n  const locationImage = content.querySelector('img[alt*=\"参考\"]');\n  const hasUpdatedImage = locationImage && locationImage.src.includes('living_room');\n  \n  return {\n    ok: hasUpdatedImage,\n    image_src: locationImage ? locationImage.src : null\n  };\n}"
+              },
+              "verify": "参考场景已更新为选择的场景",
+              "pass": false,
+              "remark": ""
+            }
+          ]
         }
       ]
     },
@@ -5256,15 +5544,16 @@
   ],
   "summary": {
     "total_modules": 10,
-    "total_features": 78,
+    "total_features": 81,
     "priority_breakdown": {
-      "P0": 32,
+      "P0": 35,
       "P1": 24,
       "P2": 8
     },
     "new_modules_added": "新增世界管理、角色管理、场景管理三个模块，共13个测试用例",
-    "latest_update": "2024-12-24",
-    "coverage": "覆盖用户认证、工作流列表、工作流编辑器、节点操作、剧本解析、时间轴、世界管理、角色管理、场景管理等核心功能",
+    "latest_update": "2024-12-25",
+    "new_features_added": "新增场景自动匹配功能测试（editor_026）、分镜组场景信息显示测试（editor_027）、分镜组场景选择功能测试（editor_028）",
+    "coverage": "覆盖用户认证、工作流列表、工作流编辑器、节点操作、剧本解析、场景自动匹配、时间轴、世界管理、角色管理、场景管理等核心功能",
     "pass_level": "每个 test_step 都有独立的 pass 字段，智能体可以逐步验证每个小步骤",
     "note": "所有 test_step 的 pass 字段均设置为 false，智能体完成每个步骤后将其设置为 true"
   },
