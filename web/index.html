@@ -279,6 +279,13 @@
           </div>
           <button class="btn" onclick="location.href='/character_card.html'">打开</button>
         </div>
+        <div class="list-item">
+          <div>
+            <div style="font-weight:700">AI音频生成</div>
+            <div class="muted">输入文本生成语音，支持声音克隆和情感控制</div>
+          </div>
+          <button class="btn" @click="$router.push({name:'audio-generate'})">打开</button>
+        </div>
         <!-- <div class="list-item">
           <div>
             <div style="font-weight:700">小红书笔记修改</div>
@@ -290,6 +297,267 @@
     `,
   };
 
+
+  const AudioGenerate = {
+    name: 'AudioGenerate',
+    data() {
+      return {
+        text: '',
+        refAudioFile: null,
+        emoRefAudioFile: null,
+        emoText: '',
+        emoWeight: 1,
+        emoControlMethod: 0,
+        emoVec: [0, 0, 0, 0, 0, 0, 0, 0],
+        loading: false,
+        error: '',
+        result: null,
+        audioId: null,
+        status: '',
+        statusInterval: null,
+        authToken: '',
+      }
+    },
+    mounted() {
+      this.authToken = localStorage.getItem('auth_token') || '';
+    },
+    computed: {
+      canSubmit() { 
+        if (!this.text.trim() || this.loading) return false;
+        if (this.emoControlMethod === 2 && !this.emoVecValid) return false;
+        return true;
+      },
+      emoControlOptions() {
+        return [
+          { value: 0, label: '与参考音频相同' },
+          { value: 1, label: '使用情感参考音频' },
+          { value: 2, label: '使用情感向量' },
+          { value: 3, label: '使用情感描述文本' }
+        ];
+      },
+      emoVecLabels() {
+        return ['喜', '怒', '哀', '惧', '厌恶', '低落', '惊喜', '平静'];
+      },
+      emoVecSum() {
+        return this.emoVec.reduce((sum, val) => sum + val, 0);
+      },
+      emoVecValid() {
+        return this.emoVecSum <= 1.5;
+      },
+      statusText() {
+        if (this.status === 'submitted') return '任务已提交，正在生成音频...';
+        if (this.loading) return '正在生成音频，请稍候...';
+        if (this.result) return '音频生成完成！';
+        return '';
+      }
+    },
+    methods: {
+      onRefAudioFile(e) { this.refAudioFile = e.target.files[0] || null; },
+      onEmoRefAudioFile(e) { this.emoRefAudioFile = e.target.files[0] || null; },
+      
+      async submit() {
+        if (!this.canSubmit) return;
+        
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.error = '请先登录后再使用音频生成功能';
+          return;
+        }
+        
+        this.loading = true;
+        this.error = '';
+        this.result = null;
+        this.audioId = null;
+        this.status = '';
+        this.clearStatusCheck();
+        
+        try {
+          const form = new FormData();
+          form.append('text', this.text);
+          form.append('user_id', userId);
+          form.append('emo_control_method', this.emoControlMethod);
+          
+          if (this.refAudioFile) {
+            form.append('ref_audio', this.refAudioFile);
+          }
+          
+          if (this.emoRefAudioFile) {
+            form.append('emo_ref_audio', this.emoRefAudioFile);
+          }
+          
+          if (this.emoText) {
+            form.append('emo_text', this.emoText);
+          }
+          
+          if (this.emoWeight !== null) {
+            form.append('emo_weight', this.emoWeight);
+          }
+          
+          if (this.emoControlMethod === 2) {
+            form.append('emo_vec', this.emoVec.join(','));
+          }
+          
+          if (this.authToken) {
+            form.append('auth_token', this.authToken);
+          }
+          
+          const res = await axios.post('/api/audio-generate', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          
+          this.audioId = res.data.audio_id;
+          this.status = res.data.status || 'submitted';
+          
+          if (this.audioId) {
+            this.startStatusCheck();
+          }
+          
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '请求失败';
+          this.loading = false;
+        }
+      },
+      
+      async checkStatus() {
+        if (!this.audioId) return;
+        
+        try {
+          const authToken = localStorage.getItem('auth_token');
+          const params = authToken ? { auth_token: authToken } : {};
+          
+          const res = await axios.get(`/api/audio-status/${this.audioId}`, { params });
+          const payload = res?.data;
+          
+          if (!payload) {
+            console.error('Invalid status response:', payload);
+            return;
+          }
+          
+          const status = typeof payload.status === 'string' ? payload.status.toUpperCase() : payload.status;
+          
+          if (status === 'SUCCESS' || status === 2) {
+            this.result = payload.result_url ? { file_url: payload.result_url } : null;
+            this.status = 'SUCCESS';
+            this.loading = false;
+            this.clearStatusCheck();
+          } else if (status === 'FAILED' || status === -1) {
+            this.error = payload.reason || payload.message || '任务失败';
+            this.status = 'FAILED';
+            this.loading = false;
+            this.clearStatusCheck();
+          } else {
+            this.status = 'RUNNING';
+          }
+        } catch (err) {
+          console.error('Status check failed:', err);
+        }
+      },
+      
+      startStatusCheck() {
+        this.statusInterval = setInterval(() => {
+          this.checkStatus();
+        }, 10000);
+      },
+      
+      clearStatusCheck() {
+        if (this.statusInterval) {
+          clearInterval(this.statusInterval);
+          this.statusInterval = null;
+        }
+      },
+      
+      downloadAudio(url) {
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = `audio_${dateStr}_${timeStr}.wav`;
+        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+        window.open(downloadUrl, '_blank');
+      }
+    },
+    beforeUnmount() {
+      this.clearStatusCheck();
+    },
+    template: `
+      <div class="form">
+        <div class="field">
+          <label class="label">生成文本 <span style="color: red;">*</span></label>
+          <textarea class="input" v-model="text" placeholder="输入要转换为语音的文本" rows="4"></textarea>
+        </div>
+        
+        <div class="field">
+          <label class="label">参考音频（可选）</label>
+          <input type="file" @change="onRefAudioFile" accept="audio/*" class="input" :disabled="loading">
+          <div class="muted" style="margin-top: 4px;">上传参考音频进行声音克隆</div>
+        </div>
+        
+        <div class="field">
+          <label class="label">情感控制方式</label>
+          <select class="input" v-model="emoControlMethod">
+            <option v-for="opt in emoControlOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </div>
+        
+        <div class="field" v-if="emoControlMethod === 1">
+          <label class="label">情感参考音频</label>
+          <input type="file" @change="onEmoRefAudioFile" accept="audio/*" class="input" :disabled="loading">
+          <div class="muted" style="margin-top: 4px;">上传情感参考音频</div>
+        </div>
+        
+        <div class="field" v-if="emoControlMethod === 2">
+          <label class="label">情感向量控制</label>
+          <div style="margin-bottom: 16px;">
+            <div v-for="(label, idx) in emoVecLabels" :key="idx" style="margin-bottom: 12px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="font-size: 14px;">{{ label }}</span>
+                <span style="font-size: 14px; color: var(--primary);">{{ emoVec[idx].toFixed(2) }}</span>
+              </div>
+              <input type="range" v-model.number="emoVec[idx]" min="0" max="1.5" step="0.01" style="width: 100%;" />
+            </div>
+          </div>
+          <div class="muted" style="margin-top: 8px;">
+            当前总和: <span :style="{color: emoVecValid ? 'var(--success)' : 'var(--danger)', fontWeight: 'bold'}">{{ emoVecSum.toFixed(2) }}</span> / 1.5
+            <span v-if="!emoVecValid" style="color: var(--danger); margin-left: 8px;">⚠️ 情感向量之和不能超过1.5</span>
+          </div>
+        </div>
+        
+        <div class="field" v-if="emoControlMethod === 3">
+          <label class="label">情感描述文本</label>
+          <input class="input" v-model="emoText" placeholder="描述期望的情感，例如：开心、悲伤、愤怒" />
+        </div>
+        
+        <div class="field" v-if="emoControlMethod === 1">
+          <label class="label">情感权重 ({{ emoWeight }})</label>
+          <input type="range" v-model.number="emoWeight" min="0" max="1.6" step="0.1" style="width: 100%;" />
+          <div class="muted" style="margin-top: 4px;">调整情感的强度，0为无情感，1.6为最强情感</div>
+        </div>
+        
+        <div class="field">
+          <button class="btn" @click="submit" :disabled="!canSubmit">
+            {{ loading ? '生成中...' : '开始生成' }}
+          </button>
+        </div>
+        
+        <div v-if="statusText" class="status" :class="{'success': result, 'danger': status==='FAILED'}">
+          {{ statusText }}
+        </div>
+        
+        <div v-if="error && !loading" class="status danger">{{ error }}</div>
+        
+        <div v-if="result" class="results">
+          <div class="result-title">生成结果</div>
+          <div class="result-item">
+            <audio :src="result.file_url" controls style="width:100%; margin-bottom:8px;"></audio>
+            <button class="btn secondary" @click="downloadAudio(result.file_url)">下载音频</button>
+          </div>
+        </div>
+      </div>
+    `
+  };
 
   const VideoRemix = {
     name: 'VideoRemix',
@@ -3694,7 +3962,8 @@
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
     { path: '/video-enhance', name: 'video-enhance', component: VideoEnhance },
-    { path: '/video-remix', name: 'video-remix', component: VideoRemix }
+    { path: '/video-remix', name: 'video-remix', component: VideoRemix },
+    { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate }
   ];
   const router = VueRouter.createRouter({
     history: VueRouter.createWebHistory(),
@@ -3805,6 +4074,7 @@
         if (this.route.name === 'image-to-video') return '图片生成视频';
         if (this.route.name === 'ai-script-gen') return '图生视频智能体';
         if (this.route.name === 'video-enhance') return '视频高清修复';
+        if (this.route.name === 'audio-generate') return 'AI 音频生成';
         return 'AI 工具';
       },
       isLoggedIn() {

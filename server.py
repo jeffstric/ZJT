@@ -16,13 +16,13 @@ from pydantic import BaseModel
 from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync, run_ai_app_task
 from config_util import get_config_path, is_dev_environment
 from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
-from model import AIToolsModel, TasksModel
+from model import AIToolsModel, TasksModel, AIAudioModel
 import uuid
 from duomi_api_requset import create_video_remix, create_character, get_character_task_result
 from PIL import Image
 from baidu import call_ernie_vl_api
 from task.scheduler import init_scheduler
-from config.constant import TASK_COMPUTING_POWER, TASK_TYPE_GENERATE_VIDEO
+from config.constant import TASK_COMPUTING_POWER, TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(APP_DIR, "qwen_image_edit_api.json")
@@ -380,6 +380,29 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     # Return URL that can be accessed via static file serving
     return f"{SERVER_HOST}/upload/{filename}"
 
+
+def _save_uploaded_audio(upload_file: UploadFile) -> str:
+    """
+    Save uploaded audio to /home/appuser/share_appuser/comfyui_upload/tts/tmp_ref_audio directory and return the file path
+    """
+    # Ensure audio upload directory exists
+    audio_dir = os.path.expanduser("/home/appuser/share_appuser/comfyui_upload/tts/tmp_ref_audio")
+    os.makedirs(audio_dir, exist_ok=True)
+    
+    # Generate unique filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    file_extension = os.path.splitext(upload_file.filename or "audio.wav")[1]
+    filename = f"ref_audio_{timestamp}_{unique_id}{file_extension}"
+    
+    # Save file
+    file_path = os.path.join(audio_dir, filename)
+    with open(file_path, "wb") as f:
+        content = upload_file.file.read()
+        f.write(content)
+    
+    # Return relative path from upload directory
+    return file_path
 
 def _concatenate_images(upload_files: List[UploadFile]) -> str:
     """
@@ -2201,6 +2224,128 @@ async def api_create_character(
         logger.error(f"Character creation failed: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"创建角色失败: {str(e)}")
+
+
+@app.post("/api/audio-generate")
+async def audio_generate(
+    text: str = Form(..., description="Text to generate audio from"),
+    ref_audio: Optional[UploadFile] = File(None, description="Reference audio file for voice cloning"),
+    emo_ref_audio: Optional[UploadFile] = File(None, description="Emotion reference audio file"),
+    ref_audio_url: Optional[str] = Form(None, description="Reference audio URL (alternative to file upload)"),
+    emo_ref_audio_url: Optional[str] = Form(None, description="Emotion reference audio URL (alternative to file upload)"),
+    emo_text: Optional[str] = Form(None, description="Emotion description text"),
+    emo_weight: Optional[float] = Form(None, description="Emotion weight (0.0-1.6)"),
+    emo_vec: Optional[str] = Form(None, description="Emotion vector control"),
+    emo_control_method: Optional[int] = Form(0, description="Emotion control method: 0-same as voice ref, 1-use emotion ref, 2-use emotion vector, 3-use emotion text"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Submit audio generation task
+    Supports voice cloning with reference audio and emotion control
+    """
+    try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Authentication token is required"
+            )
+        
+        # Calculate computing power cost
+        ref_path = None
+        if ref_audio:
+            ref_path = _save_uploaded_audio(ref_audio)  # Reuse upload function for audio
+        elif ref_audio_url:
+            ref_path = ref_audio_url
+        
+        # Handle emotion reference audio upload
+        emo_ref_path = None
+        if emo_ref_audio:
+            emo_ref_path = _save_uploaded_audio(emo_ref_audio)
+        elif emo_ref_audio_url:
+            emo_ref_path = emo_ref_audio_url
+        
+        # Generate transaction ID
+        transaction_id = str(uuid.uuid4())
+        
+        # Create database record for audio generation task
+        audio_id = None
+        if user_id:
+            try:
+                audio_id = AIAudioModel.create(
+                    text=text,
+                    user_id=user_id,
+                    ref_path=ref_path,
+                    emo_ref_path=emo_ref_path,
+                    transaction_id=transaction_id,
+                    emo_text=emo_text,
+                    emo_weight=emo_weight,
+                    emo_vec=emo_vec,
+                    emo_control_method=emo_control_method,
+                    status=0
+                )
+                TasksModel.create(
+                    task_type=TASK_TYPE_GENERATE_AUDIO,
+                    task_id=audio_id,
+                    status=0
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to create audio database record: {db_error}")
+                raise HTTPException(status_code=500, detail=f"创建音频记录失败: {str(db_error)}")
+        
+        return JSONResponse({
+            "audio_id": audio_id,
+            "status": "submitted",
+            "message": "Successfully submitted audio generation task"
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Audio generation failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"音频生成失败: {str(e)}")
+
+
+@app.get("/api/audio-status/{audio_id}")
+async def audio_status(audio_id: int):
+    """
+    查询音频生成任务状态。
+    
+    根据 ai_audio 表记录判断：
+    - status == 2 且 result_url 有值：SUCCESS
+    - status == -1：FAILED
+    - 其他：RUNNING
+    """
+    try:
+        record = AIAudioModel.get_by_id(audio_id)
+        if not record:
+            raise HTTPException(status_code=404, detail=f"未找到音频任务 {audio_id}")
+        
+        if record.status == 2 and record.result_url:
+            return JSONResponse({
+                "audio_id": record.id,
+                "status": "SUCCESS",
+                "result_url": record.result_url,
+                "message": record.message or "音频生成成功"
+            })
+        elif record.status == -1:
+            return JSONResponse({
+                "audio_id": record.id,
+                "status": "FAILED",
+                "reason": record.message or "音频生成失败"
+            })
+        else:
+            return JSONResponse({
+                "audio_id": record.id,
+                "status": "RUNNING",
+                "message": record.message or "音频生成中，请稍候"
+            })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Audio status check failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"查询音频状态失败: {str(e)}")
 
 
 @app.get("/api/character-status/{task_id}")
