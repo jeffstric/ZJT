@@ -871,6 +871,21 @@ textarea:focus{ border-color: var(--primary); }
   box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
   transform: translateY(-50%) scale(1.3);
 }
+.port.first-frame-port{
+  left: -9px;
+  transform: translateY(-50%);
+  border-color: #3b82f6;
+  background: #3b82f6;
+}
+.port.first-frame-port:hover{
+  background: #93c5fd;
+  transform: translateY(-50%) scale(1.2);
+}
+.port.first-frame-port.can-connect{
+  background: #93c5fd;
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
+  transform: translateY(-50%) scale(1.3);
+}
 
 .timeline-container {
   position: fixed;

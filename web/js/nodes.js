@@ -110,6 +110,8 @@
                 to: id
               });
               renderConnections();
+              renderImageConnections();
+              renderFirstFrameConnections();
             }
           }
         }
@@ -1313,10 +1315,51 @@
     }
 
     function removeConnection(connId){
+      const conn = state.connections.find(c => c.id === connId);
       state.connections = state.connections.filter(c => c.id !== connId);
       if(state.selectedConnId === connId) state.selectedConnId = null;
       hideConnDeleteBtn();
       renderConnections();
+      renderImageConnections();
+      renderFirstFrameConnections();
+      
+      // 如果删除的连接涉及分镜节点，更新其预览图和选择菜单
+      if(conn){
+        const fromNode = state.nodes.find(n => n.id === conn.from);
+        const toNode = state.nodes.find(n => n.id === conn.to);
+        
+        // 如果是分镜节点连接到图片节点，或图片节点连接到分镜节点
+        if(fromNode && fromNode.type === 'shot_frame' && fromNode.updatePreview){
+          fromNode.updatePreview();
+        }
+        if(toNode && toNode.type === 'shot_frame' && toNode.updatePreview){
+          toNode.updatePreview();
+        }
+      }
+    }
+
+    function removeFirstFrameConnection(connId){
+      const conn = state.firstFrameConnections.find(c => c.id === connId);
+      state.firstFrameConnections = state.firstFrameConnections.filter(c => c.id !== connId);
+      if(state.selectedFirstFrameConnId === connId) state.selectedFirstFrameConnId = null;
+      hideConnDeleteBtn();
+      renderFirstFrameConnections();
+      
+      // 如果删除的连接涉及分镜节点，更新其预览图
+      if(conn){
+        const toNode = state.nodes.find(n => n.id === conn.to);
+        if(toNode && toNode.type === 'shot_frame'){
+          toNode.data.previewImageUrl = '';
+          const nodeEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+          if(nodeEl){
+            const previewImageEl = nodeEl.querySelector('.shot-frame-preview-image');
+            if(previewImageEl){
+              previewImageEl.style.display = 'none';
+              previewImageEl.src = '';
+            }
+          }
+        }
+      }
     }
 
     function renderConnections(tempLine){
@@ -1448,6 +1491,7 @@
           state.selectedImgConnId = conn.id;
           renderConnections();
           renderImageConnections();
+          renderFirstFrameConnections();
         });
         
         // 显示删除按钮（计算贝塞尔曲线t=0.5处的实际位置）
@@ -1463,6 +1507,103 @@
           const bezierX = mt*mt*mt*fromX + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*toX;
           const bezierY = mt*mt*mt*fromY + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*toY;
           // 转换为屏幕坐标
+          const screenX = bezierX * state.zoom + state.panX;
+          const screenY = bezierY * state.zoom + state.panY;
+          connDeleteBtn.style.display = 'flex';
+          connDeleteBtn.style.left = (screenX - 12) + 'px';
+          connDeleteBtn.style.top = (screenY - 12) + 'px';
+        }
+      }
+    }
+
+    function renderFirstFrameConnections(){
+      // 清除旧的首帧连接线
+      const oldLines = document.querySelectorAll('.first-frame-conn-group');
+      oldLines.forEach(l => l.remove());
+      
+      // 隐藏删除按钮（如果选中的连接已被删除）
+      if(state.selectedFirstFrameConnId !== null){
+        const stillExists = state.firstFrameConnections.some(c => c.id === state.selectedFirstFrameConnId);
+        if(!stillExists){
+          state.selectedFirstFrameConnId = null;
+          connDeleteBtn.style.display = 'none';
+        }
+      }
+      
+      // 绘制首帧连接线（蓝色）
+      for(const conn of state.firstFrameConnections){
+        const fromEl = canvasEl.querySelector(`.node[data-node-id="${conn.from}"]`);
+        const toEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+        if(!fromEl || !toEl) continue;
+        
+        const outputPort = fromEl.querySelector('.port.output');
+        const firstFramePort = toEl.querySelector('.first-frame-port');
+        if(!outputPort || !firstFramePort) continue;
+        
+        const fromRect = outputPort.getBoundingClientRect();
+        const toRect = firstFramePort.getBoundingClientRect();
+        const containerRect = canvasContainer.getBoundingClientRect();
+        
+        const fromX = (fromRect.left + fromRect.width/2 - containerRect.left - state.panX) / state.zoom;
+        const fromY = (fromRect.top + fromRect.height/2 - containerRect.top - state.panY) / state.zoom;
+        const toX = (toRect.left + toRect.width/2 - containerRect.left - state.panX) / state.zoom;
+        const toY = (toRect.top + toRect.height/2 - containerRect.top - state.panY) / state.zoom;
+        
+        const dx = Math.abs(toX - fromX) * 0.5;
+        const pathD = `M${fromX},${fromY} C${fromX+dx},${fromY} ${toX-dx},${toY} ${toX},${toY}`;
+        
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'first-frame-conn-group');
+        group.dataset.firstFrameConnId = String(conn.id);
+        
+        // hitbox（透明宽线，方便点击）
+        const hitbox = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hitbox.setAttribute('d', pathD);
+        hitbox.setAttribute('class', 'hitbox');
+        hitbox.style.fill = 'none';
+        hitbox.style.stroke = 'transparent';
+        hitbox.style.strokeWidth = '20';
+        hitbox.style.cursor = 'pointer';
+        
+        // 可见线（蓝色）
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', pathD);
+        path.setAttribute('class', 'visible');
+        path.style.fill = 'none';
+        path.style.stroke = '#3b82f6';
+        path.style.strokeWidth = '2';
+        path.style.pointerEvents = 'none';
+        
+        if(state.selectedFirstFrameConnId === conn.id){
+          path.style.stroke = '#1d4ed8';
+          path.style.strokeWidth = '3';
+        }
+        
+        group.appendChild(hitbox);
+        group.appendChild(path);
+        connectionsSvg.appendChild(group);
+        
+        // 点击选中
+        hitbox.addEventListener('click', (e) => {
+          e.stopPropagation();
+          state.selectedConnId = null;
+          state.selectedImgConnId = null;
+          state.selectedFirstFrameConnId = conn.id;
+          renderConnections();
+          renderImageConnections();
+          renderFirstFrameConnections();
+        });
+        
+        // 显示删除按钮
+        if(state.selectedFirstFrameConnId === conn.id){
+          const cx1 = fromX + dx;
+          const cy1 = fromY;
+          const cx2 = toX - dx;
+          const cy2 = toY;
+          const t = 0.5;
+          const mt = 1 - t;
+          const bezierX = mt*mt*mt*fromX + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*toX;
+          const bezierY = mt*mt*mt*fromY + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*toY;
           const screenX = bezierX * state.zoom + state.panX;
           const screenY = bezierY * state.zoom + state.panY;
           connDeleteBtn.style.display = 'flex';
@@ -1846,6 +1987,7 @@
           
           renderConnections();
           renderImageConnections();
+          renderFirstFrameConnections();
           renderMinimap();
 
           // 为每个视频节点初始化状态显示
@@ -2311,6 +2453,9 @@
             <div class="gen-meta image-draw-count-label"></div>
             <div class="muted image-edit-status" style="display:none;"></div>
           </div>
+          <div class="field image-confirm-field" style="display:none;">
+            <button class="mini-btn image-confirm-shot-btn" type="button" style="background: #10b981; color: white; width: 100%;">确认分镜图</button>
+          </div>
         </div>
       `;
 
@@ -2356,6 +2501,14 @@
                 to: id
               });
               renderConnections();
+              renderImageConnections();
+              renderFirstFrameConnections();
+              
+              // 更新分镜节点的预览图和选择菜单
+              if(fromNode.updatePreview){
+                fromNode.updatePreview();
+              }
+              
               try{ autoSaveWorkflow(); } catch(e){}
             }
           }
@@ -2381,8 +2534,45 @@
       const drawCountLabel = el.querySelector('.image-draw-count-label');
       const genCaret = el.querySelector('.gen-btn-caret');
       const genMenu = el.querySelector('.gen-menu');
+      const confirmFieldEl = el.querySelector('.image-confirm-field');
+      const confirmShotBtn = el.querySelector('.image-confirm-shot-btn');
 
       if(ratioEl) ratioEl.value = node.data.ratio;
+
+      // 检查是否连接到分镜节点，显示/隐藏确认按钮
+      function updateConfirmButtonVisibility(){
+        const connectedShotFrameNode = state.connections
+          .filter(c => c.to === id)
+          .map(c => state.nodes.find(n => n.id === c.from))
+          .find(n => n && n.type === 'shot_frame');
+        
+        if(connectedShotFrameNode && node.data.url){
+          confirmFieldEl.style.display = 'block';
+        } else {
+          confirmFieldEl.style.display = 'none';
+        }
+      }
+
+      // 确认分镜图按钮
+      confirmShotBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const connectedShotFrameNode = state.connections
+          .filter(c => c.to === id)
+          .map(c => state.nodes.find(n => n.id === c.from))
+          .find(n => n && n.type === 'shot_frame');
+        
+        if(connectedShotFrameNode && node.data.url){
+          connectedShotFrameNode.data.previewImageUrl = node.data.url;
+          if(connectedShotFrameNode.updatePreview){
+            connectedShotFrameNode.updatePreview();
+          }
+          showToast('已设置为视频首帧', 'success');
+          try{ autoSaveWorkflow(); } catch(e){}
+        }
+      });
+
+      // 初始化时检查确认按钮可见性
+      updateConfirmButtonVisibility();
 
       function updateDrawCountLabel(){
         drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
@@ -2491,10 +2681,25 @@
             submitRes.projectIds,
             (progressText) => { statusEl.textContent = progressText; },
             (statusResult) => {
-              const rawResults = extractResultsArray(statusResult);
-              const imageUrls = Array.isArray(rawResults)
-                ? rawResults.map(normalizeVideoUrl).filter(Boolean)
-                : [];
+              console.log('Image edit status result:', statusResult);
+              
+              // 从 tasks 数组中提取结果
+              let imageUrls = [];
+              if(statusResult.tasks && Array.isArray(statusResult.tasks)){
+                // 多任务或单任务包装格式
+                imageUrls = statusResult.tasks
+                  .filter(task => task.status === 'SUCCESS' && task.result)
+                  .map(task => normalizeVideoUrl(task.result))
+                  .filter(Boolean);
+              } else {
+                // 直接从 statusResult 提取
+                const rawResults = extractResultsArray(statusResult);
+                imageUrls = Array.isArray(rawResults)
+                  ? rawResults.map(normalizeVideoUrl).filter(Boolean)
+                  : [];
+              }
+              
+              console.log('Extracted image URLs:', imageUrls);
 
               if(imageUrls.length === 0){
                 statusEl.style.color = '#dc2626';
@@ -2836,6 +3041,8 @@
               });
               
               renderConnections();
+              renderImageConnections();
+              renderFirstFrameConnections();
               renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }
@@ -2987,6 +3194,9 @@
                 to: id
               });
               renderConnections();
+              renderImageConnections();
+              renderFirstFrameConnections();
+              renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }
           }
@@ -2998,11 +3208,6 @@
         e.preventDefault();
         e.stopPropagation();
         state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
-      });
-
-      detailBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openShotGroupModal(node.data, id);
       });
 
       modelSelect.addEventListener('change', () => {
@@ -3069,6 +3274,8 @@
       });
 
       renderConnections();
+      renderImageConnections();
+      renderFirstFrameConnections();
       try{ autoSaveWorkflow(); } catch(e){}
       showToast(`已生成 ${shots.length} 个独立分镜节点`, 'success');
     }
@@ -3133,6 +3340,8 @@
           shotJson: shotData,
           model: inheritedModel,
           drawCount: 1,
+          previewImageUrl: '',
+          videoDrawCount: 1,
         }
       };
       state.nodes.push(node);
@@ -3191,6 +3400,34 @@
             </div>
             <div class="gen-meta shot-frame-draw-count-label"></div>
           </div>
+          <div class="field shot-frame-preview-field" style="position: relative;">
+            <div class="port first-frame-port" title="连接图片节点（视频首帧）"></div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <div class="label" style="margin: 0;">视频首帧</div>
+              <div class="gen-container shot-frame-image-selector-container" style="display: none;">
+                <button class="mini-btn shot-frame-image-selector-btn" type="button" style="font-size: 11px; padding: 4px 8px; background: white; color: #333; border: 1px solid #ddd;">选择图片</button>
+                <button class="gen-btn-caret" type="button" aria-label="选择图片" style="font-size: 11px; padding: 4px 6px;">▾</button>
+                <div class="gen-menu shot-frame-image-menu">
+                </div>
+              </div>
+            </div>
+            <img class="shot-frame-preview-image" src="${node.data.previewImageUrl || ''}" style="width: 100%; border-radius: 6px; cursor: pointer; display: ${node.data.previewImageUrl ? 'block' : 'none'};" />
+          </div>
+          <div class="field">
+            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start;">
+              <div class="gen-container">
+                <button class="gen-btn gen-btn-main shot-frame-generate-video-btn" type="button" style="background: #22c55e; color: white;">生成视频</button>
+                <button class="gen-btn gen-btn-caret shot-frame-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
+                <div class="gen-menu shot-frame-video-menu">
+                  <div class="gen-item" data-count="1">X1</div>
+                  <div class="gen-item" data-count="2">X2</div>
+                  <div class="gen-item" data-count="3">X3</div>
+                  <div class="gen-item" data-count="4">X4</div>
+                </div>
+              </div>
+            </div>
+            <div class="gen-meta shot-frame-video-draw-count-label"></div>
+          </div>
         </div>
       `;
 
@@ -3207,6 +3444,17 @@
       const genMenu = el.querySelector('.shot-frame-menu');
       const drawCountLabel = el.querySelector('.shot-frame-draw-count-label');
       const modelEl = el.querySelector('.shot-frame-model');
+      const previewFieldEl = el.querySelector('.shot-frame-preview-field');
+      const previewImageEl = el.querySelector('.shot-frame-preview-image');
+      const generateVideoBtn = el.querySelector('.shot-frame-generate-video-btn');
+      const videoCaret = el.querySelector('.shot-frame-video-caret');
+      const videoMenu = el.querySelector('.shot-frame-video-menu');
+      const videoDrawCountLabel = el.querySelector('.shot-frame-video-draw-count-label');
+      const imageSelectorContainer = el.querySelector('.shot-frame-image-selector-container');
+      const imageSelectorBtn = el.querySelector('.shot-frame-image-selector-btn');
+      const imageSelectorCaret = imageSelectorContainer ? imageSelectorContainer.querySelector('.gen-btn-caret') : null;
+      const imageMenu = el.querySelector('.shot-frame-image-menu');
+      const firstFramePort = el.querySelector('.first-frame-port');
 
       // 设置模型选择器的初始值
       if(modelEl) modelEl.value = node.data.model;
@@ -3215,11 +3463,155 @@
       if(!node.data.drawCount){
         node.data.drawCount = 1;
       }
+      if(!node.data.videoDrawCount){
+        node.data.videoDrawCount = 1;
+      }
 
       function updateDrawCountLabel(){
         drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
       }
       updateDrawCountLabel();
+
+      function updateVideoDrawCountLabel(){
+        videoDrawCountLabel.textContent = `抽卡次数：X${node.data.videoDrawCount}`;
+      }
+      updateVideoDrawCountLabel();
+
+      // 获取所有连接的图片节点（包括输出端口连接的和首帧连接的）
+      function getConnectedImageNodes(){
+        // 从分镜节点的输出端口连接的图片节点（分镜节点 -> 图片节点）
+        const outputConnectedImages = state.connections
+          .filter(c => c.from === id)
+          .map(c => state.nodes.find(n => n.id === c.to))
+          .filter(n => n && n.type === 'image' && n.data.url);
+        
+        // 连接到分镜节点输出端口的图片节点（图片节点 -> 分镜节点右侧）
+        const inputConnectedImages = state.connections
+          .filter(c => c.to === id)
+          .map(c => state.nodes.find(n => n.id === c.from))
+          .filter(n => n && n.type === 'image' && n.data.url);
+        
+        // 通过首帧连接的图片节点
+        const firstFrameConnectedImages = state.firstFrameConnections
+          .filter(c => c.to === id)
+          .map(c => state.nodes.find(n => n.id === c.from))
+          .filter(n => n && n.type === 'image' && n.data.url);
+        
+        // 合并并去重
+        const allImages = [...outputConnectedImages, ...inputConnectedImages, ...firstFrameConnectedImages];
+        const uniqueImages = allImages.filter((img, index, self) => 
+          index === self.findIndex(i => i.id === img.id)
+        );
+        
+        return uniqueImages;
+      }
+
+      // 更新图片选择菜单
+      function updateImageSelectionMenu(){
+        const connectedImageNodes = getConnectedImageNodes();
+        
+        if(connectedImageNodes.length > 1 && imageMenu){
+          // 有多个图片节点，显示选择按钮
+          imageSelectorContainer.style.display = 'flex';
+          
+          // 清空并重新填充菜单
+          imageMenu.innerHTML = '';
+          connectedImageNodes.forEach((imgNode, index) => {
+            const menuItem = document.createElement('div');
+            menuItem.className = 'gen-item';
+            menuItem.textContent = imgNode.title || imgNode.data.name || `图片${index + 1}`;
+            menuItem.dataset.nodeId = imgNode.id;
+            imageMenu.appendChild(menuItem);
+            
+            menuItem.addEventListener('click', (e) => {
+              e.stopPropagation();
+              node.data.previewImageUrl = imgNode.data.url;
+              previewImageEl.src = proxyImageUrl(imgNode.data.url);
+              previewImageEl.style.display = 'block';
+              imageMenu.classList.remove('show');
+              
+              // 更新首帧连接：删除旧连接，创建新连接
+              state.firstFrameConnections = state.firstFrameConnections.filter(c => c.to !== id);
+              state.firstFrameConnections.push({
+                id: state.nextFirstFrameConnId++,
+                from: imgNode.id,
+                to: id
+              });
+              renderFirstFrameConnections();
+              
+              try{ autoSaveWorkflow(); } catch(e){}
+            });
+          });
+        } else {
+          // 只有一个或没有图片节点，隐藏选择按钮
+          imageSelectorContainer.style.display = 'none';
+        }
+      }
+
+      // 更新预览图
+      function updatePreviewImage(){
+        const connectedImageNodes = getConnectedImageNodes();
+        
+        if(connectedImageNodes.length > 0){
+          // 如果已有预览图URL且该图片仍然存在，保持不变
+          const existingImage = connectedImageNodes.find(n => n.data.url === node.data.previewImageUrl);
+          
+          if(!existingImage){
+            // 否则选择第一个或随机一个
+            const imageNode = connectedImageNodes.length === 1 
+              ? connectedImageNodes[0]
+              : connectedImageNodes[Math.floor(Math.random() * connectedImageNodes.length)];
+            
+            node.data.previewImageUrl = imageNode.data.url;
+          }
+          
+          previewImageEl.src = proxyImageUrl(node.data.previewImageUrl);
+          previewFieldEl.style.display = 'block';
+        } else {
+          node.data.previewImageUrl = '';
+          previewFieldEl.style.display = 'none';
+        }
+        
+        // 更新图片选择菜单
+        updateImageSelectionMenu();
+      }
+
+      // 图片选择按钮事件
+      if(imageSelectorCaret){
+        imageSelectorCaret.addEventListener('click', (e) => {
+          e.stopPropagation();
+          imageMenu.classList.toggle('show');
+        });
+      }
+
+      // 首帧端口事件 - 接受来自图片节点的连接
+      firstFramePort.addEventListener('mouseup', (e) => {
+        e.stopPropagation();
+        if(state.connecting && state.connecting.fromId !== id){
+          const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
+          if(fromNode && fromNode.type === 'image' && fromNode.data.url){
+            // 删除该分镜节点的旧首帧连接
+            state.firstFrameConnections = state.firstFrameConnections.filter(c => c.to !== id);
+            
+            // 创建新的首帧连接
+            state.firstFrameConnections.push({
+              id: state.nextFirstFrameConnId++,
+              from: state.connecting.fromId,
+              to: id
+            });
+            
+            // 更新视频首帧
+            node.data.previewImageUrl = fromNode.data.url;
+            previewImageEl.src = proxyImageUrl(fromNode.data.url);
+            previewImageEl.style.display = 'block';
+            previewFieldEl.style.display = 'block';
+            
+            renderFirstFrameConnections();
+            try{ autoSaveWorkflow(); } catch(e){}
+          }
+        }
+        state.connecting = null;
+      });
 
       // 模型选择
       modelEl.addEventListener('change', () => {
@@ -3242,6 +3634,47 @@
           genMenu.classList.remove('show');
         });
       }
+
+      // 视频抽卡次数选择
+      videoCaret.addEventListener('click', (e) => {
+        e.stopPropagation();
+        videoMenu.classList.toggle('show');
+      });
+
+      const videoGenItems = videoMenu.querySelectorAll('.gen-item');
+      for(const item of videoGenItems){
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const count = Number(item.dataset.count || '1');
+          node.data.videoDrawCount = count;
+          updateVideoDrawCountLabel();
+          videoMenu.classList.remove('show');
+        });
+      }
+
+      // 预览图点击放大
+      previewImageEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if(node.data.previewImageUrl){
+          openImageModal(proxyImageUrl(node.data.previewImageUrl), '视频首帧');
+        }
+      });
+
+      // 生成视频
+      generateVideoBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if(!node.data.previewImageUrl){
+          showToast('请先生成分镜图', 'warning');
+          return;
+        }
+        generateShotFrameVideo(id, node);
+      });
+
+      // 初始化时更新预览图
+      updatePreviewImage();
+
+      // 暴露更新预览图的方法供外部调用
+      node.updatePreview = updatePreviewImage;
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3289,7 +3722,8 @@
       inputPort.addEventListener('mouseup', (e) => {
         if(state.connecting && state.connecting.fromId !== id){
           const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
-          if(fromNode && fromNode.type === 'shot_group'){
+          // 接受来自分镜组或图片节点的连接
+          if(fromNode && (fromNode.type === 'shot_group' || fromNode.type === 'image')){
             const exists = state.connections.some(c => c.from === state.connecting.fromId && c.to === id);
             if(!exists){
               state.connections.push({
@@ -3298,6 +3732,14 @@
                 to: id
               });
               renderConnections();
+              renderImageConnections();
+              renderFirstFrameConnections();
+              
+              // 如果是图片节点连接，更新预览图和选择菜单
+              if(fromNode.type === 'image'){
+                updatePreviewImage();
+              }
+              
               try{ autoSaveWorkflow(); } catch(e){}
             }
           }

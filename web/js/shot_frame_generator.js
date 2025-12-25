@@ -219,6 +219,13 @@ async function generateShotFrameImage(nodeId, node){
         
         // 重新渲染连接线
         renderConnections();
+        renderImageConnections();
+        renderFirstFrameConnections();
+        
+        // 更新分镜节点的预览图
+        if(node.updatePreview){
+          node.updatePreview();
+        }
         
         generateBtn.disabled = false;
         generateBtn.textContent = '生成分镜图';

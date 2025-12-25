@@ -74,6 +74,7 @@
         renderConnections();
         renderMinimap();
         renderImageConnections();
+        renderFirstFrameConnections();
       }
     }
 
@@ -85,6 +86,7 @@
         renderConnections();
         renderMinimap();
         renderImageConnections();
+        renderFirstFrameConnections();
       }
     }
 
@@ -131,6 +133,9 @@
       // 清除该节点相关的图片连接
       state.imageConnections = state.imageConnections.filter(c => c.from !== id && c.to !== id);
       
+      // 清除该节点相关的首帧连接
+      state.firstFrameConnections = state.firstFrameConnections.filter(c => c.from !== id && c.to !== id);
+      
       // 删除节点
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
@@ -140,6 +145,7 @@
       renderConnections();
       renderMinimap();
       renderImageConnections();
+      renderFirstFrameConnections();
       
       // 自动保存
       try{ autoSaveWorkflow(); } catch(e){}

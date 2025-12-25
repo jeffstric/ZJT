@@ -78,9 +78,11 @@
         nextNodeId: state.nextNodeId,
         nextConnId: state.nextConnId,
         nextImgConnId: state.nextImgConnId,
+        nextFirstFrameConnId: state.nextFirstFrameConnId,
         nodes: serializableNodes,
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
+        firstFrameConnections: state.firstFrameConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         timeline: {
           clips: state.timeline.clips,
           nextClipId: state.timeline.nextClipId,
@@ -250,9 +252,11 @@
       state.nodes = [];
       state.connections = [];
       state.imageConnections = [];
+      state.firstFrameConnections = [];
       state.selectedNodeId = null;
       state.selectedConnId = null;
       state.selectedImgConnId = null;
+      state.selectedFirstFrameConnId = null;
       
       // 恢复视口
       if(data.viewport){
@@ -273,6 +277,7 @@
       state.nextNodeId = data.nextNodeId || 1;
       state.nextConnId = data.nextConnId || 1;
       state.nextImgConnId = data.nextImgConnId || 1;
+      state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
       
       // 恢复节点
       if(data.nodes && Array.isArray(data.nodes)){
@@ -290,6 +295,10 @@
         state.imageConnections = data.imageConnections;
       }
       
+      if(data.firstFrameConnections && Array.isArray(data.firstFrameConnections)){
+        state.firstFrameConnections = data.firstFrameConnections;
+      }
+      
       // 恢复时间轴
       if(data.timeline){
         state.timeline.clips = data.timeline.clips || [];
@@ -301,7 +310,17 @@
       // 重新渲染
       renderConnections();
       renderImageConnections();
+      renderFirstFrameConnections();
       renderMinimap();
+      
+      // 恢复完成后，更新所有分镜节点的图片选择菜单
+      setTimeout(() => {
+        state.nodes.forEach(node => {
+          if(node.type === 'shot_frame' && node.updatePreview){
+            node.updatePreview();
+          }
+        });
+      }, 100);
     }
 
     // 恢复单个节点
@@ -679,17 +698,24 @@
         node.data.model = nodeData.data.model || 'gemini-2.5-pro-image-preview';
         node.data.drawCount = nodeData.data.drawCount || 1;
         
+        // 恢复节点标题
+        if(nodeData.title){
+          node.title = nodeData.title;
+        }
+        
         const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
         if(el){
           const promptEl = el.querySelector('.image-prompt');
           const ratioEl = el.querySelector('.image-ratio');
           const modelEl = el.querySelector('.image-model');
           const drawCountLabel = el.querySelector('.image-draw-count-label');
+          const titleEl = el.querySelector('.node-title');
           
           if(promptEl) promptEl.value = node.data.prompt;
           if(ratioEl) ratioEl.value = node.data.ratio;
           if(modelEl) modelEl.value = node.data.model;
           if(drawCountLabel) drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
+          if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;
           
           if(node.data.url || node.data.preview){
             const previewImg = el.querySelector('.image-preview');
@@ -776,16 +802,44 @@
         node.data = { ...node.data, ...nodeData.data };
         node.title = nodeData.title || node.title;
         
-        // 如果有生成的图片URL，更新UI显示
-        if(nodeData.data.imageUrl){
-          const nodeEl = document.querySelector(`.node[data-node-id="${nodeData.id}"]`);
-          if(nodeEl){
+        const nodeEl = document.querySelector(`.node[data-node-id="${nodeData.id}"]`);
+        if(nodeEl){
+          // 如果有生成的图片URL，更新UI显示
+          if(nodeData.data.imageUrl){
             const imageFieldEl = nodeEl.querySelector('.shot-frame-image-field');
             const imageEl = nodeEl.querySelector('.shot-frame-image');
             
             if(imageFieldEl && imageEl){
               imageEl.src = nodeData.data.imageUrl;
               imageFieldEl.style.display = 'block';
+            }
+          }
+          
+          // 恢复视频首帧
+          if(nodeData.data.previewImageUrl){
+            const previewFieldEl = nodeEl.querySelector('.shot-frame-preview-field');
+            const previewImageEl = nodeEl.querySelector('.shot-frame-preview-image');
+            
+            if(previewFieldEl && previewImageEl){
+              previewImageEl.src = proxyImageUrl(nodeData.data.previewImageUrl);
+              previewImageEl.style.display = 'block';
+              previewFieldEl.style.display = 'block';
+            }
+          }
+          
+          // 恢复抽卡次数显示
+          if(nodeData.data.drawCount){
+            const drawCountLabel = nodeEl.querySelector('.shot-frame-draw-count-label');
+            if(drawCountLabel){
+              drawCountLabel.textContent = `抽卡次数：X${nodeData.data.drawCount}`;
+            }
+          }
+          
+          // 恢复视频抽卡次数显示
+          if(nodeData.data.videoDrawCount){
+            const videoDrawCountLabel = nodeEl.querySelector('.shot-frame-video-draw-count-label');
+            if(videoDrawCountLabel){
+              videoDrawCountLabel.textContent = `抽卡次数：X${nodeData.data.videoDrawCount}`;
             }
           }
         }
