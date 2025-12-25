@@ -321,6 +321,8 @@
         createScriptNodeWithData(nodeData);
       } else if(nodeData.type === 'shot_group'){
         createShotGroupNodeWithData(nodeData);
+      } else if(nodeData.type === 'shot_frame'){
+        createShotFrameNodeWithData(nodeData);
       } else if(nodeData.type === 'character'){
         createCharacterNodeWithData(nodeData);
       } else if(nodeData.type === 'location'){
@@ -757,3 +759,37 @@
       state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
     }
 
+    // 带数据创建分镜节点
+    function createShotFrameNodeWithData(nodeData){
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      createShotFrameNode({ 
+        x: nodeData.x, 
+        y: nodeData.y,
+        shotData: nodeData.data.shotJson || {}
+      });
+      
+      // 恢复节点数据
+      const node = state.nodes.find(n => n.id === nodeData.id);
+      if(node && nodeData.data){
+        node.data = { ...node.data, ...nodeData.data };
+        node.title = nodeData.title || node.title;
+        
+        // 如果有生成的图片URL，更新UI显示
+        if(nodeData.data.imageUrl){
+          const nodeEl = document.querySelector(`.node[data-node-id="${nodeData.id}"]`);
+          if(nodeEl){
+            const imageFieldEl = nodeEl.querySelector('.shot-frame-image-field');
+            const imageEl = nodeEl.querySelector('.shot-frame-image');
+            
+            if(imageFieldEl && imageEl){
+              imageEl.src = nodeData.data.imageUrl;
+              imageFieldEl.style.display = 'block';
+            }
+          }
+        }
+      }
+      
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+    }

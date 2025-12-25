@@ -88,8 +88,6 @@ JSON_FORMAT_EXAMPLE = """{
       "location_db_id": 123,
       "type": "室内/室外",
       "description": "场景详细描述（必须非常详细，包括环境布局、物品摆设、光线、色调等）",
-      "time_of_day": "具体时间段（如'下午3点左右'、'傍晚日落时分'）",
-      "weather": "天气（室外必填，室内填null）",
       "atmosphere": "氛围",
       "environment_sound": "环境音描述（如'街道车辆声、行人脚步声'）",
       "background_music": "背景音乐描述（如'轻快的爵士乐'）",
@@ -102,38 +100,64 @@ JSON_FORMAT_EXAMPLE = """{
       "location_db_id": null,
       "type": "室内/室外",
       "description": "子场景详细描述",
-      "time_of_day": "具体时间段",
-      "weather": "天气（室外必填，室内填null）",
       "atmosphere": "氛围",
       "environment_sound": "环境音描述",
       "background_music": "背景音乐描述",
       "level": 1
     }
   ],
-  "shots": [
+  "shot_groups": [
     {
-      "shot_id": "shot_001",
-      "shot_number": 1,
-      "duration": 5.0,
-      "location_id": "loc_001",
-      "shot_type": "远景/中景/近景/特写",
-      "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
-      "description": "镜头简要描述（涉及角色时用【【角色名】】格式）",
-      "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：人物位置、姿态、表情、服装；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及角色时用【【角色名】】格式）",
-      "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式）",
-      "characters_present": ["char_001"],
-      "dialogue": [
+      "group_id": "grp_001",
+      "group_name": "开场镜头",
+      "shots": [
         {
-          "character_id": "char_001",
-          "character_name": "【【人物名称】】",
-          "text": "对话内容"
+          "shot_id": "s001",
+          "shot_number": 1,
+          "duration": 5.0,
+          "location_id": "loc_001",
+          "time_of_day": "具体时间段（如'下午3点左右'、'傍晚日落时分'）",
+          "weather": "天气（室外必填，室内填null）",
+          "shot_type": "远景/中景/近景/特写",
+          "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
+          "description": "镜头简要描述（涉及角色时用【【角色名】】格式）",
+          "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：人物位置、姿态、表情、服装；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及角色时用【【角色名】】格式）",
+          "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式）",
+          "characters_present": ["char_001"],
+          "dialogue": [
+            {
+              "character_id": "char_001",
+              "character_name": "【【人物名称】】",
+              "text": "对话内容"
+            }
+          ],
+          "action": "动作描述（涉及角色时用【【角色名】】格式）",
+          "mood": "情绪氛围",
+          "environment_sound": "环境音（场景中的自然声音，如脚步声、车辆声等）",
+          "background_music": "背景音乐（配乐，如钢琴曲、爵士乐等）",
+          "audio_notes": "音频备注"
+        },
+        {
+          "shot_id": "s002",
+          "shot_number": 2,
+          "duration": 4.0,
+          "location_id": "loc_001",
+          "time_of_day": "具体时间段",
+          "weather": "天气",
+          "shot_type": "中景",
+          "camera_movement": "推进",
+          "description": "第二个镜头描述",
+          "opening_frame_description": "第二个镜头起始画面详细描述",
+          "scene_detail": "第二个镜头场景详细描述",
+          "characters_present": ["char_001"],
+          "dialogue": [],
+          "action": "动作描述",
+          "mood": "情绪氛围",
+          "environment_sound": "环境音",
+          "background_music": "背景音乐",
+          "audio_notes": "音频备注"
         }
-      ],
-      "action": "动作描述（涉及角色时用【【角色名】】格式）",
-      "mood": "情绪氛围",
-      "environment_sound": "环境音（场景中的自然声音，如脚步声、车辆声等）",
-      "background_music": "背景音乐（配乐，如钢琴曲、爵士乐等）",
-      "audio_notes": "音频备注"
+      ]
     }
   ],
   "metadata": {

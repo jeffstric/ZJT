@@ -521,6 +521,14 @@
               <input type="text" class="shot-field" data-field="duration" value="${escapeHtml(shot.duration || '')}" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
             </div>
             <div>
+              <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">时间段</label>
+              <input type="text" class="shot-field" data-field="time_of_day" value="${escapeHtml(shot.time_of_day || '')}" placeholder="如：下午3点、傍晚日落时分" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">天气</label>
+              <input type="text" class="shot-field" data-field="weather" value="${escapeHtml(shot.weather || '')}" placeholder="如：晴朗、阴云密布" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
+            </div>
+            <div>
               <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">场景ID</label>
               <input type="text" class="shot-field" data-field="location_id" value="${escapeHtml(shot.location_id || '')}" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
             </div>
@@ -1064,6 +1072,8 @@
             <tr style="background: #f5f5f5; border-bottom: 2px solid #ddd;">
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">镜头ID</th>
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">时长(秒)</th>
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">时间</th>
+              <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">天气</th>
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">镜头类型</th>
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">运镜</th>
               <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">参考场景</th>
@@ -1077,6 +1087,8 @@
       shots.forEach((shot, index) => {
         const shotId = shot.shot_id || `shot_${index + 1}`;
         const duration = shot.duration ? shot.duration : '-';
+        const timeOfDay = shot.time_of_day || '-';
+        const weather = shot.weather || '-';
         const shotType = shot.shot_type || '-';
         const cameraMovement = shot.camera_movement || '-';
         const description = shot.description || '-';
@@ -1088,6 +1100,8 @@
           <tr style="border-bottom: 1px solid #eee;">
             <td style="padding: 10px; border: 1px solid #ddd; font-weight: 600;">${shotId}</td>
             <td style="padding: 10px; border: 1px solid #ddd;">${duration}</td>
+            <td style="padding: 10px; border: 1px solid #ddd;">${escapeHtml(timeOfDay)}</td>
+            <td style="padding: 10px; border: 1px solid #ddd;">${escapeHtml(weather)}</td>
             <td style="padding: 10px; border: 1px solid #ddd;">${shotType}</td>
             <td style="padding: 10px; border: 1px solid #ddd;">${cameraMovement}</td>
             <td style="padding: 10px; border: 1px solid #ddd;">${locationDisplay}</td>
@@ -2244,6 +2258,7 @@
       el.style.top = node.y + 'px';
 
       el.innerHTML = `
+        <div class="port input" title="输入（连接分镜节点）"></div>
         <div class="port output" title="输出（连接到图生视频节点）"></div>
         <div class="node-header">
           <div class="node-title">${node.title}</div>
@@ -2301,6 +2316,7 @@
 
       const headerEl = el.querySelector('.node-header');
       const deleteBtn = el.querySelector('.icon-btn');
+      const inputPort = el.querySelector('.port.input');
       const outputPort = el.querySelector('.port.output');
 
       deleteBtn.addEventListener('click', (e) => {
@@ -2326,6 +2342,24 @@
           origX: node.x,
           origY: node.y,
         };
+      });
+
+      inputPort.addEventListener('mouseup', (e) => {
+        if(state.connecting && state.connecting.fromId !== id){
+          const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
+          if(fromNode && fromNode.type === 'shot_frame'){
+            const exists = state.connections.some(c => c.from === state.connecting.fromId && c.to === id);
+            if(!exists){
+              state.connections.push({
+                id: state.nextConnId++,
+                from: state.connecting.fromId,
+                to: id
+              });
+              renderConnections();
+              try{ autoSaveWorkflow(); } catch(e){}
+            }
+          }
+        }
       });
 
       outputPort.addEventListener('mousedown', (e) => {
@@ -3052,6 +3086,23 @@
       
       const shotTitle = shotData.shot_id || shotData.shot_number ? `镜头${shotData.shot_number || ''}` : '分镜图';
       
+      // 构建图片提示词，包含时间和天气信息
+      let imagePrompt = shotData.opening_frame_description || '';
+      const timeOfDay = shotData.time_of_day;
+      const weather = shotData.weather;
+      
+      if(timeOfDay || weather){
+        const contextInfo = [];
+        if(timeOfDay) contextInfo.push(`时间：${timeOfDay}`);
+        if(weather) contextInfo.push(`天气：${weather}`);
+        
+        if(imagePrompt){
+          imagePrompt = `${contextInfo.join('，')}。${imagePrompt}`;
+        } else {
+          imagePrompt = contextInfo.join('，');
+        }
+      }
+      
       // 过滤掉不需要的字段
       const filteredShotData = {...shotData};
       delete filteredShotData.shot_id;
@@ -3069,7 +3120,7 @@
         y,
         data: {
           shotId: shotData.shot_id || '',
-          imagePrompt: shotData.opening_frame_description || '',
+          imagePrompt: imagePrompt,
           videoPrompt: videoPromptJson,
           duration: shotData.duration || 0,
           shotType: shotData.shot_type || '',
@@ -3093,12 +3144,12 @@
         <div class="port input" title="输入（连接分镜组节点）"></div>
         <div class="port output" title="输出"></div>
         <div class="node-header">
-          <div class="node-title">镜头: ${node.title}</div>
+          <div class="node-title">分镜: ${node.title}</div>
           <button class="icon-btn" title="删除">×</button>
         </div>
         <div class="node-body">
           <div class="field">
-            <div class="label">镜头信息</div>
+            <div class="label">分镜信息</div>
             <div class="gen-meta">${escapeHtml(node.data.description)}</div>
             <div class="gen-meta" style="margin-top: 4px;">时长: ${node.data.duration}秒 | ${escapeHtml(node.data.shotType)} | ${escapeHtml(node.data.cameraMovement)}</div>
           </div>
@@ -3114,8 +3165,20 @@
             <div class="label">生成的图片</div>
             <img class="shot-frame-image" src="${node.data.imageUrl}" style="width: 100%; border-radius: 6px; cursor: pointer;" />
           </div>
-          <div class="field btn-row">
-            <button class="mini-btn shot-frame-generate-btn" type="button">生成图片</button>
+          <div class="field">
+            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start;">
+              <div class="gen-container">
+                <button class="gen-btn gen-btn-main shot-frame-generate-btn" type="button">生成分镜图</button>
+                <button class="gen-btn gen-btn-caret shot-frame-caret" type="button" aria-label="选择抽卡次数">▾</button>
+                <div class="gen-menu shot-frame-menu">
+                  <div class="gen-item" data-count="1">X1</div>
+                  <div class="gen-item" data-count="2">X2</div>
+                  <div class="gen-item" data-count="3">X3</div>
+                  <div class="gen-item" data-count="4">X4</div>
+                </div>
+              </div>
+            </div>
+            <div class="gen-meta shot-frame-draw-count-label"></div>
           </div>
         </div>
       `;
@@ -3129,6 +3192,36 @@
       const imageFieldEl = el.querySelector('.shot-frame-image-field');
       const inputPort = el.querySelector('.port.input');
       const outputPort = el.querySelector('.port.output');
+      const genCaret = el.querySelector('.shot-frame-caret');
+      const genMenu = el.querySelector('.shot-frame-menu');
+      const drawCountLabel = el.querySelector('.shot-frame-draw-count-label');
+
+      // 初始化抽卡次数
+      if(!node.data.drawCount){
+        node.data.drawCount = 1;
+      }
+
+      function updateDrawCountLabel(){
+        drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
+      }
+      updateDrawCountLabel();
+
+      // 抽卡次数选择
+      genCaret.addEventListener('click', (e) => {
+        e.stopPropagation();
+        genMenu.classList.toggle('show');
+      });
+
+      const genItems = genMenu.querySelectorAll('.gen-item');
+      for(const item of genItems){
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const count = Number(item.dataset.count || '1');
+          node.data.drawCount = count;
+          updateDrawCountLabel();
+          genMenu.classList.remove('show');
+        });
+      }
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3163,18 +3256,7 @@
 
       generateBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        generateBtn.disabled = true;
-        generateBtn.textContent = '生成中...';
-        
-        try {
-          showToast('图片生成功能待实现', 'info');
-        } catch(error) {
-          console.error('生成图片失败:', error);
-          showToast('生成图片失败', 'error');
-        } finally {
-          generateBtn.disabled = false;
-          generateBtn.textContent = '生成图片';
-        }
+        generateShotFrameImage(id, node);
       });
 
       if(imageEl && node.data.imageUrl){
