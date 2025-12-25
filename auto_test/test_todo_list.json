@@ -5540,17 +5540,434 @@
           ]
         }
       ]
+    },
+    {
+      "id": "shot_frame_first_frame",
+      "name": "分镜节点视频首帧模块",
+      "description": "分镜节点视频首帧连接功能测试，包括蓝色连接线、磁吸效果、图片选择等",
+      "features": [
+        {
+          "id": "first_frame_001",
+          "name": "分镜节点视频首帧端口显示",
+          "description": "验证分镜节点的视频首帧区域显示蓝色输入端口",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建分镜节点",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "添加分镜节点",
+                "ref": "<添加分镜节点ref>"
+              },
+              "expected_result": "分镜节点创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "获取节点快照验证首帧端口",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "分镜节点包含视频首帧区域，左侧有蓝色输入端口(.first-frame-port)，端口样式为蓝色圆点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "验证首帧端口样式",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const port = document.querySelector('.first-frame-port'); if(!port) return {exists: false}; const style = getComputedStyle(port); return { exists: true, background: style.backgroundColor, borderColor: style.borderColor }; }"
+              },
+              "verify": "端口存在且背景色为蓝色(#3b82f6)",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "first_frame_002",
+          "name": "图片节点连接到分镜节点首帧端口",
+          "description": "验证用户可以从图片节点拖拽连接线到分镜节点的视频首帧端口，创建蓝色连接线",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建图片节点并上传图片",
+              "operation": "创建图片节点，上传测试图片",
+              "expected_result": "图片节点创建成功，图片上传完成",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "创建分镜节点",
+              "operation": "创建分镜节点",
+              "expected_result": "分镜节点创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "从图片节点输出端口拖拽到分镜节点首帧端口",
+              "mcp_tool": "mcp1_browser_drag",
+              "mcp_params": {
+                "startElement": "图片节点输出端口",
+                "startRef": "<输出端口ref>",
+                "endElement": "分镜节点首帧端口",
+                "endRef": "<首帧端口ref>"
+              },
+              "expected_result": "创建蓝色连接线",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证蓝色连接线存在",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { return { connCount: document.querySelectorAll('.first-frame-conn-group').length, firstFrameConns: window.state ? window.state.firstFrameConnections.length : 0 }; }"
+              },
+              "verify": "蓝色连接线数量为1，state.firstFrameConnections长度为1",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "验证视频首帧图片显示",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const img = document.querySelector('.shot-frame-preview-image'); return { exists: !!img, display: img ? img.style.display : 'none', src: img ? img.src : '' }; }"
+              },
+              "verify": "视频首帧图片元素存在，display不为none，src有值",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "first_frame_003",
+          "name": "首帧连接磁吸效果",
+          "description": "验证拖拽连接线靠近首帧端口时，端口放大并显示光晕效果，连接线吸附到端口",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建图片节点和分镜节点",
+              "operation": "创建两个节点",
+              "expected_result": "节点创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "从图片节点输出端口开始拖拽",
+              "operation": "mousedown on 图片节点输出端口",
+              "expected_result": "开始创建连接线",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "将鼠标移动到首帧端口附近(50px范围内)",
+              "operation": "mousemove to near 首帧端口",
+              "expected_result": "首帧端口添加can-connect类，显示放大和光晕效果",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证端口高亮状态",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const port = document.querySelector('.first-frame-port'); return { hasCanConnect: port ? port.classList.contains('can-connect') : false }; }"
+              },
+              "verify": "首帧端口包含can-connect类",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "first_frame_004",
+          "name": "图片选择更新首帧连接",
+          "description": "验证通过选择图片下拉菜单切换图片时，首帧连接线自动更新",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建多个图片节点并连接到分镜节点",
+              "operation": "创建2个图片节点，分别上传图片，连接到分镜节点",
+              "expected_result": "2个图片节点连接到分镜节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "验证图片选择按钮显示",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const selector = document.querySelector('.shot-frame-image-selector-container'); return { visible: selector ? selector.style.display !== 'none' : false }; }"
+              },
+              "verify": "图片选择容器可见",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "点击选择图片下拉按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "选择图片下拉按钮",
+                "ref": "<下拉按钮ref>"
+              },
+              "expected_result": "显示图片选择菜单",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "选择另一个图片",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "图片选项",
+                "ref": "<图片选项ref>"
+              },
+              "expected_result": "首帧连接线更新到新选择的图片节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "验证首帧连接已更新",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const conns = window.state ? window.state.firstFrameConnections : []; return { count: conns.length, fromId: conns.length > 0 ? conns[0].from : null }; }"
+              },
+              "verify": "首帧连接数量为1，from指向新选择的图片节点",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "first_frame_005",
+          "name": "删除首帧连接线",
+          "description": "验证用户可以选中并删除首帧连接线",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建图片节点到分镜节点的首帧连接",
+              "operation": "创建连接",
+              "expected_result": "蓝色连接线创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击蓝色连接线选中",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "首帧连接线",
+                "ref": "<连接线ref>"
+              },
+              "expected_result": "连接线被选中，显示删除按钮",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "验证删除按钮显示",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const btn = document.getElementById('connDeleteBtn'); return { visible: btn ? btn.style.display !== 'none' : false }; }"
+              },
+              "verify": "删除按钮可见",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "点击删除按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "删除按钮",
+                "ref": "<删除按钮ref>"
+              },
+              "expected_result": "连接线被删除",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "验证连接线已删除",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { return { connCount: document.querySelectorAll('.first-frame-conn-group').length, stateCount: window.state ? window.state.firstFrameConnections.length : 0 }; }"
+              },
+              "verify": "蓝色连接线数量为0",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "first_frame_006",
+          "name": "首帧连接重新加载保持",
+          "description": "验证页面重新加载后，首帧连接线和视频首帧图片正确恢复显示",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建图片节点到分镜节点的首帧连接",
+              "operation": "创建连接并保存",
+              "expected_result": "蓝色连接线创建成功，工作流已保存",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "记录当前首帧连接信息",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const conns = window.state ? window.state.firstFrameConnections : []; return { count: conns.length, data: conns }; }"
+              },
+              "verify": "记录连接数量和连接数据",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "刷新页面",
+              "mcp_tool": "mcp1_browser_navigate",
+              "mcp_params": {
+                "url": "${config.base_url}/video-workflow?id=<workflow_id>"
+              },
+              "expected_result": "页面重新加载",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "等待页面加载完成",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "保存",
+                "time": 5
+              },
+              "expected_result": "页面加载完成",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "验证首帧连接线恢复",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { return { connCount: document.querySelectorAll('.first-frame-conn-group').length, stateCount: window.state ? window.state.firstFrameConnections.length : 0 }; }"
+              },
+              "verify": "蓝色连接线数量与重新加载前一致",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证视频首帧图片显示",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const img = document.querySelector('.shot-frame-preview-image'); return { exists: !!img, display: img ? img.style.display : 'none', hasSrc: img ? !!img.src : false }; }"
+              },
+              "verify": "视频首帧图片元素存在且正确显示",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "first_frame_007",
+          "name": "删除图片节点清除首帧连接",
+          "description": "验证删除已连接的图片节点时，相关的首帧连接线也被删除",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "",
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建图片节点到分镜节点的首帧连接",
+              "operation": "创建连接",
+              "expected_result": "蓝色连接线创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "验证首帧连接存在",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { return { connCount: window.state ? window.state.firstFrameConnections.length : 0 }; }"
+              },
+              "verify": "首帧连接数量为1",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "删除图片节点",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "图片节点删除按钮",
+                "ref": "<删除按钮ref>"
+              },
+              "expected_result": "图片节点被删除",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证首帧连接已清除",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { return { connCount: document.querySelectorAll('.first-frame-conn-group').length, stateCount: window.state ? window.state.firstFrameConnections.length : 0 }; }"
+              },
+              "verify": "首帧连接数量为0",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        }
+      ]
     }
   ],
   "summary": {
-    "total_modules": 10,
-    "total_features": 81,
+    "total_modules": 11,
+    "total_features": 88,
     "priority_breakdown": {
-      "P0": 35,
-      "P1": 24,
+      "P0": 40,
+      "P1": 26,
       "P2": 8
     },
-    "new_modules_added": "新增世界管理、角色管理、场景管理三个模块，共13个测试用例",
+    "new_modules_added": "新增分镜节点视频首帧模块，共7个测试用例",
     "latest_update": "2024-12-25",
     "new_features_added": "新增场景自动匹配功能测试（editor_026）、分镜组场景信息显示测试（editor_027）、分镜组场景选择功能测试（editor_028）",
     "coverage": "覆盖用户认证、工作流列表、工作流编辑器、节点操作、剧本解析、场景自动匹配、时间轴、世界管理、角色管理、场景管理等核心功能",
