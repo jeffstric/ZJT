@@ -838,6 +838,7 @@
           ${character.other_info ? `<div class="field"><div class="label">其他信息</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.other_info.slice(0, 100))}${character.other_info.length > 100 ? '...' : ''}</div></div>` : ''}
           <div class="field btn-row">
             <button class="mini-btn character-edit-btn" type="button">编辑</button>
+            <button class="mini-btn character-sora-video-btn" type="button" style="background: #8b5cf6; color: white;">生成sora角色视频</button>
           </div>
         </div>
         <div class="port output" data-port="output" title="输出"></div>
@@ -849,6 +850,7 @@
       const headerEl = el.querySelector('.node-header');
       const deleteBtn = el.querySelector('[data-action="delete"]');
       const editBtn = el.querySelector('.character-edit-btn');
+      const soraVideoBtn = el.querySelector('.character-sora-video-btn');
       const outputPort = el.querySelector('.port.output');
       
       deleteBtn.addEventListener('click', (e) => {
@@ -859,6 +861,11 @@
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openCharacterEditModal(id, character);
+      });
+      
+      soraVideoBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        generateSoraCharacterVideo(id, character);
       });
       
       el.addEventListener('mousedown', (e) => {
@@ -935,6 +942,7 @@
           ${character.other_info ? `<div class="field"><div class="label">其他信息</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.other_info.slice(0, 100))}${character.other_info.length > 100 ? '...' : ''}</div></div>` : ''}
           <div class="field btn-row">
             <button class="mini-btn character-edit-btn" type="button">编辑</button>
+            <button class="mini-btn character-sora-video-btn" type="button" style="background: #8b5cf6; color: white;">生成sora角色视频</button>
           </div>
         </div>
         <div class="port output" data-port="output" title="输出"></div>
@@ -946,6 +954,7 @@
       const headerEl = el.querySelector('.node-header');
       const deleteBtn = el.querySelector('[data-action="delete"]');
       const editBtn = el.querySelector('.character-edit-btn');
+      const soraVideoBtn = el.querySelector('.character-sora-video-btn');
       const outputPort = el.querySelector('.port.output');
       
       deleteBtn.addEventListener('click', (e) => {
@@ -956,6 +965,11 @@
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openCharacterEditModal(id, character);
+      });
+      
+      soraVideoBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        generateSoraCharacterVideo(id, character);
       });
       
       el.addEventListener('mousedown', (e) => {
@@ -1937,6 +1951,183 @@
         currentEditingCharacterNodeId = null;
       }
     });
+
+    // ========== 生成Sora角色视频功能 ==========
+    
+    async function generateSoraCharacterVideo(characterNodeId, character) {
+      if (!character || !character.name) {
+        showToast('角色信息不完整', 'error');
+        return;
+      }
+      
+      if (!character.reference_image) {
+        showToast('角色缺少参考图，无法生成视频', 'error');
+        return;
+      }
+      
+      const characterNode = state.nodes.find(n => n.id === characterNodeId);
+      if (!characterNode) {
+        showToast('找不到角色节点', 'error');
+        return;
+      }
+      
+      const soraVideoBtn = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-sora-video-btn`);
+      if (soraVideoBtn) {
+        soraVideoBtn.disabled = true;
+        soraVideoBtn.textContent = '生成中...';
+      }
+      
+      try {
+        const characterName = character.name;
+        const styleName = state.style.name || '默认风格';
+        const prompt = `说话：'我是${characterName}，欢迎观看我的短剧，非常感谢大家 ，谢谢！' 然后缓慢转一圈360度全方位展示身体。视频风格为 ${styleName}`;
+        const imageUrl = character.reference_image;
+        const duration = 10;
+        const ratio = state.ratio || '16:9';
+        
+        showToast('正在生成Sora角色视频...', 'info');
+        
+        const userId = localStorage.getItem('user_id') || '1';
+        const authToken = localStorage.getItem('auth_token') || '';
+        const form = new FormData();
+        
+        form.append('image_url', imageUrl);
+        form.append('prompt', prompt);
+        form.append('duration_seconds', duration);
+        form.append('count', 1);
+        form.append('ratio', ratio);
+        
+        if (userId) {
+          form.append('user_id', userId);
+        }
+        if (authToken) {
+          form.append('auth_token', authToken);
+        }
+        
+        const res = await fetch('/api/ai-app-run-image-url', {
+          method: 'POST',
+          body: form
+        });
+        
+        const data = await res.json();
+        
+        if (!data.project_ids || data.project_ids.length === 0) {
+          throw new Error(data.detail || data.message || '提交任务失败');
+        }
+        
+        const projectIds = data.project_ids;
+        showToast('视频生成任务已提交，正在处理...', 'info');
+        
+        pollVideoStatus(
+          projectIds,
+          (msg) => {
+            if (soraVideoBtn) {
+              soraVideoBtn.textContent = msg;
+            }
+          },
+          (statusResult) => {
+            console.log('Sora character video generation status result:', statusResult);
+            
+            let videoUrls = [];
+            if (statusResult.tasks && Array.isArray(statusResult.tasks)) {
+              videoUrls = statusResult.tasks
+                .filter(task => task.status === 'SUCCESS' && task.result)
+                .map(task => normalizeVideoUrl(task.result))
+                .filter(Boolean);
+            } else {
+              const rawResults = extractResultsArray(statusResult);
+              videoUrls = Array.isArray(rawResults)
+                ? rawResults.map(normalizeVideoUrl).filter(Boolean)
+                : [];
+            }
+            
+            console.log('Extracted video URLs:', videoUrls);
+            
+            if (videoUrls.length === 0) {
+              const errorMsg = 'Sora角色视频生成失败，未获取到结果';
+              showToast(errorMsg, 'error');
+              if (soraVideoBtn) {
+                soraVideoBtn.disabled = false;
+                soraVideoBtn.textContent = '生成sora角色视频';
+              }
+              return;
+            }
+            
+            const videoUrl = videoUrls[0];
+            const offsetX = 350;
+            const offsetY = 0;
+            const videoNodeX = characterNode.x + offsetX;
+            const videoNodeY = characterNode.y + offsetY;
+            
+            const newVideoNodeId = createVideoNode({ 
+              x: videoNodeX, 
+              y: videoNodeY 
+            });
+            
+            const newVideoNode = state.nodes.find(n => n.id === newVideoNodeId);
+            if (newVideoNode) {
+              newVideoNode.data.url = videoUrl;
+              newVideoNode.data.name = `${characterName}角色视频`;
+              newVideoNode.title = newVideoNode.data.name;
+              
+              const newNodeEl = canvasEl.querySelector(`.node[data-node-id="${newVideoNodeId}"]`);
+              if (newNodeEl) {
+                const titleEl = newNodeEl.querySelector('.node-title');
+                if (titleEl) titleEl.textContent = newVideoNode.title;
+                
+                const nameEl = newNodeEl.querySelector('.video-name');
+                if (nameEl) nameEl.textContent = newVideoNode.data.name;
+                
+                const previewField = newNodeEl.querySelector('.video-preview-field');
+                const thumbVideo = newNodeEl.querySelector('.video-thumb');
+                if (previewField && thumbVideo) {
+                  thumbVideo.src = proxyImageUrl(videoUrl);
+                  previewField.style.display = 'block';
+                }
+              }
+              
+              state.connections.push({
+                id: state.nextConnId++,
+                from: characterNodeId,
+                to: newVideoNodeId
+              });
+              
+              console.log(`Created Sora character video node ${newVideoNodeId} with URL:`, videoUrl);
+            }
+            
+            renderConnections();
+            renderImageConnections();
+            renderFirstFrameConnections();
+            
+            if (soraVideoBtn) {
+              soraVideoBtn.disabled = false;
+              soraVideoBtn.textContent = '生成sora角色视频';
+            }
+            
+            showToast('Sora角色视频生成成功！', 'success');
+            renderMinimap();
+            try { autoSaveWorkflow(); } catch(e) { console.error('Auto save failed:', e); }
+          },
+          (error) => {
+            const errorMsg = `生成失败: ${error}`;
+            showToast(errorMsg, 'error');
+            if (soraVideoBtn) {
+              soraVideoBtn.disabled = false;
+              soraVideoBtn.textContent = '生成sora角色视频';
+            }
+          }
+        );
+        
+      } catch (error) {
+        console.error('生成Sora角色视频失败:', error);
+        const errorMsg = `生成失败: ${error.message || error}`;
+        showToast(errorMsg, 'error');
+        if (soraVideoBtn) {
+          soraVideoBtn.disabled = false;
+          soraVideoBtn.textContent = '生成sora角色视频';
+        }
+      }
+    }
 
     // 页面加载时初始化
     (async function init(){

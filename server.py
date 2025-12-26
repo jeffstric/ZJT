@@ -21,7 +21,7 @@ from model.world import WorldModel
 from model.character import CharacterModel
 from model.location import LocationModel
 import uuid
-from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character, get_character_task_result
+from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character as create_character_task, get_character_task_result
 from PIL import Image
 from llm import call_ernie_vl_api
 
@@ -2412,7 +2412,7 @@ async def api_create_character(
         transaction_id = str(uuid.uuid4())
         
         # Call the character creation API
-        response = create_character(
+        response = create_character_task(
             timestamps=timestamps,
             url=url,
             from_task=from_task,

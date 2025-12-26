@@ -5979,9 +5979,10 @@
         {
           "id": "character_005",
           "name": "生成Sora角色视频功能",
-          "description": "验证角色节点的生成sora角色视频按钮可以自动创建图生视频节点，并填充固定提示词和10秒时长",
+          "description": "验证角色节点的生成sora角色视频按钮直接调用图生视频API，生成成功后自动创建视频节点",
           "priority": "P1",
           "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/ai-app-run-image-url",
           "pass": false,
           "remark": "",
           "prerequisites": ["character_004"],
@@ -6003,70 +6004,96 @@
                 "element": "生成sora角色视频按钮",
                 "ref": "<生成sora角色视频按钮ref>"
               },
-              "expected_result": "自动创建图生视频节点",
+              "expected_result": "按钮变为生成中状态",
               "pass": false,
               "remark": ""
             },
             {
               "step": 3,
-              "action": "等待节点创建完成",
-              "mcp_tool": "mcp1_browser_wait_for",
-              "mcp_params": {
-                "text": "已创建Sora角色视频节点",
-                "time": 3
-              },
-              "expected_result": "显示成功提示",
+              "action": "验证按钮状态变化",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "按钮文字变为「生成中...」且被禁用",
               "pass": false,
               "remark": ""
             },
             {
               "step": 4,
-              "action": "获取图生视频节点快照",
-              "mcp_tool": "mcp1_browser_snapshot",
+              "action": "验证API请求发送",
+              "mcp_tool": "mcp1_browser_network_requests",
               "mcp_params": {},
-              "verify": "画布上出现新的图生视频节点，位于角色节点右侧",
+              "verify": "存在POST /api/ai-app-run-image-url请求，包含image_url（角色参考图）、prompt（固定提示词）、duration_seconds（10）、count（1）、ratio参数",
               "pass": false,
               "remark": ""
             },
             {
               "step": 5,
               "action": "验证提示词内容",
-              "mcp_tool": "mcp1_browser_evaluate",
-              "mcp_params": {
-                "function": "() => { const promptEl = document.querySelector('.node[data-node-id]:last-child .prompt'); return promptEl ? promptEl.value : ''; }"
-              },
-              "verify": "提示词包含：「说话：'我是XX（角色名称），欢迎观看我的短剧，请认准 智剧通 制作短剧，谢谢！' 然后缓慢转一圈360度全方位展示身体。视频风格为 XX（画风）」",
+              "operation": "检查API请求中的prompt参数",
+              "expected_result": "提示词包含：「说话：'我是XX（角色名称），欢迎观看我的短剧，请认准 智剧通 制作短剧，谢谢！' 然后缓慢转一圈360度全方位展示身体。视频风格为 XX（画风）」",
               "pass": false,
               "remark": ""
             },
             {
               "step": 6,
-              "action": "验证视频时长设置",
-              "mcp_tool": "mcp1_browser_evaluate",
+              "action": "等待视频生成完成",
+              "mcp_tool": "mcp1_browser_wait_for",
               "mcp_params": {
-                "function": "() => { const durationEl = document.querySelector('.node[data-node-id]:last-child .duration-select'); return durationEl ? durationEl.value : ''; }"
+                "text": "Sora角色视频生成成功",
+                "time": 180
               },
-              "verify": "时长选择器的值为 '10'（10秒）",
+              "expected_result": "显示成功提示",
               "pass": false,
               "remark": ""
             },
             {
               "step": 7,
-              "action": "验证模型设置",
+              "action": "验证视频节点自动创建",
               "mcp_tool": "mcp1_browser_evaluate",
               "mcp_params": {
-                "function": "() => { const modelEl = document.querySelector('.node[data-node-id]:last-child .model-select'); return modelEl ? modelEl.value : ''; }"
+                "function": "() => { const s = window.state; if(!s || !Array.isArray(s.nodes)) return { count: 0 }; return { count: s.nodes.filter(n => n.type === 'video').length }; }"
               },
-              "verify": "模型选择器的值为 'sora'",
+              "verify": "视频节点数量 >= 1",
               "pass": false,
               "remark": ""
             },
             {
               "step": 8,
-              "action": "验证首帧图片已加载",
+              "action": "验证视频节点位置",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const s = window.state; const charNode = s?.nodes?.find(n => n.type === 'character'); const videoNode = s?.nodes?.find(n => n.type === 'video'); if(!charNode || !videoNode) return { valid: false }; return { valid: true, charX: charNode.x, videoX: videoNode.x, offsetX: videoNode.x - charNode.x }; }"
+              },
+              "verify": "视频节点位于角色节点右侧，x偏移约350px",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 9,
+              "action": "验证视频节点连接关系",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const s = window.state; if(!s) return { hasConn: false }; const charNode = s.nodes.find(n => n.type === 'character'); const videoNode = s.nodes.find(n => n.type === 'video'); if(!charNode || !videoNode) return { hasConn: false }; return { hasConn: s.connections.some(c => c.from === charNode.id && c.to === videoNode.id) }; }"
+              },
+              "verify": "角色节点和视频节点之间存在连接线",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 10,
+              "action": "验证视频节点标题和内容",
               "mcp_tool": "mcp1_browser_snapshot",
               "mcp_params": {},
-              "verify": "图生视频节点的首帧预览区域显示角色参考图",
+              "verify": "视频节点标题为「XX角色视频」，视频预览区域显示生成的视频",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 11,
+              "action": "验证按钮恢复正常状态",
+              "mcp_tool": "mcp1_browser_snapshot",
+              "mcp_params": {},
+              "verify": "按钮文字恢复为「生成sora角色视频」且可点击",
               "pass": false,
               "remark": ""
             }
