@@ -532,8 +532,9 @@ async def image_edit(
                     detail="您的算力不足，无法生成视频"
                 )
 
-        # Handle multiple images
-        image_urls = [_save_uploaded_image(img) for img in image]
+        # Handle multiple images - limit to maximum 5 images
+        images_to_process = image[:5] if len(image) > 5 else image
+        image_urls = [_save_uploaded_image(img) for img in images_to_process]
         
         # Submit tasks according to generation count
         project_ids = []

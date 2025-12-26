@@ -180,6 +180,15 @@ async function generateShotFrameImage(nodeId, node){
       return;
     }
     
+    // 5.5. 限制参考图数量不超过5个
+    const MAX_REFERENCE_IMAGES = 5;
+    if(referenceImages.length > MAX_REFERENCE_IMAGES){
+      console.warn(`参考图数量 ${referenceImages.length} 超过限制 ${MAX_REFERENCE_IMAGES}，将只使用前 ${MAX_REFERENCE_IMAGES} 张`);
+      referenceImages.splice(MAX_REFERENCE_IMAGES);
+      promptSuffix.splice(MAX_REFERENCE_IMAGES);
+      showToast(`参考图数量超过${MAX_REFERENCE_IMAGES}张，已自动限制为${MAX_REFERENCE_IMAGES}张`, 'warning');
+    }
+    
     generateBtn.textContent = '生成中...';
     showToast(`找到${referenceImages.length}张参考图，开始生成...`, 'info');
     
