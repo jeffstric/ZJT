@@ -22,7 +22,7 @@ from duomi_api_requset import create_video_remix, create_character, get_characte
 from PIL import Image
 from baidu import call_ernie_vl_api
 from task.scheduler import init_scheduler
-from config.constant import TASK_COMPUTING_POWER, TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO, RECHARGE_PACKAGES
+from config.constant import TASK_COMPUTING_POWER, TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO, RECHARGE_PACKAGES, AUTHENTICATION_ID
 from utils.wechat_pay_util import WechatPayUtil
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -49,7 +49,8 @@ wechat_pay_config = config.get("pay", {}).get("wxpay", {})
 wechat_pay_util = WechatPayUtil(
     app_id=wechat_pay_config.get("appId"),
     mch_id=wechat_pay_config.get("mchId"),
-    api_key=wechat_pay_config.get("api_key")
+    api_key=wechat_pay_config.get("api_key"),
+    APIv3_key=wechat_pay_config.get("APIv3_key")
 )
 
 # Default ComfyUI server address; can be overridden by request field
@@ -2557,30 +2558,22 @@ async def create_wechat_payment(request: WechatPayRequest):
             # openid = get_user_openid(request.user_id)
             openid = f"mock_openid_{request.user_id}"
             
-            # TODO: 获取真实的客户端IP
-            payer_client_ip = "127.0.0.1"
-            
             payment_result = wechat_pay_util.create_jsapi_payment(
                 order_id=order_id,
                 total_fee=total_fee,
                 body=body,
                 openid=openid,
-                notify_url=notify_url,
-                payer_client_ip=payer_client_ip
+                notify_url=notify_url
             )
         else:
             # 外部浏览器使用H5支付
             payment_type = "H5"
             
-            # TODO: 获取真实的客户端IP
-            payer_client_ip = "127.0.0.1"
-            
             payment_result = wechat_pay_util.create_h5_payment(
                 order_id=order_id,
                 total_fee=total_fee,
                 body=body,
-                notify_url=notify_url,
-                payer_client_ip=payer_client_ip
+                notify_url=notify_url
             )
         
         # 保存订单记录到数据库
@@ -2664,14 +2657,14 @@ async def wechat_payment_callback(request: Request):
         
         # TODO: 验证回调签名
         # 从请求头获取签名信息
-        # timestamp = request.headers.get("Wechatpay-Timestamp")
-        # nonce = request.headers.get("Wechatpay-Nonce")
-        # signature = request.headers.get("Wechatpay-Signature")
-        # serial = request.headers.get("Wechatpay-Serial")
-        # 
-        # if not wechat_pay_util.verify_callback_signature(timestamp, nonce, body, signature):
-        #     logger.error("Invalid callback signature")
-        #     return JSONResponse({"code": "FAIL", "message": "签名验证失败"}, status_code=400)
+        timestamp = request.headers.get("Wechatpay-Timestamp")
+        nonce = request.headers.get("Wechatpay-Nonce")
+        signature = request.headers.get("Wechatpay-Signature")
+        serial = request.headers.get("Wechatpay-Serial")
+        
+        if not wechat_pay_util.verify_callback_signature(timestamp, nonce, body, signature):
+            logger.error("Invalid callback signature")
+            return JSONResponse({"code": "FAIL", "message": "签名验证失败"}, status_code=400)
         
         # 检查事件类型
         event_type = callback_data.get("event_type")
@@ -2679,52 +2672,83 @@ async def wechat_payment_callback(request: Request):
             logger.warning(f"Unsupported event type: {event_type}")
             return JSONResponse({"code": "SUCCESS", "message": "OK"})
         
-        # TODO: 解密资源数据
-        # resource = callback_data.get("resource", {})
-        # ciphertext = resource.get("ciphertext")
-        # associated_data = resource.get("associated_data")
-        # nonce = resource.get("nonce")
-        # 
-        # # 使用APIv3密钥解密
-        # decrypted_data = wechat_pay_util.decrypt_callback_resource(
-        #     ciphertext=ciphertext,
-        #     associated_data=associated_data,
-        #     nonce=nonce
-        # )
-        # 
-        # # 解析交易数据
-        # transaction_data = json.loads(decrypted_data)
-        # order_id = transaction_data.get("out_trade_no")
-        # transaction_id = transaction_data.get("transaction_id")
-        # trade_state = transaction_data.get("trade_state")
-        # 
-        # logger.info(f"Decrypted transaction: order_id={order_id}, transaction_id={transaction_id}, state={trade_state}")
-        # 
-        # # 如果支付成功，处理订单
-        # if trade_state == "SUCCESS":
-        #     # 查询订单
-        #     order = PaymentOrdersModel.get_by_order_id(order_id)
-        #     
-        #     if not order:
-        #         logger.error(f"Order not found: {order_id}")
-        #         return JSONResponse({"code": "FAIL", "message": "订单不存在"}, status_code=400)
-        #     
-        #     # 检查订单状态，避免重复处理
-        #     if order.status == 1:
-        #         logger.info(f"Order already paid: {order_id}")
-        #         return JSONResponse({"code": "SUCCESS", "message": "OK"})
-        #     
-        #     # 更新订单状态为已支付
-        #     PaymentOrdersModel.update_paid(order_id, transaction_id)
-        #     
-        #     # TODO: 增加用户算力
-        #     # add_computing_power(
-        #     #     user_id=order.user_id,
-        #     #     computing_power=order.computing_power,
-        #     #     order_id=order_id
-        #     # )
-        #     
-        #     logger.info(f"Payment processed successfully: order_id={order_id}, user_id={order.user_id}, computing_power={order.computing_power}")
+        # 解密资源数据
+        resource = callback_data.get("resource", {})
+        ciphertext = resource.get("ciphertext")
+        associated_data = resource.get("associated_data")
+        resource_nonce = resource.get("nonce")
+        
+        if not ciphertext or not associated_data or not resource_nonce:
+            logger.error("Missing encryption parameters in callback")
+            return JSONResponse({"code": "FAIL", "message": "缺少加密参数"}, status_code=400)
+        
+        # 使用APIv3密钥解密
+        try:
+            decrypted_data = wechat_pay_util.decrypt_callback_resource(
+                nonce=resource_nonce,
+                ciphertext=ciphertext,
+                associated_data=associated_data
+            )
+        except Exception as e:
+            logger.error(f"Failed to decrypt callback data: {str(e)}")
+            return JSONResponse({"code": "FAIL", "message": "解密失败"}, status_code=400)
+        
+        # 解析交易数据
+        transaction_data = json.loads(decrypted_data)
+        order_id = transaction_data.get("out_trade_no")
+        transaction_id = transaction_data.get("transaction_id")
+        trade_state = transaction_data.get("trade_state")
+        
+        logger.info(f"Decrypted transaction: order_id={order_id}, transaction_id={transaction_id}, state={trade_state}")
+        
+        # 如果支付成功，处理订单
+        if trade_state == "SUCCESS":
+            # 查询订单
+            order = PaymentOrdersModel.get_by_order_id(order_id)
+            
+            if not order:
+                logger.error(f"Order not found: {order_id}")
+                return JSONResponse({"code": "FAIL", "message": "订单不存在"}, status_code=400)
+            
+            # 检查订单状态，避免重复处理
+            if order.status == 1:
+                logger.info(f"Order already paid: {order_id}")
+                return JSONResponse({"code": "SUCCESS", "message": "OK"})
+            
+            # 更新订单状态为已支付
+            PaymentOrdersModel.update_paid(order_id, transaction_id)
+            user_id = order.user_id
+            # TODO: 增加用户算力
+            logger.info(f"Refunding {user_id} , {AUTHENTICATION_ID}")
+            success, message, response_data = make_perseids_request(
+                endpoint='get_auth_token_by_user_id',
+                method='POST',
+                data={
+                    "user_id": user_id,
+                    "authentication_id": AUTHENTICATION_ID
+                }
+            )
+
+            if not success:
+                logger.error(f"Failed to get auth token for user {user_id}: {message}")
+                return False
+                
+            auth_token = response_data['token']
+            headers = {'Authorization': f'Bearer {auth_token}'}
+                        
+            # 发起请求，增加算力
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": order.computing_power,
+                    "behavior": "increase",
+                    "transaction_id": transaction_id
+                }
+            )
+            
+            logger.info(f"Payment processed successfully: order_id={order_id}, user_id={order.user_id}, computing_power={order.computing_power}")
         
         # 返回成功响应（V3 API使用JSON格式）
         return JSONResponse({"code": "SUCCESS", "message": "OK"})

@@ -7,6 +7,12 @@ import uuid
 from typing import Dict, Optional
 import logging
 import json
+import os
+import base64
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,17 +20,20 @@ logger = logging.getLogger(__name__)
 class WechatPayUtil:
     """微信支付工具类"""
     
-    def __init__(self, app_id: str = None, mch_id: str = None, api_key: str = None):
+    def __init__(self, app_id: str = None, mch_id: str = None, api_key: str = None, APIv3_key: str = None):
         """
         初始化微信支付工具
         
         Args:
             app_id: 微信公众号/小程序的AppID
             mch_id: 微信支付商户号
+            api_key: 商户API证书序列号
+            APIv3_key: APIv3密钥
         """
         self.app_id = app_id
         self.mch_id = mch_id
-        self.api_key = api_key    
+        self.api_key = api_key
+        self.APIv3_key = APIv3_key
     
     def generate_order_id(self) -> str:
         """
@@ -41,8 +50,7 @@ class WechatPayUtil:
         total_fee: int,
         body: str,
         openid: str,
-        notify_url: str,
-        payer_client_ip: str = "127.0.0.1"
+        notify_url: str
     ) -> Dict:
         """
         创建JSAPI支付订单（微信内浏览器支付）- 使用微信支付V3 API
@@ -53,7 +61,6 @@ class WechatPayUtil:
             body: 商品描述
             openid: 用户的openid
             notify_url: 支付结果通知回调URL
-            payer_client_ip: 用户终端IP
         
         Returns:
             包含支付参数的字典
@@ -87,9 +94,6 @@ class WechatPayUtil:
         #     },
         #     "payer": {
         #         "openid": openid
-        #     },
-        #     "scene_info": {
-        #         "payer_client_ip": payer_client_ip
         #     }
         # }
         # 
@@ -165,7 +169,6 @@ class WechatPayUtil:
         total_fee: int,
         body: str,
         notify_url: str,
-        payer_client_ip: str = "127.0.0.1",
         scene_info: Optional[Dict] = None
     ) -> Dict:
         """
@@ -176,7 +179,6 @@ class WechatPayUtil:
             total_fee: 支付金额（单位：分）
             body: 商品描述
             notify_url: 支付结果通知回调URL
-            payer_client_ip: 用户终端IP
             scene_info: 场景信息（H5支付必填），包含h5_info
         
         Returns:
@@ -244,43 +246,6 @@ class WechatPayUtil:
         h5_url = result.get("h5_url")
         
         return {"h5_url": h5_url}
-          
-    def create_native_payment(
-        self,
-        order_id: str,
-        total_fee: int,
-        body: str,
-        notify_url: str
-    ) -> Dict:
-        """
-        创建Native支付订单（扫码支付）
-        
-        Args:
-            order_id: 商户订单号
-            total_fee: 支付金额（单位：分）
-            body: 商品描述
-            notify_url: 支付结果通知回调URL
-        
-        Returns:
-            包含支付二维码URL的字典
-            {
-                "code_url": "weixin://wxpay/bizpayurl?pr=xxx"
-            }
-        
-        TODO: 实现具体的Native支付逻辑
-        - 调用微信统一下单接口，trade_type=NATIVE
-        - 获取支付二维码URL code_url
-        """
-        logger.info(f"Creating Native payment for order {order_id}, amount: {total_fee}")
-        
-        # TODO: 实现微信Native支付API调用
-        # 类似H5支付，但trade_type=NATIVE
-        # 返回的是code_url，前端需要将其生成二维码供用户扫描
-        
-        # 临时返回模拟数据
-        return {
-            "code_url": f"weixin://wxpay/bizpayurl?pr=mock_{order_id}"
-        }
     
     def _generate_sign(
         self,
@@ -319,11 +284,7 @@ class WechatPayUtil:
         
         # 第二步：使用商户私钥进行RSA-SHA256签名
         try:
-            import os
-            import base64
-            from cryptography.hazmat.primitives import hashes, serialization
-            from cryptography.hazmat.primitives.asymmetric import padding
-            from cryptography.hazmat.backends import default_backend
+
             
             # 读取私钥文件
             private_key_path = os.path.join(
@@ -358,4 +319,120 @@ class WechatPayUtil:
             logger.error(f"Failed to generate signature: {str(e)}")
             logger.warning("Using mock signature for development")
             return "mock_signature"
+    
+    def verify_callback_signature(
+        self,
+        timestamp: str,
+        nonce: str,
+        body: bytes,
+        signature: str
+    ) -> bool:
+        """
+        验证微信支付回调签名
+        
+        使用微信支付平台公钥验证回调签名，确保回调数据来源可信
+        
+        验签步骤：
+        1. 构建验签串（timestamp、nonce、body）
+        2. 使用微信支付平台公钥验证签名
+        
+        Args:
+            timestamp: 时间戳（从请求头Wechatpay-Timestamp获取）
+            nonce: 随机串（从请求头Wechatpay-Nonce获取）
+            body: 请求体原始字节数据
+            signature: 签名（从请求头Wechatpay-Signature获取，Base64编码）
+        
+        Returns:
+            签名是否有效
+        """
+        try:
+
+            
+            # 构建验签串
+            verify_string = f"{timestamp}\n{nonce}\n{body.decode('utf-8')}\n"
+            
+            # 读取微信支付平台公钥
+            public_key_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "secret/wechat/pub_key.pem"
+            )
+            
+            with open(public_key_path, 'rb') as f:
+                public_key = serialization.load_pem_public_key(
+                    f.read(),
+                    backend=default_backend()
+                )
+            
+            # Base64解码签名
+            signature_bytes = base64.b64decode(signature)
+            
+            # 使用公钥验证签名
+            try:
+                public_key.verify(
+                    signature_bytes,
+                    verify_string.encode('utf-8'),
+                    padding.PKCS1v15(),
+                    hashes.SHA256()
+                )
+                logger.info("Callback signature verification successful")
+                return True
+            except Exception as verify_error:
+                logger.error(f"Signature verification failed: {str(verify_error)}")
+                return False
+                
+        except FileNotFoundError:
+            logger.error(f"Public key file not found: {public_key_path}")
+            logger.warning("Skipping signature verification for development")
+            return True  # 开发环境下如果没有公钥文件，跳过验签
+        except Exception as e:
+            logger.error(f"Failed to verify callback signature: {str(e)}")
+            return False
+    
+    def decrypt_callback_resource(
+        self,
+        nonce: str,
+        ciphertext: str,
+        associated_data: str
+    ) -> str:
+        """
+        解密微信支付回调中的加密资源数据
+        
+        使用AEAD_AES_256_GCM算法解密resource中的ciphertext
+        
+        Args:
+            nonce: 加密使用的随机串
+            ciphertext: Base64编码的密文
+            associated_data: 附加数据
+        
+        Returns:
+            解密后的明文字符串（JSON格式）
+        """
+        try:
+
+            
+            # APIv3密钥
+            if not self.APIv3_key:
+                raise ValueError("APIv3_key is not configured")
+            
+            # 转换为字节
+            key_bytes = str.encode(self.APIv3_key)
+            nonce_bytes = str.encode(nonce)
+            ad_bytes = str.encode(associated_data)
+            
+            # Base64解码密文
+            ciphertext_bytes = base64.b64decode(ciphertext)
+            
+            # 使用AESGCM解密
+            aesgcm = AESGCM(key_bytes)
+            decrypted_bytes = aesgcm.decrypt(nonce_bytes, ciphertext_bytes, ad_bytes)
+            
+            # 转换为字符串
+            decrypted_text = decrypted_bytes.decode('utf-8')
+            
+            logger.info("Successfully decrypted callback resource data")
+            return decrypted_text
+            
+        except Exception as e:
+            logger.error(f"Failed to decrypt callback resource: {str(e)}")
+            raise
       
