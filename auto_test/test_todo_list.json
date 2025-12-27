@@ -6098,6 +6098,391 @@
               "remark": ""
             }
           ]
+        },
+        {
+          "id": "character_006",
+          "name": "创建Sora角色卡并同步到数据库",
+          "description": "验证创建角色卡成功后，sora_character字段会同步保存到数据库，重新加载工作流后角色卡ID依然存在",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "POST /api/create-character, GET /api/character-status/{task_id}, POST /api/characters/update",
+          "pass": false,
+          "remark": "修复了角色卡创建后不同步到数据库的bug",
+          "prerequisites": ["character_005"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建角色节点并生成角色视频",
+              "operation": "点击生成sora角色视频按钮",
+              "expected_result": "视频生成成功，视频节点自动创建并连接到角色节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击创建sora角色卡按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "创建sora角色卡按钮",
+                "ref": "<创建角色卡按钮ref>"
+              },
+              "expected_result": "按钮显示'创建中...'，开始轮询状态",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "等待角色卡创建完成（最多10分钟）",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "角色卡创建成功",
+                "time": 600000
+              },
+              "expected_result": "显示成功提示，包含角色卡ID",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证角色卡ID已保存到节点数据",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const node = window.state.nodes.find(n => n.type === 'character'); return { hasSoraCharacter: !!node?.data?.sora_character, soraCharacterId: node?.data?.sora_character }; }"
+              },
+              "verify": "节点数据中存在sora_character字段",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "刷新页面重新加载工作流",
+              "mcp_tool": "mcp1_browser_navigate",
+              "mcp_params": {
+                "url": "${config.base_url}/video-workflow?id=<workflow_id>"
+              },
+              "expected_result": "页面重新加载",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证角色卡ID从数据库加载成功",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const node = window.state.nodes.find(n => n.type === 'character'); return { hasSoraCharacter: !!node?.data?.sora_character, buttonText: document.querySelector('.character-create-card-btn')?.textContent }; }"
+              },
+              "verify": "sora_character字段存在，按钮显示'重新生成sora角色卡'",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "character_007",
+          "name": "角色视频连接线持久化",
+          "description": "验证角色生成视频后，角色节点与视频节点之间的连接线能正确保存和加载，即使节点很多也不会丢失",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "修复了节点多时连接线不显示的timing问题",
+          "prerequisites": ["character_005"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建多个节点（至少20个）",
+              "operation": "创建多种类型节点",
+              "expected_result": "画布上有大量节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "创建角色节点并生成角色视频",
+              "operation": "点击生成sora角色视频按钮",
+              "expected_result": "视频生成成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "验证连接线立即显示",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "Sora角色视频生成成功",
+                "time": 5000
+              },
+              "expected_result": "成功提示显示",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "等待连接线渲染完成（100ms延迟）",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => new Promise(resolve => setTimeout(() => resolve({ connCount: window.state.connections.length, svgPaths: document.querySelectorAll('#connectionsSvg path.line').length }), 200))"
+              },
+              "verify": "state.connections和SVG中的连接线数量一致",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "保存工作流",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "保存按钮",
+                "ref": "<保存按钮ref>"
+              },
+              "expected_result": "工作流保存成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "刷新页面重新加载",
+              "mcp_tool": "mcp1_browser_navigate",
+              "mcp_params": {
+                "url": "${config.base_url}/video-workflow?id=<workflow_id>"
+              },
+              "expected_result": "页面重新加载",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 7,
+              "action": "验证连接线正确恢复",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const charNode = window.state.nodes.find(n => n.type === 'character'); const conn = window.state.connections.find(c => c.from === charNode?.id); return { hasConnection: !!conn, fromNodeType: charNode?.type, toNodeId: conn?.to }; }"
+              },
+              "verify": "角色节点到视频节点的连接存在",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "character_008",
+          "name": "角色视频按钮UI状态变化",
+          "description": "验证角色节点的生成sora角色视频按钮在sora_character存在时显示为白色背景和'重新生成sora角色视频'文字",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "优化了按钮UI，与角色卡按钮保持一致的视觉风格",
+          "prerequisites": ["character_006"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建新角色节点（无sora_character）",
+              "operation": "添加角色节点到画布",
+              "expected_result": "角色节点创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "验证初始按钮样式",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const btn = document.querySelector('.character-sora-video-btn'); return { text: btn?.textContent, bgColor: window.getComputedStyle(btn).backgroundColor }; }"
+              },
+              "verify": "按钮文字为'生成sora角色视频'，背景色为紫色(rgb(139, 92, 246))",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "生成角色视频并创建角色卡",
+              "operation": "完成角色视频生成和角色卡创建",
+              "expected_result": "角色卡创建成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证按钮样式更新",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const btn = document.querySelector('.character-sora-video-btn'); return { text: btn?.textContent, bgColor: window.getComputedStyle(btn).backgroundColor, border: window.getComputedStyle(btn).border }; }"
+              },
+              "verify": "按钮文字为'重新生成sora角色视频'，背景色为白色，有灰色边框",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "刷新页面验证样式持久化",
+              "mcp_tool": "mcp1_browser_navigate",
+              "mcp_params": {
+                "url": "${config.base_url}/video-workflow?id=<workflow_id>"
+              },
+              "expected_result": "页面重新加载",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证加载后按钮样式正确",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const btn = document.querySelector('.character-sora-video-btn'); return { text: btn?.textContent, hasWhiteBg: window.getComputedStyle(btn).backgroundColor.includes('255, 255, 255') }; }"
+              },
+              "verify": "按钮保持'重新生成sora角色视频'样式",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "character_009",
+          "name": "角色卡创建超时时间验证",
+          "description": "验证角色卡创建的超时时间已从2分钟延长到10分钟，帮助按钮可点击显示提示信息",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "优化了超时时间和帮助按钮交互",
+          "prerequisites": ["character_005"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建角色并生成视频",
+              "operation": "完成角色视频生成",
+              "expected_result": "视频生成成功",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "点击创建角色卡按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "创建sora角色卡按钮",
+                "ref": "<创建角色卡按钮ref>"
+              },
+              "expected_result": "开始创建角色卡",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "观察轮询进度显示",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "处理中",
+                "time": 5000
+              },
+              "expected_result": "按钮显示'处理中(x/300)...'格式的进度",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证最大轮询次数",
+              "mcp_tool": "mcp1_browser_evaluate",
+              "mcp_params": {
+                "function": "() => { const btnText = document.querySelector('.character-create-card-btn')?.textContent; const match = btnText?.match(/\\((\\d+)\\/(\\d+)\\)/); return { currentAttempt: match?.[1], maxAttempts: match?.[2] }; }"
+              },
+              "verify": "maxAttempts为300（10分钟 = 300次 * 2秒）",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "点击帮助图标（问号）",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "角色卡帮助图标",
+                "ref": "<帮助图标ref>"
+              },
+              "expected_result": "显示提示信息toast",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证帮助提示内容",
+              "mcp_tool": "mcp1_browser_wait_for",
+              "mcp_params": {
+                "text": "如果角色持续创建失败，请尝试更改角色图片并重新生成角色视频",
+                "time": 3000
+              },
+              "verify": "显示正确的帮助信息",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "character_010",
+          "name": "分镜视频生成时角色ID替换",
+          "description": "验证分镜节点使用Sora模型生成视频时，提示词中的【【角色名】】会被替换为@sora_character_id格式，已存在的角色ID也会添加@符号",
+          "priority": "P0",
+          "page_url": "/video-workflow",
+          "api_endpoint": "GET /api/character/search, POST /api/ai-app-run-image-url",
+          "pass": false,
+          "remark": "实现了Sora模型的角色ID自动替换功能",
+          "prerequisites": ["character_006", "shot_frame_003"],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "创建角色并生成角色卡",
+              "operation": "创建角色'林越'并生成sora_character",
+              "expected_result": "角色卡创建成功，获得sora_character ID",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "创建分镜节点并设置视频提示词",
+              "operation": "在视频提示词中输入包含【【林越】】和patiencep.dragonenvo的文本",
+              "example_prompt": "patiencep.dragonenvo 走上擂台，面向【【林越】】表达感谢",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "选择Sora视频模型",
+              "mcp_tool": "mcp1_browser_select_option",
+              "mcp_params": {
+                "element": "视频模型选择器",
+                "ref": "<视频模型选择ref>",
+                "values": ["sora"]
+              },
+              "expected_result": "模型选择为Sora",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "点击生成视频按钮",
+              "mcp_tool": "mcp1_browser_click",
+              "mcp_params": {
+                "element": "生成视频按钮",
+                "ref": "<生成视频按钮ref>"
+              },
+              "expected_result": "开始生成视频",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "检查网络请求中的提示词",
+              "mcp_tool": "mcp1_browser_network_requests",
+              "verify": "POST /api/ai-app-run-image-url请求中的prompt参数包含@patiencep.dragonenvo和@<sora_character_id>格式",
+              "expected_pattern": "@[a-z0-9]+\\.[a-z0-9]+ ",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证控制台日志",
+              "mcp_tool": "mcp1_browser_console_messages",
+              "verify": "控制台显示角色替换日志，如'Replaced 【【林越】】 with @xxx.xxx'",
+              "pass": false,
+              "remark": ""
+            }
+          ]
         }
       ]
     },
@@ -6753,16 +7138,16 @@
   ],
   "summary": {
     "total_modules": 12,
-    "total_features": 97,
+    "total_features": 102,
     "priority_breakdown": {
-      "P0": 40,
-      "P1": 26,
+      "P0": 43,
+      "P1": 28,
       "P2": 8
     },
     "new_modules_added": "新增分镜节点视频首帧模块（7个测试用例）、新增镜头节点生成视频模块（9个测试用例）",
-    "latest_update": "2024-12-26",
-    "new_features_added": "新增场景自动匹配功能测试（editor_026）、分镜组场景信息显示测试（editor_027）、分镜组场景选择功能测试（editor_028）",
-    "coverage": "覆盖用户认证、工作流列表、工作流编辑器、节点操作、剧本解析、场景自动匹配、时间轴、世界管理、角色管理、场景管理、镜头节点生成视频等核心功能",
+    "latest_update": "2024-12-27",
+    "new_features_added": "新增角色卡数据库同步测试（character_006）、角色视频连接线持久化测试（character_007）、角色视频按钮UI状态测试（character_008）、角色卡创建超时验证测试（character_009）、分镜视频角色ID替换测试（character_010）",
+    "coverage": "覆盖用户认证、工作流列表、工作流编辑器、节点操作、剧本解析、场景自动匹配、时间轴、世界管理、角色管理（含Sora角色卡创建与数据库同步）、场景管理、镜头节点生成视频（含角色ID自动替换）等核心功能",
     "pass_level": "每个 test_step 都有独立的 pass 字段，智能体可以逐步验证每个小步骤",
     "note": "所有 test_step 的 pass 字段均设置为 false，智能体完成每个步骤后将其设置为 true"
   },
