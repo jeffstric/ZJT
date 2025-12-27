@@ -1369,6 +1369,8 @@
     }
 
     function renderConnections(tempLine){
+      updateCanvasSize();
+      
       let pathsHtml = '';
       for(const conn of state.connections){
         const from = getOutputPortPos(conn.from);

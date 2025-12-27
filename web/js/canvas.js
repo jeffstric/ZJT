@@ -1,4 +1,6 @@
     function renderMinimap(){
+      updateCanvasSize();
+      
       if(state.nodes.length === 0){
         minimapContent.innerHTML = '';
         return;
@@ -116,6 +118,37 @@
       const y = Math.max(marginTop, viewportTop + marginTop);
       
       return { x, y };
+    }
+
+    function updateCanvasSize(){
+      if(state.nodes.length === 0){
+        return;
+      }
+      
+      let maxX = 0;
+      let maxY = 0;
+      
+      for(const node of state.nodes){
+        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+        const w = el ? el.offsetWidth : 300;
+        const h = el ? el.offsetHeight : 200;
+        maxX = Math.max(maxX, node.x + w);
+        maxY = Math.max(maxY, node.y + h);
+      }
+      
+      const minWidth = 10000;
+      const minHeight = 10000;
+      const padding = 1000;
+      
+      const newWidth = Math.max(minWidth, maxX + padding);
+      const newHeight = Math.max(minHeight, maxY + padding);
+      
+      canvasEl.style.width = newWidth + 'px';
+      canvasEl.style.height = newHeight + 'px';
+      connectionsSvg.style.width = newWidth + 'px';
+      connectionsSvg.style.height = newHeight + 'px';
+      connectionsSvg.setAttribute('width', newWidth);
+      connectionsSvg.setAttribute('height', newHeight);
     }
 
     function removeNode(id){
