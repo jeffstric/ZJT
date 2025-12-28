@@ -415,6 +415,28 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     return f"{SERVER_HOST}/upload/{filename}"
 
 
+def _save_user_asset(upload_file: UploadFile, user_id: int, category: str = "workflow") -> str:
+    """
+    Save a user-specific asset (image/video) under a scoped directory.
+    """
+    asset_dir = os.path.join(UPLOAD_DIR, category, str(user_id))
+    os.makedirs(asset_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = uuid.uuid4().hex[:8]
+    original_name = upload_file.filename or "asset"
+    file_extension = os.path.splitext(original_name)[1] or ".bin"
+    filename = f"{category}_{timestamp}_{unique_id}{file_extension}"
+
+    file_path = os.path.join(asset_dir, filename)
+    with open(file_path, "wb") as f:
+        content = upload_file.file.read()
+        f.write(content)
+
+    relative_path = f"{category}/{user_id}/{filename}"
+    return f"{SERVER_HOST}/upload/{relative_path}"
+
+
 def _concatenate_images(upload_files: List[UploadFile]) -> str:
     """
     Concatenate multiple images horizontally and save to upload directory.
@@ -2693,13 +2715,16 @@ async def get_video_workflow(
 @app.post('/api/video-workflow/upload')
 async def upload_workflow_asset(
     file: UploadFile = File(..., description="要上传的图片或视频文件"),
-    auth_token: str = Header(None, alias="Authorization")
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
     上传工作流素材（图片或视频）
     返回可访问的永久URL
     """
     try:
+        user_id = _get_user_id_from_header(user_id)
+        
         # 验证文件类型
         content_type = file.content_type or ""
         if not (content_type.startswith("image/") or content_type.startswith("video/")):
@@ -2708,8 +2733,8 @@ async def upload_workflow_asset(
                 content={"code": -1, "message": "仅支持图片或视频文件"}
             )
         
-        # 保存文件并获取URL
-        file_url = _save_uploaded_image(file)
+        # 保存文件并获取URL（用户隔离目录）
+        file_url = _save_user_asset(file, user_id, category="workflow")
         
         return JSONResponse({
             "code": 0,
