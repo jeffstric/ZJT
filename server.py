@@ -10,8 +10,10 @@ import os
 import time
 import logging
 import traceback
+import shutil
 from datetime import datetime
 from typing import List, Optional
+from urllib.parse import urlparse
 from pydantic import BaseModel
 from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync, run_ai_app_task
 from config_util import get_config_path, is_dev_environment
@@ -441,6 +443,52 @@ def _save_user_asset(
     relative_path = f"{category}/{user_id}/{filename}"
     host = (base_host or SERVER_HOST).rstrip("/")
     return f"{host}/upload/{relative_path}"
+
+
+def _normalize_origin(origin: Optional[str]) -> Optional[str]:
+    if not origin:
+        return None
+    try:
+        trimmed = origin.strip()
+        if not trimmed:
+            return None
+        parsed = urlparse(trimmed)
+        if not parsed.scheme or not parsed.netloc:
+            parsed = urlparse(f"http://{trimmed.lstrip('/')}")
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    except Exception:
+        return None
+
+
+def _get_local_upload_file(asset_url: Optional[str], origin: Optional[str]) -> Optional[str]:
+    if not asset_url:
+        return None
+    normalized_origin = _normalize_origin(origin)
+    try:
+        # Support relative URLs like /upload/...
+        if asset_url.startswith("/upload/"):
+            relative_path = asset_url[len("/upload/"):]
+            local_path = os.path.join(UPLOAD_DIR, *relative_path.split("/"))
+            return local_path if os.path.exists(local_path) else None
+
+        parsed = urlparse(asset_url)
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        asset_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        if normalized_origin and asset_origin != normalized_origin:
+            return None
+        asset_path = parsed.path or ""
+        if not asset_path.startswith("/upload/"):
+            return None
+        relative_path = asset_path[len("/upload/"):]
+        if not relative_path:
+            return None
+        local_path = os.path.join(UPLOAD_DIR, *relative_path.split("/"))
+        return local_path if os.path.exists(local_path) else None
+    except Exception:
+        return None
 
 
 def _concatenate_images(upload_files: List[UploadFile]) -> str:
@@ -3743,11 +3791,13 @@ class ExportTimelineDraftRequest(BaseModel):
     draft_path: str
     timeline_clips: List[dict]
     workflow_name: Optional[str] = "未命名工作流"
+    request_origin: Optional[str] = None
 
 
 @app.post('/api/export_timeline_draft')
 async def export_timeline_draft(
-    request: ExportTimelineDraftRequest,
+    payload: ExportTimelineDraftRequest,
+    http_request: Request,
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
@@ -3756,7 +3806,7 @@ async def export_timeline_draft(
     try:
         user_id = _get_user_id_from_header(user_id)
         
-        if not request.timeline_clips or len(request.timeline_clips) == 0:
+        if not payload.timeline_clips or len(payload.timeline_clips) == 0:
             return JSONResponse(
                 status_code=400,
                 content={
@@ -3777,7 +3827,7 @@ async def export_timeline_draft(
         
         # 生成唯一的草稿名称（使用工作流名称作为前缀）
         # 清理工作流名称，移除不适合文件名的字符
-        safe_workflow_name = "".join(c for c in request.workflow_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_workflow_name = "".join(c for c in payload.workflow_name if c.isalnum() or c in (' ', '-', '_')).strip()
         safe_workflow_name = safe_workflow_name.replace(' ', '_') or 'workflow'
         draft_name = f"{safe_workflow_name}_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
@@ -3792,11 +3842,13 @@ async def export_timeline_draft(
         logger.info(f"开始导出草稿: {draft_name}")
         logger.info(f"临时基础目录: {base_temp_dir}")
         logger.info(f"临时下载目录: {temp_download_dir}")
-        logger.info(f"草稿路径前缀: {request.draft_path}")
+        logger.info(f"草稿路径前缀: {payload.draft_path}")
+
+        request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
         
         # 下载所有视频
         downloaded_files = []
-        for idx, clip in enumerate(request.timeline_clips):
+        for idx, clip in enumerate(payload.timeline_clips):
             video_url = clip.get('url')
             video_name = clip.get('name', f'video_{idx}')
             
@@ -3805,31 +3857,39 @@ async def export_timeline_draft(
                 continue
             
             try:
-                logger.info(f"正在下载视频 {idx + 1}/{len(request.timeline_clips)}: {video_name}")
-                
-                # 下载视频
-                response = requests.get(video_url, stream=True, timeout=300)
-                response.raise_for_status()
-                
-                # 确定文件扩展名
-                file_ext = '.mp4'
-                if 'content-type' in response.headers:
-                    content_type = response.headers['content-type']
-                    if 'video/quicktime' in content_type or video_url.endswith('.mov'):
-                        file_ext = '.mov'
-                    elif 'video/x-msvideo' in content_type or video_url.endswith('.avi'):
-                        file_ext = '.avi'
-                
-                # 保存文件
-                safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                file_path = os.path.join(temp_download_dir, safe_name)
-                
-                with open(file_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                
-                logger.info(f"视频下载完成: {safe_name}")
+                local_asset_path = _get_local_upload_file(video_url, request_origin)
+                if local_asset_path:
+                    file_ext = os.path.splitext(local_asset_path)[1] or '.mp4'
+                    safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                    file_path = os.path.join(temp_download_dir, safe_name)
+                    shutil.copy2(local_asset_path, file_path)
+                    logger.info(f"已复用本地上传文件: {local_asset_path} -> {file_path}")
+                else:
+                    logger.info(f"正在下载视频 {idx + 1}/{len(payload.timeline_clips)}: {video_name}")
+                    
+                    # 下载视频
+                    response = requests.get(video_url, stream=True, timeout=300)
+                    response.raise_for_status()
+                    
+                    # 确定文件扩展名
+                    file_ext = '.mp4'
+                    if 'content-type' in response.headers:
+                        content_type = response.headers['content-type']
+                        if 'video/quicktime' in content_type or video_url.endswith('.mov'):
+                            file_ext = '.mov'
+                        elif 'video/x-msvideo' in content_type or video_url.endswith('.avi'):
+                            file_ext = '.avi'
+                    
+                    # 保存文件
+                    safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                    file_path = os.path.join(temp_download_dir, safe_name)
+                    
+                    with open(file_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                    
+                    logger.info(f"视频下载完成: {safe_name}")
                 
                 downloaded_files.append({
                     'file_path': file_path,
@@ -3838,12 +3898,12 @@ async def export_timeline_draft(
                 })
                 
             except Exception as e:
-                logger.error(f"下载视频失败 {video_name}: {e}")
+                logger.error(f"处理视频失败 {video_name}: {e}")
                 return JSONResponse(
                     status_code=500,
                     content={
                         'success': False,
-                        'error': f'下载视频失败: {video_name} - {str(e)}'
+                        'error': f'处理视频失败: {video_name} - {str(e)}'
                     }
                 )
         
@@ -3863,7 +3923,7 @@ async def export_timeline_draft(
         library = JianyingMultiTrackLibrary(
             draft_name=draft_name,
             output_dir=local_draft_parent,
-            material_path_prefix=request.draft_path
+            material_path_prefix=payload.draft_path
         )
         
         # 创建视频轨道
@@ -3926,7 +3986,6 @@ async def export_timeline_draft(
         zip_filename = f"{draft_name}.zip"
         zip_path = os.path.join(draft_upload_dir, zip_filename)
         
-        import shutil
         import zipfile
         
         # 手动创建压缩包，包含HTML指南和草稿文件夹
