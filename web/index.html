@@ -4093,7 +4093,8 @@
       paymentQrCode: '',
       paymentOrderId: '',
       paymentError: '',
-      wechatOpenid: ''
+      wechatOpenid: '',
+      userIp: ''
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -4129,6 +4130,9 @@
       
       // 尝试从localStorage恢复openid
       this.wechatOpenid = localStorage.getItem('wechat_openid') || '';
+      
+      // 获取用户IP地址
+      this.fetchUserIp();
       
       // Fetch computing power if logged in
       if (this.authToken) {
@@ -4646,7 +4650,11 @@
       async fetchRechargePackages() {
         this.rechargePackagesLoading = true;
         try {
-          const response = await axios.get('/api/recharge/packages');
+          const response = await axios.get('/api/recharge/packages', {
+            params: {
+              auth_token: this.authToken
+            }
+          });
           if (response.data.success) {
             this.rechargePackages = response.data.packages || [];
           } else {
@@ -4654,6 +4662,10 @@
           }
         } catch (error) {
           console.error('Error fetching recharge packages:', error);
+          if (error.response?.status === 401) {
+            alert('登录已过期，请重新登录');
+            this.handleLogout();
+          }
         } finally {
           this.rechargePackagesLoading = false;
         }
@@ -4715,6 +4727,19 @@
         window.location.href = authUrl;
       },
       
+      async fetchUserIp() {
+        try {
+          // 使用公共IP查询API获取用户IP
+          const response = await axios.get('https://api.ipify.org?format=json');
+          this.userIp = response.data.ip;
+          console.log('User IP:', this.userIp);
+        } catch (error) {
+          console.error('Failed to fetch user IP:', error);
+          // 如果获取失败，使用默认值
+          this.userIp = '0.0.0.0';
+        }
+      },
+      
       async createPaymentOrder() {
         this.paymentLoading = true;
         this.paymentError = '';
@@ -4724,7 +4749,8 @@
             package_id: this.selectedPackage.package_id,
             user_id: parseInt(this.userId, 10),
             auth_token: this.authToken,
-            is_wechat_browser: this.isWechatBrowser()
+            is_wechat_browser: this.isWechatBrowser(),
+            payment_ip: this.userIp || '0.0.0.0'
           };
           
           // 如果是微信浏览器，传递openid

@@ -23,6 +23,8 @@ class PaymentOrder:
         self.payment_type = kwargs.get('payment_type')
         self.status = kwargs.get('status', 0)
         self.transaction_id = kwargs.get('transaction_id')
+        self.payment_ip = kwargs.get('payment_ip')
+        self.note = kwargs.get('note')
         self.paid_at = kwargs.get('paid_at')
         self.created_at = kwargs.get('created_at')
         self.updated_at = kwargs.get('updated_at')
@@ -40,6 +42,8 @@ class PaymentOrder:
             'payment_type': self.payment_type,
             'status': self.status,
             'transaction_id': self.transaction_id,
+            'payment_ip': self.payment_ip,
+            'note': self.note,
             'paid_at': self.paid_at.isoformat() if self.paid_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
@@ -58,7 +62,9 @@ class PaymentOrdersModel:
         price: float,
         payment_type: str,
         platform: str = 'wechat',
-        status: int = 0
+        status: int = 0,
+        payment_ip: Optional[str] = None,
+        note: Optional[str] = None
     ) -> int:
         """
         Create a new payment order record
@@ -72,14 +78,16 @@ class PaymentOrdersModel:
             payment_type: 支付类型（JSAPI/H5/NATIVE）
             platform: 支付平台（wechat/alipay等）
             status: 订单状态（0-待支付, 1-已支付, 2-已取消, 3-已退款）
+            payment_ip: 支付IP地址
+            note: 备注信息
         
         Returns:
             Inserted record ID
         """
         sql = """
             INSERT INTO payment_orders 
-            (order_id, user_id, package_id, computing_power, price, platform, payment_type, status, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            (order_id, user_id, package_id, computing_power, price, platform, payment_type, status, payment_ip, note, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
         try:
             record_id = execute_insert(sql, (
@@ -90,7 +98,9 @@ class PaymentOrdersModel:
                 price,
                 platform,
                 payment_type,
-                status
+                status,
+                payment_ip,
+                note
             ))
             logger.info(f"Created payment order: {order_id}, platform: {platform}, record_id: {record_id}")
             return record_id

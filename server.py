@@ -2477,6 +2477,7 @@ class WechatPayRequest(BaseModel):
     auth_token: str
     is_wechat_browser: bool = False
     openid: Optional[str] = None
+    payment_ip: Optional[str] = None
 
 
 @app.get("/api/wechat/get-openid")
@@ -2535,20 +2536,50 @@ async def get_wechat_openid(code: str):
 
 
 @app.get("/api/recharge/packages")
-async def get_recharge_packages():
+async def get_recharge_packages(auth_token: str):
     """
     获取算力充值套餐列表
     
+    Args:
+        auth_token: 用户认证token
+    
     Returns:
         List of recharge packages with computing power and pricing
+        If user has already recharged before, the first package (首充福利) will be filtered out
     """
     try:
+        # 验证token并获取用户信息
+        success, message, response_data = make_perseids_request(
+            endpoint='check_first_recharge',
+            method='POST',
+            headers={'Authorization': f'Bearer {auth_token}'}
+        )
+        
+        if not success:
+            logger.error(f"Token verification failed: {message}")
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        first_recharges = response_data.get('first_recharges')
+        if not first_recharges:
+            raise HTTPException(status_code=401, detail="Invalid user information")
+        
+        # 如果用户已经充值过，过滤掉首充福利套餐（第一个套餐）
+        packages = RECHARGE_PACKAGES.copy()
+        if first_recharges == 1:
+            packages = [pkg for pkg in packages if pkg.get("package_id") != 1]
+            logger.info(f"User {user_id} has {payment_count} payment records, filtering out first-time package")
+        else:
+            logger.info(f"User {user_id} is a first-time recharger, showing all packages")
+        
         return JSONResponse({
             "success": True,
-            "packages": RECHARGE_PACKAGES
+            "packages": packages
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get recharge packages: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取充值套餐失败: {str(e)}")
 
 
@@ -2578,6 +2609,35 @@ async def create_wechat_payment(request: WechatPayRequest):
             raise HTTPException(
                 status_code=400,
                 detail="Authentication token is required"
+            )
+        
+        # 验证用户登录状态：通过查询算力判断token是否有效
+        try:
+            computing_power_response = make_perseids_request(
+                method="GET",
+                endpoint="/api/v1/user/check_computing_power",
+                params={
+                    "user_id": request.user_id,
+                    "auth_token": request.auth_token
+                }
+            )
+            
+            if not computing_power_response or not computing_power_response.get("success"):
+                logger.warning(f"User {request.user_id} authentication failed or expired")
+                raise HTTPException(
+                    status_code=401,
+                    detail="登录已过期，请重新登录"
+                )
+            
+            logger.info(f"User {request.user_id} authentication verified, computing power: {computing_power_response.get('computing_power')}")
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to verify user authentication: {str(e)}")
+            raise HTTPException(
+                status_code=401,
+                detail="登录过期，请重新登录"
             )
         
         # 验证套餐ID
@@ -2623,7 +2683,8 @@ async def create_wechat_payment(request: WechatPayRequest):
                 total_fee=total_fee,
                 body=body,
                 openid=request.openid,
-                notify_url=notify_url
+                notify_url=notify_url,
+                payer_client_ip=request.payment_ip or "127.0.0.1"
             )
         else:
             # 外部浏览器使用H5支付
@@ -2633,7 +2694,8 @@ async def create_wechat_payment(request: WechatPayRequest):
                 order_id=order_id,
                 total_fee=total_fee,
                 body=body,
-                notify_url=notify_url
+                notify_url=notify_url,
+                payer_client_ip=request.payment_ip or "127.0.0.1"
             )
         
         # 保存订单记录到数据库
@@ -2645,7 +2707,8 @@ async def create_wechat_payment(request: WechatPayRequest):
                 computing_power=package_info["computing_power"],
                 price=package_info["price"],
                 payment_type=payment_type,
-                status=0  # 0-待支付
+                status=0,  # 0-待支付
+                payment_ip=request.payment_ip
             )
             logger.info(f"Saved payment order {record_id} to database")
         except Exception as e:
