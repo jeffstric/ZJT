@@ -1066,7 +1066,10 @@
         if(e.target.classList.contains('port')) return;
         e.preventDefault();
         e.stopPropagation();
-        setSelected(id);
+        // 如果节点不在选中列表中，才调用setSelected（这会清空其他选中）
+        if(!state.selectedNodeIds.includes(id)){
+          setSelected(id);
+        }
         initNodeDrag(id, e.clientX, e.clientY);
       });
       
@@ -1188,7 +1191,10 @@
         if(e.target.classList.contains('port')) return;
         e.preventDefault();
         e.stopPropagation();
-        setSelected(id);
+        // 如果节点不在选中列表中，才调用setSelected（这会清空其他选中）
+        if(!state.selectedNodeIds.includes(id)){
+          setSelected(id);
+        }
         initNodeDrag(id, e.clientX, e.clientY);
       });
       
@@ -1277,7 +1283,10 @@
         if(e.target.classList.contains('port')) return;
         e.preventDefault();
         e.stopPropagation();
-        setSelected(id);
+        // 如果节点不在选中列表中，才调用setSelected（这会清空其他选中）
+        if(!state.selectedNodeIds.includes(id)){
+          setSelected(id);
+        }
         initNodeDrag(id, e.clientX, e.clientY);
       });
       
@@ -1364,7 +1373,10 @@
         if(e.target.classList.contains('port')) return;
         e.preventDefault();
         e.stopPropagation();
-        setSelected(id);
+        // 如果节点不在选中列表中，才调用setSelected（这会清空其他选中）
+        if(!state.selectedNodeIds.includes(id)){
+          setSelected(id);
+        }
         initNodeDrag(id, e.clientX, e.clientY);
       });
       
