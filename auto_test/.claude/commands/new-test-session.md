@@ -6,10 +6,13 @@
 
 ## 执行步骤
 
-1. 读取 `test_todo_list.json` 模板文件
-2. 生成时间戳：`YYYYMMDD_HHMMSS` 格式
-3. 创建 `test_sessions/session_{timestamp}.json`
-4. 输出新会话文件路径
+1. 检查 `test_todo_list.json` 是否存在
+   - 如果不存在，先运行 `python merge_test_cases.py` 合并测试用例
+   - 等待合并完成后继续
+2. 读取 `test_todo_list.json` 模板文件
+3. 生成时间戳：`YYYYMMDD_HHMMSS` 格式
+4. 创建 `test_sessions/session_{timestamp}.json`
+5. 输出新会话文件路径
 
 ## 文件命名
 

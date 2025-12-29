@@ -85,7 +85,7 @@
           "mcp_tool": "mcp1_browser_file_upload",
           "mcp_params": {
             "paths": [
-              "g:/code/comfyui_server/test_assets/character_image.jpg"
+              "${config.test_assets.test_image}"
             ]
           },
           "expected_result": "图片上传成功",
@@ -99,7 +99,7 @@
           "mcp_tool": "mcp1_browser_file_upload",
           "mcp_params": {
             "paths": [
-              "g:/code/comfyui_server/test_assets/character_voice.mp3"
+              "${config.test_assets.test_voice}"
             ]
           },
           "expected_result": "音频上传成功",
@@ -174,7 +174,7 @@
           "mcp_tool": "mcp1_browser_file_upload",
           "mcp_params": {
             "paths": [
-              "g:/code/comfyui_server/test_assets/test_voice.mp3"
+              "${config.test_assets.test_voice}"
             ]
           },
           "expected_result": "音频文件选择成功",
@@ -276,7 +276,7 @@
           "mcp_tool": "mcp1_browser_file_upload",
           "mcp_params": {
             "paths": [
-              "g:/code/comfyui_server/test_assets/new_voice.mp3"
+              "${config.test_assets.test_voice}"
             ]
           },
           "expected_result": "新音频文件选择成功",

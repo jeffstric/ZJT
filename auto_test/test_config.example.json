@@ -14,7 +14,8 @@
   },
   "test_assets": {
     "test_image": "g:/code/comfyui_server/auto_test/test_assets/test_image.jpg",
-    "test_video" : "g:/code/comfyui_server/auto_test/test_assets/test.mp4"
+    "test_video" : "g:/code/comfyui_server/auto_test/test_assets/test.mp4",
+    "test_voice" : "g:/code/comfyui_server/auto_test/test_assets/test.wav"
   },
   "timeouts": {
     "page_load": 10,

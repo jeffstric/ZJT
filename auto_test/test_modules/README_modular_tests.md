@@ -52,22 +52,6 @@ vim test_modules/auth.json
 
 **等待测试完成后再合并**，否则会丢失进度。
 
-## 可用的 MCP 工具
-
-Playwright MCP 支持的工具列表：
-
-- `mcp1_browser_navigate` - 导航到 URL
-- `mcp1_browser_snapshot` - 获取页面快照
-- `mcp1_browser_click` - 点击元素
-- `mcp1_browser_type` - 输入文本
-- `mcp1_browser_fill_form` - 填写表单
-- `mcp1_browser_select_option` - 选择下拉选项
-- `mcp1_browser_file_upload` - 上传文件
-- `mcp1_browser_wait_for` - 等待元素/文本出现
-- `mcp1_browser_evaluate` - 执行 JavaScript
-- `mcp1_browser_network_requests` - 检查网络请求
-- `mcp1_browser_close` - 关闭浏览器
-- `mcp1_browser_run_code` - 运行代码
 
 
 ## 注意事项

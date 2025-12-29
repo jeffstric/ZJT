@@ -42,7 +42,7 @@
           "mcp_tool": "mcp1_browser_file_upload",
           "mcp_params": {
             "paths": [
-              "g:/code/comfyui_server/test_assets/test_image.jpg"
+              "${config.test_assets.test_image}"
             ]
           },
           "expected_result": "文件开始上传",
@@ -736,9 +736,12 @@
         {
           "step": 2,
           "action": "选择视频文件",
-          "operation": "upload",
-          "selector": ".video-file",
-          "test_file": "test_video.mp4",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": [
+              "${config.test_assets.test_video}"
+            ]
+          },
           "expected_result": "视频加载成功",
           "pass": false,
           "remark": "",
