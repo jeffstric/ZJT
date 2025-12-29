@@ -20,23 +20,17 @@ python test_navigator.py --module node_operations
 # 查看某个功能的详细步骤
 python test_navigator.py --feature node_005
 
-# ⭐ 标记当前步骤为通过（必须指定模块）
-python test_navigator.py --pass-current --module node_operations
-
-# ⭐ 标记当前步骤为通过并添加备注
-python test_navigator.py --pass-current --module node_operations --remark "界面显示正常，功能测试通过"
-
 # ⭐ 标记指定功能的某个步骤为通过
-python test_navigator.py --pass node_005 1
+python test_navigator.py --mark node_005 1 --set-pass true --set-processed true
 
 # ⭐ 标记指定步骤为通过并添加备注
-python test_navigator.py --pass node_005 1 --remark "节点创建成功，所有字段显示正确"
+python test_navigator.py --mark node_005 1 --set-pass true --set-processed true --remark "节点创建成功，所有字段显示正确"
 
 # ⭐ 标记指定功能的所有步骤为通过
-python test_navigator.py --pass node_005
+python test_navigator.py --mark node_005 --set-pass true --set-processed true
 
 # ⭐ 标记整个功能为通过并添加备注
-python test_navigator.py --pass node_005 --remark "所有测试步骤完成，功能运行正常"
+python test_navigator.py --mark node_005 --set-pass true --set-processed true --remark "所有测试步骤完成，功能运行正常"
 ```
 
 ## 智能体分工模式
