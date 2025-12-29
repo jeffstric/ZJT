@@ -1,0 +1,276 @@
+{
+  "id": "world_management",
+  "name": "世界管理模块",
+  "description": "工作流编辑器中的世界创建、选择、节点添加功能测试",
+  "features": [
+    {
+      "id": "world_001",
+      "name": "创建世界功能",
+      "description": "验证用户可以通过模态框创建新世界，输入世界名称和描述后保存成功",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/worlds/create",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "获取页面快照找到世界按钮",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "页面包含「世界」按钮，记录其 ref",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击世界按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "世界按钮",
+            "ref": "<世界按钮ref>"
+          },
+          "expected_result": "弹出世界选择下拉框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "获取下拉框快照",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "下拉框包含「新建世界」选项，记录其 ref",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击新建世界选项",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "新建世界选项",
+            "ref": "<新建世界选项ref>"
+          },
+          "expected_result": "弹出创建世界模态框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "等待模态框出现",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "新建世界",
+            "time": 3
+          },
+          "expected_result": "模态框标题可见",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "填写世界信息",
+          "mcp_tool": "mcp1_browser_fill_form",
+          "mcp_params": {
+            "fields": [
+              {
+                "name": "世界名称",
+                "type": "textbox",
+                "ref": "<名称输入框ref>",
+                "value": "测试世界"
+              },
+              {
+                "name": "世界描述",
+                "type": "textbox",
+                "ref": "<描述输入框ref>",
+                "value": "这是一个自动化测试创建的世界"
+              }
+            ]
+          },
+          "expected_result": "表单字段填写完成",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "点击保存按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "保存按钮",
+            "ref": "<保存按钮ref>"
+          },
+          "expected_result": "发起创建请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 8,
+          "action": "等待创建成功",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "创建成功",
+            "time": 5
+          },
+          "expected_result": "显示成功提示",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 9,
+          "action": "验证世界已选中",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "世界按钮显示「测试世界」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "world_002",
+      "name": "选择已有世界",
+      "description": "验证用户可以从下拉框选择已创建的世界",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "GET /api/worlds/list",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "world_001"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击世界按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "世界按钮",
+            "ref": "<世界按钮ref>"
+          },
+          "expected_result": "弹出世界选择下拉框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "获取下拉框快照",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "下拉框显示已创建的世界列表",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "选择世界",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "世界选项",
+            "ref": "<世界选项ref>"
+          },
+          "expected_result": "世界被选中，下拉框关闭",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "验证世界已选中",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "世界按钮显示选中的世界名称",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "world_003",
+      "name": "添加世界节点到画布",
+      "description": "验证选中世界后可以将世界节点添加到画布，节点显示世界信息",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "world_002"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击添加按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加按钮",
+            "ref": "<添加按钮ref>"
+          },
+          "expected_result": "弹出添加菜单",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "获取菜单快照",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "菜单包含「世界」选项，记录其 ref",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击世界选项",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "世界菜单项",
+            "ref": "<世界选项ref>"
+          },
+          "expected_result": "在画布上创建世界节点",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "等待节点创建",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "世界",
+            "time": 3
+          },
+          "expected_result": "节点标题出现",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "获取节点快照验证结构",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "节点包含：「世界」标题、世界名称、世界描述、输出端口",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    }
+  ]
+}

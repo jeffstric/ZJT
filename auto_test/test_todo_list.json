@@ -1,37 +1,4 @@
 {
-  "title": "视频工作流功能检查清单",
-  "version": "2.0.0",
-  "description": "基于 playwright-mcp 的智能体浏览器自动化测试清单，每个测试步骤对应具体的 MCP 工具调用",
-  "created_at": "2024-12-19",
-  "mcp_tools": {
-    "navigate": "mcp1_browser_navigate",
-    "click": "mcp1_browser_click",
-    "type": "mcp1_browser_type",
-    "snapshot": "mcp1_browser_snapshot",
-    "fill_form": "mcp1_browser_fill_form",
-    "select_option": "mcp1_browser_select_option",
-    "file_upload": "mcp1_browser_file_upload",
-    "wait_for": "mcp1_browser_wait_for",
-    "evaluate": "mcp1_browser_evaluate",
-    "hover": "mcp1_browser_hover",
-    "drag": "mcp1_browser_drag",
-    "press_key": "mcp1_browser_press_key",
-    "screenshot": "mcp1_browser_take_screenshot",
-    "console": "mcp1_browser_console_messages",
-    "network": "mcp1_browser_network_requests"
-  },
-  "config_file": "test_config.json",
-  "config_note": "所有 ${config.xxx} 格式的变量需要从 test_config.json 中读取替换",
-  "test_config": {
-    "base_url": "${config.base_url}",
-    "test_mode_param": "${config.test_mode_param}",
-    "auth_token_key": "auth_token",
-    "user_id_key": "user_id",
-    "credentials": {
-      "phone": "${config.credentials.phone}",
-      "password": "${config.credentials.password}"
-    }
-  },
   "modules": [
     {
       "id": "auth",
@@ -1558,7 +1525,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "新增批量选择功能测试",
+          "remark": "",
           "prerequisites": [
             "editor_007"
           ],
@@ -1570,7 +1537,7 @@
               "selector": "#addBtn",
               "expected_result": "画布上有至少3个节点",
               "pass": false,
-              "remark": "准备测试环境",
+              "remark": "",
               "is_processed": false
             },
             {
@@ -1638,7 +1605,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "新增批量移动功能测试",
+          "remark": "",
           "prerequisites": [
             "editor_012_1"
           ],
@@ -1698,7 +1665,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "新增批量删除功能测试",
+          "remark": "",
           "prerequisites": [
             "editor_012_1"
           ],
@@ -2467,7 +2434,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/parse-script",
           "pass": false,
-          "remark": "测试场景匹配的核心逻辑，包括直接匹配、父场景匹配、权限验证",
+          "remark": "",
           "prerequisites": [
             "需要先创建测试用的世界和场景数据"
           ],
@@ -2554,7 +2521,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "验证前端正确显示后端匹配的场景信息",
+          "remark": "",
           "prerequisites": [
             "editor_026"
           ],
@@ -2670,7 +2637,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "验证场景选择弹窗和场景更新功能",
+          "remark": "",
           "prerequisites": [
             "editor_027"
           ],
@@ -2780,7 +2747,8 @@
           ],
           "is_processed": false
         }
-      ]
+      ],
+      "remark": ""
     },
     {
       "id": "node_operations",
@@ -3967,7 +3935,8 @@
           ],
           "is_processed": false
         }
-      ]
+      ],
+      "remark": ""
     },
     {
       "id": "error_handling",
@@ -5458,7 +5427,8 @@
           ],
           "is_processed": false
         }
-      ]
+      ],
+      "remark": ""
     },
     {
       "id": "shot_frame_video",
@@ -5473,7 +5443,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/ai-app-run-image-url",
           "pass": false,
-          "remark": "对应git提交cb1caef - 实现了分镜节点生成视频的功能",
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -5617,7 +5587,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/ai-app-run-image-url",
           "pass": false,
-          "remark": "对应git提交2a050ec和c0d7595 - 实现了将视频生成的json格式修改为文本形式，修复了提示词依然为json的问题",
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -5686,7 +5656,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/filter-sensitive-words",
           "pass": false,
-          "remark": "对应git提交9a49be5 - 实现了镜头节点中，降低视频提示词违禁的功能",
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -5859,7 +5829,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "对应git提交686e54f - 实现了根据分镜数量和视频的长宽比，动态确定分镜图的图片长宽比例",
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -5932,7 +5902,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/image-edit",
           "pass": false,
-          "remark": "对应git提交acd3681 - 控制了图片编辑最多输入图片只能5个",
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -6113,7 +6083,7 @@
           "priority": "P2",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "对应shot_frame_generator.js中的画风文字描述功能",
+          "remark": "",
           "test_steps": [
             {
               "step": 1,
@@ -6191,7 +6161,8 @@
           ],
           "is_processed": false
         }
-      ]
+      ],
+      "remark": ""
     },
     {
       "id": "world_management",
@@ -7002,7 +6973,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "POST /api/create-character, GET /api/character-status/{task_id}, POST /api/characters/update",
           "pass": false,
-          "remark": "修复了角色卡创建后不同步到数据库的bug",
+          "remark": "",
           "prerequisites": [
             "character_005"
           ],
@@ -7088,7 +7059,7 @@
           "priority": "P0",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "修复了节点多时连接线不显示的timing问题",
+          "remark": "",
           "prerequisites": [
             "character_005"
           ],
@@ -7183,7 +7154,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "优化了按钮UI，与角色卡按钮保持一致的视觉风格",
+          "remark": "",
           "prerequisites": [
             "character_006"
           ],
@@ -7264,7 +7235,7 @@
           "priority": "P1",
           "page_url": "/video-workflow",
           "pass": false,
-          "remark": "优化了超时时间和帮助按钮交互",
+          "remark": "",
           "prerequisites": [
             "character_005"
           ],
@@ -7353,7 +7324,7 @@
           "page_url": "/video-workflow",
           "api_endpoint": "GET /api/character/search, POST /api/ai-app-run-image-url",
           "pass": false,
-          "remark": "实现了Sora模型的角色ID自动替换功能",
+          "remark": "",
           "prerequisites": [
             "character_006",
             "shot_frame_003"
@@ -7428,7 +7399,8 @@
           ],
           "is_processed": false
         }
-      ]
+      ],
+      "remark": ""
     },
     {
       "id": "location_management",
@@ -8139,67 +8111,8 @@
           ],
           "is_processed": false
         }
-      ]
+      ],
+      "remark": ""
     }
-  ],
-  "summary": {
-    "total_modules": 12,
-    "total_features": 102,
-    "priority_breakdown": {
-      "P0": 43,
-      "P1": 28,
-      "P2": 8
-    },
-    "new_modules_added": "新增分镜节点视频首帧模块（7个测试用例）、新增镜头节点生成视频模块（9个测试用例）",
-    "latest_update": "2024-12-27",
-    "new_features_added": "新增角色卡数据库同步测试（character_006）、角色视频连接线持久化测试（character_007）、角色视频按钮UI状态测试（character_008）、角色卡创建超时验证测试（character_009）、分镜视频角色ID替换测试（character_010）",
-    "coverage": "覆盖用户认证、工作流列表、工作流编辑器、节点操作、剧本解析、场景自动匹配、时间轴、世界管理、角色管理（含Sora角色卡创建与数据库同步）、场景管理、镜头节点生成视频（含角色ID自动替换）等核心功能",
-    "pass_level": "每个 test_step 都有独立的 pass 字段，智能体可以逐步验证每个小步骤",
-    "note": "所有 test_step 的 pass 字段均设置为 false，智能体完成每个步骤后将其设置为 true"
-  },
-  "mcp_usage_guide": {
-    "description": "使用 playwright-mcp 执行测试的工作流程说明",
-    "workflow": [
-      {
-        "step": 1,
-        "action": "调用 mcp1_browser_snapshot 获取页面快照",
-        "purpose": "获取页面当前状态的可访问性树，从中提取元素的 ref 值"
-      },
-      {
-        "step": 2,
-        "action": "从快照中识别目标元素的 ref",
-        "purpose": "ref 是 playwright-mcp 识别元素的唯一标识符"
-      },
-      {
-        "step": 3,
-        "action": "使用具体的 mcp 工具执行操作",
-        "purpose": "如 mcp1_browser_click、mcp1_browser_type 等"
-      },
-      {
-        "step": 4,
-        "action": "调用 mcp1_browser_wait_for 等待页面状态变化",
-        "purpose": "确保异步操作完成"
-      },
-      {
-        "step": 5,
-        "action": "再次调用 mcp1_browser_snapshot 验证结果",
-        "purpose": "检查操作是否成功，页面是否达到预期状态"
-      }
-    ],
-    "key_tools": {
-      "mcp1_browser_navigate": "导航到指定URL，参数: {url: string}",
-      "mcp1_browser_snapshot": "获取页面可访问性快照，无参数，返回页面元素树和ref",
-      "mcp1_browser_click": "点击元素，参数: {element: string, ref: string}",
-      "mcp1_browser_type": "在元素中输入文本，参数: {element: string, ref: string, text: string}",
-      "mcp1_browser_fill_form": "填充多个表单字段，参数: {fields: [{name, type, ref, value}]}",
-      "mcp1_browser_select_option": "选择下拉选项，参数: {element: string, ref: string, values: string[]}",
-      "mcp1_browser_file_upload": "上传文件，参数: {paths: string[]}",
-      "mcp1_browser_wait_for": "等待文本出现/消失，参数: {text?: string, textGone?: string, time?: number}",
-      "mcp1_browser_evaluate": "执行JavaScript代码，参数: {function: string}",
-      "mcp1_browser_network_requests": "获取网络请求列表",
-      "mcp1_browser_console_messages": "获取控制台消息",
-      "mcp1_browser_take_screenshot": "截图，参数: {filename?: string, fullPage?: boolean}"
-    },
-    "ref_note": "测试步骤中的 <xxx_ref> 占位符需要在运行时从 mcp1_browser_snapshot 的返回结果中动态获取"
-  }
+  ]
 }

@@ -1,0 +1,255 @@
+{
+  "id": "location_management",
+  "name": "场景管理模块",
+  "description": "工作流编辑器中的场景创建、编辑、节点添加功能测试",
+  "features": [
+    {
+      "id": "location_001",
+      "name": "创建场景功能",
+      "description": "验证用户可以创建新场景，输入场景信息后保存成功",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/locations/create",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "world_001"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击场景按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "场景按钮",
+            "ref": "<场景按钮ref>"
+          },
+          "expected_result": "弹出场景选择下拉框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击新建场景选项",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "新建场景选项",
+            "ref": "<新建场景选项ref>"
+          },
+          "expected_result": "弹出创建场景模态框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "填写场景信息",
+          "mcp_tool": "mcp1_browser_fill_form",
+          "mcp_params": {
+            "fields": [
+              {
+                "name": "场景名称",
+                "type": "textbox",
+                "ref": "<名称输入框ref>",
+                "value": "测试咖啡厅"
+              },
+              {
+                "name": "场景描述",
+                "type": "textbox",
+                "ref": "<描述输入框ref>",
+                "value": "一个温馨的咖啡厅，有柔和的灯光和舒适的座位"
+              },
+              {
+                "name": "环境音效",
+                "type": "textbox",
+                "ref": "<环境音效输入框ref>",
+                "value": "咖啡机声、轻柔的交谈声"
+              },
+              {
+                "name": "背景音乐",
+                "type": "textbox",
+                "ref": "<背景音乐输入框ref>",
+                "value": "轻音乐"
+              }
+            ]
+          },
+          "expected_result": "表单字段填写完成",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击保存按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "保存按钮",
+            "ref": "<保存按钮ref>"
+          },
+          "expected_result": "发起创建请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "等待创建成功",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "创建成功",
+            "time": 5
+          },
+          "expected_result": "显示成功提示",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "location_002",
+      "name": "编辑场景功能",
+      "description": "验证用户可以编辑已创建的场景，修改场景信息",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "PUT /api/locations/update",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "location_001"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "添加场景节点到画布",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加场景节点",
+            "ref": "<添加场景ref>"
+          },
+          "expected_result": "场景节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击场景节点的编辑按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "编辑按钮",
+            "ref": "<编辑按钮ref>"
+          },
+          "expected_result": "弹出编辑场景模态框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证表单预填充",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "模态框显示「编辑场景」标题，表单字段预填充场景信息",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "修改场景描述",
+          "mcp_tool": "mcp1_browser_type",
+          "mcp_params": {
+            "element": "描述输入框",
+            "ref": "<描述输入框ref>",
+            "text": "一个现代化的咖啡厅，装修简约时尚"
+          },
+          "expected_result": "描述字段更新",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "点击保存按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "保存按钮",
+            "ref": "<保存按钮ref>"
+          },
+          "expected_result": "发起更新请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "等待更新成功",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "更新成功",
+            "time": 5
+          },
+          "expected_result": "显示成功提示，模态框关闭",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "location_003",
+      "name": "添加场景节点到画布",
+      "description": "验证选中场景后可以将场景节点添加到画布，节点显示场景信息和编辑按钮",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "location_001"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击添加按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加按钮",
+            "ref": "<添加按钮ref>"
+          },
+          "expected_result": "弹出添加菜单",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击场景选项",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "场景菜单项",
+            "ref": "<场景选项ref>"
+          },
+          "expected_result": "在画布上创建场景节点",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "获取节点快照验证结构",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "节点包含：「场景」标题、场景名称、场景描述、环境音效、背景音乐、编辑按钮、输出端口",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    }
+  ]
+}

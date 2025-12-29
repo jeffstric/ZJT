@@ -1,0 +1,81 @@
+{
+  "modules": [
+    {
+      "id": "auth",
+      "name": "用户认证模块",
+      "description": "用户登录、登出功能的测试",
+      "file": "auth.json",
+      "feature_count": 2
+    },
+    {
+      "id": "workflow_list",
+      "name": "工作流列表页模块",
+      "description": "工作流列表页面的展示、搜索、筛选、分页、CRUD 操作",
+      "file": "workflow_list.json",
+      "feature_count": 9
+    },
+    {
+      "id": "workflow_editor",
+      "name": "工作流编辑器模块",
+      "description": "工作流画布编辑器的核心功能测试，包括画布操作、节点管理、连接线等",
+      "file": "workflow_editor.json",
+      "feature_count": 32
+    },
+    {
+      "id": "node_operations",
+      "name": "节点操作模块",
+      "description": "各类节点的具体操作功能测试，包括图片上传、参数设置、视频生成等",
+      "file": "node_operations.json",
+      "feature_count": 21
+    },
+    {
+      "id": "error_handling",
+      "name": "错误处理与边界场景",
+      "description": "验证系统对各种错误情况和边界场景的处理能力",
+      "file": "error_handling.json",
+      "feature_count": 11
+    },
+    {
+      "id": "timeline",
+      "name": "视频时间轴模块",
+      "description": "视频时间轴功能的测试，包括添加视频、拖拽排序、拖拽替换、删除片段等操作",
+      "file": "timeline.json",
+      "feature_count": 16
+    },
+    {
+      "id": "shot_frame_video",
+      "name": "镜头节点生成视频模块",
+      "description": "分镜节点生成视频功能的端到端测试，包括视频生成、提示词处理、比例计算等",
+      "file": "shot_frame_video.json",
+      "feature_count": 9
+    },
+    {
+      "id": "world_management",
+      "name": "世界管理模块",
+      "description": "工作流编辑器中的世界创建、选择、节点添加功能测试",
+      "file": "world_management.json",
+      "feature_count": 3
+    },
+    {
+      "id": "character_management",
+      "name": "角色管理模块",
+      "description": "工作流编辑器中的角色创建、编辑、节点添加、音频试听功能测试",
+      "file": "character_management.json",
+      "feature_count": 10
+    },
+    {
+      "id": "location_management",
+      "name": "场景管理模块",
+      "description": "工作流编辑器中的场景创建、编辑、节点添加功能测试",
+      "file": "location_management.json",
+      "feature_count": 3
+    },
+    {
+      "id": "shot_frame_first_frame",
+      "name": "分镜节点视频首帧模块",
+      "description": "分镜节点视频首帧连接功能测试，包括蓝色连接线、磁吸效果、图片选择等",
+      "file": "shot_frame_first_frame.json",
+      "feature_count": 7
+    }
+  ]
+}
