@@ -355,8 +355,9 @@ def print_next_test(navigator: TestNavigator, module_id: Optional[str] = None, s
 
     for s in next_test['all_steps']:
         status = "[PASS]" if s.get('pass', False) else "[TODO]"
+        processed = "[PROCESSED]" if s.get('is_processed', False) else ""
         current = ">>>" if s.get('step') == step.get('step') else "   "
-        print(f"{current} {status} 步骤 {s.get('step', '?')}: {s.get('action', '未知')}")
+        print(f"{current} {status} {processed} 步骤 {s.get('step', '?')}: {s.get('action', '未知')}")
 
     print("=" * 70 + "\n")
 
@@ -395,7 +396,8 @@ def print_feature_detail(navigator: TestNavigator, feature_id: str):
 
     for step in feature.get('test_steps', []):
         status = "[PASS]" if step.get('pass', False) else "[TODO]"
-        print(f"\n{status} 步骤 {step.get('step', '?')}: {step.get('action', '未知操作')}")
+        processed = "[PROCESSED]" if step.get('is_processed', False) else ""
+        print(f"\n{status} {processed} 步骤 {step.get('step', '?')}: {step.get('action', '未知操作')}")
 
         if step.get('mcp_tool'):
             print(f"   MCP工具: {step.get('mcp_tool')}")
