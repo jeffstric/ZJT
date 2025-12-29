@@ -415,7 +415,12 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     return f"{SERVER_HOST}/upload/{filename}"
 
 
-def _save_user_asset(upload_file: UploadFile, user_id: int, category: str = "workflow") -> str:
+def _save_user_asset(
+    upload_file: UploadFile,
+    user_id: int,
+    category: str = "workflow",
+    base_host: Optional[str] = None
+) -> str:
     """
     Save a user-specific asset (image/video) under a scoped directory.
     """
@@ -434,7 +439,8 @@ def _save_user_asset(upload_file: UploadFile, user_id: int, category: str = "wor
         f.write(content)
 
     relative_path = f"{category}/{user_id}/{filename}"
-    return f"{SERVER_HOST}/upload/{relative_path}"
+    host = (base_host or SERVER_HOST).rstrip("/")
+    return f"{host}/upload/{relative_path}"
 
 
 def _concatenate_images(upload_files: List[UploadFile]) -> str:
@@ -2714,6 +2720,7 @@ async def get_video_workflow(
 
 @app.post('/api/video-workflow/upload')
 async def upload_workflow_asset(
+    request: Request,
     file: UploadFile = File(..., description="要上传的图片或视频文件"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
@@ -2734,7 +2741,8 @@ async def upload_workflow_asset(
             )
         
         # 保存文件并获取URL（用户隔离目录）
-        file_url = _save_user_asset(file, user_id, category="workflow")
+        request_host = str(request.base_url).rstrip("/")
+        file_url = _save_user_asset(file, user_id, category="workflow", base_host=request_host)
         
         return JSONResponse({
             "code": 0,
