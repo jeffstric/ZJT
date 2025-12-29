@@ -1,9 +1,18 @@
 import json
+import os
+import yaml
 import httpx
-# 百度千帆API Key（已保留你的密钥）
-API_KEY = "bce-v3/ALTAK-RW7WrM9SbRGJBisQ6n41v/223a3bda9f1652f86d74d5d8b937201fc3c86dde"
-# 百度千帆API地址
-QIANFAN_API_URL = "https://qianfan.baidubce.com/v2/chat/completions"
+from config_util import get_config_path
+
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+config_file = get_config_path()
+with open(os.path.join(APP_DIR, config_file), 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
+
+baidu_config = config.get('llm', {}).get('baidu', {})
+API_KEY = baidu_config.get('api_key')
+QIANFAN_API_URL = baidu_config.get('api_url', 'https://qianfan.baidubce.com/v2/chat/completions')
+DEFAULT_MODEL = baidu_config.get('model', 'ernie-4.5-turbo-vl-latest')
 
 # 基础默认提示词（不含动态参数部分）
 BASE_DEFAULT_PROMPT = """请根据上传的图片生成一个短视频的脚本内容。要求如下： 1. 脚本应包括多个常见且吸引人的场景，前几帧不允许出现我给的参考图片的静态帧，还需要内容特别引人注目，画面内容要真实且富有风格。   2. 避免拟人化内容，但可以在部分场景中加入模特以增强视觉效果。 3. 确保脚本内容不侵犯任何版权。4. 整个视频时长不得超过15秒。 5. 包含专业的镜头要求和拍摄技巧。 6. 所有细节描述需具体且到位，以确保画面呈现的清晰。 7. 视频风格是用户分享，不要营销卖货。 8. 视频完整，头尾呼应 9. 但是除了展示的商品外，画面中不得出现任何文字内容。 10. 视频应包含多样化的场景，避免单一场景。 11. 生成ai脚本，脚本形式为Json格式，将每个场景中的Json字段的内容都接在Text字段中，不要省略字段，也不要概括内容，参照{
@@ -90,7 +99,7 @@ async def call_ernie_vl_api(image_url1, image_url2=None, image_url3=None, image_
 
         # 构造百度千帆API请求参数
         payload = json.dumps({
-            "model": "ernie-4.5-turbo-vl-latest",
+            "model": DEFAULT_MODEL,
             "messages": [
                 {
                     "role": "user",
@@ -115,7 +124,15 @@ async def call_ernie_vl_api(image_url1, image_url2=None, image_url3=None, image_
                 data=payload.encode("utf-8")
             )
 
+        if response.status_code != 200:
+            error_detail = {
+                "status_code": response.status_code,
+                "response_text": response.text,
+                "error": f"百度千帆API调用失败: HTTP {response.status_code}"
+            }
+            return error_detail
+
         response_data = response.json()
         return response_data
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"百度千帆API异常: {str(e)}"}

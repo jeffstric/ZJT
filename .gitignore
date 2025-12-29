@@ -2,5 +2,5 @@ config_*.yml
 __pycache__/
 server_output/
 upload/
-*.json
-*.md
+!auto_test/*.json
+auto_test/test_todo_list.json

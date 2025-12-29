@@ -1,0 +1,546 @@
+{
+  "id": "workflow_list",
+  "name": "工作流列表页模块",
+  "description": "工作流列表页面的展示、搜索、筛选、分页、CRUD 操作",
+  "features": [
+    {
+      "id": "list_001",
+      "name": "访问工作流列表页",
+      "description": "验证用户可以正常访问工作流列表页面，页面正确加载并显示工作流卡片列表",
+      "priority": "P0",
+      "page_url": "/video-workflow-list",
+      "api_endpoint": "GET /api/video-workflow/list",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "导航到工作流列表页",
+          "mcp_tool": "mcp1_browser_navigate",
+          "mcp_params": {
+            "url": "${config.base_url}/video-workflow-list"
+          },
+          "expected_result": "页面正常加载",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "等待页面加载完成",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "视频工作流",
+            "time": 5
+          },
+          "expected_result": "页面标题出现",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "获取页面快照验证结构",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "页面包含：品牌Logo、「视频工作流」标题、「新建工作流」按钮、搜索框、状态筛选下拉框、工作流卡片列表或空状态提示",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "检查网络请求",
+          "mcp_tool": "mcp1_browser_network_requests",
+          "mcp_params": {},
+          "verify": "存在 GET /api/video-workflow/list 请求且返回成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "list_002",
+      "name": "工作流卡片展示",
+      "description": "验证每个工作流卡片正确显示名称、描述、状态标签、创建时间、编辑和删除按钮",
+      "priority": "P0",
+      "page_url": "/video-workflow-list",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "list_001"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "检查卡片元素",
+          "operation": "verify",
+          "selector": ".workflow-card",
+          "expected_result": "每个卡片包含封面图区域、名称、描述、状态标签、创建时间",
+          "selectors": {
+            "card": ".workflow-card",
+            "cover": ".workflow-cover",
+            "name": ".workflow-name",
+            "description": ".workflow-desc",
+            "status": ".workflow-status",
+            "meta": ".workflow-meta"
+          },
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "检查状态标签样式",
+          "operation": "verify",
+          "expected_result": "启用状态显示绿色(.status-enabled)，禁用状态显示红色(.status-disabled)，草稿状态显示黄色(.status-draft)",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "检查操作按钮",
+          "operation": "verify",
+          "selector": ".workflow-actions",
+          "expected_result": "每个卡片底部有「编辑」和「删除」两个按钮",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "list_003",
+      "name": "搜索工作流功能",
+      "description": "验证用户可以通过关键词搜索工作流，搜索结果根据名称模糊匹配进行过滤",
+      "priority": "P1",
+      "page_url": "/video-workflow-list",
+      "api_endpoint": "GET /api/video-workflow/list?keyword=xxx",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "在搜索框输入关键词",
+          "operation": "type",
+          "selector": "#searchInput",
+          "test_data": "测试",
+          "expected_result": "搜索框显示输入的关键词",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "等待搜索结果",
+          "operation": "wait",
+          "wait_time_ms": 500,
+          "expected_result": "防抖后自动发起带 keyword 参数的 API 请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证搜索结果",
+          "operation": "verify",
+          "expected_result": "列表只显示名称包含「测试」的工作流",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "清空搜索框",
+          "operation": "clear",
+          "selector": "#searchInput",
+          "expected_result": "列表恢复显示全部工作流",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "list_004",
+      "name": "状态筛选功能",
+      "description": "验证用户可以按状态（已启用/已禁用/草稿）筛选工作流列表",
+      "priority": "P1",
+      "page_url": "/video-workflow-list",
+      "api_endpoint": "GET /api/video-workflow/list?status=x",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "选择「已启用」状态",
+          "operation": "select",
+          "selector": "#statusFilter",
+          "value": "1",
+          "expected_result": "发起带 status=1 参数的 API 请求，列表只显示已启用的工作流",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "选择「已禁用」状态",
+          "operation": "select",
+          "selector": "#statusFilter",
+          "value": "0",
+          "expected_result": "列表只显示已禁用的工作流",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "选择「草稿」状态",
+          "operation": "select",
+          "selector": "#statusFilter",
+          "value": "2",
+          "expected_result": "列表只显示草稿状态的工作流",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "选择「全部状态」",
+          "operation": "select",
+          "selector": "#statusFilter",
+          "value": "",
+          "expected_result": "列表恢复显示全部工作流",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "list_005",
+      "name": "分页功能",
+      "description": "验证工作流列表支持分页，用户可以通过上一页/下一页按钮切换页面",
+      "priority": "P1",
+      "page_url": "/video-workflow-list",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "检查分页控件",
+          "operation": "verify",
+          "selector": "#pagination",
+          "expected_result": "页面底部显示分页控件，包含上一页按钮、页码信息、下一页按钮",
+          "selectors": {
+            "prev_button": "#prevBtn",
+            "page_info": "#pageInfo",
+            "next_button": "#nextBtn"
+          },
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证页码信息格式",
+          "operation": "verify",
+          "selector": "#pageInfo",
+          "expected_result": "显示格式为「第 X 页 / 共 Y 页 (共 Z 条)」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击下一页",
+          "operation": "click",
+          "selector": "#nextBtn",
+          "expected_result": "加载下一页数据，页码信息更新",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击上一页",
+          "operation": "click",
+          "selector": "#prevBtn",
+          "expected_result": "返回上一页数据，页码信息更新",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "list_006",
+      "name": "新建工作流功能",
+      "description": "验证用户可以通过模态框新建工作流，输入名称、描述、状态后保存成功",
+      "priority": "P0",
+      "page_url": "/video-workflow-list",
+      "api_endpoint": "POST /api/video-workflow/create",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "获取页面快照找到新建按钮",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "页面包含「新建工作流」按钮，记录其 ref",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击新建工作流按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "新建工作流按钮",
+            "ref": "<新建按钮ref>"
+          },
+          "expected_result": "弹出模态框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "等待模态框出现",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "新建工作流",
+            "time": 3
+          },
+          "expected_result": "模态框标题可见",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "获取模态框快照",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "模态框包含名称输入框、描述文本域、画风输入框、画风参考图上传控件、状态选择器、保存和取消按钮",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "填写表单",
+          "mcp_tool": "mcp1_browser_fill_form",
+          "mcp_params": {
+            "fields": [
+              {
+                "name": "工作流名称",
+                "type": "textbox",
+                "ref": "<名称输入框ref>",
+                "value": "MCP自动化测试工作流"
+              },
+              {
+                "name": "工作流描述",
+                "type": "textbox",
+                "ref": "<描述输入框ref>",
+                "value": "通过playwright-mcp自动化创建"
+              }
+            ]
+          },
+          "expected_result": "表单字段填写完成",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "选择状态为草稿",
+          "mcp_tool": "mcp1_browser_select_option",
+          "mcp_params": {
+            "element": "状态选择器",
+            "ref": "<状态选择器ref>",
+            "values": [
+              "2"
+            ]
+          },
+          "expected_result": "状态选择为草稿",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "点击保存按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "保存按钮",
+            "ref": "<保存按钮ref>"
+          },
+          "expected_result": "发起创建请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 8,
+          "action": "等待创建成功",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "textGone": "新建工作流",
+            "time": 5
+          },
+          "expected_result": "模态框关闭",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 9,
+          "action": "验证创建成功",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "列表中显示新创建的「MCP自动化测试工作流」卡片",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "list_007",
+      "name": "编辑工作流基本信息",
+      "description": "验证用户可以编辑工作流的名称、描述、状态等基本信息",
+      "priority": "P0",
+      "page_url": "/video-workflow-list",
+      "api_endpoint": "PUT /api/video-workflow/{id}",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击工作流卡片的编辑按钮",
+          "operation": "click",
+          "selector": ".workflow-card .btn-secondary:has-text('编辑')",
+          "expected_result": "弹出模态框，标题显示「编辑工作流」，表单预填充当前工作流信息",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "修改工作流名称",
+          "operation": "clear_and_type",
+          "selector": "#workflowName",
+          "test_data": "修改后的工作流名称",
+          "expected_result": "名称输入框显示新内容",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击保存按钮",
+          "operation": "click",
+          "selector": "#createModal button:has-text('保存')",
+          "expected_result": "发起 PUT /api/video-workflow/{id} 请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "验证更新成功",
+          "operation": "verify",
+          "expected_result": "显示「更新成功」Toast 提示，模态框关闭，列表刷新显示更新后的信息",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "list_008",
+      "name": "删除工作流功能",
+      "description": "验证用户可以删除工作流，删除前有确认对话框，删除后工作流从列表中移除",
+      "priority": "P0",
+      "page_url": "/video-workflow-list",
+      "api_endpoint": "DELETE /api/video-workflow/{id}",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击工作流卡片的删除按钮",
+          "operation": "click",
+          "selector": ".workflow-card .btn-danger:has-text('删除')",
+          "expected_result": "弹出删除确认模态框，提示「确定要删除这个工作流吗？此操作不可撤销。」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击确认删除按钮",
+          "operation": "click",
+          "selector": "#deleteModal .btn-danger:has-text('删除')",
+          "expected_result": "发起 DELETE /api/video-workflow/{id} 请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证删除成功",
+          "operation": "verify",
+          "expected_result": "显示「删除成功」Toast 提示，模态框关闭，工作流从列表中移除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "list_009",
+      "name": "点击卡片进入编辑器",
+      "description": "验证用户点击工作流卡片可以跳转到工作流编辑器页面",
+      "priority": "P0",
+      "page_url": "/video-workflow-list",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击工作流卡片主体区域",
+          "operation": "click",
+          "selector": ".workflow-card .workflow-content",
+          "expected_result": "页面跳转到 /video-workflow?id={workflow_id}",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证跳转成功",
+          "operation": "verify",
+          "expected_result": "URL 包含 /video-workflow?id=，编辑器页面正常加载",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    }
+  ]
+}

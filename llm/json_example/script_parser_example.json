@@ -1,0 +1,141 @@
+{
+  "script_title": "清晨的咖啡",
+  "total_duration": 20.00,
+  "style": "温馨写实",
+  "characters": [
+    {
+      "id": "char_001",
+      "name": "小李",
+      "role": "主角",
+      "description": "25岁的上班族，穿着白衬衫",
+      "gender": "男",
+      "age_range": "25-30"
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc_001",
+      "name": "公寓厨房",
+      "parent_id": null,
+      "type": "室内",
+      "description": "简约现代的小厨房，白色橱柜，大理石台面",
+      "time_of_day": "早晨7点",
+      "weather": null,
+      "atmosphere": "清新、宁静",
+      "environment_sound": "咖啡机声、鸟鸣声",
+      "background_music": "轻柔的晨间音乐",
+      "level": 0
+    },
+    {
+      "id": "loc_002",
+      "name": "客厅",
+      "parent_id": null,
+      "type": "室内",
+      "description": "温馨的小客厅，沙发、茶几、落地窗",
+      "time_of_day": "早晨7点",
+      "weather": null,
+      "atmosphere": "舒适、放松",
+      "environment_sound": "轻微的交通声",
+      "background_music": "轻柔的晨间音乐",
+      "level": 0
+    }
+  ],
+  "shot_groups": [
+    {
+      "group_id": "grp_001",
+      "group_name": "制作咖啡",
+      "shots": [
+        {
+          "shot_id": "s001",
+          "shot_number": 1,
+          "time_range": "00:00.00-00:06.00",
+          "location_id": "loc_001",
+          "shot_type": "中景",
+          "camera_movement": "固定",
+          "description": "【【小李】】在厨房准备咖啡",
+          "opening_frame_description": "厨房中景，【【小李】】站在咖啡机前，穿着白衬衫，侧身面向咖啡机。早晨的阳光从窗户照进来，在台面上形成光斑。",
+          "scene_detail": "【【小李】】站在咖啡机前，打开咖啡机，倒入咖啡豆。窗外的晨光照进厨房。",
+          "characters_present": ["char_001"],
+          "dialogue": null,
+          "action": "【【小李】】操作咖啡机，准备制作咖啡",
+          "mood": "平静、专注",
+          "environment_sound": "咖啡机启动声、咖啡豆研磨声",
+          "background_music": "轻柔的晨间音乐"
+        },
+        {
+          "shot_id": "s002",
+          "shot_number": 2,
+          "time_range": "00:06.00-00:10.50",
+          "location_id": "loc_001",
+          "shot_type": "特写",
+          "camera_movement": "固定",
+          "description": "咖啡缓缓流入杯中",
+          "opening_frame_description": "咖啡杯特写，白色陶瓷杯放在大理石台面上，咖啡机出口正对杯口。背景虚化，可见窗外的晨光。",
+          "scene_detail": "深褐色的咖啡从咖啡机缓缓流入杯中，形成细腻的咖啡油脂层。蒸汽缓缓升起。",
+          "characters_present": [],
+          "dialogue": null,
+          "action": "咖啡流入杯中，蒸汽升起",
+          "mood": "温暖、治愈",
+          "environment_sound": "咖啡流动声、轻微的蒸汽声",
+          "background_music": "轻柔的晨间音乐"
+        }
+      ]
+    },
+    {
+      "group_id": "grp_002",
+      "group_name": "享用咖啡",
+      "shots": [
+        {
+          "shot_id": "s003",
+          "shot_number": 3,
+          "duration": 5.0,
+          "location_id": "loc_002",
+          "shot_type": "全景",
+          "camera_movement": "缓慢推进",
+          "description": "【【小李】】端着咖啡走向客厅",
+          "opening_frame_description": "客厅全景，【【小李】】从厨房方向走来，双手捧着冒着热气的咖啡杯。落地窗透进明亮的晨光，沙发和茶几在画面右侧。",
+          "scene_detail": "【【小李】】穿着白衬衫，端着咖啡杯缓步走向沙发。窗外是城市的清晨景色。",
+          "characters_present": ["char_001"],
+          "dialogue": null,
+          "action": "【【小李】】端着咖啡走向沙发",
+          "mood": "悠闲、惬意",
+          "environment_sound": "脚步声、远处的车辆声",
+          "background_music": "轻柔的晨间音乐"
+        },
+        {
+          "shot_id": "s004",
+          "shot_number": 4,
+          "duration": 9.0,
+          "location_id": "loc_002",
+          "shot_type": "中景",
+          "camera_movement": "固定",
+          "description": "【【小李】】坐在沙发上品尝咖啡",
+          "opening_frame_description": "客厅中景，【【小李】】坐在沙发上，身体微微后靠，双手捧着咖啡杯。落地窗在背景中，晨光勾勒出他的轮廓。茶几上放着一本书。",
+          "scene_detail": "【【小李】】坐下，端起咖啡杯轻轻吹了吹，然后小口品尝。表情放松，眼神望向窗外。",
+          "characters_present": ["char_001"],
+          "dialogue": [
+            {
+              "character_id": "char_001",
+              "character_name": "【【小李】】",
+              "text": "新的一天开始了"
+            }
+          ],
+          "action": "【【小李】】坐下品尝咖啡，望向窗外",
+          "mood": "满足、期待",
+          "environment_sound": "轻微的交通声、鸟鸣",
+          "background_music": "轻柔的晨间音乐"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "created_at": "2025-12-23T15:37:00",
+    "max_group_duration": 15.00,
+    "total_shot_groups": 2,
+    "total_shots": 4,
+    "total_characters": 1,
+    "total_locations": 2,
+    "genre": "生活片段",
+    "style": "温馨写实"
+  }
+}

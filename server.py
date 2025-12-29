@@ -10,17 +10,42 @@ import os
 import time
 import logging
 import traceback
+import shutil
 from datetime import datetime
 from typing import List, Optional
+from urllib.parse import urlparse
 from pydantic import BaseModel
 from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync, run_ai_app_task
 from config_util import get_config_path, is_dev_environment
 from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
-from model import AIToolsModel
+from model import AIToolsModel, VideoWorkflowModel
+from model.world import WorldModel
+from model.character import CharacterModel
+from model.location import LocationModel
 import uuid
-from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character, get_character_task_result
+from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character as create_character_task, get_character_task_result
 from PIL import Image
-from baidu import call_ernie_vl_api
+from llm import call_ernie_vl_api
+
+
+def _get_user_id_from_header(user_id: Optional[int]) -> int:
+    if user_id is None:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    if isinstance(user_id, str) and not user_id.strip():
+        raise HTTPException(status_code=400, detail="user_id is required")
+    try:
+        return int(user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="invalid user_id")
+
+
+def _ensure_world_owner(world_id: int, user_id: int):
+    world = WorldModel.get_by_id(world_id)
+    if not world:
+        raise HTTPException(status_code=404, detail="世界不存在")
+    if getattr(world, 'user_id', None) != user_id:
+        raise HTTPException(status_code=403, detail="无权访问该世界")
+    return world
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE_PATH = os.path.join(APP_DIR, "qwen_image_edit_api.json")
@@ -392,6 +417,80 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     return f"{SERVER_HOST}/upload/{filename}"
 
 
+def _save_user_asset(
+    upload_file: UploadFile,
+    user_id: int,
+    category: str = "workflow",
+    base_host: Optional[str] = None
+) -> str:
+    """
+    Save a user-specific asset (image/video) under a scoped directory.
+    """
+    asset_dir = os.path.join(UPLOAD_DIR, category, str(user_id))
+    os.makedirs(asset_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = uuid.uuid4().hex[:8]
+    original_name = upload_file.filename or "asset"
+    file_extension = os.path.splitext(original_name)[1] or ".bin"
+    filename = f"{category}_{timestamp}_{unique_id}{file_extension}"
+
+    file_path = os.path.join(asset_dir, filename)
+    with open(file_path, "wb") as f:
+        content = upload_file.file.read()
+        f.write(content)
+
+    relative_path = f"{category}/{user_id}/{filename}"
+    host = (base_host or SERVER_HOST).rstrip("/")
+    return f"{host}/upload/{relative_path}"
+
+
+def _normalize_origin(origin: Optional[str]) -> Optional[str]:
+    if not origin:
+        return None
+    try:
+        trimmed = origin.strip()
+        if not trimmed:
+            return None
+        parsed = urlparse(trimmed)
+        if not parsed.scheme or not parsed.netloc:
+            parsed = urlparse(f"http://{trimmed.lstrip('/')}")
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    except Exception:
+        return None
+
+
+def _get_local_upload_file(asset_url: Optional[str], origin: Optional[str]) -> Optional[str]:
+    if not asset_url:
+        return None
+    normalized_origin = _normalize_origin(origin)
+    try:
+        # Support relative URLs like /upload/...
+        if asset_url.startswith("/upload/"):
+            relative_path = asset_url[len("/upload/"):]
+            local_path = os.path.join(UPLOAD_DIR, *relative_path.split("/"))
+            return local_path if os.path.exists(local_path) else None
+
+        parsed = urlparse(asset_url)
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        asset_origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        if normalized_origin and asset_origin != normalized_origin:
+            return None
+        asset_path = parsed.path or ""
+        if not asset_path.startswith("/upload/"):
+            return None
+        relative_path = asset_path[len("/upload/"):]
+        if not relative_path:
+            return None
+        local_path = os.path.join(UPLOAD_DIR, *relative_path.split("/"))
+        return local_path if os.path.exists(local_path) else None
+    except Exception:
+        return None
+
+
 def _concatenate_images(upload_files: List[UploadFile]) -> str:
     """
     Concatenate multiple images horizontally and save to upload directory.
@@ -475,7 +574,8 @@ async def image_edit(
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
-    model: str = Form("gemini-2.5-pro-image-preview", description="Model type: gemini-2.5-pro-image-preview, gemini-3-pro-image-preview")
+    model: str = Form("gemini-2.5-pro-image-preview", description="Model type: gemini-2.5-pro-image-preview, gemini-3-pro-image-preview"),
+    image_size: str = Form("1K", description="Image resolution: 1K, 2K, 4K")
 ):
     """
     Submit image editing task to RunningHub nanobanana service
@@ -517,8 +617,9 @@ async def image_edit(
                     detail="您的算力不足，无法生成视频"
                 )
 
-        # Handle multiple images
-        image_urls = [_save_uploaded_image(img) for img in image]
+        # Handle multiple images - limit to maximum 5 images
+        images_to_process = image[:5] if len(image) > 5 else image
+        image_urls = [_save_uploaded_image(img) for img in images_to_process]
         
         # Submit tasks according to generation count
         project_ids = []
@@ -526,7 +627,7 @@ async def image_edit(
             #用uuid生成交易id
             transaction_id = str(uuid.uuid4())
 
-            response = create_ai_image(model, prompt, ratio, image_urls)
+            response = create_ai_image(model, prompt, ratio, image_urls, image_size)
             logger.info(response)
             project_id = response.get("data", {}).get("task_id")
             if not project_id:
@@ -1050,6 +1151,122 @@ async def ai_app_run_image(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
+
+
+@app.post("/api/ai-app-run-image-url")
+async def ai_app_run_image_url(
+    prompt: str = Form("", description="Text prompt for the AI app"),
+    image_url: str = Form(..., description="Image URL (already uploaded to server)"),
+    ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9"),
+    duration_seconds: int = Form(10, description="Duration in seconds"),
+    count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Submit image-to-video task using an already uploaded image URL.
+    This is optimized for workflow where images are already on the server.
+    """
+    try:
+        # logger.info(f"ai_app_run_image_url called with image_url: {image_url}")
+        # logger.info(f"prompt: {prompt}")
+        # logger.info(f"ratio: {ratio}, duration_seconds: {duration_seconds}, count: {count}")
+
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
+        
+        if not image_url:
+            raise HTTPException(
+                status_code=400,
+                detail="Image URL is required"
+            )
+
+        computing_power = TASK_COMPUTING_POWER[3]
+        if CHECK_AUTH_TOKEN:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+            user_computing_power = response_data.get('computing_power', 0)
+            total_computing_power = computing_power * count
+            if user_computing_power < total_computing_power:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+        
+        project_ids = []
+        
+        for i in range(count):
+            try:
+                transaction_id = str(uuid.uuid4())
+                result = create_image_to_video(prompt, ratio, image_url, duration_seconds)
+                
+                project_id = result.get("id")
+                if not project_id:
+                    logger.error(f"Task {i+1}: No project ID received")
+                    continue
+                
+                project_ids.append(project_id)
+                logger.info(f"Task {i+1} submitted with project_id: {project_id}")
+                
+                if CHECK_AUTH_TOKEN:
+                    headers = {'Authorization': f'Bearer {auth_token}'}
+                    make_perseids_request(
+                        endpoint='user/calculate_computing_power',
+                        method='POST',
+                        headers=headers,
+                        data={
+                            'computing_power': computing_power,
+                            'behavior': 'deduct',
+                            'transaction_id': transaction_id
+                        }
+                    )
+                
+                if user_id:
+                    try:
+                        AIToolsModel.create(
+                            prompt=prompt,
+                            user_id=user_id,
+                            type=3,
+                            image_path=image_url,
+                            ratio=ratio,
+                            duration=duration_seconds,
+                            project_id=project_id,
+                            status=1  # 1-处理中, 2-完成, -1-失败
+                        )
+                    except Exception as db_err:
+                        logger.error(f"Failed to save to database: {str(db_err)}")
+                        
+            except Exception as task_err:
+                logger.error(f"Task {i+1} failed: {str(task_err)}")
+                continue
+        
+        if not project_ids:
+            raise HTTPException(status_code=500, detail="所有任务都提交失败")
+        
+        return JSONResponse({
+            "success": True,
+            "project_ids": project_ids,
+            "status": "submitted",
+            "image_url": image_url
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to submit task: {str(e)}")
 
 
 @app.get('/api/user/computing_power')
@@ -2280,7 +2497,7 @@ async def api_create_character(
         transaction_id = str(uuid.uuid4())
         
         # Call the character creation API
-        response = create_character(
+        response = create_character_task(
             timestamps=timestamps,
             url=url,
             from_task=from_task,
@@ -2448,6 +2665,456 @@ async def api_character_status(
         raise HTTPException(status_code=500, detail=f"查询角色状态失败: {str(e)}")
 
 
+# ==================== Video Workflow API ====================
+
+class VideoWorkflowCreateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    cover_image: Optional[str] = None
+    status: Optional[int] = 1
+    workflow_data: Optional[dict] = None
+    style: Optional[str] = None
+    style_reference_image: Optional[str] = None
+
+class VideoWorkflowUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    cover_image: Optional[str] = None
+    status: Optional[int] = None
+    workflow_data: Optional[dict] = None
+    style: Optional[str] = None
+    style_reference_image: Optional[str] = None
+    default_world_id: Optional[int] = None
+
+
+@app.get('/api/video-workflow/list')
+async def get_video_workflow_list(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量"),
+    status: Optional[int] = Query(None, description="状态筛选: 0-禁用, 1-启用, 2-草稿"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    order_by: str = Query("create_time", description="排序字段"),
+    order_direction: str = Query("DESC", description="排序方向: ASC, DESC"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    获取视频工作流列表（分页）
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+
+        result = VideoWorkflowModel.list_by_user(
+            user_id=user_id,
+            page=page,
+            page_size=page_size,
+            status=status,
+            keyword=keyword,
+            order_by=order_by,
+            order_direction=order_direction
+        )
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "success",
+            "data": result
+        })
+    except Exception as e:
+        logger.error(f"Failed to get video workflow list: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"获取工作流列表失败: {str(e)}"}
+        )
+
+
+@app.get('/api/video-workflow/{workflow_id}')
+async def get_video_workflow(
+    workflow_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    获取单个视频工作流详情
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        workflow = VideoWorkflowModel.get_by_id(workflow_id)
+        if not workflow:
+            return JSONResponse(
+                status_code=404,
+                content={"code": -1, "message": "工作流不存在"}
+            )
+
+        if getattr(workflow, 'user_id', None) != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={"code": -1, "message": "无权限访问该工作流"}
+            )
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "success",
+            "data": workflow.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Failed to get video workflow {workflow_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"获取工作流详情失败: {str(e)}"}
+        )
+
+
+@app.post('/api/video-workflow/upload')
+async def upload_workflow_asset(
+    request: Request,
+    file: UploadFile = File(..., description="要上传的图片或视频文件"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    上传工作流素材（图片或视频）
+    返回可访问的永久URL
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        # 验证文件类型
+        content_type = file.content_type or ""
+        if not (content_type.startswith("image/") or content_type.startswith("video/")):
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "仅支持图片或视频文件"}
+            )
+        
+        # 保存文件并获取URL（用户隔离目录）
+        request_host = str(request.base_url).rstrip("/")
+        file_url = _save_user_asset(file, user_id, category="workflow", base_host=request_host)
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "上传成功",
+            "data": {"url": file_url}
+        })
+    except Exception as e:
+        logger.error(f"Failed to upload workflow asset: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"上传失败: {str(e)}"}
+        )
+
+
+def _match_location_to_db(location_id: str, locations: list, user_id: int) -> tuple[Optional[int], Optional[str], Optional[str]]:
+    """
+    匹配场景到数据库
+    
+    Args:
+        location_id: 场景ID (如 "loc_001")
+        locations: 大模型返回的locations数组
+        user_id: 当前用户ID
+    
+    Returns:
+        (db_location_id, db_location_pic, location_name) 元组，未匹配则返回 (None, None, None)
+    """
+    # 构建location字典以便快速查找
+    location_map = {loc['id']: loc for loc in locations}
+    
+    # 查找当前location
+    current_loc = location_map.get(location_id)
+    if not current_loc:
+        return (None, None, None)
+    
+    # 递归向上查找匹配的location_db_id
+    def find_matching_db_location(loc):
+        if not loc:
+            return (None, None, None)
+        
+        # 检查当前location的location_db_id
+        db_id = loc.get('location_db_id')
+        if db_id is not None:
+            # 验证该location是否属于当前用户
+            try:
+                db_location = LocationModel.get_by_id(db_id)
+                if db_location and db_location.user_id == user_id:
+                    # 匹配成功
+                    return (db_id, db_location.reference_image, db_location.name)
+            except Exception as e:
+                logger.warning(f"Failed to get location {db_id}: {e}")
+        
+        # 如果当前location未匹配，且不是根节点，则查找父节点
+        level = loc.get('level', 0)
+        if level != 0:
+            parent_id = loc.get('parent_id')
+            if parent_id:
+                parent_loc = location_map.get(parent_id)
+                return find_matching_db_location(parent_loc)
+        
+        # 已到根节点仍未匹配
+        return (None, None, None)
+    
+    return find_matching_db_location(current_loc)
+
+
+@app.post('/api/parse-script')
+async def parse_script(
+    request: Request,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    解析剧本为分镜组
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        body = await request.json()
+        script_content = body.get('script_content', '')
+        max_group_duration = body.get('max_group_duration', 15)
+        world_id = body.get('world_id')
+        
+        if not script_content:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "剧本内容不能为空"}
+            )
+        
+        # 导入剧本解析模块
+        from llm.script_parser import parse_script_to_shots
+        
+        # 调用LLM解析剧本
+        parsed_data = await parse_script_to_shots(
+            script_content=script_content,
+            max_group_duration=max_group_duration,
+            world_id=world_id,
+            model=None,
+            temperature=0.7
+        )
+        
+        if not parsed_data:
+            return JSONResponse(
+                status_code=500,
+                content={"code": -1, "message": "剧本解析失败"}
+            )
+        
+        # 为每个shot添加db_location_id、db_location_pic和location_name字段
+        locations = parsed_data.get('locations', [])
+        shot_groups = parsed_data.get('shot_groups', [])
+        
+        for group in shot_groups:
+            shots = group.get('shots', [])
+            for shot in shots:
+                location_id = shot.get('location_id')
+                if location_id:
+                    db_location_id, db_location_pic, location_name = _match_location_to_db(location_id, locations, user_id)
+                    shot['db_location_id'] = db_location_id
+                    shot['db_location_pic'] = db_location_pic
+                    shot['location_name'] = location_name
+                else:
+                    shot['db_location_id'] = None
+                    shot['db_location_pic'] = None
+                    shot['location_name'] = None
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "解析成功",
+            "data": parsed_data
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to parse script: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"剧本解析失败: {str(e)}"}
+        )
+
+
+class ReduceViolationRequest(BaseModel):
+    prompt: str
+
+@app.post('/api/reduce-violation')
+async def reduce_violation(
+    request: ReduceViolationRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    降低提示词违规风险
+    """
+    try:
+        from llm.qwen import call_qwen_chat_async
+        
+        user_prompt = f"""以上提示词中触发了 sora的 This content may violate our content policies. 请你修改以上提示词，避免触发违禁
+
+原提示词：
+{request.prompt}
+
+请直接输出修改后的提示词，不要添加任何解释。"""
+        
+        messages = [
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        rewritten_prompt = await call_qwen_chat_async(
+            messages=messages,
+            temperature=0.7,
+            max_tokens=2000
+        )
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "改写成功",
+            "data": {"prompt": rewritten_prompt.strip()}
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to reduce violation: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"改写失败: {str(e)}"}
+        )
+
+
+@app.post('/api/video-workflow/create')
+async def create_video_workflow(
+    request: VideoWorkflowCreateRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    创建视频工作流
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        workflow_id = VideoWorkflowModel.create(
+            name=request.name,
+            user_id=user_id,
+            description=request.description,
+            cover_image=request.cover_image,
+            status=request.status,
+            workflow_data=request.workflow_data,
+            style=request.style,
+            style_reference_image=request.style_reference_image
+        )
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "创建成功",
+            "data": {"id": workflow_id}
+        })
+    except Exception as e:
+        logger.error(f"Failed to create video workflow: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"创建工作流失败: {str(e)}"}
+        )
+
+
+@app.put('/api/video-workflow/{workflow_id}')
+async def update_video_workflow(
+    workflow_id: int,
+    request: VideoWorkflowUpdateRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    更新视频工作流
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        # 检查工作流是否存在
+        workflow = VideoWorkflowModel.get_by_id(workflow_id)
+        if not workflow:
+            return JSONResponse(
+                status_code=404,
+                content={"code": -1, "message": "工作流不存在"}
+            )
+
+        if getattr(workflow, 'user_id', None) != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={"code": -1, "message": "无权限修改该工作流"}
+            )
+        
+        # 构建更新字段
+        update_fields = {}
+        if request.name is not None:
+            update_fields['name'] = request.name
+        if request.description is not None:
+            update_fields['description'] = request.description
+        if request.cover_image is not None:
+            update_fields['cover_image'] = request.cover_image
+        if request.status is not None:
+            update_fields['status'] = request.status
+        if request.workflow_data is not None:
+            update_fields['workflow_data'] = request.workflow_data
+        if request.style is not None:
+            update_fields['style'] = request.style
+        if request.style_reference_image is not None:
+            update_fields['style_reference_image'] = request.style_reference_image
+        if request.default_world_id is not None:
+            update_fields['default_world_id'] = request.default_world_id
+        
+        if update_fields:
+            VideoWorkflowModel.update(workflow_id, **update_fields)
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "更新成功"
+        })
+    except Exception as e:
+        logger.error(f"Failed to update video workflow {workflow_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"更新工作流失败: {str(e)}"}
+        )
+
+
+@app.delete('/api/video-workflow/{workflow_id}')
+async def delete_video_workflow(
+    workflow_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    删除视频工作流
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        # 检查工作流是否存在
+        workflow = VideoWorkflowModel.get_by_id(workflow_id)
+        if not workflow:
+            return JSONResponse(
+                status_code=404,
+                content={"code": -1, "message": "工作流不存在"}
+            )
+
+        if getattr(workflow, 'user_id', None) != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={"code": -1, "message": "无权限删除该工作流"}
+            )
+        
+        VideoWorkflowModel.delete(workflow_id)
+        
+        return JSONResponse({
+            "code": 0,
+            "message": "删除成功"
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete video workflow {workflow_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"删除工作流失败: {str(e)}"}
+        )
+
+
 # Serve upload directory for static file access
 upload_dir = os.path.join(APP_DIR, "upload")
 if not os.path.exists(upload_dir):
@@ -2464,6 +3131,947 @@ app.mount("/files", StaticFiles(directory=files_dir), name="files")
 static_dir = os.path.join(APP_DIR, "web")
 if not os.path.exists(static_dir):
     os.makedirs(static_dir, exist_ok=True)
+
+@app.get('/api/worlds')
+async def get_worlds(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取世界列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        result = WorldModel.list_by_user(
+            user_id=user_id,
+            page=page,
+            page_size=page_size
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get worlds: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+class CreateWorldRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+@app.post('/api/worlds')
+async def create_world(
+    request: CreateWorldRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    创建世界
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not request.name or not request.name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '世界名称不能为空',
+                    'data': None
+                }
+            )
+        
+        world_id = WorldModel.create(
+            name=request.name.strip(),
+            user_id=user_id,
+            description=request.description
+        )
+        
+        world = WorldModel.get_by_id(world_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '创建成功',
+                'data': world.to_dict() if world else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to create world: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.get('/api/characters')
+async def get_characters(
+    world_id: int = Query(..., description="世界ID"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取角色列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        result = CharacterModel.list_by_world(
+            world_id=world_id,
+            page=page,
+            page_size=page_size,
+            keyword=keyword
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get characters: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.get('/api/character/search')
+async def search_character(
+    user_id: int = Query(..., description="用户ID"),
+    world_id: int = Query(..., description="世界ID"),
+    name: str = Query(..., description="角色名称")
+):
+    """
+    根据角色名称和世界ID搜索角色，返回角色的sora_character字段
+    """
+    try:
+        result = CharacterModel.list_by_world(
+            world_id=world_id,
+            page=1,
+            page_size=1,
+            keyword=name
+        )
+        
+        if result and result.get('data') and len(result['data']) > 0:
+            character = result['data'][0]
+            if character.get('name') == name:
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        'code': 0,
+                        'message': 'success',
+                        'data': character,
+                        'sora_character': character.get('sora_character')
+                    }
+                )
+        
+        return JSONResponse(
+            status_code=404,
+            content={
+                'code': -1,
+                'message': 'Character not found',
+                'data': None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to search character: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/characters')
+async def create_character(
+    world_id: int = Form(..., description="世界ID"),
+    name: str = Form(..., description="角色名称"),
+    age: Optional[str] = Form(None, description="年龄"),
+    identity: Optional[str] = Form(None, description="身份/职业"),
+    personality: Optional[str] = Form(None, description="性格"),
+    behavior: Optional[str] = Form(None, description="行为习惯"),
+    other_info: Optional[str] = Form(None, description="其他信息"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    default_voice: Optional[UploadFile] = File(None, description="参考音频"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    创建角色
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not name or not name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '角色名称不能为空',
+                    'data': None
+                }
+            )
+        
+        # 处理图片上传
+        image_path = None
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"character_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            char_upload_dir = os.path.join(upload_dir, "character", "pic")
+            os.makedirs(char_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(char_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await reference_image.read()
+                f.write(content)
+            
+            image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
+        
+        # 处理音频上传
+        voice_path = None
+        if default_voice and default_voice.filename:
+            file_ext = os.path.splitext(default_voice.filename)[1]
+            filename = f"character_voice_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            voice_upload_dir = os.path.join(upload_dir, "character", "voice")
+            os.makedirs(voice_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(voice_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await default_voice.read()
+                f.write(content)
+            
+            voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
+        
+        character_id = CharacterModel.create(
+            world_id=world_id,
+            name=name.strip(),
+            user_id=user_id,
+            age=age.strip() if age else None,
+            identity=identity.strip() if identity else None,
+            personality=personality.strip() if personality else None,
+            behavior=behavior.strip() if behavior else None,
+            other_info=other_info.strip() if other_info else None,
+            reference_image=image_path,
+            default_voice=voice_path
+        )
+        
+        character = CharacterModel.get_by_id(character_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '创建成功',
+                'data': character.to_dict() if character else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to create character: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/characters/update')
+async def update_character(
+    character_id: int = Form(..., description="角色ID"),
+    name: str = Form(..., description="角色名称"),
+    age: Optional[str] = Form(None, description="年龄"),
+    identity: Optional[str] = Form(None, description="身份/职业"),
+    personality: Optional[str] = Form(None, description="性格"),
+    behavior: Optional[str] = Form(None, description="行为习惯"),
+    other_info: Optional[str] = Form(None, description="其他信息"),
+    sora_character: Optional[str] = Form(None, description="Sora角色卡ID"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    default_voice: Optional[UploadFile] = File(None, description="参考音频"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    更新角色
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not name or not name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '角色名称不能为空',
+                    'data': None
+                }
+            )
+        
+        # 处理图片上传
+        image_path = None
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"character_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            char_upload_dir = os.path.join(upload_dir, "character", "pic")
+            os.makedirs(char_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(char_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await reference_image.read()
+                f.write(content)
+            
+            image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
+        
+        # 处理音频上传
+        voice_path = None
+        if default_voice and default_voice.filename:
+            file_ext = os.path.splitext(default_voice.filename)[1]
+            filename = f"character_voice_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            voice_upload_dir = os.path.join(upload_dir, "character", "voice")
+            os.makedirs(voice_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(voice_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await default_voice.read()
+                f.write(content)
+            
+            voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
+        
+        # 构建更新字段
+        update_fields = {
+            'name': name.strip(),
+            'age': age.strip() if age else None,
+            'identity': identity.strip() if identity else None,
+            'personality': personality.strip() if personality else None,
+            'behavior': behavior.strip() if behavior else None,
+            'other_info': other_info.strip() if other_info else None,
+            'sora_character': sora_character.strip() if sora_character else None,
+        }
+        
+        if image_path:
+            update_fields['reference_image'] = image_path
+        if voice_path:
+            update_fields['default_voice'] = voice_path
+        
+        CharacterModel.update(character_id, **update_fields)
+        
+        character = CharacterModel.get_by_id(character_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '更新成功',
+                'data': character.to_dict() if character else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to update character: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.get('/api/locations')
+async def get_locations(
+    world_id: int = Query(..., description="世界ID"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取场景列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        result = LocationModel.list_by_world(
+            world_id=world_id,
+            page=page,
+            page_size=page_size,
+            keyword=keyword
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get locations: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.get('/api/location/{location_id}')
+async def get_location_by_id(
+    location_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    根据ID获取场景信息
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        location = LocationModel.get_by_id(location_id)
+        
+        if not location:
+            return JSONResponse(
+                status_code=404,
+                content={'code': -1, 'message': '场景不存在'}
+            )
+        
+        # 验证权限
+        if location.user_id != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={'code': -1, 'message': '无权访问此场景'}
+            )
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': location.to_dict()
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get location {location_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'code': -1, 'message': f'获取场景失败: {str(e)}'}
+        )
+
+
+@app.get('/api/locations/tree')
+async def get_locations_tree(
+    world_id: int = Query(..., description="世界ID"),
+    limit: Optional[int] = Query(None, ge=1, description="最大返回数量，优先保留顶层场景"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取场景树形结构
+    返回嵌套的场景树，支持 limit 参数控制返回数量
+    当指定 limit 时，优先保留顶层场景（parent_id 为 null），然后是一级子场景，以此类推
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        tree = LocationModel.get_tree_by_world(world_id=world_id, limit=limit)
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': tree
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get location tree: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/locations')
+async def create_location(
+    world_id: int = Form(..., description="世界ID"),
+    name: str = Form(..., description="场景名称"),
+    parent_id: Optional[int] = Form(None, description="父场景ID，为空表示顶层场景"),
+    description: Optional[str] = Form(None, description="场景描述"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    创建场景
+    支持嵌套场景：通过 parent_id 指定父场景，为 null 表示顶层场景
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not name or not name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '场景名称不能为空',
+                    'data': None
+                }
+            )
+        
+        # 处理图片上传
+        image_path = None
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"location_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            loc_upload_dir = os.path.join(upload_dir, "location", "pic")
+            os.makedirs(loc_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(loc_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await reference_image.read()
+                f.write(content)
+            
+            image_path = f"{SERVER_HOST}/upload/location/pic/{filename}"
+        
+        location_id = LocationModel.create(
+            world_id=world_id,
+            name=name.strip(),
+            user_id=user_id,
+            parent_id=parent_id,
+            description=description.strip() if description else None,
+            reference_image=image_path
+        )
+        
+        location = LocationModel.get_by_id(location_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '创建成功',
+                'data': location.to_dict() if location else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to create location: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.put('/api/locations/{location_id}')
+async def update_location(
+    location_id: int,
+    name: Optional[str] = Form(None, description="场景名称"),
+    parent_id: Optional[int] = Form(None, description="父场景ID"),
+    description: Optional[str] = Form(None, description="场景描述"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    更新场景信息
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        # 检查场景是否存在
+        location = LocationModel.get_by_id(location_id)
+        if not location:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'code': -1,
+                    'message': '场景不存在',
+                    'data': None
+                }
+            )
+        
+        # 准备更新数据
+        update_data = {}
+        
+        if name is not None and name.strip():
+            update_data['name'] = name.strip()
+        
+        if parent_id is not None:
+            update_data['parent_id'] = parent_id
+        
+        if description is not None:
+            update_data['description'] = description.strip() if description else None
+        
+        # 处理图片上传
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"location_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            loc_upload_dir = os.path.join(upload_dir, "location", "pic")
+            os.makedirs(loc_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(loc_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await reference_image.read()
+                f.write(content)
+            
+            update_data['reference_image'] = f"{SERVER_HOST}/upload/location/pic/{filename}"
+        
+        # 更新场景
+        if update_data:
+            LocationModel.update(location_id, **update_data)
+        
+        # 获取更新后的场景
+        updated_location = LocationModel.get_by_id(location_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '更新成功',
+                'data': updated_location.to_dict() if updated_location else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to update location: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+class ExportTimelineDraftRequest(BaseModel):
+    draft_path: str
+    timeline_clips: List[dict]
+    workflow_name: Optional[str] = "未命名工作流"
+    request_origin: Optional[str] = None
+
+
+@app.post('/api/export_timeline_draft')
+async def export_timeline_draft(
+    payload: ExportTimelineDraftRequest,
+    http_request: Request,
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    导出时间轴到剪影草稿
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not payload.timeline_clips or len(payload.timeline_clips) == 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'error': '时间轴为空，无法导出'
+                }
+            )
+        
+        # 导入jianying库
+        import sys
+        jianying_path = os.path.join(APP_DIR, 'jianying', 'src')
+        if jianying_path not in sys.path:
+            sys.path.insert(0, jianying_path)
+        
+        from core import JianyingMultiTrackLibrary
+        from draft_generator import DraftGenerator
+        from utils import seconds_to_microseconds
+        
+        # 生成唯一的草稿名称（使用工作流名称作为前缀）
+        # 清理工作流名称，移除不适合文件名的字符
+        safe_workflow_name = "".join(c for c in payload.workflow_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_workflow_name = safe_workflow_name.replace(' ', '_') or 'workflow'
+        draft_name = f"{safe_workflow_name}_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # 创建临时目录（使用/tmp目录，按日期分组）
+        date_folder = datetime.now().strftime('%Y-%m-%d')
+        base_temp_dir = os.path.join('/tmp', 'jianying_export', date_folder, draft_name)
+        temp_download_dir = os.path.join(base_temp_dir, 'downloads')
+        local_draft_parent = os.path.join(base_temp_dir, 'draft_output')
+        os.makedirs(temp_download_dir, exist_ok=True)
+        os.makedirs(local_draft_parent, exist_ok=True)
+        
+        logger.info(f"开始导出草稿: {draft_name}")
+        logger.info(f"临时基础目录: {base_temp_dir}")
+        logger.info(f"临时下载目录: {temp_download_dir}")
+        logger.info(f"草稿路径前缀: {payload.draft_path}")
+
+        request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
+        
+        # 下载所有视频
+        downloaded_files = []
+        asset_cache = {}
+        for idx, clip in enumerate(payload.timeline_clips):
+            video_url = clip.get('url')
+            video_name = clip.get('name', f'video_{idx}')
+            
+            if not video_url:
+                logger.warning(f"跳过没有URL的片段: {video_name}")
+                continue
+            
+            try:
+                asset_key = None
+                local_asset_path = _get_local_upload_file(video_url, request_origin)
+                if local_asset_path:
+                    asset_key = f"local::{os.path.abspath(local_asset_path)}"
+                elif video_url:
+                    asset_key = f"url::{video_url}"
+
+                if asset_key and asset_key in asset_cache:
+                    file_path = asset_cache[asset_key]
+                    safe_name = os.path.basename(file_path)
+                    logger.info(f"复用已下载素材: {video_name} -> {safe_name}")
+                else:
+                    if local_asset_path:
+                        file_ext = os.path.splitext(local_asset_path)[1] or '.mp4'
+                        safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                        file_path = os.path.join(temp_download_dir, safe_name)
+                        shutil.copy2(local_asset_path, file_path)
+                        logger.info(f"已复用本地上传文件: {local_asset_path} -> {file_path}")
+                    else:
+                        logger.info(f"正在下载视频 {idx + 1}/{len(payload.timeline_clips)}: {video_name}")
+                        
+                        # 下载视频
+                        response = requests.get(video_url, stream=True, timeout=300)
+                        response.raise_for_status()
+                        
+                        # 确定文件扩展名
+                        file_ext = '.mp4'
+                        if 'content-type' in response.headers:
+                            content_type = response.headers['content-type']
+                            if 'video/quicktime' in content_type or video_url.endswith('.mov'):
+                                file_ext = '.mov'
+                            elif 'video/x-msvideo' in content_type or video_url.endswith('.avi'):
+                                file_ext = '.avi'
+                        
+                        # 保存文件
+                        safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                        file_path = os.path.join(temp_download_dir, safe_name)
+                        
+                        with open(file_path, 'wb') as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                        
+                        logger.info(f"视频下载完成: {safe_name}")
+                    
+                    if asset_key:
+                        asset_cache[asset_key] = file_path
+                
+                downloaded_files.append({
+                    'file_path': file_path,
+                    'clip': clip,
+                    'filename': safe_name
+                })
+                
+            except Exception as e:
+                logger.error(f"处理视频失败 {video_name}: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        'success': False,
+                        'error': f'处理视频失败: {video_name} - {str(e)}'
+                    }
+                )
+        
+        if not downloaded_files:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'error': '没有成功下载任何视频'
+                }
+            )
+        
+        # 创建剪影草稿
+        logger.info("开始生成剪影草稿...")
+        
+        # 创建库实例
+        library = JianyingMultiTrackLibrary(
+            draft_name=draft_name,
+            output_dir=local_draft_parent,
+            material_path_prefix=payload.draft_path
+        )
+        
+        # 创建视频轨道
+        video_track = library.create_video_track("主轨道")
+        
+        # 添加视频片段到轨道
+        current_time = 0
+        for item in downloaded_files:
+            clip = item['clip']
+            file_path = item['file_path']
+            
+            # 获取视频时长
+            duration = library.get_media_duration(file_path)
+            
+            # 计算剪切后的时长
+            start_time = clip.get('startTime', 0)
+            end_time = clip.get('endTime', clip.get('duration', 0))
+            
+            # 转换为微秒
+            source_start = seconds_to_microseconds(start_time)
+            clip_duration = seconds_to_microseconds(end_time - start_time)
+            
+            # 添加到轨道
+            library.add_video_to_track(
+                track_id=video_track,
+                file_path=file_path,
+                start_time=seconds_to_microseconds(current_time),
+                duration=clip_duration,
+                source_start=source_start
+            )
+            
+            current_time += (end_time - start_time)
+        
+        # 生成草稿
+        generator = DraftGenerator(library)
+        draft_path = generator.generate_draft(
+            copy_media_files=True,
+            media_source_dir=temp_download_dir
+        )
+        
+        logger.info(f"草稿生成成功: {draft_path}")
+        
+        # 创建导入指南HTML文件（从模板读取）
+        template_path = os.path.join(APP_DIR, 'templates', 'jianying_import_guide.html')
+        with open(template_path, 'r', encoding='utf-8') as f:
+            html_guide_content = f.read()
+        
+        # 将HTML文件写入草稿的父目录（与草稿文件夹同级）
+        html_guide_path = os.path.join(os.path.dirname(draft_path), "如何导入到剪影.html")
+        with open(html_guide_path, 'w', encoding='utf-8') as f:
+            f.write(html_guide_content)
+        logger.info(f"已创建导入指南: {html_guide_path}")
+        
+        # 创建草稿压缩包
+        logger.info("开始创建草稿压缩包...")
+        # 使用日期分组目录
+        draft_upload_dir = os.path.join(UPLOAD_DIR, 'draft', date_folder)
+        os.makedirs(draft_upload_dir, exist_ok=True)
+        
+        zip_filename = f"{draft_name}.zip"
+        zip_path = os.path.join(draft_upload_dir, zip_filename)
+        
+        import zipfile
+        
+        # 手动创建压缩包，包含HTML指南和草稿文件夹
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # 添加HTML指南到压缩包根目录
+            zipf.write(html_guide_path, "如何导入到剪影.html")
+            
+            # 添加草稿文件夹及其所有内容
+            for root, dirs, files in os.walk(draft_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.join(os.path.basename(draft_path), os.path.relpath(file_path, draft_path))
+                    zipf.write(file_path, arcname)
+        
+        logger.info(f"压缩包已创建: {zip_path}")
+        
+        # 生成下载URL（包含日期路径）
+        download_url = f"{SERVER_HOST}/upload/draft/{date_folder}/{zip_filename}"
+        logger.info(f"下载地址: {download_url}")
+        
+        # 清理临时文件
+        try:
+            shutil.rmtree(temp_download_dir)
+            logger.info("临时下载文件已清理")
+        except Exception as e:
+            logger.warning(f"清理临时文件失败: {e}")
+        
+        # 清理生成的草稿目录（因为已经打包）
+        try:
+            shutil.rmtree(draft_path)
+            logger.info("草稿临时目录已清理")
+        except Exception as e:
+            logger.warning(f"清理草稿目录失败: {e}")
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'success': True,
+                'draft_name': draft_name,
+                'draft_path': draft_path,
+                'video_count': len(downloaded_files),
+                'download_url': download_url,
+                'zip_filename': zip_filename
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"导出草稿失败: {e}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'error': str(e)
+            }
+        )
+
+
+@app.get("/video-workflow-list")
+async def serve_video_workflow_list():
+    file_path = os.path.join(static_dir, "video_workflow_list.html")
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Video workflow list page not found")
+
+@app.get("/video-workflow")
+async def serve_video_workflow():
+    file_path = os.path.join(static_dir, "video_workflow.html")
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Video workflow page not found")
 
 # Catch-all route for SPA - returns index.html for all unmatched routes
 # This supports Vue Router history mode

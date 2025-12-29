@@ -1,0 +1,12 @@
+{
+  "ffmpeg": {
+    "ffmpeg_path": "/usr/bin/ffmpeg",
+    "ffprobe_path": "/usr/bin/ffprobe",
+    "timeout": 30,
+    "fallback_enabled": true
+  },
+  "media": {
+    "supported_video_formats": [".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv"],
+    "supported_audio_formats": [".mp3", ".wav", ".aac", ".m4a", ".ogg", ".flac"]
+  }
+}

@@ -48,7 +48,7 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
     response = requests.post(url, json=payload, headers=headers)
     return response.json()
 
-def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16", image_urls=None):
+def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16", image_urls=None, image_size="1K"):
     """
     Generate AI image using NanoBanana API
     
@@ -56,7 +56,8 @@ def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16
         model: Model type (default: "gemini-2.5-pro-image-preview")
         prompt: Text prompt for image generation
         ratio: Image aspect ratio (default: "9:16")
-        img_url: Optional image URL
+        image_urls: Optional image URLs
+        image_size: Image resolution (default: "1K", options: "1K", "2K", "4K")
     
     Returns:
         Response from the API
@@ -68,6 +69,7 @@ def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16
         "prompt": prompt,
         "aspect_ratio": ratio,
         "image_urls": image_urls,
+        "image_size": image_size,
     }
 
     headers = {

@@ -1,0 +1,8 @@
+.DS_Store
+
+# 测试配置文件（包含敏感信息）
+test_config.json
+
+# 测试进度和会话记录
+test_progress.json
+test_sessions/

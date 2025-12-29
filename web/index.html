@@ -239,6 +239,13 @@
         </div>
         <div class="list-item">
           <div>
+            <div style="font-weight:700">视频工作流</div>
+            <div class="muted">空画布 + 节点式工作流编辑</div>
+          </div>
+          <button class="btn" onclick="location.href='/video-workflow-list'">打开</button>
+        </div>
+        <div class="list-item">
+          <div>
             <div style="font-weight:700">AI视频生成</div>
             <div class="muted">输入文本提示词生成视频</div>
           </div>
@@ -1029,6 +1036,7 @@
         ratio: '9:16',
         count: 1,
         model: 'gemini-2.5-pro-image-preview',
+        imageSize: '1K',
         loading: false,
         error: '',
         results: [],
@@ -1075,6 +1083,13 @@
         return [
           { value: 'gemini-2.5-pro-image-preview', label: '标准版 (2算力)' },
           { value: 'gemini-3-pro-image-preview', label: '加强版 (6算力)' }
+        ];
+      },
+      imageSizeOptions() {
+        return [
+          { value: '1K', label: '1K' },
+          { value: '2K', label: '2K' },
+          { value: '4K', label: '4K' }
         ];
       },
       statusText() {
@@ -1132,6 +1147,7 @@
           form.append('ratio', this.ratio);
           form.append('count', this.count);
           form.append('model', this.model);
+          form.append('image_size', this.imageSize);
           
           // Add user_id from localStorage
           const userId = localStorage.getItem('user_id');
@@ -1522,6 +1538,13 @@
             <label class="label">图片比例</label>
             <select class="input" v-model="ratio">
               <option v-for="opt in ratioOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+
+          <div class="field" v-if="model === 'gemini-3-pro-image-preview'">
+            <label class="label">分辨率</label>
+            <select class="input" v-model="imageSize">
+              <option v-for="opt in imageSizeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </div>
 

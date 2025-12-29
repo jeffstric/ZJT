@@ -60,6 +60,50 @@ comfyui_server/
    └─ index.html              # 前端（Vue + Router + Axios）
 ```
 
+## 自动化测试
+
+本项目包含基于 Claude Code + Playwright MCP  + Claude Code Router 的自动化测试框架。
+
+### 环境准备
+
+详细配置请参考 `auto_test/SETUP.md`，主要步骤：
+
+
+### 运行测试
+
+```powershell
+cd auto_test
+```
+
+**方式 1：交互式运行**
+
+# 通过claude code router运行智能体测试
+
+cd auto_test
+
+```
+ccr code
+```
+
+**方式 2：使用调度器**
+```
+ccr code
+/orchestrator
+```
+
+
+### 测试模式
+
+启动时会询问是否使用测试模式（URL 带 `?test=1` 参数）：
+- **测试模式**：使用模拟接口，速度快，无成本
+- **真实模式**：使用真实接口，速度慢，有成本
+
+### 查看测试进度
+
+```
+/check-status
+```
+
 ## 常见问题
 - 若前端长时间无结果，请检查：
   - ComfyUI 是否在运行，且地址正确（端口、协议、是否可达）。
