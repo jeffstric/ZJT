@@ -1,4 +1,4 @@
-﻿{
+{
   "title": "视频工作流功能检查清单",
   "version": "2.0.0",
   "description": "基于 playwright-mcp 的智能体浏览器自动化测试清单，每个测试步骤对应具体的 MCP 工具调用",
@@ -57,7 +57,8 @@
               },
               "expected_result": "首页正常加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -66,7 +67,8 @@
               "mcp_params": {},
               "verify": "页面快照中应包含「登录」按钮元素，记录其 ref 值",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -78,7 +80,8 @@
               },
               "expected_result": "弹出登录模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -87,7 +90,8 @@
               "mcp_params": {},
               "verify": "模态框可见，包含手机号输入框、密码输入框、服务条款复选框、登录按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -117,7 +121,8 @@
               },
               "expected_result": "表单字段正确填写",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -129,7 +134,8 @@
               },
               "expected_result": "发起登录请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -141,7 +147,8 @@
               },
               "expected_result": "页面出现「登出」文字",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -150,7 +157,8 @@
               "mcp_params": {},
               "verify": "页面右上角显示「登出」按钮，模态框已关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -161,9 +169,11 @@
               },
               "verify": "返回结果包含有效的 auth_token 和 user_id",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "auth_002",
@@ -185,7 +195,8 @@
               "mcp_params": {},
               "verify": "页面快照中应包含「登出」按钮元素",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -197,7 +208,8 @@
               },
               "expected_result": "发起登出请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -209,7 +221,8 @@
               },
               "expected_result": "页面出现「登录」文字",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -218,7 +231,8 @@
               "mcp_params": {},
               "verify": "页面显示「登录」按钮，不显示「登出」按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -229,9 +243,11 @@
               },
               "verify": "auth_token 和 user_id 应为 null",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -259,7 +275,8 @@
               },
               "expected_result": "页面正常加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -271,7 +288,8 @@
               },
               "expected_result": "页面标题出现",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -280,7 +298,8 @@
               "mcp_params": {},
               "verify": "页面包含：品牌Logo、「视频工作流」标题、「新建工作流」按钮、搜索框、状态筛选下拉框、工作流卡片列表或空状态提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -289,9 +308,11 @@
               "mcp_params": {},
               "verify": "存在 GET /api/video-workflow/list 请求且返回成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "list_002",
@@ -320,7 +341,8 @@
                 "meta": ".workflow-meta"
               },
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -328,7 +350,8 @@
               "operation": "verify",
               "expected_result": "启用状态显示绿色(.status-enabled)，禁用状态显示红色(.status-disabled)，草稿状态显示黄色(.status-draft)",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -337,9 +360,11 @@
               "selector": ".workflow-actions",
               "expected_result": "每个卡片底部有「编辑」和「删除」两个按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "list_003",
@@ -359,7 +384,8 @@
               "test_data": "测试",
               "expected_result": "搜索框显示输入的关键词",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -368,7 +394,8 @@
               "wait_time_ms": 500,
               "expected_result": "防抖后自动发起带 keyword 参数的 API 请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -376,7 +403,8 @@
               "operation": "verify",
               "expected_result": "列表只显示名称包含「测试」的工作流",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -385,9 +413,11 @@
               "selector": "#searchInput",
               "expected_result": "列表恢复显示全部工作流",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "list_004",
@@ -407,7 +437,8 @@
               "value": "1",
               "expected_result": "发起带 status=1 参数的 API 请求，列表只显示已启用的工作流",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -417,7 +448,8 @@
               "value": "0",
               "expected_result": "列表只显示已禁用的工作流",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -427,7 +459,8 @@
               "value": "2",
               "expected_result": "列表只显示草稿状态的工作流",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -437,9 +470,11 @@
               "value": "",
               "expected_result": "列表恢复显示全部工作流",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "list_005",
@@ -462,7 +497,8 @@
                 "next_button": "#nextBtn"
               },
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -471,7 +507,8 @@
               "selector": "#pageInfo",
               "expected_result": "显示格式为「第 X 页 / 共 Y 页 (共 Z 条)」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -480,7 +517,8 @@
               "selector": "#nextBtn",
               "expected_result": "加载下一页数据，页码信息更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -489,9 +527,11 @@
               "selector": "#prevBtn",
               "expected_result": "返回上一页数据，页码信息更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "list_006",
@@ -510,7 +550,8 @@
               "mcp_params": {},
               "verify": "页面包含「新建工作流」按钮，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -522,7 +563,8 @@
               },
               "expected_result": "弹出模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -534,7 +576,8 @@
               },
               "expected_result": "模态框标题可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -543,7 +586,8 @@
               "mcp_params": {},
               "verify": "模态框包含名称输入框、描述文本域、画风输入框、画风参考图上传控件、状态选择器、保存和取消按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -567,7 +611,8 @@
               },
               "expected_result": "表单字段填写完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -582,7 +627,8 @@
               },
               "expected_result": "状态选择为草稿",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -594,7 +640,8 @@
               },
               "expected_result": "发起创建请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -606,7 +653,8 @@
               },
               "expected_result": "模态框关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -615,9 +663,11 @@
               "mcp_params": {},
               "verify": "列表中显示新创建的「MCP自动化测试工作流」卡片",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "list_007",
@@ -636,7 +686,8 @@
               "selector": ".workflow-card .btn-secondary:has-text('编辑')",
               "expected_result": "弹出模态框，标题显示「编辑工作流」，表单预填充当前工作流信息",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -646,7 +697,8 @@
               "test_data": "修改后的工作流名称",
               "expected_result": "名称输入框显示新内容",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -655,7 +707,8 @@
               "selector": "#createModal button:has-text('保存')",
               "expected_result": "发起 PUT /api/video-workflow/{id} 请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -663,9 +716,11 @@
               "operation": "verify",
               "expected_result": "显示「更新成功」Toast 提示，模态框关闭，列表刷新显示更新后的信息",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "list_008",
@@ -684,7 +739,8 @@
               "selector": ".workflow-card .btn-danger:has-text('删除')",
               "expected_result": "弹出删除确认模态框，提示「确定要删除这个工作流吗？此操作不可撤销。」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -693,7 +749,8 @@
               "selector": "#deleteModal .btn-danger:has-text('删除')",
               "expected_result": "发起 DELETE /api/video-workflow/{id} 请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -701,9 +758,11 @@
               "operation": "verify",
               "expected_result": "显示「删除成功」Toast 提示，模态框关闭，工作流从列表中移除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "list_009",
@@ -721,7 +780,8 @@
               "selector": ".workflow-card .workflow-content",
               "expected_result": "页面跳转到 /video-workflow?id={workflow_id}",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -729,9 +789,11 @@
               "operation": "verify",
               "expected_result": "URL 包含 /video-workflow?id=，编辑器页面正常加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -759,7 +821,8 @@
               },
               "expected_result": "页面开始加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -771,7 +834,8 @@
               },
               "expected_result": "保存按钮出现",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -780,7 +844,8 @@
               "mcp_params": {},
               "verify": "页面包含：品牌浮动栏、比例选择器(16:9等选项)、「保存」按钮、「画风」按钮、「添加」按钮、画布容器、缩放控件(+/-按钮和100%显示)、小地图区域",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -789,9 +854,11 @@
               "mcp_params": {},
               "verify": "存在 GET /api/video-workflow/1 请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_002",
@@ -809,7 +876,8 @@
               "selector": "#ratioSelect",
               "expected_result": "下拉框默认选中 16:9",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -818,7 +886,8 @@
               "selector": "#ratioSelect option",
               "expected_result": "下拉框包含5个选项：9:16、3:4、1:1、4:3、16:9",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -828,7 +897,8 @@
               "value": "9:16",
               "expected_result": "比例更新为 9:16，状态正确保存",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -838,9 +908,11 @@
               "value": "1:1",
               "expected_result": "比例更新为 1:1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_003",
@@ -858,7 +930,8 @@
               "selector": "#zoomLevel",
               "expected_result": "显示 100%",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -867,7 +940,8 @@
               "selector": "#zoomInBtn",
               "expected_result": "缩放级别增加到 110%",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -877,7 +951,8 @@
               "times": 10,
               "expected_result": "缩放级别最大为 200%，继续点击不再增加",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -886,7 +961,8 @@
               "selector": "#zoomOutBtn",
               "expected_result": "缩放级别减少",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -896,9 +972,11 @@
               "times": 20,
               "expected_result": "缩放级别最小为 25%，继续点击不再减少",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_004",
@@ -916,7 +994,8 @@
               "selector": "#canvasContainer",
               "expected_result": "光标变为 grabbing，画布容器添加 .panning 类",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -932,7 +1011,8 @@
               },
               "expected_result": "整个画布跟随鼠标平移，transform 样式更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -940,9 +1020,11 @@
               "operation": "mouseup",
               "expected_result": "画布停止平移，保持在新位置，光标恢复为 grab",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_005",
@@ -960,7 +1042,8 @@
               "selector": "#minimap",
               "expected_result": "小地图显示在画布左下角",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -969,7 +1052,8 @@
               "selector": ".minimap-node",
               "expected_result": "小地图中显示节点缩略方块",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -978,7 +1062,8 @@
               "selector": ".minimap-viewport",
               "expected_result": "显示红色边框的视口框，表示当前可视区域",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -987,9 +1072,11 @@
               "selector": ".minimap-viewport",
               "expected_result": "画布相应滚动到新位置",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_006",
@@ -1010,7 +1097,8 @@
               },
               "expected_result": "视频片段出现在时间轴中",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1022,7 +1110,8 @@
               },
               "expected_result": "弹出剪辑对话框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1034,7 +1123,8 @@
               },
               "expected_result": "加载提示消失，视频预览和时间轴缩略图显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1047,7 +1137,8 @@
               },
               "expected_result": "起点时间更新，视频画面跳转到新起点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -1060,7 +1151,8 @@
               },
               "expected_result": "终点时间更新，剪辑时长显示更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -1072,7 +1164,8 @@
               },
               "expected_result": "视频从起点开始播放，到达终点自动停止并保留在终点画面",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -1081,7 +1174,8 @@
               "mcp_params": {},
               "verify": "控制台输出包含'开始播放'和'到达终点'日志",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -1093,7 +1187,8 @@
               },
               "expected_result": "剪辑设置保存，对话框关闭，时间轴总时长更新为剪辑后的时长",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -1102,9 +1197,11 @@
               "mcp_params": {},
               "verify": "时间轴总时长显示格式为 M:SS.XX（两位小数）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_007",
@@ -1122,7 +1219,8 @@
               "selector": "#addBtn",
               "expected_result": "弹出添加菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1138,7 +1236,8 @@
                 "add_asset": "#menuAddAsset"
               },
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1146,7 +1245,8 @@
               "operation": "verify",
               "expected_result": "「添加节点」分组包含：图生视频、视频、图片",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1155,9 +1255,11 @@
               "selector": "#canvasContainer",
               "expected_result": "添加菜单关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_008",
@@ -1175,7 +1277,8 @@
               "mcp_params": {},
               "verify": "页面包含「添加」按钮，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1187,7 +1290,8 @@
               },
               "expected_result": "弹出添加菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1196,7 +1300,8 @@
               "mcp_params": {},
               "verify": "菜单包含「图生视频」选项，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1208,7 +1313,8 @@
               },
               "expected_result": "在画布上创建节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -1220,7 +1326,8 @@
               },
               "expected_result": "节点标题出现",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -1229,9 +1336,11 @@
               "mcp_params": {},
               "verify": "节点包含：「图生视频」标题、首帧画面字段(必填*)、尾帧画面字段(可选)、视频长度下拉框(10秒/15秒)、模型下拉框(sora)、提示词文本框、「生成视频」按钮、抽卡次数下拉",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_009",
@@ -1249,7 +1358,8 @@
               "selector": "#addBtn",
               "expected_result": "弹出添加菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1258,7 +1368,8 @@
               "selector": "#menuAddVideoNode",
               "expected_result": "在画布上创建新的视频节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1266,7 +1377,8 @@
               "operation": "verify",
               "expected_result": "画布上出现新节点，节点标题为「视频」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1279,9 +1391,11 @@
                 "input_port": ".port.input"
               },
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_010",
@@ -1299,7 +1413,8 @@
               "selector": "#addBtn",
               "expected_result": "弹出添加菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1308,7 +1423,8 @@
               "selector": "#menuAddImage",
               "expected_result": "在画布上创建新的图片节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1316,7 +1432,8 @@
               "operation": "verify",
               "expected_result": "画布上出现新节点，节点标题为「图片」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1328,9 +1445,11 @@
                 "output_port": ".port.output"
               },
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_011",
@@ -1351,7 +1470,8 @@
               "selector": ".node-header",
               "expected_result": "节点被选中，准备拖拽，光标变为 grabbing",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1367,7 +1487,8 @@
               },
               "expected_result": "节点跟随鼠标移动，left/top 样式实时更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1375,7 +1496,8 @@
               "operation": "mouseup",
               "expected_result": "节点停留在新位置，位置数据正确保存",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1383,9 +1505,11 @@
               "operation": "verify",
               "expected_result": "小地图中的节点缩略位置同步更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_012",
@@ -1403,7 +1527,8 @@
               "selector": ".node .icon-btn",
               "expected_result": "节点从画布上移除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1411,7 +1536,8 @@
               "operation": "verify",
               "expected_result": "画布上不再显示该节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1419,9 +1545,11 @@
               "operation": "verify",
               "expected_result": "与该节点相关的所有连接线也被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_012_1",
@@ -1442,7 +1570,8 @@
               "selector": "#addBtn",
               "expected_result": "画布上有至少3个节点",
               "pass": false,
-              "remark": "准备测试环境"
+              "remark": "准备测试环境",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1451,7 +1580,8 @@
               "key": "Control",
               "expected_result": "画布光标变为crosshair指针模式",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1467,7 +1597,8 @@
               },
               "expected_result": "出现蓝色半透明选择框，选择框跟随鼠标移动",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1475,7 +1606,8 @@
               "operation": "mouseup",
               "expected_result": "选择框内的所有节点被选中，节点显示选中状态（绿色边框和阴影），选择框消失",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -1484,7 +1616,8 @@
               "key": "Control",
               "expected_result": "画布光标恢复为grab状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -1492,9 +1625,11 @@
               "operation": "verify",
               "expected_result": "所有被选中的节点保持选中状态，其他节点无选中状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_012_2",
@@ -1514,7 +1649,8 @@
               "operation": "batch_select",
               "expected_result": "多个节点被选中",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1531,7 +1667,8 @@
               },
               "expected_result": "所有选中的节点同时移动相同的距离",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1539,7 +1676,8 @@
               "operation": "mouseup",
               "expected_result": "所有节点停留在新位置，位置数据正确保存",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1547,9 +1685,11 @@
               "operation": "verify",
               "expected_result": "小地图中所有节点的位置同步更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_012_3",
@@ -1569,7 +1709,8 @@
               "operation": "batch_select",
               "expected_result": "多个节点被选中",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1578,7 +1719,8 @@
               "key": "Delete",
               "expected_result": "弹出确认对话框，提示要删除选中的N个节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1586,7 +1728,8 @@
               "operation": "confirm",
               "expected_result": "所有选中的节点从画布上移除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1594,9 +1737,11 @@
               "operation": "verify",
               "expected_result": "画布上不再显示这些节点，相关连接线也被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_013",
@@ -1618,7 +1763,8 @@
               "selector": ".node[data-node-id] .port.output",
               "expected_result": "开始创建连接线，显示虚线预览",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1626,7 +1772,8 @@
               "operation": "drag",
               "expected_result": "虚线预览跟随鼠标移动，目标端口高亮显示 .can-connect 类",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1635,7 +1782,8 @@
               "selector": ".port.input",
               "expected_result": "创建实线连接，连接线为绿色贝塞尔曲线",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1644,9 +1792,11 @@
               "selector": "#connectionsSvg path.line",
               "expected_result": "SVG 中存在连接线路径元素",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_014",
@@ -1668,7 +1818,8 @@
               "selector": ".node[data-node-id] .port.output",
               "expected_result": "开始创建图片连接线",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1677,7 +1828,8 @@
               "selector": ".start-image-port",
               "expected_result": "首帧端口高亮显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1685,9 +1837,11 @@
               "operation": "mouseup",
               "expected_result": "创建蓝色连接线，图片节点的图片作为首帧输入",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_015",
@@ -1708,7 +1862,8 @@
               "selector": "#connectionsSvg path.hitbox",
               "expected_result": "连接线变为红色选中状态，添加 .selected 类",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1717,7 +1872,8 @@
               "selector": "#connDeleteBtn",
               "expected_result": "在连接线中点位置显示红色圆形删除按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1726,9 +1882,11 @@
               "selector": "#connDeleteBtn",
               "expected_result": "连接线被删除，删除按钮隐藏",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_016",
@@ -1747,7 +1905,8 @@
               "selector": "#saveBtn",
               "expected_result": "按钮显示「保存中...」，按钮禁用",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1755,7 +1914,8 @@
               "operation": "verify",
               "expected_result": "发起 PUT /api/video-workflow/{id} 请求，请求体包含 workflow_data 字段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1763,9 +1923,11 @@
               "operation": "verify",
               "expected_result": "显示「保存成功」Toast 提示，按钮恢复为「保存」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_017",
@@ -1787,7 +1949,8 @@
               },
               "expected_result": "弹出画风设置模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1799,7 +1962,8 @@
               },
               "expected_result": "模态框标题可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1808,7 +1972,8 @@
               "mcp_params": {},
               "verify": "模态框包含画风名称输入框、参考图上传控件、保存和取消按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1821,7 +1986,8 @@
               },
               "expected_result": "输入框显示画风名称",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -1834,7 +2000,8 @@
               },
               "expected_result": "图片预览显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -1846,7 +2013,8 @@
               },
               "expected_result": "发起保存请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -1858,7 +2026,8 @@
               },
               "expected_result": "显示成功提示，模态框关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -1867,7 +2036,8 @@
               "mcp_params": {},
               "verify": "存在 PUT /api/video-workflow/{id} 请求，请求体包含 style 和 style_reference_image 字段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -1879,9 +2049,11 @@
               },
               "expected_result": "模态框显示之前保存的画风名称和参考图",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_018",
@@ -1902,7 +2074,8 @@
               "target_url": "/video-workflow?id={saved_workflow_id}",
               "expected_result": "页面正常加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1910,7 +2083,8 @@
               "operation": "verify",
               "expected_result": "之前保存的所有节点正确显示在画布上，位置与保存时一致",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1918,7 +2092,8 @@
               "operation": "verify",
               "expected_result": "之前保存的所有连接线正确显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1926,7 +2101,8 @@
               "operation": "verify",
               "expected_result": "节点的字段值（如提示词、图片URL等）正确恢复",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -1934,9 +2110,11 @@
               "operation": "verify",
               "expected_result": "画布缩放级别和平移位置与保存时一致",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_018",
@@ -1958,7 +2136,8 @@
               },
               "expected_result": "显示节点菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -1970,7 +2149,8 @@
               },
               "expected_result": "画布上创建剧本节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -1983,7 +2163,8 @@
               },
               "expected_result": "剧本内容显示在文本域中",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -1995,7 +2176,8 @@
               },
               "expected_result": "按钮显示加载状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -2007,7 +2189,8 @@
               },
               "expected_result": "显示成功提示或按钮恢复正常状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -2018,7 +2201,8 @@
               },
               "verify": "返回结果 ok=true 且 shot_group_count >= 1，表示至少生成了一个分镜组节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -2027,9 +2211,11 @@
               "mcp_params": {},
               "verify": "存在 POST /api/parse-script 请求，响应状态为200，响应体包含 shot_groups 数组",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_019",
@@ -2050,7 +2236,8 @@
               },
               "expected_result": "显示节点菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2062,7 +2249,8 @@
               },
               "expected_result": "画布上创建图片节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2076,7 +2264,8 @@
               },
               "expected_result": "节点被限制在边界内",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -2087,7 +2276,8 @@
               },
               "verify": "返回结果 ok=true，min_x >= 0 且 min_y >= 0",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -2101,7 +2291,8 @@
               },
               "expected_result": "画布平移受到限制",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -2112,9 +2303,11 @@
               },
               "verify": "返回结果 ok=true，pan_x <= 0 且 pan_y <= 0（画布不能向右下方平移超出原点）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_020",
@@ -2135,9 +2328,11 @@
               },
               "verify": "返回结果 ok=true；所有shot都必须包含有效的duration字段（数字类型且大于0）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_021",
@@ -2158,9 +2353,11 @@
               },
               "verify": "返回结果 ok=true，has_shot_groups=true，has_direct_shots=false，all_groups_have_shots=true",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_022",
@@ -2181,9 +2378,11 @@
               },
               "verify": "返回结果 ok=true，min_length >= 50（每个opening_frame_description至少50个字符）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_023",
@@ -2204,9 +2403,11 @@
               },
               "verify": "返回结果 ok=true，所有location都包含environment_sound和background_music字段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_024",
@@ -2227,9 +2428,11 @@
               },
               "verify": "返回结果 ok=true，所有shot都包含scene_detail、environment_sound、background_music字段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_025",
@@ -2250,9 +2453,11 @@
               },
               "verify": "返回结果 ok=true，所有ID格式符合规范",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_026",
@@ -2263,7 +2468,9 @@
           "api_endpoint": "POST /api/parse-script",
           "pass": false,
           "remark": "测试场景匹配的核心逻辑，包括直接匹配、父场景匹配、权限验证",
-          "prerequisites": ["需要先创建测试用的世界和场景数据"],
+          "prerequisites": [
+            "需要先创建测试用的世界和场景数据"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -2274,7 +2481,8 @@
               },
               "verify": "成功创建测试世界，返回world_id",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2285,7 +2493,8 @@
               },
               "verify": "成功创建根场景，返回location_id",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2296,7 +2505,8 @@
               },
               "verify": "剧本解析成功，返回shot_groups和locations数据",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -2307,7 +2517,8 @@
               },
               "verify": "每个shot包含db_location_id、db_location_pic、location_name字段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -2318,7 +2529,8 @@
               },
               "verify": "场景匹配逻辑正确，匹配到的场景ID与预期一致",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -2329,9 +2541,11 @@
               },
               "verify": "测试数据清理完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_027",
@@ -2341,7 +2555,9 @@
           "page_url": "/video-workflow",
           "pass": false,
           "remark": "验证前端正确显示后端匹配的场景信息",
-          "prerequisites": ["editor_026"],
+          "prerequisites": [
+            "editor_026"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -2353,7 +2569,8 @@
               },
               "expected_result": "弹出添加菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2365,7 +2582,8 @@
               },
               "expected_result": "创建剧本节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2378,7 +2596,8 @@
               },
               "expected_result": "剧本内容已输入",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -2390,7 +2609,8 @@
               },
               "expected_result": "调用API解析剧本并创建分镜组节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -2402,7 +2622,8 @@
               },
               "expected_result": "分镜组节点已创建",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -2414,7 +2635,8 @@
               },
               "expected_result": "打开分镜组详情弹窗",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -2423,7 +2645,8 @@
               "mcp_params": {},
               "verify": "弹窗包含：参考场景区域、场景卡片（带图片和名称）、分镜列表、参考场景列",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -2434,9 +2657,11 @@
               },
               "verify": "参考场景区域正确显示，包含场景图片和名称",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "editor_028",
@@ -2446,7 +2671,9 @@
           "page_url": "/video-workflow",
           "pass": false,
           "remark": "验证场景选择弹窗和场景更新功能",
-          "prerequisites": ["editor_027"],
+          "prerequisites": [
+            "editor_027"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -2458,7 +2685,8 @@
               },
               "expected_result": "打开场景选择弹窗",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2467,7 +2695,8 @@
               "mcp_params": {},
               "verify": "弹窗包含：世界选择下拉框、搜索输入框、场景列表",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2476,11 +2705,14 @@
               "mcp_params": {
                 "element": "世界选择下拉框",
                 "ref": "<世界选择ref>",
-                "values": ["<测试世界ID>"]
+                "values": [
+                  "<测试世界ID>"
+                ]
               },
               "expected_result": "加载该世界的场景列表",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -2492,7 +2724,8 @@
               },
               "expected_result": "场景列表显示场景卡片",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -2503,7 +2736,8 @@
               },
               "verify": "场景卡片包含图片、名称、描述、ID",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -2515,7 +2749,8 @@
               },
               "expected_result": "场景选择成功，弹窗关闭，详情页面更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -2527,7 +2762,8 @@
               },
               "expected_result": "显示成功提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -2538,9 +2774,11 @@
               },
               "verify": "参考场景已更新为选择的场景",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -2566,7 +2804,8 @@
               "mcp_params": {},
               "verify": "图生视频节点中包含首帧画面文件输入区域",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2578,7 +2817,8 @@
               },
               "expected_result": "触发文件选择器",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2591,7 +2831,8 @@
               },
               "expected_result": "文件开始上传",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -2603,7 +2844,8 @@
               },
               "expected_result": "Toast提示出现",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -2612,7 +2854,8 @@
               "mcp_params": {},
               "verify": "首帧预览区域可见，显示图片缩略图和「清除」按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -2621,9 +2864,11 @@
               "mcp_params": {},
               "verify": "存在 POST /api/video-workflow/upload 请求且返回成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_002",
@@ -2644,7 +2889,8 @@
               "selector": ".start-clear",
               "expected_result": "图片被清除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2652,9 +2898,11 @@
               "operation": "verify",
               "expected_result": "预览区域隐藏，首帧端口恢复可连接状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_003",
@@ -2673,7 +2921,8 @@
               "selector": ".end-file",
               "expected_result": "打开文件选择器",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2683,7 +2932,8 @@
               "test_file": "test_end_image.jpg",
               "expected_result": "文件上传成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2692,9 +2942,11 @@
               "selector": ".end-preview-row",
               "expected_result": "尾帧预览区域显示，图片可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_004",
@@ -2712,7 +2964,8 @@
               "selector": ".duration-select",
               "expected_result": "默认选中 10秒",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2722,9 +2975,11 @@
               "value": "15",
               "expected_result": "下拉框更新为 15秒",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_005",
@@ -2742,7 +2997,8 @@
               "selector": ".model-select",
               "expected_result": "默认选中 sora",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2750,9 +3006,11 @@
               "operation": "verify",
               "expected_result": "kling 选项显示为禁用状态（暂未实现）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_006",
@@ -2771,7 +3029,8 @@
               "test_data": "一只可爱的猫咪在草地上奔跑",
               "expected_result": "文本正确显示在输入框中",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2779,9 +3038,11 @@
               "operation": "verify",
               "expected_result": "提示词数据保存到节点状态中",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_007",
@@ -2799,7 +3060,8 @@
               "selector": ".gen-btn-caret",
               "expected_result": "弹出抽卡次数菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2808,7 +3070,8 @@
               "selector": ".gen-menu",
               "expected_result": "菜单包含 X1、X2、X3、X4 四个选项",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2817,9 +3080,11 @@
               "selector": ".gen-item[data-count='2']",
               "expected_result": "菜单关闭，抽卡次数标签更新为「抽卡次数：X2」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_008",
@@ -2841,7 +3106,8 @@
               "selector": ".start-preview",
               "expected_result": "首帧预览图片可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2850,7 +3116,8 @@
               "selector": ".gen-btn-main",
               "expected_result": "按钮变为「生成中...」状态，禁用",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2858,7 +3125,8 @@
               "operation": "verify",
               "expected_result": "发起 POST /api/ai-app-run-image-url 请求，包含 image_url、prompt、ratio、duration_seconds、count 参数",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -2867,7 +3135,8 @@
               "selector": ".gen-status",
               "expected_result": "显示「正在提交任务...」状态文字",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -2875,7 +3144,8 @@
               "operation": "verify",
               "expected_result": "根据抽卡次数自动创建对应数量的视频节点，并连接到图生视频节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -2887,7 +3157,8 @@
               },
               "expected_result": "状态区域出现「生成完成」文字",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -2896,7 +3167,8 @@
               "selector": ".video-preview-field",
               "expected_result": "至少一个视频节点的预览区域显示（display != none）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -2907,9 +3179,11 @@
               },
               "verify": "返回数组长度 >= 1，且每个元素为 http(s) URL 或包含 .mp4",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_009",
@@ -2926,7 +3200,8 @@
               "operation": "verify",
               "expected_result": "首帧预览区域隐藏",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2935,7 +3210,8 @@
               "selector": ".gen-btn-main",
               "expected_result": "不发起API请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2944,9 +3220,11 @@
               "selector": ".gen-status",
               "expected_result": "显示红色错误文字「请先上传首帧图片」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_009_1",
@@ -2964,7 +3242,8 @@
               "operation": "upload_and_select",
               "expected_result": "首帧图片上传成功，抽卡次数显示为X2",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -2973,7 +3252,8 @@
               "selector": ".gen-btn-main",
               "expected_result": "自动创建2个视频节点并连接，显示生成中状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -2982,7 +3262,8 @@
               "timeout": 180000,
               "expected_result": "所有视频任务完成（成功或失败）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -2990,7 +3271,8 @@
               "operation": "verify",
               "expected_result": "每个视频节点下方显示各自的状态：成功显示绿色✓和视频预览，失败显示红色✗和具体错误原因",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -2999,7 +3281,8 @@
               "selector": ".gen-status",
               "expected_result": "根据实际结果显示：全部成功显示绿色，全部失败显示红色，部分成功显示橙色并注明数量",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -3007,9 +3290,11 @@
               "operation": "verify",
               "expected_result": "失败的视频节点保持显示详细错误原因，不会被替换为汇总信息",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_009_2",
@@ -3027,7 +3312,8 @@
               "operation": "create_and_upload",
               "expected_result": "图片节点创建成功，图片上传完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3036,7 +3322,8 @@
               "node_type": "image_to_video",
               "expected_result": "图生视频节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3044,7 +3331,8 @@
               "operation": "connect_nodes",
               "expected_result": "连接线显示正常",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -3053,7 +3341,8 @@
               "selector": ".gen-btn-main",
               "expected_result": "开始生成视频，创建视频节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -3062,7 +3351,8 @@
               "selector": ".image-conn-group",
               "expected_result": "图片节点到图生视频节点的连接线仍然显示，未消失",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -3070,9 +3360,11 @@
               "operation": "verify",
               "expected_result": "图生视频节点到视频节点的连接线正常显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_009_3",
@@ -3091,7 +3383,8 @@
               "node_type": "image_to_video",
               "expected_result": "图生视频节点创建成功，默认模型为sora",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3100,7 +3393,8 @@
               "selector": ".ratio-select option",
               "expected_result": "比例下拉框只显示9:16和16:9两个选项",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3110,7 +3404,8 @@
               "value": "16:9",
               "expected_result": "比例成功设置为16:9",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -3118,7 +3413,8 @@
               "operation": "save_and_reload",
               "expected_result": "工作流保存成功并重新加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -3127,9 +3423,11 @@
               "selector": ".ratio-select",
               "expected_result": "比例选项仍然只有9:16和16:9，当前值为16:9",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_009_4",
@@ -3147,7 +3445,8 @@
               "operation": "create_and_set",
               "expected_result": "节点创建成功，比例设置为9:16",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3156,7 +3455,8 @@
               "selector": "#saveBtn",
               "expected_result": "工作流保存成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3164,7 +3464,8 @@
               "operation": "reload",
               "expected_result": "页面刷新，工作流重新加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -3173,7 +3474,8 @@
               "selector": ".ratio-select",
               "expected_result": "比例选择框的值为9:16",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -3181,7 +3483,8 @@
               "operation": "change_and_save",
               "expected_result": "比例修改为16:9并保存成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -3189,9 +3492,11 @@
               "operation": "reload_and_verify",
               "expected_result": "比例恢复为16:9，确认持久化成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_010",
@@ -3209,7 +3514,8 @@
               "selector": ".video-file",
               "expected_result": "打开文件选择器",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3219,7 +3525,8 @@
               "test_file": "test_video.mp4",
               "expected_result": "视频加载成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3228,9 +3535,11 @@
               "selector": ".video-preview-field",
               "expected_result": "视频预览区域显示，包含播放按钮、放大按钮、下载按钮、清除按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_011",
@@ -3251,7 +3560,8 @@
               "selector": ".vp-play",
               "expected_result": "视频开始播放，按钮图标变为暂停图标",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3260,9 +3570,11 @@
               "selector": ".vp-play",
               "expected_result": "视频暂停，按钮图标恢复为播放图标",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_012",
@@ -3284,7 +3596,8 @@
               "selector": ".video-download",
               "expected_result": "触发下载请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3292,9 +3605,11 @@
               "operation": "verify",
               "expected_result": "打开 /api/download?url=xxx&filename=xxx 下载链接，显示「开始下载」Toast",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_013",
@@ -3315,7 +3630,8 @@
               "selector": ".video-clear",
               "expected_result": "视频被清除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3323,9 +3639,11 @@
               "operation": "verify",
               "expected_result": "视频预览区域隐藏，恢复到初始状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_014",
@@ -3343,7 +3661,8 @@
               "selector": ".image-file",
               "expected_result": "打开文件选择器",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3353,7 +3672,8 @@
               "test_file": "test_image.png",
               "expected_result": "图片上传成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3362,7 +3682,8 @@
               "selector": ".image-preview-row",
               "expected_result": "图片预览区域显示，包含缩略图和清除按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -3371,7 +3692,8 @@
               "selector": "#saveBtn",
               "expected_result": "触发保存工作流",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -3383,7 +3705,8 @@
               },
               "expected_result": "出现保存成功 toast",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -3392,7 +3715,8 @@
               "mcp_params": {},
               "expected_result": "页面刷新并重新加载工作流",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -3401,7 +3725,8 @@
               "selector": ".image-preview-row",
               "expected_result": "刷新后图片预览区域仍显示，不应空白",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -3412,9 +3737,11 @@
               },
               "verify": "返回值非空，且以 http(s) 或 data:image 开头",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_015",
@@ -3435,7 +3762,8 @@
               "selector": ".start-preview",
               "expected_result": "打开图片模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3444,7 +3772,8 @@
               "selector": "#imageModal",
               "expected_result": "模态框可见，标题显示「首帧预览」，图片以大尺寸显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3453,9 +3782,11 @@
               "selector": "#imageModalClose",
               "expected_result": "模态框关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_016",
@@ -3476,7 +3807,8 @@
               "selector": ".vp-zoom",
               "expected_result": "打开视频模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3485,7 +3817,8 @@
               "selector": "#videoModal",
               "expected_result": "模态框可见，视频自动开始播放",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3494,9 +3827,11 @@
               "selector": "#videoModalClose",
               "expected_result": "模态框关闭，视频暂停",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "node_020",
@@ -3515,7 +3850,8 @@
               "selector": "#addBtn",
               "expected_result": "弹出添加节点菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3524,7 +3860,8 @@
               "selector": "#menuAddImage",
               "expected_result": "画布上创建图片节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3534,7 +3871,8 @@
               "test_file": "test_image.png",
               "expected_result": "显示图片预览",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -3544,7 +3882,8 @@
               "value": "把这张图改成赛博朋克风格",
               "expected_result": "提示词输入框有内容",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -3553,7 +3892,8 @@
               "selector": ".gen-btn-caret",
               "expected_result": "显示抽卡次数下拉菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -3562,7 +3902,8 @@
               "selector": ".gen-item[data-count='2']",
               "expected_result": "抽卡次数设置为X2",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -3571,7 +3912,8 @@
               "selector": ".image-edit-btn",
               "expected_result": "触发图片编辑任务提交",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -3583,7 +3925,8 @@
               },
               "expected_result": "图片节点显示生成完成状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -3594,7 +3937,8 @@
               },
               "verify": "count >= 2 (原始节点 + 至少1个新节点)",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 10,
@@ -3605,7 +3949,8 @@
               },
               "verify": "count >= 2，且 srcs 数组元素以 http(s) 或 /api/proxy-image 开头",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 11,
@@ -3616,9 +3961,11 @@
               },
               "verify": "exists 为 true 且 text 包含 'X2'",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -3642,7 +3989,8 @@
               "operation": "clear_storage",
               "expected_result": "localStorage 中 auth_token 和 user_id 被清除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3651,9 +3999,11 @@
               "target_url": "/video-workflow-list",
               "expected_result": "页面显示需要登录的提示，或跳转到登录页",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_011",
@@ -3672,7 +4022,8 @@
               "value": "{auth_token}",
               "expected_result": "localStorage.auth_token 被设置，user_id 为空",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3682,7 +4033,8 @@
               "value": "",
               "expected_result": "localStorage.user_id 为空字符串或 null",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -3693,7 +4045,8 @@
               },
               "expected_result": "页面显示「请先登录」提示，并提供「去登录」入口",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -3702,7 +4055,8 @@
               "mcp_params": {},
               "verify": "页面包含「请先登录」文字，且不应渲染工作流卡片列表",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -3711,9 +4065,11 @@
               "mcp_params": {},
               "verify": "不应出现 GET /api/video-workflow/list 返回 400 (user_id is required) 的请求；最好不发起该请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_002",
@@ -3730,7 +4086,8 @@
               "operation": "clear_storage",
               "expected_result": "登录状态被清除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3739,9 +4096,11 @@
               "target_url": "/video-workflow?id=1",
               "expected_result": "提示需要登录或跳转到登录页",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_003",
@@ -3759,9 +4118,11 @@
               "target_url": "/video-workflow?id=99999",
               "expected_result": "显示错误提示「工作流不存在」或跳转到列表页",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_004",
@@ -3780,9 +4141,11 @@
               "test_file": "test.txt",
               "expected_result": "显示错误提示，文件未被接受",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_005",
@@ -3799,7 +4162,8 @@
               "operation": "network_offline",
               "expected_result": "网络状态变为离线",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3808,9 +4172,11 @@
               "selector": "#saveBtn",
               "expected_result": "显示网络错误提示 Toast",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_006",
@@ -3828,7 +4194,8 @@
               "selector": "button:has-text('新建工作流')",
               "expected_result": "弹出模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3837,9 +4204,11 @@
               "selector": "#createModal button:has-text('保存')",
               "expected_result": "显示验证错误「请输入工作流名称」，不发起API请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_007",
@@ -3857,7 +4226,8 @@
               "selector": ".workflow-card .btn-danger:has-text('删除')",
               "expected_result": "弹出删除确认框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3866,9 +4236,11 @@
               "selector": "#deleteModal .btn-secondary:has-text('取消')",
               "expected_result": "模态框关闭，工作流未被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_008",
@@ -3885,7 +4257,8 @@
               "operation": "trigger_generate",
               "expected_result": "开始轮询视频状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3894,9 +4267,11 @@
               "wait_time_ms": 300000,
               "expected_result": "超时后显示错误提示，按钮恢复可点击状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_009",
@@ -3914,7 +4289,8 @@
               "value": "expired_token",
               "expected_result": "Token被设置为过期值",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3923,9 +4299,11 @@
               "target_url": "/video-workflow-list",
               "expected_result": "API返回401，提示用户重新登录",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "error_010",
@@ -3943,7 +4321,8 @@
               "selector": "button:has-text('新建工作流')",
               "expected_result": "模态框可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3952,9 +4331,11 @@
               "selector": ".modal-overlay",
               "expected_result": "模态框关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -3986,7 +4367,8 @@
               },
               "expected_result": "视频上传成功，节点显示视频预览",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -3995,7 +4377,8 @@
               "mcp_params": {},
               "verify": "视频节点包含「添加到时间轴」按钮，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4007,7 +4390,8 @@
               },
               "expected_result": "视频添加到时间轴",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4019,7 +4403,8 @@
               },
               "expected_result": "时间轴面板出现",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4028,7 +4413,8 @@
               "mcp_params": {},
               "verify": "时间轴面板包含：标题「时间轴」、总时长显示、操作提示「拖拽调整顺序 | 按住Shift拖拽可替换」、清空按钮、收起按钮、时间刻度尺、视频轨道、视频片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -4039,9 +4425,11 @@
               },
               "verify": "画布容器包含 timeline-visible 类",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_002",
@@ -4058,7 +4446,8 @@
               "operation": "按 timeline_001 的步骤添加视频",
               "expected_result": "视频添加成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4069,7 +4458,8 @@
               },
               "verify": "视频片段宽度 = 时长 × 10px，比例为 10",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4078,7 +4468,8 @@
               "mcp_params": {},
               "verify": "总时长显示格式为「总时长: M:SS」，数值与视频实际时长一致",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4089,9 +4480,11 @@
               },
               "verify": "时间刻度按5秒或10秒间隔显示（根据总时长）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_003",
@@ -4108,7 +4501,8 @@
               "operation": "点击添加到时间轴按钮",
               "expected_result": "视频添加成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4116,7 +4510,8 @@
               "operation": "再次点击添加到时间轴按钮",
               "expected_result": "视频再次添加成功，不显示错误提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4127,7 +4522,8 @@
               },
               "verify": "返回值为 2",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4136,9 +4532,11 @@
               "mcp_params": {},
               "verify": "总时长显示为单个视频时长的2倍",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_004",
@@ -4155,7 +4553,8 @@
               "operation": "添加3个视频，时长分别为5秒、10秒、8秒",
               "expected_result": "3个视频都添加到时间轴",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4166,7 +4565,8 @@
               },
               "verify": "第1个片段 left=0, 第2个片段 left=第1个的时长×10, 第3个片段 left=(第1个+第2个)的时长×10",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4174,9 +4574,11 @@
               "operation": "计算每个片段的 left + width",
               "verify": "片段1末尾=5秒刻度(50px), 片段2末尾=15秒刻度(150px), 片段3末尾=23秒刻度(230px)",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_005",
@@ -4193,7 +4595,8 @@
               "operation": "添加视频A、B、C",
               "expected_result": "时间轴显示 A B C",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4206,7 +4609,8 @@
               },
               "expected_result": "拖拽过程中显示蓝色插入指示器",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4217,7 +4621,8 @@
               },
               "verify": "顺序变为 B A C",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4228,9 +4633,11 @@
               },
               "verify": "每个片段的 left 值根据新顺序重新计算",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_006",
@@ -4247,7 +4654,8 @@
               "operation": "添加视频A、B、C",
               "expected_result": "时间轴显示 A B C",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4258,7 +4666,8 @@
               },
               "verify": "目标片段B显示高亮（drop-target类）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4266,7 +4675,8 @@
               "operation": "模拟drop事件",
               "expected_result": "B的内容变为A的内容，A从时间轴删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4277,7 +4687,8 @@
               },
               "verify": "片段数量为2，顺序为 B(A的内容) C",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4286,9 +4697,11 @@
               "mcp_params": {},
               "verify": "总时长减少了被删除视频的时长",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_007",
@@ -4305,7 +4718,8 @@
               "operation": "添加2个视频",
               "expected_result": "时间轴显示2个片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4317,7 +4731,8 @@
               },
               "expected_result": "片段显示选中状态（蓝色边框）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4328,7 +4743,8 @@
               },
               "verify": "返回 true",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4339,7 +4755,8 @@
               },
               "expected_result": "片段从时间轴删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4350,9 +4767,11 @@
               },
               "verify": "片段数量减1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_008",
@@ -4369,7 +4788,8 @@
               "operation": "添加1个视频",
               "expected_result": "时间轴显示1个片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4381,7 +4801,8 @@
               },
               "expected_result": "显示移除按钮（×）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4390,7 +4811,8 @@
               "mcp_params": {},
               "verify": "片段操作区域包含移除按钮，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4402,7 +4824,8 @@
               },
               "expected_result": "片段从时间轴删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4413,9 +4836,11 @@
               },
               "verify": "片段数量为0",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_009",
@@ -4432,7 +4857,8 @@
               "operation": "添加3个视频",
               "expected_result": "时间轴显示3个片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4441,7 +4867,8 @@
               "mcp_params": {},
               "verify": "时间轴头部包含「清空」按钮，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4453,7 +4880,8 @@
               },
               "expected_result": "弹出确认对话框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4461,7 +4889,8 @@
               "operation": "点击确认按钮",
               "expected_result": "所有片段被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4472,9 +4901,11 @@
               },
               "verify": "片段数量为0，时间轴容器隐藏",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_010",
@@ -4491,7 +4922,8 @@
               "operation": "添加1个视频",
               "expected_result": "时间轴显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4503,7 +4935,8 @@
               },
               "expected_result": "时间轴面板隐藏，展开按钮显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4514,7 +4947,8 @@
               },
               "verify": "时间轴容器隐藏，展开按钮显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4526,7 +4960,8 @@
               },
               "expected_result": "时间轴面板重新显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4535,9 +4970,11 @@
               "mcp_params": {},
               "verify": "时间轴面板可见，包含之前添加的视频片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_011",
@@ -4555,7 +4992,8 @@
               "operation": "添加2个视频",
               "expected_result": "时间轴显示2个片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4567,7 +5005,8 @@
               },
               "expected_result": "发起保存请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4579,7 +5018,8 @@
               },
               "expected_result": "显示保存成功提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4590,7 +5030,8 @@
               },
               "expected_result": "页面重新加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4602,7 +5043,8 @@
               },
               "expected_result": "编辑器加载完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -4613,7 +5055,8 @@
               },
               "verify": "时间轴显示，包含2个片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -4624,9 +5067,11 @@
               },
               "verify": "片段名称、时长、位置、宽度与保存前一致",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_012",
@@ -4643,7 +5088,8 @@
               "operation": "添加5秒的视频",
               "expected_result": "片段宽度为50px",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4654,7 +5100,8 @@
               },
               "verify": "object-fit 为 cover，宽高为 100%",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4662,9 +5109,11 @@
               "operation": "目视检查",
               "expected_result": "视频内容保持原始比例，只显示左侧部分，不压缩变形",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_013",
@@ -4681,7 +5130,8 @@
               "operation": "创建视频节点，上传视频，添加到时间轴",
               "expected_result": "视频节点创建成功，时间轴显示1个片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4692,7 +5142,8 @@
               },
               "verify": "返回值为 1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4701,7 +5152,8 @@
               "mcp_params": {},
               "verify": "视频节点包含删除按钮（×），记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4713,7 +5165,8 @@
               },
               "expected_result": "弹出确认对话框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4721,7 +5174,8 @@
               "operation": "检查对话框文本",
               "expected_result": "对话框提示「该视频节点在时间轴中有 1 个片段，删除节点将同时删除这些片段。确定要删除吗？」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -4729,7 +5183,8 @@
               "operation": "取消删除",
               "expected_result": "对话框关闭，节点未被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -4740,7 +5195,8 @@
               },
               "verify": "节点存在，时间轴片段数量仍为 1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -4748,7 +5204,8 @@
               "operation": "点击删除按钮，在确认对话框中点击确定",
               "expected_result": "节点被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -4759,9 +5216,11 @@
               },
               "verify": "时间轴片段数量为 0，时间轴容器隐藏",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_014",
@@ -4778,7 +5237,8 @@
               "operation": "创建视频节点并上传视频",
               "expected_result": "视频节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4786,7 +5246,8 @@
               "operation": "点击3次「添加到时间轴」按钮",
               "expected_result": "时间轴显示3个相同的片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4797,7 +5258,8 @@
               },
               "verify": "返回值为 3",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4805,7 +5267,8 @@
               "operation": "点击删除按钮",
               "expected_result": "弹出确认对话框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4813,7 +5276,8 @@
               "operation": "检查对话框文本",
               "expected_result": "对话框提示「该视频节点在时间轴中有 3 个片段，删除节点将同时删除这些片段。确定要删除吗？」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -4821,7 +5285,8 @@
               "operation": "点击确定按钮",
               "expected_result": "节点被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -4832,9 +5297,11 @@
               },
               "verify": "时间轴片段数量为 0，时间轴容器隐藏",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_015",
@@ -4851,7 +5318,8 @@
               "operation": "创建视频节点并上传视频，不点击添加到时间轴",
               "expected_result": "视频节点创建成功，时间轴为空",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4862,7 +5330,8 @@
               },
               "verify": "返回值为 0",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4870,7 +5339,8 @@
               "operation": "点击删除按钮",
               "expected_result": "节点直接被删除，不弹出确认对话框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4879,9 +5349,11 @@
               "mcp_params": {},
               "verify": "画布上不存在该视频节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "timeline_016",
@@ -4899,7 +5371,8 @@
               "operation": "添加2-3个视频到时间轴",
               "expected_result": "时间轴显示多个视频片段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -4908,7 +5381,8 @@
               "mcp_params": {},
               "verify": "时间轴头部包含「导出草稿」按钮，位于清空按钮和收起按钮之间，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -4920,7 +5394,8 @@
               },
               "expected_result": "弹出导出草稿对话框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -4929,7 +5404,8 @@
               "mcp_params": {},
               "verify": "对话框包含标题「导出剪影草稿」、输入框（带占位符提示路径格式）、提示文字、取消按钮、开始导出按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -4942,7 +5418,8 @@
               },
               "expected_result": "路径输入成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -4954,7 +5431,8 @@
               },
               "expected_result": "对话框关闭，显示导出进度提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -4966,16 +5444,19 @@
               },
               "expected_result": "显示导出成功提示，包含草稿名称",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
               "action": "验证API请求",
               "verify": "发送POST请求到 /api/export_timeline_draft，包含draft_path和timeline_clips数据",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -5000,7 +5481,8 @@
               "operation": "创建分镜组节点，填写图片提示词，点击生成分镜图按钮",
               "expected_result": "分镜图生成成功，预览图显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5009,7 +5491,8 @@
               "mcp_params": {},
               "verify": "分镜节点包含预览图片，生成视频按钮可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5022,7 +5505,8 @@
               },
               "expected_result": "视频提示词输入成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5035,7 +5519,8 @@
               },
               "expected_result": "视频时长设置为10秒",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5048,7 +5533,8 @@
               },
               "expected_result": "抽卡次数设置为1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -5060,7 +5546,8 @@
               },
               "expected_result": "按钮变为生成中状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -5069,7 +5556,8 @@
               "mcp_params": {},
               "verify": "存在POST /api/ai-app-run-image-url请求，包含image_url、prompt、duration_seconds、count、ratio参数",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -5081,7 +5569,8 @@
               },
               "expected_result": "按钮恢复为生成视频状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -5092,7 +5581,8 @@
               },
               "verify": "视频节点数量 >= 1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 10,
@@ -5103,7 +5593,8 @@
               },
               "verify": "分镜节点和视频节点之间存在连接线",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 11,
@@ -5112,9 +5603,11 @@
               "mcp_params": {},
               "verify": "视频节点包含视频预览区域，视频缩略图可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "shot_video_002",
@@ -5132,7 +5625,8 @@
               "operation": "创建分镜组节点，生成分镜图",
               "expected_result": "分镜图生成成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5145,7 +5639,8 @@
               },
               "expected_result": "提示词输入成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5157,7 +5652,8 @@
               },
               "expected_result": "开始生成视频",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5166,7 +5662,8 @@
               "mcp_params": {},
               "verify": "POST /api/ai-app-run-image-url请求的prompt参数为纯文本字符串，不包含JSON结构如{\"opening_frame_description\"等字段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5175,9 +5672,11 @@
               "mcp_params": {},
               "verify": "控制台无JSON相关错误信息",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "shot_video_003",
@@ -5195,7 +5694,8 @@
               "operation": "创建分镜组节点，生成分镜图",
               "expected_result": "分镜图生成成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5208,7 +5708,8 @@
               },
               "expected_result": "提示词输入成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5220,7 +5721,8 @@
               },
               "expected_result": "触发违禁词检测",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5229,7 +5731,8 @@
               "mcp_params": {},
               "verify": "存在POST /api/filter-sensitive-words请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5237,9 +5740,11 @@
               "operation": "检查实际发送的prompt内容",
               "expected_result": "敏感词被替换或删除，或显示警告提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "shot_video_004",
@@ -5257,7 +5762,8 @@
               "operation": "创建分镜组节点，生成分镜图",
               "expected_result": "分镜图生成成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5270,7 +5776,8 @@
               },
               "expected_result": "抽卡次数设置为3",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5282,7 +5789,8 @@
               },
               "expected_result": "开始生成视频",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5291,7 +5799,8 @@
               "mcp_params": {},
               "verify": "POST /api/ai-app-run-image-url请求的count参数为3",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5303,7 +5812,8 @@
               },
               "expected_result": "按钮恢复为生成视频状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -5314,7 +5824,8 @@
               },
               "verify": "视频节点数量为3",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -5325,7 +5836,8 @@
               },
               "verify": "3个视频节点垂直排列，y坐标递增，间距约280px",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -5334,9 +5846,11 @@
               "mcp_params": {},
               "verify": "视频节点标题分别为分镜视频1、分镜视频2、分镜视频3",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "shot_video_005",
@@ -5354,11 +5868,14 @@
               "mcp_params": {
                 "element": "比例选择器",
                 "ref": "<比例选择器ref>",
-                "values": ["16:9"]
+                "values": [
+                  "16:9"
+                ]
               },
               "expected_result": "视频比例设置为16:9",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5366,7 +5883,8 @@
               "operation": "创建分镜组节点，添加3个分镜",
               "expected_result": "分镜组包含3个分镜",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5378,7 +5896,8 @@
               },
               "expected_result": "开始生成分镜图",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5387,7 +5906,8 @@
               "mcp_params": {},
               "verify": "POST /api/image-edit请求的ratio参数根据3个分镜和16:9比例计算得出（横向拼接时应为更宽的比例）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5398,9 +5918,11 @@
               },
               "verify": "3个分镜16:9比例返回合适的横向比例，2个分镜9:16比例返回合适的纵向比例",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "shot_video_006",
@@ -5418,7 +5940,8 @@
               "operation": "创建分镜组节点，图片提示词中包含6个角色标记【【角色1】】...【【角色6】】",
               "expected_result": "分镜节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5430,7 +5953,8 @@
               },
               "expected_result": "开始生成分镜图",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5442,7 +5966,8 @@
               },
               "expected_result": "显示警告提示：参考图数量超过5张，已自动限制为5张",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5451,7 +5976,8 @@
               "mcp_params": {},
               "verify": "POST /api/image-edit请求的FormData中，reference_image字段最多包含5个文件",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5460,9 +5986,11 @@
               "mcp_params": {},
               "verify": "控制台包含参考图数量限制的警告信息",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "shot_video_007",
@@ -5479,7 +6007,8 @@
               "operation": "创建分镜组节点，不点击生成分镜图按钮",
               "expected_result": "分镜节点创建成功，无预览图",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5490,7 +6019,8 @@
               },
               "verify": "hasPreviewImage为false",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5502,7 +6032,8 @@
               },
               "expected_result": "显示错误提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5514,7 +6045,8 @@
               },
               "expected_result": "显示警告提示：请先生成分镜图",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5523,9 +6055,11 @@
               "mcp_params": {},
               "verify": "不存在POST /api/ai-app-run-image-url请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "shot_video_008",
@@ -5545,7 +6079,8 @@
               },
               "verify": "记录分镜节点的x和y坐标",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5553,7 +6088,8 @@
               "operation": "设置抽卡次数为2，生成视频",
               "expected_result": "生成2个视频节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5564,9 +6100,11 @@
               },
               "verify": "视频节点1的x坐标 = 分镜节点x + 380，y坐标 = 分镜节点y；视频节点2的y坐标 = 视频节点1的y + 280",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "shot_video_009",
@@ -5587,7 +6125,8 @@
               },
               "expected_result": "打开画风设置",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5600,7 +6139,8 @@
               },
               "expected_result": "画风设置为赛博朋克风格",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5608,7 +6148,8 @@
               "operation": "创建分镜组节点，生成分镜图",
               "expected_result": "分镜图生成成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5621,7 +6162,8 @@
               },
               "expected_result": "提示词输入成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5633,7 +6175,8 @@
               },
               "expected_result": "开始生成视频",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -5642,9 +6185,11 @@
               "mcp_params": {},
               "verify": "POST /api/ai-app-run-image-url请求的prompt参数包含原始提示词和画风描述（图片风格：赛博朋克风格）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -5670,7 +6215,8 @@
               "mcp_params": {},
               "verify": "页面包含「世界」按钮，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5682,7 +6228,8 @@
               },
               "expected_result": "弹出世界选择下拉框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5691,7 +6238,8 @@
               "mcp_params": {},
               "verify": "下拉框包含「新建世界」选项，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5703,7 +6251,8 @@
               },
               "expected_result": "弹出创建世界模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5715,7 +6264,8 @@
               },
               "expected_result": "模态框标题可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -5739,7 +6289,8 @@
               },
               "expected_result": "表单字段填写完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -5751,7 +6302,8 @@
               },
               "expected_result": "发起创建请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -5763,7 +6315,8 @@
               },
               "expected_result": "显示成功提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -5772,9 +6325,11 @@
               "mcp_params": {},
               "verify": "世界按钮显示「测试世界」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "world_002",
@@ -5785,7 +6340,9 @@
           "api_endpoint": "GET /api/worlds/list",
           "pass": false,
           "remark": "",
-          "prerequisites": ["world_001"],
+          "prerequisites": [
+            "world_001"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -5797,7 +6354,8 @@
               },
               "expected_result": "弹出世界选择下拉框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5806,7 +6364,8 @@
               "mcp_params": {},
               "verify": "下拉框显示已创建的世界列表",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5818,7 +6377,8 @@
               },
               "expected_result": "世界被选中，下拉框关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5827,9 +6387,11 @@
               "mcp_params": {},
               "verify": "世界按钮显示选中的世界名称",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "world_003",
@@ -5839,7 +6401,9 @@
           "page_url": "/video-workflow",
           "pass": false,
           "remark": "",
-          "prerequisites": ["world_002"],
+          "prerequisites": [
+            "world_002"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -5851,7 +6415,8 @@
               },
               "expected_result": "弹出添加菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5860,7 +6425,8 @@
               "mcp_params": {},
               "verify": "菜单包含「世界」选项，记录其 ref",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5872,7 +6438,8 @@
               },
               "expected_result": "在画布上创建世界节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -5884,7 +6451,8 @@
               },
               "expected_result": "节点标题出现",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -5893,9 +6461,11 @@
               "mcp_params": {},
               "verify": "节点包含：「世界」标题、世界名称、世界描述、输出端口",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -5913,7 +6483,9 @@
           "api_endpoint": "POST /api/characters/create",
           "pass": false,
           "remark": "",
-          "prerequisites": ["world_001"],
+          "prerequisites": [
+            "world_001"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -5925,7 +6497,8 @@
               },
               "expected_result": "弹出角色选择下拉框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -5937,7 +6510,8 @@
               },
               "expected_result": "弹出创建角色模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -5973,29 +6547,36 @@
               },
               "expected_result": "表单字段填写完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
               "action": "上传参考图",
               "mcp_tool": "mcp1_browser_file_upload",
               "mcp_params": {
-                "paths": ["g:/code/comfyui_server/test_assets/character_image.jpg"]
+                "paths": [
+                  "g:/code/comfyui_server/test_assets/character_image.jpg"
+                ]
               },
               "expected_result": "图片上传成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
               "action": "上传参考音频",
               "mcp_tool": "mcp1_browser_file_upload",
               "mcp_params": {
-                "paths": ["g:/code/comfyui_server/test_assets/character_voice.mp3"]
+                "paths": [
+                  "g:/code/comfyui_server/test_assets/character_voice.mp3"
+                ]
               },
               "expected_result": "音频上传成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6004,7 +6585,8 @@
               "mcp_params": {},
               "verify": "音频预览区域可见，显示音频播放器控件",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -6016,7 +6598,8 @@
               },
               "expected_result": "发起创建请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -6028,9 +6611,11 @@
               },
               "expected_result": "显示成功提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_002",
@@ -6051,18 +6636,22 @@
               },
               "expected_result": "模态框打开",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
               "action": "选择音频文件",
               "mcp_tool": "mcp1_browser_file_upload",
               "mcp_params": {
-                "paths": ["g:/code/comfyui_server/test_assets/test_voice.mp3"]
+                "paths": [
+                  "g:/code/comfyui_server/test_assets/test_voice.mp3"
+                ]
               },
               "expected_result": "音频文件选择成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6071,7 +6660,8 @@
               "mcp_params": {},
               "verify": "音频预览区域从隐藏变为可见，包含audio元素和播放控件",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6082,9 +6672,11 @@
               },
               "verify": "音频元素有src且readyState表示可以播放",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_003",
@@ -6095,7 +6687,9 @@
           "api_endpoint": "PUT /api/characters/update",
           "pass": false,
           "remark": "",
-          "prerequisites": ["character_001"],
+          "prerequisites": [
+            "character_001"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6107,7 +6701,8 @@
               },
               "expected_result": "角色节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6119,7 +6714,8 @@
               },
               "expected_result": "弹出编辑角色模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6128,7 +6724,8 @@
               "mcp_params": {},
               "verify": "模态框显示「编辑角色」标题，表单字段预填充角色信息，参考图和音频预览显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6141,18 +6738,22 @@
               },
               "expected_result": "性格字段更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
               "action": "更换参考音频",
               "mcp_tool": "mcp1_browser_file_upload",
               "mcp_params": {
-                "paths": ["g:/code/comfyui_server/test_assets/new_voice.mp3"]
+                "paths": [
+                  "g:/code/comfyui_server/test_assets/new_voice.mp3"
+                ]
               },
               "expected_result": "新音频文件选择成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6163,7 +6764,8 @@
               },
               "verify": "音频播放器src更新为新的blob URL，预览区域保持可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -6175,7 +6777,8 @@
               },
               "expected_result": "发起更新请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -6187,9 +6790,11 @@
               },
               "expected_result": "显示成功提示，模态框关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_004",
@@ -6199,7 +6804,9 @@
           "page_url": "/video-workflow",
           "pass": false,
           "remark": "",
-          "prerequisites": ["character_001"],
+          "prerequisites": [
+            "character_001"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6211,7 +6818,8 @@
               },
               "expected_result": "弹出添加菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6223,7 +6831,8 @@
               },
               "expected_result": "在画布上创建角色节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6232,7 +6841,8 @@
               "mcp_params": {},
               "verify": "节点包含：「角色」标题、角色名称、年龄、身份、性格、行为习惯、参考图预览、编辑按钮、输出端口",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6241,9 +6851,11 @@
               "mcp_params": {},
               "verify": "节点包含编辑按钮（铅笔图标）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_005",
@@ -6254,7 +6866,9 @@
           "api_endpoint": "POST /api/ai-app-run-image-url",
           "pass": false,
           "remark": "",
-          "prerequisites": ["character_004"],
+          "prerequisites": [
+            "character_004"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6263,7 +6877,8 @@
               "mcp_params": {},
               "verify": "角色节点包含「生成sora角色视频」按钮（紫色背景）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6275,7 +6890,8 @@
               },
               "expected_result": "按钮变为生成中状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6284,7 +6900,8 @@
               "mcp_params": {},
               "verify": "按钮文字变为「生成中...」且被禁用",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6293,7 +6910,8 @@
               "mcp_params": {},
               "verify": "存在POST /api/ai-app-run-image-url请求，包含image_url（角色参考图）、prompt（固定提示词）、duration_seconds（10）、count（1）、ratio参数",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -6301,7 +6919,8 @@
               "operation": "检查API请求中的prompt参数",
               "expected_result": "提示词包含：「说话：'我是XX（角色名称），欢迎观看我的短剧，请认准 智剧通 制作短剧，谢谢！' 然后缓慢转一圈360度全方位展示身体。视频风格为 XX（画风）」",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6313,7 +6932,8 @@
               },
               "expected_result": "显示成功提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -6324,7 +6944,8 @@
               },
               "verify": "视频节点数量 >= 1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 8,
@@ -6335,7 +6956,8 @@
               },
               "verify": "视频节点位于角色节点右侧，x偏移约350px",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 9,
@@ -6346,7 +6968,8 @@
               },
               "verify": "角色节点和视频节点之间存在连接线",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 10,
@@ -6355,7 +6978,8 @@
               "mcp_params": {},
               "verify": "视频节点标题为「XX角色视频」，视频预览区域显示生成的视频",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 11,
@@ -6364,9 +6988,11 @@
               "mcp_params": {},
               "verify": "按钮文字恢复为「生成sora角色视频」且可点击",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_006",
@@ -6377,7 +7003,9 @@
           "api_endpoint": "POST /api/create-character, GET /api/character-status/{task_id}, POST /api/characters/update",
           "pass": false,
           "remark": "修复了角色卡创建后不同步到数据库的bug",
-          "prerequisites": ["character_005"],
+          "prerequisites": [
+            "character_005"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6385,7 +7013,8 @@
               "operation": "点击生成sora角色视频按钮",
               "expected_result": "视频生成成功，视频节点自动创建并连接到角色节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6397,7 +7026,8 @@
               },
               "expected_result": "按钮显示'创建中...'，开始轮询状态",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6409,7 +7039,8 @@
               },
               "expected_result": "显示成功提示，包含角色卡ID",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6420,7 +7051,8 @@
               },
               "verify": "节点数据中存在sora_character字段",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -6431,7 +7063,8 @@
               },
               "expected_result": "页面重新加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6442,9 +7075,11 @@
               },
               "verify": "sora_character字段存在，按钮显示'重新生成sora角色卡'",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_007",
@@ -6454,7 +7089,9 @@
           "page_url": "/video-workflow",
           "pass": false,
           "remark": "修复了节点多时连接线不显示的timing问题",
-          "prerequisites": ["character_005"],
+          "prerequisites": [
+            "character_005"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6462,7 +7099,8 @@
               "operation": "创建多种类型节点",
               "expected_result": "画布上有大量节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6470,7 +7108,8 @@
               "operation": "点击生成sora角色视频按钮",
               "expected_result": "视频生成成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6482,7 +7121,8 @@
               },
               "expected_result": "成功提示显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6493,7 +7133,8 @@
               },
               "verify": "state.connections和SVG中的连接线数量一致",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -6505,7 +7146,8 @@
               },
               "expected_result": "工作流保存成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6516,7 +7158,8 @@
               },
               "expected_result": "页面重新加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 7,
@@ -6527,9 +7170,11 @@
               },
               "verify": "角色节点到视频节点的连接存在",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_008",
@@ -6539,7 +7184,9 @@
           "page_url": "/video-workflow",
           "pass": false,
           "remark": "优化了按钮UI，与角色卡按钮保持一致的视觉风格",
-          "prerequisites": ["character_006"],
+          "prerequisites": [
+            "character_006"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6547,7 +7194,8 @@
               "operation": "添加角色节点到画布",
               "expected_result": "角色节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6558,7 +7206,8 @@
               },
               "verify": "按钮文字为'生成sora角色视频'，背景色为紫色(rgb(139, 92, 246))",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6566,7 +7215,8 @@
               "operation": "完成角色视频生成和角色卡创建",
               "expected_result": "角色卡创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6577,7 +7227,8 @@
               },
               "verify": "按钮文字为'重新生成sora角色视频'，背景色为白色，有灰色边框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -6588,7 +7239,8 @@
               },
               "expected_result": "页面重新加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6599,9 +7251,11 @@
               },
               "verify": "按钮保持'重新生成sora角色视频'样式",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_009",
@@ -6611,7 +7265,9 @@
           "page_url": "/video-workflow",
           "pass": false,
           "remark": "优化了超时时间和帮助按钮交互",
-          "prerequisites": ["character_005"],
+          "prerequisites": [
+            "character_005"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6619,7 +7275,8 @@
               "operation": "完成角色视频生成",
               "expected_result": "视频生成成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6631,7 +7288,8 @@
               },
               "expected_result": "开始创建角色卡",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6643,7 +7301,8 @@
               },
               "expected_result": "按钮显示'处理中(x/300)...'格式的进度",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6654,7 +7313,8 @@
               },
               "verify": "maxAttempts为300（10分钟 = 300次 * 2秒）",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -6666,7 +7326,8 @@
               },
               "expected_result": "显示提示信息toast",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6678,9 +7339,11 @@
               },
               "verify": "显示正确的帮助信息",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "character_010",
@@ -6691,7 +7354,10 @@
           "api_endpoint": "GET /api/character/search, POST /api/ai-app-run-image-url",
           "pass": false,
           "remark": "实现了Sora模型的角色ID自动替换功能",
-          "prerequisites": ["character_006", "shot_frame_003"],
+          "prerequisites": [
+            "character_006",
+            "shot_frame_003"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6699,7 +7365,8 @@
               "operation": "创建角色'林越'并生成sora_character",
               "expected_result": "角色卡创建成功，获得sora_character ID",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6707,7 +7374,8 @@
               "operation": "在视频提示词中输入包含【【林越】】和patiencep.dragonenvo的文本",
               "example_prompt": "patiencep.dragonenvo 走上擂台，面向【【林越】】表达感谢",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6716,11 +7384,14 @@
               "mcp_params": {
                 "element": "视频模型选择器",
                 "ref": "<视频模型选择ref>",
-                "values": ["sora"]
+                "values": [
+                  "sora"
+                ]
               },
               "expected_result": "模型选择为Sora",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6732,7 +7403,8 @@
               },
               "expected_result": "开始生成视频",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -6741,7 +7413,8 @@
               "verify": "POST /api/ai-app-run-image-url请求中的prompt参数包含@patiencep.dragonenvo和@<sora_character_id>格式",
               "expected_pattern": "@[a-z0-9]+\\.[a-z0-9]+ ",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6749,9 +7422,11 @@
               "mcp_tool": "mcp1_browser_console_messages",
               "verify": "控制台显示角色替换日志，如'Replaced 【【林越】】 with @xxx.xxx'",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -6769,7 +7444,9 @@
           "api_endpoint": "POST /api/locations/create",
           "pass": false,
           "remark": "",
-          "prerequisites": ["world_001"],
+          "prerequisites": [
+            "world_001"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6781,7 +7458,8 @@
               },
               "expected_result": "弹出场景选择下拉框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6793,7 +7471,8 @@
               },
               "expected_result": "弹出创建场景模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6829,7 +7508,8 @@
               },
               "expected_result": "表单字段填写完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6841,7 +7521,8 @@
               },
               "expected_result": "发起创建请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -6853,9 +7534,11 @@
               },
               "expected_result": "显示成功提示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "location_002",
@@ -6866,7 +7549,9 @@
           "api_endpoint": "PUT /api/locations/update",
           "pass": false,
           "remark": "",
-          "prerequisites": ["location_001"],
+          "prerequisites": [
+            "location_001"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6878,7 +7563,8 @@
               },
               "expected_result": "场景节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6890,7 +7576,8 @@
               },
               "expected_result": "弹出编辑场景模态框",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6899,7 +7586,8 @@
               "mcp_params": {},
               "verify": "模态框显示「编辑场景」标题，表单字段预填充场景信息",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -6912,7 +7600,8 @@
               },
               "expected_result": "描述字段更新",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -6924,7 +7613,8 @@
               },
               "expected_result": "发起更新请求",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -6936,9 +7626,11 @@
               },
               "expected_result": "显示成功提示，模态框关闭",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "location_003",
@@ -6948,7 +7640,9 @@
           "page_url": "/video-workflow",
           "pass": false,
           "remark": "",
-          "prerequisites": ["location_001"],
+          "prerequisites": [
+            "location_001"
+          ],
           "test_steps": [
             {
               "step": 1,
@@ -6960,7 +7654,8 @@
               },
               "expected_result": "弹出添加菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -6972,7 +7667,8 @@
               },
               "expected_result": "在画布上创建场景节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -6981,9 +7677,11 @@
               "mcp_params": {},
               "verify": "节点包含：「场景」标题、场景名称、场景描述、环境音效、背景音乐、编辑按钮、输出端口",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     },
@@ -7011,7 +7709,8 @@
               },
               "expected_result": "分镜节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -7020,7 +7719,8 @@
               "mcp_params": {},
               "verify": "分镜节点包含视频首帧区域，左侧有蓝色输入端口(.first-frame-port)，端口样式为蓝色圆点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -7031,9 +7731,11 @@
               },
               "verify": "端口存在且背景色为蓝色(#3b82f6)",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "first_frame_002",
@@ -7050,7 +7752,8 @@
               "operation": "创建图片节点，上传测试图片",
               "expected_result": "图片节点创建成功，图片上传完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -7058,7 +7761,8 @@
               "operation": "创建分镜节点",
               "expected_result": "分镜节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -7072,7 +7776,8 @@
               },
               "expected_result": "创建蓝色连接线",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -7083,7 +7788,8 @@
               },
               "verify": "蓝色连接线数量为1，state.firstFrameConnections长度为1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -7094,9 +7800,11 @@
               },
               "verify": "视频首帧图片元素存在，display不为none，src有值",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "first_frame_003",
@@ -7113,7 +7821,8 @@
               "operation": "创建两个节点",
               "expected_result": "节点创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -7121,7 +7830,8 @@
               "operation": "mousedown on 图片节点输出端口",
               "expected_result": "开始创建连接线",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -7129,7 +7839,8 @@
               "operation": "mousemove to near 首帧端口",
               "expected_result": "首帧端口添加can-connect类，显示放大和光晕效果",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -7140,9 +7851,11 @@
               },
               "verify": "首帧端口包含can-connect类",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "first_frame_004",
@@ -7159,7 +7872,8 @@
               "operation": "创建2个图片节点，分别上传图片，连接到分镜节点",
               "expected_result": "2个图片节点连接到分镜节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -7170,7 +7884,8 @@
               },
               "verify": "图片选择容器可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -7182,7 +7897,8 @@
               },
               "expected_result": "显示图片选择菜单",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -7194,7 +7910,8 @@
               },
               "expected_result": "首帧连接线更新到新选择的图片节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -7205,9 +7922,11 @@
               },
               "verify": "首帧连接数量为1，from指向新选择的图片节点",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "first_frame_005",
@@ -7224,7 +7943,8 @@
               "operation": "创建连接",
               "expected_result": "蓝色连接线创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -7236,7 +7956,8 @@
               },
               "expected_result": "连接线被选中，显示删除按钮",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -7247,7 +7968,8 @@
               },
               "verify": "删除按钮可见",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -7259,7 +7981,8 @@
               },
               "expected_result": "连接线被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -7270,9 +7993,11 @@
               },
               "verify": "蓝色连接线数量为0",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "first_frame_006",
@@ -7289,7 +8014,8 @@
               "operation": "创建连接并保存",
               "expected_result": "蓝色连接线创建成功，工作流已保存",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -7300,7 +8026,8 @@
               },
               "verify": "记录连接数量和连接数据",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -7311,7 +8038,8 @@
               },
               "expected_result": "页面重新加载",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -7323,7 +8051,8 @@
               },
               "expected_result": "页面加载完成",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 5,
@@ -7334,7 +8063,8 @@
               },
               "verify": "蓝色连接线数量与重新加载前一致",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 6,
@@ -7345,9 +8075,11 @@
               },
               "verify": "视频首帧图片元素存在且正确显示",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         },
         {
           "id": "first_frame_007",
@@ -7364,7 +8096,8 @@
               "operation": "创建连接",
               "expected_result": "蓝色连接线创建成功",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 2,
@@ -7375,7 +8108,8 @@
               },
               "verify": "首帧连接数量为1",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 3,
@@ -7387,7 +8121,8 @@
               },
               "expected_result": "图片节点被删除",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             },
             {
               "step": 4,
@@ -7398,9 +8133,11 @@
               },
               "verify": "首帧连接数量为0",
               "pass": false,
-              "remark": ""
+              "remark": "",
+              "is_processed": false
             }
-          ]
+          ],
+          "is_processed": false
         }
       ]
     }
