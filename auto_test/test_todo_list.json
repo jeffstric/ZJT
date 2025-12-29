@@ -1424,6 +1424,181 @@
           ]
         },
         {
+          "id": "editor_012_1",
+          "name": "批量选择节点功能",
+          "description": "验证用户按住Ctrl键后可以使用鼠标绘制选择框，批量选择多个节点",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "新增批量选择功能测试",
+          "prerequisites": [
+            "editor_007"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "添加多个节点到画布",
+              "operation": "click",
+              "selector": "#addBtn",
+              "expected_result": "画布上有至少3个节点",
+              "pass": false,
+              "remark": "准备测试环境"
+            },
+            {
+              "step": 2,
+              "action": "按下Ctrl键",
+              "operation": "keydown",
+              "key": "Control",
+              "expected_result": "画布光标变为crosshair指针模式",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "在画布空白区域按下鼠标左键并拖动",
+              "operation": "drag",
+              "start_position": {
+                "x": 100,
+                "y": 100
+              },
+              "end_position": {
+                "x": 500,
+                "y": 400
+              },
+              "expected_result": "出现蓝色半透明选择框，选择框跟随鼠标移动",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "释放鼠标左键",
+              "operation": "mouseup",
+              "expected_result": "选择框内的所有节点被选中，节点显示选中状态（绿色边框和阴影），选择框消失",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 5,
+              "action": "释放Ctrl键",
+              "operation": "keyup",
+              "key": "Control",
+              "expected_result": "画布光标恢复为grab状态",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 6,
+              "action": "验证选中状态",
+              "operation": "verify",
+              "expected_result": "所有被选中的节点保持选中状态，其他节点无选中状态",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_012_2",
+          "name": "批量移动节点功能",
+          "description": "验证用户选中多个节点后，可以拖动其中任意一个节点来批量移动所有选中的节点",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "新增批量移动功能测试",
+          "prerequisites": [
+            "editor_012_1"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "使用Ctrl+选择框批量选中多个节点",
+              "operation": "batch_select",
+              "expected_result": "多个节点被选中",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "拖动其中一个选中节点的头部",
+              "operation": "drag",
+              "selector": ".node.selected .node-header",
+              "start_position": {
+                "x": 200,
+                "y": 200
+              },
+              "end_position": {
+                "x": 300,
+                "y": 300
+              },
+              "expected_result": "所有选中的节点同时移动相同的距离",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "释放鼠标",
+              "operation": "mouseup",
+              "expected_result": "所有节点停留在新位置，位置数据正确保存",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证小地图更新",
+              "operation": "verify",
+              "expected_result": "小地图中所有节点的位置同步更新",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
+          "id": "editor_012_3",
+          "name": "批量删除节点功能",
+          "description": "验证用户选中多个节点后，可以按Delete键批量删除所有选中的节点",
+          "priority": "P1",
+          "page_url": "/video-workflow",
+          "pass": false,
+          "remark": "新增批量删除功能测试",
+          "prerequisites": [
+            "editor_012_1"
+          ],
+          "test_steps": [
+            {
+              "step": 1,
+              "action": "使用Ctrl+选择框批量选中多个节点",
+              "operation": "batch_select",
+              "expected_result": "多个节点被选中",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 2,
+              "action": "按下Delete键",
+              "operation": "keydown",
+              "key": "Delete",
+              "expected_result": "弹出确认对话框，提示要删除选中的N个节点",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 3,
+              "action": "点击确认按钮",
+              "operation": "confirm",
+              "expected_result": "所有选中的节点从画布上移除",
+              "pass": false,
+              "remark": ""
+            },
+            {
+              "step": 4,
+              "action": "验证节点已删除",
+              "operation": "verify",
+              "expected_result": "画布上不再显示这些节点，相关连接线也被删除",
+              "pass": false,
+              "remark": ""
+            }
+          ]
+        },
+        {
           "id": "editor_013",
           "name": "节点连接-图生视频到视频",
           "description": "验证用户可以从图生视频节点的输出端口拖拽连接到视频节点的输入端口，创建贝塞尔曲线连接线",
