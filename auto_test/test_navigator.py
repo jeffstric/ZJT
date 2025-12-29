@@ -68,24 +68,25 @@ class TestNavigator:
             features = module.get("features", [])
 
             total_features = len(features)
-            passed_features = sum(1 for f in features if f.get("pass", False))
+            # 功能完成条件：所有步骤都已处理完毕（无论通过与否）
+            completed_features = sum(1 for f in features if all(s.get("is_processed", False) for s in f.get("test_steps", [])))
 
             total_steps = 0
-            passed_steps = 0
+            processed_steps = 0
             for feature in features:
                 steps = feature.get("test_steps", [])
                 total_steps += len(steps)
-                passed_steps += sum(1 for s in steps if s.get("pass", False))
+                processed_steps += sum(1 for s in steps if s.get("is_processed", False))
 
             modules.append({
                 "id": module_id,
                 "name": module_name,
                 "total_features": total_features,
-                "passed_features": passed_features,
+                "passed_features": completed_features,
                 "total_steps": total_steps,
-                "passed_steps": passed_steps,
-                "progress": f"{passed_features}/{total_features}",
-                "is_complete": passed_features == total_features
+                "passed_steps": processed_steps,
+                "progress": f"{completed_features}/{total_features}",
+                "is_complete": completed_features == total_features
             })
 
         return modules
@@ -251,24 +252,31 @@ class TestNavigator:
 
         for module in data.get("modules", []):
             features = module.get("features", [])
-            module_passed = all(f.get("pass", False) for f in features)
-            if module_passed:
+            # 模块完成条件：所有功能都已处理完毕（无论通过与否）
+            module_completed = all(
+                all(s.get("is_processed", False) for s in f.get("test_steps", []))
+                for f in features
+            )
+            if module_completed:
                 passed_modules += 1
 
             for feature in features:
                 total_features += 1
-                if feature.get("pass", False):
+                # 功能完成条件：所有步骤都已处理完毕（无论通过与否）
+                feature_completed = all(s.get("is_processed", False) for s in feature.get("test_steps", []))
+                if feature_completed:
                     passed_features += 1
 
                 priority = feature.get("priority", "P1")
                 if priority in priority_stats:
                     priority_stats[priority]["total"] += 1
-                    if feature.get("pass", False):
+                    if feature_completed:
                         priority_stats[priority]["passed"] += 1
 
                 for step in feature.get("test_steps", []):
                     total_steps += 1
-                    if step.get("pass", False):
+                    # 步骤完成条件：已处理完毕（无论通过与否）
+                    if step.get("is_processed", False):
                         passed_steps += 1
 
         return {
