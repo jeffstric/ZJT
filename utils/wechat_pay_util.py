@@ -80,88 +80,109 @@ class WechatPayUtil:
         """
         logger.info(f"Creating JSAPI payment for order {order_id}, amount: {total_fee}")
         
-        # TODO: 实现微信JSAPI支付V3 API调用
         # 1. 构建请求体（JSON格式）
-        # request_body = {
-        #     "appid": self.app_id,
-        #     "mchid": self.mch_id,
-        #     "description": body,
-        #     "out_trade_no": order_id,
-        #     "notify_url": notify_url,
-        #     "amount": {
-        #         "total": total_fee,
-        #         "currency": "CNY"
-        #     },
-        #     "payer": {
-        #         "openid": openid
-        #     }
-        # }
-        # 
-        # 2. 生成V3签名（使用商户私钥）
-        # import json
-        # timestamp = str(int(time.time()))
-        # nonce_str = uuid.uuid4().hex
-        # request_body_json = json.dumps(request_body)
-        # 
-        # # 构造签名串
-        # sign_str = f"POST\n/v3/pay/transactions/jsapi\n{timestamp}\n{nonce_str}\n{request_body_json}\n"
-        # signature = self._generate_v3_signature(sign_str)
-        # 
-        # # 构造Authorization头
-        # auth_header = (
-        #     f'WECHATPAY2-SHA256-RSA2048 '
-        #     f'mchid="{self.mch_id}",'
-        #     f'nonce_str="{nonce_str}",'
-        #     f'timestamp="{timestamp}",'
-        #     f'serial_no="证书序列号",'
-        #     f'signature="{signature}"'
-        # )
-        # 
-        # 3. 调用微信支付V3统一下单接口
-        # import requests
-        # response = requests.post(
-        #     "https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi",
-        #     headers={
-        #         "Authorization": auth_header,
-        #         "Accept": "application/json",
-        #         "Content-Type": "application/json"
-        #     },
-        #     json=request_body
-        # )
-        # 
-        # 4. 解析返回结果，获取prepay_id
-        # result = response.json()
-        # prepay_id = result.get("prepay_id")
-        # 
-        # 5. 生成JSAPI支付参数（前端调用微信支付需要）
-        # timestamp = str(int(time.time()))
-        # nonce_str = uuid.uuid4().hex
-        # package = f"prepay_id={prepay_id}"
-        # 
-        # # 构造签名串
-        # sign_str = f"{self.app_id}\n{timestamp}\n{nonce_str}\n{package}\n"
-        # pay_sign = self._generate_v3_signature(sign_str)
-        # 
-        # jsapi_params = {
-        #     "appId": self.app_id,
-        #     "timeStamp": timestamp,
-        #     "nonceStr": nonce_str,
-        #     "package": package,
-        #     "signType": "RSA",
-        #     "paySign": pay_sign
-        # }
-        # 
-        # return jsapi_params
-        
-        # 临时返回模拟数据
-        return {
-            "appId": self.app_id or "wx_app_id_placeholder",
-            "timeStamp": str(int(time.time())),
-            "nonceStr": uuid.uuid4().hex,
-            "package": f"prepay_id=mock_prepay_id_{order_id}",
-            "signType": "RSA",
-            "paySign": "mock_pay_sign"
+        request_body = {
+            "appid": str(self.app_id),
+            "mchid": str(self.mch_id),
+            "description": body,
+            "out_trade_no": order_id,
+            "notify_url": notify_url,
+            "amount": {
+                "total": int(total_fee),
+                "currency": "CNY"
+            },
+            "payer": {
+                "openid": openid
+            }
         }
+        
+        timestamp = str(int(time.time()))
+        nonce_str = uuid.uuid4().hex
+        request_body_json = json.dumps(request_body)
+        
+        # 2. 生成签名
+        signature = self._generate_sign(
+            http_method="POST",
+            url_path="/v3/pay/transactions/jsapi",
+            timestamp=timestamp,
+            nonce_str=nonce_str,
+            request_body=request_body_json
+        )
+        
+        # 3. 构造Authorization头
+        auth_header = (
+            f'WECHATPAY2-SHA256-RSA2048 '
+            f'mchid="{self.mch_id}",'
+            f'nonce_str="{nonce_str}",'
+            f'timestamp="{timestamp}",'
+            f'serial_no="{self.api_key}",'
+            f'signature="{signature}"'
+        )
+        
+        # 4. 调用微信支付V3统一下单接口
+        import requests
+        response = requests.post(
+            "https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi",
+            headers={
+                "Authorization": auth_header,
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            json=request_body
+        )
+        
+        # 5. 解析返回结果，获取prepay_id
+        result = response.json()
+        prepay_id = result.get("prepay_id")
+        
+        # 6. 生成JSAPI支付参数（前端调用微信支付需要）
+        jsapi_timestamp = str(int(time.time()))
+        jsapi_nonce_str = uuid.uuid4().hex
+        package = f"prepay_id={prepay_id}"
+        
+        # 构造签名串（用于前端调起支付）
+        # 格式：appId\n时间戳\n随机串\nprepay_id=xxx\n
+        sign_str = f"{self.app_id}\n{jsapi_timestamp}\n{jsapi_nonce_str}\n{package}\n"
+        
+        # 使用商户私钥对签名串进行RSA-SHA256签名
+        try:
+            # 读取私钥文件
+            private_key_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "secret/wechat/apiclient_key.pem"
+            )
+            
+            with open(private_key_path, 'rb') as f:
+                private_key = serialization.load_pem_private_key(
+                    f.read(),
+                    password=None,
+                    backend=default_backend()
+                )
+            
+            # 使用私钥对签名串进行SHA256签名
+            signature = private_key.sign(
+                sign_str.encode('utf-8'),
+                padding.PKCS1v15(),
+                hashes.SHA256()
+            )
+            
+            # Base64编码
+            pay_sign = base64.b64encode(signature).decode('utf-8')
+            
+        except Exception as e:
+            logger.error(f"Failed to generate paySign: {str(e)}")
+            pay_sign = "mock_pay_sign"
+        
+        jsapi_params = {
+            "appId": self.app_id,
+            "timeStamp": jsapi_timestamp,
+            "nonceStr": jsapi_nonce_str,
+            "package": package,
+            "signType": "RSA",
+            "paySign": pay_sign
+        }
+        
+        return jsapi_params
     
     def create_h5_payment(
         self,
@@ -193,14 +214,23 @@ class WechatPayUtil:
         """
         logger.info(f"Creating H5 payment for order {order_id}, amount: {total_fee}")
         
+        # 如果没有提供场景信息，使用默认值
+        if scene_info is None:
+            scene_info = {
+                "payer_client_ip": "127.0.0.1",
+                "h5_info": {
+                    "type": "Wap"
+                }
+            }
+        
         request_body = {
-            "appid": self.app_id,
-            "mchid": self.mch_id,
+            "appid": str(self.app_id),
+            "mchid": str(self.mch_id),
             "description": body,
             "out_trade_no": order_id,
             "notify_url": notify_url,
             "amount": {
-                "total": total_fee,
+                "total": int(total_fee),
                 "currency": "CNY"
             },
             "scene_info": scene_info
@@ -243,6 +273,7 @@ class WechatPayUtil:
         
         # 解析返回结果，获取h5_url
         result = response.json()
+        logger.info(f"H5 payment result: {result}")
         h5_url = result.get("h5_url")
         
         return {"h5_url": h5_url}

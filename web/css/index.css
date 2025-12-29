@@ -754,3 +754,21 @@ header {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* ICP备案信息 */
+.icp-footer {
+  padding: 16px 20px;
+  text-align: left;
+  margin-top: 20px;
+}
+
+.icp-footer a {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 12px;
+  transition: color 0.3s ease;
+}
+
+.icp-footer a:hover {
+  color: var(--text);
+}

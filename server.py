@@ -2476,6 +2476,62 @@ class WechatPayRequest(BaseModel):
     user_id: int
     auth_token: str
     is_wechat_browser: bool = False
+    openid: Optional[str] = None
+
+
+@app.get("/api/wechat/get-openid")
+async def get_wechat_openid(code: str):
+    """
+    通过微信授权code获取用户openid
+    
+    Args:
+        code: 微信授权返回的code
+    
+    Returns:
+        包含openid的响应
+    """
+    try:
+        import requests
+        
+        # 从配置文件读取微信配置
+        wechat_config = config.get("pay", {}).get("wxpay", {})
+        app_id = wechat_config.get("appId")
+        app_secret = wechat_config.get("appSecret")
+        
+        if not app_id or not app_secret:
+            raise HTTPException(status_code=500, detail="微信配置不完整")
+        
+        # 调用微信接口获取openid
+        url = "https://api.weixin.qq.com/sns/oauth2/access_token"
+        params = {
+            "appid": app_id,
+            "secret": app_secret,
+            "code": code,
+            "grant_type": "authorization_code"
+        }
+        
+        response = requests.get(url, params=params)
+        result = response.json()
+        
+        if "openid" in result:
+            return JSONResponse({
+                "success": True,
+                "openid": result["openid"],
+                "access_token": result.get("access_token"),
+                "expires_in": result.get("expires_in")
+            })
+        else:
+            error_msg = result.get("errmsg", "获取openid失败")
+            logger.error(f"Failed to get openid: {result}")
+            return JSONResponse({
+                "success": False,
+                "message": error_msg
+            }, status_code=400)
+            
+    except Exception as e:
+        logger.error(f"Get openid failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取openid失败: {str(e)}")
 
 
 @app.get("/api/recharge/packages")
@@ -2554,15 +2610,19 @@ async def create_wechat_payment(request: WechatPayRequest):
         if request.is_wechat_browser:
             # 微信内浏览器使用JSAPI支付
             payment_type = "JSAPI"
-            # TODO: 获取用户的openid
-            # openid = get_user_openid(request.user_id)
-            openid = f"mock_openid_{request.user_id}"
+            
+            # 获取用户的openid
+            if not request.openid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="微信支付需要用户openid，请先进行微信授权"
+                )
             
             payment_result = wechat_pay_util.create_jsapi_payment(
                 order_id=order_id,
                 total_fee=total_fee,
                 body=body,
-                openid=openid,
+                openid=request.openid,
                 notify_url=notify_url
             )
         else:

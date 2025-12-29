@@ -39,6 +39,11 @@
 
       <router-view />
     </div>
+    
+    <!-- ICP备案信息 -->
+    <footer class="icp-footer">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">浙ICP备2023022572号-1</a>
+    </footer>
 
     <!-- Login/Register Modal -->
     <div class="modal-overlay" v-if="showLoginModal" @click.self="closeModal">
@@ -4087,7 +4092,8 @@
       paymentLoading: false,
       paymentQrCode: '',
       paymentOrderId: '',
-      paymentError: ''
+      paymentError: '',
+      wechatOpenid: ''
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -4096,6 +4102,13 @@
       this.userPhone = urlParams.get('phone') || '';
       this.userId = urlParams.get('user_id') || '';
       this.inviteCode = urlParams.get('invite_code') || '';
+      
+      // 处理微信授权回调
+      const wechatCode = urlParams.get('code');
+      if (wechatCode) {
+        this.handleWechatAuthCallback(wechatCode);
+      }
+      
       if (this.authToken) {
         localStorage.removeItem('auth_token');
         localStorage.removeItem('phone');
@@ -4113,6 +4126,9 @@
         this.userId = localStorage.getItem('user_id') || '';
         this.inviteCode = localStorage.getItem('invite_code') || '';
       }
+      
+      // 尝试从localStorage恢复openid
+      this.wechatOpenid = localStorage.getItem('wechat_openid') || '';
       
       // Fetch computing power if logged in
       if (this.authToken) {
@@ -4656,7 +4672,47 @@
         this.paymentQrCode = '';
         this.paymentOrderId = '';
         
+        // 如果是微信浏览器且没有openid，先获取openid
+        if (this.isWechatBrowser() && !this.wechatOpenid) {
+          this.requestWechatAuth();
+          return;
+        }
+        
         await this.createPaymentOrder();
+      },
+      
+      async handleWechatAuthCallback(code) {
+        try {
+          const response = await axios.get('/api/wechat/get-openid', {
+            params: { code }
+          });
+          
+          if (response.data.success) {
+            this.wechatOpenid = response.data.openid;
+            localStorage.setItem('wechat_openid', this.wechatOpenid);
+            console.log('成功获取openid');
+            
+            // 如果有选中的套餐，继续创建支付订单
+            if (this.selectedPackage) {
+              await this.createPaymentOrder();
+            }
+          } else {
+            console.error('获取openid失败:', response.data.message);
+          }
+        } catch (error) {
+          console.error('处理微信授权回调失败:', error);
+        }
+      },
+      
+      requestWechatAuth() {
+        // 获取微信公众号AppID（需要从配置中获取）
+        const appId = 'wxfcf09f56c3d2b2b8'; // TODO: 从后端配置获取
+        const redirectUri = encodeURIComponent(window.location.href);
+        const scope = 'snsapi_base'; // 静默授权，只获取openid
+        
+        // 跳转到微信授权页面
+        const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&state=STATE#wechat_redirect`;
+        window.location.href = authUrl;
       },
       
       async createPaymentOrder() {
@@ -4664,12 +4720,19 @@
         this.paymentError = '';
         
         try {
-          const response = await axios.post('/api/recharge/wechat-pay', {
+          const requestData = {
             package_id: this.selectedPackage.package_id,
             user_id: parseInt(this.userId, 10),
             auth_token: this.authToken,
             is_wechat_browser: this.isWechatBrowser()
-          });
+          };
+          
+          // 如果是微信浏览器，传递openid
+          if (this.isWechatBrowser() && this.wechatOpenid) {
+            requestData.openid = this.wechatOpenid;
+          }
+          
+          const response = await axios.post('/api/recharge/wechat-pay', requestData);
           
           if (response.data.success) {
             this.paymentOrderId = response.data.order_id;
