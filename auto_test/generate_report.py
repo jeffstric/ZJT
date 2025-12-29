@@ -140,8 +140,20 @@ def generate_html_report(output_dir: Path = None):
     progress = load_json('test_progress.json')
     session_data = get_latest_session()
     
-    if not progress:
-        return "[ERROR] 未找到 test_progress.json 文件"
+    # 优先使用会话数据，如果没有会话数据才使用 progress 文件
+    if session_data:
+        # 从会话数据构建 progress 结构
+        progress = {
+            "modules": []
+        }
+        for module in session_data.get('modules', []):
+            progress["modules"].append({
+                "id": module.get("id"),
+                "name": module.get("name"),
+                "status": "pending"  # 状态将根据实际测试数据重新计算
+            })
+    elif not progress:
+        return "[ERROR] 未找到测试数据文件"
     
     # 统计数据
     stats = count_features(session_data) if session_data else {}
@@ -249,8 +261,21 @@ def generate_html_report(output_dir: Path = None):
             steps_total = module_stats['steps']['total']
             steps_passed = module_stats['steps']['passed']
             
-            # 只有当所有功能和步骤都完成时才算已完成
-            if features_total > 0 and features_passed == features_total and steps_total > 0 and steps_passed == steps_total:
+            # 检查是否所有步骤都已处理（无论通过与否）
+            all_steps_processed = True
+            for module_data in session_data.get('modules', []):
+                if module_data.get('id') == module_id:
+                    for feature in module_data.get('features', []):
+                        for step in feature.get('test_steps', []):
+                            if not step.get('is_processed', False):
+                                all_steps_processed = False
+                                break
+                        if not all_steps_processed:
+                            break
+                    break
+            
+            # 模块完成的判断条件：所有步骤都已处理完毕（无论通过与否）
+            if features_total > 0 and steps_total > 0 and all_steps_processed:
                 completed_modules += 1
             elif features_passed > 0 or steps_passed > 0:
                 in_progress_modules += 1
@@ -342,8 +367,21 @@ def generate_html_report(output_dir: Path = None):
             steps_total = module_stats['steps']['total']
             steps_passed = module_stats['steps']['passed']
             
-            # 重新计算实际状态
-            if features_total > 0 and features_passed == features_total and steps_total > 0 and steps_passed == steps_total:
+            # 检查是否所有步骤都已处理（无论通过与否）
+            all_steps_processed = True
+            for module_data in session_data.get('modules', []):
+                if module_data.get('id') == module_id:
+                    for feature in module_data.get('features', []):
+                        for step in feature.get('test_steps', []):
+                            if not step.get('is_processed', False):
+                                all_steps_processed = False
+                                break
+                        if not all_steps_processed:
+                            break
+                    break
+            
+            # 重新计算实际状态：基于是否所有步骤都已处理
+            if features_total > 0 and steps_total > 0 and all_steps_processed:
                 actual_status = 'completed'
             elif features_passed > 0 or steps_passed > 0:
                 actual_status = 'in_progress'
