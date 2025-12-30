@@ -84,6 +84,7 @@
       el.addEventListener('mousedown', (e) => {
         e.stopPropagation();
         setSelected(id);
+        bringNodeToFront(id);
       });
 
       headerEl.addEventListener('mousedown', (e) => {
@@ -93,6 +94,7 @@
         if(!state.selectedNodeIds.includes(id)){
           setSelected(id);
         }
+        bringNodeToFront(id);
         initNodeDrag(id, e.clientX, e.clientY);
       });
 
@@ -2196,6 +2198,7 @@
         if(e.target.classList.contains('port')) return;
         e.stopPropagation();
         setSelected(id);
+        bringNodeToFront(id);
       });
 
       headerEl.addEventListener('mousedown', (e) => {
@@ -2203,6 +2206,7 @@
         e.preventDefault();
         e.stopPropagation();
         setSelected(id);
+        bringNodeToFront(id);
         initNodeDrag(id, e.clientX, e.clientY);
       });
 
@@ -2474,6 +2478,7 @@
         if(e.target.classList.contains('port')) return;
         e.stopPropagation();
         setSelected(id);
+        bringNodeToFront(id);
       });
 
       headerEl.addEventListener('mousedown', (e) => {
@@ -2481,6 +2486,7 @@
         e.preventDefault();
         e.stopPropagation();
         setSelected(id);
+        bringNodeToFront(id);
         initNodeDrag(id, e.clientX, e.clientY);
       });
 
@@ -2913,6 +2919,7 @@
       el.addEventListener('mousedown', (e) => {
         e.stopPropagation();
         setSelected(id);
+        bringNodeToFront(id);
       });
 
       headerEl.addEventListener('mousedown', (e) => {
@@ -2922,6 +2929,7 @@
         if(!state.selectedNodeIds.includes(id)){
           setSelected(id);
         }
+        bringNodeToFront(id);
         initNodeDrag(id, e.clientX, e.clientY);
       });
 
@@ -3161,6 +3169,7 @@
       el.addEventListener('mousedown', (e) => {
         e.stopPropagation();
         setSelected(id);
+        bringNodeToFront(id);
       });
 
       headerEl.addEventListener('mousedown', (e) => {
@@ -3170,6 +3179,7 @@
         if(!state.selectedNodeIds.includes(id)){
           setSelected(id);
         }
+        bringNodeToFront(id);
         initNodeDrag(id, e.clientX, e.clientY);
       });
 
@@ -3952,6 +3962,7 @@
       el.addEventListener('mousedown', (e) => {
         e.stopPropagation();
         setSelected(id);
+        bringNodeToFront(id);
       });
 
       headerEl.addEventListener('mousedown', (e) => {
@@ -3961,6 +3972,7 @@
         if(!state.selectedNodeIds.includes(id)){
           setSelected(id);
         }
+        bringNodeToFront(id);
         initNodeDrag(id, e.clientX, e.clientY);
       });
 

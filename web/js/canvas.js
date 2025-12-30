@@ -101,6 +101,16 @@
       }
     }
 
+    function bringNodeToFront(nodeId){
+      const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+      if(!nodeEl) return;
+      if(typeof state.topZIndex !== 'number' || state.topZIndex < 21){
+        state.topZIndex = 21;
+      }
+      state.topZIndex += 1;
+      nodeEl.style.zIndex = state.topZIndex;
+    }
+
     function clearSelection(){
       setSelected(null);
       state.selectedNodeIds = [];
