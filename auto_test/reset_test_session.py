@@ -62,13 +62,15 @@ def reset_test_session(force: bool = False, keep_session: bool = False):
                 session_file.unlink()
                 print(f"[SUCCESS] 已删除会话文件: {session_file.name}")
 
-            # 从 test_todo_list.json 创建新的会话文件
-            todo_list_file = base_dir / "test_todo_list.json"
-            if todo_list_file.exists():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                new_session_file = sessions_dir / f"session_{timestamp}.json"
-                shutil.copy2(todo_list_file, new_session_file)
-                print(f"[SUCCESS] 已创建新会话文件: {new_session_file.name}")
+        # 从 test_todo_list.json 创建新的会话文件（修复：移出 if session_files 条件）
+        todo_list_file = base_dir / "test_todo_list.json"
+        if todo_list_file.exists():
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_session_file = sessions_dir / f"session_{timestamp}.json"
+            shutil.copy2(todo_list_file, new_session_file)
+            print(f"[SUCCESS] 已创建新会话文件: {new_session_file.name}")
+        else:
+            print(f"[ERROR] 未找到 test_todo_list.json 文件，无法创建会话文件")
     elif keep_session:
         # 只重置会话文件中的 pass 和 is_processed 状态
         if sessions_dir.exists():
