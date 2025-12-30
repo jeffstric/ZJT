@@ -13,12 +13,12 @@ import traceback
 import shutil
 from datetime import datetime
 from typing import List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from pydantic import BaseModel
 from runninghub_request import RunningHubClient, create_image_edit_nodes, TaskStatus, run_image_edit_task, run_ai_app_task_sync, run_ai_app_task
 from config_util import get_config_path, is_dev_environment
 from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
-from model import AIToolsModel, VideoWorkflowModel
+from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
 from model.world import WorldModel
 from model.character import CharacterModel
 from model.location import LocationModel
@@ -26,7 +26,9 @@ import uuid
 from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character as create_character_task, get_character_task_result
 from PIL import Image
 from llm import call_ernie_vl_api
-
+from task.scheduler import init_scheduler
+from config.constant import TASK_COMPUTING_POWER, TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO, RECHARGE_PACKAGES, AUTHENTICATION_ID
+from utils.wechat_pay_util import WechatPayUtil
 
 def _get_user_id_from_header(user_id: Optional[int]) -> int:
     if user_id is None:
@@ -66,21 +68,17 @@ else:
     SERVER_HOST = config["server"]["host"]
 API_KEY = config["runninghub"]["api_key"]
 
+# 初始化微信支付工具
+wechat_pay_config = config.get("pay", {}).get("wxpay", {})
+wechat_pay_util = WechatPayUtil(
+    app_id=wechat_pay_config.get("appId"),
+    mch_id=wechat_pay_config.get("mchId"),
+    api_key=wechat_pay_config.get("api_key"),
+    APIv3_key=wechat_pay_config.get("APIv3_key")
+)
+
 # Default ComfyUI server address; can be overridden by request field
 DEFAULT_COMFYUI_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188/")
-
-# Type to computing power mapping
-# 1: 图片编辑, 2: AI视频生成, 3: 图片生成视频, 4: 高清放大, 5: ai视频高清修复, 6: 图生视频高清修复，7：图片编辑(nano-banana-pro), 8: 创建角色卡
-TASK_COMPUTING_POWER = {
-    1: 2,
-    2: 20,
-    3: 20,
-    4: 1,
-    5: 10,
-    6: 10,
-    7: 6,
-    8: 20
-}
 
 app = FastAPI(title="ComfyUI Qwen Image Edit Proxy")
 
@@ -416,7 +414,6 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     # Return URL that can be accessed via static file serving
     return f"{SERVER_HOST}/upload/{filename}"
 
-
 def _save_user_asset(
     upload_file: UploadFile,
     user_id: int,
@@ -489,6 +486,29 @@ def _get_local_upload_file(asset_url: Optional[str], origin: Optional[str]) -> O
         return local_path if os.path.exists(local_path) else None
     except Exception:
         return None
+
+def _save_uploaded_audio(upload_file: UploadFile) -> str:
+    """
+    Save uploaded audio to /nas/comfyui_upload/tts/tmp_ref_audio directory and return the file path
+    """
+    # Ensure audio upload directory exists
+    audio_dir = "/nas/comfyui_upload/tts/tmp_ref_audio"
+    os.makedirs(audio_dir, exist_ok=True)
+    
+    # Generate unique filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    file_extension = os.path.splitext(upload_file.filename or "audio.wav")[1]
+    filename = f"ref_audio_{timestamp}_{unique_id}{file_extension}"
+    
+    # Save file
+    file_path = os.path.join(audio_dir, filename)
+    with open(file_path, "wb") as f:
+        content = upload_file.file.read()
+        f.write(content)
+    
+    # Return relative path from upload directory
+    return file_path
 
 
 def _concatenate_images(upload_files: List[UploadFile]) -> str:
@@ -658,16 +678,21 @@ async def image_edit(
                 try:
                     # Store multiple image URLs as comma-separated string
                     image_path_str = ','.join(image_urls) if isinstance(image_urls, list) else image_urls
-                    AIToolsModel.create(
+                    id = AIToolsModel.create(
                         prompt=prompt,
                         user_id=user_id,
                         type=image_edit_type,  # 1-图片编辑
                         image_path=image_path_str,
                         ratio=ratio,
-                        project_id=project_id,
                         transaction_id=transaction_id,
-                        status=1
+                        status=0
                     )
+                    TasksModel.create(
+                        task_type=TASK_TYPE_GENERATE_VIDEO,
+                        task_id=id,
+                        status=0
+                    )
+                    project_ids.append(id)
                 except Exception as db_error:
                     logger.error(f"Failed to create database record: {db_error}")
                     # Don't fail the request if database insert fails
@@ -787,102 +812,33 @@ async def get_status(
 
         for pid in project_ids:
             # Query database to get task type
-            task_record = AIToolsModel.get_by_project_id(pid)
+            task_record = AIToolsModel.get_by_id(pid)
             
-            # Determine if this is a video task (type 2 or 3)
-            is_video = task_record and task_record.type in [2, 3]
-            
-            result = get_ai_task_result(pid, is_video)
-
-            # Check if API call was successful
-            if result.get("code") != 0:
-                error_msg = result.get("msg", "Unknown error")
-                raise HTTPException(status_code=500, detail=f"Failed to get task result: {error_msg}")
-
-            data = result.get("data", {})
-            task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-            media_url = data.get("mediaUrl")
-            reason = data.get("reason")
-            # Calculate task cost time
-            task_cost_time = None
             if task_record and task_record.create_time:
                 # Calculate time difference in seconds
                 from datetime import datetime
                 current_time = datetime.now()
                 time_diff = current_time - task_record.create_time
                 task_cost_time = int(time_diff.total_seconds())
-
+            status = task_record.status
+            reason = task_record.message
             status_str = "RUNNING"
             results_payload = []
             reason_payload = None
 
             # Update database based on status
-            if task_status == 1:  # Success
+            if status == 2:  # Success
                 status_str = "SUCCESS"
-                try:
-                    AIToolsModel.update_by_project_id(
-                        project_id=pid,
-                        result_url=media_url,
-                        status=2  # 2-处理完成
-                    )
-                except Exception as db_error:
-                    logger.error(f"Failed to update database record: {db_error}")
-
+                media_url = task_record.result_url
                 if media_url:
                     results_payload = [{
                         "file_url": media_url,
                         "task_cost_time": task_cost_time
                     }]
 
-            elif task_status == 2:  # Failed
+            elif status == -1:  # Failed
                 status_str = "FAILED"
-                logger.info(f"Task failed: {reason}")
-                if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
-                    reason = "图片包含真人，无法处理"
-                elif reason and "This content may violate our guardrails concerning similarity to third-party content. " in reason:
-                    reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
-                
-                # Check if task has already been marked as failed
-                already_failed = task_record and task_record.status == -1
-                
-                if not already_failed:
-                    # Only update status and refund if not already processed
-                    try:
-                        AIToolsModel.update_by_project_id(
-                            project_id=pid,
-                            status=-1,  # -1-处理失败
-                            message=reason
-                        )
-                    except Exception as db_error:
-                        logger.error(f"Failed to update database record: {db_error}")
-                    
-                    if CHECK_AUTH_TOKEN and auth_token and task_record is not None:
-                        # 生成交易ID
-                        transaction_id = str(uuid.uuid4())
-                        headers = {'Authorization': f'Bearer {auth_token}'}
-                        #发起请求，增加算力
-                        type = task_record.type
-                        computing_power = TASK_COMPUTING_POWER[type]
-                        success, message, response_data = make_perseids_request(
-                            endpoint='user/calculate_computing_power',
-                            method='POST',
-                            headers=headers,
-                            data={
-                                "computing_power": computing_power,
-                                "behavior": "increase",
-                                "transaction_id": transaction_id
-                            }
-                        )
-                        if success:
-                            logger.info(f"Successfully refunded {computing_power} computing power for failed task {pid}, transaction_id: {transaction_id}")
-                        else:
-                            logger.error(f"Failed to refund computing power for task {pid}: {message}")
-                else:
-                    logger.info(f"Task {pid} already marked as failed (status=-1), skipping status update and refund")
-
                 reason_payload = reason
-
-            # task_status == 0 or unknown -> RUNNING by default
 
             tasks_response.append({
                 "project_id": pid,
@@ -960,16 +916,6 @@ async def ai_app_run(
         for _ in range(count):
             # 用uuid生成交易id
             transaction_id = str(uuid.uuid4())
-
-            # Submit task (async, return immediately)
-            result = create_image_to_video(prompt, ratio, None, duration_seconds)
-            logger.info(f"Submit task result: {result}")
-            # Get project_id from new API response format
-            project_id = result.get("id")
-            if not project_id:
-                raise HTTPException(status_code=500, detail="未获得任务id")
-            project_ids.append(project_id)
-
             if CHECK_AUTH_TOKEN:
                 #发起请求，增加算力
                 success, message, response_data = make_perseids_request(
@@ -991,15 +937,21 @@ async def ai_app_run(
             # Create database record for each project
             if user_id:
                 try:
-                    AIToolsModel.create(
+                    id = AIToolsModel.create(
                         prompt=prompt,
                         user_id=user_id,
                         type=2,  # 2-AI视频生成
                         ratio=ratio,
-                        project_id=project_id,
                         transaction_id=transaction_id,
-                        status=1
+                        duration=duration_seconds,
+                        status=0
                     )
+                    TasksModel.create(
+                        task_type=TASK_TYPE_GENERATE_VIDEO,
+                        task_id=id,
+                        status=0
+                    )
+                    project_ids.append(id)
                 except Exception as db_error:
                     logger.error(f"Failed to create database record: {db_error}")
                     # Don't fail the request if database insert fails
@@ -1088,17 +1040,6 @@ async def ai_app_run_image(
                 # Generate unique transaction ID for each task
                 transaction_id = str(uuid.uuid4())
                 
-                # Submit task (async, return immediately)
-                result = create_image_to_video(prompt, ratio, image_url, duration_seconds)
-                
-                # Get project_id from new API response format
-                project_id = result.get("id")
-                if not project_id:
-                    logger.error(f"Task {i+1}: No project ID received")
-                    continue  # Continue with next task
-                
-                project_ids.append(project_id)
-                
                 # Deduct computing power for each task
                 if CHECK_AUTH_TOKEN:
                     success, message, response_data = make_perseids_request(
@@ -1118,17 +1059,22 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
-                        AIToolsModel.create(
+                        id = AIToolsModel.create(
                             prompt=prompt,
                             user_id=user_id,
                             type=3,  # 3-图片生成视频
                             image_path=image_url,
                             ratio=ratio,
                             duration=duration_seconds,
-                            project_id=project_id,
                             transaction_id=transaction_id,
-                            status=1
+                            status=0
                         )
+                        TasksModel.create(
+                            task_type=TASK_TYPE_GENERATE_VIDEO,
+                            task_id=id,
+                            status=0
+                        )
+                        project_ids.append(id)
                     except Exception as db_error:
                         logger.error(f"Failed to create database record for task {i+1}: {db_error}")
                         # Don't fail the request if database insert fails
@@ -1751,54 +1697,6 @@ async def get_ai_tools_history(
                             computing_power = TASK_COMPUTING_POWER[task.type]
                             total_refund_power += computing_power
                             logger.info(f"Upscale task {task.project_id} failed, will refund {computing_power} computing power")
-                    else:
-                        # Determine if this is a video task (type 2 or 3)
-                        is_video = task.type in [2, 3]
-                        
-                        result = get_ai_task_result(task.project_id, is_video)
-                        
-                        # Ensure we received a valid response
-                        if not result or not isinstance(result, dict):
-                            logger.error(f"Failed to get task result for {task.project_id}: invalid response type {type(result).__name__}")
-                            continue
-                        
-                        # Check if API call was successful
-                        if result.get("code") != 0:
-                            logger.error(f"Failed to get task result for {task.project_id}: {result.get('msg')}")
-                            continue
-                        
-                        data = result.get("data", {})
-                        task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-                        media_url = data.get("mediaUrl")
-                        reason = data.get("reason")
-                        
-                        if task_status == 1:  # Success
-                            AIToolsModel.update_by_project_id(
-                                project_id=task.project_id,
-                                result_url=media_url,
-                                status=2  # 处理完成
-                            )
-                            updated_count += 1
-                            logger.info(f"Task {task.project_id} completed successfully")
-                                
-                        elif task_status == 2:  # Failed
-                            if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
-                                reason = "图片包含真人，无法处理"
-                            elif reason and "This content may violate our guardrails concerning similarity to third-party content. " in reason:
-                                reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
-                            # Update status to failed
-                            AIToolsModel.update_by_project_id(
-                                project_id=task.project_id,
-                                status=-1,  # 处理失败
-                                message=reason
-                            )
-                            updated_count += 1
-                            # 累计需要补回的算力
-                            computing_power = TASK_COMPUTING_POWER[task.type]
-                            total_refund_power += computing_power
-                            logger.info(f"Task {task.project_id} failed: {reason}, will refund {computing_power} computing power")
-                        
-                        # If task_status == 0 (in progress), keep status as 1 (processing)
                     
                 except Exception as task_error:
                     logger.error(f"Failed to check status for task {task.project_id}: {task_error}")
@@ -2561,6 +2459,128 @@ async def api_create_character(
         raise HTTPException(status_code=500, detail=f"创建角色失败: {str(e)}")
 
 
+@app.post("/api/audio-generate")
+async def audio_generate(
+    text: str = Form(..., description="Text to generate audio from"),
+    ref_audio: Optional[UploadFile] = File(None, description="Reference audio file for voice cloning"),
+    emo_ref_audio: Optional[UploadFile] = File(None, description="Emotion reference audio file"),
+    ref_audio_url: Optional[str] = Form(None, description="Reference audio URL (alternative to file upload)"),
+    emo_ref_audio_url: Optional[str] = Form(None, description="Emotion reference audio URL (alternative to file upload)"),
+    emo_text: Optional[str] = Form(None, description="Emotion description text"),
+    emo_weight: Optional[float] = Form(None, description="Emotion weight (0.0-1.6)"),
+    emo_vec: Optional[str] = Form(None, description="Emotion vector control"),
+    emo_control_method: Optional[int] = Form(0, description="Emotion control method: 0-same as voice ref, 1-use emotion ref, 2-use emotion vector, 3-use emotion text"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Submit audio generation task
+    Supports voice cloning with reference audio and emotion control
+    """
+    try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Authentication token is required"
+            )
+        
+        # Calculate computing power cost
+        ref_path = None
+        if ref_audio:
+            ref_path = _save_uploaded_audio(ref_audio)  # Reuse upload function for audio
+        elif ref_audio_url:
+            ref_path = ref_audio_url
+        
+        # Handle emotion reference audio upload
+        emo_ref_path = None
+        if emo_ref_audio:
+            emo_ref_path = _save_uploaded_audio(emo_ref_audio)
+        elif emo_ref_audio_url:
+            emo_ref_path = emo_ref_audio_url
+        
+        # Generate transaction ID
+        transaction_id = str(uuid.uuid4())
+        
+        # Create database record for audio generation task
+        audio_id = None
+        if user_id:
+            try:
+                audio_id = AIAudioModel.create(
+                    text=text,
+                    user_id=user_id,
+                    ref_path=ref_path,
+                    emo_ref_path=emo_ref_path,
+                    transaction_id=transaction_id,
+                    emo_text=emo_text,
+                    emo_weight=emo_weight,
+                    emo_vec=emo_vec,
+                    emo_control_method=emo_control_method,
+                    status=0
+                )
+                TasksModel.create(
+                    task_type=TASK_TYPE_GENERATE_AUDIO,
+                    task_id=audio_id,
+                    status=0
+                )
+            except Exception as db_error:
+                logger.error(f"Failed to create audio database record: {db_error}")
+                raise HTTPException(status_code=500, detail=f"创建音频记录失败: {str(db_error)}")
+        
+        return JSONResponse({
+            "audio_id": audio_id,
+            "status": "submitted",
+            "message": "Successfully submitted audio generation task"
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Audio generation failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"音频生成失败: {str(e)}")
+
+
+@app.get("/api/audio-status/{audio_id}")
+async def audio_status(audio_id: int):
+    """
+    查询音频生成任务状态。
+    
+    根据 ai_audio 表记录判断：
+    - status == 2 且 result_url 有值：SUCCESS
+    - status == -1：FAILED
+    - 其他：RUNNING
+    """
+    try:
+        record = AIAudioModel.get_by_id(audio_id)
+        if not record:
+            raise HTTPException(status_code=404, detail=f"未找到音频任务 {audio_id}")
+        
+        if record.status == 2 and record.result_url:
+            return JSONResponse({
+                "audio_id": record.id,
+                "status": "SUCCESS",
+                "result_url": record.result_url,
+                "message": record.message or "音频生成成功"
+            })
+        elif record.status == -1:
+            return JSONResponse({
+                "audio_id": record.id,
+                "status": "FAILED",
+                "reason": record.message or "音频生成失败"
+            })
+        else:
+            return JSONResponse({
+                "audio_id": record.id,
+                "status": "RUNNING",
+                "message": record.message or "音频生成中，请稍候"
+            })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Audio status check failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"查询音频状态失败: {str(e)}")
+
+
 @app.get("/api/character-status/{task_id}")
 async def api_character_status(
     task_id: str,
@@ -2665,7 +2685,496 @@ async def api_character_status(
         raise HTTPException(status_code=500, detail=f"查询角色状态失败: {str(e)}")
 
 
-# ==================== Video Workflow API ====================
+class RechargePackage(BaseModel):
+    """算力充值套餐"""
+    package_id: int
+    computing_power: int
+    price: float
+    description: Optional[str] = None
+
+
+class WechatPayRequest(BaseModel):
+    """微信支付请求"""
+    package_id: int
+    user_id: int
+    auth_token: str
+    is_wechat_browser: bool = False
+    openid: Optional[str] = None
+    payment_ip: Optional[str] = None
+
+
+@app.get("/api/wechat/get-openid")
+async def get_wechat_openid(code: str):
+    """
+    通过微信授权code获取用户openid
+    
+    Args:
+        code: 微信授权返回的code
+    
+    Returns:
+        包含openid的响应
+    """
+    try:
+        import requests
+        
+        # 从配置文件读取微信配置
+        wechat_config = config.get("pay", {}).get("wxpay", {})
+        app_id = wechat_config.get("appId")
+        app_secret = wechat_config.get("appSecret")
+        
+        if not app_id or not app_secret:
+            raise HTTPException(status_code=500, detail="微信配置不完整")
+        
+        # 调用微信接口获取openid
+        url = "https://api.weixin.qq.com/sns/oauth2/access_token"
+        params = {
+            "appid": app_id,
+            "secret": app_secret,
+            "code": code,
+            "grant_type": "authorization_code"
+        }
+        
+        response = requests.get(url, params=params)
+        result = response.json()
+        
+        if "openid" in result:
+            return JSONResponse({
+                "success": True,
+                "openid": result["openid"],
+                "access_token": result.get("access_token"),
+                "expires_in": result.get("expires_in")
+            })
+        else:
+            error_msg = result.get("errmsg", "获取openid失败")
+            logger.error(f"Failed to get openid: {result}")
+            return JSONResponse({
+                "success": False,
+                "message": error_msg
+            }, status_code=400)
+            
+    except Exception as e:
+        logger.error(f"Get openid failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取openid失败: {str(e)}")
+
+
+def _has_completed_first_recharge(auth_token: str) -> bool:
+    """
+    调用认证服务接口，判断用户是否已经完成首充
+    
+    Args:
+        auth_token: 用户认证 token
+    
+    Returns:
+        True 表示已经首充，False 表示仍是首充用户
+    """
+    success, message, response_data = make_perseids_request(
+        endpoint='user/check_first_recharge',
+        method='GET',
+        headers={'Authorization': f'Bearer {auth_token}'}
+    )
+
+    if not success:
+        logger.error(f"Token verification failed: {message}")
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    logger.info(f"Token verification successful: {response_data}")
+    first_recharge = response_data.get('first_recharge')
+    if first_recharge is None:
+        raise HTTPException(status_code=401, detail="Invalid user information")
+
+    return first_recharge == 1
+
+
+def _append_redirect_url(h5_url: Optional[str], redirect_url: str) -> Optional[str]:
+    """
+    在H5支付链接中追加 redirect_url 参数（若已存在则覆盖）
+    """
+    if not h5_url:
+        return h5_url
+    try:
+        parsed = urlparse(h5_url)
+        query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query_params["redirect_url"] = redirect_url
+        new_query = urlencode(query_params, doseq=True)
+        return urlunparse(parsed._replace(query=new_query))
+    except Exception as e:
+        logger.error(f"Failed to append redirect_url to h5_url: {e}")
+        return h5_url
+
+
+def _update_first_recharge_status(auth_token: str) -> None:
+    """
+    调用认证服务接口，更新用户首充状态
+    
+    Args:
+        auth_token: 用户认证 token
+    """
+    success, message, response_data = make_perseids_request(
+        endpoint='user/update_first_recharge',
+        method='POST',
+        headers={'Authorization': f'Bearer {auth_token}'}
+    )
+
+    if not success:
+        logger.error(f"Failed to update first recharge status: {message}")
+        raise HTTPException(status_code=400, detail="更新首充状态失败")
+
+    logger.info(f"First recharge status updated successfully: {response_data}")
+
+
+@app.get("/api/recharge/packages")
+async def get_recharge_packages(auth_token: str):
+    """
+    获取算力充值套餐列表
+    
+    Args:
+        auth_token: 用户认证token
+    
+    Returns:
+        List of recharge packages with computing power and pricing
+        If user has already recharged before, the first package (首充福利) will be filtered out
+    """
+    try:
+        # 查询用户是否已经首充
+        has_completed_first_recharge = _has_completed_first_recharge(auth_token)
+
+        # 如果用户已经充值过，过滤掉首充福利套餐（第一个套餐）
+        packages = RECHARGE_PACKAGES.copy()
+        if has_completed_first_recharge:
+            packages = [pkg for pkg in packages if pkg.get("package_id") != 1]
+            logger.info(f"已经首充，过滤掉首充福利套餐")
+        else:
+            logger.info(f"是首充用户，显示所有套餐")
+        
+        return JSONResponse({
+            "success": True,
+            "packages": packages
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get recharge packages: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取充值套餐失败: {str(e)}")
+
+
+@app.post("/api/recharge/wechat-pay")
+async def create_wechat_payment(request: WechatPayRequest):
+    """
+    创建微信支付订单
+    
+    Args:
+        request: 包含套餐ID、用户ID、认证token和浏览器类型的请求
+    
+    Returns:
+        微信支付二维码URL/JSAPI支付参数和订单信息
+    
+    TODO: 实现具体的微信支付逻辑
+    - 调用微信支付API创建订单
+    - 根据is_wechat_browser参数选择支付方式：
+      * True: 使用JSAPI支付（微信内浏览器）
+      * False: 使用H5支付或Native支付（外部浏览器）
+    - 保存订单记录到数据库
+    - 实现支付回调处理
+    - 支付成功后增加用户算力
+    """
+    try:
+        # 验证用户token
+        if not request.auth_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Authentication token is required"
+            )
+        
+        # 验证用户登录状态：通过查询算力判断token是否有效
+        try:
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers={'Authorization': f'Bearer {request.auth_token}'}
+            )
+            
+            if not success:
+                logger.warning(f"User {request.user_id} authentication failed or expired")
+                raise HTTPException(
+                    status_code=401,
+                    detail="登录已过期，请重新登录"
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to verify user authentication: {str(e)}")
+            raise HTTPException(
+                status_code=401,
+                detail="登录过期，请重新登录"
+            )
+        
+        # 验证套餐ID
+        package_info = None
+        for package in RECHARGE_PACKAGES:
+            if package["package_id"] == request.package_id:
+                package_info = package
+                break
+        
+        if not package_info:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid package ID"
+            )
+
+        # 首充套餐校验：如果package_id为1且用户已首充，禁止再次购买
+        if request.package_id == 1:
+            has_completed_first_recharge = _has_completed_first_recharge(request.auth_token)
+            if has_completed_first_recharge:
+                logger.warning(f"User {request.user_id} attempted to purchase first-charge package again")
+                raise HTTPException(
+                    status_code=400,
+                    detail="首充福利仅限首次充值，您已领取过该套餐"
+                )
+        
+        # 生成订单ID
+        order_id = wechat_pay_util.generate_order_id()
+        
+        # 计算支付金额（单位：分）
+        total_fee = int(package_info["price"] * 100)
+        body = f"算力充值-{package_info['computing_power']}算力"
+        
+        # TODO: 配置回调URL
+        notify_url = f"{SERVER_HOST}/api/recharge/wechat-callback"
+        
+        # 根据浏览器类型选择支付方式
+        payment_result = {}
+        payment_type = ""
+        
+        if request.is_wechat_browser:
+            # 微信内浏览器使用JSAPI支付
+            payment_type = "JSAPI"
+            
+            # 获取用户的openid
+            if not request.openid:
+                raise HTTPException(
+                    status_code=400,
+                    detail="微信支付需要用户openid，请先进行微信授权"
+                )
+            
+            payment_result = wechat_pay_util.create_jsapi_payment(
+                order_id=order_id,
+                total_fee=total_fee,
+                body=body,
+                openid=request.openid,
+                notify_url=notify_url,
+                payer_client_ip=request.payment_ip or "127.0.0.1"
+            )
+        else:
+            # 外部浏览器使用H5支付
+            payment_type = "H5"
+            
+            payment_result = wechat_pay_util.create_h5_payment(
+                order_id=order_id,
+                total_fee=total_fee,
+                body=body,
+                notify_url=notify_url,
+                payer_client_ip=request.payment_ip or "127.0.0.1"
+            )
+        
+        # 保存订单记录到数据库
+        try:
+            record_id = PaymentOrdersModel.create(
+                order_id=order_id,
+                user_id=request.user_id,
+                package_id=request.package_id,
+                computing_power=package_info["computing_power"],
+                price=package_info["price"],
+                payment_type=payment_type,
+                status=0,  # 0-待支付
+                payment_ip=request.payment_ip
+            )
+            logger.info(f"Saved payment order {record_id} to database")
+        except Exception as e:
+            logger.error(f"Failed to save payment order to database: {e}")
+            # 继续执行，不影响支付流程
+        
+        logger.info(f"Created {payment_type} payment order {record_id} for user {request.user_id}, package {request.package_id}")
+        
+        # 更新用户首充状态
+        _update_first_recharge_status(auth_token=request.auth_token)
+        
+        # 返回支付信息
+        response_data = {
+            "success": True,
+            "order_id": record_id,
+            "package_id": request.package_id,
+            "computing_power": package_info["computing_power"],
+            "price": package_info["price"],
+            "payment_type": payment_type
+        }
+        
+        # 根据支付类型返回不同的数据
+        if payment_type == "JSAPI":
+            # JSAPI支付返回支付参数，前端调用微信JSAPI
+            response_data["jsapi_params"] = payment_result
+            response_data["message"] = "订单创建成功，请在微信中完成支付"
+        else:
+            # H5支付返回跳转URL
+            h5_url = payment_result.get("h5_url")
+            h5_url_with_redirect = _append_redirect_url(h5_url, SERVER_HOST)
+            response_data["h5_url"] = h5_url_with_redirect
+            response_data["message"] = "订单创建成功，即将跳转到支付页面"
+        
+        return JSONResponse(response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create wechat payment: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"创建支付订单失败: {str(e)}")
+
+
+@app.post("/api/recharge/wechat-callback")
+async def wechat_payment_callback(request: Request):
+    """
+    微信支付回调接口（V3 API）
+    
+    接收微信支付成功后的异步通知
+    
+    回调数据格式：
+    {
+        "id": "事件ID",
+        "create_time": "创建时间",
+        "resource_type": "encrypt-resource",
+        "event_type": "TRANSACTION.SUCCESS",
+        "summary": "支付成功",
+        "resource": {
+            "original_type": "transaction",
+            "algorithm": "AEAD_AES_256_GCM",
+            "ciphertext": "加密数据",
+            "associated_data": "附加数据",
+            "nonce": "随机串"
+        }
+    }
+    """
+    try:
+        # 获取回调数据
+        body = await request.body()
+        callback_data = json.loads(body.decode('utf-8'))
+        
+        logger.info(f"Received wechat payment callback: {callback_data.get('id')}")
+        logger.info(f"Event type: {callback_data.get('event_type')}")
+        
+        # TODO: 验证回调签名
+        # 从请求头获取签名信息
+        timestamp = request.headers.get("Wechatpay-Timestamp")
+        nonce = request.headers.get("Wechatpay-Nonce")
+        signature = request.headers.get("Wechatpay-Signature")
+        serial = request.headers.get("Wechatpay-Serial")
+        
+        if not wechat_pay_util.verify_callback_signature(timestamp, nonce, body, signature):
+            logger.error("Invalid callback signature")
+            return JSONResponse({"code": "FAIL", "message": "签名验证失败"}, status_code=400)
+        
+        # 检查事件类型
+        event_type = callback_data.get("event_type")
+        if event_type != "TRANSACTION.SUCCESS":
+            logger.warning(f"Unsupported event type: {event_type}")
+            return JSONResponse({"code": "SUCCESS", "message": "OK"})
+        
+        # 解密资源数据
+        resource = callback_data.get("resource", {})
+        ciphertext = resource.get("ciphertext")
+        associated_data = resource.get("associated_data")
+        resource_nonce = resource.get("nonce")
+        
+        if not ciphertext or not associated_data or not resource_nonce:
+            logger.error("Missing encryption parameters in callback")
+            return JSONResponse({"code": "FAIL", "message": "缺少加密参数"}, status_code=400)
+        
+        # 使用APIv3密钥解密
+        try:
+            decrypted_data = wechat_pay_util.decrypt_callback_resource(
+                nonce=resource_nonce,
+                ciphertext=ciphertext,
+                associated_data=associated_data
+            )
+        except Exception as e:
+            logger.error(f"Failed to decrypt callback data: {str(e)}")
+            return JSONResponse({"code": "FAIL", "message": "解密失败"}, status_code=400)
+        
+        # 解析交易数据
+        transaction_data = json.loads(decrypted_data)
+        order_id = transaction_data.get("out_trade_no")
+        transaction_id = transaction_data.get("transaction_id")
+        trade_state = transaction_data.get("trade_state")
+        
+        logger.info(f"Decrypted transaction: order_id={order_id}, transaction_id={transaction_id}, state={trade_state}")
+        
+        # 如果支付成功，处理订单
+        if trade_state == "SUCCESS":
+            # 查询订单
+            order = PaymentOrdersModel.get_by_order_id(order_id)
+            
+            if not order:
+                logger.error(f"Order not found: {order_id}")
+                return JSONResponse({"code": "FAIL", "message": "订单不存在"}, status_code=400)
+            
+            # 检查订单状态，避免重复处理
+            if order.status == 1:
+                logger.info(f"Order already paid: {order_id}")
+                return JSONResponse({"code": "SUCCESS", "message": "OK"})
+            
+            # 更新订单状态为已支付
+            PaymentOrdersModel.update_paid(order_id, transaction_id)
+            user_id = order.user_id
+            # TODO: 增加用户算力
+            logger.info(f"Refunding {user_id} , {AUTHENTICATION_ID}")
+            success, message, response_data = make_perseids_request(
+                endpoint='get_auth_token_by_user_id',
+                method='POST',
+                data={
+                    "user_id": user_id,
+                    "authentication_id": AUTHENTICATION_ID
+                }
+            )
+
+            if not success:
+                logger.error(f"Failed to get auth token for user {user_id}: {message}")
+                return False
+                
+            auth_token = response_data['token']
+            headers = {'Authorization': f'Bearer {auth_token}'}
+                        
+            # 发起请求，增加算力
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": order.computing_power,
+                    "behavior": "increase",
+                    "transaction_id": transaction_id
+                }
+            )
+            
+            logger.info(f"Payment processed successfully: order_id={order_id}, user_id={order.user_id}, computing_power={order.computing_power}")
+        
+        # 返回成功响应（V3 API使用JSON格式）
+        return JSONResponse({"code": "SUCCESS", "message": "OK"})
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse callback data: {str(e)}")
+        return JSONResponse({"code": "FAIL", "message": "数据格式错误"}, status_code=400)
+    except Exception as e:
+        logger.error(f"Wechat payment callback failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse({"code": "FAIL", "message": str(e)}, status_code=500)
+
+
+# Serve upload directory for static file access
+upload_dir = os.path.join(APP_DIR, "upload")
+if not os.path.exists(upload_dir):
+    os.makedirs(upload_dir, exist_ok=True)
+app.mount("/upload", StaticFiles(directory=upload_dir), name="uploads")
 
 class VideoWorkflowCreateRequest(BaseModel):
     name: str
@@ -4125,6 +4634,7 @@ if __name__ == "__main__":
         logger.info(f"Using SSL cert: {ssl_certfile}")
         logger.info(f"Using SSL key: {ssl_keyfile}")
         
+        init_scheduler(app)
         uvicorn.run(
             "server:app", 
             host="0.0.0.0", 
@@ -4136,4 +4646,5 @@ if __name__ == "__main__":
     else:
         # HTTP configuration
         logger.info(f"Starting HTTP server on port {port}")
+        init_scheduler(app)
         uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)

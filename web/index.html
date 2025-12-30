@@ -29,7 +29,7 @@
                   ↻
                 </button>
               </div>
-              <button class="btn secondary" @click="showRechargePowerModal = true" style="margin-top: 8px; font-size: 12px; padding: 4px 12px;">算力充值</button>
+              <button class="btn secondary" @click="showRechargePowerModal = true; fetchRechargePackages()" style="margin-top: 8px; font-size: 12px; padding: 4px 12px;">算力充值</button>
             </div>
             <button class="btn secondary" @click="handleLogout">登出</button>
           </template>
@@ -39,6 +39,11 @@
 
       <router-view />
     </div>
+    
+    <!-- ICP备案信息 -->
+    <footer class="icp-footer">
+      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">浙ICP备2023022572号-1</a>
+    </footer>
 
     <!-- Login/Register Modal -->
     <div class="modal-overlay" v-if="showLoginModal" @click.self="closeModal">
@@ -192,13 +197,74 @@
     </div>
     
     <!-- Recharge Computing Power Modal -->
-    <div class="modal-overlay" v-if="showRechargePowerModal" @click.self="showRechargePowerModal = false">
-      <div class="modal" style="position: relative; max-width: 500px;">
-        <button class="modal-close" @click="showRechargePowerModal = false">×</button>
+    <div class="modal-overlay" v-if="showRechargePowerModal" @click.self="closeRechargeModal">
+      <div class="modal" style="position: relative; max-width: 600px;">
+        <button class="modal-close" @click="closeRechargeModal">×</button>
         <div class="modal-title">算力充值</div>
-        <div style="padding: 20px; text-align: center;">
-          <img src="/files/二维码.jpg" alt="客服微信二维码" style="max-width: 100%; height: auto; border-radius: 8px; margin-bottom: 16px;" />
-          <p style="font-size: 16px; color: var(--text); margin: 0;">请添加客服微信充值算力</p>
+        
+        <!-- Package Selection -->
+        <div v-if="!selectedPackage" style="padding: 20px;">
+          <div class="package-intro">
+            <p class="package-intro-text">选择适合您的算力套餐</p>
+            <p class="package-intro-subtext">支持微信支付，充值后立即到账</p>
+          </div>
+          
+          <div v-if="rechargePackagesLoading" style="text-align: center; padding: 40px;">
+            <div class="loading-spinner"></div>
+            <p style="margin-top: 16px; color: var(--muted);">加载套餐中...</p>
+          </div>
+          <div v-else-if="rechargePackages.length > 0" class="package-list">
+            <div 
+              v-for="(pkg, index) in rechargePackages" 
+              :key="pkg.package_id" 
+              class="package-item"
+              @click="selectPackage(pkg)"
+            >
+              <div class="package-header">
+                <div class="package-title-section">
+                  <span class="package-name">{{ pkg.description }}</span>
+                  <span class="package-computing-power">{{ pkg.computing_power }} 算力</span>
+                </div>
+                <div class="package-price-section">
+                  <span class="package-price">¥{{ pkg.price }}</span>
+                  <span class="package-unit-price">{{ (pkg.price / pkg.computing_power * 100).toFixed(2) }}元/百算力</span>
+                </div>
+              </div>
+              <div class="package-footer">
+                <span class="package-select-hint">点击选择</span>
+                <span class="package-arrow">→</span>
+              </div>
+            </div>
+          </div>
+          <div v-else style="text-align: center; padding: 40px; color: var(--muted);">
+            <p>暂无可用套餐</p>
+          </div>
+        </div>
+        
+        <!-- Payment Processing -->
+        <div v-else style="padding: 20px;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">
+              {{ selectedPackage.description }}
+            </div>
+            <div style="font-size: 16px; color: var(--muted);">
+              {{ selectedPackage.computing_power }} 算力 - ¥{{ selectedPackage.price }}
+            </div>
+          </div>
+          
+          <div v-if="paymentLoading" style="text-align: center; padding: 40px;">
+            <div class="loading-spinner"></div>
+            <p style="margin-top: 16px;">正在创建支付订单...</p>
+            <p style="font-size: 12px; color: var(--muted); margin-top: 8px;">请稍候</p>
+          </div>
+          <div v-else-if="paymentError" style="text-align: center; padding: 20px;">
+            <p style="color: var(--danger); margin-bottom: 16px;">{{ paymentError }}</p>
+            <button class="btn secondary" @click="retryPayment">重试</button>
+          </div>
+          
+          <div style="margin-top: 20px; text-align: center;">
+            <button class="btn secondary" @click="backToPackageSelection">返回选择套餐</button>
+          </div>
         </div>
       </div>
     </div>
@@ -286,6 +352,13 @@
           </div>
           <button class="btn" onclick="location.href='/character_card.html'">打开</button>
         </div>
+        <div class="list-item">
+          <div>
+            <div style="font-weight:700">AI音频生成</div>
+            <div class="muted">输入文本生成语音，支持声音克隆和情感控制</div>
+          </div>
+          <button class="btn" @click="$router.push({name:'audio-generate'})">打开</button>
+        </div>
         <!-- <div class="list-item">
           <div>
             <div style="font-weight:700">小红书笔记修改</div>
@@ -297,6 +370,267 @@
     `,
   };
 
+
+  const AudioGenerate = {
+    name: 'AudioGenerate',
+    data() {
+      return {
+        text: '',
+        refAudioFile: null,
+        emoRefAudioFile: null,
+        emoText: '',
+        emoWeight: 1,
+        emoControlMethod: 0,
+        emoVec: [0, 0, 0, 0, 0, 0, 0, 0],
+        loading: false,
+        error: '',
+        result: null,
+        audioId: null,
+        status: '',
+        statusInterval: null,
+        authToken: '',
+      }
+    },
+    mounted() {
+      this.authToken = localStorage.getItem('auth_token') || '';
+    },
+    computed: {
+      canSubmit() { 
+        if (!this.text.trim() || this.loading) return false;
+        if (this.emoControlMethod === 2 && !this.emoVecValid) return false;
+        return true;
+      },
+      emoControlOptions() {
+        return [
+          { value: 0, label: '与参考音频相同' },
+          { value: 1, label: '使用情感参考音频' },
+          { value: 2, label: '使用情感向量' },
+          { value: 3, label: '使用情感描述文本' }
+        ];
+      },
+      emoVecLabels() {
+        return ['喜', '怒', '哀', '惧', '厌恶', '低落', '惊喜', '平静'];
+      },
+      emoVecSum() {
+        return this.emoVec.reduce((sum, val) => sum + val, 0);
+      },
+      emoVecValid() {
+        return this.emoVecSum <= 1.5;
+      },
+      statusText() {
+        if (this.status === 'submitted') return '任务已提交，正在生成音频...';
+        if (this.loading) return '正在生成音频，请稍候...';
+        if (this.result) return '音频生成完成！';
+        return '';
+      }
+    },
+    methods: {
+      onRefAudioFile(e) { this.refAudioFile = e.target.files[0] || null; },
+      onEmoRefAudioFile(e) { this.emoRefAudioFile = e.target.files[0] || null; },
+      
+      async submit() {
+        if (!this.canSubmit) return;
+        
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.error = '请先登录后再使用音频生成功能';
+          return;
+        }
+        
+        this.loading = true;
+        this.error = '';
+        this.result = null;
+        this.audioId = null;
+        this.status = '';
+        this.clearStatusCheck();
+        
+        try {
+          const form = new FormData();
+          form.append('text', this.text);
+          form.append('user_id', userId);
+          form.append('emo_control_method', this.emoControlMethod);
+          
+          if (this.refAudioFile) {
+            form.append('ref_audio', this.refAudioFile);
+          }
+          
+          if (this.emoRefAudioFile) {
+            form.append('emo_ref_audio', this.emoRefAudioFile);
+          }
+          
+          if (this.emoText) {
+            form.append('emo_text', this.emoText);
+          }
+          
+          if (this.emoWeight !== null) {
+            form.append('emo_weight', this.emoWeight);
+          }
+          
+          if (this.emoControlMethod === 2) {
+            form.append('emo_vec', this.emoVec.join(','));
+          }
+          
+          if (this.authToken) {
+            form.append('auth_token', this.authToken);
+          }
+          
+          const res = await axios.post('/api/audio-generate', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          
+          this.audioId = res.data.audio_id;
+          this.status = res.data.status || 'submitted';
+          
+          if (this.audioId) {
+            this.startStatusCheck();
+          }
+          
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '请求失败';
+          this.loading = false;
+        }
+      },
+      
+      async checkStatus() {
+        if (!this.audioId) return;
+        
+        try {
+          const authToken = localStorage.getItem('auth_token');
+          const params = authToken ? { auth_token: authToken } : {};
+          
+          const res = await axios.get(`/api/audio-status/${this.audioId}`, { params });
+          const payload = res?.data;
+          
+          if (!payload) {
+            console.error('Invalid status response:', payload);
+            return;
+          }
+          
+          const status = typeof payload.status === 'string' ? payload.status.toUpperCase() : payload.status;
+          
+          if (status === 'SUCCESS' || status === 2) {
+            this.result = payload.result_url ? { file_url: payload.result_url } : null;
+            this.status = 'SUCCESS';
+            this.loading = false;
+            this.clearStatusCheck();
+          } else if (status === 'FAILED' || status === -1) {
+            this.error = payload.reason || payload.message || '任务失败';
+            this.status = 'FAILED';
+            this.loading = false;
+            this.clearStatusCheck();
+          } else {
+            this.status = 'RUNNING';
+          }
+        } catch (err) {
+          console.error('Status check failed:', err);
+        }
+      },
+      
+      startStatusCheck() {
+        this.statusInterval = setInterval(() => {
+          this.checkStatus();
+        }, 10000);
+      },
+      
+      clearStatusCheck() {
+        if (this.statusInterval) {
+          clearInterval(this.statusInterval);
+          this.statusInterval = null;
+        }
+      },
+      
+      downloadAudio(url) {
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = `audio_${dateStr}_${timeStr}.wav`;
+        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+        window.open(downloadUrl, '_blank');
+      }
+    },
+    beforeUnmount() {
+      this.clearStatusCheck();
+    },
+    template: `
+      <div class="form">
+        <div class="field">
+          <label class="label">生成文本 <span style="color: red;">*</span></label>
+          <textarea class="input" v-model="text" placeholder="输入要转换为语音的文本" rows="4"></textarea>
+        </div>
+        
+        <div class="field">
+          <label class="label">参考音频（可选）</label>
+          <input type="file" @change="onRefAudioFile" accept="audio/*" class="input" :disabled="loading">
+          <div class="muted" style="margin-top: 4px;">上传参考音频进行声音克隆</div>
+        </div>
+        
+        <div class="field">
+          <label class="label">情感控制方式</label>
+          <select class="input" v-model="emoControlMethod">
+            <option v-for="opt in emoControlOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </div>
+        
+        <div class="field" v-if="emoControlMethod === 1">
+          <label class="label">情感参考音频</label>
+          <input type="file" @change="onEmoRefAudioFile" accept="audio/*" class="input" :disabled="loading">
+          <div class="muted" style="margin-top: 4px;">上传情感参考音频</div>
+        </div>
+        
+        <div class="field" v-if="emoControlMethod === 2">
+          <label class="label">情感向量控制</label>
+          <div style="margin-bottom: 16px;">
+            <div v-for="(label, idx) in emoVecLabels" :key="idx" style="margin-bottom: 12px;">
+              <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                <span style="font-size: 14px;">{{ label }}</span>
+                <span style="font-size: 14px; color: var(--primary);">{{ emoVec[idx].toFixed(2) }}</span>
+              </div>
+              <input type="range" v-model.number="emoVec[idx]" min="0" max="1.5" step="0.01" style="width: 100%;" />
+            </div>
+          </div>
+          <div class="muted" style="margin-top: 8px;">
+            当前总和: <span :style="{color: emoVecValid ? 'var(--success)' : 'var(--danger)', fontWeight: 'bold'}">{{ emoVecSum.toFixed(2) }}</span> / 1.5
+            <span v-if="!emoVecValid" style="color: var(--danger); margin-left: 8px;">⚠️ 情感向量之和不能超过1.5</span>
+          </div>
+        </div>
+        
+        <div class="field" v-if="emoControlMethod === 3">
+          <label class="label">情感描述文本</label>
+          <input class="input" v-model="emoText" placeholder="描述期望的情感，例如：开心、悲伤、愤怒" />
+        </div>
+        
+        <div class="field" v-if="emoControlMethod === 1">
+          <label class="label">情感权重 ({{ emoWeight }})</label>
+          <input type="range" v-model.number="emoWeight" min="0" max="1.6" step="0.1" style="width: 100%;" />
+          <div class="muted" style="margin-top: 4px;">调整情感的强度，0为无情感，1.6为最强情感</div>
+        </div>
+        
+        <div class="field">
+          <button class="btn" @click="submit" :disabled="!canSubmit">
+            {{ loading ? '生成中...' : '开始生成' }}
+          </button>
+        </div>
+        
+        <div v-if="statusText" class="status" :class="{'success': result, 'danger': status==='FAILED'}">
+          {{ statusText }}
+        </div>
+        
+        <div v-if="error && !loading" class="status danger">{{ error }}</div>
+        
+        <div v-if="result" class="results">
+          <div class="result-title">生成结果</div>
+          <div class="result-item">
+            <audio :src="result.file_url" controls style="width:100%; margin-bottom:8px;"></audio>
+            <button class="btn secondary" @click="downloadAudio(result.file_url)">下载音频</button>
+          </div>
+        </div>
+      </div>
+    `
+  };
 
   const VideoRemix = {
     name: 'VideoRemix',
@@ -3727,7 +4061,8 @@
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
     { path: '/video-enhance', name: 'video-enhance', component: VideoEnhance },
-    { path: '/video-remix', name: 'video-remix', component: VideoRemix }
+    { path: '/video-remix', name: 'video-remix', component: VideoRemix },
+    { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate }
   ];
   const router = VueRouter.createRouter({
     history: VueRouter.createWebHistory(),
@@ -3783,7 +4118,16 @@
       resetCountdownTimer: null,
       showTermsModal: false,
       termsContent: '',
-      showWechatGuideModal: false
+      showWechatGuideModal: false,
+      rechargePackages: [],
+      rechargePackagesLoading: false,
+      selectedPackage: null,
+      paymentLoading: false,
+      paymentQrCode: '',
+      paymentOrderId: '',
+      paymentError: '',
+      wechatOpenid: '',
+      userIp: ''
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -3792,6 +4136,13 @@
       this.userPhone = urlParams.get('phone') || '';
       this.userId = urlParams.get('user_id') || '';
       this.inviteCode = urlParams.get('invite_code') || '';
+      
+      // 处理微信授权回调
+      const wechatCode = urlParams.get('code');
+      if (wechatCode) {
+        this.handleWechatAuthCallback(wechatCode);
+      }
+      
       if (this.authToken) {
         localStorage.removeItem('auth_token');
         localStorage.removeItem('phone');
@@ -3809,6 +4160,12 @@
         this.userId = localStorage.getItem('user_id') || '';
         this.inviteCode = localStorage.getItem('invite_code') || '';
       }
+      
+      // 尝试从localStorage恢复openid
+      this.wechatOpenid = localStorage.getItem('wechat_openid') || '';
+      
+      // 获取用户IP地址
+      this.fetchUserIp();
       
       // Fetch computing power if logged in
       if (this.authToken) {
@@ -3838,6 +4195,7 @@
         if (this.route.name === 'image-to-video') return '图片生成视频';
         if (this.route.name === 'ai-script-gen') return '图生视频智能体';
         if (this.route.name === 'video-enhance') return '视频高清修复';
+        if (this.route.name === 'audio-generate') return 'AI 音频生成';
         return 'AI 工具';
       },
       isLoggedIn() {
@@ -4320,6 +4678,206 @@
       isWechatBrowser() {
         const ua = navigator.userAgent.toLowerCase();
         return /micromessenger/.test(ua);
+      },
+      
+      async fetchRechargePackages() {
+        this.rechargePackagesLoading = true;
+        try {
+          const response = await axios.get('/api/recharge/packages', {
+            params: {
+              auth_token: this.authToken
+            }
+          });
+          if (response.data.success) {
+            this.rechargePackages = response.data.packages || [];
+          } else {
+            console.error('Failed to fetch recharge packages:', response.data);
+          }
+        } catch (error) {
+          console.error('Error fetching recharge packages:', error);
+          if (error.response?.status === 401) {
+            alert('登录已过期，请重新登录');
+          }
+        } finally {
+          this.rechargePackagesLoading = false;
+        }
+      },
+      
+      async selectPackage(pkg) {
+        if (!this.authToken || !this.userId) {
+          alert('请先登录');
+          this.showRechargePowerModal = false;
+          this.showLoginModal = true;
+          return;
+        }
+        
+        this.selectedPackage = pkg;
+        this.paymentError = '';
+        this.paymentQrCode = '';
+        this.paymentOrderId = '';
+        
+        // 如果是微信浏览器且没有openid，先获取openid
+        if (this.isWechatBrowser() && !this.wechatOpenid) {
+          this.requestWechatAuth();
+          return;
+        }
+        
+        await this.createPaymentOrder();
+      },
+      
+      async handleWechatAuthCallback(code) {
+        try {
+          const response = await axios.get('/api/wechat/get-openid', {
+            params: { code }
+          });
+          
+          if (response.data.success) {
+            this.wechatOpenid = response.data.openid;
+            localStorage.setItem('wechat_openid', this.wechatOpenid);
+            console.log('成功获取openid');
+            
+            // 如果有选中的套餐，继续创建支付订单
+            if (this.selectedPackage) {
+              await this.createPaymentOrder();
+            }
+          } else {
+            console.error('获取openid失败:', response.data.message);
+          }
+        } catch (error) {
+          console.error('处理微信授权回调失败:', error);
+        }
+      },
+      
+      requestWechatAuth() {
+        // 获取微信公众号AppID（需要从配置中获取）
+        const appId = 'wxfcf09f56c3d2b2b8'; // TODO: 从后端配置获取
+        const redirectUri = encodeURIComponent(window.location.href);
+        const scope = 'snsapi_base'; // 静默授权，只获取openid
+        
+        // 跳转到微信授权页面
+        const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&state=STATE#wechat_redirect`;
+        window.location.href = authUrl;
+      },
+      
+      async fetchUserIp() {
+        try {
+          // 使用公共IP查询API获取用户IP
+          const response = await axios.get('https://api.ipify.org?format=json');
+          this.userIp = response.data.ip;
+          console.log('User IP:', this.userIp);
+        } catch (error) {
+          console.error('Failed to fetch user IP:', error);
+          // 如果获取失败，使用默认值
+          this.userIp = '0.0.0.0';
+        }
+      },
+      
+      async createPaymentOrder() {
+        this.paymentLoading = true;
+        this.paymentError = '';
+        
+        try {
+          const requestData = {
+            package_id: this.selectedPackage.package_id,
+            user_id: parseInt(this.userId, 10),
+            auth_token: this.authToken,
+            is_wechat_browser: this.isWechatBrowser(),
+            payment_ip: this.userIp || '0.0.0.0'
+          };
+          
+          // 如果是微信浏览器，传递openid
+          if (this.isWechatBrowser() && this.wechatOpenid) {
+            requestData.openid = this.wechatOpenid;
+          }
+          
+          const response = await axios.post('/api/recharge/wechat-pay', requestData);
+          
+          if (response.data.success) {
+            this.paymentOrderId = response.data.order_id;
+            const paymentType = response.data.payment_type;
+            
+            // 根据支付类型调起不同的支付方式
+            if (paymentType === 'JSAPI') {
+              // 微信内浏览器，调用JSAPI支付
+              this.invokeWechatJSAPI(response.data.jsapi_params);
+            } else if (paymentType === 'H5') {
+              // 外部浏览器，跳转到H5支付页面
+              const h5Url = response.data.h5_url;
+              if (h5Url) {
+                window.location.href = h5Url;
+              } else {
+                this.paymentError = '获取支付链接失败';
+              }
+            } else {
+              this.paymentError = '不支持的支付类型';
+            }
+          } else {
+            this.paymentError = response.data.message || '创建支付订单失败';
+          }
+        } catch (error) {
+          console.error('Error creating payment order:', error);
+          this.paymentError = error?.response?.data?.detail || '创建支付订单失败，请重试';
+        } finally {
+          this.paymentLoading = false;
+        }
+      },
+      
+      invokeWechatJSAPI(jsapiParams) {
+        // 检查是否在微信环境中
+        if (typeof WeixinJSBridge === 'undefined') {
+          this.paymentError = '请在微信中打开';
+          return;
+        }
+        
+        // 调用微信支付JSAPI
+        WeixinJSBridge.invoke(
+          'getBrandWCPayRequest',
+          {
+            appId: jsapiParams.appId,
+            timeStamp: jsapiParams.timeStamp,
+            nonceStr: jsapiParams.nonceStr,
+            package: jsapiParams.package,
+            signType: jsapiParams.signType,
+            paySign: jsapiParams.paySign
+          },
+          (res) => {
+            if (res.err_msg === 'get_brand_wcpay_request:ok') {
+              // 支付成功
+              alert('支付成功！算力将在几秒内到账');
+              this.closeRechargeModal();
+              // 刷新算力
+              setTimeout(() => {
+                this.fetchComputingPower();
+              }, 2000);
+            } else if (res.err_msg === 'get_brand_wcpay_request:cancel') {
+              // 用户取消支付
+              this.paymentError = '支付已取消';
+            } else {
+              // 支付失败
+              this.paymentError = '支付失败: ' + res.err_msg;
+            }
+          }
+        );
+      },
+      
+      backToPackageSelection() {
+        this.selectedPackage = null;
+        this.paymentQrCode = '';
+        this.paymentOrderId = '';
+        this.paymentError = '';
+      },
+      
+      retryPayment() {
+        this.createPaymentOrder();
+      },
+      
+      closeRechargeModal() {
+        this.showRechargePowerModal = false;
+        this.selectedPackage = null;
+        this.paymentQrCode = '';
+        this.paymentOrderId = '';
+        this.paymentError = '';
+        this.rechargePackages = [];
       }
     },
     
