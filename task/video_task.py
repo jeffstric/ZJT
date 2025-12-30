@@ -65,7 +65,7 @@ def _submit_new_task(ai_tool):
         logger.info(response)
         project_id = response.get("data", {}).get("task_id")
     elif ai_tool_type in [2, 3]:
-        result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, image_urls, ai_tool.duration)
+        result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
         logger.info(f"Submit task result: {result}")
         project_id = result.get("id")
     else:
