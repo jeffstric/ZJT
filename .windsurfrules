@@ -1,4 +1,4 @@
-1. 新增、调整功能后，或者发现bug后，请结合 auto_test/test_modules 目录下中的测试用例，判断是否需要添加或者调整测试用例。
+1. 新增、调整功能后，或者发现bug后，请结合 auto_test/test_modules 目录下中的测试用例，判断是否需要添加或者调整测试用例。如果新增了测试模块，请补充到测试模块的索引文件 auto_test/test_modules/index.json 中。
 2. auto_test/test_modules 目录 是提供给智能体调用playwright进行端到端自动化测试的测试用例清单，而非单元测试用例，用于验证完整业务流程。
 3. 脚本的输出信息，避免出现gpk无法识别的符号，如✅、❌等。
 4. video_workflow.html 中，需要将css以及js等相关代码，尽量独立成文件，降低token消耗。

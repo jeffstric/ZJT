@@ -1,3 +1,6 @@
+    const MIN_ZOOM = 0.25;
+    const MAX_ZOOM = 2;
+
     function renderMinimap(){
       updateCanvasSize();
       
@@ -68,28 +71,35 @@
       zoomLevelEl.textContent = Math.round(state.zoom * 100) + '%';
     }
 
+    function setZoom(newZoom, focal){
+      const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+      const oldZoom = state.zoom || 1;
+      if(clampedZoom === oldZoom) return;
+
+      const containerRect = canvasContainer.getBoundingClientRect();
+      const focalX = focal && typeof focal.x === 'number' ? focal.x : containerRect.width / 2;
+      const focalY = focal && typeof focal.y === 'number' ? focal.y : containerRect.height / 2;
+      const worldX = (focalX - state.panX) / oldZoom;
+      const worldY = (focalY - state.panY) / oldZoom;
+
+      state.zoom = clampedZoom;
+      state.panX = Math.min(0, focalX - worldX * clampedZoom);
+      state.panY = Math.min(0, focalY - worldY * clampedZoom);
+
+      applyTransform();
+      updateZoomLevel();
+      renderConnections();
+      renderMinimap();
+      renderImageConnections();
+      renderFirstFrameConnections();
+    }
+
     function zoomIn(){
-      if(state.zoom < 2){
-        state.zoom = Math.min(2, state.zoom + 0.1);
-        applyTransform();
-        updateZoomLevel();
-        renderConnections();
-        renderMinimap();
-        renderImageConnections();
-        renderFirstFrameConnections();
-      }
+      setZoom(state.zoom + 0.1);
     }
 
     function zoomOut(){
-      if(state.zoom > 0.25){
-        state.zoom = Math.max(0.25, state.zoom - 0.1);
-        applyTransform();
-        updateZoomLevel();
-        renderConnections();
-        renderMinimap();
-        renderImageConnections();
-        renderFirstFrameConnections();
-      }
+      setZoom(state.zoom - 0.1);
     }
 
     function setSelected(id){
@@ -99,6 +109,16 @@
         const nid = Number(nodeEl.dataset.nodeId);
         nodeEl.classList.toggle('selected', nid === id);
       }
+    }
+
+    function bringNodeToFront(nodeId){
+      const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+      if(!nodeEl) return;
+      if(typeof state.topZIndex !== 'number' || state.topZIndex < 21){
+        state.topZIndex = 21;
+      }
+      state.topZIndex += 1;
+      nodeEl.style.zIndex = state.topZIndex;
     }
 
     function clearSelection(){

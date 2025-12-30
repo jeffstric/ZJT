@@ -57,7 +57,7 @@ def merge_test_cases(output_file: str = "test_todo_list.json") -> bool:
             module_data = json.load(f)
         
         modules.append(module_data)
-        print(f"[OK] 加载模块: {module_info['id']} ({module_info['feature_count']} 个功能)")
+        print(f"[OK] 加载模块: {module_info['id']} ")
     
     # 构建完整数据结构
     merged_data = {

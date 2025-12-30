@@ -67,15 +67,24 @@ python test_navigator.py --skip-processed
 
 ```
 LOOP_START:
-    1. python test_navigator.py --status  # 检查进度
-    2. 如果 100% 完成 → 生成报告并停止
-    3. 如果 连续失败超过5次 → 报告错误并停止
-    4. python test_navigator.py  # 获取下一个待测试功能
-    5. 创建 Task 分配给测试工程师：
+    1. python check_duplicate_ids.py  # 检查测试用例ID是否重复
+    2. 如果发现重复ID → 报告错误并停止，不进行测试
+    3. python test_navigator.py --status  # 检查进度
+    4. 如果所有测试已处理完毕（is_processed=true）→ 执行归档并停止
+    5. 如果 连续失败超过5次 → 报告错误并停止
+    6. python test_navigator.py --skip-processed  # 获取下一个未处理的功能
+    7. 如果没有更多未处理的测试 → 执行归档并停止
+    8. 创建 Task 分配给测试工程师：
        Task("测试功能 <feature_id>", "/test-module <feature_id>")
-    6. 等待 Task 完成，收到测试工程师返回的结果
-    7. 不要输出总结！不要询问用户！
-    8. GOTO LOOP_START  # 立即创建下一个 Task
+    9. 等待 Task 完成，收到测试工程师返回的结果
+    10. 不要输出总结！不要询问用户！
+    11. GOTO LOOP_START  # 立即创建下一个 Task
+
+当达到停止条件时，执行以下操作后立即停止：
+    1. python test_navigator.py --status  # 再次确认 100% 完成
+    2. python generate_report.py --archive  # 归档测试结果
+    3. python reset_test_session.py  # 重置测试状态（仅在100%完成时）
+    4. 输出完成信息并停止，不要继续下一轮测试
 ```
 
 **注意**：不要在测试过程中运行 `merge_test_cases.py`，这会覆盖测试进度！
@@ -87,10 +96,24 @@ LOOP_START:
 
 **项目经理只在以下情况停止：**
 
-1. **所有测试完成** - `python test_navigator.py --status` 显示 100%
+1. **所有测试已处理完毕** - 所有测试步骤的 `is_processed` 都为 `true`（无论 `pass` 是否为 `true`）
+   - 先确认：`python test_navigator.py --status` 显示 100% 完成
+   - 执行归档：`python generate_report.py --archive`
+   - 执行重置：`python reset_test_session.py`
+   - 输出完成信息并**立即停止**，不要继续下一轮测试
 2. **连续失败超过 5 次** - 可能存在环境问题，需要用户介入
 3. **配置错误** - 无法读取 test_config.json 或服务器无法访问
 4. **用户明确要求停止**
+
+**重要**：
+- 测试完成的判断标准是 `is_processed: true`，而不是 `pass: true`
+- 即使测试失败，只要已经执行并标记为已处理，就认为该测试完成
+- **归档和重置完成后必须停止，绝不要自动开始下一轮测试**
+
+**⚠️ 关键安全提醒**：
+- **绝对不要**在测试未100%完成时运行 `reset_test_session.py`
+- 只有当 `python test_navigator.py --status` 显示 100% 完成时才能重置
+- 如果 `is_processed` 不是全部为 `true`，运行重置会导致测试进度丢失，需要重新开始
 
 **以下情况不要停止：**
 - 单个测试失败 - 但还没有重试超过4次
@@ -130,14 +153,19 @@ LOOP_START:
 
 ## 进度报告与归档
 
-**重要**: 测试完成后，不要输出长文本报告，而是归档测试结果并重置状态：
+**重要**: 测试完成后，使用归档脚本 `generate_report.py` 归档测试结果并重置状态，然后**立即停止**：
 
 ```bash
-# 1. 归档测试结果到时间目录
+# 1. 先确认所有测试都已处理完毕
+python test_navigator.py --status  # 必须显示 100% 完成
+
+# 2. 使用归档脚本 generate_report.py 归档测试结果到时间目录
 python generate_report.py --archive
 
-# 2. 重置测试状态，准备下一轮测试
+# 3. 重置测试状态，为将来的测试做准备（仅在100%完成时执行）
 python reset_test_session.py
+
+# 4. 输出完成信息并停止
 ```
 
 归档后会在 `test_reports/` 目录下创建格式为 `YYYY-MM-DD_HH-MM[_名称]` 的目录，包含：
@@ -151,11 +179,16 @@ python reset_test_session.py
 - `reset_test_session.py --force`: 强制重置，不归档
 - `reset_test_session.py --keep-session`: 保留会话文件，只重置状态
 
+**完成后的正确输出示例**：
 ```
 所有模块测试完成！
-测试结果已归档到: test_reports/2024-12-25_23-00/
-测试状态已重置，可以开始新一轮测试
+测试结果已归档到: test_reports/2025-12-29_19-48/
+测试状态已重置，本轮测试结束。
+
+如需开始新一轮测试，请重新运行 /orchestrator 命令。
 ```
+
+**关键**：归档和重置完成后，项目经理必须停止，不要自动开始下一轮测试！
 
 ## 开始调度
 
@@ -165,10 +198,10 @@ python reset_test_session.py
 # 1. 检查进度
 python test_navigator.py --status
 
-# 2. 获取下一个功能
-python test_navigator.py
+# 2. 获取下一个未处理的功能
+python test_navigator.py --skip-processed
 
-# 3. 创建 Task 分配给测试工程师
+# 3. 如果有未处理的功能，创建 Task 分配给测试工程师
 Task("测试功能 <feature_id>", "/test-module <feature_id>")
 
 # 4. 等待 Task 完成（测试工程师会返回结果）

@@ -240,10 +240,11 @@
       
       // 平移画布
       if(state.panning){
-        const dx = e.clientX - state.panning.startX;
-        const dy = e.clientY - state.panning.startY;
-        state.panX = Math.min(0, state.panning.origPanX + dx);
-        state.panY = Math.min(0, state.panning.origPanY + dy);
+        const zoom = state.zoom || 1;
+        const dx = (e.clientX - state.panning.startX) / zoom;
+        const dy = (e.clientY - state.panning.startY) / zoom;
+        state.panX = Math.min(0, state.panning.origPanX + dx * zoom);
+        state.panY = Math.min(0, state.panning.origPanY + dy * zoom);
         applyTransform();
         renderImageConnections();
         renderFirstFrameConnections();
@@ -256,8 +257,9 @@
       }
       // 拖动节点（支持批量拖动）
       if(state.drag){
-        const dx = e.clientX - state.drag.startX;
-        const dy = e.clientY - state.drag.startY;
+        const zoom = state.zoom || 1;
+        const dx = (e.clientX - state.drag.startX) / zoom;
+        const dy = (e.clientY - state.drag.startY) / zoom;
         
         // 如果拖动的节点在选中列表中，批量移动所有选中的节点
         if(state.selectedNodeIds.includes(state.drag.nodeId)){

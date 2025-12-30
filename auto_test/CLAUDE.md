@@ -94,14 +94,11 @@ python test_navigator.py --module node_operations
 # 查看某个功能的详细步骤
 python test_navigator.py --feature node_005
 
-# 标记当前步骤为通过（必须指定模块）
-python test_navigator.py --pass-current --module <模块ID>
-
 # 标记指定功能的某个步骤为通过
-python test_navigator.py --pass node_005 1
+python test_navigator.py --mark node_005 1 --set-pass true --set-processed true
 
 # 标记指定功能的所有步骤为通过
-python test_navigator.py --pass node_005
+python test_navigator.py --mark node_005 --set-pass true --set-processed true
 ```
 
 ## 测试执行流程
@@ -127,7 +124,7 @@ python test_navigator.py --module <模块ID>
 ### 4. 标记完成
 **使用脚本更新状态**：
 ```bash
-python test_navigator.py --pass-current --module <模块ID>
+python test_navigator.py --mark <功能ID> <步骤号> --set-pass true --set-processed true
 ```
 
 ## 可用命令

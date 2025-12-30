@@ -42,7 +42,7 @@
           "mcp_tool": "mcp1_browser_file_upload",
           "mcp_params": {
             "paths": [
-              "g:/code/comfyui_server/test_assets/test_image.jpg"
+              "${config.test_assets.test_image}"
             ]
           },
           "expected_result": "文件开始上传",
@@ -736,9 +736,12 @@
         {
           "step": 2,
           "action": "选择视频文件",
-          "operation": "upload",
-          "selector": ".video-file",
-          "test_file": "test_video.mp4",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": [
+              "${config.test_assets.test_video}"
+            ]
+          },
           "expected_result": "视频加载成功",
           "pass": false,
           "remark": "",
@@ -1176,6 +1179,273 @@
             "function": "() => { const label = document.querySelector('.image-draw-count-label'); return { text: label ? label.textContent : '', exists: !!label }; }"
           },
           "verify": "exists 为 true 且 text 包含 'X2'",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_017",
+      "name": "删除时间轴中的视频节点确认",
+      "description": "验证删除已添加到时间轴的视频节点时，会弹出确认对话框，确认后同步删除时间轴中的片段",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_010"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建视频节点",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "视频节点按钮",
+            "selector": ".node-btn[data-type='video']"
+          },
+          "expected_result": "视频节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "上传测试视频文件",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": [
+              "${config.test_assets.test_video}"
+            ]
+          },
+          "expected_result": "视频上传成功，显示预览",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "添加视频到时间轴",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加到时间轴按钮",
+            "selector": ".add-to-timeline"
+          },
+          "expected_result": "视频片段出现在时间轴中",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击视频节点删除按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "视频节点删除按钮",
+            "selector": ".node-delete"
+          },
+          "expected_result": "弹出确认对话框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证确认对话框出现",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "删除节点将同时删除这些片段",
+            "time": 5
+          },
+          "expected_result": "确认对话框显示删除警告信息",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "确认删除操作",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "确认删除按钮",
+            "selector": ".confirm-delete"
+          },
+          "expected_result": "节点和时间轴片段都被删除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "验证删除结果",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
+          },
+          "verify": "时间轴片段数量为 0",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_018",
+      "name": "删除重复添加到时间轴的视频节点",
+      "description": "验证删除重复添加到时间轴的视频节点时，确认对话框显示正确的片段数量，确认后删除所有相关片段",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建视频节点",
+          "operation": "创建视频节点并上传视频",
+          "expected_result": "视频节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "多次添加到时间轴",
+          "operation": "点击3次「添加到时间轴」按钮",
+          "expected_result": "时间轴显示3个相同的片段",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证时间轴片段数量",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
+          },
+          "verify": "返回值为 3",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击视频节点删除按钮",
+          "operation": "点击删除按钮",
+          "expected_result": "弹出确认对话框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证确认对话框显示片段数量",
+          "operation": "检查对话框文本",
+          "expected_result": "对话框提示「该视频节点在时间轴中有 3 个片段，删除节点将同时删除这些片段。确定要删除吗？」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "确认删除",
+          "operation": "点击确定按钮",
+          "expected_result": "节点被删除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "验证所有片段都被删除",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return { clipCount: document.querySelectorAll('.timeline-clip').length, timelineVisible: document.getElementById('timelineContainer').style.display !== 'none' }; }"
+          },
+          "verify": "时间轴片段数量为 0，时间轴容器隐藏",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_019",
+      "name": "取消删除时间轴中的视频节点",
+      "description": "验证删除已添加到时间轴的视频节点时，点击取消按钮可以取消删除操作",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_010"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建视频节点并上传视频",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "视频节点按钮",
+            "selector": ".node-btn[data-type='video']"
+          },
+          "expected_result": "视频节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "上传测试视频并添加到时间轴",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": [
+              "${config.test_assets.test_video}"
+            ]
+          },
+          "expected_result": "视频上传成功并添加到时间轴",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击视频节点删除按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "视频节点删除按钮",
+            "selector": ".node-delete"
+          },
+          "expected_result": "弹出确认对话框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击取消按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "取消删除按钮",
+            "selector": ".cancel-delete"
+          },
+          "expected_result": "对话框关闭，节点未被删除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证节点和时间轴片段仍存在",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
+          },
+          "verify": "时间轴片段数量仍为 1",
           "pass": false,
           "remark": "",
           "is_processed": false

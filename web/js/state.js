@@ -31,7 +31,8 @@
       defaultWorldId: null,
       selectionMode: false,
       selecting: null,
-      selectedNodeIds: []
+      selectedNodeIds: [],
+      topZIndex: 21
     };
 
     function normalizeVideoUrl(item){

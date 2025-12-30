@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-测试导航器 - 自动分析测试 JSON 文件，提供下一个需要测试的端到端测试内容
+测试导航器 - 自动分析会话文件，提供下一个需要测试的端到端测试内容
 避免 LLM 大模型上下文快速耗尽
 
 用法:
@@ -10,8 +10,6 @@
     python test_navigator.py --module auth      # 筛选指定模块的下一个测试
     python test_navigator.py --status           # 显示测试进度统计
     python test_navigator.py --feature node_005 # 显示指定功能的详细信息
-    python test_navigator.py --pass node_005 1  # 标记 node_005 的步骤1为通过
-    python test_navigator.py --pass node_005    # 标记 node_005 的所有步骤为通过
     python test_navigator.py --mark node_005 1 --set-pass true --set-processed true  # 标记步骤状态
     python test_navigator.py --mark node_005 --set-pass false --set-processed true    # 标记整个功能为已处理但未通过
     python test_navigator.py --skip-processed   # 跳过已处理(is_processed=true)的测试
@@ -33,20 +31,18 @@ class TestNavigator:
         if base_dir is None:
             base_dir = Path(__file__).parent
         self.base_dir = Path(base_dir)
-        self.todo_list_path = self.base_dir / "test_todo_list.json"
         self.sessions_dir = self.base_dir / "test_sessions"
         self.config_path = self.base_dir / "test_config.json"
 
     def load_test_data(self) -> Dict[str, Any]:
-        """加载测试数据（优先从会话文件加载）"""
+        """加载测试数据（仅从会话文件加载）"""
         # 尝试加载最新的会话文件
         session_file = self._get_latest_session()
         if session_file:
             with open(session_file, 'r', encoding='utf-8-sig') as f:
                 return json.load(f), session_file
-        # 否则加载模板文件
-        with open(self.todo_list_path, 'r', encoding='utf-8-sig') as f:
-            return json.load(f), None
+        # 如果没有会话文件，抛出错误
+        raise FileNotFoundError("未找到会话文件，请先创建会话文件")
 
     def _get_latest_session(self) -> Optional[Path]:
         """获取最新的会话文件"""
@@ -68,24 +64,25 @@ class TestNavigator:
             features = module.get("features", [])
 
             total_features = len(features)
-            passed_features = sum(1 for f in features if f.get("pass", False))
+            # 功能完成条件：所有步骤都已处理完毕（无论通过与否）
+            completed_features = sum(1 for f in features if all(s.get("is_processed", False) for s in f.get("test_steps", [])))
 
             total_steps = 0
-            passed_steps = 0
+            processed_steps = 0
             for feature in features:
                 steps = feature.get("test_steps", [])
                 total_steps += len(steps)
-                passed_steps += sum(1 for s in steps if s.get("pass", False))
+                processed_steps += sum(1 for s in steps if s.get("is_processed", False))
 
             modules.append({
                 "id": module_id,
                 "name": module_name,
                 "total_features": total_features,
-                "passed_features": passed_features,
+                "passed_features": completed_features,
                 "total_steps": total_steps,
-                "passed_steps": passed_steps,
-                "progress": f"{passed_features}/{total_features}",
-                "is_complete": passed_features == total_features
+                "passed_steps": processed_steps,
+                "progress": f"{completed_features}/{total_features}",
+                "is_complete": completed_features == total_features
             })
 
         return modules
@@ -165,8 +162,20 @@ class TestNavigator:
             set_pass: 必填，设置pass字段的值
             set_processed: 必填，设置is_processed字段的值
             step_num: 可选，步骤号。不传则标记整个功能
-            remark: 可选，备注信息
+            remark: 必填，备注信息（防止测试工程师走捷径）
         """
+        # 强制要求提供备注，防止测试工程师走捷径
+        if not remark or remark.strip() == "":
+            print("[ERROR] 必须提供备注信息！这是为了确保测试工程师真正执行了测试。")
+            print("[ERROR] 备注应包含：测试过程、观察结果、验证要点等具体信息。")
+            print("[ERROR] 示例：'成功登录，界面显示用户信息，token验证通过'")
+            return False
+        
+        # 检查备注长度，确保不是敷衍的短备注
+        if len(remark.strip()) < 5:
+            print("[ERROR] 备注信息过短！请提供详细的测试过程和结果描述（至少5个字符）。")
+            print("[ERROR] 这是为了确保测试工程师提供真实的测试证据。")
+            return False
         session_file = self._get_latest_session()
         if not session_file:
             print("[ERROR] 没有找到会话文件")
@@ -180,47 +189,192 @@ class TestNavigator:
             for feature in module.get("features", []):
                 if feature.get("id") == feature_id:
                     found = True
+                    # 记录操作时间戳
+                    current_time = datetime.now().isoformat()
+                    
                     if step_num is not None:
                         # 标记单个步骤
                         for step in feature.get("test_steps", []):
                             if step.get("step") == step_num:
                                 step["pass"] = set_pass
                                 step["is_processed"] = set_processed
-                                if remark:
-                                    step["remark"] = remark
+                                step["remark"] = remark
+                                step["marked_at"] = current_time  # 记录标记时间
+                                step["marked_by"] = "test_engineer"  # 标记操作者
+                                
                                 pass_str = "PASS" if set_pass else "FAIL"
                                 proc_str = "PROCESSED" if set_processed else "UNPROCESSED"
                                 msg = f"[MARK] 已标记 {feature_id} 步骤 {step_num}: pass={set_pass}, is_processed={set_processed}"
-                                if remark:
-                                    msg += f", 备注: {remark}"
+                                msg += f", 备注: {remark}"
+                                msg += f", 时间: {current_time}"
                                 print(msg)
                                 break
                         else:
                             print(f"[ERROR] 未找到步骤 {step_num}")
                             return False
                     else:
-                        # 标记所有步骤
+                        # 标记所有步骤（批量操作需要特别记录）
+                        batch_operation_log = {
+                            "operation_type": "batch_mark_all_steps",
+                            "feature_id": feature_id,
+                            "timestamp": current_time,
+                            "set_pass": set_pass,
+                            "set_processed": set_processed,
+                            "remark": remark,
+                            "step_count": len(feature.get("test_steps", []))
+                        }
+                        
                         for step in feature.get("test_steps", []):
                             step["pass"] = set_pass
                             step["is_processed"] = set_processed
-                            if remark:
-                                step["remark"] = remark
-                        msg = f"[MARK] 已标记 {feature_id} 的所有步骤: pass={set_pass}, is_processed={set_processed}"
-                        if remark:
-                            msg += f", 备注: {remark}"
+                            step["remark"] = remark
+                            step["marked_at"] = current_time
+                            step["marked_by"] = "test_engineer"
+                            step["batch_operation"] = True  # 标记为批量操作
+                        
+                        # 记录批量操作到功能级别
+                        if "batch_operations" not in feature:
+                            feature["batch_operations"] = []
+                        feature["batch_operations"].append(batch_operation_log)
+                        
+                        msg = f"[MARK] 已批量标记 {feature_id} 的所有步骤: pass={set_pass}, is_processed={set_processed}"
+                        msg += f", 备注: {remark}"
+                        msg += f", 时间: {current_time}"
+                        msg += f" [WARNING] 批量操作已记录，请确保真实测试过所有步骤！"
                         print(msg)
 
                     # 检查是否所有步骤都通过，如果是则标记功能为通过
                     all_passed = all(s.get("pass", False) for s in feature.get("test_steps", []))
                     if all_passed:
                         feature["pass"] = True
-                        print(f"[DONE] 功能 {feature_id} 已全部通过!")
+                        feature["completed_at"] = current_time  # 记录功能完成时间
+                        print(f"[DONE] 功能 {feature_id} 已全部通过! 完成时间: {current_time}")
 
                     # 检查是否所有步骤都已处理
                     all_processed = all(s.get("is_processed", False) for s in feature.get("test_steps", []))
                     if all_processed:
                         feature["is_processed"] = True
-                        print(f"[INFO] 功能 {feature_id} 已全部标记为已处理")
+                        feature["processed_at"] = current_time  # 记录处理完成时间
+                        print(f"[INFO] 功能 {feature_id} 已全部标记为已处理，时间: {current_time}")
+                    break
+            if found:
+                break
+
+        if not found:
+            print(f"[ERROR] 未找到功能: {feature_id}")
+            return False
+
+        # 保存更新后的数据
+        with open(session_file, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        print(f"[SAVE] 已更新会话文件: {session_file}")
+        return True
+
+    def mark_batch(self, feature_id: str, batch_config: Dict[str, Any]) -> bool:
+        """批量标记多个步骤为不同状态
+        
+        Args:
+            feature_id: 功能ID
+            batch_config: 批量配置，格式：{
+                "remark": "整体备注信息",
+                "steps": [{"step": 1, "pass": true, "processed": true, "remark": "步骤备注"}, ...]
+            }
+            
+        Returns:
+            bool: 是否成功
+        """
+        # 检查配置格式
+        if not isinstance(batch_config, dict):
+            print("[ERROR] 批量配置必须是字典格式！")
+            return False
+            
+        remark = batch_config.get("remark", "")
+        step_configs = batch_config.get("steps", [])
+        
+        # 强制要求提供备注
+        if not remark or remark.strip() == "":
+            print("[ERROR] 必须在JSON中提供remark字段！这是为了确保测试工程师真正执行了测试。")
+            print("[ERROR] 备注应包含：测试过程、观察结果、验证要点等具体信息。")
+            return False
+        
+        if len(remark.strip()) < 10:
+            print("[ERROR] 备注信息过短！请提供详细的测试过程和结果描述（至少10个字符）。")
+            return False
+            
+        if not step_configs:
+            print("[ERROR] 必须提供步骤配置信息！")
+            return False
+            
+        session_file = self._get_latest_session()
+        if not session_file:
+            print("[ERROR] 没有找到会话文件")
+            return False
+
+        with open(session_file, 'r', encoding='utf-8-sig') as f:
+            data = json.load(f)
+
+        found = False
+        current_time = datetime.now().isoformat()
+        
+        for module in data.get("modules", []):
+            for feature in module.get("features", []):
+                if feature.get("id") == feature_id:
+                    found = True
+                    
+                    # 记录批量混合操作
+                    batch_operation_log = {
+                        "operation_type": "batch_mark_mixed_steps",
+                        "feature_id": feature_id,
+                        "timestamp": current_time,
+                        "step_configs": step_configs,
+                        "remark": remark,
+                        "step_count": len(step_configs)
+                    }
+                    
+                    # 应用步骤配置
+                    updated_steps = []
+                    for config in step_configs:
+                        step_num = config.get("step")
+                        set_pass = config.get("pass", False)
+                        set_processed = config.get("processed", True)
+                        step_remark = config.get("remark", remark)  # 优先使用步骤级备注，否则使用整体备注
+                        
+                        for step in feature.get("test_steps", []):
+                            if step.get("step") == step_num:
+                                step["pass"] = set_pass
+                                step["is_processed"] = set_processed
+                                step["remark"] = step_remark
+                                step["marked_at"] = current_time
+                                step["marked_by"] = "test_engineer"
+                                step["batch_operation"] = True
+                                updated_steps.append(f"步骤{step_num}({'通过' if set_pass else '失败'})")
+                                break
+                        else:
+                            print(f"[WARNING] 未找到步骤 {step_num}")
+                    
+                    # 记录批量操作到功能级别
+                    if "batch_operations" not in feature:
+                        feature["batch_operations"] = []
+                    feature["batch_operations"].append(batch_operation_log)
+                    
+                    # 检查功能状态
+                    all_passed = all(s.get("pass", False) for s in feature.get("test_steps", []))
+                    if all_passed:
+                        feature["pass"] = True
+                        feature["completed_at"] = current_time
+                        print(f"[DONE] 功能 {feature_id} 已全部通过! 完成时间: {current_time}")
+                    
+                    all_processed = all(s.get("is_processed", False) for s in feature.get("test_steps", []))
+                    if all_processed:
+                        feature["is_processed"] = True
+                        feature["processed_at"] = current_time
+                        print(f"[INFO] 功能 {feature_id} 已全部标记为已处理，时间: {current_time}")
+                    
+                    print(f"[MARK] 已批量标记 {feature_id}: {', '.join(updated_steps)}")
+                    print(f"[MARK] 备注: {remark}")
+                    print(f"[MARK] 时间: {current_time}")
+                    print(f"[WARNING] 批量混合操作已记录，请确保真实测试过所有步骤！")
                     break
             if found:
                 break
@@ -251,24 +405,31 @@ class TestNavigator:
 
         for module in data.get("modules", []):
             features = module.get("features", [])
-            module_passed = all(f.get("pass", False) for f in features)
-            if module_passed:
+            # 模块完成条件：所有功能都已处理完毕（无论通过与否）
+            module_completed = all(
+                all(s.get("is_processed", False) for s in f.get("test_steps", []))
+                for f in features
+            )
+            if module_completed:
                 passed_modules += 1
 
             for feature in features:
                 total_features += 1
-                if feature.get("pass", False):
+                # 功能完成条件：所有步骤都已处理完毕（无论通过与否）
+                feature_completed = all(s.get("is_processed", False) for s in feature.get("test_steps", []))
+                if feature_completed:
                     passed_features += 1
 
                 priority = feature.get("priority", "P1")
                 if priority in priority_stats:
                     priority_stats[priority]["total"] += 1
-                    if feature.get("pass", False):
+                    if feature_completed:
                         priority_stats[priority]["passed"] += 1
 
                 for step in feature.get("test_steps", []):
                     total_steps += 1
-                    if step.get("pass", False):
+                    # 步骤完成条件：已处理完毕（无论通过与否）
+                    if step.get("is_processed", False):
                         passed_steps += 1
 
         return {
@@ -446,8 +607,9 @@ def main():
   python test_navigator.py --module auth      # 筛选指定模块的下一个测试
   python test_navigator.py --status           # 显示测试进度统计
   python test_navigator.py --feature node_005 # 显示指定功能的详细信息
-  python test_navigator.py --mark node_005 1 --set-pass true --set-processed true  # 标记步骤状态
-  python test_navigator.py --mark node_005 --set-pass false --set-processed true   # 标记整个功能
+  python test_navigator.py --mark node_005 1 --set-pass true --set-processed true --remark "步骤测试通过"  # 标记单个步骤
+  python test_navigator.py --mark node_005 --set-pass false --set-processed true --remark "功能测试失败"   # 标记整个功能
+  python test_navigator.py --mark-batch auth_001 --batch-config '{"remark":"步骤1通过，步骤2失败","steps":[{"step":1,"pass":true,"processed":true},{"step":2,"pass":false,"processed":true}]}'  # 批量混合标记
   python test_navigator.py --skip-processed   # 跳过已处理的测试
         """
     )
@@ -460,6 +622,8 @@ def main():
     parser.add_argument('--set-pass', type=str, choices=['true', 'false'], help='必填，设置pass字段的值')
     parser.add_argument('--set-processed', type=str, choices=['true', 'false'], help='必填，设置is_processed字段的值')
     parser.add_argument('--remark', '-r', type=str, help='为标记的步骤添加备注信息')
+    parser.add_argument('--mark-batch', type=str, help='批量混合标记功能ID，配合 --batch-config 使用')
+    parser.add_argument('--batch-config', type=str, help='批量配置JSON字符串，格式: "{\"remark\":\"整体备注\",\"steps\":[{\"step\":1,\"pass\":true,\"processed\":true,\"remark\":\"步骤备注\"}]}"')
     parser.add_argument('--skip-processed', action='store_true', help='跳过已处理(is_processed=True)的测试项')
 
     args = parser.parse_args()
@@ -473,6 +637,21 @@ def main():
             print_status(navigator)
         elif args.feature:
             print_feature_detail(navigator, args.feature)
+        elif args.mark_batch:
+            # 批量混合标记功能
+            if not args.batch_config:
+                print("[ERROR] --mark-batch 必须配合 --batch-config 使用")
+                print("   用法: python test_navigator.py --mark-batch <feature_id> --batch-config '<json>'")
+                print("   示例: python test_navigator.py --mark-batch auth_001 --batch-config '{\"remark\":\"步骤1-3通过，步骤4-6失败\",\"steps\":[{\"step\":1,\"pass\":true,\"processed\":true},{\"step\":2,\"pass\":false,\"processed\":true}]}'")
+                sys.exit(1)
+            
+            try:
+                batch_config = json.loads(args.batch_config)
+                navigator.mark_batch(args.mark_batch, batch_config)
+            except json.JSONDecodeError as e:
+                print(f"[ERROR] 批量配置JSON格式错误: {e}")
+                print("   正确格式: '{\"remark\":\"整体备注\",\"steps\":[{\"step\":1,\"pass\":true,\"processed\":true,\"remark\":\"步骤备注\"}]}'")
+                sys.exit(1)
         elif args.mark:
             # 检查必填参数
             if args.set_pass is None or args.set_processed is None:

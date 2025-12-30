@@ -1,5 +1,13 @@
 # 测试工作流规范
 
+## ⚠️ 重要：测试实现方式
+
+**所有测试理论上都应该通过 playwright-mcp 来实现，无需新建 Python 脚本。**
+
+**如果某个测试无法仅通过 MCP 实现，请直接标识测试失败，后期会修改测试用例。**
+
+不要尝试编写额外的 Python 测试脚本或使用其他工具来绕过这个限制。
+
 ## 🔧 核心工具：test_navigator.py
 
 **使用 Python 脚本获取下一个测试项和标记完成，避免上下文溢出！**
@@ -20,23 +28,17 @@ python test_navigator.py --module node_operations
 # 查看某个功能的详细步骤
 python test_navigator.py --feature node_005
 
-# ⭐ 标记当前步骤为通过（必须指定模块）
-python test_navigator.py --pass-current --module node_operations
-
-# ⭐ 标记当前步骤为通过并添加备注
-python test_navigator.py --pass-current --module node_operations --remark "界面显示正常，功能测试通过"
-
 # ⭐ 标记指定功能的某个步骤为通过
-python test_navigator.py --pass node_005 1
+python test_navigator.py --mark node_005 1 --set-pass true --set-processed true
 
 # ⭐ 标记指定步骤为通过并添加备注
-python test_navigator.py --pass node_005 1 --remark "节点创建成功，所有字段显示正确"
+python test_navigator.py --mark node_005 1 --set-pass true --set-processed true --remark "节点创建成功，所有字段显示正确"
 
 # ⭐ 标记指定功能的所有步骤为通过
-python test_navigator.py --pass node_005
+python test_navigator.py --mark node_005 --set-pass true --set-processed true
 
 # ⭐ 标记整个功能为通过并添加备注
-python test_navigator.py --pass node_005 --remark "所有测试步骤完成，功能运行正常"
+python test_navigator.py --mark node_005 --set-pass true --set-processed true --remark "所有测试步骤完成，功能运行正常"
 ```
 
 ## 智能体分工模式

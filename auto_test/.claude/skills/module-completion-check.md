@@ -87,7 +87,7 @@ python test_navigator.py --status
 **解决方案：**
 1. 运行 `python test_navigator.py --module <模块ID>` 找到下一个待测试项
 2. 继续执行剩余的测试步骤
-3. 使用 `python test_navigator.py --pass-current --module <模块ID>` 标记完成
+3. 使用 `python test_navigator.py --mark <功能ID> <步骤号> --set-pass true --set-processed true` 标记完成
 
 ### 问题2：功能未全部完成
 

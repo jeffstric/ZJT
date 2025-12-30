@@ -1,4 +1,56 @@
 
+    const computingPowerValueEl = document.getElementById('computingPowerValue');
+    const computingPowerRefreshBtn = document.getElementById('computingPowerRefreshBtn');
+    const computingPowerChip = document.getElementById('computingPowerChip');
+
+    function updateComputingPowerLabel(value){
+      if(computingPowerValueEl){
+        computingPowerValueEl.textContent = value;
+      }
+    }
+
+    async function fetchComputingPower(){
+      const token = getAuthToken();
+      if(!token){
+        updateComputingPowerLabel('未登录');
+        computingPowerRefreshBtn?.setAttribute('disabled', 'true');
+        return;
+      }
+
+      computingPowerRefreshBtn?.setAttribute('disabled', 'true');
+      updateComputingPowerLabel('加载中...');
+
+      try{
+        const response = await fetch('/api/user/computing_power', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const data = await response.json();
+        if(data.success && data.data){
+          updateComputingPowerLabel(data.data.computing_power ?? 0);
+        }else{
+          console.warn('fetchComputingPower:', data.message);
+          updateComputingPowerLabel('0');
+        }
+      }catch(error){
+        console.error('fetchComputingPower error:', error);
+        updateComputingPowerLabel('0');
+      }finally{
+        computingPowerRefreshBtn?.removeAttribute('disabled');
+      }
+    }
+
+    computingPowerRefreshBtn?.addEventListener('click', () => {
+      fetchComputingPower();
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if(computingPowerChip){
+        fetchComputingPower();
+      }
+    });
+
     // 轮询视频状态
     function pollVideoStatus(projectIds, onProgress, onComplete, onError, onTaskUpdate){
       let pollCount = 0;
