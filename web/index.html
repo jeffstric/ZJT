@@ -389,6 +389,7 @@
         status: '',
         statusInterval: null,
         authToken: '',
+        resultAudioUrl: '',
       }
     },
     mounted() {
@@ -440,6 +441,7 @@
         this.loading = true;
         this.error = '';
         this.result = null;
+        this.clearResultAudioUrl();
         this.audioId = null;
         this.status = '';
         this.clearStatusCheck();
@@ -499,8 +501,26 @@
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
           
-          const res = await axios.get(`/api/audio-status/${this.audioId}`, { params });
-          const payload = res?.data;
+          const res = await axios.get(`/api/audio-status/${this.audioId}`, {
+            params,
+            responseType: 'blob'
+          });
+          
+          const contentType = (res.headers['content-type'] || '').toLowerCase();
+          const headerStatus = res.headers['x-audio-status'];
+          
+          if (headerStatus === 'SUCCESS' || contentType.startsWith('audio/')) {
+            const blobUrl = URL.createObjectURL(res.data);
+            this.setResultAudioUrl(blobUrl);
+            this.result = { file_url: blobUrl, isBlob: true };
+            this.status = 'SUCCESS';
+            this.loading = false;
+            this.clearStatusCheck();
+            return;
+          }
+          
+          const text = await res.data.text();
+          const payload = text ? JSON.parse(text) : null;
           
           if (!payload) {
             console.error('Invalid status response:', payload);
@@ -540,20 +560,48 @@
         }
       },
       
-      downloadAudio(url) {
+      setResultAudioUrl(url) {
+        this.clearResultAudioUrl();
+        this.resultAudioUrl = url;
+      },
+
+      clearResultAudioUrl() {
+        if (this.resultAudioUrl) {
+          URL.revokeObjectURL(this.resultAudioUrl);
+          this.resultAudioUrl = '';
+        }
+      },
+      
+      generateAudioFilename() {
         const now = new Date();
         const dateStr = now.getFullYear().toString() + 
                        (now.getMonth() + 1).toString().padStart(2, '0') + 
                        now.getDate().toString().padStart(2, '0');
         const timeStr = now.getHours().toString().padStart(2, '0') + 
                        now.getMinutes().toString().padStart(2, '0');
-        const filename = `audio_${dateStr}_${timeStr}.wav`;
-        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
-        window.open(downloadUrl, '_blank');
+        return `audio_${dateStr}_${timeStr}.wav`;
+      },
+
+      downloadAudio(url) {
+        if (!url) return;
+        const filename = this.generateAudioFilename();
+        
+        if (url.startsWith('blob:')) {
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        } else {
+          const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+          window.open(downloadUrl, '_blank');
+        }
       }
     },
     beforeUnmount() {
       this.clearStatusCheck();
+      this.clearResultAudioUrl();
     },
     template: `
       <div class="form">
