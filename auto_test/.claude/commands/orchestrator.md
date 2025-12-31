@@ -66,31 +66,114 @@ python test_navigator.py --skip-processed
 **🔄 通过 Task 调度测试工程师，自动循环！**
 
 ```
+STARTUP_CHECK:
+    0. 创建 Task 执行浏览器连接检查：
+       Task("浏览器环境检查", "/browser-check")
+    1. 等待浏览器检查完成，如果失败 → 报告错误并停止，不进行测试
+
 LOOP_START:
-    1. python check_duplicate_ids.py  # 检查测试用例ID是否重复
-    2. 如果发现重复ID → 报告错误并停止，不进行测试
-    3. python test_navigator.py --status  # 检查进度
-    4. 如果所有测试已处理完毕（is_processed=true）→ 执行归档并停止
-    5. 如果 连续失败超过5次 → 报告错误并停止
-    6. python test_navigator.py --skip-processed  # 获取下一个未处理的功能
-    7. 如果没有更多未处理的测试 → 执行归档并停止
-    8. 创建 Task 分配给测试工程师：
+    2. python check_duplicate_ids.py  # 检查测试用例ID是否重复
+    3. 如果发现重复ID → 报告错误并停止，不进行测试
+    4. python test_navigator.py --status  # 检查进度
+    5. 如果所有测试已处理完毕（is_processed=true）→ 执行归档并停止
+    6. 如果 连续失败超过5次 → 报告错误并停止
+    7. python test_navigator.py --skip-processed  # 获取下一个未处理的功能
+    8. 如果没有更多未处理的测试 → 执行归档并停止
+    9. 创建 Task 分配给测试工程师：
        Task("测试功能 <feature_id>", "/test-module <feature_id>")
-    9. 等待 Task 完成，收到测试工程师返回的结果
-    10. 不要输出总结！不要询问用户！
-    11. GOTO LOOP_START  # 立即创建下一个 Task
+    10. 等待 Task 完成，收到测试工程师返回的结果
+    11. python context_manager.py --update <feature_id>  # 更新上下文管理状态
+    12. python auto_restart.py --check  # 检查是否需要上下文清理和重启
+    13. 如果需要重启 → 输出重启消息并执行 /orchestrator 命令
+    14. 不要输出总结！不要询问用户！
+    15. GOTO LOOP_START  # 立即创建下一个 Task
 
 当达到停止条件时，执行以下操作后立即停止：
     1. python test_navigator.py --status  # 再次确认 100% 完成
     2. python generate_report.py --archive  # 归档测试结果
     3. python reset_test_session.py  # 重置测试状态（仅在100%完成时）
-    4. 输出完成信息并停止，不要继续下一轮测试
+    4. python context_manager.py --reset  # 重置上下文管理状态
+    5. 输出完成信息并停止，不要继续下一轮测试
 ```
 
 **注意**：不要在测试过程中运行 `merge_test_cases.py`，这会覆盖测试进度！
 
 **重要：项目经理不要自己执行测试！通过 Task 分配给测试工程师！**
 **Task 完成后，项目经理会自动收到结果，然后继续循环创建下一个 Task！**
+
+## 🔄 上下文管理和自动重启
+
+**为防止上下文积累导致性能下降，orchestrator 支持自动上下文清理和重新调用。**
+
+### 上下文管理工具
+
+```bash
+# 检查当前上下文状态
+python context_manager.py --status
+
+# 更新模块完成状态（每完成一个测试模块后调用）
+python context_manager.py --update <module_id>
+
+# 检查是否需要上下文清理
+python context_manager.py --check
+
+# 重置上下文管理状态
+python context_manager.py --reset
+
+# 配置上下文管理参数
+python context_manager.py --config max_modules_per_session=15
+```
+
+### 自动重启检查
+
+```bash
+# 检查是否需要重启
+python auto_restart.py --check
+
+# 生成重启消息
+python auto_restart.py --message
+
+# 查看重启日志
+python auto_restart.py --log
+```
+
+### 上下文清理策略
+
+支持三种清理策略（在 `context_config.json` 中配置）：
+
+1. **module_count**: 基于完成的测试模块数量（默认：10个模块）
+2. **token_estimate**: 基于估算的上下文token数量（默认：50000 tokens）
+3. **time_based**: 基于时间间隔（默认：30分钟）
+
+### 自动重启流程
+
+当达到上下文清理条件时：
+
+1. **检测阶段**: `python auto_restart.py --check` 返回 `true`
+2. **准备阶段**: 生成重启消息，保存当前状态
+3. **重启阶段**: 输出重启命令 `/orchestrator`
+4. **恢复阶段**: 新会话从下一个未处理模块继续
+
+### 重要说明
+
+- **测试进度不会丢失**: 所有测试状态保存在 `test_modules/index.json` 中
+- **自动恢复**: 重启后自动从下一个 `is_processed=false` 的模块继续
+- **状态保持**: 重启计数、完成统计等信息会被保留
+- **无缝切换**: 用户无需手动干预，orchestrator 会自动处理
+
+### 配置文件说明
+
+**context_config.json**:
+```json
+{
+  "max_modules_per_session": 1,
+  "max_context_tokens": 50000,
+  "cleanup_strategy": "module_count",
+  "auto_restart": true,
+  "preserve_state": true,
+  "restart_command": "/orchestrator"
+}
+```
 
 ## 🛑 何时停止
 
@@ -195,6 +278,11 @@ python reset_test_session.py
 **立即开始自动循环调度！**
 
 ```bash
+# 0. 首先执行浏览器环境检查
+Task("浏览器环境检查", "/browser-check")
+
+# 等待浏览器检查完成，如果失败则停止
+
 # 1. 检查进度
 python test_navigator.py --status
 

@@ -132,31 +132,74 @@
       "test_steps": [
         {
           "step": 1,
-          "action": "点击尾帧画面文件输入",
-          "operation": "click",
-          "selector": ".end-file",
-          "expected_result": "打开文件选择器",
+          "action": "点击添加按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加按钮",
+            "ref": "<添加按钮ref>"
+          },
+          "expected_result": "弹出添加菜单",
           "pass": false,
           "remark": "",
           "is_processed": false
         },
         {
           "step": 2,
-          "action": "选择图片文件并上传",
-          "operation": "upload",
-          "selector": ".end-file",
-          "test_file": "test_end_image.jpg",
-          "expected_result": "文件上传成功",
+          "action": "点击图生视频选项",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "图生视频菜单项",
+            "ref": "<图生视频选项ref>"
+          },
+          "expected_result": "在画布上创建图生视频节点",
           "pass": false,
           "remark": "",
           "is_processed": false
         },
         {
           "step": 3,
+          "action": "等待节点创建完成",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "图生视频",
+            "time": 3
+          },
+          "expected_result": "图生视频节点标题出现",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击尾帧画面文件输入",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "尾帧文件输入",
+            "ref": "<尾帧文件输入ref>"
+          },
+          "expected_result": "打开文件选择器",
+          "pass": false,
+          "remark": "注意：需要先创建图生视频节点，然后才能找到 .end-file 选择器",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "上传尾帧图片文件",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": ["auto_test/test_assets/test_end_image.jpg"]
+          },
+          "expected_result": "文件上传成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
           "action": "验证预览显示",
-          "operation": "verify",
-          "selector": ".end-preview-row",
-          "expected_result": "尾帧预览区域显示，图片可见",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "尾帧预览区域显示，图片可见，包含 .end-preview-row 元素",
           "pass": false,
           "remark": "",
           "is_processed": false
@@ -308,7 +351,7 @@
       "description": "验证用户点击生成视频按钮后，系统调用API生成视频，并自动创建视频节点接收结果",
       "priority": "P0",
       "page_url": "/video-workflow",
-      "api_endpoint": "POST /api/ai-app-run-image-url",
+      "api_endpoint": "POST /api/ai-app-run-image",
       "pass": false,
       "remark": "",
       "prerequisites": [
@@ -339,7 +382,7 @@
           "step": 3,
           "action": "验证API请求",
           "operation": "verify",
-          "expected_result": "发起 POST /api/ai-app-run-image-url 请求，包含 image_url、prompt、ratio、duration_seconds、count 参数",
+          "expected_result": "发起 POST /api/ai-app-run-image 请求，包含 image_urls、prompt、ratio、duration_seconds、count 参数",
           "pass": false,
           "remark": "",
           "is_processed": false
@@ -448,7 +491,7 @@
       "description": "验证多次抽卡时，每个视频节点独立显示生成状态，成功和失败的视频节点互不干扰（端到端测试，使用真实API）",
       "priority": "P1",
       "page_url": "/video-workflow",
-      "api_endpoint": "POST /api/ai-app-run-image-url, GET /api/get-status/{projectIds}",
+      "api_endpoint": "POST /api/ai-app-run-image, GET /api/get-status/{projectIds}",
       "pass": false,
       "remark": "",
       "test_steps": [
@@ -518,7 +561,7 @@
       "description": "验证点击生成视频按钮时，图片节点到图生视频节点的连接线不会消失",
       "priority": "P0",
       "page_url": "/video-workflow",
-      "api_endpoint": "POST /api/ai-app-run-image-url",
+      "api_endpoint": "POST /api/ai-app-run-image",
       "pass": false,
       "remark": "",
       "test_steps": [

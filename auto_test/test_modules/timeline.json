@@ -741,37 +741,39 @@
       "pass": false,
       "remark": "",
       "test_steps": [
-        {
-          "step": 1,
-          "action": "添加短时长视频",
-          "operation": "添加5秒的视频",
-          "expected_result": "片段宽度为50px",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 2,
-          "action": "检查视频缩略图样式",
-          "mcp_tool": "mcp1_browser_evaluate",
-          "mcp_params": {
-            "function": "() => { const thumb = document.querySelector('.timeline-clip-thumb'); const style = window.getComputedStyle(thumb); return { objectFit: style.objectFit, width: style.width, height: style.height }; }"
+          {
+            "step": 1,
+            "action": "添加视频节点",
+            "mcp_tool": "mcp1_browser_click",
+            "expected_result": "弹出添加菜单"
           },
-          "verify": "object-fit 为 cover，宽高为 100%",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 3,
-          "action": "验证视频不变形",
-          "operation": "目视检查",
-          "expected_result": "视频内容保持原始比例，只显示左侧部分，不压缩变形",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        }
-      ],
+          {
+            "step": 2, 
+            "action": "选择视频节点选项",
+            "mcp_tool": "mcp1_browser_click",
+            "expected_result": "创建视频节点"
+          },
+          {
+            "step": 3,
+            "action": "上传短时长视频文件",
+            "mcp_tool": "mcp1_browser_file_upload",
+            "mcp_params": {
+              "paths": ["auto_test/test_assets/short_video_5s.mp4"]
+            },
+            "expected_result": "视频上传成功"
+          },
+          {
+            "step": 4,
+            "action": "点击添加到时间轴按钮",
+            "expected_result": "视频添加到时间轴，片段宽度约50px"
+          },
+          {
+            "step": 5,
+            "action": "检查视频缩略图样式",
+            "mcp_tool": "mcp1_browser_evaluate",
+            "verify": "object-fit 为 cover，宽高为 100%"
+          }
+        ],
       "is_processed": false
     },
     {
