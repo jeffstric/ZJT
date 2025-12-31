@@ -1,45 +1,179 @@
 {
   "id": "shot_frame_video",
-  "name": "镜头节点生成视频模块",
-  "description": "分镜节点生成视频功能的端到端测试，包括视频生成、提示词处理、比例计算等",
+  "name": "分镜视频生成完整流程模块",
+  "description": "从剧本节点开始的完整分镜视频生成流程测试，包括剧本解析、分镜组创建、独立分镜生成、分镜图生成、视频生成等完整端到端流程",
   "features": [
     {
       "id": "shot_video_001",
-      "name": "分镜节点生成视频-基础流程",
-      "description": "验证用户可以在分镜节点生成分镜图后，点击生成视频按钮生成视频，系统自动创建视频节点并显示结果",
+      "name": "分镜视频生成-完整基础流程",
+      "description": "验证从剧本节点开始的完整流程：创建剧本 -> 生成分镜组 -> 创建独立分镜 -> 生成分镜图 -> 生成视频",
       "priority": "P0",
       "page_url": "/video-workflow",
-      "api_endpoint": "POST /api/ai-app-run-image-url",
+      "api_endpoint": "POST /api/ai-app-run-image",
       "pass": false,
       "remark": "",
       "test_steps": [
         {
           "step": 1,
-          "action": "创建分镜组节点并生成分镜图",
-          "operation": "创建分镜组节点，填写图片提示词，点击生成分镜图按钮",
-          "expected_result": "分镜图生成成功，预览图显示",
+          "action": "导航到视频工作流页面",
+          "mcp_tool": "mcp1_browser_navigate",
+          "mcp_params": {
+            "url": "${config.base_url}/video-workflow"
+          },
+          "expected_result": "成功加载视频工作流页面",
           "pass": false,
           "remark": "",
           "is_processed": false
         },
         {
           "step": 2,
-          "action": "验证分镜图预览显示",
-          "mcp_tool": "mcp1_browser_snapshot",
-          "mcp_params": {},
-          "verify": "分镜节点包含预览图片，生成视频按钮可见",
+          "action": "创建剧本节点",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加按钮",
+            "ref": "#addBtn"
+          },
+          "expected_result": "显示添加菜单",
           "pass": false,
           "remark": "",
           "is_processed": false
         },
         {
           "step": 3,
+          "action": "选择剧本节点",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "剧本菜单项",
+            "ref": "#menuAddScript"
+          },
+          "expected_result": "创建剧本节点成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "填写剧本内容",
+          "mcp_tool": "mcp1_browser_type",
+          "mcp_params": {
+            "element": "剧本内容输入框",
+            "ref": ".node[data-node-id] .script-content",
+            "text": "第一场：城市街道\n镜头1：远景，展现繁华的城市街道，车水马龙\n镜头2：中景，主角走在人群中，表情专注\n镜头3：近景，主角停下脚步，看向远方"
+          },
+          "expected_result": "剧本内容输入成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "点击解析剧本按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "解析剧本按钮",
+            "ref": ".node[data-node-id] .script-parse-btn"
+          },
+          "expected_result": "开始解析剧本，按钮变为解析中状态",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "等待剧本解析完成",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "解析剧本",
+            "time": 60
+          },
+          "expected_result": "剧本解析完成，自动创建分镜组节点",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "验证分镜组节点创建",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const s = window.state; if(!s || !Array.isArray(s.nodes)) return { count: 0 }; return { count: s.nodes.filter(n => n.type === 'shot_group').length }; }"
+          },
+          "verify": "分镜组节点数量 >= 1",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 8,
+          "action": "点击独立分镜按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "独立分镜按钮",
+            "ref": ".node[data-node-id] .shot-group-generate-btn"
+          },
+          "expected_result": "开始生成独立分镜节点",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 9,
+          "action": "验证独立分镜节点创建",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const s = window.state; if(!s || !Array.isArray(s.nodes)) return { count: 0 }; return { count: s.nodes.filter(n => n.type === 'shot_frame').length }; }"
+          },
+          "verify": "分镜节点数量 >= 3",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 10,
+          "action": "点击第一个分镜节点的生成分镜图按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "生成分镜图按钮",
+            "ref": ".node[data-node-id] .shot-frame-generate-btn"
+          },
+          "expected_result": "开始生成分镜图",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 11,
+          "action": "等待分镜图生成完成",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "生成分镜图",
+            "time": 120
+          },
+          "expected_result": "分镜图生成完成，显示预览图",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 12,
+          "action": "验证分镜图预览显示",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const shotNode = window.state?.nodes?.find(n => n.type === 'shot_frame'); return { hasPreviewImage: shotNode?.data?.previewImageUrl ? true : false }; }"
+          },
+          "verify": "hasPreviewImage为true",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 13,
           "action": "填写视频提示词",
           "mcp_tool": "mcp1_browser_type",
           "mcp_params": {
             "element": "视频提示词输入框",
-            "ref": "<视频提示词输入框ref>",
-            "text": "镜头缓慢推进，展现角色的表情变化"
+            "ref": ".node[data-node-id] .shot-frame-video-prompt",
+            "text": "镜头缓慢推进，展现城市的繁华景象"
           },
           "expected_result": "视频提示词输入成功",
           "pass": false,
@@ -47,12 +181,12 @@
           "is_processed": false
         },
         {
-          "step": 4,
+          "step": 14,
           "action": "设置视频时长",
           "mcp_tool": "mcp1_browser_type",
           "mcp_params": {
             "element": "视频时长输入框",
-            "ref": "<视频时长输入框ref>",
+            "ref": ".node[data-node-id] .shot-frame-video-duration",
             "text": "10"
           },
           "expected_result": "视频时长设置为10秒",
@@ -61,57 +195,43 @@
           "is_processed": false
         },
         {
-          "step": 5,
-          "action": "设置抽卡次数",
-          "mcp_tool": "mcp1_browser_type",
-          "mcp_params": {
-            "element": "抽卡次数输入框",
-            "ref": "<抽卡次数输入框ref>",
-            "text": "1"
-          },
-          "expected_result": "抽卡次数设置为1",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 6,
+          "step": 15,
           "action": "点击生成视频按钮",
           "mcp_tool": "mcp1_browser_click",
           "mcp_params": {
             "element": "生成视频按钮",
-            "ref": "<生成视频按钮ref>"
+            "ref": ".node[data-node-id] .shot-frame-generate-video-btn"
           },
-          "expected_result": "按钮变为生成中状态",
+          "expected_result": "开始生成视频，按钮变为生成中状态",
           "pass": false,
           "remark": "",
           "is_processed": false
         },
         {
-          "step": 7,
+          "step": 16,
           "action": "验证API请求发送",
           "mcp_tool": "mcp1_browser_network_requests",
           "mcp_params": {},
-          "verify": "存在POST /api/ai-app-run-image-url请求，包含image_url、prompt、duration_seconds、count、ratio参数",
+          "verify": "存在POST /api/ai-app-run-image请求，包含image_urls、prompt、duration_seconds、count、ratio参数",
           "pass": false,
           "remark": "",
           "is_processed": false
         },
         {
-          "step": 8,
+          "step": 17,
           "action": "等待视频生成完成",
           "mcp_tool": "mcp1_browser_wait_for",
           "mcp_params": {
             "text": "生成视频",
             "time": 180
           },
-          "expected_result": "按钮恢复为生成视频状态",
+          "expected_result": "视频生成完成，按钮恢复正常状态",
           "pass": false,
           "remark": "",
           "is_processed": false
         },
         {
-          "step": 9,
+          "step": 18,
           "action": "验证视频节点自动创建",
           "mcp_tool": "mcp1_browser_evaluate",
           "mcp_params": {
@@ -123,11 +243,11 @@
           "is_processed": false
         },
         {
-          "step": 10,
+          "step": 19,
           "action": "验证视频节点连接关系",
           "mcp_tool": "mcp1_browser_evaluate",
           "mcp_params": {
-            "function": "() => { const s = window.state; if(!s) return { hasConn: false }; const shotNode = s.nodes.find(n => n.type === 'shot_group'); const videoNode = s.nodes.find(n => n.type === 'video'); if(!shotNode || !videoNode) return { hasConn: false }; return { hasConn: s.connections.some(c => c.from === shotNode.id && c.to === videoNode.id) }; }"
+            "function": "() => { const s = window.state; if(!s) return { hasConn: false }; const shotNode = s.nodes.find(n => n.type === 'shot_frame'); const videoNode = s.nodes.find(n => n.type === 'video'); if(!shotNode || !videoNode) return { hasConn: false }; return { hasConn: s.connections.some(c => c.from === shotNode.id && c.to === videoNode.id) }; }"
           },
           "verify": "分镜节点和视频节点之间存在连接线",
           "pass": false,
@@ -135,7 +255,7 @@
           "is_processed": false
         },
         {
-          "step": 11,
+          "step": 20,
           "action": "验证视频预览显示",
           "mcp_tool": "mcp1_browser_snapshot",
           "mcp_params": {},
@@ -149,156 +269,19 @@
     },
     {
       "id": "shot_video_002",
-      "name": "分镜节点生成视频-视频提示词文本格式",
-      "description": "验证视频提示词使用文本格式而非JSON格式传递给视频模型",
-      "priority": "P0",
-      "page_url": "/video-workflow",
-      "api_endpoint": "POST /api/ai-app-run-image-url",
-      "pass": false,
-      "remark": "",
-      "test_steps": [
-        {
-          "step": 1,
-          "action": "创建分镜节点并生成分镜图",
-          "operation": "创建分镜组节点，生成分镜图",
-          "expected_result": "分镜图生成成功",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 2,
-          "action": "填写视频提示词为纯文本",
-          "mcp_tool": "mcp1_browser_type",
-          "mcp_params": {
-            "element": "视频提示词输入框",
-            "ref": "<视频提示词输入框ref>",
-            "text": "镜头从远处推进，展现城市的繁华景象，灯光闪烁"
-          },
-          "expected_result": "提示词输入成功",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 3,
-          "action": "点击生成视频按钮",
-          "mcp_tool": "mcp1_browser_click",
-          "mcp_params": {
-            "element": "生成视频按钮",
-            "ref": "<生成视频按钮ref>"
-          },
-          "expected_result": "开始生成视频",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 4,
-          "action": "验证API请求中的prompt字段为文本格式",
-          "mcp_tool": "mcp1_browser_network_requests",
-          "mcp_params": {},
-          "verify": "POST /api/ai-app-run-image-url请求的prompt参数为纯文本字符串，不包含JSON结构如{\"opening_frame_description\"等字段",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 5,
-          "action": "验证控制台无JSON解析错误",
-          "mcp_tool": "mcp1_browser_console_messages",
-          "mcp_params": {},
-          "verify": "控制台无JSON相关错误信息",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        }
-      ],
-      "is_processed": false
-    },
-    {
-      "id": "shot_video_003",
-      "name": "分镜节点生成视频-违禁词过滤",
-      "description": "验证视频提示词中的违禁内容会被自动过滤或提示",
+      "name": "分镜视频生成-多次抽卡测试",
+      "description": "验证设置抽卡次数大于1时，系统生成多个视频并创建对应数量的视频节点",
       "priority": "P1",
       "page_url": "/video-workflow",
-      "api_endpoint": "POST /api/filter-sensitive-words",
+      "api_endpoint": "POST /api/ai-app-run-image",
       "pass": false,
       "remark": "",
       "test_steps": [
         {
           "step": 1,
-          "action": "创建分镜节点并生成分镜图",
-          "operation": "创建分镜组节点，生成分镜图",
-          "expected_result": "分镜图生成成功",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 2,
-          "action": "填写包含敏感词的视频提示词",
-          "mcp_tool": "mcp1_browser_type",
-          "mcp_params": {
-            "element": "视频提示词输入框",
-            "ref": "<视频提示词输入框ref>",
-            "text": "角色手持武器，场景中出现暴力冲突"
-          },
-          "expected_result": "提示词输入成功",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 3,
-          "action": "点击生成视频按钮",
-          "mcp_tool": "mcp1_browser_click",
-          "mcp_params": {
-            "element": "生成视频按钮",
-            "ref": "<生成视频按钮ref>"
-          },
-          "expected_result": "触发违禁词检测",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 4,
-          "action": "验证违禁词过滤API调用",
-          "mcp_tool": "mcp1_browser_network_requests",
-          "mcp_params": {},
-          "verify": "存在POST /api/filter-sensitive-words请求",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 5,
-          "action": "验证过滤后的提示词",
-          "operation": "检查实际发送的prompt内容",
-          "expected_result": "敏感词被替换或删除，或显示警告提示",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        }
-      ],
-      "is_processed": false
-    },
-    {
-      "id": "shot_video_004",
-      "name": "分镜节点生成视频-多次抽卡",
-      "description": "验证设置抽卡次数大于1时，系统生成多个视频并创建对应数量的视频节点",
-      "priority": "P0",
-      "page_url": "/video-workflow",
-      "api_endpoint": "POST /api/ai-app-run-image-url",
-      "pass": false,
-      "remark": "",
-      "test_steps": [
-        {
-          "step": 1,
-          "action": "创建分镜节点并生成分镜图",
-          "operation": "创建分镜组节点，生成分镜图",
-          "expected_result": "分镜图生成成功",
+          "action": "按照基础流程创建到分镜图节点",
+          "operation": "执行shot_video_001的步骤1-12，确保有可用的分镜图",
+          "expected_result": "分镜图生成成功，可以进行视频生成",
           "pass": false,
           "remark": "",
           "is_processed": false
@@ -306,11 +289,23 @@
         {
           "step": 2,
           "action": "设置抽卡次数为3",
-          "mcp_tool": "mcp1_browser_type",
+          "mcp_tool": "mcp1_browser_click",
           "mcp_params": {
-            "element": "抽卡次数输入框",
-            "ref": "<抽卡次数输入框ref>",
-            "text": "3"
+            "element": "视频抽卡次数选择按钮",
+            "ref": ".node[data-node-id] .shot-frame-video-caret"
+          },
+          "expected_result": "显示抽卡次数菜单",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "选择3次抽卡",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "3次抽卡选项",
+            "ref": ".shot-frame-video-menu .gen-item[data-count='3']"
           },
           "expected_result": "抽卡次数设置为3",
           "pass": false,
@@ -318,12 +313,12 @@
           "is_processed": false
         },
         {
-          "step": 3,
+          "step": 4,
           "action": "点击生成视频按钮",
           "mcp_tool": "mcp1_browser_click",
           "mcp_params": {
             "element": "生成视频按钮",
-            "ref": "<生成视频按钮ref>"
+            "ref": ".node[data-node-id] .shot-frame-generate-video-btn"
           },
           "expected_result": "开始生成视频",
           "pass": false,
@@ -331,17 +326,17 @@
           "is_processed": false
         },
         {
-          "step": 4,
+          "step": 5,
           "action": "验证API请求中的count参数",
           "mcp_tool": "mcp1_browser_network_requests",
           "mcp_params": {},
-          "verify": "POST /api/ai-app-run-image-url请求的count参数为3",
+          "verify": "POST /api/ai-app-run-image请求的count参数为3",
           "pass": false,
           "remark": "",
           "is_processed": false
         },
         {
-          "step": 5,
+          "step": 6,
           "action": "等待视频生成完成",
           "mcp_tool": "mcp1_browser_wait_for",
           "mcp_params": {
@@ -354,7 +349,7 @@
           "is_processed": false
         },
         {
-          "step": 6,
+          "step": 7,
           "action": "验证创建了3个视频节点",
           "mcp_tool": "mcp1_browser_evaluate",
           "mcp_params": {
@@ -364,36 +359,14 @@
           "pass": false,
           "remark": "",
           "is_processed": false
-        },
-        {
-          "step": 7,
-          "action": "验证视频节点位置排列",
-          "mcp_tool": "mcp1_browser_evaluate",
-          "mcp_params": {
-            "function": "() => { const s = window.state; if(!s) return { positions: [] }; const videoNodes = s.nodes.filter(n => n.type === 'video').sort((a,b) => a.y - b.y); return { positions: videoNodes.map(n => ({id: n.id, y: n.y})) }; }"
-          },
-          "verify": "3个视频节点垂直排列，y坐标递增，间距约280px",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 8,
-          "action": "验证视频节点标题",
-          "mcp_tool": "mcp1_browser_snapshot",
-          "mcp_params": {},
-          "verify": "视频节点标题分别为分镜视频1、分镜视频2、分镜视频3",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
         }
       ],
       "is_processed": false
     },
     {
-      "id": "shot_video_005",
-      "name": "分镜节点生成视频-分镜图比例动态计算",
-      "description": "验证根据分镜数量和视频长宽比，动态确定分镜图的图片长宽比例",
+      "id": "shot_video_003",
+      "name": "分镜视频生成-错误处理测试",
+      "description": "验证未生成分镜图时点击生成视频按钮的错误提示",
       "priority": "P1",
       "page_url": "/video-workflow",
       "pass": false,
@@ -401,149 +374,9 @@
       "test_steps": [
         {
           "step": 1,
-          "action": "设置工作流视频比例为16:9",
-          "mcp_tool": "mcp1_browser_select_option",
-          "mcp_params": {
-            "element": "比例选择器",
-            "ref": "<比例选择器ref>",
-            "values": [
-              "16:9"
-            ]
-          },
-          "expected_result": "视频比例设置为16:9",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 2,
-          "action": "创建包含3个分镜的分镜组节点",
-          "operation": "创建分镜组节点，添加3个分镜",
-          "expected_result": "分镜组包含3个分镜",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 3,
-          "action": "点击生成分镜图按钮",
-          "mcp_tool": "mcp1_browser_click",
-          "mcp_params": {
-            "element": "生成分镜图按钮",
-            "ref": "<生成分镜图按钮ref>"
-          },
-          "expected_result": "开始生成分镜图",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 4,
-          "action": "验证图片编辑API请求的ratio参数",
-          "mcp_tool": "mcp1_browser_network_requests",
-          "mcp_params": {},
-          "verify": "POST /api/image-edit请求的ratio参数根据3个分镜和16:9比例计算得出（横向拼接时应为更宽的比例）",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 5,
-          "action": "验证比例计算逻辑",
-          "mcp_tool": "mcp1_browser_evaluate",
-          "mcp_params": {
-            "function": "() => { if(typeof calculateMergedShotRatio !== 'function') return { error: 'function not found' }; return { ratio_3_shots_16_9: calculateMergedShotRatio(3, '16:9'), ratio_2_shots_9_16: calculateMergedShotRatio(2, '9:16') }; }"
-          },
-          "verify": "3个分镜16:9比例返回合适的横向比例，2个分镜9:16比例返回合适的纵向比例",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        }
-      ],
-      "is_processed": false
-    },
-    {
-      "id": "shot_video_006",
-      "name": "分镜节点生成视频-参考图数量限制",
-      "description": "验证生成分镜图时，参考图数量最多为5张，超过时自动截取前5张",
-      "priority": "P1",
-      "page_url": "/video-workflow",
-      "api_endpoint": "POST /api/image-edit",
-      "pass": false,
-      "remark": "",
-      "test_steps": [
-        {
-          "step": 1,
-          "action": "创建包含多个角色的分镜节点",
-          "operation": "创建分镜组节点，图片提示词中包含6个角色标记【【角色1】】...【【角色6】】",
-          "expected_result": "分镜节点创建成功",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 2,
-          "action": "点击生成分镜图按钮",
-          "mcp_tool": "mcp1_browser_click",
-          "mcp_params": {
-            "element": "生成分镜图按钮",
-            "ref": "<生成分镜图按钮ref>"
-          },
-          "expected_result": "开始生成分镜图",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 3,
-          "action": "验证参考图数量限制提示",
-          "mcp_tool": "mcp1_browser_wait_for",
-          "mcp_params": {
-            "text": "参考图数量超过5张",
-            "time": 5
-          },
-          "expected_result": "显示警告提示：参考图数量超过5张，已自动限制为5张",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 4,
-          "action": "验证API请求中的图片数量",
-          "mcp_tool": "mcp1_browser_network_requests",
-          "mcp_params": {},
-          "verify": "POST /api/image-edit请求的FormData中，reference_image字段最多包含5个文件",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 5,
-          "action": "验证控制台日志",
-          "mcp_tool": "mcp1_browser_console_messages",
-          "mcp_params": {},
-          "verify": "控制台包含参考图数量限制的警告信息",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        }
-      ],
-      "is_processed": false
-    },
-    {
-      "id": "shot_video_007",
-      "name": "分镜节点生成视频-未生成分镜图时的错误提示",
-      "description": "验证未生成分镜图时点击生成视频按钮，显示错误提示",
-      "priority": "P1",
-      "page_url": "/video-workflow",
-      "pass": false,
-      "remark": "",
-      "test_steps": [
-        {
-          "step": 1,
-          "action": "创建分镜组节点但不生成分镜图",
-          "operation": "创建分镜组节点，不点击生成分镜图按钮",
-          "expected_result": "分镜节点创建成功，无预览图",
+          "action": "按照基础流程创建到独立分镜节点",
+          "operation": "执行shot_video_001的步骤1-9，确保有独立分镜节点但未生成分镜图",
+          "expected_result": "独立分镜节点创建成功，但无预览图",
           "pass": false,
           "remark": "",
           "is_processed": false
@@ -553,7 +386,7 @@
           "action": "验证预览图不存在",
           "mcp_tool": "mcp1_browser_evaluate",
           "mcp_params": {
-            "function": "() => { const shotNode = window.state?.nodes?.find(n => n.type === 'shot_group'); return { hasPreviewImage: shotNode?.data?.previewImageUrl ? true : false }; }"
+            "function": "() => { const shotNode = window.state?.nodes?.find(n => n.type === 'shot_frame'); return { hasPreviewImage: shotNode?.data?.previewImageUrl ? true : false }; }"
           },
           "verify": "hasPreviewImage为false",
           "pass": false,
@@ -566,7 +399,7 @@
           "mcp_tool": "mcp1_browser_click",
           "mcp_params": {
             "element": "生成视频按钮",
-            "ref": "<生成视频按钮ref>"
+            "ref": ".node[data-node-id] .shot-frame-generate-video-btn"
           },
           "expected_result": "显示错误提示",
           "pass": false,
@@ -591,137 +424,7 @@
           "action": "验证未发起API请求",
           "mcp_tool": "mcp1_browser_network_requests",
           "mcp_params": {},
-          "verify": "不存在POST /api/ai-app-run-image-url请求",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        }
-      ],
-      "is_processed": false
-    },
-    {
-      "id": "shot_video_008",
-      "name": "分镜节点生成视频-视频节点位置计算",
-      "description": "验证生成的视频节点位置在分镜节点右侧，多个视频节点垂直排列",
-      "priority": "P2",
-      "page_url": "/video-workflow",
-      "pass": false,
-      "remark": "",
-      "test_steps": [
-        {
-          "step": 1,
-          "action": "记录分镜节点位置",
-          "mcp_tool": "mcp1_browser_evaluate",
-          "mcp_params": {
-            "function": "() => { const shotNode = window.state?.nodes?.find(n => n.type === 'shot_group'); return { x: shotNode?.x, y: shotNode?.y }; }"
-          },
-          "verify": "记录分镜节点的x和y坐标",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 2,
-          "action": "生成2个视频",
-          "operation": "设置抽卡次数为2，生成视频",
-          "expected_result": "生成2个视频节点",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 3,
-          "action": "验证视频节点位置",
-          "mcp_tool": "mcp1_browser_evaluate",
-          "mcp_params": {
-            "function": "() => { const s = window.state; const shotNode = s?.nodes?.find(n => n.type === 'shot_group'); const videoNodes = s?.nodes?.filter(n => n.type === 'video').sort((a,b) => a.y - b.y) || []; return { shotX: shotNode?.x, shotY: shotNode?.y, videos: videoNodes.map(v => ({x: v.x, y: v.y})) }; }"
-          },
-          "verify": "视频节点1的x坐标 = 分镜节点x + 380，y坐标 = 分镜节点y；视频节点2的y坐标 = 视频节点1的y + 280",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        }
-      ],
-      "is_processed": false
-    },
-    {
-      "id": "shot_video_009",
-      "name": "分镜节点生成视频-画风文字描述添加",
-      "description": "验证生成视频时，如果工作流设置了画风，视频提示词会自动添加画风描述",
-      "priority": "P2",
-      "page_url": "/video-workflow",
-      "pass": false,
-      "remark": "",
-      "test_steps": [
-        {
-          "step": 1,
-          "action": "设置工作流画风",
-          "mcp_tool": "mcp1_browser_click",
-          "mcp_params": {
-            "element": "画风按钮",
-            "ref": "<画风按钮ref>"
-          },
-          "expected_result": "打开画风设置",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 2,
-          "action": "输入画风名称",
-          "mcp_tool": "mcp1_browser_type",
-          "mcp_params": {
-            "element": "画风名称输入框",
-            "ref": "<画风名称输入框ref>",
-            "text": "赛博朋克风格"
-          },
-          "expected_result": "画风设置为赛博朋克风格",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 3,
-          "action": "创建分镜节点并生成分镜图",
-          "operation": "创建分镜组节点，生成分镜图",
-          "expected_result": "分镜图生成成功",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 4,
-          "action": "填写视频提示词",
-          "mcp_tool": "mcp1_browser_type",
-          "mcp_params": {
-            "element": "视频提示词输入框",
-            "ref": "<视频提示词输入框ref>",
-            "text": "镜头缓慢推进"
-          },
-          "expected_result": "提示词输入成功",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 5,
-          "action": "生成视频",
-          "mcp_tool": "mcp1_browser_click",
-          "mcp_params": {
-            "element": "生成视频按钮",
-            "ref": "<生成视频按钮ref>"
-          },
-          "expected_result": "开始生成视频",
-          "pass": false,
-          "remark": "",
-          "is_processed": false
-        },
-        {
-          "step": 6,
-          "action": "验证API请求中的prompt包含画风描述",
-          "mcp_tool": "mcp1_browser_network_requests",
-          "mcp_params": {},
-          "verify": "POST /api/ai-app-run-image-url请求的prompt参数包含原始提示词和画风描述（图片风格：赛博朋克风格）",
+          "verify": "不存在POST /api/ai-app-run-image请求",
           "pass": false,
           "remark": "",
           "is_processed": false

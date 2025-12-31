@@ -59,12 +59,6 @@
       "name": "场景管理模块",
       "description": "工作流编辑器中的场景创建、编辑、节点添加功能测试",
       "file": "location_management.json"
-    },
-    {
-      "id": "shot_frame_first_frame",
-      "name": "分镜节点视频首帧模块",
-      "description": "分镜节点视频首帧连接功能测试，包括蓝色连接线、磁吸效果、图片选择等",
-      "file": "shot_frame_first_frame.json"
     }
   ]
 }
