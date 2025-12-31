@@ -136,7 +136,7 @@
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
         firstFrameConnections: state.firstFrameConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         timeline: {
-          clips: state.timeline.clips,
+          clips: state.timeline.clips.map(c => ({ ...c })),
           nextClipId: state.timeline.nextClipId,
         }
       };
@@ -188,7 +188,11 @@
     }
 
     // 自动保存（静默保存，不显示提示）
-    async function autoSaveWorkflow(){
+    async function autoSaveWorkflow(options){
+      const opts = options || {};
+      if(!opts.skipHistory){
+        captureHistorySnapshot();
+      }
       const workflowId = getWorkflowIdFromUrl();
       if(!workflowId) return;
       
@@ -222,12 +226,75 @@
       }
     }
 
+    function captureHistorySnapshot(){
+      if(state.isRestoringHistory) return;
+      try{
+        const snapshot = serializeWorkflow();
+        const serialized = JSON.stringify(snapshot);
+        const currentEntry = state.history[state.historyPointer] || null;
+        if(currentEntry && currentEntry.serialized === serialized){
+          return;
+        }
+        
+        if(state.historyPointer < state.history.length - 1){
+          state.history = state.history.slice(0, state.historyPointer + 1);
+        }
+        
+        state.history.push({ serialized });
+        if(state.history.length > state.historyLimit){
+          state.history.splice(0, state.history.length - state.historyLimit);
+        }
+        state.historyPointer = state.history.length - 1;
+      }catch(error){
+        console.warn('captureHistorySnapshot failed:', error);
+      }
+    }
+    
+    function resetHistoryWithCurrentState(){
+      try{
+        const snapshot = serializeWorkflow();
+        const serialized = JSON.stringify(snapshot);
+        state.history = [{ serialized }];
+        state.historyPointer = 0;
+      }catch(error){
+        console.warn('resetHistoryWithCurrentState failed:', error);
+        state.history = [];
+        state.historyPointer = -1;
+      }
+    }
+    
+    async function undoWorkflowChange(){
+      if(state.historyPointer <= 0){
+        showToast('没有更多可撤销的操作', 'warning');
+        return;
+      }
+      const targetIndex = state.historyPointer - 1;
+      const entry = state.history[targetIndex];
+      if(!entry){
+        showToast('撤销失败', 'error');
+        return;
+      }
+      try{
+        const snapshot = JSON.parse(entry.serialized);
+        state.historyPointer = targetIndex;
+        state.isRestoringHistory = true;
+        restoreWorkflow(snapshot);
+        state.isRestoringHistory = false;
+        showToast('已撤销上一步操作', 'info');
+        autoSaveWorkflow({ skipHistory: true });
+      }catch(error){
+        state.isRestoringHistory = false;
+        console.error('undoWorkflowChange error:', error);
+        showToast('撤销失败', 'error');
+      }
+    }
+    
     // 启动自动保存定时器（每3分钟）
     let autoSaveTimer = null;
     function startAutoSave(){
       if(autoSaveTimer) clearInterval(autoSaveTimer);
       autoSaveTimer = setInterval(() => {
-        autoSaveWorkflow();
+        autoSaveWorkflow({ skipHistory: true });
       }, 3 * 60 * 1000); // 3分钟
     }
 
@@ -298,85 +365,94 @@
 
     // 恢复工作流状态
     function restoreWorkflow(data){
-      // 清除现有节点
-      for(const node of [...state.nodes]){
-        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
-        if(el) el.remove();
-      }
-      
-      // 重置状态
-      state.nodes = [];
-      state.connections = [];
-      state.imageConnections = [];
-      state.firstFrameConnections = [];
-      state.selectedNodeId = null;
-      state.selectedConnId = null;
-      state.selectedImgConnId = null;
-      state.selectedFirstFrameConnId = null;
-      
-      // 恢复视口
-      if(data.viewport){
-        state.panX = data.viewport.panX || 0;
-        state.panY = data.viewport.panY || 0;
-        state.zoom = data.viewport.zoom || 1;
-        applyTransform();
-        updateZoomLevel();
-      }
-      
-      // 恢复比例
-      if(data.ratio){
-        state.ratio = data.ratio;
-        ratioSelectEl.value = data.ratio;
-      }
-      
-      // 恢复ID计数器
-      state.nextNodeId = data.nextNodeId || 1;
-      state.nextConnId = data.nextConnId || 1;
-      state.nextImgConnId = data.nextImgConnId || 1;
-      state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
-      
-      // 恢复节点
-      if(data.nodes && Array.isArray(data.nodes)){
-        for(const nodeData of data.nodes){
-          restoreNode(nodeData);
+      const wasRestoring = state.isRestoringHistory;
+      state.isRestoringHistory = true;
+      try{
+        // 清除现有节点
+        for(const node of [...state.nodes]){
+          const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+          if(el) el.remove();
+        }
+        
+        // 重置状态
+        state.nodes = [];
+        state.connections = [];
+        state.imageConnections = [];
+        state.firstFrameConnections = [];
+        state.selectedNodeId = null;
+        state.selectedConnId = null;
+        state.selectedImgConnId = null;
+        state.selectedFirstFrameConnId = null;
+        
+        // 恢复视口
+        if(data.viewport){
+          state.panX = data.viewport.panX || 0;
+          state.panY = data.viewport.panY || 0;
+          state.zoom = data.viewport.zoom || 1;
+          applyTransform();
+          updateZoomLevel();
+        }
+        
+        // 恢复比例
+        if(data.ratio){
+          state.ratio = data.ratio;
+          ratioSelectEl.value = data.ratio;
+        }
+        
+        // 恢复ID计数器
+        state.nextNodeId = data.nextNodeId || 1;
+        state.nextConnId = data.nextConnId || 1;
+        state.nextImgConnId = data.nextImgConnId || 1;
+        state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
+        
+        // 恢复节点
+        if(data.nodes && Array.isArray(data.nodes)){
+          for(const nodeData of data.nodes){
+            restoreNode(nodeData);
+          }
+        }
+        
+        // 恢复连接
+        if(data.connections && Array.isArray(data.connections)){
+          state.connections = data.connections;
+        }
+        
+        if(data.imageConnections && Array.isArray(data.imageConnections)){
+          state.imageConnections = data.imageConnections;
+        }
+        
+        if(data.firstFrameConnections && Array.isArray(data.firstFrameConnections)){
+          state.firstFrameConnections = data.firstFrameConnections;
+        }
+        
+        // 恢复时间轴
+        if(data.timeline){
+          state.timeline.clips = data.timeline.clips || [];
+          state.timeline.nextClipId = data.timeline.nextClipId || 1;
+          state.timeline.visible = state.timeline.clips.length > 0;
+          renderTimeline();
+        }
+        
+        // 重新渲染
+        renderConnections();
+        renderImageConnections();
+        renderFirstFrameConnections();
+        renderMinimap();
+        
+        // 恢复完成后，更新所有分镜节点的图片选择菜单
+        setTimeout(() => {
+          state.nodes.forEach(node => {
+            if(node.type === 'shot_frame' && node.updatePreview){
+              node.updatePreview();
+            }
+          });
+        }, 100);
+      } finally {
+        state.isRestoringHistory = wasRestoring;
+        if(!wasRestoring){
+          resetHistoryWithCurrentState();
         }
       }
-      
-      // 恢复连接
-      if(data.connections && Array.isArray(data.connections)){
-        state.connections = data.connections;
-      }
-      
-      if(data.imageConnections && Array.isArray(data.imageConnections)){
-        state.imageConnections = data.imageConnections;
-      }
-      
-      if(data.firstFrameConnections && Array.isArray(data.firstFrameConnections)){
-        state.firstFrameConnections = data.firstFrameConnections;
-      }
-      
-      // 恢复时间轴
-      if(data.timeline){
-        state.timeline.clips = data.timeline.clips || [];
-        state.timeline.nextClipId = data.timeline.nextClipId || 1;
-        state.timeline.visible = state.timeline.clips.length > 0;
-        renderTimeline();
-      }
-      
-      // 重新渲染
-      renderConnections();
-      renderImageConnections();
-      renderFirstFrameConnections();
-      renderMinimap();
-      
-      // 恢复完成后，更新所有分镜节点的图片选择菜单
-      setTimeout(() => {
-        state.nodes.forEach(node => {
-          if(node.type === 'shot_frame' && node.updatePreview){
-            node.updatePreview();
-          }
-        });
-      }, 100);
     }
 
     // 恢复单个节点

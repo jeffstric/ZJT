@@ -140,6 +140,17 @@
       }
     });
 
+    // Ctrl+Z 撤销
+    window.addEventListener('keydown', (e) => {
+      const isCtrl = e.ctrlKey || e.metaKey;
+      if(!isCtrl) return;
+      if(document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA' || document.activeElement.isContentEditable)) return;
+      if(e.key.toLowerCase() === 'z'){
+        e.preventDefault();
+        undoWorkflowChange();
+      }
+    });
+
     // 键盘删除连接线、时间轴片段和批量删除节点
     window.addEventListener('keydown', (e) => {
       if(e.key === 'Delete' || e.key === 'Backspace'){
@@ -288,6 +299,7 @@
             el.style.top = n.y + 'px';
           }
         }
+        state.drag.moved = true;
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
@@ -474,8 +486,12 @@
       }
       
       if(state.drag){
+        const moved = state.drag.moved;
         state.drag = null;
         renderMinimap();
+        if(moved){
+          captureHistorySnapshot();
+        }
       }
       if(state.panning){
         state.panning = null;

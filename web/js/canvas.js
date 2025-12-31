@@ -171,7 +171,8 @@
           startY: startY,
           origX: node.x,
           origY: node.y,
-          nodePositions: nodePositions
+          nodePositions: nodePositions,
+          moved: false
         };
       } else {
         // 单个节点拖动
@@ -181,7 +182,8 @@
           startY: startY,
           origX: node.x,
           origY: node.y,
-          nodePositions: {}
+          nodePositions: {},
+          moved: false
         };
       }
     }

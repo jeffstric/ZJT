@@ -32,7 +32,11 @@
       selectionMode: false,
       selecting: null,
       selectedNodeIds: [],
-      topZIndex: 21
+      topZIndex: 21,
+      history: [],
+      historyPointer: -1,
+      historyLimit: 50,
+      isRestoringHistory: false
     };
 
     function normalizeVideoUrl(item){
