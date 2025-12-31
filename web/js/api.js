@@ -48,8 +48,8 @@
       
       const form = new FormData();
       
-      // 直接使用image_url，不需要重新上传
-      form.append('image_url', imageUrl);
+      // 直接使用image_urls，不需要重新上传
+      form.append('image_urls', imageUrl);
       form.append('prompt', prompt || '');
       form.append('ratio', ratio || '9:16');
       form.append('duration_seconds', duration || 10);
@@ -62,7 +62,7 @@
         form.append('auth_token', authToken);
       }
 
-      const res = await fetch('/api/ai-app-run-image-url', {
+      const res = await fetch('/api/ai-app-run-image', {
         method: 'POST',
         body: form
       });

@@ -105,7 +105,7 @@ async function generateShotFrameVideo(nodeId, node){
     const authToken = localStorage.getItem('auth_token') || '';
     const form = new FormData();
     
-    form.append('image_url', imageUrl);
+    form.append('image_urls', imageUrl);
     form.append('prompt', videoPrompt);
     form.append('duration_seconds', duration);
     form.append('count', count);
@@ -118,7 +118,7 @@ async function generateShotFrameVideo(nodeId, node){
       form.append('auth_token', authToken);
     }
 
-    const res = await fetch('/api/ai-app-run-image-url', {
+    const res = await fetch('/api/ai-app-run-image', {
       method: 'POST',
       body: form
     });
