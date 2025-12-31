@@ -108,10 +108,6 @@
             <input class="input" type="password" v-model="registerForm.password" placeholder="请输入密码" />
           </div>
           <div class="field">
-            <label class="label">确认密码</label>
-            <input class="input" type="password" v-model="registerForm.confirmPassword" placeholder="请再次输入密码" />
-          </div>
-          <div class="field">
             <label class="label">邀请码（选填）</label>
             <input class="input" type="text" v-model="registerForm.inviteCode" placeholder="请输入邀请码" maxlength="10" @keyup.enter="handleRegister" />
             <div class="invite-tip">
@@ -4138,7 +4134,6 @@
         phone: '',
         code: '',
         password: '',
-        confirmPassword: '',
         inviteCode: '',
         termsAgreed: false
       },
@@ -4169,7 +4164,8 @@
       paymentOrderId: '',
       paymentError: '',
       wechatOpenid: '',
-      userIp: ''
+      userIp: '',
+      externalPayUrl: window.EXTERNAL_PAY_URL || 'https://www.perseids.cn/external_recharge.html'
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -4301,7 +4297,6 @@
         this.registerForm.phone = '';
         this.registerForm.code = '';
         this.registerForm.password = '';
-        this.registerForm.confirmPassword = '';
         this.registerForm.inviteCode = '';
         this.registerForm.termsAgreed = false;
         this.resetForm.phone = '';
@@ -4431,7 +4426,7 @@
         try {
           // 验证输入
           if (!this.registerForm.phone || !this.registerForm.code || 
-              !this.registerForm.password || !this.registerForm.confirmPassword) {
+              !this.registerForm.password) {
             this.registerError = '请填写完整信息';
             this.registerLoading = false;
             return;
@@ -4453,13 +4448,6 @@
           // 验证密码长度
           if (this.registerForm.password.length < 6) {
             this.registerError = '密码长度不能少于6位';
-            this.registerLoading = false;
-            return;
-          }
-          
-          // 验证两次密码是否一致
-          if (this.registerForm.password !== this.registerForm.confirmPassword) {
-            this.registerError = '两次输入的密码不一致';
             this.registerLoading = false;
             return;
           }
@@ -4830,20 +4818,45 @@
       },
       
       async createPaymentOrder() {
+        if (!this.selectedPackage) return;
         this.paymentLoading = true;
         this.paymentError = '';
+        
+        const isWechat = this.isWechatBrowser();
+        
+        if (!isWechat) {
+          try {
+            const payUrl = new URL(this.externalPayUrl);
+            payUrl.searchParams.set('package_id', this.selectedPackage.package_id);
+            payUrl.searchParams.set('package_name', encodeURIComponent(this.selectedPackage.description || `套餐${this.selectedPackage.package_id}`));
+            payUrl.searchParams.set('price', this.selectedPackage.price);
+            payUrl.searchParams.set('computing_power', this.selectedPackage.computing_power);
+            payUrl.searchParams.set('user_id', this.userId);
+            payUrl.searchParams.set('auth_token', encodeURIComponent(this.authToken));
+            payUrl.searchParams.set('payment_ip', this.userIp || '');
+            payUrl.searchParams.set('redirect_url', encodeURIComponent(window.location.href));
+            payUrl.searchParams.set('api_base', window.location.origin);
+            
+            window.location.href = payUrl.toString();
+          } catch (err) {
+            console.error('Failed to open external payment page:', err);
+            this.paymentError = '跳转支付页面失败，请重试';
+          } finally {
+            this.paymentLoading = false;
+          }
+          return;
+        }
         
         try {
           const requestData = {
             package_id: this.selectedPackage.package_id,
             user_id: parseInt(this.userId, 10),
             auth_token: this.authToken,
-            is_wechat_browser: this.isWechatBrowser(),
+            is_wechat_browser: true,
             payment_ip: this.userIp || '0.0.0.0'
           };
           
-          // 如果是微信浏览器，传递openid
-          if (this.isWechatBrowser() && this.wechatOpenid) {
+          if (this.wechatOpenid) {
             requestData.openid = this.wechatOpenid;
           }
           
@@ -4853,20 +4866,10 @@
             this.paymentOrderId = response.data.order_id;
             const paymentType = response.data.payment_type;
             
-            // 根据支付类型调起不同的支付方式
             if (paymentType === 'JSAPI') {
-              // 微信内浏览器，调用JSAPI支付
               this.invokeWechatJSAPI(response.data.jsapi_params);
-            } else if (paymentType === 'H5') {
-              // 外部浏览器，跳转到H5支付页面
-              const h5Url = response.data.h5_url;
-              if (h5Url) {
-                window.location.href = h5Url;
-              } else {
-                this.paymentError = '获取支付链接失败';
-              }
             } else {
-              this.paymentError = '不支持的支付类型';
+              this.paymentError = '检测到非微信环境，请使用外部支付页面';
             }
           } else {
             this.paymentError = response.data.message || '创建支付订单失败';

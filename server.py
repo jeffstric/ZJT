@@ -3014,9 +3014,7 @@ async def create_wechat_payment(request: WechatPayRequest):
             response_data["message"] = "订单创建成功，请在微信中完成支付"
         else:
             # H5支付返回跳转URL
-            h5_url = payment_result.get("h5_url")
-            h5_url_with_redirect = _append_redirect_url(h5_url, SERVER_HOST)
-            response_data["h5_url"] = h5_url_with_redirect
+            response_data["h5_url"] = payment_result.get("h5_url")
             response_data["message"] = "订单创建成功，即将跳转到支付页面"
         
         return JSONResponse(response_data)
