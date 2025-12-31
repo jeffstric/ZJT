@@ -2658,6 +2658,11 @@
       // 初始化世界选择器
       initWorldSelector();
       
+      // 初始化视频提示词后缀
+      if(typeof initVideoPromptSuffix === 'function'){
+        initVideoPromptSuffix();
+      }
+      
       const workflowId = getWorkflowIdFromUrl();
       if(workflowId){
         await loadWorkflow(workflowId);

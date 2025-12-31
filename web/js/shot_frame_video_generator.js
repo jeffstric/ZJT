@@ -92,6 +92,11 @@ async function generateShotFrameVideo(nodeId, node){
     if(videoModel === 'sora'){
       videoPrompt = await replaceCharacterMarkers(videoPrompt);
     }
+    
+    // 添加视频提示词后缀
+    if(typeof getVideoPromptWithSuffix === 'function'){
+      videoPrompt = getVideoPromptWithSuffix(videoPrompt);
+    }
 
     showToast(`正在生成 ${count} 个视频...`, 'info');
 

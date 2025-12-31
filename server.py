@@ -3302,6 +3302,8 @@ async def parse_script(
         script_content = body.get('script_content', '')
         max_group_duration = body.get('max_group_duration', 15)
         world_id = body.get('world_id')
+        force_medium_shot = body.get('force_medium_shot', False)
+        no_bg_music = body.get('no_bg_music', False)
         
         if not script_content:
             return JSONResponse(
@@ -3318,7 +3320,9 @@ async def parse_script(
             max_group_duration=max_group_duration,
             world_id=world_id,
             model=None,
-            temperature=0.7
+            temperature=0.7,
+            force_medium_shot=force_medium_shot,
+            no_bg_music=no_bg_music
         )
         
         if not parsed_data:

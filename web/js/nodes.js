@@ -2852,6 +2852,20 @@
             </select>
             <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">每个镜头组内所有镜头的总时长不超过此值</div>
           </div>
+          <div class="field">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+              <input type="checkbox" class="script-force-medium-shot" style="cursor: pointer;" checked />
+              <span>对话禁止全景</span>
+            </label>
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">对话镜头自动选择近景或中景，避免sora全景对话效果不佳</div>
+          </div>
+          <div class="field">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+              <input type="checkbox" class="script-no-bg-music" style="cursor: pointer;" checked />
+              <span>不生成背景音乐</span>
+            </label>
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">方便后期调音</div>
+          </div>
           <div class="field script-info-field" style="display:none;">
             <div class="gen-meta script-name"></div>
             <div class="gen-meta script-length"></div>
@@ -2872,6 +2886,8 @@
       const textareaEl = el.querySelector('.script-textarea');
       const fileEl = el.querySelector('.script-file');
       const durationSelectEl = el.querySelector('.script-duration-select');
+      const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
+      const noBgMusicEl = el.querySelector('.script-no-bg-music');
       const infoField = el.querySelector('.script-info-field');
       const nameEl = el.querySelector('.script-name');
       const lengthEl = el.querySelector('.script-length');
@@ -2880,8 +2896,10 @@
       const charCountEl = el.querySelector('.script-char-count');
       const warningField = el.querySelector('.script-warning-field');
       
-      // 初始化节点数据中的最大时长
+      // 初始化节点数据中的最大时长和选项
       node.data.maxGroupDuration = 15;
+      node.data.forceMediumShot = true;
+      node.data.noBgMusic = true;
 
       // 更新字符计数器
       function updateCharCount(length) {
@@ -2942,6 +2960,16 @@
       // 时长选择监听
       durationSelectEl.addEventListener('change', () => {
         node.data.maxGroupDuration = parseInt(durationSelectEl.value);
+      });
+
+      // 对话强制中景选项监听
+      forceMediumShotEl.addEventListener('change', () => {
+        node.data.forceMediumShot = forceMediumShotEl.checked;
+      });
+
+      // 不生成背景音乐选项监听
+      noBgMusicEl.addEventListener('change', () => {
+        node.data.noBgMusic = noBgMusicEl.checked;
       });
 
       // 文本框输入监听
@@ -3007,7 +3035,9 @@
             body: JSON.stringify({
               script_content: node.data.scriptContent,
               max_group_duration: node.data.maxGroupDuration || 15,
-              world_id: state.defaultWorldId
+              world_id: state.defaultWorldId,
+              force_medium_shot: node.data.forceMediumShot || false,
+              no_bg_music: node.data.noBgMusic || false
             })
           });
 
@@ -3263,18 +3293,6 @@
       return id;
     }
 
-    function triggerAutoArrange(){
-      if(typeof autoArrangeNodes === 'function'){
-        requestAnimationFrame(() => {
-          try{
-            autoArrangeNodes();
-          }catch(err){
-            console.error('autoArrangeNodes failed:', err);
-          }
-        });
-      }
-    }
-
     // 生成分镜图节点 - 独立分镜模式
     function generateShotFramesIndependent(shotGroupNodeId, shotGroupNode){
       const shots = shotGroupNode.data.shots || [];
@@ -3325,7 +3343,6 @@
       renderImageConnections();
       renderFirstFrameConnections();
       try{ autoSaveWorkflow(); } catch(e){}
-      triggerAutoArrange();
       showToast(`已生成 ${shots.length} 个独立分镜节点`, 'success');
     }
 
@@ -3438,7 +3455,6 @@
       renderImageConnections();
       renderFirstFrameConnections();
       try{ autoSaveWorkflow(); } catch(e){}
-      triggerAutoArrange();
       showToast('已创建合并分镜节点', 'success');
     }
 

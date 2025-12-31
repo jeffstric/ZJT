@@ -311,7 +311,9 @@ async def parse_script_to_shots(
     max_group_duration: int = 15,
     world_id: Optional[int] = None,
     model: Optional[str] = None,
-    temperature: float = 0.7
+    temperature: float = 0.7,
+    force_medium_shot: bool = False,
+    no_bg_music: bool = False
 ) -> Dict[str, Any]:
     """
     将剧本内容解析为结构化的人物、场景和分镜数据
@@ -322,6 +324,8 @@ async def parse_script_to_shots(
         world_id: 世界ID，用于获取数据库中的场景列表进行关联匹配
         model: 使用的LLM模型，默认使用配置文件中的模型
         temperature: 温度参数，控制创意性，默认0.7
+        force_medium_shot: 是否强制对话内容使用中景(半身像)，默认False
+        no_bg_music: 是否不生成背景音乐，默认False
     
     Returns:
         包含characters、locations、shots的结构化数据字典
@@ -385,6 +389,28 @@ async def parse_script_to_shots(
                     logger.warning(f"No locations found for world_id: {world_id}")
             except Exception as e:
                 logger.error(f"Failed to load database locations: {e}", exc_info=True)
+        
+        # 构建特殊要求文本
+        special_requirements = ""
+        if force_medium_shot:
+            special_requirements += """
+**【对话镜头特殊要求】**
+- **所有包含对话(dialogue)的镜头，shot_type禁止使用"全景"或"远景"**
+- 对话镜头应该使用"近景"或"中景"，由你根据场景需要自动选择最合适的景别
+- 近景：适合表现人物细腻的面部表情和情绪变化
+- 中景：适合表现人物的肢体语言和半身动作，能够清楚看到人物的面部表情和上半身
+- 这是为了避免sora在全景对话场景中效果不佳的问题
+
+"""
+        
+        if no_bg_music:
+            special_requirements += """
+**【背景音乐特殊要求】**
+- **所有shot节点的background_music字段必须设置为null或空字符串**
+- 不要生成任何背景音乐描述
+- 这是为了方便后期调音处理
+
+"""
         
         # 构建用户提示词
         user_prompt = f"""请将以下剧本内容解析为结构化的JSON数据。
@@ -461,7 +487,7 @@ async def parse_script_to_shots(
    - 错误示例："【【小李】】走进【【房间】】"（房间不是角色，不要用【【】】）
    - 这样便于后续系统匹配角色库
 
-7. **输出格式**：
+{special_requirements}7. **输出格式**：
    - 必须严格按照以下JSON格式输出
    - 确保所有ID引用关系正确
    - 只输出纯JSON内容
