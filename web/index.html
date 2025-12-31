@@ -1610,19 +1610,6 @@
               // Still running
               this.status = 'RUNNING';
             }
-          } else {
-            // Single task response (backward compatibility)
-            this.status = res.data.status;
-            
-            if (res.data.status === 'SUCCESS') {
-              this.results = res.data.results || [];
-              this.loading = false;
-              this.clearStatusCheck();
-            } else if (res.data.status === 'FAILED') {
-              this.error = res.data.reason || '任务处理失败';
-              this.loading = false;
-              this.clearStatusCheck();
-            }
           }
         } catch (err) {
           console.error('Status check error:', err);

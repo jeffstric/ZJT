@@ -651,14 +651,6 @@ async def image_edit(
             #用uuid生成交易id
             transaction_id = str(uuid.uuid4())
 
-            response = create_ai_image(model, prompt, ratio, image_urls, image_size)
-            logger.info(response)
-            project_id = response.get("data", {}).get("task_id")
-            if not project_id:
-                logger.error("Failed to create project")
-                continue
-            project_ids.append(project_id)
-
             if CHECK_AUTH_TOKEN:
                 #发起请求，扣除算力
                 success, message, response_data = make_perseids_request(
@@ -849,15 +841,6 @@ async def get_status(
                 "status": status_str,
                 "results": results_payload,
                 "reason": reason_payload
-            })
-
-        # Backward compatibility: single project_id keeps old shape
-        if len(tasks_response) == 1:
-            task = tasks_response[0]
-            return JSONResponse({
-                "status": task["status"],
-                "results": task["results"],
-                "reason": task["reason"]
             })
 
         # Multiple project_ids: return list
@@ -1928,7 +1911,7 @@ async def image_upscale(
                 )
                   
         # 1. Get the original image record from database using project_id
-        original_record = AIToolsModel.get_by_project_id(project_id)
+        original_record = AIToolsModel.get_by_id(project_id)
         
         if not original_record:
             raise HTTPException(status_code=404, detail="未找到对应的图片记录")
