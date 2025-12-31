@@ -2871,10 +2871,10 @@ async def create_wechat_payment(request: WechatPayRequest):
                 payer_client_ip=request.payment_ip or "127.0.0.1"
             )
         else:
-            # 外部浏览器使用H5支付
-            payment_type = "H5"
+            # 外部浏览器使用Native扫码支付
+            payment_type = "NATIVE"
             
-            payment_result = wechat_pay_util.create_h5_payment(
+            payment_result = wechat_pay_util.create_native_payment(
                 order_id=order_id,
                 total_fee=total_fee,
                 body=body,
@@ -2920,9 +2920,9 @@ async def create_wechat_payment(request: WechatPayRequest):
             response_data["jsapi_params"] = payment_result
             response_data["message"] = "订单创建成功，请在微信中完成支付"
         else:
-            # H5支付返回跳转URL
-            response_data["h5_url"] = payment_result.get("h5_url")
-            response_data["message"] = "订单创建成功，即将跳转到支付页面"
+            # Native支付返回二维码链接
+            response_data["code_url"] = payment_result.get("code_url")
+            response_data["message"] = "订单创建成功，请使用微信扫码完成支付"
         
         return JSONResponse(response_data)
         
