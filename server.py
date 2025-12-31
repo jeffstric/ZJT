@@ -957,7 +957,8 @@ async def ai_app_run(
 @app.post("/api/ai-app-run-image")
 async def ai_app_run_image(
     prompt: str = Form(..., description="Text prompt for the AI app"),
-    images: List[UploadFile] = File(..., description="Image files for the AI app (1-5 images)"),
+    images: List[UploadFile] = File(None, description="Image files for the AI app (1-5 images)"),
+    image_urls: str = Form(None, description="Comma-separated image URLs (alternative to uploading files)"),
     ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9"),
     duration_seconds: int = Form(15, description="Duration in seconds"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
@@ -966,7 +967,9 @@ async def ai_app_run_image(
 ):
     """
     Submit task to RunningHub AI-app/run endpoint and wait for completion.
-    Supports uploading 1-5 images which will be concatenated horizontally.
+    Supports two modes:
+    1. Upload images: Provide 1-5 images via 'images' parameter (will be concatenated horizontally)
+    2. Use image URLs: Provide comma-separated URLs via 'image_urls' parameter
     Automatically polls task status and returns final video/image URLs.
     """
     try:
@@ -976,24 +979,44 @@ async def ai_app_run_image(
                 detail="Authentication token is required"
             )
         
-        # Validate number of images
-        if not images or len(images) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="At least one image is required"
-            )
-        
-        if len(images) > 5:
-            raise HTTPException(
-                status_code=400,
-                detail="Maximum 5 images allowed"
-            )
-        
-        # If single image, save it directly; if multiple, concatenate them
-        if len(images) == 1:
-            image_url = _save_uploaded_image(images[0])
+        # Determine which mode: uploaded images or image URLs
+        if image_urls:
+            # Mode 1: Use provided image URLs
+            url_list = [url.strip() for url in image_urls.split(',') if url.strip()]
+            if not url_list:
+                raise HTTPException(
+                    status_code=400,
+                    detail="At least one valid image URL is required"
+                )
+            if len(url_list) > 5:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Maximum 5 image URLs allowed"
+                )
+            # Use the first URL directly (or concatenate if multiple URLs provided)
+            if len(url_list) == 1:
+                image_url = url_list[0]
+            else:
+                # For multiple URLs, we use the first one for now
+                # TODO: Consider downloading and concatenating multiple URLs if needed
+                image_url = url_list[0]
+        elif images and len(images) > 0:
+            # Mode 2: Upload images
+            if len(images) > 5:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Maximum 5 images allowed"
+                )
+            # If single image, save it directly; if multiple, concatenate them
+            if len(images) == 1:
+                image_url = _save_uploaded_image(images[0])
+            else:
+                image_url = _concatenate_images(images)
         else:
-            image_url = _concatenate_images(images)
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'images' (uploaded files) or 'image_urls' (comma-separated URLs) must be provided"
+            )
 
         computing_power = TASK_COMPUTING_POWER[3]
         if CHECK_AUTH_TOKEN:
@@ -1084,122 +1107,6 @@ async def ai_app_run_image(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
-
-
-@app.post("/api/ai-app-run-image-url")
-async def ai_app_run_image_url(
-    prompt: str = Form("", description="Text prompt for the AI app"),
-    image_url: str = Form(..., description="Image URL (already uploaded to server)"),
-    ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9"),
-    duration_seconds: int = Form(10, description="Duration in seconds"),
-    count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
-    user_id: int = Form(None, description="User ID"),
-    auth_token: str = Form(None, description="Authentication token")
-):
-    """
-    Submit image-to-video task using an already uploaded image URL.
-    This is optimized for workflow where images are already on the server.
-    """
-    try:
-        # logger.info(f"ai_app_run_image_url called with image_url: {image_url}")
-        # logger.info(f"prompt: {prompt}")
-        # logger.info(f"ratio: {ratio}, duration_seconds: {duration_seconds}, count: {count}")
-
-        if CHECK_AUTH_TOKEN and auth_token is None:
-            raise HTTPException(
-                status_code=400, 
-                detail="Authentication token is required"
-            )
-        
-        if not image_url:
-            raise HTTPException(
-                status_code=400,
-                detail="Image URL is required"
-            )
-
-        computing_power = TASK_COMPUTING_POWER[3]
-        if CHECK_AUTH_TOKEN:
-            headers = {'Authorization': f'Bearer {auth_token}'}
-            success, message, response_data = make_perseids_request(
-                endpoint='user/check_computing_power',
-                method='GET',
-                headers=headers
-            )
-            if not success:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=message
-                )
-            
-            user_computing_power = response_data.get('computing_power', 0)
-            total_computing_power = computing_power * count
-            if user_computing_power < total_computing_power:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
-                )
-        
-        project_ids = []
-        
-        for i in range(count):
-            try:
-                transaction_id = str(uuid.uuid4())
-                result = create_image_to_video(prompt, ratio, image_url, duration_seconds)
-                
-                project_id = result.get("id")
-                if not project_id:
-                    logger.error(f"Task {i+1}: No project ID received")
-                    continue
-                
-                project_ids.append(project_id)
-                logger.info(f"Task {i+1} submitted with project_id: {project_id}")
-                
-                if CHECK_AUTH_TOKEN:
-                    headers = {'Authorization': f'Bearer {auth_token}'}
-                    make_perseids_request(
-                        endpoint='user/calculate_computing_power',
-                        method='POST',
-                        headers=headers,
-                        data={
-                            'computing_power': computing_power,
-                            'behavior': 'deduct',
-                            'transaction_id': transaction_id
-                        }
-                    )
-                
-                if user_id:
-                    try:
-                        AIToolsModel.create(
-                            prompt=prompt,
-                            user_id=user_id,
-                            type=3,
-                            image_path=image_url,
-                            ratio=ratio,
-                            duration=duration_seconds,
-                            project_id=project_id,
-                            status=1  # 1-处理中, 2-完成, -1-失败
-                        )
-                    except Exception as db_err:
-                        logger.error(f"Failed to save to database: {str(db_err)}")
-                        
-            except Exception as task_err:
-                logger.error(f"Task {i+1} failed: {str(task_err)}")
-                continue
-        
-        if not project_ids:
-            raise HTTPException(status_code=500, detail="所有任务都提交失败")
-        
-        return JSONResponse({
-            "success": True,
-            "project_ids": project_ids,
-            "status": "submitted",
-            "image_url": image_url
-        })
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to submit task: {str(e)}")
 
 
 @app.get('/api/user/computing_power')
