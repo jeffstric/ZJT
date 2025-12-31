@@ -74,7 +74,7 @@
             <label class="label">密码</label>
             <input class="input" type="password" v-model="loginForm.password" placeholder="请输入密码" @keyup.enter="handleLogin" />
           </div>
-          <div class="terms-checkbox">
+          <div v-if="loginShowTerms" class="terms-checkbox">
             <input type="checkbox" id="login-terms" v-model="loginForm.termsAgreed" />
             <label for="login-terms" style="cursor: pointer;">
               我已阅读并同意 <span class="terms-link" @click.stop="showTermsModal = true">《AI工具服务使用条款》</span>
@@ -116,8 +116,14 @@
             <input class="input" type="text" v-model="registerForm.inviteCode" placeholder="请输入邀请码" maxlength="10" @keyup.enter="handleRegister" />
             <div class="invite-tip">
               <span class="tip-icon">🎁</span>
-              <span class="tip-text">填写邀请码，额外赠送 <strong>50 算力</strong></span>
+              <span class="tip-text">填写邀请码，额外赠送 <strong>25 算力</strong></span>
             </div>
+          </div>
+          <div class="terms-checkbox">
+            <input type="checkbox" id="register-terms" v-model="registerForm.termsAgreed" />
+            <label for="register-terms" style="cursor: pointer;">
+              我已阅读并同意 <span class="terms-link" @click.stop="showTermsModal = true">《AI工具服务使用条款》</span>
+            </label>
           </div>
           <div class="field" style="margin-top: 20px;">
             <button class="btn" style="width: 100%;" @click="handleRegister" :disabled="registerLoading">
@@ -4133,7 +4139,8 @@
         code: '',
         password: '',
         confirmPassword: '',
-        inviteCode: ''
+        inviteCode: '',
+        termsAgreed: false
       },
       registerLoading: false,
       registerError: '',
@@ -4290,11 +4297,13 @@
         this.loginForm.phone = '';
         this.loginForm.password = '';
         this.loginForm.termsAgreed = false;
+        this.loginShowTerms = false;
         this.registerForm.phone = '';
         this.registerForm.code = '';
         this.registerForm.password = '';
         this.registerForm.confirmPassword = '';
         this.registerForm.inviteCode = '';
+        this.registerForm.termsAgreed = false;
         this.resetForm.phone = '';
         this.resetForm.code = '';
         this.resetForm.newPassword = '';
@@ -4304,7 +4313,6 @@
       async handleLogin() {
         this.loginError = '';
         this.loginLoading = true;
-        
         try {
           // 验证输入
           if (!this.loginForm.phone || !this.loginForm.password) {
@@ -4360,6 +4368,11 @@
         } catch (error) {
           console.error('Login error:', error);
           this.loginError = error?.response?.data?.message || '登录失败，请重试';
+          if (this.loginError === '请阅读并同意AI工具服务使用条款') {
+              this.loginShowTerms = true;
+              this.loginLoading = false;
+              return;
+          }
         } finally {
           this.loginLoading = false;
         }
@@ -4424,6 +4437,12 @@
             return;
           }
           
+          if (!this.registerForm.termsAgreed) {
+            this.registerError = '请勾选《AI工具服务使用条款》';
+            this.registerLoading = false;
+            return;
+          }
+          
           // 验证手机号格式
           if (!/^1[3-9]\d{9}$/.test(this.registerForm.phone)) {
             this.registerError = '请输入正确的手机号';
@@ -4455,11 +4474,14 @@
           });
           
           if (response.data.success) {
-            // 关闭模态框并清空表单
-            this.closeModal();
-            
-            // 提示用户注册成功
-            alert('注册成功！');
+            // 注册成功后自动登录
+            this.showLoginModal = true;
+            this.authMode = 'login';
+            this.loginShowTerms = true;
+            this.loginForm.phone = this.registerForm.phone;
+            this.loginForm.password = this.registerForm.password;
+            this.loginForm.termsAgreed = true;
+            await this.handleLogin();
           } else {
             this.registerError = response.data.message || '注册失败';
           }
