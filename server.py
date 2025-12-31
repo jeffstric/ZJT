@@ -2900,10 +2900,7 @@ async def create_wechat_payment(request: WechatPayRequest):
             # 继续执行，不影响支付流程
         
         logger.info(f"Created {payment_type} payment order {record_id} for user {request.user_id}, package {request.package_id}")
-        
-        # 更新用户首充状态
-        _update_first_recharge_status(auth_token=request.auth_token)
-        
+              
         # 返回支付信息
         response_data = {
             "success": True,
@@ -3030,8 +3027,6 @@ async def wechat_payment_callback(request: Request):
                 logger.info(f"Order already paid: {order_id}")
                 return JSONResponse({"code": "SUCCESS", "message": "OK"})
             
-            # 更新订单状态为已支付
-            PaymentOrdersModel.update_paid(order_id, transaction_id)
             user_id = order.user_id
             # TODO: 增加用户算力
             logger.info(f"Refunding {user_id} , {AUTHENTICATION_ID}")
@@ -3049,6 +3044,25 @@ async def wechat_payment_callback(request: Request):
                 return False
                 
             auth_token = response_data['token']
+            computing_power = order.computing_power
+            
+            # 检查是否为首充福利
+            if order.package_id == 1:
+                has_completed_first_recharge = _has_completed_first_recharge(auth_token)
+                if has_completed_first_recharge:
+                    computing_power = 4
+                    logger.warning(f"User {order.user_id} attempted to purchase first-charge package again, downgrade computing power to {computing_power}")
+                    try:
+                        PaymentOrdersModel.update_computing_power(order_id, computing_power)
+                    except Exception as e:
+                        logger.error(f"Failed to update computing power for repeated first-charge order {order_id}: {e}")
+                else:
+                    # 更新用户首充状态
+                    _update_first_recharge_status(auth_token=auth_token)
+            
+            # 更新订单状态为已支付
+            PaymentOrdersModel.update_paid(order_id, transaction_id)
+
             headers = {'Authorization': f'Bearer {auth_token}'}
                         
             # 发起请求，增加算力
@@ -3057,13 +3071,13 @@ async def wechat_payment_callback(request: Request):
                 method='POST',
                 headers=headers,
                 data={
-                    "computing_power": order.computing_power,
+                    "computing_power": computing_power,
                     "behavior": "increase",
                     "transaction_id": transaction_id
                 }
             )
             
-            logger.info(f"Payment processed successfully: order_id={order_id}, user_id={order.user_id}, computing_power={order.computing_power}")
+            logger.info(f"Payment processed successfully: order_id={order_id}, user_id={order.user_id}, computing_power={computing_power}")
         
         # 返回成功响应（V3 API使用JSON格式）
         return JSONResponse({"code": "SUCCESS", "message": "OK"})

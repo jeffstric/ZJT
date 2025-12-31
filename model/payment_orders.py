@@ -57,7 +57,7 @@ class PaymentOrdersModel:
     def create(
         order_id: str,
         user_id: int,
-        package_id: str,
+        package_id: int,
         computing_power: int,
         price: float,
         payment_type: str,
@@ -229,6 +229,24 @@ class PaymentOrdersModel:
             Number of affected rows
         """
         return PaymentOrdersModel.update_status(order_id, 1, transaction_id)
+    
+    @staticmethod
+    def update_computing_power(order_id: str, computing_power: int) -> int:
+        """
+        Update computing power for a specific payment order.
+        """
+        sql = """
+            UPDATE payment_orders
+            SET computing_power = %s, updated_at = NOW()
+            WHERE order_id = %s
+        """
+        try:
+            affected_rows = execute_update(sql, (computing_power, order_id))
+            logger.info(f"Updated computing power for order {order_id} to {computing_power}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to update computing power for order {order_id}: {e}")
+            raise
     
     @staticmethod
     def cancel(order_id: str) -> int:
