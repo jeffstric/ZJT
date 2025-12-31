@@ -1,0 +1,8 @@
+{
+  "max_modules_per_session": 1,
+  "max_context_tokens": 50000,
+  "cleanup_strategy": "module_count",
+  "auto_restart": true,
+  "preserve_state": true,
+  "restart_command": "/orchestrator"
+}
