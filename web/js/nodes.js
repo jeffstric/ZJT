@@ -3263,6 +3263,18 @@
       return id;
     }
 
+    function triggerAutoArrange(){
+      if(typeof autoArrangeNodes === 'function'){
+        requestAnimationFrame(() => {
+          try{
+            autoArrangeNodes();
+          }catch(err){
+            console.error('autoArrangeNodes failed:', err);
+          }
+        });
+      }
+    }
+
     // 生成分镜图节点 - 独立分镜模式
     function generateShotFramesIndependent(shotGroupNodeId, shotGroupNode){
       const shots = shotGroupNode.data.shots || [];
@@ -3313,6 +3325,7 @@
       renderImageConnections();
       renderFirstFrameConnections();
       try{ autoSaveWorkflow(); } catch(e){}
+      triggerAutoArrange();
       showToast(`已生成 ${shots.length} 个独立分镜节点`, 'success');
     }
 
@@ -3425,6 +3438,7 @@
       renderImageConnections();
       renderFirstFrameConnections();
       try{ autoSaveWorkflow(); } catch(e){}
+      triggerAutoArrange();
       showToast('已创建合并分镜节点', 'success');
     }
 
