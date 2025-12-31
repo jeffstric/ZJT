@@ -13,6 +13,24 @@
       "file": "workflow_list.json"
     },
     {
+      "id": "world_management",
+      "name": "世界管理模块",
+      "description": "工作流编辑器中的世界创建、选择、节点添加功能测试",
+      "file": "world_management.json"
+    },
+    {
+      "id": "location_management",
+      "name": "场景管理模块",
+      "description": "工作流编辑器中的场景创建、编辑、节点添加功能测试",
+      "file": "location_management.json"
+    },
+    {
+      "id": "character_management",
+      "name": "角色管理模块",
+      "description": "工作流编辑器中的角色创建、编辑、节点添加、音频试听功能测试",
+      "file": "character_management.json"
+    },
+    {
       "id": "workflow_editor",
       "name": "工作流编辑器模块",
       "description": "工作流画布编辑器的核心功能测试，包括画布操作、节点管理、连接线等",
@@ -23,12 +41,6 @@
       "name": "节点操作模块",
       "description": "各类节点的具体操作功能测试，包括图片上传、参数设置、视频生成等",
       "file": "node_operations.json"
-    },
-    {
-      "id": "error_handling",
-      "name": "错误处理与边界场景",
-      "description": "验证系统对各种错误情况和边界场景的处理能力",
-      "file": "error_handling.json"
     },
     {
       "id": "timeline",
@@ -43,22 +55,10 @@
       "file": "shot_frame_video.json"
     },
     {
-      "id": "world_management",
-      "name": "世界管理模块",
-      "description": "工作流编辑器中的世界创建、选择、节点添加功能测试",
-      "file": "world_management.json"
-    },
-    {
-      "id": "character_management",
-      "name": "角色管理模块",
-      "description": "工作流编辑器中的角色创建、编辑、节点添加、音频试听功能测试",
-      "file": "character_management.json"
-    },
-    {
-      "id": "location_management",
-      "name": "场景管理模块",
-      "description": "工作流编辑器中的场景创建、编辑、节点添加功能测试",
-      "file": "location_management.json"
+      "id": "error_handling",
+      "name": "错误处理与边界场景",
+      "description": "验证系统对各种错误情况和边界场景的处理能力",
+      "file": "error_handling.json"
     }
   ]
 }

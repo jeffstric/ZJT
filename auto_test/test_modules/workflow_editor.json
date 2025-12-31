@@ -1486,7 +1486,8 @@
       "pass": false,
       "remark": "",
       "prerequisites": [
-        "需要先创建测试用的世界和场景数据"
+        "world_001",
+        "location_001"
       ],
       "test_steps": [
         {
