@@ -289,6 +289,92 @@ class WechatPayUtil:
         
         return {"h5_url": h5_url}
     
+    def create_native_payment(
+        self,
+        order_id: str,
+        total_fee: int,
+        body: str,
+        notify_url: str,
+        payer_client_ip: str = "127.0.0.1",
+        product_id: Optional[str] = None
+    ) -> Dict:
+        """
+        创建Native支付订单（扫码支付）- 使用微信支付V3 API
+        
+        Args:
+            order_id: 商户订单号
+            total_fee: 支付金额（单位：分）
+            body: 商品描述
+            notify_url: 支付结果通知回调URL
+            payer_client_ip: 用户终端IP
+            product_id: 商品ID（可选，用于标记二维码场景）
+        
+        Returns:
+            包含code_url的字典
+            {
+                "code_url": "weixin://wxpay/bizpayurl?pr=xxx"
+            }
+        
+        参考 create_jsapi_payment 的签名和请求构建流程
+        """
+        logger.info(f"Creating Native payment for order {order_id}, amount: {total_fee}")
+        
+        request_body = {
+            "appid": str(self.app_id),
+            "mchid": str(self.mch_id),
+            "description": body,
+            "out_trade_no": order_id,
+            "notify_url": notify_url,
+            "amount": {
+                "total": int(total_fee),
+                "currency": "CNY"
+            },
+            "scene_info": {
+                "payer_client_ip": payer_client_ip
+            }
+        }
+        
+        if product_id:
+            request_body["goods_tag"] = product_id
+        
+        timestamp = str(int(time.time()))
+        nonce_str = uuid.uuid4().hex
+        request_body_json = json.dumps(request_body)
+        
+        signature = self._generate_sign(
+            http_method="POST",
+            url_path="/v3/pay/transactions/native",
+            timestamp=timestamp,
+            nonce_str=nonce_str,
+            request_body=request_body_json
+        )
+        
+        auth_header = (
+            f'WECHATPAY2-SHA256-RSA2048 '
+            f'mchid="{self.mch_id}",'
+            f'nonce_str="{nonce_str}",'
+            f'timestamp="{timestamp}",'
+            f'serial_no="{self.api_key}",'
+            f'signature="{signature}"'
+        )
+        
+        import requests
+        response = requests.post(
+            "https://api.mch.weixin.qq.com/v3/pay/transactions/native",
+            headers={
+                "Authorization": auth_header,
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            },
+            json=request_body
+        )
+        
+        result = response.json()
+        logger.info(f"Native payment result: {result}")
+        code_url = result.get("code_url")
+        
+        return {"code_url": code_url}
+    
     def _generate_sign(
         self,
         http_method: str,

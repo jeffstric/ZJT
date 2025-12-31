@@ -263,7 +263,21 @@
             <p style="color: var(--danger); margin-bottom: 16px;">{{ paymentError }}</p>
             <button class="btn secondary" @click="retryPayment">重试</button>
           </div>
-          
+          <div v-else-if="nativeCodeUrl" style="text-align: center; padding: 20px;">
+            <div style="font-weight: 600; font-size: 16px; margin-bottom: 16px;">请使用微信扫码完成支付</div>
+            <div style="display: inline-flex; flex-direction: column; align-items: center; gap: 12px;">
+              <div style="background: #fff; padding: 12px; border-radius: 12px; box-shadow: 0 8px 24px rgba(15,23,42,0.08);">
+                <img v-if="paymentQrCode" :src="paymentQrCode" alt="微信支付二维码" style="width: 240px; height: 240px;" />
+              </div>
+              <div style="font-size: 13px; color: var(--muted); line-height: 1.6;">
+                请打开微信“扫一扫”完成支付<br/>
+                如果已支付，请稍等片刻系统会自动到账
+              </div>
+              <div style="display: flex; gap: 12px;">
+                <button class="btn secondary" @click="retryPayment">二维码失效？重新生成</button>
+              </div>
+            </div>
+          </div>
           <div style="margin-top: 20px; text-align: center;">
             <button class="btn secondary" @click="backToPackageSelection">返回选择套餐</button>
           </div>
@@ -4165,7 +4179,7 @@
       paymentError: '',
       wechatOpenid: '',
       userIp: '',
-      externalPayUrl: window.EXTERNAL_PAY_URL || 'https://www.perseids.cn/external_recharge.html'
+      nativeCodeUrl: ''
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -4760,6 +4774,7 @@
         this.paymentError = '';
         this.paymentQrCode = '';
         this.paymentOrderId = '';
+        this.nativeCodeUrl = '';
         
         // 如果是微信浏览器且没有openid，先获取openid
         if (this.isWechatBrowser() && !this.wechatOpenid) {
@@ -4821,30 +4836,12 @@
         if (!this.selectedPackage) return;
         this.paymentLoading = true;
         this.paymentError = '';
+        this.nativeCodeUrl = '';
+        this.paymentQrCode = '';
         
         const isWechat = this.isWechatBrowser();
-        
-        if (!isWechat) {
-          try {
-            const payUrl = new URL(this.externalPayUrl);
-            payUrl.searchParams.set('package_id', this.selectedPackage.package_id);
-            payUrl.searchParams.set('package_name', encodeURIComponent(this.selectedPackage.description || `套餐${this.selectedPackage.package_id}`));
-            payUrl.searchParams.set('price', this.selectedPackage.price);
-            payUrl.searchParams.set('computing_power', this.selectedPackage.computing_power);
-            payUrl.searchParams.set('user_id', this.userId);
-            payUrl.searchParams.set('auth_token', encodeURIComponent(this.authToken));
-            payUrl.searchParams.set('payment_ip', this.userIp || '');
-            payUrl.searchParams.set('redirect_url', encodeURIComponent(window.location.href));
-            payUrl.searchParams.set('api_base', window.location.origin);
-            
-            window.location.href = payUrl.toString();
-          } catch (err) {
-            console.error('Failed to open external payment page:', err);
-            this.paymentError = '跳转支付页面失败，请重试';
-          } finally {
-            this.paymentLoading = false;
-          }
-          return;
+        if (!this.userIp) {
+          await this.fetchUserIp();
         }
         
         try {
@@ -4852,11 +4849,11 @@
             package_id: this.selectedPackage.package_id,
             user_id: parseInt(this.userId, 10),
             auth_token: this.authToken,
-            is_wechat_browser: true,
+            is_wechat_browser: isWechat,
             payment_ip: this.userIp || '0.0.0.0'
           };
           
-          if (this.wechatOpenid) {
+          if (isWechat && this.wechatOpenid) {
             requestData.openid = this.wechatOpenid;
           }
           
@@ -4868,8 +4865,16 @@
             
             if (paymentType === 'JSAPI') {
               this.invokeWechatJSAPI(response.data.jsapi_params);
+            } else if (paymentType === 'NATIVE') {
+              const codeUrl = response.data.code_url;
+              if (!codeUrl) {
+                this.paymentError = '未获取到支付二维码，请重试';
+              } else {
+                this.nativeCodeUrl = codeUrl;
+                this.paymentQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(codeUrl)}`;
+              }
             } else {
-              this.paymentError = '检测到非微信环境，请使用外部支付页面';
+              this.paymentError = '未知的支付方式，请重试';
             }
           } else {
             this.paymentError = response.data.message || '创建支付订单失败';
@@ -4925,6 +4930,7 @@
         this.paymentQrCode = '';
         this.paymentOrderId = '';
         this.paymentError = '';
+        this.nativeCodeUrl = '';
       },
       
       retryPayment() {
@@ -4937,6 +4943,7 @@
         this.paymentQrCode = '';
         this.paymentOrderId = '';
         this.paymentError = '';
+        this.nativeCodeUrl = '';
         this.rechargePackages = [];
       }
     },
