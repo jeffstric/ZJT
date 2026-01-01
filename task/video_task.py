@@ -11,6 +11,7 @@ from duomi_api_requset import (
     create_ai_image,
     create_image_to_video,
     get_ai_task_result,
+    create_text_to_image,
 )
 from model import TasksModel, AIToolsModel
 from config.constant import TASK_TYPE_GENERATE_VIDEO,AUTHENTICATION_ID
@@ -57,13 +58,42 @@ def _submit_new_task(ai_tool):
             image_urls = ai_tool.image_path
     
     if ai_tool_type in [1, 7]:
-        if ai_tool_type == 1:
-            model = "gemini-2.5-pro-image-preview"
+        # Check if this is image-edit (has image_urls) or text-to-image (no image_urls)
+        if image_urls:
+            # Image editing task
+            if ai_tool_type == 1:
+                model = "gemini-2.5-pro-image-preview"
+            else:
+                model = "gemini-3-pro-image-preview"
+            response = create_ai_image(model, ai_tool.prompt, ai_tool.ratio, image_urls)
+            logger.info(response)
+            project_id = response.get("data", {}).get("task_id")
         else:
-            model = "gemini-3-pro-image-preview"
-        response = create_ai_image(model, ai_tool.prompt, ai_tool.ratio, image_urls)
-        logger.info(response)
-        project_id = response.get("data", {}).get("task_id")
+            # Text-to-image task
+            if ai_tool_type == 1:
+                model = "gemini-2.5-pro-image-preview"  # 标准版
+            else:
+                model = "gemini-3-pro-image-preview"  # 加强版
+            
+            # Get image_size from database if available (only for gemini-3-pro-image-preview)
+            image_size = None
+            if ai_tool_type == 7:  # Only for gemini-3-pro-image-preview
+                image_size = "1K"  # Default, could be stored in ai_tool if needed
+            
+            response = create_text_to_image(
+                model=model,
+                prompt=ai_tool.prompt,
+                aspect_ratio=ai_tool.ratio or "9:16",
+                image_size=image_size
+            )
+            logger.info(f"Text-to-image response: {response}")
+            
+            if response.get("code") != 200:
+                error_msg = response.get("msg", "API调用失败")
+                logger.error(f"Text-to-image API error: {error_msg}")
+                return False
+            
+            project_id = response.get("data", {}).get("task_id")
     elif ai_tool_type in [2, 3]:
         result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
         logger.info(f"Submit task result: {result}")

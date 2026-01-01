@@ -80,6 +80,43 @@ def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16
     response = requests.post(url, json=payload, headers=headers)
     return response.json()
 
+def create_text_to_image(model="gemini-3-pro-image-preview", prompt="", aspect_ratio="auto", image_size=None):
+    """
+    Generate AI image from text using NanoBanana API (text-to-image)
+    
+    Args:
+        model: Model type (default: "gemini-3-pro-image-preview")
+               Options: "gemini-3-pro-image-preview", "nano-banana-pro", 
+                       "gemini-2.5-pro-image-preview", "nano-banana"
+        prompt: Text prompt for image generation
+        aspect_ratio: Image aspect ratio (default: "auto")
+                     Options: "auto", "1:1", "2:3", "3:2", "3:4", "4:3", 
+                             "4:5", "5:4", "9:16", "16:9", "21:9"
+        image_size: Image resolution (optional, only for gemini-3-pro-image-preview)
+                   Format: "1K", "2K", "4K" (K must be uppercase)
+    
+    Returns:
+        Response from the API
+    """
+    url = "https://duomiapi.com/api/gemini/nano-banana"
+    
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "aspect_ratio": aspect_ratio
+    }
+    
+    if image_size and model == "gemini-3-pro-image-preview":
+        payload["image_size"] = image_size
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": token
+    }
+    
+    response = requests.post(url, json=payload, headers=headers)
+    return response.json()
+
 def create_video_remix(video_id, prompt, aspect_ratio="16:9", duration=15):
     """
     Remix/re-edit an existing video using Sora2 API
