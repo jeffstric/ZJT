@@ -5,20 +5,20 @@
 import os
 import subprocess
 from typing import Optional, Tuple
-from config import Config
+from jianying_config import JianyingConfig
 
 
 class MediaUtils:
     """媒体文件处理工具类"""
     
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(self, config: Optional[JianyingConfig] = None):
         """
         初始化媒体工具
         
         Args:
             config: 配置对象，如果为None则使用默认配置
         """
-        self.config = config or Config()
+        self.config = config or JianyingConfig()
     
     def get_media_duration(self, file_path: str) -> int:
         """

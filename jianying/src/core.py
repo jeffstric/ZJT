@@ -10,7 +10,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
-from config import Config
+from jianying_config import JianyingConfig
 from media_utils import MediaUtils
 
 
@@ -39,7 +39,7 @@ class Track:
 class JianyingMultiTrackLibrary:
     """剪映多轨道草稿生成库"""
 
-    def __init__(self, draft_name: str, output_dir: str, config: Optional[Config] = None,
+    def __init__(self, draft_name: str, output_dir: str, config: Optional[JianyingConfig] = None,
                  material_path_prefix: Optional[str] = None,
                  width: int = 1920, height: int = 1080, fps: int = 30):
         """
@@ -53,7 +53,7 @@ class JianyingMultiTrackLibrary:
             height: 画布高度
             fps: 帧率
         """
-        self.config = config or Config()
+        self.config = config or JianyingConfig()
         self.media_utils = MediaUtils(self.config)
         
         self.draft_name = draft_name

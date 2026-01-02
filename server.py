@@ -4365,7 +4365,7 @@ async def export_timeline_draft(
         
         from core import JianyingMultiTrackLibrary
         from draft_generator import DraftGenerator
-        from utils import seconds_to_microseconds
+        from jianying_utils import seconds_to_microseconds
         
         # 生成唯一的草稿名称（使用工作流名称作为前缀）
         # 清理工作流名称，移除不适合文件名的字符
