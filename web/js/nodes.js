@@ -3019,6 +3019,13 @@
           return;
         }
 
+        if(!state.defaultWorldId){
+          const confirmed = window.confirm('尚未在左上角选择世界，无法自动匹配场景和角色。确认继续拆分分镜图吗？');
+          if(!confirmed){
+            return;
+          }
+        }
+
         splitBtn.disabled = true;
         statusEl.style.display = 'block';
         statusEl.style.color = '#666';
