@@ -3722,6 +3722,22 @@ async def create_world(
                 }
             )
         
+        cleaned_name = request.name.strip()
+        
+        existing_world = WorldModel.get_by_name(
+            user_id=user_id,
+            name=cleaned_name
+        )
+        if existing_world:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '该世界已经存在，请选择其他名称',
+                    'data': None
+                }
+            )
+        
         world_id = WorldModel.create(
             name=request.name.strip(),
             user_id=user_id,
