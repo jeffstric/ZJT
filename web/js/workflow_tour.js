@@ -856,6 +856,17 @@
     startTour(true);
   });
 
+  const resetBtn = document.getElementById('tourResetBtn');
+  if(resetBtn){
+    resetBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      if(confirm('确定要重置新手引导吗？这将清除所有进度。')){
+        window.workflowTour.reset();
+        alert('新手引导已重置！');
+      }
+    });
+  }
+
   window.addEventListener('keydown', handleKeydown);
   window.addEventListener('resize', () => active && renderStep());
   window.addEventListener('scroll', () => active && renderStep(), { passive: true });
