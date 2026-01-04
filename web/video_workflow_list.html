@@ -720,7 +720,7 @@
         });
         const result = await response.json();
         if (result.code === 0 && result.data) {
-          document.getElementById('workflowWorld').value = result.data.world_id || '';
+          document.getElementById('workflowWorld').value = result.data.default_world_id || '';
           document.getElementById('workflowStyle').value = result.data.style || '';
           if (result.data.style_reference_image) {
             document.getElementById('styleImagePreviewImg').src = result.data.style_reference_image;
@@ -763,7 +763,7 @@
       
       // Add world_id if provided
       if (worldId) {
-        data.world_id = parseInt(worldId);
+        data.default_world_id = parseInt(worldId);
       }
       
       // Add style if provided

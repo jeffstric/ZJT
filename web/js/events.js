@@ -377,10 +377,11 @@
         
         // 如果从图生视频节点拖拽，查找视频节点输入端口
         // 如果从剧本节点拖拽，查找分镜组节点输入端口
-        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'script')){
+        // 如果从角色节点拖拽，查找视频节点输入端口
+        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'script' || fromNode.type === 'character')){
           let nearestPort = null;
           let nearestDist = 50;
-          const targetType = fromNode.type === 'image_to_video' ? 'video' : 'shot_group';
+          const targetType = fromNode.type === 'script' ? 'shot_group' : 'video';
           for(const node of state.nodes){
             if(node.type !== targetType) continue;
             const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -1061,11 +1062,16 @@
         e.stopPropagation();
         const canClick = createCardBtn.getAttribute('data-can-click') === 'true';
         if (!canClick) {
-          showToast('请先生成角色视频，按钮会自动启用', 'warning');
+          showToast('请先连接一个视频节点，或生成角色视频后再创建角色卡', 'warning');
           return;
         }
         createSoraCharacterCard(id, character);
       });
+      
+      // 初始化时检查是否已有连接的视频节点
+      setTimeout(() => {
+        updateCharacterCardButtonState(id);
+      }, 100);
       
       if (helpIcon) {
         helpIcon.addEventListener('click', (e) => {
@@ -1186,11 +1192,16 @@
         e.stopPropagation();
         const canClick = createCardBtn.getAttribute('data-can-click') === 'true';
         if (!canClick) {
-          showToast('请先生成角色视频，按钮会自动启用', 'warning');
+          showToast('请先连接一个视频节点，或生成角色视频后再创建角色卡', 'warning');
           return;
         }
         createSoraCharacterCard(id, character);
       });
+      
+      // 初始化时检查是否已有连接的视频节点
+      setTimeout(() => {
+        updateCharacterCardButtonState(id);
+      }, 100);
       
       if (helpIcon) {
         helpIcon.addEventListener('click', (e) => {
@@ -1505,7 +1516,9 @@
           showToast('世界创建成功', 'success');
           
           // 关闭创建世界模态框
-          document.getElementById('createWorldModal').classList.remove('show');
+          const modalEl = document.getElementById('createWorldModal');
+          modalEl.classList.remove('show');
+          modalEl.dispatchEvent(new Event('worldCreateSuccess', { bubbles: true }));
           
           // 重新加载世界列表
           if (currentWorldSelectElement) {
@@ -1823,7 +1836,9 @@
         if (result.code === 0 && result.data) {
           showToast('场景创建成功', 'success');
           
-          document.getElementById('createLocationModal').classList.remove('show');
+          const modalEl = document.getElementById('createLocationModal');
+          modalEl.classList.remove('show');
+          modalEl.dispatchEvent(new Event('locationCreateSuccess', { bubbles: true }));
           
           loadLocations(worldId);
         } else {
@@ -2191,7 +2206,7 @@
                   e.stopPropagation();
                   const canClick = createCardBtn.getAttribute('data-can-click') === 'true';
                   if (!canClick) {
-                    showToast('请先生成角色视频，按钮会自动启用', 'warning');
+                    showToast('请先连接一个视频节点，或生成角色视频后再创建角色卡', 'warning');
                     return;
                   }
                   createSoraCharacterCard(savedNodeId, character);
@@ -2486,9 +2501,37 @@
         const userId = localStorage.getItem('user_id') || '1';
         const authToken = localStorage.getItem('auth_token') || '';
         
+        // 从数据库记录ID获取实际的Duomi API任务ID
+        // videoProjectId 是数据库记录ID，需要查询数据库获取实际的 project_id
+        let actualTaskId = videoProjectId;
+        try {
+          // 调用后端接口获取数据库记录详情
+          const detailUrl = `/api/ai-tools/detail/${videoProjectId}`;
+          const detailRes = await fetch(detailUrl, {
+            headers: {
+              'Authorization': authToken ? `Bearer ${authToken}` : '',
+              'X-User-Id': userId
+            }
+          });
+          
+          if (detailRes.ok) {
+            const detailData = await detailRes.json();
+            if (detailData.success && detailData.data && detailData.data.project_id) {
+              actualTaskId = detailData.data.project_id;
+              console.log(`Resolved database record ID ${videoProjectId} to actual task ID: ${actualTaskId}`);
+            } else {
+              console.warn('Database record has no project_id, using record ID as fallback');
+            }
+          } else {
+            console.warn('Failed to fetch record detail, using record ID as fallback');
+          }
+        } catch (resolveError) {
+          console.warn('Failed to resolve task ID, using original value:', resolveError);
+        }
+        
         const characterCardForm = new FormData();
         characterCardForm.append('timestamps', '1,3');
-        characterCardForm.append('from_task', videoProjectId);
+        characterCardForm.append('from_task', actualTaskId);
         
         if (userId) {
           characterCardForm.append('user_id', userId);
@@ -2573,9 +2616,23 @@
                     helpIcon.style.display = 'none';
                   }
                   
+                  // 成功时更新按钮状态
+                  if (createCardBtn) {
+                    createCardBtn.disabled = false;
+                    createCardBtn.textContent = '重新生成sora角色卡';
+                    createCardBtn.style.background = 'white';
+                    createCardBtn.style.color = '#111827';
+                    createCardBtn.style.border = '1px solid #d1d5db';
+                  }
+                  
                   try { autoSaveWorkflow(); } catch(e) { console.error('Auto save failed:', e); }
                 } else {
                   showToast('角色卡创建完成，但未获取到角色ID', 'warning');
+                  // 即使没有获取到ID，也恢复按钮状态
+                  if (createCardBtn) {
+                    createCardBtn.disabled = false;
+                    createCardBtn.textContent = '创建角色卡';
+                  }
                 }
                 break;
               } else if (statusData.status === 'FAILED' || statusData.status === 'ERROR') {
@@ -2583,6 +2640,11 @@
                 const helpIcon = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-card-help-icon`);
                 if (helpIcon) {
                   helpIcon.style.display = 'block';
+                }
+                // 失败时恢复按钮状态，允许重试
+                if (createCardBtn) {
+                  createCardBtn.disabled = false;
+                  createCardBtn.textContent = '创建角色卡';
                 }
                 break;
               } else {
@@ -2605,13 +2667,24 @@
             if (helpIcon) {
               helpIcon.style.display = 'block';
             }
+            // 超时时恢复按钮状态，允许重试
+            if (createCardBtn) {
+              createCardBtn.disabled = false;
+              createCardBtn.textContent = '创建角色卡';
+            }
           }
         } else {
           console.error('Character card creation failed:', characterCardData);
-          showToast('角色卡创建失败: ' + (characterCardData.message || '未知错误'), 'error');
+          const errorMsg = characterCardData.detail || characterCardData.message || '未知错误';
+          showToast('角色卡创建失败: ' + errorMsg, 'error');
           const helpIcon = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-card-help-icon`);
           if (helpIcon) {
             helpIcon.style.display = 'block';
+          }
+          // 失败时恢复按钮状态，不要禁用，允许重试
+          if (createCardBtn) {
+            createCardBtn.disabled = false;
+            createCardBtn.textContent = '创建角色卡';
           }
         }
       } catch (error) {
@@ -2621,8 +2694,14 @@
         if (helpIcon) {
           helpIcon.style.display = 'block';
         }
+        // 失败时恢复按钮状态，不要禁用，允许重试
+        if (createCardBtn) {
+          createCardBtn.disabled = false;
+          createCardBtn.textContent = '创建角色卡';
+        }
       } finally {
-        updateCharacterCardButtonState(characterNodeId);
+        // 只在成功时才更新按钮状态为禁用
+        // updateCharacterCardButtonState(characterNodeId);
       }
     }
     

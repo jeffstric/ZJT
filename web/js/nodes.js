@@ -24,7 +24,7 @@
       el.style.top = node.y + 'px';
 
       el.innerHTML = `
-        <div class="port input" title="输入（连接图生视频节点）"></div>
+        <div class="port input" title="输入（连接图生视频节点或角色节点）"></div>
         <div class="node-header">
           <div class="node-title">${node.title}</div>
           <button class="icon-btn" title="删除">×</button>
@@ -101,7 +101,7 @@
       inputPort.addEventListener('mouseup', (e) => {
         if(state.connecting && state.connecting.fromId !== id){
           const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
-          if(fromNode && fromNode.type === 'image_to_video'){
+          if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'character')){
             const exists = state.connections.some(c => c.to === id);
             if(!exists){
               state.connections.push({
@@ -112,6 +112,11 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              
+              // 如果连接涉及角色节点，更新角色卡按钮状态
+              if(fromNode.type === 'character'){
+                updateCharacterCardButtonState(state.connecting.fromId);
+              }
             }
           }
         }
@@ -3017,6 +3022,13 @@
         if(!node.data.scriptContent) {
           showToast('请先上传剧本文件', 'error');
           return;
+        }
+
+        if(!state.defaultWorldId){
+          const confirmed = window.confirm('尚未在左上角选择世界，无法自动匹配场景和角色。确认继续拆分分镜图吗？');
+          if(!confirmed){
+            return;
+          }
         }
 
         splitBtn.disabled = true;

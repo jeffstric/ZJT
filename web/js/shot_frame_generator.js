@@ -43,16 +43,35 @@ function calculateMergedShotRatio(shotCount, canvasRatio) {
   return closestRatio.name;
 }
 
+// 移除不存在角色的【【】】标记
+function removeMissingCharacterMarkers(prompt, missingCharacters){
+  if(!prompt || !missingCharacters || missingCharacters.size === 0){
+    return prompt;
+  }
+
+  return prompt.replace(/【【([^】]+)】】/g, (match, name) => {
+    const trimmedName = name.trim();
+    return missingCharacters.has(trimmedName) ? trimmedName : match;
+  });
+}
+
 // 生成分镜图功能
 async function generateShotFrameImage(nodeId, node){
+  console.log('[生成分镜图] 函数被调用, nodeId:', nodeId, 'node:', node);
+  console.log('[生成分镜图] 当前 state.defaultWorldId:', state.defaultWorldId);
+  
   const generateBtn = document.querySelector(`.node[data-node-id="${nodeId}"] .shot-frame-generate-btn`);
-  if(!generateBtn) return;
+  if(!generateBtn){
+    console.error('[生成分镜图] 未找到生成按钮');
+    return;
+  }
   
   generateBtn.disabled = true;
   generateBtn.textContent = '处理中...';
   
   try {
-    const imagePrompt = node.data.imagePrompt || '';
+    let imagePrompt = node.data.imagePrompt || '';
+    console.log('[生成分镜图] 图片提示词:', imagePrompt);
     if(!imagePrompt){
       showToast('图片提示词不能为空', 'warning');
       return;
@@ -61,6 +80,7 @@ async function generateShotFrameImage(nodeId, node){
     // 1. 提取角色名（用【【】】包裹）
     const characterPattern = /【【([^】]+)】】/g;
     const characterNames = [];
+    const missingCharacters = new Set();
     let match;
     while((match = characterPattern.exec(imagePrompt)) !== null){
       const name = match[1].trim();
@@ -68,6 +88,8 @@ async function generateShotFrameImage(nodeId, node){
         characterNames.push(name);
       }
     }
+    
+    console.log('[生成分镜图] 提取到的角色列表:', characterNames);
     
     // 2. 匹配角色并获取参考图
     const referenceImages = [];
@@ -78,7 +100,14 @@ async function generateShotFrameImage(nodeId, node){
       showToast(`检测到${characterNames.length}个角色，正在匹配...`, 'info');
       
       // 获取 world_id
-      const worldId = state.defaultWorldId || 1;
+      if(!state.defaultWorldId){
+        showToast('请先在左上角选择世界，以便正确匹配角色', 'warning');
+        generateBtn.disabled = false;
+        generateBtn.textContent = '生成分镜图';
+        return;
+      }
+      const worldId = state.defaultWorldId;
+      console.log(`[生成分镜图] 使用世界ID: ${worldId}, 角色列表:`, characterNames);
       
       for(const characterName of characterNames){
         try {
@@ -94,25 +123,44 @@ async function generateShotFrameImage(nodeId, node){
           
           if(response.ok){
             const result = await response.json();
-            if(result.code === 0 && result.data && result.data.data){
+            console.log(`[角色匹配] 角色"${characterName}"查询结果:`, result);
+            if(result.code === 0 && result.data && Array.isArray(result.data.data)){
               const characters = result.data.data;
-              // 精确匹配或模糊匹配
-              const matchedChar = characters.find(c => c.name === characterName) || characters[0];
-              
-              if(matchedChar && matchedChar.reference_image){
-                // 将参考图URL转换为File对象
-                const imageFile = await fetchFileFromUrl(matchedChar.reference_image);
-                if(imageFile){
-                  referenceImages.push(imageFile);
-                  promptSuffix.push(`图${imageIndex}是${characterName}`);
-                  imageIndex++;
+              console.log(`[角色匹配] 找到${characters.length}个匹配角色:`, characters.map(c => c.name));
+              if(characters.length > 0){
+                // 精确匹配或模糊匹配
+                const matchedChar = characters.find(c => c.name === characterName) || characters[0];
+                console.log(`[角色匹配] 最终匹配角色:`, matchedChar.name, '参考图:', matchedChar.reference_image);
+                
+                if(matchedChar && matchedChar.reference_image){
+                  // 将参考图URL转换为File对象
+                  const imageFile = await fetchFileFromUrl(matchedChar.reference_image);
+                  if(imageFile){
+                    referenceImages.push(imageFile);
+                    promptSuffix.push(`图${imageIndex}是${characterName}`);
+                    imageIndex++;
+                  }
                 }
+              } else {
+                missingCharacters.add(characterName);
               }
+            } else if(result.code === 0 && result.data && result.data.data === null){
+              missingCharacters.add(characterName);
             }
           }
         } catch(error){
           console.error(`匹配角色 ${characterName} 失败:`, error);
         }
+      }
+    }
+
+    const sanitizedPrompt = removeMissingCharacterMarkers(imagePrompt, missingCharacters);
+    if(sanitizedPrompt !== imagePrompt){
+      imagePrompt = sanitizedPrompt;
+      node.data.imagePrompt = sanitizedPrompt;
+      const promptTextarea = document.querySelector(`.node[data-node-id="${nodeId}"] .shot-frame-image-prompt`);
+      if(promptTextarea){
+        promptTextarea.value = sanitizedPrompt;
       }
     }
     
@@ -172,38 +220,9 @@ async function generateShotFrameImage(nodeId, node){
       finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
     }
     
-    // 5. 检查是否有参考图
-    if(referenceImages.length === 0){
-      showToast('未找到角色或场景参考图，无法生成', 'warning');
-      generateBtn.disabled = false;
-      generateBtn.textContent = '生成分镜图';
-      return;
-    }
-    
-    // 5.5. 限制参考图数量不超过5个
-    const MAX_REFERENCE_IMAGES = 5;
-    if(referenceImages.length > MAX_REFERENCE_IMAGES){
-      console.warn(`参考图数量 ${referenceImages.length} 超过限制 ${MAX_REFERENCE_IMAGES}，将只使用前 ${MAX_REFERENCE_IMAGES} 张`);
-      referenceImages.splice(MAX_REFERENCE_IMAGES);
-      promptSuffix.splice(MAX_REFERENCE_IMAGES);
-      showToast(`参考图数量超过${MAX_REFERENCE_IMAGES}张，已自动限制为${MAX_REFERENCE_IMAGES}张`, 'warning');
-    }
-    
-    generateBtn.textContent = '生成中...';
-    showToast(`找到${referenceImages.length}张参考图，开始生成...`, 'info');
-    
-    // 6. 调用图片编辑API
+    // 5. 确定使用哪个API（图片编辑或文生图）
     const userId = localStorage.getItem('user_id');
     const authToken = localStorage.getItem('auth_token') || '';
-    const form = new FormData();
-    
-    // 添加所有参考图
-    referenceImages.forEach(file => {
-      form.append('image', file);
-    });
-    
-    form.append('prompt', finalPrompt);
-    
     let ratio;
     if (isMerged) {
       const canvasRatio = state.ratio || '16:9';
@@ -216,21 +235,67 @@ async function generateShotFrameImage(nodeId, node){
       ratio = canvasRatio;
     }
     
-    form.append('ratio', ratio);
-    form.append('count', node.data.drawCount || 1);
-    form.append('model', node.data.model || 'gemini-2.5-pro-image-preview');
-    
-    if(userId){
-      form.append('user_id', userId);
+    let res;
+    if(referenceImages.length === 0){
+      // 没有参考图，使用文生图API
+      generateBtn.textContent = '生成中...';
+      showToast('未找到参考图，使用文生图模式生成...', 'info');
+      
+      const form = new FormData();
+      form.append('prompt', finalPrompt);
+      form.append('model', node.data.model || 'gemini-2.5-pro-image-preview');
+      form.append('aspect_ratio', ratio);
+      form.append('count', node.data.drawCount || 1);
+      
+      if(userId){
+        form.append('user_id', userId);
+      }
+      if(authToken){
+        form.append('auth_token', authToken);
+      }
+      
+      res = await fetch('/api/text-to-image', {
+        method: 'POST',
+        body: form
+      });
+    } else {
+      // 有参考图，使用图片编辑API
+      // 5.5. 限制参考图数量不超过5个
+      const MAX_REFERENCE_IMAGES = 5;
+      if(referenceImages.length > MAX_REFERENCE_IMAGES){
+        console.warn(`参考图数量 ${referenceImages.length} 超过限制 ${MAX_REFERENCE_IMAGES}，将只使用前 ${MAX_REFERENCE_IMAGES} 张`);
+        referenceImages.splice(MAX_REFERENCE_IMAGES);
+        promptSuffix.splice(MAX_REFERENCE_IMAGES);
+        showToast(`参考图数量超过${MAX_REFERENCE_IMAGES}张，已自动限制为${MAX_REFERENCE_IMAGES}张`, 'warning');
+      }
+      
+      generateBtn.textContent = '生成中...';
+      showToast(`找到${referenceImages.length}张参考图，开始生成...`, 'info');
+      
+      const form = new FormData();
+      
+      // 添加所有参考图
+      referenceImages.forEach(file => {
+        form.append('image', file);
+      });
+      
+      form.append('prompt', finalPrompt);
+      form.append('ratio', ratio);
+      form.append('count', node.data.drawCount || 1);
+      form.append('model', node.data.model || 'gemini-2.5-pro-image-preview');
+      
+      if(userId){
+        form.append('user_id', userId);
+      }
+      if(authToken){
+        form.append('auth_token', authToken);
+      }
+      
+      res = await fetch('/api/image-edit', {
+        method: 'POST',
+        body: form
+      });
     }
-    if(authToken){
-      form.append('auth_token', authToken);
-    }
-    
-    const res = await fetch('/api/image-edit', {
-      method: 'POST',
-      body: form
-    });
     
     const data = await res.json();
     if(!data.project_ids || data.project_ids.length === 0){

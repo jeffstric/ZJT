@@ -24,7 +24,7 @@ from model.world import WorldModel
 from model.character import CharacterModel
 from model.location import LocationModel
 import uuid
-from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character as create_character_task, get_character_task_result
+from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character as create_character_task, get_character_task_result, create_text_to_image
 from PIL import Image
 from llm import call_ernie_vl_api
 from task.scheduler import init_scheduler
@@ -697,6 +697,110 @@ async def image_edit(
             "project_ids": project_ids,
             "status": "submitted",
             "image_urls": image_urls
+        })
+    except HTTPException:
+        raise    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/text-to-image")
+async def text_to_image(
+    prompt: str = Form(...),
+    model: str = Form("gemini-2.5-pro-image-preview", description="Model type: gemini-3-pro-image-preview, gemini-2.5-pro-image-preview"),
+    aspect_ratio: str = Form("9:16", description="Aspect ratio: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9"),
+    image_size: str = Form(None, description="Image resolution: 1K, 2K, 4K (only for gemini-3-pro-image-preview)"),
+    count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Submit text-to-image task to Duomi API (Gemini nano-banana)
+    """
+    try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="Authentication token is required"
+            )
+
+        # Determine computing power based on model
+        text_to_image_type = 1  # gemini-2.5-pro-image-preview: 2算力
+        if model == "gemini-3-pro-image-preview":
+            text_to_image_type = 7  # gemini-3-pro-image-preview: 6算力
+        
+        computing_power = TASK_COMPUTING_POWER[text_to_image_type]
+        
+        if CHECK_AUTH_TOKEN:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            # Check computing power
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=message
+                )
+            
+            # Check if computing power is sufficient
+            user_computing_power = response_data.get('computing_power', 0)
+            total_computing_power = computing_power * count
+            if user_computing_power < total_computing_power:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+
+        # Submit tasks according to generation count
+        project_ids = []
+        for _ in range(count):
+            # Generate transaction ID
+            transaction_id = str(uuid.uuid4())
+
+            if CHECK_AUTH_TOKEN:
+                # Deduct computing power
+                success, message, response_data = make_perseids_request(
+                    endpoint='user/calculate_computing_power',
+                    method='POST',
+                    headers=headers,
+                    data={
+                        "computing_power": computing_power,
+                        "behavior": "deduct",
+                        "transaction_id": transaction_id
+                    }
+                )
+                if not success:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=message
+                    )
+
+            # Create database record (status=0, will be processed by scheduler)
+            if user_id:
+                try:
+                    id = AIToolsModel.create(
+                        prompt=prompt,
+                        user_id=user_id,
+                        type=text_to_image_type,
+                        ratio=aspect_ratio,
+                        transaction_id=transaction_id,
+                        status=0
+                    )
+                    TasksModel.create(
+                        task_type=TASK_TYPE_GENERATE_VIDEO,
+                        task_id=id,
+                        status=0
+                    )
+                    project_ids.append(id)
+                except Exception as db_error:
+                    logger.error(f"Failed to create database record: {db_error}")
+                    raise HTTPException(status_code=500, detail=f"创建数据库记录失败: {str(db_error)}")
+
+        return JSONResponse({
+            "project_ids": project_ids,
+            "status": "submitted"
         })
     except HTTPException:
         raise    
@@ -1676,6 +1780,45 @@ async def get_ai_tools_history(
         )
 
 
+@app.get('/api/ai-tools/detail/{record_id}')
+async def get_ai_tool_detail(
+    record_id: int,
+    user_id: int = Header(None, alias="X-User-Id"),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取单个 AI 工具记录的详情
+    """
+    try:
+        # 查询数据库记录
+        record = AIToolsModel.get_by_id(record_id)
+        
+        if not record:
+            raise HTTPException(status_code=404, detail="记录不存在")
+        
+        # 检查权限（可选）
+        if user_id and record.user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权访问该记录")
+        
+        return JSONResponse({
+            'success': True,
+            'data': record.to_dict()
+        })
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'获取记录详情失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
 @app.post("/api/ai-script-generate")
 async def ai_script_generate(
     image1: UploadFile = File(..., description="第一张图片（必传）"),
@@ -2216,7 +2359,7 @@ async def video_remix(
 async def api_create_character(
     timestamps: str = Form(..., description="Time range (format: 'start,end', 1-3 seconds)"),
     url: Optional[str] = Form(None, description="Video URL (not for real people)"),
-    from_task: Optional[str] = Form(None, description="Task ID (supports real people)"),
+    from_task: Optional[str] = Form(None, description="Task ID or database record ID (supports real people)"),
     callback_url: Optional[str] = Form(None, description="Callback URL"),
     user_id: Optional[int] = Form(None, description="User ID"),
     auth_token: Optional[str] = Form(None, description="Authentication token")
@@ -2224,6 +2367,7 @@ async def api_create_character(
     """
     Create character generation task using SORA API
     Either url or from_task must be provided
+    from_task can be either a Duomi API task ID or a database record ID
     """
     try:
         # 检查认证
@@ -2297,6 +2441,16 @@ async def api_create_character(
         )
         
         logger.info(f"Character creation response: {response}")
+        
+        # Check for API errors first
+        if "error" in response:
+            error_info = response.get("error", {})
+            error_message = error_info.get("message", "未知错误")
+            error_code = error_info.get("code", "unknown")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"创建角色任务失败: [{error_code}] {error_message}"
+            )
         
         # Extract task ID from response
         task_id = response.get("id") or response.get("task_id") or response.get("data", {}).get("id")
@@ -3608,6 +3762,11 @@ class CreateWorldRequest(BaseModel):
     description: Optional[str] = None
 
 
+class UpdateWorldRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
 @app.post('/api/worlds')
 async def create_world(
     request: CreateWorldRequest,
@@ -3630,6 +3789,22 @@ async def create_world(
                 }
             )
         
+        cleaned_name = request.name.strip()
+        
+        existing_world = WorldModel.get_by_name(
+            user_id=user_id,
+            name=cleaned_name
+        )
+        if existing_world:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '该世界已经存在，请选择其他名称',
+                    'data': None
+                }
+            )
+        
         world_id = WorldModel.create(
             name=request.name.strip(),
             user_id=user_id,
@@ -3648,6 +3823,142 @@ async def create_world(
         )
     except Exception as e:
         logger.error(f"Failed to create world: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.put('/api/worlds/{world_id}')
+async def update_world(
+    world_id: int,
+    request: UpdateWorldRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    编辑世界信息
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        world = _ensure_world_owner(world_id, user_id)
+
+        update_fields = {}
+
+        if request.name is not None:
+            cleaned_name = request.name.strip()
+            if not cleaned_name:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': '世界名称不能为空',
+                        'data': None
+                    }
+                )
+            existing_world = WorldModel.get_by_name(user_id=user_id, name=cleaned_name)
+            if existing_world and getattr(existing_world, "id", None) != world_id:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': '该世界名称已被使用',
+                        'data': None
+                    }
+                )
+            update_fields['name'] = cleaned_name
+
+        if request.description is not None:
+            update_fields['description'] = request.description.strip() if request.description else None
+
+        if not update_fields:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '没有可更新的字段',
+                    'data': None
+                }
+            )
+
+        WorldModel.update(world_id, **update_fields)
+        updated_world = WorldModel.get_by_id(world_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '更新成功',
+                'data': updated_world.to_dict() if updated_world else world.to_dict()
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.delete('/api/worlds/{world_id}')
+async def delete_world(
+    world_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除世界
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        _ensure_world_owner(world_id, user_id)
+
+        character_count = CharacterModel.count_by_world(world_id)
+        if character_count > 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '该世界下仍存在角色，请先删除所有角色后再尝试删除世界',
+                    'data': None
+                }
+            )
+
+        location_count = LocationModel.count_by_world(world_id)
+        if location_count > 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '该世界下仍存在场景，请先删除所有场景后再尝试删除世界',
+                    'data': None
+                }
+            )
+
+        WorldModel.delete(world_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '删除成功',
+                'data': None
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete world {world_id}: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -4257,7 +4568,7 @@ async def export_timeline_draft(
         
         from core import JianyingMultiTrackLibrary
         from draft_generator import DraftGenerator
-        from utils import seconds_to_microseconds
+        from jianying_utils import seconds_to_microseconds
         
         # 生成唯一的草稿名称（使用工作流名称作为前缀）
         # 清理工作流名称，移除不适合文件名的字符

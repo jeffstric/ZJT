@@ -8,7 +8,435 @@
   --primary-light:#dcfce7;
   --danger:#ef4444;
 }
+html, body{
+  height:100%;
+}
 *{box-sizing:border-box;}
+html.tour-active,
+body.tour-active{
+  overflow:hidden;
+}
+body.tour-script-input-locked{
+  cursor: default;
+}
+.lock-mask{
+  display:none;
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  background: rgba(15,23,42,0.55);
+  pointer-events: auto;
+}
+.lock-mask.show{
+  display:block;
+}
+body.tour-world-locked #workflowTourPortal,
+body.tour-world-locked #workflowTourPortal *{
+  pointer-events:auto !important;
+}
+body.tour-world-locked .brand-floating{
+  z-index: 1600;
+  pointer-events:none;
+}
+body.tour-world-locked .brand-floating #defaultWorldSelect{
+  pointer-events:none;
+  opacity:0.45;
+}
+body.tour-world-locked #createWorldBtn{
+  pointer-events:auto !important;
+  position: relative;
+  z-index: 1650;
+  filter: drop-shadow(0 0 18px rgba(34,197,94,0.55));
+  animation: tourPulse 1.2s ease-in-out infinite;
+}
+@keyframes tourPulse{
+  0%{ transform: scale(1); }
+  50%{ transform: scale(1.08); }
+  100%{ transform: scale(1); }
+}
+body.tour-world-modal .lock-mask{
+  display:none;
+}
+body.tour-world-modal #createWorldModal{
+  pointer-events:none;
+  z-index: 2000;
+}
+body.tour-world-modal #createWorldModal .modal-card{
+  pointer-events:auto;
+}
+body.tour-world-modal #createWorldModal .modal-close{
+  pointer-events:none;
+  opacity:0.35;
+  cursor:not-allowed;
+}
+body.tour-world-modal .modal:not(#createWorldModal){
+  pointer-events:none;
+}
+body.tour-world-modal #createWorldSaveBtn,
+body.tour-world-modal #createWorldCancelBtn{
+  pointer-events:auto;
+}
+body.tour-world-focus-create #createWorldSaveBtn{
+  position:relative;
+  z-index:2050;
+  filter: drop-shadow(0 0 18px rgba(34,197,94,0.65));
+  animation: tourPulse 1.2s ease-in-out infinite;
+}
+#workflowTourPortal .tour-overlay{
+  position: fixed;
+  inset: 0;
+  background: rgba(15,23,42,0.55);
+  pointer-events: none;
+  transition: background 0.2s ease;
+}
+body.tour-location-locked .lock-mask,
+body.tour-character-locked .lock-mask,
+body.tour-script-locked .lock-mask{
+  display:block;
+}
+body.tour-location-locked,
+body.tour-character-locked,
+body.tour-script-locked{
+  cursor: default;
+}
+body.tour-location-locked .brand-floating,
+body.tour-location-locked .ratio-floating,
+body.tour-location-locked .minimap,
+body.tour-location-locked .zoom-controls,
+body.tour-location-locked .timeline-container,
+body.tour-location-locked .timeline-expand-btn,
+body.tour-character-locked .brand-floating,
+body.tour-character-locked .ratio-floating,
+body.tour-character-locked .minimap,
+body.tour-character-locked .zoom-controls,
+body.tour-character-locked .timeline-container,
+body.tour-character-locked .timeline-expand-btn,
+body.tour-script-locked .brand-floating,
+body.tour-script-locked .ratio-floating,
+body.tour-script-locked .minimap,
+body.tour-script-locked .zoom-controls,
+body.tour-script-locked .timeline-container,
+body.tour-script-locked .timeline-expand-btn{
+  pointer-events:none;
+}
+body.tour-location-locked .add-btn-container,
+body.tour-character-locked .add-btn-container,
+body.tour-script-locked .add-btn-container{
+  z-index:1650;
+}
+body.tour-location-locked #addBtn,
+body.tour-character-locked #addBtn,
+body.tour-script-locked #addBtn{
+  pointer-events:auto !important;
+  position:relative;
+  z-index:1660;
+  filter: drop-shadow(0 0 18px rgba(34,197,94,0.55));
+  animation: tourPulse 1.2s ease-in-out infinite;
+}
+body.tour-location-locked .add-menu,
+body.tour-character-locked .add-menu,
+body.tour-script-locked .add-menu{
+  z-index:1660;
+  pointer-events:auto;
+  display:block !important;
+}
+body.tour-location-locked .add-menu-item,
+body.tour-character-locked .add-menu-item,
+body.tour-script-locked .add-menu-item{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-location-locked #menuAddLocation{
+  pointer-events:auto;
+  opacity:1;
+  position:relative;
+  z-index:1670;
+  background: rgba(34,197,94,0.08);
+  border-radius: 8px;
+  animation: tourPulse 1.2s ease-in-out infinite;
+}
+body.tour-location-locked #menuAddLocation:hover{
+  background: rgba(34,197,94,0.15);
+}
+body.tour-character-locked #menuAddCharacter{
+  pointer-events:auto;
+  opacity:1;
+  position:relative;
+  z-index:1670;
+  background: rgba(34,197,94,0.08);
+  border-radius: 8px;
+  animation: tourPulse 1.2s ease-in-out infinite;
+}
+body.tour-character-locked #menuAddCharacter:hover{
+  background: rgba(34,197,94,0.15);
+}
+body.tour-script-locked #menuAddScript{
+  pointer-events:auto;
+  opacity:1;
+  position:relative;
+  z-index:1670;
+  background: rgba(34,197,94,0.08);
+  border-radius: 8px;
+  animation: tourPulse 1.2s ease-in-out infinite;
+}
+body.tour-script-locked #menuAddScript:hover{
+  background: rgba(34,197,94,0.15);
+}
+body.tour-script-input-locked .lock-mask{
+  display:none;
+}
+body.tour-script-input-locked{
+  cursor: default;
+}
+body.tour-script-input-locked .brand-floating,
+body.tour-script-input-locked .ratio-floating,
+body.tour-script-input-locked .minimap,
+body.tour-script-input-locked .zoom-controls,
+body.tour-script-input-locked .timeline-container,
+body.tour-script-input-locked .timeline-expand-btn,
+body.tour-script-input-locked .add-btn-container{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-script-input-locked .node{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-script-input-locked .node:has(.script-textarea){
+  pointer-events:auto;
+  opacity:1;
+  position:relative;
+  z-index:1670;
+}
+body.tour-script-input-locked .node:has(.script-textarea) *{
+  pointer-events:auto;
+}
+body.tour-script-input-locked .script-textarea{
+  position:relative;
+  z-index:1671;
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.3);
+}
+body.tour-script-input-locked #connectionsSvg,
+body.tour-script-input-locked .canvas-container svg{
+  pointer-events:none;
+}
+body.tour-script-input-locked .tour-highlight{
+  display:none;
+}
+body.tour-script-input-locked .tour-overlay{
+  display:none;
+}
+body.tour-script-input-locked #workflowTourPortal{
+  pointer-events:none;
+}
+body.tour-script-input-locked #workflowTourPortal .tour-popover,
+body.tour-script-input-locked #workflowTourPortal .tour-popover *{
+  pointer-events:auto;
+}
+body.tour-split-shots-locked .lock-mask{
+  display:none;
+}
+body.tour-split-shots-locked{
+  cursor: default;
+}
+body.tour-split-shots-locked .brand-floating,
+body.tour-split-shots-locked .ratio-floating,
+body.tour-split-shots-locked .minimap,
+body.tour-split-shots-locked .zoom-controls,
+body.tour-split-shots-locked .timeline-container,
+body.tour-split-shots-locked .timeline-expand-btn,
+body.tour-split-shots-locked .add-btn-container{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-split-shots-locked .node{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-split-shots-locked .node:has(.shot-group-generate-btn){
+  pointer-events:auto;
+  opacity:1;
+  position:relative;
+  z-index:1670;
+}
+body.tour-split-shots-locked .node:has(.shot-group-generate-btn) *{
+  pointer-events:auto;
+}
+body.tour-split-shots-locked .shot-group-generate-btn{
+  position:relative;
+  z-index:1671;
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.3);
+}
+body.tour-split-shots-locked #connectionsSvg,
+body.tour-split-shots-locked .canvas-container svg{
+  pointer-events:none;
+}
+body.tour-split-shots-locked .tour-highlight{
+  display:none;
+}
+body.tour-split-shots-locked .tour-overlay{
+  display:none;
+}
+body.tour-split-shots-locked #workflowTourPortal{
+  pointer-events:none;
+}
+body.tour-split-shots-locked #workflowTourPortal .tour-popover,
+body.tour-split-shots-locked #workflowTourPortal .tour-popover *{
+  pointer-events:auto;
+}
+body.tour-generate-storyboard-locked .lock-mask{
+  display:none;
+}
+body.tour-generate-storyboard-locked{
+  cursor: default;
+}
+body.tour-generate-storyboard-locked .brand-floating,
+body.tour-generate-storyboard-locked .ratio-floating,
+body.tour-generate-storyboard-locked .minimap,
+body.tour-generate-storyboard-locked .zoom-controls,
+body.tour-generate-storyboard-locked .timeline-container,
+body.tour-generate-storyboard-locked .timeline-expand-btn,
+body.tour-generate-storyboard-locked .add-btn-container{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-generate-storyboard-locked .node{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-generate-storyboard-locked .node:has(.shot-frame-generate-btn){
+  pointer-events:auto;
+  opacity:1;
+  position:relative;
+  z-index:1670;
+}
+body.tour-generate-storyboard-locked .node:has(.shot-frame-generate-btn) *{
+  pointer-events:auto;
+}
+body.tour-generate-storyboard-locked .shot-frame-generate-btn{
+  position:relative;
+  z-index:1671;
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.3);
+}
+body.tour-generate-storyboard-locked #connectionsSvg,
+body.tour-generate-storyboard-locked .canvas-container svg{
+  pointer-events:none;
+}
+body.tour-generate-storyboard-locked .tour-highlight{
+  display:none;
+}
+body.tour-generate-storyboard-locked .tour-overlay{
+  display:none;
+}
+body.tour-generate-storyboard-locked #workflowTourPortal{
+  pointer-events:none;
+}
+body.tour-generate-storyboard-locked #workflowTourPortal .tour-popover,
+body.tour-generate-storyboard-locked #workflowTourPortal .tour-popover *{
+  pointer-events:auto;
+}
+body.tour-generate-video-locked .lock-mask{
+  display:none;
+}
+body.tour-generate-video-locked{
+  cursor: default;
+}
+body.tour-generate-video-locked .brand-floating,
+body.tour-generate-video-locked .ratio-floating,
+body.tour-generate-video-locked .minimap,
+body.tour-generate-video-locked .zoom-controls,
+body.tour-generate-video-locked .timeline-container,
+body.tour-generate-video-locked .timeline-expand-btn,
+body.tour-generate-video-locked .add-btn-container{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-generate-video-locked .node{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-generate-video-locked .node:has(.shot-frame-generate-video-btn){
+  pointer-events:auto;
+  opacity:1;
+  position:relative;
+  z-index:1670;
+}
+body.tour-generate-video-locked .node:has(.shot-frame-generate-video-btn) *{
+  pointer-events:auto;
+}
+body.tour-generate-video-locked .shot-frame-generate-video-btn{
+  position:relative;
+  z-index:1671;
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.3);
+}
+body.tour-generate-video-locked #connectionsSvg,
+body.tour-generate-video-locked .canvas-container svg{
+  pointer-events:none;
+}
+body.tour-generate-video-locked .tour-highlight{
+  display:none;
+}
+body.tour-generate-video-locked .tour-overlay{
+  display:none;
+}
+body.tour-generate-video-locked #workflowTourPortal{
+  pointer-events:none;
+}
+body.tour-generate-video-locked #workflowTourPortal .tour-popover,
+body.tour-generate-video-locked #workflowTourPortal .tour-popover *{
+  pointer-events:auto;
+}
+body.tour-add-to-timeline-locked .lock-mask{
+  display:none;
+}
+body.tour-add-to-timeline-locked{
+  cursor: default;
+}
+body.tour-add-to-timeline-locked .brand-floating,
+body.tour-add-to-timeline-locked .ratio-floating,
+body.tour-add-to-timeline-locked .minimap,
+body.tour-add-to-timeline-locked .zoom-controls,
+body.tour-add-to-timeline-locked .timeline-container,
+body.tour-add-to-timeline-locked .timeline-expand-btn,
+body.tour-add-to-timeline-locked .add-btn-container{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-add-to-timeline-locked .node{
+  pointer-events:none;
+  opacity:0.35;
+}
+body.tour-add-to-timeline-locked .node:has(.video-add-timeline){
+  pointer-events:auto;
+  opacity:1;
+  position:relative;
+  z-index:1670;
+}
+body.tour-add-to-timeline-locked .node:has(.video-add-timeline) *{
+  pointer-events:auto;
+}
+body.tour-add-to-timeline-locked .video-add-timeline{
+  position:relative;
+  z-index:1671;
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.3);
+}
+body.tour-add-to-timeline-locked #connectionsSvg,
+body.tour-add-to-timeline-locked .canvas-container svg{
+  pointer-events:none;
+}
+body.tour-add-to-timeline-locked .tour-highlight{
+  display:none;
+}
+body.tour-add-to-timeline-locked .tour-overlay{
+  display:none;
+}
+body.tour-add-to-timeline-locked #workflowTourPortal{
+  pointer-events:none;
+}
+body.tour-add-to-timeline-locked #workflowTourPortal .tour-popover,
+body.tour-add-to-timeline-locked #workflowTourPortal .tour-popover *{
+  pointer-events:auto;
+}
 body{
   margin:0;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
@@ -48,6 +476,14 @@ body{
 }
 .shell{
   padding: 0;
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
 }
 .ratio-label{
   color: var(--muted);
@@ -64,9 +500,11 @@ select{
   cursor: pointer;
 }
 .canvas-container{
+  flex: 1;
   margin-top: 0;
   position: relative;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   background: #fafafa;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -100,6 +538,11 @@ select{
   padding-left: 10px;
   border-left: 1px solid var(--border);
 }
+.world-selector-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
 .world-selector select{
   font-size: 13px;
   padding: 6px 10px;
@@ -115,6 +558,19 @@ select{
   font-size: 14px;
   font-weight: 700;
 }
+.tour-trigger{
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: #fff;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.tour-trigger:hover{
+  border-color: var(--primary);
+  transform: translateY(-1px);
+}
 .ratio-floating{
   position: absolute;
   top: 12px;
@@ -123,7 +579,7 @@ select{
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(255,255,255,0.95);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 8px 10px;
@@ -700,7 +1156,11 @@ textarea:focus{ border-color: var(--primary); }
   background: rgba(0,0,0,0.55);
   z-index: 999;
 }
-.modal.show{ display: flex; }
+.modal.show{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .modal-card{
   width: min(920px, calc(100vw - 32px));
   background: #111;
@@ -1058,6 +1518,43 @@ textarea:focus{ border-color: var(--primary); }
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.15s;
+}
+.tour-highlight{
+  position: fixed;
+  border-radius: 14px;
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.95), 0 25px 80px rgba(15,23,42,0.35);
+  transition: all 0.2s;
+  pointer-events: none;
+  opacity: 0;
+}
+#workflowTourPortal.active .tour-highlight.spotlight{
+  box-shadow: 0 0 0 9999px rgba(15,23,42,0.55), 0 25px 80px rgba(15,23,42,0.35);
+  background: transparent;
+}
+#workflowTourPortal.active .tour-highlight{
+  opacity: 1;
+}
+.tour-popover{
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  pointer-events: none;
+  display: none;
+}
+#workflowTourPortal{
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  pointer-events: none;
+  display: none;
+}
+#workflowTourPortal.active{
+  display: block;
+  pointer-events: auto;
+}
+#workflowTourPortal .tour-overlay.transparent{
+  background: transparent;
+  pointer-events: none;
 }
 .timeline-drop-indicator.show {
   opacity: 1;

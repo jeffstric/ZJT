@@ -158,6 +158,25 @@ class WorldModel:
             raise
     
     @staticmethod
+    def get_by_name(
+        user_id: int,
+        name: str
+    ) -> Optional[World]:
+        """
+        Get a world by user and name (exact match)
+        """
+        sql = "SELECT * FROM world WHERE user_id = %s AND name = %s LIMIT 1"
+        
+        try:
+            result = execute_query(sql, (user_id, name), fetch_one=True)
+            if result:
+                return World(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get world by name '{name}' for user {user_id}: {e}")
+            raise
+    
+    @staticmethod
     def update(
         record_id: int,
         **kwargs

@@ -122,6 +122,7 @@
       return {
         version: '1.0',
         ratio: state.ratio,
+        defaultWorldId: state.defaultWorldId,
         viewport: {
           panX: state.panX,
           panY: state.panY,
@@ -167,7 +168,8 @@
             'X-User-Id': getUserId()
           },
           body: JSON.stringify({
-            workflow_data: workflowData
+            workflow_data: workflowData,
+            default_world_id: state.defaultWorldId
           })
         });
 
@@ -210,14 +212,15 @@
             'X-User-Id': getUserId()
           },
           body: JSON.stringify({
-            workflow_data: workflowData
+            workflow_data: workflowData,
+            default_world_id: state.defaultWorldId
           })
         });
 
         const result = await response.json();
         
         if(result.code === 0){
-          console.log('自动保存成功:', new Date().toLocaleTimeString());
+          console.log('自动保存成功:', new Date().toLocaleTimeString(), 'defaultWorldId:', state.defaultWorldId);
         } else {
           console.warn('自动保存失败:', result.message);
         }
@@ -340,6 +343,7 @@
           // 加载默认世界
           if(workflow.default_world_id){
             state.defaultWorldId = workflow.default_world_id;
+            console.log('[加载工作流] 从服务器加载 default_world_id:', workflow.default_world_id);
             const defaultWorldSelect = document.getElementById('defaultWorldSelect');
             if(defaultWorldSelect){
               defaultWorldSelect.value = workflow.default_world_id;
@@ -352,7 +356,9 @@
           
           // 如果有workflow_data，恢复状态
           if(workflow.workflow_data){
+            console.log('[加载工作流] workflow_data.defaultWorldId:', workflow.workflow_data.defaultWorldId);
             restoreWorkflow(workflow.workflow_data);
+            console.log('[加载工作流] 恢复后 state.defaultWorldId:', state.defaultWorldId);
           }
         } else {
           showToast(result.message || '加载工作流失败', 'error');
@@ -399,6 +405,21 @@
           ratioSelectEl.value = data.ratio;
         }
         
+        // 恢复默认世界ID
+        if(data.defaultWorldId !== undefined){
+          console.log('[恢复工作流] 从 workflow_data 恢复 defaultWorldId:', data.defaultWorldId);
+          state.defaultWorldId = data.defaultWorldId;
+          const defaultWorldSelect = document.getElementById('defaultWorldSelect');
+          if(defaultWorldSelect && state.defaultWorldId){
+            defaultWorldSelect.value = state.defaultWorldId;
+            if(typeof updateWorldSelectorState === 'function'){
+              updateWorldSelectorState();
+            }
+          }
+        } else {
+          console.log('[恢复工作流] workflow_data 中没有 defaultWorldId，保持当前值:', state.defaultWorldId);
+        }
+        
         // 恢复ID计数器
         state.nextNodeId = data.nextNodeId || 1;
         state.nextConnId = data.nextConnId || 1;
@@ -439,11 +460,15 @@
         renderFirstFrameConnections();
         renderMinimap();
         
-        // 恢复完成后，更新所有分镜节点的图片选择菜单
+        // 恢复完成后，更新所有分镜节点的图片选择菜单和角色节点的按钮状态
         setTimeout(() => {
           state.nodes.forEach(node => {
             if(node.type === 'shot_frame' && node.updatePreview){
               node.updatePreview();
+            }
+            // 更新角色节点的创建角色卡按钮状态
+            if(node.type === 'character'){
+              updateCharacterCardButtonState(node.id);
             }
           });
         }, 100);
@@ -781,6 +806,7 @@
         node.data.url = nodeData.data.url || '';
         node.data.name = nodeData.data.name || '';
         node.data.duration = nodeData.data.duration || 0;
+        node.data.project_id = nodeData.data.project_id || '';
         // 如果有URL，显示预览
         if(node.data.url){
           const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -972,6 +998,20 @@
             const videoDrawCountLabel = nodeEl.querySelector('.shot-frame-video-draw-count-label');
             if(videoDrawCountLabel){
               videoDrawCountLabel.textContent = `抽卡次数：X${nodeData.data.videoDrawCount}`;
+            }
+          }
+          
+          // 恢复图片提示词和视频提示词的 textarea 显示
+          if(nodeData.data.imagePrompt !== undefined){
+            const imagePromptEl = nodeEl.querySelector('.shot-frame-image-prompt');
+            if(imagePromptEl){
+              imagePromptEl.value = nodeData.data.imagePrompt;
+            }
+          }
+          if(nodeData.data.videoPromptText !== undefined){
+            const videoPromptEl = nodeEl.querySelector('.shot-frame-video-prompt');
+            if(videoPromptEl){
+              videoPromptEl.value = nodeData.data.videoPromptText;
             }
           }
         }
