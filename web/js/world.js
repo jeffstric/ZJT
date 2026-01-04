@@ -71,6 +71,8 @@ function handleWorldSelectionChange(worldId) {
   const parsedWorldId = worldId ? parseInt(worldId, 10) : null;
   state.defaultWorldId = Number.isNaN(parsedWorldId) ? null : parsedWorldId;
   
+  console.log('[世界选择] worldId参数:', worldId, '解析后的ID:', parsedWorldId, '最终state.defaultWorldId:', state.defaultWorldId);
+  
   // Update visual state
   updateWorldSelectorState();
   

@@ -57,14 +57,21 @@ function removeMissingCharacterMarkers(prompt, missingCharacters){
 
 // 生成分镜图功能
 async function generateShotFrameImage(nodeId, node){
+  console.log('[生成分镜图] 函数被调用, nodeId:', nodeId, 'node:', node);
+  console.log('[生成分镜图] 当前 state.defaultWorldId:', state.defaultWorldId);
+  
   const generateBtn = document.querySelector(`.node[data-node-id="${nodeId}"] .shot-frame-generate-btn`);
-  if(!generateBtn) return;
+  if(!generateBtn){
+    console.error('[生成分镜图] 未找到生成按钮');
+    return;
+  }
   
   generateBtn.disabled = true;
   generateBtn.textContent = '处理中...';
   
   try {
     let imagePrompt = node.data.imagePrompt || '';
+    console.log('[生成分镜图] 图片提示词:', imagePrompt);
     if(!imagePrompt){
       showToast('图片提示词不能为空', 'warning');
       return;
@@ -82,6 +89,8 @@ async function generateShotFrameImage(nodeId, node){
       }
     }
     
+    console.log('[生成分镜图] 提取到的角色列表:', characterNames);
+    
     // 2. 匹配角色并获取参考图
     const referenceImages = [];
     const promptSuffix = [];
@@ -91,7 +100,14 @@ async function generateShotFrameImage(nodeId, node){
       showToast(`检测到${characterNames.length}个角色，正在匹配...`, 'info');
       
       // 获取 world_id
-      const worldId = state.defaultWorldId || 1;
+      if(!state.defaultWorldId){
+        showToast('请先在左上角选择世界，以便正确匹配角色', 'warning');
+        generateBtn.disabled = false;
+        generateBtn.textContent = '生成分镜图';
+        return;
+      }
+      const worldId = state.defaultWorldId;
+      console.log(`[生成分镜图] 使用世界ID: ${worldId}, 角色列表:`, characterNames);
       
       for(const characterName of characterNames){
         try {
@@ -107,11 +123,14 @@ async function generateShotFrameImage(nodeId, node){
           
           if(response.ok){
             const result = await response.json();
+            console.log(`[角色匹配] 角色"${characterName}"查询结果:`, result);
             if(result.code === 0 && result.data && Array.isArray(result.data.data)){
               const characters = result.data.data;
+              console.log(`[角色匹配] 找到${characters.length}个匹配角色:`, characters.map(c => c.name));
               if(characters.length > 0){
                 // 精确匹配或模糊匹配
                 const matchedChar = characters.find(c => c.name === characterName) || characters[0];
+                console.log(`[角色匹配] 最终匹配角色:`, matchedChar.name, '参考图:', matchedChar.reference_image);
                 
                 if(matchedChar && matchedChar.reference_image){
                   // 将参考图URL转换为File对象
