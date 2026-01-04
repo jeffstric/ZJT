@@ -538,6 +538,11 @@ select{
   padding-left: 10px;
   border-left: 1px solid var(--border);
 }
+.world-selector-actions{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
 .world-selector select{
   font-size: 13px;
   padding: 6px 10px;
@@ -1151,7 +1156,11 @@ textarea:focus{ border-color: var(--primary); }
   background: rgba(0,0,0,0.55);
   z-index: 999;
 }
-.modal.show{ display: flex; }
+.modal.show{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 .modal-card{
   width: min(920px, calc(100vw - 32px));
   background: #111;

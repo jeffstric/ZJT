@@ -3750,6 +3750,11 @@ class CreateWorldRequest(BaseModel):
     description: Optional[str] = None
 
 
+class UpdateWorldRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
 @app.post('/api/worlds')
 async def create_world(
     request: CreateWorldRequest,
@@ -3806,6 +3811,142 @@ async def create_world(
         )
     except Exception as e:
         logger.error(f"Failed to create world: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.put('/api/worlds/{world_id}')
+async def update_world(
+    world_id: int,
+    request: UpdateWorldRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    编辑世界信息
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        world = _ensure_world_owner(world_id, user_id)
+
+        update_fields = {}
+
+        if request.name is not None:
+            cleaned_name = request.name.strip()
+            if not cleaned_name:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': '世界名称不能为空',
+                        'data': None
+                    }
+                )
+            existing_world = WorldModel.get_by_name(user_id=user_id, name=cleaned_name)
+            if existing_world and getattr(existing_world, "id", None) != world_id:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': '该世界名称已被使用',
+                        'data': None
+                    }
+                )
+            update_fields['name'] = cleaned_name
+
+        if request.description is not None:
+            update_fields['description'] = request.description.strip() if request.description else None
+
+        if not update_fields:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '没有可更新的字段',
+                    'data': None
+                }
+            )
+
+        WorldModel.update(world_id, **update_fields)
+        updated_world = WorldModel.get_by_id(world_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '更新成功',
+                'data': updated_world.to_dict() if updated_world else world.to_dict()
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.delete('/api/worlds/{world_id}')
+async def delete_world(
+    world_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除世界
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        _ensure_world_owner(world_id, user_id)
+
+        character_count = CharacterModel.count_by_world(world_id)
+        if character_count > 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '该世界下仍存在角色，请先删除所有角色后再尝试删除世界',
+                    'data': None
+                }
+            )
+
+        location_count = LocationModel.count_by_world(world_id)
+        if location_count > 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '该世界下仍存在场景，请先删除所有场景后再尝试删除世界',
+                    'data': None
+                }
+            )
+
+        WorldModel.delete(world_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '删除成功',
+                'data': None
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete world {world_id}: {e}")
         return JSONResponse(
             status_code=500,
             content={

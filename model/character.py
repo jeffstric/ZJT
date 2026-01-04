@@ -64,6 +64,19 @@ class CharacterModel:
     """Character database operations"""
     
     @staticmethod
+    def count_by_world(world_id: int) -> int:
+        """
+        Count characters under a specific world
+        """
+        sql = "SELECT COUNT(*) AS total FROM `character` WHERE world_id = %s"
+        try:
+            result = execute_query(sql, (world_id,), fetch_one=True)
+            return result['total'] if result and 'total' in result else 0
+        except Exception as e:
+            logger.error(f"Failed to count characters for world {world_id}: {e}")
+            raise
+    
+    @staticmethod
     def create(
         world_id: int,
         name: str,
