@@ -947,6 +947,28 @@ svg.connections path.temp{
 .icon-btn:hover{ background: rgba(0,0,0,0.05); }
 .node-body{ padding: 12px; display:flex; flex-direction:column; gap:12px; }
 .field{ display:flex; flex-direction:column; gap:6px; }
+.field-row{
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.field-row .field{
+  flex: 1;
+  min-width: 220px;
+}
+.media-field-row{
+  align-items: flex-start;
+}
+.media-field-row .field{
+  flex: 1;
+}
+.media-field-row audio{
+  width: 100%;
+}
+.compact-textarea{
+  min-height: 80px;
+  max-height: 140px;
+}
 .field.btn-row{
   flex-direction: row;
   justify-content: flex-end;
