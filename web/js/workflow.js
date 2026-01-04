@@ -406,18 +406,23 @@
         }
         
         // 恢复默认世界ID
-        if(data.defaultWorldId !== undefined){
+        const defaultWorldSelect = document.getElementById('defaultWorldSelect');
+        const syncDefaultWorldSelector = () => {
+          if(!defaultWorldSelect){
+            return;
+          }
+          defaultWorldSelect.value = state.defaultWorldId == null ? '' : state.defaultWorldId;
+          if(typeof updateWorldSelectorState === 'function'){
+            updateWorldSelectorState();
+          }
+        };
+        if(data.defaultWorldId !== undefined && data.defaultWorldId !== null){
           console.log('[恢复工作流] 从 workflow_data 恢复 defaultWorldId:', data.defaultWorldId);
           state.defaultWorldId = data.defaultWorldId;
-          const defaultWorldSelect = document.getElementById('defaultWorldSelect');
-          if(defaultWorldSelect && state.defaultWorldId){
-            defaultWorldSelect.value = state.defaultWorldId;
-            if(typeof updateWorldSelectorState === 'function'){
-              updateWorldSelectorState();
-            }
-          }
-        } else {
-          console.log('[恢复工作流] workflow_data 中没有 defaultWorldId，保持当前值:', state.defaultWorldId);
+          syncDefaultWorldSelector();
+        }else{
+          console.log('[恢复工作流] workflow_data 中没有有效的 defaultWorldId，保持当前值:', state.defaultWorldId);
+          syncDefaultWorldSelector();
         }
         
         // 恢复ID计数器

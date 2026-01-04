@@ -3259,6 +3259,7 @@ class VideoWorkflowCreateRequest(BaseModel):
     workflow_data: Optional[dict] = None
     style: Optional[str] = None
     style_reference_image: Optional[str] = None
+    default_world_id: Optional[int] = None
 
 class VideoWorkflowUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -3585,7 +3586,8 @@ async def create_video_workflow(
             status=request.status,
             workflow_data=request.workflow_data,
             style=request.style,
-            style_reference_image=request.style_reference_image
+            style_reference_image=request.style_reference_image,
+            default_world_id=request.default_world_id
         )
         
         return JSONResponse({

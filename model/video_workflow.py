@@ -64,7 +64,8 @@ class VideoWorkflowModel:
         status: int = 1,
         workflow_data: Optional[Dict] = None,
         style: Optional[str] = None,
-        style_reference_image: Optional[str] = None
+        style_reference_image: Optional[str] = None,
+        default_world_id: Optional[int] = None
     ) -> int:
         """
         Create a new video workflow record
@@ -84,11 +85,11 @@ class VideoWorkflowModel:
         """
         sql = """
             INSERT INTO video_workflow 
-            (name, user_id, description, cover_image, status, workflow_data, style, style_reference_image)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (name, user_id, description, cover_image, status, workflow_data, style, style_reference_image, default_world_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         workflow_data_str = json.dumps(workflow_data) if workflow_data else None
-        params = (name, user_id, description, cover_image, status, workflow_data_str, style, style_reference_image)
+        params = (name, user_id, description, cover_image, status, workflow_data_str, style, style_reference_image, default_world_id)
         
         try:
             record_id = execute_insert(sql, params)

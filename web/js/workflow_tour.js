@@ -14,6 +14,8 @@
     }
   };
 
+  let splitShotsTargetEl = null;
+
   const TOUR_PROGRESS_KEY = 'workflow_tour_progress_v1';
   const steps = [
     {
@@ -61,9 +63,9 @@
       id: 'splitShots',
       title: '独立分镜',
       description: '在分镜组节点中点击"独立分镜"按钮，拆分出单独的分镜节点。',
-      target: () => document.querySelector('.shot-group-generate-btn'),
+      target: () => getSplitShotsTarget(),
       hint: '点击独立分镜按钮后，即可完成新手指引。',
-      missingHint: '请先在剧本节点拆分分镜组。'
+      missingHint: '请先在剧本节点拆分镜组。'
     },
     {
       id: 'generateStoryboard',
@@ -156,6 +158,24 @@
     return rect.width > 0 && rect.height > 0;
   };
 
+  function getSplitShotsTarget(){
+    if(splitShotsTargetEl && document.body.contains(splitShotsTargetEl)){
+      return splitShotsTargetEl;
+    }
+    const buttons = Array.from(document.querySelectorAll('.shot-group-generate-btn'));
+    if(buttons.length === 0){
+      splitShotsTargetEl = null;
+      return null;
+    }
+    const index = buttons.length === 1 ? 0 : Math.floor(Math.random() * buttons.length);
+    splitShotsTargetEl = buttons[index];
+    return splitShotsTargetEl;
+  }
+
+  function resetSplitShotsTarget(){
+    splitShotsTargetEl = null;
+  }
+
   const positionPopover = (rect) => {
     const padding = 16;
     const popWidth = popoverEl.offsetWidth || 320;
@@ -228,8 +248,8 @@
   const scriptInputHandlers = new Map();
   let scriptInputObserver = null;
   let splitShotsHandler = null;
-  let generateStoryboardHandler = null;
-  let generateVideoHandler = null;
+  const generateStoryboardHandlers = new Map();
+  const generateVideoHandlers = new Map();
   let addToTimelineHandler = null;
 
   const attachMenuItemHandler = (stepId, menuItemEl) => {
@@ -384,7 +404,7 @@
       return;
     }
     const checkAndAttach = () => {
-      const btn = document.querySelector('.shot-group-generate-btn');
+      const btn = getSplitShotsTarget();
       if(!btn){
         return false;
       }
@@ -409,94 +429,114 @@
   };
 
   const detachSplitShotsHandler = () => {
-    if(!splitShotsHandler){
-      return;
-    }
-    const btn = document.querySelector('.shot-group-generate-btn');
-    if(btn){
-      btn.removeEventListener('click', splitShotsHandler);
+    if(splitShotsHandler && splitShotsTargetEl){
+      splitShotsTargetEl.removeEventListener('click', splitShotsHandler);
+    }else if(splitShotsHandler){
+      const btn = document.querySelector('.shot-group-generate-btn');
+      if(btn){
+        btn.removeEventListener('click', splitShotsHandler);
+      }
     }
     splitShotsHandler = null;
+    resetSplitShotsTarget();
   };
 
   const attachGenerateStoryboardHandler = () => {
-    if(generateStoryboardHandler){
-      return;
-    }
-    const checkAndAttach = () => {
-      const btn = document.querySelector('.shot-frame-generate-btn');
-      if(!btn){
-        return false;
-      }
-      generateStoryboardHandler = () => {
-        if(steps[currentStepIndex]?.id !== GENERATE_STORYBOARD_STEP_ID){
+    const bindButtons = () => {
+      let hasButton = false;
+      const buttons = document.querySelectorAll('.shot-frame-generate-btn');
+      buttons.forEach((btn) => {
+        hasButton = true;
+        if(generateStoryboardHandlers.has(btn)){
           return;
         }
-        detachGenerateStoryboardHandler();
-        completeStepAndExit();
-      };
-      btn.addEventListener('click', generateStoryboardHandler);
-      return true;
+        const handler = () => {
+          if(steps[currentStepIndex]?.id !== GENERATE_STORYBOARD_STEP_ID){
+            return;
+          }
+          detachGenerateStoryboardHandler();
+          completeStepAndExit();
+        };
+        btn.addEventListener('click', handler);
+        generateStoryboardHandlers.set(btn, handler);
+      });
+      return hasButton;
     };
-    if(!checkAndAttach()){
+
+    if(bindButtons()){
       const observer = new MutationObserver(() => {
-        if(checkAndAttach()){
-          observer.disconnect();
-        }
+        bindButtons();
       });
       observer.observe(document.body, { childList: true, subtree: true });
+      return;
     }
+
+    const observer = new MutationObserver(() => {
+      if(bindButtons()){
+        observer.disconnect();
+        const newObserver = new MutationObserver(() => {
+          bindButtons();
+        });
+        newObserver.observe(document.body, { childList: true, subtree: true });
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   };
 
   const detachGenerateStoryboardHandler = () => {
-    if(!generateStoryboardHandler){
-      return;
-    }
-    const btn = document.querySelector('.shot-frame-generate-btn');
-    if(btn){
-      btn.removeEventListener('click', generateStoryboardHandler);
-    }
-    generateStoryboardHandler = null;
+    generateStoryboardHandlers.forEach((handler, btn) => {
+      btn.removeEventListener('click', handler);
+    });
+    generateStoryboardHandlers.clear();
   };
 
   const attachGenerateVideoHandler = () => {
-    if(generateVideoHandler){
-      return;
-    }
-    const checkAndAttach = () => {
-      const btn = document.querySelector('.shot-frame-generate-video-btn');
-      if(!btn){
-        return false;
-      }
-      generateVideoHandler = () => {
-        if(steps[currentStepIndex]?.id !== GENERATE_VIDEO_STEP_ID){
+    const bindButtons = () => {
+      let hasButton = false;
+      const buttons = document.querySelectorAll('.shot-frame-generate-video-btn');
+      buttons.forEach((btn) => {
+        hasButton = true;
+        if(generateVideoHandlers.has(btn)){
           return;
         }
-        detachGenerateVideoHandler();
-        completeStepAndExit();
-      };
-      btn.addEventListener('click', generateVideoHandler);
-      return true;
+        const handler = () => {
+          if(steps[currentStepIndex]?.id !== GENERATE_VIDEO_STEP_ID){
+            return;
+          }
+          detachGenerateVideoHandler();
+          completeStepAndExit();
+        };
+        btn.addEventListener('click', handler);
+        generateVideoHandlers.set(btn, handler);
+      });
+      return hasButton;
     };
-    if(!checkAndAttach()){
+
+    if(bindButtons()){
       const observer = new MutationObserver(() => {
-        if(checkAndAttach()){
-          observer.disconnect();
-        }
+        bindButtons();
       });
       observer.observe(document.body, { childList: true, subtree: true });
+      return;
     }
+
+    const observer = new MutationObserver(() => {
+      if(bindButtons()){
+        observer.disconnect();
+        const newObserver = new MutationObserver(() => {
+          bindButtons();
+        });
+        newObserver.observe(document.body, { childList: true, subtree: true });
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   };
 
   const detachGenerateVideoHandler = () => {
-    if(!generateVideoHandler){
-      return;
-    }
-    const btn = document.querySelector('.shot-frame-generate-video-btn');
-    if(btn){
-      btn.removeEventListener('click', generateVideoHandler);
-    }
-    generateVideoHandler = null;
+    generateVideoHandlers.forEach((handler, btn) => {
+      btn.removeEventListener('click', handler);
+    });
+    generateVideoHandlers.clear();
   };
 
   const attachAddToTimelineHandler = () => {
@@ -561,7 +601,7 @@
     document.body.classList.toggle('tour-character-locked', characterLocked);
     document.body.classList.toggle('tour-script-locked', scriptLocked);
     document.body.classList.toggle('tour-script-input-locked', scriptInputLocked);
-    highlightEl.classList.toggle('spotlight', worldLocked || isMenuItemStep || scriptInputLocked);
+    highlightEl.classList.toggle('spotlight', isMenuItemStep || scriptInputLocked);
     if(overlayEl){
       overlayEl.classList.toggle('transparent', worldLocked || isMenuItemStep || scriptInputLocked);
     }
@@ -603,6 +643,7 @@
       attachSplitShotsHandler();
     }else{
       detachSplitShotsHandler();
+      resetSplitShotsTarget();
     }
     const generateStoryboardLocked = stepId === GENERATE_STORYBOARD_STEP_ID;
     document.body.classList.toggle('tour-generate-storyboard-locked', generateStoryboardLocked);
@@ -754,7 +795,11 @@
       }
 
       if(targetVisible){
-        updateHighlight(rect);
+        if(step.id === WORLD_STEP_ID && !worldModalActive){
+          updateHighlight(null);
+        }else{
+          updateHighlight(rect);
+        }
         positionPopover(rect);
       }else{
         updateHighlight(null);
