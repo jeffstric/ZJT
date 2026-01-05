@@ -55,6 +55,7 @@
 
       el.innerHTML = `
         <div class="port input" title="输入（连接分镜节点）"></div>
+        <div class="port video-input-port" title="视频输入（连接视频节点作为情感参考）"></div>
         <div class="port output" title="输出"></div>
         <div class="node-header">
           <div class="node-title">${node.title}</div>
@@ -70,11 +71,12 @@
             </select>
           </div>
           
-          <div class="dialogue-emo-ref-audio-field" style="display: none; margin-bottom: 12px;">
+          <div class="dialogue-emo-ref-audio-field" style="margin-bottom: 12px;">
             <label class="label" style="font-size: 12px; margin-bottom: 4px;">情感参考音频</label>
             <input type="file" class="dialogue-emo-ref-audio-input" accept="audio/*" style="width: 100%; padding: 4px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 11px; background: #f9fafb;">
             <div class="dialogue-emo-ref-audio-preview" style="display: none; margin-top: 6px;">
-              <audio controls style="width: 100%; max-height: 32px;"></audio>
+              <audio controls style="width: 100%; max-height: 32px; margin-bottom: 4px;"></audio>
+              <button class="mini-btn dialogue-emo-ref-audio-clear-btn" type="button" style="font-size: 11px; padding: 4px 8px;">清除音频</button>
             </div>
           </div>
           
@@ -118,6 +120,7 @@
       const headerEl = el.querySelector('.node-header');
       const deleteBtn = el.querySelector('.icon-btn');
       const inputPort = el.querySelector('.port.input');
+      const videoInputPort = el.querySelector('.port.video-input-port');
       const outputPort = el.querySelector('.port.output');
       const generateAllBtn = el.querySelector('.dialogue-generate-all-btn');
       
@@ -125,6 +128,7 @@
       const emoRefAudioField = el.querySelector('.dialogue-emo-ref-audio-field');
       const emoRefAudioInput = el.querySelector('.dialogue-emo-ref-audio-input');
       const emoRefAudioPreview = el.querySelector('.dialogue-emo-ref-audio-preview');
+      const emoRefAudioClearBtn = el.querySelector('.dialogue-emo-ref-audio-clear-btn');
       const emoWeightField = el.querySelector('.dialogue-emo-weight-field');
       const emoWeightSlider = el.querySelector('.dialogue-emo-weight-slider');
       const emoWeightValue = el.querySelector('.dialogue-emo-weight-value');
@@ -180,6 +184,11 @@
         state.connecting = null;
       });
 
+      videoInputPort.addEventListener('mouseup', (e) => {
+        // 不要在这里清空 state.connecting，让 events.js 中的全局 mouseup 处理器来处理
+        // state.connecting 会在 events.js 的 mouseup 事件中被清空
+      });
+
       outputPort.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -191,9 +200,24 @@
         const method = parseInt(e.target.value);
         node.data.emoControlMethod = method;
         
-        emoRefAudioField.style.display = method === 1 ? 'block' : 'none';
+        // 情感参考音频区域始终显示，但在非情感参考音频模式下禁用
+        const isEmoRefMode = method === 1;
+        emoRefAudioField.style.opacity = isEmoRefMode ? '1' : '0.5';
+        emoRefAudioField.style.pointerEvents = isEmoRefMode ? 'auto' : 'none';
+        emoRefAudioInput.disabled = !isEmoRefMode;
+        if(emoRefAudioClearBtn) emoRefAudioClearBtn.disabled = !isEmoRefMode;
+        
         emoWeightField.style.display = method === 1 ? 'block' : 'none';
         emoVecField.style.display = method === 2 ? 'block' : 'none';
+        
+        // 视频输入端口始终显示，但在非情感参考音频模式下禁用
+        if(videoInputPort){
+          if(isEmoRefMode){
+            videoInputPort.classList.remove('disabled');
+          } else {
+            videoInputPort.classList.add('disabled');
+          }
+        }
         
         try{ autoSaveWorkflow(); } catch(e){}
       });
@@ -219,6 +243,19 @@
           console.error('情感参考音频上传失败:', error);
           showToast('情感参考音频上传失败', 'error');
         }
+      });
+      
+      emoRefAudioClearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        node.data.emoRefAudioUrl = null;
+        emoRefAudioInput.value = '';
+        emoRefAudioPreview.style.display = 'none';
+        const audio = emoRefAudioPreview.querySelector('audio');
+        if(audio){
+          audio.src = '';
+        }
+        showToast('已清除情感参考音频', 'success');
+        try{ autoSaveWorkflow(); } catch(e){}
       });
       
       emoWeightSlider.addEventListener('input', (e) => {
@@ -385,12 +422,20 @@
             console.warn('未找到匹配的角色或角色没有配置参考音频');
           }
           
-          if(node.data.emoControlMethod === 1 && node.data.emoRefAudioUrl){
-            const emoAudioUrl = proxyDownloadUrl(node.data.emoRefAudioUrl);
-            const emoAudioResponse = await fetch(emoAudioUrl);
-            if(emoAudioResponse.ok){
-              const emoAudioBlob = await emoAudioResponse.blob();
-              form.append('emo_ref_audio', emoAudioBlob, 'emo_ref_audio.wav');
+          if(node.data.emoControlMethod === 1){
+            const videoConn = state.videoConnections.find(c => c.to === id);
+            if(videoConn){
+              const videoNode = state.nodes.find(n => n.id === videoConn.from);
+              if(videoNode && videoNode.data.url){
+                form.append('emo_ref_video_url', videoNode.data.url);
+              }
+            } else if(node.data.emoRefAudioUrl){
+              const emoAudioUrl = proxyDownloadUrl(node.data.emoRefAudioUrl);
+              const emoAudioResponse = await fetch(emoAudioUrl);
+              if(emoAudioResponse.ok){
+                const emoAudioBlob = await emoAudioResponse.blob();
+                form.append('emo_ref_audio', emoAudioBlob, 'emo_ref_audio.wav');
+              }
             }
             
             if(node.data.emoWeight !== null && node.data.emoWeight !== undefined){
@@ -712,6 +757,16 @@
       });
 
       attachDialogueItemEvents();
+      
+      // 初始化视频输入端口的禁用状态
+      if(videoInputPort){
+        if(node.data.emoControlMethod === 1){
+          videoInputPort.classList.remove('disabled');
+        } else {
+          videoInputPort.classList.add('disabled');
+        }
+      }
+      
       canvasEl.appendChild(el);
       setSelected(id);
       return id;
@@ -740,19 +795,39 @@
       
       const emoControlSelect = el.querySelector('.dialogue-emo-control-select');
       const emoRefAudioField = el.querySelector('.dialogue-emo-ref-audio-field');
+      const emoRefAudioInput = el.querySelector('.dialogue-emo-ref-audio-input');
+      const emoRefAudioClearBtn = el.querySelector('.dialogue-emo-ref-audio-clear-btn');
       const emoRefAudioPreview = el.querySelector('.dialogue-emo-ref-audio-preview');
       const emoWeightField = el.querySelector('.dialogue-emo-weight-field');
       const emoWeightSlider = el.querySelector('.dialogue-emo-weight-slider');
       const emoWeightValue = el.querySelector('.dialogue-emo-weight-value');
       const emoVecField = el.querySelector('.dialogue-emo-vec-field');
       const emoVecSliders = el.querySelectorAll('.dialogue-emo-vec-slider');
+      const videoInputPort = el.querySelector('.port.video-input-port');
       
       if(emoControlSelect && node.data.emoControlMethod !== undefined){
         emoControlSelect.value = node.data.emoControlMethod;
         
-        if(emoRefAudioField) emoRefAudioField.style.display = node.data.emoControlMethod === 1 ? 'block' : 'none';
+        // 情感参考音频区域始终显示，但在非情感参考音频模式下禁用
+        const isEmoRefMode = node.data.emoControlMethod === 1;
+        if(emoRefAudioField){
+          emoRefAudioField.style.opacity = isEmoRefMode ? '1' : '0.5';
+          emoRefAudioField.style.pointerEvents = isEmoRefMode ? 'auto' : 'none';
+        }
+        if(emoRefAudioInput) emoRefAudioInput.disabled = !isEmoRefMode;
+        if(emoRefAudioClearBtn) emoRefAudioClearBtn.disabled = !isEmoRefMode;
+        
         if(emoWeightField) emoWeightField.style.display = node.data.emoControlMethod === 1 ? 'block' : 'none';
         if(emoVecField) emoVecField.style.display = node.data.emoControlMethod === 2 ? 'block' : 'none';
+        
+        // 视频输入端口始终显示，但在非情感参考音频模式下禁用
+        if(videoInputPort){
+          if(isEmoRefMode){
+            videoInputPort.classList.remove('disabled');
+          } else {
+            videoInputPort.classList.add('disabled');
+          }
+        }
       }
       
       if(node.data.emoRefAudioUrl && emoRefAudioPreview){

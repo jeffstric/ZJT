@@ -25,6 +25,7 @@
 
       el.innerHTML = `
         <div class="port input" title="输入（连接图生视频节点或角色节点）"></div>
+        <div class="port output" title="输出（连接到对话组节点作为情感参考）"></div>
         <div class="node-header">
           <div class="node-title">${node.title}</div>
           <button class="icon-btn" title="删除">×</button>
@@ -65,6 +66,7 @@
       const fileEl = el.querySelector('.video-file');
       const fromAssetBtn = el.querySelector('.video-from-asset');
       const inputPort = el.querySelector('.port.input');
+      const outputPort = el.querySelector('.port.output');
       const previewField = el.querySelector('.video-preview-field');
       const thumbVideo = el.querySelector('.video-thumb');
       const playBtn = el.querySelector('.vp-play');
@@ -112,6 +114,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               
               // 如果连接涉及角色节点，更新角色卡按钮状态
               if(fromNode.type === 'character'){
@@ -121,6 +124,12 @@
           }
         }
         state.connecting = null;
+      });
+
+      outputPort.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
       });
 
       function setVideoFromFile(file){
@@ -1327,6 +1336,7 @@
       renderConnections();
       renderImageConnections();
       renderFirstFrameConnections();
+      renderVideoConnections();
       
       // 如果删除的连接涉及分镜节点，更新其预览图和选择菜单
       if(conn){
@@ -1504,6 +1514,7 @@
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
+          renderVideoConnections();
         });
         
         // 显示删除按钮（计算贝塞尔曲线t=0.5处的实际位置）
@@ -1525,6 +1536,124 @@
           connDeleteBtn.style.left = (screenX - 12) + 'px';
           connDeleteBtn.style.top = (screenY - 12) + 'px';
         }
+      }
+    }
+
+    function renderVideoConnections(){
+      try {
+        // 检查必要的元素是否存在
+        if(!connectionsSvg || !canvasEl || !canvasContainer) {
+          return;
+        }
+        
+        // 确保init化videoConnections数组
+        if(!state.videoConnections) {
+          state.videoConnections = [];
+        }
+        
+        // 清除旧的视频连接线
+        const oldLines = document.querySelectorAll('.video-conn-group');
+        oldLines.forEach(l => l.remove());
+        
+        // 隐藏删除按钮（如果选中的连接已被删除）
+        if(state.selectedVideoConnId !== null){
+          const stillExists = state.videoConnections.some(c => c.id === state.selectedVideoConnId);
+          if(!stillExists){
+            state.selectedVideoConnId = null;
+            if(connDeleteBtn) connDeleteBtn.style.display = 'none';
+          }
+        }
+        
+        // 绘制视频连接线
+        for(const conn of state.videoConnections){
+        const fromEl = canvasEl.querySelector(`.node[data-node-id="${conn.from}"]`);
+        const toEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+        if(!fromEl || !toEl) continue;
+        
+        const outputPort = fromEl.querySelector('.port.output');
+        const videoInputPort = toEl.querySelector('.port.video-input-port');
+        if(!outputPort || !videoInputPort) continue;
+        
+        const fromRect = outputPort.getBoundingClientRect();
+        const toRect = videoInputPort.getBoundingClientRect();
+        const containerRect = canvasContainer.getBoundingClientRect();
+        
+        const fromX = (fromRect.left + fromRect.width/2 - containerRect.left - state.panX) / state.zoom;
+        const fromY = (fromRect.top + fromRect.height/2 - containerRect.top - state.panY) / state.zoom;
+        const toX = (toRect.left + toRect.width/2 - containerRect.left - state.panX) / state.zoom;
+        const toY = (toRect.top + toRect.height/2 - containerRect.top - state.panY) / state.zoom;
+        
+        const dx = Math.abs(toX - fromX) * 0.5;
+        const pathD = `M${fromX},${fromY} C${fromX+dx},${fromY} ${toX-dx},${toY} ${toX},${toY}`;
+        
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'video-conn-group');
+        group.dataset.videoConnId = String(conn.id);
+        
+        // hitbox（透明宽线，方便点击）
+        const hitbox = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hitbox.setAttribute('d', pathD);
+        hitbox.setAttribute('class', 'hitbox');
+        hitbox.style.fill = 'none';
+        hitbox.style.stroke = 'transparent';
+        hitbox.style.strokeWidth = '20';
+        hitbox.style.cursor = 'pointer';
+        
+        // 可见线
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', pathD);
+        path.setAttribute('class', 'visible');
+        path.style.fill = 'none';
+        path.style.stroke = '#3b82f6';
+        path.style.strokeWidth = '2';
+        path.style.pointerEvents = 'none';
+        
+        if(state.selectedVideoConnId === conn.id){
+          path.style.stroke = '#1d4ed8';
+          path.style.strokeWidth = '3';
+        }
+        
+        group.appendChild(hitbox);
+        group.appendChild(path);
+        connectionsSvg.appendChild(group);
+        
+        // 点击选中
+        hitbox.addEventListener('click', (e) => {
+          e.stopPropagation();
+          state.selectedConnId = null;
+          state.selectedImgConnId = null;
+          state.selectedFirstFrameConnId = null;
+          state.selectedVideoConnId = conn.id;
+          renderConnections();
+          renderImageConnections();
+          renderFirstFrameConnections();
+          renderVideoConnections();
+        });
+        
+        // 显示删除按钮（计算贝塞尔曲线t=0.5处的实际位置）
+        if(state.selectedVideoConnId === conn.id){
+          // 控制点
+          const cx1 = fromX + dx;
+          const cy1 = fromY;
+          const cx2 = toX - dx;
+          const cy2 = toY;
+          // 三次贝塞尔曲线 t=0.5 时的点
+          const t = 0.5;
+          const mt = 1 - t;
+          const bezierX = mt*mt*mt*fromX + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*toX;
+          const bezierY = mt*mt*mt*fromY + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*toY;
+          // 转换为屏幕坐标
+          const screenX = bezierX * state.zoom + state.panX;
+          const screenY = bezierY * state.zoom + state.panY;
+          if(connDeleteBtn){
+            connDeleteBtn.style.display = 'flex';
+            connDeleteBtn.style.left = (screenX - 12) + 'px';
+            connDeleteBtn.style.top = (screenY - 12) + 'px';
+          }
+        }
+      }
+      } catch(error) {
+        console.error('[renderVideoConnections] Error:', error);
       }
     }
 
@@ -1604,6 +1733,7 @@
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
+          renderVideoConnections();
         });
         
         // 显示删除按钮
@@ -2001,6 +2131,7 @@
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
+          renderVideoConnections();
           renderMinimap();
 
           // 为每个视频节点初始化状态显示
@@ -2229,6 +2360,7 @@
                 portType: 'start'
               });
               renderImageConnections();
+              renderVideoConnections();
             }
           }
         }
@@ -2267,6 +2399,7 @@
                 portType: 'end'
               });
               renderImageConnections();
+              renderVideoConnections();
             }
           }
         }
@@ -2319,6 +2452,7 @@
           state.imageConnections = state.imageConnections.filter(c => !(c.to === id && c.portType === 'start'));
           startImagePort.classList.add('disabled');
           renderImageConnections();
+          renderVideoConnections();
           showToast('首帧图片上传成功', 'success');
         } else {
           startPreviewRow.style.display = 'none';
@@ -2346,6 +2480,7 @@
           state.imageConnections = state.imageConnections.filter(c => !(c.to === id && c.portType === 'end'));
           endImagePort.classList.add('disabled');
           renderImageConnections();
+          renderVideoConnections();
           showToast('尾帧图片上传成功', 'success');
         } else {
           endPreviewRow.style.display = 'none';
@@ -2509,6 +2644,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               
               // 更新分镜节点的预览图和选择菜单
               if(fromNode.updatePreview){
@@ -3086,6 +3222,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }
@@ -3239,6 +3376,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }
@@ -3354,6 +3492,7 @@
       renderConnections();
       renderImageConnections();
       renderFirstFrameConnections();
+      renderVideoConnections();
       try{ autoSaveWorkflow(); } catch(e){}
       showToast(`已生成 ${shots.length} 个独立分镜节点`, 'success');
     }
@@ -3466,6 +3605,7 @@
       renderConnections();
       renderImageConnections();
       renderFirstFrameConnections();
+      renderVideoConnections();
       try{ autoSaveWorkflow(); } catch(e){}
       showToast('已创建合并分镜节点', 'success');
     }
@@ -4097,6 +4237,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               
               // 如果是图片节点连接，更新预览图和选择菜单
               if(fromNode.type === 'image'){

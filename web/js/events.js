@@ -126,6 +126,7 @@
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
         // 开始平移画布
         state.panning = {
           startX: e.clientX,
@@ -149,6 +150,11 @@
         renderImageConnections();
       } else if(state.selectedFirstFrameConnId !== null){
         removeFirstFrameConnection(state.selectedFirstFrameConnId);
+      } else if(state.selectedVideoConnId !== null){
+        state.videoConnections = state.videoConnections.filter(c => c.id !== state.selectedVideoConnId);
+        state.selectedVideoConnId = null;
+        hideConnDeleteBtn();
+        renderVideoConnections();
       }
     });
 
@@ -181,6 +187,12 @@
         } else if(state.selectedFirstFrameConnId !== null){
           e.preventDefault();
           removeFirstFrameConnection(state.selectedFirstFrameConnId);
+        } else if(state.selectedVideoConnId !== null){
+          e.preventDefault();
+          state.videoConnections = state.videoConnections.filter(c => c.id !== state.selectedVideoConnId);
+          state.selectedVideoConnId = null;
+          hideConnDeleteBtn();
+          renderVideoConnections();
         } else if(state.timeline.selectedClipId !== null){
           e.preventDefault();
           removeFromTimeline(state.timeline.selectedClipId);
@@ -271,11 +283,13 @@
         applyTransform();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
         // 更新删除按钮位置（如果有选中的连接线）
         if(state.selectedConnId !== null){
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
+          renderVideoConnections();
         }
       }
       // 拖动节点（支持批量拖动）
@@ -315,6 +329,7 @@
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
       }
       // 拖拽创建连接线时显示虚线预览
       if(state.connecting){
@@ -411,6 +426,27 @@
           }
         }
         
+        // 如果从视频节点拖拽，查找对话组节点的视频输入端口
+        let nearestVideoInputPort = null;
+        if(fromNode && fromNode.type === 'video'){
+          let nearestVideoDist = 50;
+          for(const node of state.nodes){
+            if(node.type !== 'dialogue_group') continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+            if(!toEl) continue;
+            const portEl = toEl.querySelector('.port.video-input-port');
+            if(!portEl || portEl.classList.contains('disabled')) continue;
+            const rect = portEl.getBoundingClientRect();
+            const portX = (rect.left + rect.width/2 - containerRect.left - state.panX) / state.zoom;
+            const portY = (rect.top + rect.height/2 - containerRect.top - state.panY) / state.zoom;
+            const dist = Math.sqrt(Math.pow(toX - portX, 2) + Math.pow(toY - portY, 2));
+            if(dist < nearestVideoDist){
+              nearestVideoDist = dist;
+              nearestVideoInputPort = { nodeId: node.id, x: portX, y: portY };
+            }
+          }
+        }
+        
         // 更新图片端口高亮状态
         for(const portEl of canvasEl.querySelectorAll('.start-image-port, .end-image-port')){
           const nodeEl = portEl.closest('.node');
@@ -436,6 +472,14 @@
           portEl.classList.toggle('can-connect', isNearest);
         }
         
+        // 更新视频输入端口高亮状态
+        for(const portEl of canvasEl.querySelectorAll('.port.video-input-port')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          const isNearest = nearestVideoInputPort && nearestVideoInputPort.nodeId === nodeId;
+          portEl.classList.toggle('can-connect', isNearest);
+        }
+        
         // 如果找到最近端口，虚线吸附到该端口
         let targetX = toX, targetY = toY;
         if(nearestImgPort){
@@ -450,6 +494,10 @@
           targetX = nearestFirstFramePort.x;
           targetY = nearestFirstFramePort.y;
         }
+        if(nearestVideoInputPort){
+          targetX = nearestVideoInputPort.x;
+          targetY = nearestVideoInputPort.y;
+        }
         
         renderConnections({
           fromX: fromPos.x,
@@ -459,6 +507,7 @@
         });
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
       }
     });
 
@@ -658,10 +707,57 @@
               });
               
               // 如果连接涉及角色节点，更新角色卡按钮状态
-              const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
-              if(fromNode && fromNode.type === 'character'){
+              const sourceNode = state.nodes.find(n => n.id === state.connecting.fromId);
+              if(sourceNode && sourceNode.type === 'character'){
                 updateCharacterCardButtonState(state.connecting.fromId);
               }
+            }
+          }
+        }
+        
+        // 如果从视频节点拖拽，查找对话组节点的视频输入端口
+        if(fromNode && fromNode.type === 'video'){
+          let nearestVideoInputPort = null;
+          let nearestVideoDist = 50;
+          for(const node of state.nodes){
+            if(node.type !== 'dialogue_group') continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+            if(!toEl) continue;
+            const portEl = toEl.querySelector('.port.video-input-port');
+            if(!portEl || portEl.classList.contains('disabled')) continue;
+            const rect = portEl.getBoundingClientRect();
+            const portX = (rect.left + rect.width/2 - containerRect.left - state.panX) / state.zoom;
+            const portY = (rect.top + rect.height/2 - containerRect.top - state.panY) / state.zoom;
+            const dist = Math.sqrt(Math.pow(mouseX - portX, 2) + Math.pow(mouseY - portY, 2));
+            if(dist < nearestVideoDist){
+              nearestVideoDist = dist;
+              nearestVideoInputPort = { nodeId: node.id };
+            }
+          }
+          
+          if(nearestVideoInputPort){
+            const exists = state.videoConnections.some(c => c.from === state.connecting.fromId && c.to === nearestVideoInputPort.nodeId);
+            if(!exists){
+              state.videoConnections.push({
+                id: state.nextVideoConnId++,
+                from: state.connecting.fromId,
+                to: nearestVideoInputPort.nodeId
+              });
+              renderVideoConnections();
+              showToast('视频已连接作为情感参考', 'success');
+              try{ autoSaveWorkflow(); } catch(e){}
+            }
+          } else {
+            // 检查是否有对话组节点但端口被禁用
+            const hasDisabledPort = state.nodes.some(node => {
+              if(node.type !== 'dialogue_group') return false;
+              const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+              if(!toEl) return false;
+              const portEl = toEl.querySelector('.port.video-input-port');
+              return portEl && portEl.classList.contains('disabled');
+            });
+            if(hasDisabledPort){
+              showToast('请先将对话组节点的“情感控制方式”切换为“使用情感参考音频”', 'warning');
             }
           }
         }
@@ -676,6 +772,7 @@
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
       }
     });
 
@@ -714,6 +811,7 @@
       renderConnections();
       renderImageConnections();
       renderFirstFrameConnections();
+      renderVideoConnections();
       renderMinimap();
     });
 
@@ -2434,6 +2532,7 @@
                 renderConnections();
                 renderImageConnections();
                 renderFirstFrameConnections();
+                renderVideoConnections();
                 renderMinimap();
               }, 100);
             }
