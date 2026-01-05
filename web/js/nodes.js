@@ -3337,7 +3337,7 @@
         
         const shotFrameNodeId = createShotFrameNode({
           x: shotGroupNode.x + offsetX,
-          y: baseY + (index * 280),
+          y: baseY + (index * 700),
           shotData: shotDataWithLocation,
           model: shotGroupNode.data.model
         });
