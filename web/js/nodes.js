@@ -3806,7 +3806,7 @@
             </select>
           </div>
           <div class="field">
-            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start;">
+            <div class="btn-row" style="display: flex; gap: 8px; justify-content: space-between; align-items: center;">
               <div class="gen-container">
                 <button class="gen-btn gen-btn-main shot-frame-generate-btn" type="button">生成分镜图</button>
                 <button class="gen-btn gen-btn-caret shot-frame-caret" type="button" aria-label="选择抽卡次数">▾</button>
@@ -3817,6 +3817,7 @@
                   <div class="gen-item" data-count="4">X4</div>
                 </div>
               </div>
+              <button class="gen-btn shot-frame-generate-dialogue-btn" type="button" style="background: #22c55e; color: white;" disabled>生成对话音频</button>
             </div>
             <div class="gen-meta shot-frame-draw-count-label"></div>
           </div>
@@ -3870,6 +3871,7 @@
       const imagePromptEl = el.querySelector('.shot-frame-image-prompt');
       const videoPromptEl = el.querySelector('.shot-frame-video-prompt');
       const generateBtn = el.querySelector('.shot-frame-generate-btn');
+      const generateDialogueBtn = el.querySelector('.shot-frame-generate-dialogue-btn');
       const imageEl = el.querySelector('.shot-frame-image');
       const imageFieldEl = el.querySelector('.shot-frame-image-field');
       const inputPort = el.querySelector('.port.input');
@@ -4214,6 +4216,72 @@
         e.stopPropagation();
         generateShotFrameImage(id, node);
       });
+
+      // 检查是否有对话数据，更新生成对话音频按钮状态
+      function updateDialogueButtonState(){
+        if(generateDialogueBtn){
+          const hasDialogue = node.data.shotJson && 
+                             node.data.shotJson.dialogue && 
+                             Array.isArray(node.data.shotJson.dialogue) && 
+                             node.data.shotJson.dialogue.length > 0;
+          generateDialogueBtn.disabled = !hasDialogue;
+        }
+      }
+      updateDialogueButtonState();
+
+      // 生成对话音频按钮点击事件
+      if(generateDialogueBtn){
+        generateDialogueBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          
+          if(!node.data.shotJson || !node.data.shotJson.dialogue || node.data.shotJson.dialogue.length === 0){
+            showToast('该分镜没有对话数据', 'warning');
+            return;
+          }
+          
+          // 创建对话组节点
+          const dialogueGroupX = node.x + 450;
+          const dialogueGroupY = node.y;
+          const dialogueGroupId = createDialogueGroupNode({
+            x: dialogueGroupX,
+            y: dialogueGroupY,
+            dialogueData: node.data.shotJson.dialogue
+          });
+          
+          // 连接分镜节点到对话组节点
+          const exists = state.connections.some(c => c.from === id && c.to === dialogueGroupId);
+          if(!exists){
+            state.connections.push({
+              id: state.nextConnId++,
+              from: id,
+              to: dialogueGroupId
+            });
+            renderConnections();
+          }
+          
+          // 获取对话组节点
+          const dialogueGroupNode = state.nodes.find(n => n.id === dialogueGroupId);
+          if(!dialogueGroupNode){
+            showToast('创建对话组节点失败', 'error');
+            return;
+          }
+          
+          // 自动触发所有对话的音频生成
+          const dialogueGroupEl = canvasEl.querySelector(`.node[data-node-id="${dialogueGroupId}"]`);
+          if(dialogueGroupEl){
+            const generateAllBtn = dialogueGroupEl.querySelector('.dialogue-generate-all-btn');
+            if(generateAllBtn){
+              // 延迟一下再点击，确保init化完成
+              setTimeout(() => {
+                generateAllBtn.click();
+              }, 100);
+            }
+          }
+          
+          showToast('已创建对话组节点并开始生成音频', 'success');
+          try{ autoSaveWorkflow(); } catch(e){}
+        });
+      }
 
       if(imageEl && node.data.imageUrl){
         imageEl.addEventListener('click', (e) => {
