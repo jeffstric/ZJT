@@ -399,45 +399,55 @@
     }
   };
 
+  const splitShotsHandlers = new Map();
+  
   const attachSplitShotsHandler = () => {
-    if(splitShotsHandler){
-      return;
-    }
-    const checkAndAttach = () => {
-      const btn = getSplitShotsTarget();
-      if(!btn){
-        return false;
-      }
-      splitShotsHandler = () => {
-        if(steps[currentStepIndex]?.id !== SPLIT_SHOTS_STEP_ID){
+    const bindButtons = () => {
+      let hasButton = false;
+      const buttons = document.querySelectorAll('.shot-group-generate-btn');
+      buttons.forEach((btn) => {
+        hasButton = true;
+        if(splitShotsHandlers.has(btn)){
           return;
         }
-        detachSplitShotsHandler();
-        completeStepAndExit();
-      };
-      btn.addEventListener('click', splitShotsHandler);
-      return true;
+        const handler = () => {
+          if(steps[currentStepIndex]?.id !== SPLIT_SHOTS_STEP_ID){
+            return;
+          }
+          detachSplitShotsHandler();
+          completeStepAndExit();
+        };
+        btn.addEventListener('click', handler);
+        splitShotsHandlers.set(btn, handler);
+      });
+      return hasButton;
     };
-    if(!checkAndAttach()){
+
+    if(bindButtons()){
       const observer = new MutationObserver(() => {
-        if(checkAndAttach()){
-          observer.disconnect();
-        }
+        bindButtons();
       });
       observer.observe(document.body, { childList: true, subtree: true });
+      return;
     }
+
+    const observer = new MutationObserver(() => {
+      if(bindButtons()){
+        observer.disconnect();
+        const newObserver = new MutationObserver(() => {
+          bindButtons();
+        });
+        newObserver.observe(document.body, { childList: true, subtree: true });
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   };
 
   const detachSplitShotsHandler = () => {
-    if(splitShotsHandler && splitShotsTargetEl){
-      splitShotsTargetEl.removeEventListener('click', splitShotsHandler);
-    }else if(splitShotsHandler){
-      const btn = document.querySelector('.shot-group-generate-btn');
-      if(btn){
-        btn.removeEventListener('click', splitShotsHandler);
-      }
-    }
-    splitShotsHandler = null;
+    splitShotsHandlers.forEach((handler, btn) => {
+      btn.removeEventListener('click', handler);
+    });
+    splitShotsHandlers.clear();
     resetSplitShotsTarget();
   };
 
@@ -787,7 +797,10 @@
       const targetVisible = isVisible(targetEl);
       const rect = targetVisible ? targetEl.getBoundingClientRect() : null;
 
-      if(targetVisible && typeof targetEl.scrollIntoView === 'function'){
+      const canvasNodeSteps = [INPUT_SCRIPT_STEP_ID, SPLIT_SHOTS_STEP_ID, GENERATE_STORYBOARD_STEP_ID, GENERATE_VIDEO_STEP_ID, ADD_TO_TIMELINE_STEP_ID];
+      const isCanvasNode = canvasNodeSteps.includes(step.id);
+      
+      if(targetVisible && !isCanvasNode && typeof targetEl.scrollIntoView === 'function'){
         const withinViewport = rect.top >= 0 && rect.bottom <= window.innerHeight;
         if(!withinViewport){
           targetEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });

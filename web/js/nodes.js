@@ -3065,7 +3065,7 @@
             if(result.data.shot_groups && result.data.shot_groups.length > 0) {
               result.data.shot_groups.forEach((shotGroup, index) => {
                 const offsetX = 400;
-                const offsetY = index * 320;
+                const offsetY = index * 465;
                 const shotGroupNodeId = createShotGroupNode({
                   x: node.x + offsetX,
                   y: node.y + offsetY,

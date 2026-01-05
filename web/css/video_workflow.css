@@ -274,7 +274,6 @@ body.tour-split-shots-locked .node{
 body.tour-split-shots-locked .node:has(.shot-group-generate-btn){
   pointer-events:auto;
   opacity:1;
-  position:relative;
   z-index:1670;
 }
 body.tour-split-shots-locked .node:has(.shot-group-generate-btn) *{
@@ -376,7 +375,6 @@ body.tour-generate-video-locked .node{
 body.tour-generate-video-locked .node:has(.shot-frame-generate-video-btn){
   pointer-events:auto;
   opacity:1;
-  position:relative;
   z-index:1670;
 }
 body.tour-generate-video-locked .node:has(.shot-frame-generate-video-btn) *{
