@@ -4665,6 +4665,12 @@
         this.fetchComputingPower();
       }
       
+      // 检查是否需要自动弹出登录窗口（从工作流页面跳转过来）
+      const redirectAfterLogin = localStorage.getItem('redirect_after_login');
+      if (redirectAfterLogin && !this.authToken) {
+        this.showLoginModal = true;
+      }
+      
       // Load terms of service
       this.loadTermsContent();
       
@@ -4803,6 +4809,14 @@
               localStorage.setItem('phone', this.userPhone);
               localStorage.setItem('user_id', this.userId);
               localStorage.setItem('invite_code', this.inviteCode);
+              
+              // 检查是否需要跳转回原页面
+              const redirectUrl = localStorage.getItem('redirect_after_login');
+              if(redirectUrl){
+                localStorage.removeItem('redirect_after_login');
+                window.location.href = redirectUrl;
+                return;
+              }
               
               // 刷新页面以使用新的登录信息
               window.location.reload();

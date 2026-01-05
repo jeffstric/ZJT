@@ -9,11 +9,18 @@
       }
     }
 
+    function redirectToLogin(){
+      const currentUrl = window.location.href;
+      localStorage.setItem('redirect_after_login', currentUrl);
+      window.location.href = '/index.html';
+    }
+
     async function fetchComputingPower(){
       const token = getAuthToken();
       if(!token){
         updateComputingPowerLabel('未登录');
         computingPowerRefreshBtn?.setAttribute('disabled', 'true');
+        redirectToLogin();
         return;
       }
 
@@ -26,16 +33,30 @@
             'Authorization': `Bearer ${token}`
           }
         });
+        
+        if(!response.ok){
+          if(response.status === 400 || response.status === 401 || response.status === 403){
+            console.warn('认证失败，跳转到登录页');
+            redirectToLogin();
+            return;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
         const data = await response.json();
         if(data.success && data.data){
           updateComputingPowerLabel(data.data.computing_power ?? 0);
         }else{
           console.warn('fetchComputingPower:', data.message);
-          updateComputingPowerLabel('0');
+          if(data.message && (data.message.includes('认证') || data.message.includes('登录'))){
+            redirectToLogin();
+          }else{
+            updateComputingPowerLabel('0');
+          }
         }
       }catch(error){
         console.error('fetchComputingPower error:', error);
-        updateComputingPowerLabel('0');
+        updateComputingPowerLabel('错误');
       }finally{
         computingPowerRefreshBtn?.removeAttribute('disabled');
       }
@@ -45,10 +66,33 @@
       fetchComputingPower();
     });
 
+    let computingPowerTimer = null;
+
+    function startComputingPowerTimer(){
+      if(computingPowerTimer){
+        clearInterval(computingPowerTimer);
+      }
+      computingPowerTimer = setInterval(() => {
+        fetchComputingPower();
+      }, 5 * 60 * 1000);
+    }
+
+    function stopComputingPowerTimer(){
+      if(computingPowerTimer){
+        clearInterval(computingPowerTimer);
+        computingPowerTimer = null;
+      }
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
       if(computingPowerChip){
         fetchComputingPower();
+        startComputingPowerTimer();
       }
+    });
+
+    window.addEventListener('beforeunload', () => {
+      stopComputingPowerTimer();
     });
 
     // 轮询视频状态
