@@ -107,6 +107,14 @@
               </svg>
               <span class="add-menu-text">分镜组</span>
             </div>
+            <div class="add-menu-item" id="menuAddTextToSpeech">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M12 2C13.1046 2 14 2.89543 14 4V12C14 13.1046 13.1046 14 12 14C10.8954 14 10 13.1046 10 12V4C10 2.89543 10.8954 2 12 2Z" stroke="currentColor" stroke-width="2"/>
+                <path d="M17 10V12C17 14.7614 14.7614 17 12 17C9.23858 17 7 14.7614 7 12V10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M12 17V21M12 21H8M12 21H16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">文字转语音</span>
+            </div>
           </div>
           <div class="add-menu-group">
             <div class="add-menu-label">添加素材</div>
@@ -341,13 +349,15 @@
             <label class="label" style="color: #0f172a;">角色名称 <span style="color: #ef4444;">*</span></label>
             <input type="text" id="createCharacterNameInput" placeholder="请输入角色名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
           </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">年龄</label>
-            <input type="text" id="createCharacterAgeInput" placeholder="请输入年龄..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
-          </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">身份/职业</label>
-            <input type="text" id="createCharacterIdentityInput" placeholder="请输入身份或职业..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          <div class="field-row">
+            <div class="field">
+              <label class="label" style="color: #0f172a;">年龄</label>
+              <input type="text" id="createCharacterAgeInput" placeholder="请输入年龄..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            </div>
+            <div class="field">
+              <label class="label" style="color: #0f172a;">身份/职业</label>
+              <input type="text" id="createCharacterIdentityInput" placeholder="请输入身份或职业..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            </div>
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">性格</label>
@@ -359,17 +369,19 @@
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">其他信息</label>
-            <textarea id="createCharacterOtherInfoInput" placeholder="请输入其他信息..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+            <textarea id="createCharacterOtherInfoInput" class="compact-textarea" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
           </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">参考图</label>
-            <input type="file" id="createCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
-          </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">参考音频</label>
-            <input type="file" id="createCharacterVoiceInput" accept="audio/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
-            <div id="createCharacterVoicePreview" style="margin-top: 8px; display: none;">
-              <audio id="createCharacterVoicePreviewAudio" controls style="width: 100%; max-height: 40px;"></audio>
+          <div class="field-row media-field-row">
+            <div class="field">
+              <label class="label" style="color: #0f172a;">参考图</label>
+              <input type="file" id="createCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            </div>
+            <div class="field">
+              <label class="label" style="color: #0f172a;">参考音频</label>
+              <input type="file" id="createCharacterVoiceInput" accept="audio/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <div id="createCharacterVoicePreview" style="margin-top: 8px; display: none;">
+                <audio id="createCharacterVoicePreviewAudio" controls style="width: 100%; max-height: 40px;"></audio>
+              </div>
             </div>
           </div>
         </div>
@@ -525,13 +537,15 @@
             <label class="label" style="color: #0f172a;">角色名称 <span style="color: #ef4444;">*</span></label>
             <input type="text" id="editCharacterNameInput" placeholder="请输入角色名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
           </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">年龄</label>
-            <input type="text" id="editCharacterAgeInput" placeholder="请输入年龄..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
-          </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">身份/职业</label>
-            <input type="text" id="editCharacterIdentityInput" placeholder="请输入身份或职业..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          <div class="field-row">
+            <div class="field">
+              <label class="label" style="color: #0f172a;">年龄</label>
+              <input type="text" id="editCharacterAgeInput" placeholder="请输入年龄..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            </div>
+            <div class="field">
+              <label class="label" style="color: #0f172a;">身份/职业</label>
+              <input type="text" id="editCharacterIdentityInput" placeholder="请输入身份或职业..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            </div>
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">性格</label>
@@ -543,20 +557,22 @@
           </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">其他信息</label>
-            <textarea id="editCharacterOtherInfoInput" placeholder="请输入其他信息..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+            <textarea id="editCharacterOtherInfoInput" class="compact-textarea" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
           </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">参考图</label>
-            <input type="file" id="editCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
-            <div id="editCharacterImagePreview" style="margin-top: 8px; display: none;">
-              <img id="editCharacterImagePreviewImg" style="max-width: 100%; height: auto; border-radius: 8px;" />
+          <div class="field-row media-field-row">
+            <div class="field">
+              <label class="label" style="color: #0f172a;">参考图</label>
+              <input type="file" id="editCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <div id="editCharacterImagePreview" style="margin-top: 8px; display: none;">
+                <img id="editCharacterImagePreviewImg" style="max-width: 100%; height: auto; border-radius: 8px;" />
+              </div>
             </div>
-          </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">参考音频</label>
-            <input type="file" id="editCharacterVoiceInput" accept="audio/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
-            <div id="editCharacterVoicePreview" style="margin-top: 8px; display: none;">
-              <audio id="editCharacterVoicePreviewAudio" controls style="width: 100%;"></audio>
+            <div class="field">
+              <label class="label" style="color: #0f172a;">参考音频</label>
+              <input type="file" id="editCharacterVoiceInput" accept="audio/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <div id="editCharacterVoicePreview" style="margin-top: 8px; display: none;">
+                <audio id="editCharacterVoicePreviewAudio" controls style="width: 100%;"></audio>
+              </div>
             </div>
           </div>
           <div class="field">
@@ -638,6 +654,7 @@
   <script src="/js/workflow.js"></script>
   <script src="/js/canvas.js"></script>
   <script src="/js/nodes.js"></script>
+  <script src="/js/text_to_speech_node.js"></script>
   <script src="/js/shot_frame_generator.js"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>

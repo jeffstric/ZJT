@@ -46,8 +46,23 @@ body.tour-world-locked #createWorldBtn{
   pointer-events:auto !important;
   position: relative;
   z-index: 1650;
-  filter: drop-shadow(0 0 18px rgba(34,197,94,0.55));
-  animation: tourPulse 1.2s ease-in-out infinite;
+  filter: drop-shadow(0 0 12px rgba(34,197,94,1)) drop-shadow(0 0 24px rgba(34,197,94,0.8));
+  animation: tourPulseStrong 1s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(34,197,94,0.7);
+}
+@keyframes tourPulseStrong{
+  0%{ 
+    transform: scale(1); 
+    box-shadow: 0 0 0 0 rgba(34,197,94,0.7);
+  }
+  50%{ 
+    transform: scale(1.15); 
+    box-shadow: 0 0 0 8px rgba(34,197,94,0);
+  }
+  100%{ 
+    transform: scale(1); 
+    box-shadow: 0 0 0 0 rgba(34,197,94,0);
+  }
 }
 @keyframes tourPulse{
   0%{ transform: scale(1); }
@@ -240,7 +255,10 @@ body.tour-split-shots-locked{
   cursor: default;
 }
 body.tour-split-shots-locked .brand-floating,
-body.tour-split-shots-locked .ratio-floating,
+body.tour-split-shots-locked .ratio-floating{
+  pointer-events:none;
+  opacity:1;
+}
 body.tour-split-shots-locked .minimap,
 body.tour-split-shots-locked .zoom-controls,
 body.tour-split-shots-locked .timeline-container,
@@ -256,7 +274,6 @@ body.tour-split-shots-locked .node{
 body.tour-split-shots-locked .node:has(.shot-group-generate-btn){
   pointer-events:auto;
   opacity:1;
-  position:relative;
   z-index:1670;
 }
 body.tour-split-shots-locked .node:has(.shot-group-generate-btn) *{
@@ -358,7 +375,6 @@ body.tour-generate-video-locked .node{
 body.tour-generate-video-locked .node:has(.shot-frame-generate-video-btn){
   pointer-events:auto;
   opacity:1;
-  position:relative;
   z-index:1670;
 }
 body.tour-generate-video-locked .node:has(.shot-frame-generate-video-btn) *{
@@ -929,6 +945,28 @@ svg.connections path.temp{
 .icon-btn:hover{ background: rgba(0,0,0,0.05); }
 .node-body{ padding: 12px; display:flex; flex-direction:column; gap:12px; }
 .field{ display:flex; flex-direction:column; gap:6px; }
+.field-row{
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.field-row .field{
+  flex: 1;
+  min-width: 220px;
+}
+.media-field-row{
+  align-items: flex-start;
+}
+.media-field-row .field{
+  flex: 1;
+}
+.media-field-row audio{
+  width: 100%;
+}
+.compact-textarea{
+  min-height: 80px;
+  max-height: 140px;
+}
 .field.btn-row{
   flex-direction: row;
   justify-content: flex-end;

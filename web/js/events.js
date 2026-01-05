@@ -51,6 +51,12 @@
       addMenu.classList.remove('show');
     });
 
+    document.getElementById('menuAddTextToSpeech').addEventListener('click', () => {
+      createTextToSpeechNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+    });
+
     // 点击其他地方关闭菜单
     document.addEventListener('click', (e) => {
       if(!e.target.closest('#addBtnContainer')){

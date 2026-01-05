@@ -2,5 +2,4 @@
 -- Run this script on existing databases to add the new field
 
 ALTER TABLE `video_workflow` 
-ADD COLUMN `default_world_id` INT UNSIGNED DEFAULT NULL COMMENT '默认世界ID' AFTER `style_reference_image`,
-ADD INDEX `idx_default_world_id` (`default_world_id`);
+ADD COLUMN `default_world_id` INT UNSIGNED DEFAULT NULL COMMENT '默认世界ID' AFTER `style_reference_image`;

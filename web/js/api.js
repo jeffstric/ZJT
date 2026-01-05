@@ -27,6 +27,40 @@
       }
     }
 
+    // 上传音频文件到TTS临时目录
+    async function uploadAudioFile(file){
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      try {
+        const userId = getUserId();
+        const timestamp = Date.now();
+        const randomStr = Math.random().toString(36).substring(2, 8);
+        const ext = file.name.split('.').pop() || 'wav';
+        const filename = `${userId}_${timestamp}_${randomStr}.${ext}`;
+        
+        const response = await fetch('/api/upload-file', {
+          method: 'POST',
+          headers: {
+            'Authorization': getAuthToken(),
+            'X-User-Id': userId
+          },
+          body: formData
+        });
+        
+        const result = await response.json();
+        if(result.code === 0 && result.data && result.data.url){
+          return result.data.url;
+        } else {
+          throw new Error(result.message || '上传失败');
+        }
+      } catch(error){
+        console.error('Audio upload error:', error);
+        showToast('音频上传失败: ' + error.message, 'error');
+        return null;
+      }
+    }
+
     // 生成视频API调用
     async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio){
       // 测试模式：模拟API响应

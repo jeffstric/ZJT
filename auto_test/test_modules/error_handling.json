@@ -173,6 +173,68 @@
         }
       ],
       "is_processed": false
+    },
+    {
+      "id": "error_011",
+      "name": "算力查询认证失败自动跳转登录",
+      "description": "验证工作流页面算力查询API返回400/401/403时自动跳转到登录页，并在登录后自动返回",
+      "priority": "P1",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "设置无效Token",
+          "operation": "set_storage",
+          "key": "auth_token",
+          "value": "invalid_token_12345",
+          "expected_result": "Token被设置为无效值",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "访问工作流编辑页",
+          "operation": "navigate",
+          "target_url": "/video-workflow?id=1",
+          "expected_result": "页面加载，算力查询API返回认证失败",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "等待自动跳转",
+          "operation": "wait",
+          "wait_time_ms": 3000,
+          "expected_result": "自动跳转到 /index.html 登录页",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "验证URL包含登录页",
+          "operation": "check_url",
+          "expected_url": "/index.html",
+          "expected_result": "当前URL为登录页",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证localStorage保存了返回地址",
+          "operation": "check_storage",
+          "key": "redirect_after_login",
+          "expected_result": "localStorage中保存了工作流页面URL",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
     }
   ]
 }

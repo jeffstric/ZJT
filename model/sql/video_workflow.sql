@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS `video_workflow` (
     `workflow_data` JSON COMMENT '工作流配置数据(JSON格式)',
     `style` VARCHAR(255) DEFAULT NULL COMMENT '画风',
     `style_reference_image` VARCHAR(500) DEFAULT NULL COMMENT '画风参考图URL',
+    `default_world_id` int unsigned DEFAULT NULL COMMENT '默认世界ID',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
