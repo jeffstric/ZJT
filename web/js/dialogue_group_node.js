@@ -13,7 +13,11 @@
         y,
         data: {
           dialogues: dialogueData,
-          audioResults: {}
+          audioResults: {},
+          emoControlMethod: 0,
+          emoVec: [0, 0, 0, 0, 0, 0, 0, 0],
+          emoWeight: 1,
+          emoRefAudioUrl: null
         }
       };
       state.nodes.push(node);
@@ -57,6 +61,48 @@
           <button class="icon-btn" title="删除">×</button>
         </div>
         <div class="node-body">
+          <div class="field" style="margin-bottom: 12px;">
+            <label class="label" style="font-size: 12px; margin-bottom: 4px;">情感控制方式</label>
+            <select class="dialogue-emo-control-select" style="width: 100%; padding: 6px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; background: #ffffff; color: #111827;">
+              <option value="0">与参考音频相同</option>
+              <option value="1">使用情感参考音频</option>
+              <option value="2">使用情感向量</option>
+            </select>
+          </div>
+          
+          <div class="dialogue-emo-ref-audio-field" style="display: none; margin-bottom: 12px;">
+            <label class="label" style="font-size: 12px; margin-bottom: 4px;">情感参考音频</label>
+            <input type="file" class="dialogue-emo-ref-audio-input" accept="audio/*" style="width: 100%; padding: 4px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 11px; background: #f9fafb;">
+            <div class="dialogue-emo-ref-audio-preview" style="display: none; margin-top: 6px;">
+              <audio controls style="width: 100%; max-height: 32px;"></audio>
+            </div>
+          </div>
+          
+          <div class="dialogue-emo-weight-field" style="display: none; margin-bottom: 12px;">
+            <label class="label" style="font-size: 12px; margin-bottom: 4px;">情感权重: <span class="dialogue-emo-weight-value">1.0</span></label>
+            <input type="range" class="dialogue-emo-weight-slider" min="0" max="1.6" step="0.1" value="1" style="width: 100%;">
+            <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">调整情感强度，0为无情感，1.6为最强情感</div>
+          </div>
+          
+          <div class="dialogue-emo-vec-field" style="display: none; margin-bottom: 12px;">
+            <label class="label" style="font-size: 12px; margin-bottom: 6px;">情感向量控制</label>
+            <div class="dialogue-emo-vec-sliders" style="font-size: 11px;">
+              ${['喜', '怒', '哀', '惧', '厌恶', '低落', '惊喜', '平静'].map((label, idx) => `
+                <div style="margin-bottom: 8px;">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span>${label}</span>
+                    <span class="dialogue-emo-vec-value" data-index="${idx}">0.00</span>
+                  </div>
+                  <input type="range" class="dialogue-emo-vec-slider" data-index="${idx}" min="0" max="1.5" step="0.01" value="0" style="width: 100%;">
+                </div>
+              `).join('')}
+            </div>
+            <div style="font-size: 11px; margin-top: 4px;">
+              总和: <span class="dialogue-emo-vec-sum" style="font-weight: bold;">0.00</span> / 1.5
+              <span class="dialogue-emo-vec-warning" style="color: #dc2626; display: none; margin-left: 8px;">情感向量之和不能超过1.5</span>
+            </div>
+          </div>
+          
           <div class="field">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <div class="label" style="margin: 0;">对话列表</div>
@@ -74,6 +120,18 @@
       const inputPort = el.querySelector('.port.input');
       const outputPort = el.querySelector('.port.output');
       const generateAllBtn = el.querySelector('.dialogue-generate-all-btn');
+      
+      const emoControlSelect = el.querySelector('.dialogue-emo-control-select');
+      const emoRefAudioField = el.querySelector('.dialogue-emo-ref-audio-field');
+      const emoRefAudioInput = el.querySelector('.dialogue-emo-ref-audio-input');
+      const emoRefAudioPreview = el.querySelector('.dialogue-emo-ref-audio-preview');
+      const emoWeightField = el.querySelector('.dialogue-emo-weight-field');
+      const emoWeightSlider = el.querySelector('.dialogue-emo-weight-slider');
+      const emoWeightValue = el.querySelector('.dialogue-emo-weight-value');
+      const emoVecField = el.querySelector('.dialogue-emo-vec-field');
+      const emoVecSliders = el.querySelectorAll('.dialogue-emo-vec-slider');
+      const emoVecSum = el.querySelector('.dialogue-emo-vec-sum');
+      const emoVecWarning = el.querySelector('.dialogue-emo-vec-warning');
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -126,6 +184,82 @@
         e.preventDefault();
         e.stopPropagation();
         state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+      });
+      
+      emoControlSelect.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const method = parseInt(e.target.value);
+        node.data.emoControlMethod = method;
+        
+        emoRefAudioField.style.display = method === 1 ? 'block' : 'none';
+        emoWeightField.style.display = method === 1 ? 'block' : 'none';
+        emoVecField.style.display = method === 2 ? 'block' : 'none';
+        
+        try{ autoSaveWorkflow(); } catch(e){}
+      });
+      
+      emoRefAudioInput.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        const file = e.target.files[0];
+        if(!file) return;
+        
+        try {
+          const uploadedUrl = await uploadFile(file);
+          if(uploadedUrl){
+            node.data.emoRefAudioUrl = uploadedUrl;
+            const audio = emoRefAudioPreview.querySelector('audio');
+            if(audio){
+              audio.src = proxyDownloadUrl(uploadedUrl);
+              emoRefAudioPreview.style.display = 'block';
+            }
+            showToast('情感参考音频上传成功', 'success');
+            try{ autoSaveWorkflow(); } catch(e){}
+          }
+        } catch(error){
+          console.error('情感参考音频上传失败:', error);
+          showToast('情感参考音频上传失败', 'error');
+        }
+      });
+      
+      emoWeightSlider.addEventListener('input', (e) => {
+        e.stopPropagation();
+        const value = parseFloat(e.target.value);
+        node.data.emoWeight = value;
+        emoWeightValue.textContent = value.toFixed(1);
+      });
+      
+      emoWeightSlider.addEventListener('change', (e) => {
+        try{ autoSaveWorkflow(); } catch(e){}
+      });
+      
+      function updateEmoVecSum(){
+        const sum = node.data.emoVec.reduce((acc, val) => acc + val, 0);
+        emoVecSum.textContent = sum.toFixed(2);
+        if(sum > 1.5){
+          emoVecSum.style.color = '#dc2626';
+          emoVecWarning.style.display = 'inline';
+        } else {
+          emoVecSum.style.color = '#16a34a';
+          emoVecWarning.style.display = 'none';
+        }
+      }
+      
+      emoVecSliders.forEach(slider => {
+        slider.addEventListener('input', (e) => {
+          e.stopPropagation();
+          const index = parseInt(slider.dataset.index);
+          const value = parseFloat(e.target.value);
+          node.data.emoVec[index] = value;
+          
+          const valueSpan = el.querySelector(`.dialogue-emo-vec-value[data-index="${index}"]`);
+          if(valueSpan) valueSpan.textContent = value.toFixed(2);
+          
+          updateEmoVecSum();
+        });
+        
+        slider.addEventListener('change', (e) => {
+          try{ autoSaveWorkflow(); } catch(e){}
+        });
       });
 
       function updateDialogueList(){
@@ -232,7 +366,7 @@
           const form = new FormData();
           form.append('text', dialogue.text);
           form.append('user_id', userId);
-          form.append('emo_control_method', 0);
+          form.append('emo_control_method', node.data.emoControlMethod || 0);
           
           if(matchedCharacter && matchedCharacter.default_voice){
             console.log('角色参考音频URL:', matchedCharacter.default_voice);
@@ -249,6 +383,28 @@
             form.append('ref_audio', voiceBlob, 'ref_audio.wav');
           } else {
             console.warn('未找到匹配的角色或角色没有配置参考音频');
+          }
+          
+          if(node.data.emoControlMethod === 1 && node.data.emoRefAudioUrl){
+            const emoAudioUrl = proxyDownloadUrl(node.data.emoRefAudioUrl);
+            const emoAudioResponse = await fetch(emoAudioUrl);
+            if(emoAudioResponse.ok){
+              const emoAudioBlob = await emoAudioResponse.blob();
+              form.append('emo_ref_audio', emoAudioBlob, 'emo_ref_audio.wav');
+            }
+            
+            if(node.data.emoWeight !== null && node.data.emoWeight !== undefined){
+              form.append('emo_weight', node.data.emoWeight);
+            }
+          }
+          
+          if(node.data.emoControlMethod === 2 && node.data.emoVec){
+            const emoVecSum = node.data.emoVec.reduce((acc, val) => acc + val, 0);
+            if(emoVecSum <= 1.5){
+              form.append('emo_vec', node.data.emoVec.join(','));
+            } else {
+              throw new Error('情感向量之和不能超过1.5');
+            }
           }
           
           const authToken = getAuthToken();
@@ -581,6 +737,60 @@
       
       const el = canvasEl.querySelector(`.node[data-node-id="${nodeData.id}"]`);
       if(!el) return;
+      
+      const emoControlSelect = el.querySelector('.dialogue-emo-control-select');
+      const emoRefAudioField = el.querySelector('.dialogue-emo-ref-audio-field');
+      const emoRefAudioPreview = el.querySelector('.dialogue-emo-ref-audio-preview');
+      const emoWeightField = el.querySelector('.dialogue-emo-weight-field');
+      const emoWeightSlider = el.querySelector('.dialogue-emo-weight-slider');
+      const emoWeightValue = el.querySelector('.dialogue-emo-weight-value');
+      const emoVecField = el.querySelector('.dialogue-emo-vec-field');
+      const emoVecSliders = el.querySelectorAll('.dialogue-emo-vec-slider');
+      
+      if(emoControlSelect && node.data.emoControlMethod !== undefined){
+        emoControlSelect.value = node.data.emoControlMethod;
+        
+        if(emoRefAudioField) emoRefAudioField.style.display = node.data.emoControlMethod === 1 ? 'block' : 'none';
+        if(emoWeightField) emoWeightField.style.display = node.data.emoControlMethod === 1 ? 'block' : 'none';
+        if(emoVecField) emoVecField.style.display = node.data.emoControlMethod === 2 ? 'block' : 'none';
+      }
+      
+      if(node.data.emoRefAudioUrl && emoRefAudioPreview){
+        const audio = emoRefAudioPreview.querySelector('audio');
+        if(audio){
+          audio.src = proxyDownloadUrl(node.data.emoRefAudioUrl);
+          emoRefAudioPreview.style.display = 'block';
+        }
+      }
+      
+      if(node.data.emoWeight !== undefined && emoWeightSlider && emoWeightValue){
+        emoWeightSlider.value = node.data.emoWeight;
+        emoWeightValue.textContent = node.data.emoWeight.toFixed(1);
+      }
+      
+      if(node.data.emoVec && emoVecSliders){
+        emoVecSliders.forEach((slider, idx) => {
+          if(node.data.emoVec[idx] !== undefined){
+            slider.value = node.data.emoVec[idx];
+            const valueSpan = el.querySelector(`.dialogue-emo-vec-value[data-index="${idx}"]`);
+            if(valueSpan) valueSpan.textContent = node.data.emoVec[idx].toFixed(2);
+          }
+        });
+        
+        const sum = node.data.emoVec.reduce((acc, val) => acc + val, 0);
+        const emoVecSum = el.querySelector('.dialogue-emo-vec-sum');
+        const emoVecWarning = el.querySelector('.dialogue-emo-vec-warning');
+        if(emoVecSum){
+          emoVecSum.textContent = sum.toFixed(2);
+          if(sum > 1.5){
+            emoVecSum.style.color = '#dc2626';
+            if(emoVecWarning) emoVecWarning.style.display = 'inline';
+          } else {
+            emoVecSum.style.color = '#16a34a';
+            if(emoVecWarning) emoVecWarning.style.display = 'none';
+          }
+        }
+      }
       
       if(node.data.audioResults){
         Object.keys(node.data.audioResults).forEach(index => {

@@ -11,6 +11,8 @@ import time
 import logging
 import traceback
 import shutil
+import subprocess
+import tempfile
 from datetime import datetime
 from typing import List, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
@@ -513,6 +515,176 @@ def _save_uploaded_audio(upload_file: UploadFile) -> str:
     
     # Return relative path from upload directory
     return file_path
+
+
+def _download_and_extract_audio_from_video(video_url: str) -> str:
+    """
+    Download video from URL, validate size and duration, extract audio, and clean up.
+    
+    Args:
+        video_url: URL of the video to download
+        
+    Returns:
+        Path to extracted audio file
+        
+    Raises:
+        HTTPException: If video is too large, too long, or processing fails
+    """
+    video_path = None
+    audio_path = None
+    
+    try:
+        # Create temp directory for video processing
+        temp_dir = tempfile.mkdtemp(prefix="video_audio_extract_")
+        video_path = os.path.join(temp_dir, "temp_video.mp4")
+        
+        # Download video with size limit check
+        logger.info(f"Downloading video from: {video_url}")
+        response = requests.get(video_url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        # Check Content-Length header if available
+        content_length = response.headers.get('Content-Length')
+        if content_length:
+            size_mb = int(content_length) / (1024 * 1024)
+            if size_mb > 40:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"视频文件过大: {size_mb:.1f}MB，限制为40MB"
+                )
+        
+        # Download video with size check
+        downloaded_size = 0
+        max_size = 40 * 1024 * 1024  # 40MB in bytes
+        
+        with open(video_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    downloaded_size += len(chunk)
+                    if downloaded_size > max_size:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"视频文件超过40MB限制"
+                        )
+                    f.write(chunk)
+        
+        logger.info(f"Video downloaded: {downloaded_size / (1024*1024):.2f}MB")
+        
+        # Check video duration using ffprobe
+        try:
+            duration_cmd = [
+                'ffprobe', '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                video_path
+            ]
+            duration_result = subprocess.run(
+                duration_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if duration_result.returncode == 0:
+                duration = float(duration_result.stdout.strip())
+                logger.info(f"Video duration: {duration:.2f}s")
+                
+                if duration > 20:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"视频时长过长: {duration:.1f}秒，限制为20秒"
+                    )
+            else:
+                logger.warning(f"Failed to get video duration: {duration_result.stderr}")
+        except subprocess.TimeoutExpired:
+            logger.warning("ffprobe timeout when checking duration")
+        except Exception as e:
+            logger.warning(f"Error checking video duration: {e}")
+        
+        # Extract audio using ffmpeg
+        audio_dir = "/nas/comfyui_upload/tts/tmp_ref_audio"
+        os.makedirs(audio_dir, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        audio_filename = f"extracted_audio_{timestamp}_{unique_id}.wav"
+        audio_path = os.path.join(audio_dir, audio_filename)
+        
+        logger.info(f"Extracting audio to: {audio_path}")
+        
+        # Use ffmpeg to extract audio
+        ffmpeg_cmd = [
+            'ffmpeg', '-i', video_path,
+            '-vn',  # No video
+            '-acodec', 'pcm_s16le',  # PCM 16-bit
+            '-ar', '44100',  # Sample rate 44.1kHz
+            '-ac', '2',  # Stereo
+            '-y',  # Overwrite output file
+            audio_path
+        ]
+        
+        result = subprocess.run(
+            ffmpeg_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode != 0:
+            logger.error(f"ffmpeg error: {result.stderr}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"音频提取失败: {result.stderr[:200]}"
+            )
+        
+        if not os.path.exists(audio_path):
+            raise HTTPException(
+                status_code=500,
+                detail="音频提取失败: 输出文件不存在"
+            )
+        
+        logger.info(f"Audio extracted successfully: {audio_path}")
+        return audio_path
+        
+    except HTTPException:
+        raise
+    except requests.RequestException as e:
+        logger.error(f"Failed to download video: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"视频下载失败: {str(e)}"
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("ffmpeg timeout")
+        raise HTTPException(
+            status_code=500,
+            detail="音频提取超时"
+        )
+    except Exception as e:
+        logger.error(f"Error processing video: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"视频处理失败: {str(e)}"
+        )
+    finally:
+        # Clean up temporary video file
+        if video_path and os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+                logger.info(f"Cleaned up temporary video: {video_path}")
+            except Exception as e:
+                logger.warning(f"Failed to remove temp video: {e}")
+        
+        # Clean up temp directory
+        if video_path:
+            temp_dir = os.path.dirname(video_path)
+            if os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    logger.info(f"Cleaned up temp directory: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temp directory: {e}")
 
 
 def _concatenate_images(upload_files: List[UploadFile]) -> str:
@@ -2514,6 +2686,7 @@ async def audio_generate(
     emo_ref_audio: Optional[UploadFile] = File(None, description="Emotion reference audio file"),
     ref_audio_url: Optional[str] = Form(None, description="Reference audio URL (alternative to file upload)"),
     emo_ref_audio_url: Optional[str] = Form(None, description="Emotion reference audio URL (alternative to file upload)"),
+    emo_ref_video_url: Optional[str] = Form(None, description="Emotion reference video URL (will extract audio)"),
     emo_text: Optional[str] = Form(None, description="Emotion description text"),
     emo_weight: Optional[float] = Form(None, description="Emotion weight (0.0-1.6)"),
     emo_vec: Optional[str] = Form(None, description="Emotion vector control"),
@@ -2543,8 +2716,13 @@ async def audio_generate(
         emo_ref_path = None
         if emo_ref_audio:
             emo_ref_path = _save_uploaded_audio(emo_ref_audio)
+        elif emo_ref_video_url:
+            # Download video and extract audio
+            emo_ref_path = _download_and_extract_audio_from_video(emo_ref_video_url)
         elif emo_ref_audio_url:
             emo_ref_path = emo_ref_audio_url
+        
+        logger.info(f"Audio generation - ref_path: {ref_path}, emo_ref_path: {emo_ref_path}")
         
         # Generate transaction ID
         transaction_id = str(uuid.uuid4())
