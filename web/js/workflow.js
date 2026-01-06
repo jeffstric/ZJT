@@ -176,10 +176,12 @@
         nextConnId: state.nextConnId,
         nextImgConnId: state.nextImgConnId,
         nextFirstFrameConnId: state.nextFirstFrameConnId,
+        nextVideoConnId: state.nextVideoConnId,
         nodes: serializableNodes,
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
         firstFrameConnections: state.firstFrameConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        videoConnections: state.videoConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         timeline: {
           clips: state.timeline.clips.map(c => ({ ...c })),
           nextClipId: state.timeline.nextClipId,
@@ -429,10 +431,12 @@
         state.connections = [];
         state.imageConnections = [];
         state.firstFrameConnections = [];
+        state.videoConnections = [];
         state.selectedNodeId = null;
         state.selectedConnId = null;
         state.selectedImgConnId = null;
         state.selectedFirstFrameConnId = null;
+        state.selectedVideoConnId = null;
         
         // 恢复视口
         if(data.viewport){
@@ -474,6 +478,7 @@
         state.nextConnId = data.nextConnId || 1;
         state.nextImgConnId = data.nextImgConnId || 1;
         state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
+        state.nextVideoConnId = data.nextVideoConnId || 1;
         
         // 恢复节点
         if(data.nodes && Array.isArray(data.nodes)){
@@ -495,6 +500,10 @@
           state.firstFrameConnections = data.firstFrameConnections;
         }
         
+        if(data.videoConnections && Array.isArray(data.videoConnections)){
+          state.videoConnections = data.videoConnections;
+        }
+        
         // 恢复时间轴
         if(data.timeline){
           state.timeline.clips = data.timeline.clips || [];
@@ -507,6 +516,7 @@
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
         renderMinimap();
         
         // 恢复完成后，更新所有分镜节点的图片选择菜单和角色节点的按钮状态
