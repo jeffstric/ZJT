@@ -738,14 +738,20 @@
           if(nearestVideoInputPort){
             const exists = state.videoConnections.some(c => c.from === state.connecting.fromId && c.to === nearestVideoInputPort.nodeId);
             if(!exists){
-              state.videoConnections.push({
-                id: state.nextVideoConnId++,
-                from: state.connecting.fromId,
-                to: nearestVideoInputPort.nodeId
-              });
-              renderVideoConnections();
-              showToast('视频已连接作为情感参考', 'success');
-              try{ autoSaveWorkflow(); } catch(e){}
+              // 检查目标对话组节点是否已经有视频连接
+              const existingConn = state.videoConnections.find(c => c.to === nearestVideoInputPort.nodeId);
+              if(existingConn){
+                showToast('该对话组节点已有视频连接，一个对话组只能连接一个情感参考视频', 'warning');
+              } else {
+                state.videoConnections.push({
+                  id: state.nextVideoConnId++,
+                  from: state.connecting.fromId,
+                  to: nearestVideoInputPort.nodeId
+                });
+                renderVideoConnections();
+                showToast('视频已连接作为情感参考', 'success');
+                try{ autoSaveWorkflow(); } catch(e){}
+              }
             }
           } else {
             // 检查是否有对话组节点但端口被禁用
