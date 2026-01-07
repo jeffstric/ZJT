@@ -73,10 +73,10 @@ def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int,
     重新组合分镜组，确保每个分镜组的总时长不超过max_group_duration秒
     
     策略：
-    1. 将所有shots按照location_id分组
-    2. 对于每个location，将shots按照shot_number排序
-    3. 按照max_group_duration秒的限制，将同一location的shots重新分组
-    4. 尽量让每个分镜组接近max_group_duration秒（贪心算法）
+    1. 提取所有shots并按shot_number排序（保持全局顺序）
+    2. 按顺序遍历shots，根据时长限制进行分组
+    3. 尽量让每个分镜组接近max_group_duration秒（贪心算法）
+    4. 保证输出的分镜组中shots的shot_number是递增的
     
     Args:
         parsed_data: 解析后的剧本数据
@@ -94,55 +94,27 @@ def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int,
     if not shot_groups:
         return parsed_data
     
-    # 提取所有shots并按location_id分组
-    location_shots = {}  # {location_id: [shots]}
-    
+    # 提取所有shots并按shot_number排序（保持全局顺序）
+    all_shots = []
     for group in shot_groups:
         shots = group.get("shots", [])
-        for shot in shots:
-            location_id = shot.get("location_id", "unknown")
-            if location_id not in location_shots:
-                location_shots[location_id] = []
-            location_shots[location_id].append(shot)
+        all_shots.extend(shots)
     
-    # 对每个location的shots按shot_number排序
-    for location_id in location_shots:
-        location_shots[location_id].sort(key=lambda s: s.get("shot_number", 0))
+    # 按shot_number排序，确保顺序正确
+    all_shots.sort(key=lambda s: s.get("shot_number", 0))
     
     # 重新组合分镜组
     new_shot_groups = []
     group_counter = 1
+    current_group_shots = []
+    current_group_duration = 0.0
     
-    for location_id, shots in location_shots.items():
-        # 对当前location的shots进行分组
-        current_group_shots = []
-        current_group_duration = 0.0
+    for shot in all_shots:
+        shot_duration = float(shot.get("duration", 0))
         
-        for shot in shots:
-            shot_duration = float(shot.get("duration", 0))
-            
-            # 如果加入当前镜头会超过限制，则创建新组
-            if current_group_shots and (current_group_duration + shot_duration) > max_group_duration:
-                # 保存当前组
-                location_name = shot.get("location_id", "unknown")
-                group_name = f"分镜组{group_counter}"
-                new_shot_groups.append({
-                    "group_id": f"grp_{group_counter:03d}",
-                    "group_name": group_name,
-                    "shots": current_group_shots
-                })
-                group_counter += 1
-                
-                # 开始新组
-                current_group_shots = [shot]
-                current_group_duration = shot_duration
-            else:
-                # 加入当前组
-                current_group_shots.append(shot)
-                current_group_duration += shot_duration
-        
-        # 保存最后一组
-        if current_group_shots:
+        # 如果加入当前镜头会超过限制，则创建新组
+        if current_group_shots and (current_group_duration + shot_duration) > max_group_duration:
+            # 保存当前组
             group_name = f"分镜组{group_counter}"
             new_shot_groups.append({
                 "group_id": f"grp_{group_counter:03d}",
@@ -150,6 +122,24 @@ def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int,
                 "shots": current_group_shots
             })
             group_counter += 1
+            
+            # 开始新组
+            current_group_shots = [shot]
+            current_group_duration = shot_duration
+        else:
+            # 加入当前组
+            current_group_shots.append(shot)
+            current_group_duration += shot_duration
+    
+    # 保存最后一组
+    if current_group_shots:
+        group_name = f"分镜组{group_counter}"
+        new_shot_groups.append({
+            "group_id": f"grp_{group_counter:03d}",
+            "group_name": group_name,
+            "shots": current_group_shots
+        })
+        group_counter += 1
     
     # 统计重组信息
     original_group_count = len(shot_groups)
