@@ -303,7 +303,8 @@ async def parse_script_to_shots(
     model: Optional[str] = None,
     temperature: float = 0.7,
     force_medium_shot: bool = False,
-    no_bg_music: bool = False
+    no_bg_music: bool = False,
+    split_multi_dialogue: bool = False
 ) -> Dict[str, Any]:
     """
     将剧本内容解析为结构化的人物、场景和分镜数据
@@ -316,6 +317,7 @@ async def parse_script_to_shots(
         temperature: 温度参数，控制创意性，默认0.7
         force_medium_shot: 是否强制对话内容使用中景(半身像)，默认False
         no_bg_music: 是否不生成背景音乐，默认False
+        split_multi_dialogue: 是否将多人对话镜头拆分为单人对话镜头，默认False
     
     Returns:
         包含characters、locations、shots的结构化数据字典
@@ -400,6 +402,77 @@ async def parse_script_to_shots(
 - **所有shot节点的background_music字段必须设置为null或空字符串**
 - 不要生成任何背景音乐描述
 - 这是为了方便后期调音处理
+
+"""
+        
+        if split_multi_dialogue:
+            special_requirements += """
+**【多人对话镜头拆分要求 - 极其重要】**
+- **当一个镜头中有多个角色对话时（dialogue数组包含2个或以上角色），必须将该镜头拆分为多个单人对话镜头**
+
+- **【核心规则 - 必须严格遵守】：**
+  * **每个拆分后的镜头只能包含一个角色的对话**
+  * **【禁止行为】在拆分后的单人镜头中，opening_frame_description、scene_detail、description、action等所有画面描述字段中，严禁同时出现两个或多个角色**
+  * **【正确做法】每个镜头的画面描述只能聚焦于一个说话的角色，只描述这一个角色的动作、表情、位置**
+  * 按照对话顺序依次拆分，保持对话的连贯性
+  * 每个拆分镜头的shot_type应该使用"近景"或"中景"，展现说话角色的面部表情
+  * 每个拆分镜头的duration根据该角色台词长度合理分配（通常3-6秒）
+  * characters_present数组也只能包含一个角色ID（说话的角色）
+  
+- **【关键】遵守180度轴线原则，避免画面越轴：**
+  * 假设两个角色A和B对话，建立一条虚拟的轴线连接两人
+  * 摄像机必须始终保持在轴线的同一侧拍摄
+  * 正确示例：角色A在画面左侧面向右，角色B在画面右侧面向左（正反打）
+  * 错误示例：角色A和B都面向同一方向，或者位置关系突然颠倒
+  * 在opening_frame_description中明确描述角色在画面中的位置和朝向（但只描述一个角色）
+  
+- **【拆分示例 - 正确做法】：**
+  * 原镜头：中景，A和B在咖啡厅对话
+    - dialogue: [{"character_id": "A", "text": "你好吗？"}, {"character_id": "B", "text": "我很好，谢谢"}]
+    - opening_frame_description: "中景：【【A】】和【【B】】坐在咖啡厅..." ❌ 错误！
+    
+  * 拆分后（正确）：
+    - 镜头1：中景，A说话
+      - dialogue: [{"character_id": "A", "text": "你好吗？"}]
+      - characters_present: ["char_001"]  // 只有A
+      - description: "【【A】】说话"  // 只提A
+      - opening_frame_description: "中景：【【A】】坐在咖啡厅的座位上，身体微微前倾，双手放在桌上，面带微笑，眼神看向画面右侧（镜头外），嘴唇微动正在说话"  ✓ 正确！只描述A
+      - scene_detail: "【【A】】在咖啡厅中说话，表情友好"  ✓ 正确！只描述A
+      - action: "【【A】】微笑着询问对方"  ✓ 正确！只描述A
+      
+    - 镜头2：中景，B回应
+      - dialogue: [{"character_id": "B", "text": "我很好，谢谢"}]
+      - characters_present: ["char_002"]  // 只有B
+      - description: "【【B】】回应"  // 只提B
+      - opening_frame_description: "中景：【【B】】坐在咖啡厅的另一侧座位，身体放松靠在椅背上，双手交叉放在胸前，面带笑容，眼神看向画面左侧（镜头外），点头回应"  ✓ 正确！只描述B
+      - scene_detail: "【【B】】在咖啡厅中回应，表情轻松愉快"  ✓ 正确！只描述B
+      - action: "【【B】】点头微笑着回答"  ✓ 正确！只描述B
+
+- **【错误示例 - 严禁这样做】：**
+  * ❌ 错误1：opening_frame_description: "中景：【【A】】和【【B】】坐在咖啡厅，【【A】】正在说话..."
+    - 问题：同时出现了A和B两个角色
+  * ❌ 错误2：scene_detail: "【【A】】对【【B】】说话，【【B】】在认真倾听"
+    - 问题：同时描述了A和B的动作
+  * ❌ 错误3：description: "【【A】】和【【B】】在对话"
+    - 问题：同时提到了两个角色
+  * ❌ 错误4：characters_present: ["char_001", "char_002"]
+    - 问题：包含了两个角色ID
+  
+- **【正确示例 - 应该这样做】：**
+  * ✓ 正确1：opening_frame_description: "中景：【【A】】坐在咖啡厅，身体前倾，面带微笑看向镜头外右侧，正在说话"
+    - 只描述A，通过"看向镜头外"暗示对方存在
+  * ✓ 正确2：scene_detail: "【【B】】在咖啡厅中回应，表情轻松"
+    - 只描述B的状态
+  * ✓ 正确3：description: "【【A】】说话"
+    - 只提一个角色
+  * ✓ 正确4：characters_present: ["char_001"]
+    - 只包含一个角色ID
+
+- **注意事项：**
+  * 拆分后的镜头仍然属于同一个shot_group（如果总时长不超限）
+  * 保持场景的连续性，location_id、time_of_day、weather等保持一致
+  * 通过"看向镜头外"、"看向右侧/左侧"等描述暗示对话对象的存在，但不要直接描述对方
+  * 确保拆分后的镜头在视觉上能够自然衔接（通过轴线原则）
 
 """
         
