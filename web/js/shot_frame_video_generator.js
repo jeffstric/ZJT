@@ -88,10 +88,11 @@ async function generateShotFrameVideo(nodeId, node){
     const count = node.data.videoDrawCount || 1;
     const videoModel = node.data.videoModel || 'sora';
     
-    // 如果是Sora模型，需要替换提示词中的角色标记
-    if(videoModel === 'sora'){
-      videoPrompt = await replaceCharacterMarkers(videoPrompt);
-    }
+    // 如果是Sora模型,需要替换提示词中的角色标记
+    // 注意: 图生视频模式下禁用角色卡替换,因为效果不佳。等后期支持文生视频时再启用
+    // if(videoModel === 'sora'){
+    //   videoPrompt = await replaceCharacterMarkers(videoPrompt);
+    // }
     
     // 添加视频提示词后缀
     if(typeof getVideoPromptWithSuffix === 'function'){

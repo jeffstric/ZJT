@@ -401,6 +401,8 @@
         text: '',
         refAudioFile: null,
         emoRefAudioFile: null,
+        emoRefType: 'file',
+        emoRefVideoUrl: '',
         emoText: '',
         emoWeight: 1,
         emoControlMethod: 0,
@@ -479,8 +481,10 @@
             form.append('ref_audio', this.refAudioFile);
           }
           
-          if (this.emoRefAudioFile) {
+          if (this.emoRefType === 'file' && this.emoRefAudioFile) {
             form.append('emo_ref_audio', this.emoRefAudioFile);
+          } else if (this.emoRefType === 'video_url' && this.emoRefVideoUrl) {
+            form.append('emo_ref_video_url', this.emoRefVideoUrl);
           }
           
           if (this.emoText) {
@@ -648,8 +652,20 @@
         
         <div class="field" v-if="emoControlMethod === 1">
           <label class="label">情感参考音频</label>
-          <input type="file" @change="onEmoRefAudioFile" accept="audio/*" class="input" :disabled="loading">
-          <div class="muted" style="margin-top: 4px;">上传情感参考音频</div>
+          <div style="margin-bottom: 8px;">
+            <label style="display: inline-flex; align-items: center; margin-right: 16px; cursor: pointer;">
+              <input type="radio" v-model="emoRefType" value="file" style="margin-right: 4px;" :disabled="loading">
+              <span>上传音频文件</span>
+            </label>
+            <label style="display: inline-flex; align-items: center; cursor: pointer;">
+              <input type="radio" v-model="emoRefType" value="video_url" style="margin-right: 4px;" :disabled="loading">
+              <span>视频链接</span>
+            </label>
+          </div>
+          <input v-if="emoRefType === 'file'" type="file" @change="onEmoRefAudioFile" accept="audio/*" class="input" :disabled="loading">
+          <input v-if="emoRefType === 'video_url'" type="text" v-model="emoRefVideoUrl" placeholder="输入视频链接（支持40MB以内，20秒以内的视频）" class="input" :disabled="loading">
+          <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'file'">上传情感参考音频文件</div>
+          <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'video_url'">输入视频链接，将自动提取音频（视频大小限制40MB，时长不超过20秒）</div>
         </div>
         
         <div class="field" v-if="emoControlMethod === 2">

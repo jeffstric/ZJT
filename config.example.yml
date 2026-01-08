@@ -48,3 +48,13 @@ llm:
     api_key: "sk-xxxx"
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     model: "qwen-plus"
+
+# Test mode configuration
+test_mode:
+  enabled: false  # 是否启用测试模式
+  mock_videos:
+    image_to_video: "https://cdn3.dmiapi.com/attachments/sora/20260107/968e1cf718e6e115fdb0a5874d39c470.mp4?e=1768198067&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:LWFb2h3-ecBwr-YBQWToVPcEkJw="  # 图生视频的测试视频URL
+    text_to_video: "https://cdn3.dmiapi.com/attachments/sora/20260107/968e1cf718e6e115fdb0a5874d39c470.mp4?e=1768198067&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:LWFb2h3-ecBwr-YBQWToVPcEkJw="  # 文生视频的测试视频URL
+  mock_images:
+    image_edit: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 图片编辑的测试图片URL
+    text_to_image: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 文生图的测试图片URL

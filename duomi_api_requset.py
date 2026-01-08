@@ -2,6 +2,8 @@ import requests
 from config_util import get_config_path
 import os
 import yaml
+import uuid
+import time
 
 config_path = get_config_path()
     
@@ -13,6 +15,17 @@ with open(config_path, 'r', encoding='utf-8') as file:
     config = yaml.safe_load(file)
     
 token = config["duomi"]["token"]
+
+# Test mode configuration
+test_mode_config = config.get("test_mode", {})
+TEST_MODE_ENABLED = test_mode_config.get("enabled", False)
+MOCK_VIDEOS = test_mode_config.get("mock_videos", {})
+MOCK_IMAGES = test_mode_config.get("mock_images", {})
+
+
+def _generate_mock_task_id():
+    """生成测试模式的task_id，带有特殊前缀用于识别"""
+    return f"mock_task_{uuid.uuid4().hex[:16]}_{int(time.time())}"
 
 
 def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
@@ -28,6 +41,16 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
     Returns:
         Response from the API
     """
+    # 测试模式：返回mock task_id
+    if TEST_MODE_ENABLED:
+        mock_task_id = _generate_mock_task_id()
+        print(f"[TEST MODE] create_image_to_video - Generated mock task_id: {mock_task_id}")
+        return {
+            "id": mock_task_id,
+            "state": "processing",
+            "message": "Test mode - task created"
+        }
+    
     url = "https://duomiapi.com/v1/videos/generations"
     
     payload = {
@@ -62,6 +85,20 @@ def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16
     Returns:
         Response from the API
     """
+    # 测试模式：返回mock task_id
+    if TEST_MODE_ENABLED:
+        mock_task_id = _generate_mock_task_id()
+        print(f"[TEST MODE] create_ai_image - Generated mock task_id: {mock_task_id}")
+        return {
+            "code": 200,
+            "msg": "success",
+            "data": {
+                "task_id": mock_task_id,
+                "state": "processing",
+                "message": "Test mode - task created"
+            }
+        }
+    
     url = "https://duomiapi.com/api/gemini/nano-banana-edit"
     
     payload = {
@@ -98,6 +135,20 @@ def create_text_to_image(model="gemini-3-pro-image-preview", prompt="", aspect_r
     Returns:
         Response from the API
     """
+    # 测试模式：返回mock task_id
+    if TEST_MODE_ENABLED:
+        mock_task_id = _generate_mock_task_id()
+        print(f"[TEST MODE] create_text_to_image - Generated mock task_id: {mock_task_id}")
+        return {
+            "code": 200,
+            "msg": "success",
+            "data": {
+                "task_id": mock_task_id,
+                "state": "processing",
+                "message": "Test mode - task created"
+            }
+        }
+    
     url = "https://duomiapi.com/api/gemini/nano-banana"
     
     payload = {
@@ -265,6 +316,30 @@ def get_ai_task_result(project_id, is_video):
             }
         }
     """
+    # 测试模式：检测mock task_id并返回配置的测试资源
+    if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
+        print(f"[TEST MODE] get_ai_task_result - Detected mock task_id: {project_id}")
+        
+        # 根据任务类型返回对应的mock资源
+        if is_video:
+            # 视频任务：返回配置的测试视频URL
+            mock_video_url = MOCK_VIDEOS.get("image_to_video", "http://example.com/test_video.mp4")
+            print(f"[TEST MODE] Returning mock video URL: {mock_video_url}")
+        else:
+            # 图片任务：返回配置的测试图片URL
+            mock_image_url = MOCK_IMAGES.get("image_edit", "http://example.com/test_image.png")
+            print(f"[TEST MODE] Returning mock image URL: {mock_image_url}")
+        
+        return {
+            "code": 0,
+            "msg": "success",
+            "data": {
+                "status": 1,  # 成功
+                "mediaUrl": mock_video_url if is_video else mock_image_url,
+                "reason": None
+            }
+        }
+    
     if is_video:
         url = f"https://duomiapi.com/v1/videos/tasks/{project_id}"
     else:

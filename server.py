@@ -11,6 +11,8 @@ import time
 import logging
 import traceback
 import shutil
+import subprocess
+import tempfile
 from datetime import datetime
 from typing import List, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
@@ -513,6 +515,176 @@ def _save_uploaded_audio(upload_file: UploadFile) -> str:
     
     # Return relative path from upload directory
     return file_path
+
+
+def _download_and_extract_audio_from_video(video_url: str) -> str:
+    """
+    Download video from URL, validate size and duration, extract audio, and clean up.
+    
+    Args:
+        video_url: URL of the video to download
+        
+    Returns:
+        Path to extracted audio file
+        
+    Raises:
+        HTTPException: If video is too large, too long, or processing fails
+    """
+    video_path = None
+    audio_path = None
+    
+    try:
+        # Create temp directory for video processing
+        temp_dir = tempfile.mkdtemp(prefix="video_audio_extract_")
+        video_path = os.path.join(temp_dir, "temp_video.mp4")
+        
+        # Download video with size limit check
+        logger.info(f"Downloading video from: {video_url}")
+        response = requests.get(video_url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        # Check Content-Length header if available
+        content_length = response.headers.get('Content-Length')
+        if content_length:
+            size_mb = int(content_length) / (1024 * 1024)
+            if size_mb > 40:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"视频文件过大: {size_mb:.1f}MB，限制为40MB"
+                )
+        
+        # Download video with size check
+        downloaded_size = 0
+        max_size = 40 * 1024 * 1024  # 40MB in bytes
+        
+        with open(video_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    downloaded_size += len(chunk)
+                    if downloaded_size > max_size:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"视频文件超过40MB限制"
+                        )
+                    f.write(chunk)
+        
+        logger.info(f"Video downloaded: {downloaded_size / (1024*1024):.2f}MB")
+        
+        # Check video duration using ffprobe
+        try:
+            duration_cmd = [
+                'ffprobe', '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                video_path
+            ]
+            duration_result = subprocess.run(
+                duration_cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if duration_result.returncode == 0:
+                duration = float(duration_result.stdout.strip())
+                logger.info(f"Video duration: {duration:.2f}s")
+                
+                if duration > 20:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"视频时长过长: {duration:.1f}秒，限制为20秒"
+                    )
+            else:
+                logger.warning(f"Failed to get video duration: {duration_result.stderr}")
+        except subprocess.TimeoutExpired:
+            logger.warning("ffprobe timeout when checking duration")
+        except Exception as e:
+            logger.warning(f"Error checking video duration: {e}")
+        
+        # Extract audio using ffmpeg
+        audio_dir = "/nas/comfyui_upload/tts/tmp_ref_audio"
+        os.makedirs(audio_dir, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        audio_filename = f"extracted_audio_{timestamp}_{unique_id}.wav"
+        audio_path = os.path.join(audio_dir, audio_filename)
+        
+        logger.info(f"Extracting audio to: {audio_path}")
+        
+        # Use ffmpeg to extract audio
+        ffmpeg_cmd = [
+            'ffmpeg', '-i', video_path,
+            '-vn',  # No video
+            '-acodec', 'pcm_s16le',  # PCM 16-bit
+            '-ar', '44100',  # Sample rate 44.1kHz
+            '-ac', '2',  # Stereo
+            '-y',  # Overwrite output file
+            audio_path
+        ]
+        
+        result = subprocess.run(
+            ffmpeg_cmd,
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        if result.returncode != 0:
+            logger.error(f"ffmpeg error: {result.stderr}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"音频提取失败: {result.stderr[:200]}"
+            )
+        
+        if not os.path.exists(audio_path):
+            raise HTTPException(
+                status_code=500,
+                detail="音频提取失败: 输出文件不存在"
+            )
+        
+        logger.info(f"Audio extracted successfully: {audio_path}")
+        return audio_path
+        
+    except HTTPException:
+        raise
+    except requests.RequestException as e:
+        logger.error(f"Failed to download video: {e}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"视频下载失败: {str(e)}"
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("ffmpeg timeout")
+        raise HTTPException(
+            status_code=500,
+            detail="音频提取超时"
+        )
+    except Exception as e:
+        logger.error(f"Error processing video: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"视频处理失败: {str(e)}"
+        )
+    finally:
+        # Clean up temporary video file
+        if video_path and os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+                logger.info(f"Cleaned up temporary video: {video_path}")
+            except Exception as e:
+                logger.warning(f"Failed to remove temp video: {e}")
+        
+        # Clean up temp directory
+        if video_path:
+            temp_dir = os.path.dirname(video_path)
+            if os.path.exists(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                    logger.info(f"Cleaned up temp directory: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temp directory: {e}")
 
 
 def _concatenate_images(upload_files: List[UploadFile]) -> str:
@@ -2514,6 +2686,7 @@ async def audio_generate(
     emo_ref_audio: Optional[UploadFile] = File(None, description="Emotion reference audio file"),
     ref_audio_url: Optional[str] = Form(None, description="Reference audio URL (alternative to file upload)"),
     emo_ref_audio_url: Optional[str] = Form(None, description="Emotion reference audio URL (alternative to file upload)"),
+    emo_ref_video_url: Optional[str] = Form(None, description="Emotion reference video URL (will extract audio)"),
     emo_text: Optional[str] = Form(None, description="Emotion description text"),
     emo_weight: Optional[float] = Form(None, description="Emotion weight (0.0-1.6)"),
     emo_vec: Optional[str] = Form(None, description="Emotion vector control"),
@@ -2543,8 +2716,13 @@ async def audio_generate(
         emo_ref_path = None
         if emo_ref_audio:
             emo_ref_path = _save_uploaded_audio(emo_ref_audio)
+        elif emo_ref_video_url:
+            # Download video and extract audio
+            emo_ref_path = _download_and_extract_audio_from_video(emo_ref_video_url)
         elif emo_ref_audio_url:
             emo_ref_path = emo_ref_audio_url
+        
+        logger.info(f"Audio generation - ref_path: {ref_path}, emo_ref_path: {emo_ref_path}")
         
         # Generate transaction ID
         transaction_id = str(uuid.uuid4())
@@ -3354,12 +3532,12 @@ async def get_video_workflow(
 @app.post('/api/video-workflow/upload')
 async def upload_workflow_asset(
     request: Request,
-    file: UploadFile = File(..., description="要上传的图片或视频文件"),
+    file: UploadFile = File(..., description="要上传的图片、视频或音频文件"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    上传工作流素材（图片或视频）
+    上传工作流素材（图片、视频或音频）
     返回可访问的永久URL
     """
     try:
@@ -3367,10 +3545,10 @@ async def upload_workflow_asset(
         
         # 验证文件类型
         content_type = file.content_type or ""
-        if not (content_type.startswith("image/") or content_type.startswith("video/")):
+        if not (content_type.startswith("image/") or content_type.startswith("video/") or content_type.startswith("audio/")):
             return JSONResponse(
                 status_code=400,
-                content={"code": -1, "message": "仅支持图片或视频文件"}
+                content={"code": -1, "message": "仅支持图片、视频或音频文件"}
             )
         
         # 保存文件并获取URL（用户隔离目录）
@@ -3459,6 +3637,7 @@ async def parse_script(
         world_id = body.get('world_id')
         force_medium_shot = body.get('force_medium_shot', False)
         no_bg_music = body.get('no_bg_music', False)
+        split_multi_dialogue = body.get('split_multi_dialogue', False)
         
         if not script_content:
             return JSONResponse(
@@ -3475,9 +3654,10 @@ async def parse_script(
             max_group_duration=max_group_duration,
             world_id=world_id,
             model=None,
-            temperature=0.7,
+            temperature=0.5,
             force_medium_shot=force_medium_shot,
-            no_bg_music=no_bg_music
+            no_bg_music=no_bg_music,
+            split_multi_dialogue=split_multi_dialogue
         )
         
         if not parsed_data:
@@ -4536,9 +4716,13 @@ async def update_location(
 
 class ExportTimelineDraftRequest(BaseModel):
     draft_path: str
-    timeline_clips: List[dict]
+    video_clips: List[dict] = []
+    audio_clips: List[dict] = []
+    pillars: List[dict] = []
     workflow_name: Optional[str] = "未命名工作流"
     request_origin: Optional[str] = None
+    # 兼容旧版本
+    timeline_clips: Optional[List[dict]] = None
 
 
 @app.post('/api/export_timeline_draft')
@@ -4553,7 +4737,13 @@ async def export_timeline_draft(
     try:
         user_id = _get_user_id_from_header(user_id)
         
-        if not payload.timeline_clips or len(payload.timeline_clips) == 0:
+        # 兼容旧版本：如果使用旧的timeline_clips字段，转换为新格式
+        if payload.timeline_clips is not None:
+            payload.video_clips = payload.timeline_clips
+            payload.audio_clips = []
+            payload.pillars = []
+        
+        if not payload.video_clips and not payload.audio_clips:
             return JSONResponse(
                 status_code=400,
                 content={
@@ -4593,10 +4783,13 @@ async def export_timeline_draft(
 
         request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
         
-        # 下载所有视频
-        downloaded_files = []
+        # 下载所有视频和音频
+        downloaded_video_files = []
+        downloaded_audio_files = []
         asset_cache = {}
-        for idx, clip in enumerate(payload.timeline_clips):
+        
+        # 下载视频文件
+        for idx, clip in enumerate(payload.video_clips):
             video_url = clip.get('url')
             video_name = clip.get('name', f'video_{idx}')
             
@@ -4624,7 +4817,7 @@ async def export_timeline_draft(
                         shutil.copy2(local_asset_path, file_path)
                         logger.info(f"已复用本地上传文件: {local_asset_path} -> {file_path}")
                     else:
-                        logger.info(f"正在下载视频 {idx + 1}/{len(payload.timeline_clips)}: {video_name}")
+                        logger.info(f"正在下载视频 {idx + 1}/{len(payload.video_clips)}: {video_name}")
                         
                         # 下载视频
                         response = requests.get(video_url, stream=True, timeout=300)
@@ -4653,7 +4846,7 @@ async def export_timeline_draft(
                     if asset_key:
                         asset_cache[asset_key] = file_path
                 
-                downloaded_files.append({
+                downloaded_video_files.append({
                     'file_path': file_path,
                     'clip': clip,
                     'filename': safe_name
@@ -4669,12 +4862,88 @@ async def export_timeline_draft(
                     }
                 )
         
-        if not downloaded_files:
+        # 下载音频文件
+        for idx, clip in enumerate(payload.audio_clips):
+            audio_url = clip.get('url')
+            audio_name = clip.get('name', f'audio_{idx}')
+            
+            if not audio_url:
+                logger.warning(f"跳过没有URL的音频片段: {audio_name}")
+                continue
+            
+            try:
+                asset_key = None
+                local_asset_path = _get_local_upload_file(audio_url, request_origin)
+                if local_asset_path:
+                    asset_key = f"local::{os.path.abspath(local_asset_path)}"
+                elif audio_url:
+                    asset_key = f"url::{audio_url}"
+
+                if asset_key and asset_key in asset_cache:
+                    file_path = asset_cache[asset_key]
+                    safe_name = os.path.basename(file_path)
+                    logger.info(f"复用已下载素材: {audio_name} -> {safe_name}")
+                else:
+                    if local_asset_path:
+                        file_ext = os.path.splitext(local_asset_path)[1] or '.mp3'
+                        safe_name = f"audio_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                        file_path = os.path.join(temp_download_dir, safe_name)
+                        shutil.copy2(local_asset_path, file_path)
+                        logger.info(f"已复用本地上传音频文件: {local_asset_path} -> {file_path}")
+                    else:
+                        logger.info(f"正在下载音频 {idx + 1}/{len(payload.audio_clips)}: {audio_name}")
+                        
+                        # 下载音频
+                        response = requests.get(audio_url, stream=True, timeout=300)
+                        response.raise_for_status()
+                        
+                        # 确定文件扩展名
+                        file_ext = '.mp3'
+                        if 'content-type' in response.headers:
+                            content_type = response.headers['content-type']
+                            if 'audio/wav' in content_type or audio_url.endswith('.wav'):
+                                file_ext = '.wav'
+                            elif 'audio/aac' in content_type or audio_url.endswith('.aac'):
+                                file_ext = '.aac'
+                            elif 'audio/mpeg' in content_type or audio_url.endswith('.mp3'):
+                                file_ext = '.mp3'
+                        
+                        # 保存文件
+                        safe_name = f"audio_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                        file_path = os.path.join(temp_download_dir, safe_name)
+                        
+                        with open(file_path, 'wb') as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                        
+                        logger.info(f"音频下载完成: {safe_name}")
+                    
+                    if asset_key:
+                        asset_cache[asset_key] = file_path
+                
+                downloaded_audio_files.append({
+                    'file_path': file_path,
+                    'clip': clip,
+                    'filename': safe_name
+                })
+                
+            except Exception as e:
+                logger.error(f"处理音频失败 {audio_name}: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        'success': False,
+                        'error': f'处理音频失败: {audio_name} - {str(e)}'
+                    }
+                )
+        
+        if not downloaded_video_files and not downloaded_audio_files:
             return JSONResponse(
                 status_code=400,
                 content={
                     'success': False,
-                    'error': '没有成功下载任何视频'
+                    'error': '没有成功下载任何媒体文件'
                 }
             )
         
@@ -4688,36 +4957,181 @@ async def export_timeline_draft(
             material_path_prefix=payload.draft_path
         )
         
-        # 创建视频轨道
+        # 创建视频轨道和音频轨道
         video_track = library.create_video_track("主轨道")
+        audio_track = library.create_audio_track("音频轨道")
         
-        # 添加视频片段到轨道
-        current_time = 0
-        for item in downloaded_files:
-            clip = item['clip']
-            file_path = item['file_path']
+        # 如果有柱子数据，使用柱子系统处理（支持不连续的视频）
+        if payload.pillars:
+            logger.info(f"使用柱子系统处理时间轴，共 {len(payload.pillars)} 个柱子")
             
-            # 获取视频时长
-            duration = library.get_media_duration(file_path)
+            # 按柱子顺序处理
+            sorted_pillars = sorted(payload.pillars, key=lambda p: (p.get('scriptId', 0), p.get('shotNumber', 0)))
+            current_time = 0
             
-            # 计算剪切后的时长
-            start_time = clip.get('startTime', 0)
-            end_time = clip.get('endTime', clip.get('duration', 0))
+            for pillar in sorted_pillars:
+                pillar_id = pillar.get('id')
+                default_duration = pillar.get('defaultDuration', 15)
+                video_clip_ids = pillar.get('videoClipIds', [])
+                audio_clip_ids = pillar.get('audioClipIds', [])
+                
+                logger.info(f"处理柱子 {pillar_id}: 默认时长={default_duration}秒, 视频片段={len(video_clip_ids)}个, 音频片段={len(audio_clip_ids)}个")
+                
+                # 计算该柱子的实际时长
+                pillar_duration = default_duration
+                
+                # 处理该柱子内的视频片段
+                pillar_video_duration = 0
+                has_video = False
+                
+                for clip_data in payload.video_clips:
+                    if clip_data.get('pillarId') == pillar_id:
+                        # 查找对应的下载文件
+                        downloaded_item = None
+                        for item in downloaded_video_files:
+                            if item['clip'].get('url') == clip_data.get('url'):
+                                downloaded_item = item
+                                break
+                        
+                        if downloaded_item:
+                            has_video = True
+                            clip = downloaded_item['clip']
+                            file_path = downloaded_item['file_path']
+                            
+                            # 计算剪切后的时长
+                            start_time = clip.get('startTime', 0)
+                            end_time = clip.get('endTime', clip.get('duration', 0))
+                            clip_duration_sec = end_time - start_time
+                            
+                            # 转换为微秒
+                            source_start = seconds_to_microseconds(start_time)
+                            clip_duration = seconds_to_microseconds(clip_duration_sec)
+                            
+                            # 添加到轨道
+                            library.add_video_to_track(
+                                track_id=video_track,
+                                file_path=file_path,
+                                start_time=seconds_to_microseconds(current_time + pillar_video_duration),
+                                duration=clip_duration,
+                                source_start=source_start
+                            )
+                            
+                            pillar_video_duration += clip_duration_sec
+                            logger.info(f"  添加视频片段: {clip.get('name')}, 时长={clip_duration_sec:.2f}秒")
+                
+                # 如果该柱子没有视频，创建占位符
+                if not has_video:
+                    # 使用任意一个已下载的视频作为占位符素材（不可见、静音）
+                    if downloaded_video_files:
+                        placeholder_file = downloaded_video_files[0]['file_path']
+                        placeholder_duration = default_duration
+                        
+                        library.add_video_to_track(
+                            track_id=video_track,
+                            file_path=placeholder_file,
+                            start_time=seconds_to_microseconds(current_time),
+                            duration=seconds_to_microseconds(placeholder_duration),
+                            source_start=0,
+                            is_placeholder=True
+                        )
+                        
+                        pillar_video_duration = placeholder_duration
+                        logger.info(f"  添加占位符片段: 时长={placeholder_duration:.2f}秒（柱子无视频）")
+                
+                # 处理该柱子内的音频片段
+                pillar_audio_duration = 0
+                for clip_data in payload.audio_clips:
+                    if clip_data.get('pillarId') == pillar_id:
+                        # 查找对应的下载文件
+                        downloaded_item = None
+                        for item in downloaded_audio_files:
+                            if item['clip'].get('url') == clip_data.get('url'):
+                                downloaded_item = item
+                                break
+                        
+                        if downloaded_item:
+                            clip = downloaded_item['clip']
+                            file_path = downloaded_item['file_path']
+                            
+                            # 计算剪切后的时长
+                            start_time = clip.get('startTime', 0)
+                            end_time = clip.get('endTime', clip.get('duration', 0))
+                            clip_duration_sec = end_time - start_time
+                            
+                            # 转换为微秒
+                            source_start = seconds_to_microseconds(start_time)
+                            clip_duration = seconds_to_microseconds(clip_duration_sec)
+                            
+                            # 添加到轨道
+                            library.add_audio_to_track(
+                                track_id=audio_track,
+                                file_path=file_path,
+                                start_time=seconds_to_microseconds(current_time + pillar_audio_duration),
+                                duration=clip_duration,
+                                source_start=source_start
+                            )
+                            
+                            pillar_audio_duration += clip_duration_sec
+                            logger.info(f"  添加音频片段: {clip.get('name')}, 时长={clip_duration_sec:.2f}秒")
+                
+                # 使用最大时长作为柱子的实际时长
+                pillar_duration = max(default_duration, pillar_video_duration, pillar_audio_duration)
+                current_time += pillar_duration
+                logger.info(f"柱子 {pillar_id} 实际时长: {pillar_duration:.2f}秒")
+        
+        else:
+            # 经典模式：按顺序添加视频和音频（兼容旧版本）
+            logger.info("使用经典模式处理时间轴")
+            current_time = 0
             
-            # 转换为微秒
-            source_start = seconds_to_microseconds(start_time)
-            clip_duration = seconds_to_microseconds(end_time - start_time)
+            # 添加视频片段
+            for item in downloaded_video_files:
+                clip = item['clip']
+                file_path = item['file_path']
+                
+                # 计算剪切后的时长
+                start_time = clip.get('startTime', 0)
+                end_time = clip.get('endTime', clip.get('duration', 0))
+                
+                # 转换为微秒
+                source_start = seconds_to_microseconds(start_time)
+                clip_duration = seconds_to_microseconds(end_time - start_time)
+                
+                # 添加到轨道
+                library.add_video_to_track(
+                    track_id=video_track,
+                    file_path=file_path,
+                    start_time=seconds_to_microseconds(current_time),
+                    duration=clip_duration,
+                    source_start=source_start
+                )
+                
+                current_time += (end_time - start_time)
             
-            # 添加到轨道
-            library.add_video_to_track(
-                track_id=video_track,
-                file_path=file_path,
-                start_time=seconds_to_microseconds(current_time),
-                duration=clip_duration,
-                source_start=source_start
-            )
-            
-            current_time += (end_time - start_time)
+            # 添加音频片段
+            audio_time = 0
+            for item in downloaded_audio_files:
+                clip = item['clip']
+                file_path = item['file_path']
+                
+                # 计算剪切后的时长
+                start_time = clip.get('startTime', 0)
+                end_time = clip.get('endTime', clip.get('duration', 0))
+                
+                # 转换为微秒
+                source_start = seconds_to_microseconds(start_time)
+                clip_duration = seconds_to_microseconds(end_time - start_time)
+                
+                # 添加到轨道
+                library.add_audio_to_track(
+                    track_id=audio_track,
+                    file_path=file_path,
+                    start_time=seconds_to_microseconds(audio_time),
+                    duration=clip_duration,
+                    source_start=source_start
+                )
+                
+                audio_time += (end_time - start_time)
         
         # 生成草稿
         generator = DraftGenerator(library)
@@ -4788,7 +5202,8 @@ async def export_timeline_draft(
                 'success': True,
                 'draft_name': draft_name,
                 'draft_path': draft_path,
-                'video_count': len(downloaded_files),
+                'video_count': len(downloaded_video_files),
+                'audio_count': len(downloaded_audio_files),
                 'download_url': download_url,
                 'zip_filename': zip_filename
             }

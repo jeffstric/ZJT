@@ -57,6 +57,12 @@
       addMenu.classList.remove('show');
     });
 
+    document.getElementById('menuAddDialogueGroup').addEventListener('click', () => {
+      createDialogueGroupNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+    });
+
     // 点击其他地方关闭菜单
     document.addEventListener('click', (e) => {
       if(!e.target.closest('#addBtnContainer')){
@@ -120,6 +126,7 @@
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
         // 开始平移画布
         state.panning = {
           startX: e.clientX,
@@ -143,6 +150,11 @@
         renderImageConnections();
       } else if(state.selectedFirstFrameConnId !== null){
         removeFirstFrameConnection(state.selectedFirstFrameConnId);
+      } else if(state.selectedVideoConnId !== null){
+        state.videoConnections = state.videoConnections.filter(c => c.id !== state.selectedVideoConnId);
+        state.selectedVideoConnId = null;
+        hideConnDeleteBtn();
+        renderVideoConnections();
       }
     });
 
@@ -175,6 +187,12 @@
         } else if(state.selectedFirstFrameConnId !== null){
           e.preventDefault();
           removeFirstFrameConnection(state.selectedFirstFrameConnId);
+        } else if(state.selectedVideoConnId !== null){
+          e.preventDefault();
+          state.videoConnections = state.videoConnections.filter(c => c.id !== state.selectedVideoConnId);
+          state.selectedVideoConnId = null;
+          hideConnDeleteBtn();
+          renderVideoConnections();
         } else if(state.timeline.selectedClipId !== null){
           e.preventDefault();
           removeFromTimeline(state.timeline.selectedClipId);
@@ -265,11 +283,13 @@
         applyTransform();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
         // 更新删除按钮位置（如果有选中的连接线）
         if(state.selectedConnId !== null){
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
+          renderVideoConnections();
         }
       }
       // 拖动节点（支持批量拖动）
@@ -309,6 +329,7 @@
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
       }
       // 拖拽创建连接线时显示虚线预览
       if(state.connecting){
@@ -405,6 +426,27 @@
           }
         }
         
+        // 如果从视频节点拖拽，查找对话组节点的视频输入端口
+        let nearestVideoInputPort = null;
+        if(fromNode && fromNode.type === 'video'){
+          let nearestVideoDist = 50;
+          for(const node of state.nodes){
+            if(node.type !== 'dialogue_group') continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+            if(!toEl) continue;
+            const portEl = toEl.querySelector('.port.video-input-port');
+            if(!portEl || portEl.classList.contains('disabled')) continue;
+            const rect = portEl.getBoundingClientRect();
+            const portX = (rect.left + rect.width/2 - containerRect.left - state.panX) / state.zoom;
+            const portY = (rect.top + rect.height/2 - containerRect.top - state.panY) / state.zoom;
+            const dist = Math.sqrt(Math.pow(toX - portX, 2) + Math.pow(toY - portY, 2));
+            if(dist < nearestVideoDist){
+              nearestVideoDist = dist;
+              nearestVideoInputPort = { nodeId: node.id, x: portX, y: portY };
+            }
+          }
+        }
+        
         // 更新图片端口高亮状态
         for(const portEl of canvasEl.querySelectorAll('.start-image-port, .end-image-port')){
           const nodeEl = portEl.closest('.node');
@@ -430,6 +472,14 @@
           portEl.classList.toggle('can-connect', isNearest);
         }
         
+        // 更新视频输入端口高亮状态
+        for(const portEl of canvasEl.querySelectorAll('.port.video-input-port')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          const isNearest = nearestVideoInputPort && nearestVideoInputPort.nodeId === nodeId;
+          portEl.classList.toggle('can-connect', isNearest);
+        }
+        
         // 如果找到最近端口，虚线吸附到该端口
         let targetX = toX, targetY = toY;
         if(nearestImgPort){
@@ -444,6 +494,10 @@
           targetX = nearestFirstFramePort.x;
           targetY = nearestFirstFramePort.y;
         }
+        if(nearestVideoInputPort){
+          targetX = nearestVideoInputPort.x;
+          targetY = nearestVideoInputPort.y;
+        }
         
         renderConnections({
           fromX: fromPos.x,
@@ -453,6 +507,7 @@
         });
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
       }
     });
 
@@ -652,10 +707,63 @@
               });
               
               // 如果连接涉及角色节点，更新角色卡按钮状态
-              const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
-              if(fromNode && fromNode.type === 'character'){
+              const sourceNode = state.nodes.find(n => n.id === state.connecting.fromId);
+              if(sourceNode && sourceNode.type === 'character'){
                 updateCharacterCardButtonState(state.connecting.fromId);
               }
+            }
+          }
+        }
+        
+        // 如果从视频节点拖拽，查找对话组节点的视频输入端口
+        if(fromNode && fromNode.type === 'video'){
+          let nearestVideoInputPort = null;
+          let nearestVideoDist = 50;
+          for(const node of state.nodes){
+            if(node.type !== 'dialogue_group') continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+            if(!toEl) continue;
+            const portEl = toEl.querySelector('.port.video-input-port');
+            if(!portEl || portEl.classList.contains('disabled')) continue;
+            const rect = portEl.getBoundingClientRect();
+            const portX = (rect.left + rect.width/2 - containerRect.left - state.panX) / state.zoom;
+            const portY = (rect.top + rect.height/2 - containerRect.top - state.panY) / state.zoom;
+            const dist = Math.sqrt(Math.pow(mouseX - portX, 2) + Math.pow(mouseY - portY, 2));
+            if(dist < nearestVideoDist){
+              nearestVideoDist = dist;
+              nearestVideoInputPort = { nodeId: node.id };
+            }
+          }
+          
+          if(nearestVideoInputPort){
+            const exists = state.videoConnections.some(c => c.from === state.connecting.fromId && c.to === nearestVideoInputPort.nodeId);
+            if(!exists){
+              // 检查目标对话组节点是否已经有视频连接
+              const existingConn = state.videoConnections.find(c => c.to === nearestVideoInputPort.nodeId);
+              if(existingConn){
+                showToast('该对话组节点已有视频连接，一个对话组只能连接一个情感参考视频', 'warning');
+              } else {
+                state.videoConnections.push({
+                  id: state.nextVideoConnId++,
+                  from: state.connecting.fromId,
+                  to: nearestVideoInputPort.nodeId
+                });
+                renderVideoConnections();
+                showToast('视频已连接作为情感参考', 'success');
+                try{ autoSaveWorkflow(); } catch(e){}
+              }
+            }
+          } else {
+            // 检查是否有对话组节点但端口被禁用
+            const hasDisabledPort = state.nodes.some(node => {
+              if(node.type !== 'dialogue_group') return false;
+              const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+              if(!toEl) return false;
+              const portEl = toEl.querySelector('.port.video-input-port');
+              return portEl && portEl.classList.contains('disabled');
+            });
+            if(hasDisabledPort){
+              showToast('请先将对话组节点的“情感控制方式”切换为“使用情感参考音频”', 'warning');
             }
           }
         }
@@ -670,6 +778,7 @@
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
       }
     });
 
@@ -708,6 +817,7 @@
       renderConnections();
       renderImageConnections();
       renderFirstFrameConnections();
+      renderVideoConnections();
       renderMinimap();
     });
 
@@ -735,7 +845,14 @@
       e.stopPropagation();
       if(confirm('确定要清空时间轴吗？')){
         state.timeline.clips = [];
+        state.timeline.audioClips = [];
         state.timeline.selectedClipId = null;
+        state.timeline.selectedAudioClipId = null;
+        // 清空柱子中的片段引用
+        state.timeline.pillars.forEach(pillar => {
+          pillar.videoClipIds = [];
+          pillar.audioClipIds = [];
+        });
         renderTimeline();
         showToast('时间轴已清空', 'success');
         try{ autoSaveWorkflow(); } catch(e){}
@@ -1706,15 +1823,50 @@
     });
     
     // 创建角色音频文件选择预览
-    document.getElementById('createCharacterVoiceInput').addEventListener('change', (e) => {
+    document.getElementById('createCharacterVoiceInput').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       const voicePreview = document.getElementById('createCharacterVoicePreview');
       const voicePreviewAudio = document.getElementById('createCharacterVoicePreviewAudio');
+      const voiceInput = e.target;
       
       if (file) {
+        // 验证文件大小
+        const maxSize = 10 * 1024 * 1024; // 10MB
+        if(file.size > maxSize){
+          showToast('音频文件不能超过10MB', 'error');
+          voiceInput.value = '';
+          voicePreviewAudio.src = '';
+          voicePreview.style.display = 'none';
+          return;
+        }
+        
+        // 验证音频时长
         const url = URL.createObjectURL(file);
-        voicePreviewAudio.src = url;
-        voicePreview.style.display = 'block';
+        const audio = new Audio();
+        
+        audio.addEventListener('loadedmetadata', () => {
+          const maxDuration = 20; // 20秒
+          if(audio.duration > maxDuration){
+            showToast(`音频时长不能超过${maxDuration}秒，当前时长：${audio.duration.toFixed(1)}秒`, 'error');
+            voiceInput.value = '';
+            voicePreviewAudio.src = '';
+            voicePreview.style.display = 'none';
+            URL.revokeObjectURL(url);
+          } else {
+            voicePreviewAudio.src = url;
+            voicePreview.style.display = 'block';
+          }
+        });
+        
+        audio.addEventListener('error', () => {
+          showToast('无法读取音频文件', 'error');
+          voiceInput.value = '';
+          voicePreviewAudio.src = '';
+          voicePreview.style.display = 'none';
+          URL.revokeObjectURL(url);
+        });
+        
+        audio.src = url;
       } else {
         voicePreviewAudio.src = '';
         voicePreview.style.display = 'none';
@@ -1722,15 +1874,80 @@
     });
     
     // 编辑角色音频文件选择预览
-    document.getElementById('editCharacterVoiceInput').addEventListener('change', (e) => {
+    document.getElementById('editCharacterVoiceInput').addEventListener('change', async (e) => {
       const file = e.target.files[0];
       const voicePreview = document.getElementById('editCharacterVoicePreview');
       const voicePreviewAudio = document.getElementById('editCharacterVoicePreviewAudio');
+      const voiceInput = e.target;
       
       if (file) {
+        // 验证文件大小
+        const maxSize = 10 * 1024 * 1024; // 10MB
+        if(file.size > maxSize){
+          showToast('音频文件不能超过10MB', 'error');
+          voiceInput.value = '';
+          // 恢复原始音频
+          const characterId = currentEditingCharacterNodeId;
+          if (characterId) {
+            const node = state.nodes.find(n => n.id === characterId);
+            if (node && node.data && node.data.default_voice) {
+              voicePreviewAudio.src = node.data.default_voice;
+              voicePreview.style.display = 'block';
+              return;
+            }
+          }
+          voicePreviewAudio.src = '';
+          voicePreview.style.display = 'none';
+          return;
+        }
+        
+        // 验证音频时长
         const url = URL.createObjectURL(file);
-        voicePreviewAudio.src = url;
-        voicePreview.style.display = 'block';
+        const audio = new Audio();
+        
+        audio.addEventListener('loadedmetadata', () => {
+          const maxDuration = 20; // 20秒
+          if(audio.duration > maxDuration){
+            showToast(`音频时长不能超过${maxDuration}秒，当前时长：${audio.duration.toFixed(1)}秒`, 'error');
+            voiceInput.value = '';
+            URL.revokeObjectURL(url);
+            // 恢复原始音频
+            const characterId = currentEditingCharacterNodeId;
+            if (characterId) {
+              const node = state.nodes.find(n => n.id === characterId);
+              if (node && node.data && node.data.default_voice) {
+                voicePreviewAudio.src = node.data.default_voice;
+                voicePreview.style.display = 'block';
+                return;
+              }
+            }
+            voicePreviewAudio.src = '';
+            voicePreview.style.display = 'none';
+          } else {
+            voicePreviewAudio.src = url;
+            voicePreview.style.display = 'block';
+          }
+        });
+        
+        audio.addEventListener('error', () => {
+          showToast('无法读取音频文件', 'error');
+          voiceInput.value = '';
+          URL.revokeObjectURL(url);
+          // 恢复原始音频
+          const characterId = currentEditingCharacterNodeId;
+          if (characterId) {
+            const node = state.nodes.find(n => n.id === characterId);
+            if (node && node.data && node.data.default_voice) {
+              voicePreviewAudio.src = node.data.default_voice;
+              voicePreview.style.display = 'block';
+              return;
+            }
+          }
+          voicePreviewAudio.src = '';
+          voicePreview.style.display = 'none';
+        });
+        
+        audio.src = url;
       } else {
         // 如果清空文件，检查是否有原始音频
         const characterId = currentEditingCharacterNodeId;
@@ -2428,6 +2645,7 @@
                 renderConnections();
                 renderImageConnections();
                 renderFirstFrameConnections();
+                renderVideoConnections();
                 renderMinimap();
               }, 100);
             }

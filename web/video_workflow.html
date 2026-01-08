@@ -115,6 +115,13 @@
               </svg>
               <span class="add-menu-text">文字转语音</span>
             </div>
+            <div class="add-menu-item" id="menuAddDialogueGroup">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M8 12H8.01M12 12H12.01M16 12H16.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M3 7C3 5.89543 3.89543 5 5 5H19C20.1046 5 21 5.89543 21 7V15C21 16.1046 20.1046 17 19 17H13L9 21V17H5C3.89543 17 3 16.1046 3 15V7Z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              <span class="add-menu-text">对话组</span>
+            </div>
           </div>
           <div class="add-menu-group">
             <div class="add-menu-label">添加素材</div>
@@ -630,8 +637,17 @@
     </div>
     <div class="timeline-ruler" id="timelineRuler"></div>
     <div class="timeline-tracks" id="timelineTracks">
-      <div class="timeline-track" id="videoTrack">
-        <!-- 视频片段将动态添加到这里 -->
+      <div class="timeline-track-container timeline-track-container-video">
+        <div class="timeline-track-label">视频</div>
+        <div class="timeline-track" id="videoTrack">
+          <!-- 视频片段将动态添加到这里 -->
+        </div>
+      </div>
+      <div class="timeline-track-container timeline-track-container-audio">
+        <div class="timeline-track-label">音频</div>
+        <div class="timeline-track" id="audioTrack">
+          <!-- 音频片段将动态添加到这里 -->
+        </div>
       </div>
     </div>
   </div>
@@ -655,6 +671,7 @@
   <script src="/js/canvas.js"></script>
   <script src="/js/nodes.js"></script>
   <script src="/js/text_to_speech_node.js"></script>
+  <script src="/js/dialogue_group_node.js"></script>
   <script src="/js/shot_frame_generator.js"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>

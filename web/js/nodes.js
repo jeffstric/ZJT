@@ -25,6 +25,7 @@
 
       el.innerHTML = `
         <div class="port input" title="输入（连接图生视频节点或角色节点）"></div>
+        <div class="port output" title="输出（连接到对话组节点作为情感参考）"></div>
         <div class="node-header">
           <div class="node-title">${node.title}</div>
           <button class="icon-btn" title="删除">×</button>
@@ -65,6 +66,7 @@
       const fileEl = el.querySelector('.video-file');
       const fromAssetBtn = el.querySelector('.video-from-asset');
       const inputPort = el.querySelector('.port.input');
+      const outputPort = el.querySelector('.port.output');
       const previewField = el.querySelector('.video-preview-field');
       const thumbVideo = el.querySelector('.video-thumb');
       const playBtn = el.querySelector('.vp-play');
@@ -112,6 +114,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               
               // 如果连接涉及角色节点，更新角色卡按钮状态
               if(fromNode.type === 'character'){
@@ -121,6 +124,12 @@
           }
         }
         state.connecting = null;
+      });
+
+      outputPort.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
       });
 
       function setVideoFromFile(file){
@@ -1327,6 +1336,7 @@
       renderConnections();
       renderImageConnections();
       renderFirstFrameConnections();
+      renderVideoConnections();
       
       // 如果删除的连接涉及分镜节点，更新其预览图和选择菜单
       if(conn){
@@ -1504,6 +1514,7 @@
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
+          renderVideoConnections();
         });
         
         // 显示删除按钮（计算贝塞尔曲线t=0.5处的实际位置）
@@ -1525,6 +1536,124 @@
           connDeleteBtn.style.left = (screenX - 12) + 'px';
           connDeleteBtn.style.top = (screenY - 12) + 'px';
         }
+      }
+    }
+
+    function renderVideoConnections(){
+      try {
+        // 检查必要的元素是否存在
+        if(!connectionsSvg || !canvasEl || !canvasContainer) {
+          return;
+        }
+        
+        // 确保init化videoConnections数组
+        if(!state.videoConnections) {
+          state.videoConnections = [];
+        }
+        
+        // 清除旧的视频连接线
+        const oldLines = document.querySelectorAll('.video-conn-group');
+        oldLines.forEach(l => l.remove());
+        
+        // 隐藏删除按钮（如果选中的连接已被删除）
+        if(state.selectedVideoConnId !== null){
+          const stillExists = state.videoConnections.some(c => c.id === state.selectedVideoConnId);
+          if(!stillExists){
+            state.selectedVideoConnId = null;
+            if(connDeleteBtn) connDeleteBtn.style.display = 'none';
+          }
+        }
+        
+        // 绘制视频连接线
+        for(const conn of state.videoConnections){
+        const fromEl = canvasEl.querySelector(`.node[data-node-id="${conn.from}"]`);
+        const toEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+        if(!fromEl || !toEl) continue;
+        
+        const outputPort = fromEl.querySelector('.port.output');
+        const videoInputPort = toEl.querySelector('.port.video-input-port');
+        if(!outputPort || !videoInputPort) continue;
+        
+        const fromRect = outputPort.getBoundingClientRect();
+        const toRect = videoInputPort.getBoundingClientRect();
+        const containerRect = canvasContainer.getBoundingClientRect();
+        
+        const fromX = (fromRect.left + fromRect.width/2 - containerRect.left - state.panX) / state.zoom;
+        const fromY = (fromRect.top + fromRect.height/2 - containerRect.top - state.panY) / state.zoom;
+        const toX = (toRect.left + toRect.width/2 - containerRect.left - state.panX) / state.zoom;
+        const toY = (toRect.top + toRect.height/2 - containerRect.top - state.panY) / state.zoom;
+        
+        const dx = Math.abs(toX - fromX) * 0.5;
+        const pathD = `M${fromX},${fromY} C${fromX+dx},${fromY} ${toX-dx},${toY} ${toX},${toY}`;
+        
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'video-conn-group');
+        group.dataset.videoConnId = String(conn.id);
+        
+        // hitbox（透明宽线，方便点击）
+        const hitbox = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hitbox.setAttribute('d', pathD);
+        hitbox.setAttribute('class', 'hitbox');
+        hitbox.style.fill = 'none';
+        hitbox.style.stroke = 'transparent';
+        hitbox.style.strokeWidth = '20';
+        hitbox.style.cursor = 'pointer';
+        
+        // 可见线
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', pathD);
+        path.setAttribute('class', 'visible');
+        path.style.fill = 'none';
+        path.style.stroke = '#3b82f6';
+        path.style.strokeWidth = '2';
+        path.style.pointerEvents = 'none';
+        
+        if(state.selectedVideoConnId === conn.id){
+          path.style.stroke = '#1d4ed8';
+          path.style.strokeWidth = '3';
+        }
+        
+        group.appendChild(hitbox);
+        group.appendChild(path);
+        connectionsSvg.appendChild(group);
+        
+        // 点击选中
+        hitbox.addEventListener('click', (e) => {
+          e.stopPropagation();
+          state.selectedConnId = null;
+          state.selectedImgConnId = null;
+          state.selectedFirstFrameConnId = null;
+          state.selectedVideoConnId = conn.id;
+          renderConnections();
+          renderImageConnections();
+          renderFirstFrameConnections();
+          renderVideoConnections();
+        });
+        
+        // 显示删除按钮（计算贝塞尔曲线t=0.5处的实际位置）
+        if(state.selectedVideoConnId === conn.id){
+          // 控制点
+          const cx1 = fromX + dx;
+          const cy1 = fromY;
+          const cx2 = toX - dx;
+          const cy2 = toY;
+          // 三次贝塞尔曲线 t=0.5 时的点
+          const t = 0.5;
+          const mt = 1 - t;
+          const bezierX = mt*mt*mt*fromX + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*toX;
+          const bezierY = mt*mt*mt*fromY + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*toY;
+          // 转换为屏幕坐标
+          const screenX = bezierX * state.zoom + state.panX;
+          const screenY = bezierY * state.zoom + state.panY;
+          if(connDeleteBtn){
+            connDeleteBtn.style.display = 'flex';
+            connDeleteBtn.style.left = (screenX - 12) + 'px';
+            connDeleteBtn.style.top = (screenY - 12) + 'px';
+          }
+        }
+      }
+      } catch(error) {
+        console.error('[renderVideoConnections] Error:', error);
       }
     }
 
@@ -1604,6 +1733,7 @@
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
+          renderVideoConnections();
         });
         
         // 显示删除按钮
@@ -2001,6 +2131,7 @@
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
+          renderVideoConnections();
           renderMinimap();
 
           // 为每个视频节点初始化状态显示
@@ -2229,6 +2360,7 @@
                 portType: 'start'
               });
               renderImageConnections();
+              renderVideoConnections();
             }
           }
         }
@@ -2267,6 +2399,7 @@
                 portType: 'end'
               });
               renderImageConnections();
+              renderVideoConnections();
             }
           }
         }
@@ -2319,6 +2452,7 @@
           state.imageConnections = state.imageConnections.filter(c => !(c.to === id && c.portType === 'start'));
           startImagePort.classList.add('disabled');
           renderImageConnections();
+          renderVideoConnections();
           showToast('首帧图片上传成功', 'success');
         } else {
           startPreviewRow.style.display = 'none';
@@ -2346,6 +2480,7 @@
           state.imageConnections = state.imageConnections.filter(c => !(c.to === id && c.portType === 'end'));
           endImagePort.classList.add('disabled');
           renderImageConnections();
+          renderVideoConnections();
           showToast('尾帧图片上传成功', 'success');
         } else {
           endPreviewRow.style.display = 'none';
@@ -2509,6 +2644,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               
               // 更新分镜节点的预览图和选择菜单
               if(fromNode.updatePreview){
@@ -2807,16 +2943,21 @@
     // 剧本节点
     function createScriptNode(opts){
       const id = state.nextNodeId++;
+      const scriptId = (opts && typeof opts.scriptId === 'number') ? opts.scriptId : state.nextScriptId++;
+      if(opts && typeof opts.scriptId === 'number' && opts.scriptId >= state.nextScriptId) {
+        state.nextScriptId = opts.scriptId + 1;
+      }
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
       const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
       const node = {
         id,
         type: 'script',
-        title: '剧本',
+        title: `剧本 ${scriptId}`,
         x,
         y,
         data: {
+          scriptId,
           file: null,
           url: '',
           name: '',
@@ -2835,7 +2976,7 @@
       el.innerHTML = `
         <div class="port output" title="输出（拆分为分镜组）"></div>
         <div class="node-header">
-          <div class="node-title">${node.title}</div>
+          <div class="node-title">剧本 ${scriptId}</div>
           <button class="icon-btn" title="删除">×</button>
         </div>
         <div class="node-body">
@@ -2871,6 +3012,13 @@
             </label>
             <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">方便后期调音</div>
           </div>
+          <div class="field">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+              <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
+              <span>拆分多人对话镜头</span>
+            </label>
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将多人对话镜头拆分为单人对话镜头，并注意画面不越轴</div>
+          </div>
           <div class="field script-info-field" style="display:none;">
             <div class="gen-meta script-name"></div>
             <div class="gen-meta script-length"></div>
@@ -2893,6 +3041,7 @@
       const durationSelectEl = el.querySelector('.script-duration-select');
       const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
       const noBgMusicEl = el.querySelector('.script-no-bg-music');
+      const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
       const infoField = el.querySelector('.script-info-field');
       const nameEl = el.querySelector('.script-name');
       const lengthEl = el.querySelector('.script-length');
@@ -2905,6 +3054,7 @@
       node.data.maxGroupDuration = 15;
       node.data.forceMediumShot = true;
       node.data.noBgMusic = true;
+      node.data.splitMultiDialogue = false;
 
       // 更新字符计数器
       function updateCharCount(length) {
@@ -2975,6 +3125,11 @@
       // 不生成背景音乐选项监听
       noBgMusicEl.addEventListener('change', () => {
         node.data.noBgMusic = noBgMusicEl.checked;
+      });
+
+      // 拆分多人对话选项监听
+      splitMultiDialogueEl.addEventListener('change', () => {
+        node.data.splitMultiDialogue = splitMultiDialogueEl.checked;
       });
 
       // 文本框输入监听
@@ -3049,7 +3204,8 @@
               max_group_duration: node.data.maxGroupDuration || 15,
               world_id: state.defaultWorldId,
               force_medium_shot: node.data.forceMediumShot || false,
-              no_bg_music: node.data.noBgMusic || false
+              no_bg_music: node.data.noBgMusic || false,
+              split_multi_dialogue: node.data.splitMultiDialogue || false
             })
           });
 
@@ -3063,6 +3219,21 @@
             
             // 创建分镜组节点
             if(result.data.shot_groups && result.data.shot_groups.length > 0) {
+              // 预先创建所有柱子（基于剧本中的所有分镜）
+              const scriptId = id;
+              const maxGroupDuration = result.data.max_group_duration || 15;
+              
+              result.data.shot_groups.forEach((shotGroup) => {
+                if(shotGroup.shots && Array.isArray(shotGroup.shots)) {
+                  shotGroup.shots.forEach((shot) => {
+                    if(shot.shot_number) {
+                      // 为每个分镜预创建柱子
+                      createOrUpdatePillar(scriptId, shot.shot_number, shot.duration || maxGroupDuration);
+                    }
+                  });
+                }
+              });
+              
               result.data.shot_groups.forEach((shotGroup, index) => {
                 const offsetX = 400;
                 const offsetY = index * 465;
@@ -3083,14 +3254,19 @@
                 }
               });
               
+              // 自动显示时间轴（即使还没有片段）
+              state.timeline.visible = true;
+              renderTimeline();
+              
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }
             
-            showToast('剧本拆分成功！', 'success');
+            showToast('剧本拆分成功！时间轴已准备就绪', 'success');
           } else {
             throw new Error(result.message || '解析失败');
           }
@@ -3239,6 +3415,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }
@@ -3354,6 +3531,7 @@
       renderConnections();
       renderImageConnections();
       renderFirstFrameConnections();
+      renderVideoConnections();
       try{ autoSaveWorkflow(); } catch(e){}
       showToast(`已生成 ${shots.length} 个独立分镜节点`, 'success');
     }
@@ -3466,6 +3644,7 @@
       renderConnections();
       renderImageConnections();
       renderFirstFrameConnections();
+      renderVideoConnections();
       try{ autoSaveWorkflow(); } catch(e){}
       showToast('已创建合并分镜节点', 'success');
     }
@@ -3666,7 +3845,7 @@
             </select>
           </div>
           <div class="field">
-            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start;">
+            <div class="btn-row" style="display: flex; gap: 8px; justify-content: space-between; align-items: center;">
               <div class="gen-container">
                 <button class="gen-btn gen-btn-main shot-frame-generate-btn" type="button">生成分镜图</button>
                 <button class="gen-btn gen-btn-caret shot-frame-caret" type="button" aria-label="选择抽卡次数">▾</button>
@@ -3677,6 +3856,7 @@
                   <div class="gen-item" data-count="4">X4</div>
                 </div>
               </div>
+              <button class="gen-btn shot-frame-generate-dialogue-btn" type="button" style="background: #22c55e; color: white;" disabled>生成对话音频</button>
             </div>
             <div class="gen-meta shot-frame-draw-count-label"></div>
           </div>
@@ -3730,6 +3910,7 @@
       const imagePromptEl = el.querySelector('.shot-frame-image-prompt');
       const videoPromptEl = el.querySelector('.shot-frame-video-prompt');
       const generateBtn = el.querySelector('.shot-frame-generate-btn');
+      const generateDialogueBtn = el.querySelector('.shot-frame-generate-dialogue-btn');
       const imageEl = el.querySelector('.shot-frame-image');
       const imageFieldEl = el.querySelector('.shot-frame-image-field');
       const inputPort = el.querySelector('.port.input');
@@ -4075,6 +4256,81 @@
         generateShotFrameImage(id, node);
       });
 
+      // 检查是否有对话数据，更新生成对话音频按钮状态
+      function updateDialogueButtonState(){
+        if(generateDialogueBtn){
+          const hasDialogue = node.data.shotJson && 
+                             node.data.shotJson.dialogue && 
+                             Array.isArray(node.data.shotJson.dialogue) && 
+                             node.data.shotJson.dialogue.length > 0;
+          generateDialogueBtn.disabled = !hasDialogue;
+          generateDialogueBtn.title = hasDialogue ? '生成对话音频' : '该镜头没有对话';
+          generateDialogueBtn.style.background = hasDialogue ? '#22c55e' : '#9ca3af';
+          generateDialogueBtn.style.cursor = hasDialogue ? 'pointer' : 'not-allowed';
+        }
+      }
+      updateDialogueButtonState();
+
+      // 生成对话音频按钮点击事件
+      if(generateDialogueBtn){
+        generateDialogueBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          
+          if(!node.data.shotJson || !node.data.shotJson.dialogue || node.data.shotJson.dialogue.length === 0){
+            showToast('该分镜没有对话数据', 'warning');
+            return;
+          }
+          
+          // 创建对话组节点
+          const dialogueGroupX = node.x + 450;
+          const dialogueGroupY = node.y;
+          const dialogueGroupId = createDialogueGroupNode({
+            x: dialogueGroupX,
+            y: dialogueGroupY,
+            dialogueData: node.data.shotJson.dialogue,
+            shotNumber: node.data.shotJson.shot_number
+          });
+          
+          // 连接分镜节点到对话组节点
+          const exists = state.connections.some(c => c.from === id && c.to === dialogueGroupId);
+          if(!exists){
+            state.connections.push({
+              id: state.nextConnId++,
+              from: id,
+              to: dialogueGroupId
+            });
+            renderConnections();
+          }
+          
+          // 获取对话组节点
+          const dialogueGroupNode = state.nodes.find(n => n.id === dialogueGroupId);
+          if(!dialogueGroupNode){
+            showToast('创建对话组节点失败', 'error');
+            return;
+          }
+          
+          // 设置对话组节点的shotNumber（确保数据正确保存）
+          if(node.data.shotJson.shot_number){
+            dialogueGroupNode.data.shotNumber = node.data.shotJson.shot_number;
+          }
+          
+          // 自动触发所有对话的音频生成
+          const dialogueGroupEl = canvasEl.querySelector(`.node[data-node-id="${dialogueGroupId}"]`);
+          if(dialogueGroupEl){
+            const generateAllBtn = dialogueGroupEl.querySelector('.dialogue-generate-all-btn');
+            if(generateAllBtn){
+              // 延迟一下再点击，确保init化完成
+              setTimeout(() => {
+                generateAllBtn.click();
+              }, 100);
+            }
+          }
+          
+          showToast('已创建对话组节点并开始生成音频', 'success');
+          try{ autoSaveWorkflow(); } catch(e){}
+        });
+      }
+
       if(imageEl && node.data.imageUrl){
         imageEl.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -4097,6 +4353,7 @@
               renderConnections();
               renderImageConnections();
               renderFirstFrameConnections();
+              renderVideoConnections();
               
               // 如果是图片节点连接，更新预览图和选择菜单
               if(fromNode.type === 'image'){

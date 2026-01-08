@@ -176,13 +176,19 @@
         nextConnId: state.nextConnId,
         nextImgConnId: state.nextImgConnId,
         nextFirstFrameConnId: state.nextFirstFrameConnId,
+        nextVideoConnId: state.nextVideoConnId,
+        nextScriptId: state.nextScriptId,
         nodes: serializableNodes,
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
         firstFrameConnections: state.firstFrameConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        videoConnections: state.videoConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         timeline: {
           clips: state.timeline.clips.map(c => ({ ...c })),
+          audioClips: state.timeline.audioClips.map(c => ({ ...c })),
+          pillars: state.timeline.pillars.map(p => ({ ...p })),
           nextClipId: state.timeline.nextClipId,
+          nextAudioClipId: state.timeline.nextAudioClipId,
         }
       };
     }
@@ -429,10 +435,12 @@
         state.connections = [];
         state.imageConnections = [];
         state.firstFrameConnections = [];
+        state.videoConnections = [];
         state.selectedNodeId = null;
         state.selectedConnId = null;
         state.selectedImgConnId = null;
         state.selectedFirstFrameConnId = null;
+        state.selectedVideoConnId = null;
         
         // 恢复视口
         if(data.viewport){
@@ -474,6 +482,8 @@
         state.nextConnId = data.nextConnId || 1;
         state.nextImgConnId = data.nextImgConnId || 1;
         state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
+        state.nextVideoConnId = data.nextVideoConnId || 1;
+        state.nextScriptId = data.nextScriptId || 1;
         
         // 恢复节点
         if(data.nodes && Array.isArray(data.nodes)){
@@ -495,11 +505,36 @@
           state.firstFrameConnections = data.firstFrameConnections;
         }
         
+        if(data.videoConnections && Array.isArray(data.videoConnections)){
+          state.videoConnections = data.videoConnections;
+        }
+        
         // 恢复时间轴
         if(data.timeline){
           state.timeline.clips = data.timeline.clips || [];
+          state.timeline.audioClips = data.timeline.audioClips || [];
+          state.timeline.pillars = data.timeline.pillars || [];
           state.timeline.nextClipId = data.timeline.nextClipId || 1;
-          state.timeline.visible = state.timeline.clips.length > 0;
+          state.timeline.nextAudioClipId = data.timeline.nextAudioClipId || 1;
+          state.timeline.visible = state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0;
+          
+          // 如果没有柱子数据但有片段，尝试自动迁移
+          if(state.timeline.pillars.length === 0 && (state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0)){
+            console.log('[恢复工作流] 检测到历史数据，尝试自动迁移柱子...');
+            // 延迟执行迁移，确保所有节点都已恢复
+            setTimeout(() => {
+              if(typeof autoMigratePillars === 'function'){
+                const migrated = autoMigratePillars();
+                if(migrated){
+                  console.log('[恢复工作流] 历史数据迁移成功');
+                  renderTimeline();
+                  try{ autoSaveWorkflow(); } catch(e){}
+                }
+              }
+            }, 500);
+          }
+          
+          console.log(`[恢复工作流] 恢复了 ${state.timeline.pillars.length} 个柱子`);
           renderTimeline();
         }
         
@@ -507,6 +542,7 @@
         renderConnections();
         renderImageConnections();
         renderFirstFrameConnections();
+        renderVideoConnections();
         renderMinimap();
         
         // 恢复完成后，更新所有分镜节点的图片选择菜单和角色节点的按钮状态
@@ -554,6 +590,8 @@
         createLocationNodeWithData(nodeData);
       } else if(nodeData.type === 'text_to_speech'){
         createTextToSpeechNodeWithData(nodeData);
+      } else if(nodeData.type === 'dialogue_group'){
+        createDialogueGroupNodeWithData(nodeData);
       }
     }
 
@@ -944,7 +982,11 @@
       const savedNextNodeId = state.nextNodeId;
       state.nextNodeId = nodeData.id;
       
-      createScriptNode({ x: nodeData.x, y: nodeData.y });
+      createScriptNode({ 
+        x: nodeData.x, 
+        y: nodeData.y,
+        scriptId: nodeData.data && nodeData.data.scriptId
+      });
       
       state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
       
@@ -954,11 +996,15 @@
         node.data.name = nodeData.data.name || '';
         node.data.maxGroupDuration = nodeData.data.maxGroupDuration || 15;
         node.data.parsedData = nodeData.data.parsedData || null;
+        node.data.forceMediumShot = nodeData.data.forceMediumShot !== undefined ? nodeData.data.forceMediumShot : true;
+        node.data.noBgMusic = nodeData.data.noBgMusic !== undefined ? nodeData.data.noBgMusic : true;
         
         const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
         if(el){
           const textareaEl = el.querySelector('.script-textarea');
           const durationSelectEl = el.querySelector('.script-duration-select');
+          const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
+          const noBgMusicEl = el.querySelector('.script-no-bg-music');
           const splitBtn = el.querySelector('.script-split-btn');
           const infoField = el.querySelector('.script-info-field');
           const nameEl = el.querySelector('.script-name');
@@ -967,6 +1013,8 @@
           
           if(textareaEl) textareaEl.value = node.data.scriptContent;
           if(durationSelectEl) durationSelectEl.value = String(node.data.maxGroupDuration);
+          if(forceMediumShotEl) forceMediumShotEl.checked = node.data.forceMediumShot;
+          if(noBgMusicEl) noBgMusicEl.checked = node.data.noBgMusic;
           
           if(node.data.scriptContent && node.data.scriptContent.trim().length > 0){
             if(splitBtn) splitBtn.disabled = false;

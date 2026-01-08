@@ -49,6 +49,28 @@ python3 server.py
 - 环境变量 `COMFYUI_SERVER`：不在前端传 `server` 字段时，后端默认的 ComfyUI 地址。
 - 表单字段 `timeout`：后端轮询历史的超时时间（秒），默认 180。
 
+### 测试模式配置
+
+项目支持测试模式，用于在不调用真实外部 API 的情况下测试完整业务流程。详细说明请参考 `docs/test_mode_guide.md`。
+
+快速启用测试模式：
+
+1. 在 `config.yml` 中配置：
+```yaml
+test_mode:
+  enabled: true  # 启用测试模式
+  mock_videos:
+    image_to_video: "http://localhost:5178/upload/test_video.mp4"
+    text_to_video: "http://localhost:5178/upload/test_video.mp4"
+  mock_images:
+    image_edit: "http://localhost:5178/upload/test_image.png"
+    text_to_image: "http://localhost:5178/upload/test_image.png"
+```
+
+2. 准备测试资源文件并放置在 `upload/` 目录下
+
+3. 重启服务即可使用测试模式
+
 ## 目录结构
 ```
 comfyui_server/

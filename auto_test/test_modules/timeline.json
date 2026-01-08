@@ -1055,6 +1055,199 @@
         }
       ],
       "is_processed": false
+    },
+    {
+      "id": "timeline_018",
+      "name": "导出包含音频的时间轴到剪影",
+      "description": "验证导出时间轴时，音频片段也能正确导出到剪影草稿的音频轨道",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/export_timeline_draft",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "添加视频到时间轴",
+          "operation": "添加1-2个视频到时间轴",
+          "expected_result": "时间轴显示视频片段",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "添加音频到时间轴",
+          "operation": "添加1-2个音频片段到时间轴",
+          "expected_result": "时间轴显示音频轨道和音频片段",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击导出草稿按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "导出草稿按钮",
+            "ref": "<导出草稿按钮ref>"
+          },
+          "expected_result": "弹出导出对话框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "输入草稿路径并确认",
+          "operation": "输入剪影草稿路径并点击开始导出",
+          "expected_result": "开始导出处理",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "等待导出成功",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "草稿导出成功",
+            "time": 60
+          },
+          "expected_result": "显示导出成功提示",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "验证API请求包含音频数据",
+          "verify": "POST请求包含video_clips和audio_clips两个数组，audio_clips不为空",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "timeline_019",
+      "name": "导出不连续视频的时间轴到剪影",
+      "description": "验证当时间轴存在不连续的视频片段时（如镜头1、2有视频，镜头3无视频，镜头4、5有视频），导出的剪影草稿能正确保留所有镜头的时长和顺序",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/export_timeline_draft",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建包含多个分镜的剧本节点",
+          "operation": "创建剧本节点，包含5个分镜",
+          "expected_result": "剧本节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "为部分分镜添加视频",
+          "operation": "为分镜1、2、4、5添加视频到时间轴，分镜3不添加视频",
+          "expected_result": "时间轴显示4个视频片段，分属不同的柱子",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证柱子系统",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return { pillarCount: state.timeline.pillars.length, clipCount: state.timeline.clips.length }; }"
+          },
+          "verify": "柱子数量为5，视频片段数量为4",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击导出草稿",
+          "operation": "输入路径并导出",
+          "expected_result": "开始导出",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "等待导出成功",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "草稿导出成功",
+            "time": 90
+          },
+          "expected_result": "导出成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "验证API请求包含柱子数据",
+          "verify": "POST请求包含pillars数组，包含5个柱子，每个柱子包含id、scriptId、shotNumber、defaultDuration、videoClipIds、audioClipIds",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "验证导出逻辑",
+          "verify": "后端按柱子顺序处理，即使柱子3没有视频，也会预留其defaultDuration的时长，确保柱子4、5的视频在正确的时间位置",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "timeline_020",
+      "name": "导出兼容旧版本时间轴数据",
+      "description": "验证导出功能向后兼容，支持旧版本的timeline_clips格式",
+      "priority": "P2",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/export_timeline_draft",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "模拟旧版本数据格式",
+          "operation": "构造只包含timeline_clips字段的请求数据",
+          "expected_result": "数据准备完成",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "发送旧格式导出请求",
+          "verify": "后端能正确处理，将timeline_clips转换为video_clips",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证导出成功",
+          "verify": "返回成功响应，包含download_url",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
     }
   ],
   "remark": ""

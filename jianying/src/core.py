@@ -139,7 +139,8 @@ class JianyingMultiTrackLibrary:
 
     def add_video_to_track(self, track_id: str, file_path: str, start_time: int, 
                           duration: int = None, source_start: int = 0, width: int = None, 
-                          height: int = None, speed: float = 1.0, volume: float = 1.0) -> str:
+                          height: int = None, speed: float = 1.0, volume: float = 1.0, 
+                          is_placeholder: bool = False) -> str:
         """向指定视频轨道添加视频片段"""
         # 查找轨道
         track = None
@@ -216,8 +217,9 @@ class JianyingMultiTrackLibrary:
             start_time=start_time,
             duration=duration,
             source_start=source_start,
-            volume=volume,
-            speed=speed
+            volume=volume if not is_placeholder else 0.0,  # 占位符静音
+            speed=speed,
+            visible=not is_placeholder  # 占位符不可见
         )
         track.segments.append(segment)
 

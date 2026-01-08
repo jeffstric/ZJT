@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 import uuid
 from perseids_client import make_perseids_request
 from config.constant import TASK_COMPUTING_POWER
+import yaml
+import os
+from config_util import get_config_path
 
 from duomi_api_requset import (
     create_ai_image,
@@ -18,6 +21,18 @@ from config.constant import TASK_TYPE_GENERATE_VIDEO,AUTHENTICATION_ID
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Load test mode configuration
+config_path = get_config_path()
+with open(config_path, 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
+test_mode_config = config.get("test_mode", {})
+TEST_MODE_ENABLED = test_mode_config.get("enabled", False)
+
+if TEST_MODE_ENABLED:
+    logger.info("=" * 60)
+    logger.info("TEST MODE ENABLED - Using mock API responses")
+    logger.info("=" * 60)
 
 
 def calculate_next_retry_delay(try_count):
@@ -48,6 +63,9 @@ def _submit_new_task(ai_tool):
     """
     ai_tool_type = ai_tool.type
     task_id = ai_tool.id
+    
+    if TEST_MODE_ENABLED:
+        logger.info(f"[TEST MODE] Submitting task {task_id} (type: {ai_tool_type})")
     
     # Parse image_urls from comma-separated string to array
     image_urls = None
@@ -131,6 +149,10 @@ def _check_task_status(ai_tool):
         return False
 
     is_video = ai_tool_type in [2, 3]
+    
+    if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
+        logger.info(f"[TEST MODE] Checking status for mock task {project_id}")
+    
     result = get_ai_task_result(project_id, is_video)
     
     if not isinstance(result, dict):
