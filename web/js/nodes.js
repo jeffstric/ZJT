@@ -3729,6 +3729,14 @@
         return sum + duration;
       }, 0);
 
+      // 收集所有镜头的对话数据
+      const allDialogues = [];
+      shots.forEach(shot => {
+        if(shot.dialogue && Array.isArray(shot.dialogue) && shot.dialogue.length > 0){
+          allDialogues.push(...shot.dialogue);
+        }
+      });
+      
       // 构建合并分镜的shotData
       const mergedShotData = {
         shot_id: 'merged',
@@ -3744,7 +3752,9 @@
         arrangement: arrangement,
         isMerged: true,
         // 存储完整的shots数组，用于视频提示词
-        shots: shots
+        shots: shots,
+        // 合并所有镜头的对话数据，用于生成对话组节点
+        dialogue: allDialogues
       };
 
       // 创建一个合并分镜节点
@@ -4364,6 +4374,10 @@
         updateVideoDurationOptions(videoModelEl.value);
         // 更新算力显示
         updateVideoComputingPowerDisplay();
+        // 更新按钮显示状态
+        if(typeof updateReduceViolationBtnVisibility === 'function') {
+          updateReduceViolationBtnVisibility();
+        }
       });
 
       // 抽卡次数选择
@@ -4455,6 +4469,22 @@
       });
 
       const reduceViolationBtn = el.querySelector('.reduce-violation-btn');
+      
+      // 控制按钮显示的函数
+      function updateReduceViolationBtnVisibility() {
+        if(reduceViolationBtn) {
+          const videoModel = node.data.videoModel || 'sora2';
+          if(videoModel === 'sora2') {
+            reduceViolationBtn.style.display = 'inline-block';
+          } else {
+            reduceViolationBtn.style.display = 'none';
+          }
+        }
+      }
+      
+      // 初始化按钮显示状态
+      updateReduceViolationBtnVisibility();
+      
       if(reduceViolationBtn){
         reduceViolationBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
