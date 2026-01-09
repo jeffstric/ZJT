@@ -62,10 +62,10 @@
     }
 
     // 生成视频API调用
-    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio){
+    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel){
       // 测试模式：模拟API响应
       if(TEST_MODE){
-        console.log('[TEST MODE] 模拟生成视频API调用', { imageUrl, prompt, duration, count, ratio });
+        console.log('[TEST MODE] 模拟生成视频API调用', { imageUrl, prompt, duration, count, ratio, videoModel });
         await new Promise(r => setTimeout(r, 500)); // 模拟网络延迟
         const mockIds = [];
         for(let i = 0; i < (count || 1); i++){
@@ -88,6 +88,7 @@
       form.append('ratio', ratio || '9:16');
       form.append('duration_seconds', duration || 10);
       form.append('count', count || 1);
+      form.append('video_model', videoModel || 'sora2');
       
       if(userId){
         form.append('user_id', userId);

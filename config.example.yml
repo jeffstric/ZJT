@@ -4,6 +4,7 @@ runninghub:
   ai_app_webapp_id: "1973555977595301890"
   ai_app_api_key: "xxxx"
   ai_app_webapp_img_id: "1976487269899046914"
+  max_concurrent_slots: 3  # RunningHub 最大并发槽位数量
 # Server configuration
 server:
   host: "http://ailive.perseids.cn:11442"

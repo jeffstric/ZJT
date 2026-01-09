@@ -84,11 +84,85 @@
       }
     }
 
+    // 算力配置（用于节点算力预估）
+    let taskComputingPowerConfig = {};
+    
+    async function fetchComputingPowerConfig(){
+      try {
+        const response = await fetch('/api/computing-power-config');
+        if(response.ok){
+          const data = await response.json();
+          if(data.success && data.data && data.data.task_computing_power){
+            taskComputingPowerConfig = data.data.task_computing_power;
+            console.log('[算力配置] 已加载:', taskComputingPowerConfig);
+            // 配置加载完成后，更新所有图生视频节点的算力显示
+            updateAllImageToVideoNodesPower();
+          }
+        }
+      } catch(error){
+        console.error('[算力配置] 加载失败:', error);
+      }
+    }
+    
+    // 获取算力配置的函数（供节点使用）
+    function getTaskComputingPowerConfig(){
+      return taskComputingPowerConfig;
+    }
+    
+    // 更新所有图生视频节点的算力显示
+    function updateAllImageToVideoNodesPower(){
+      if(!state || !state.nodes) return;
+      
+      state.nodes.forEach(node => {
+        if(node.type === 'image_to_video'){
+          const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+          if(el){
+            const computingPowerValue = el.querySelector('.computing-power-value');
+            const computingPowerDetail = el.querySelector('.computing-power-detail');
+            if(computingPowerValue && computingPowerDetail){
+              // 计算算力
+              let singlePower = 0;
+              if(taskComputingPowerConfig && Object.keys(taskComputingPowerConfig).length > 0){
+                const videoModel = node.data.videoModel || 'sora2';
+                const duration = node.data.duration || 10;
+                
+                if(videoModel === 'sora2'){
+                  singlePower = taskComputingPowerConfig[3] || 0;
+                } else if(videoModel === 'ltx2'){
+                  singlePower = taskComputingPowerConfig[10] || 0;
+                } else if(videoModel === 'wan22'){
+                  const wan22Power = taskComputingPowerConfig[11];
+                  if(typeof wan22Power === 'object'){
+                    singlePower = wan22Power[duration] || wan22Power[5] || 0;
+                  } else {
+                    singlePower = wan22Power || 0;
+                  }
+                } else if(videoModel === 'kling'){
+                  const klingPower = taskComputingPowerConfig[12];
+                  if(typeof klingPower === 'object'){
+                    singlePower = klingPower[duration] || klingPower[5] || 0;
+                  } else {
+                    singlePower = klingPower || 0;
+                  }
+                }
+              }
+              const count = node.data.drawCount || 1;
+              const totalPower = singlePower * count;
+              computingPowerValue.textContent = `${totalPower} 算力`;
+              computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
+            }
+          }
+        }
+      });
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
       if(computingPowerChip){
         fetchComputingPower();
         startComputingPowerTimer();
       }
+      // 加载算力配置
+      fetchComputingPowerConfig();
     });
 
     window.addEventListener('beforeunload', () => {
@@ -797,7 +871,8 @@
         node.data.endUrl = nodeData.data.endUrl || '';
         node.data.duration = nodeData.data.duration || 15;
         node.data.ratio = nodeData.data.ratio || state.ratio || '16:9';
-        node.data.model = nodeData.data.model || 'sora';
+        // 兼容旧数据：如果有model字段，迁移到videoModel
+        node.data.videoModel = nodeData.data.videoModel || nodeData.data.model || 'sora2';
         node.data.drawCount = nodeData.data.drawCount || 1;
         node.data.motionLevel = nodeData.data.motionLevel || 5;
         node.data.useMotion = nodeData.data.useMotion || false;
@@ -809,37 +884,53 @@
           const promptEl = el.querySelector('.prompt');
           if(promptEl) promptEl.value = node.data.prompt;
           
-          // 更新时长选择
+          // 先更新视频模型选择
+          const videoModelSelect = el.querySelector('.video-model-select');
+          if(videoModelSelect) videoModelSelect.value = node.data.videoModel;
+          
+          // 根据模型更新时长选项
           const durationSelect = el.querySelector('.duration-select');
-          if(durationSelect) durationSelect.value = node.data.duration;
-          
-          // 先更新模型选择
-          const modelSelect = el.querySelector('.model-select');
-          if(modelSelect) modelSelect.value = node.data.model;
-          
-          // 根据模型更新比例选项，然后设置比例值
-          const ratioSelect = el.querySelector('.ratio-select');
-          if(ratioSelect && modelSelect) {
-            const model = node.data.model;
-            if(model === 'sora') {
-              // sora只支持16:9和9:16
-              ratioSelect.innerHTML = `
-                <option value="9:16">9:16</option>
-                <option value="16:9">16:9</option>
+          if(durationSelect && videoModelSelect) {
+            const videoModel = node.data.videoModel;
+            if(videoModel === 'ltx2') {
+              durationSelect.innerHTML = `
+                <option value="5">5秒 (121帧)</option>
+                <option value="8">8秒 (201帧)</option>
+                <option value="10">10秒 (241帧)</option>
               `;
-              // 如果保存的比例不在支持列表中，使用16:9
-              if(node.data.ratio !== '9:16' && node.data.ratio !== '16:9') {
-                node.data.ratio = '16:9';
+              if(![5, 8, 10].includes(node.data.duration)) {
+                node.data.duration = 5;
+              }
+            } else if(videoModel === 'wan22' || videoModel === 'kling') {
+              durationSelect.innerHTML = `
+                <option value="5">5秒</option>
+                <option value="10">10秒</option>
+              `;
+              if(![5, 10].includes(node.data.duration)) {
+                node.data.duration = 5;
               }
             } else {
-              // 其他模型支持所有比例
-              ratioSelect.innerHTML = `
-                <option value="9:16">9:16</option>
-                <option value="3:4">3:4</option>
-                <option value="1:1">1:1</option>
-                <option value="4:3">4:3</option>
-                <option value="16:9">16:9</option>
+              durationSelect.innerHTML = `
+                <option value="10">10秒</option>
+                <option value="15">15秒</option>
               `;
+              if(![10, 15].includes(node.data.duration)) {
+                node.data.duration = 10;
+              }
+            }
+            durationSelect.value = node.data.duration;
+          }
+          
+          // 根据模型更新比例选项（所有模型都只支持16:9和9:16）
+          const ratioSelect = el.querySelector('.ratio-select');
+          if(ratioSelect) {
+            ratioSelect.innerHTML = `
+              <option value="9:16">9:16 (竖屏)</option>
+              <option value="16:9">16:9 (横屏)</option>
+            `;
+            // 如果保存的比例不在支持列表中，使用16:9
+            if(node.data.ratio !== '9:16' && node.data.ratio !== '16:9') {
+              node.data.ratio = '16:9';
             }
             ratioSelect.value = node.data.ratio;
           }
@@ -847,6 +938,43 @@
           // 更新抽卡次数标签
           const genCountLabel = el.querySelector('.gen-count-label');
           if(genCountLabel) genCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
+          
+          // 更新算力显示
+          const computingPowerValue = el.querySelector('.computing-power-value');
+          const computingPowerDetail = el.querySelector('.computing-power-detail');
+          if(computingPowerValue && computingPowerDetail) {
+            // 计算算力
+            const config = getTaskComputingPowerConfig();
+            let singlePower = 0;
+            if(config && Object.keys(config).length > 0) {
+              const videoModel = node.data.videoModel || 'sora2';
+              const duration = node.data.duration || 10;
+              
+              if(videoModel === 'sora2') {
+                singlePower = config[3] || 0;
+              } else if(videoModel === 'ltx2') {
+                singlePower = config[10] || 0;
+              } else if(videoModel === 'wan22') {
+                const wan22Power = config[11];
+                if(typeof wan22Power === 'object') {
+                  singlePower = wan22Power[duration] || wan22Power[5] || 0;
+                } else {
+                  singlePower = wan22Power || 0;
+                }
+              } else if(videoModel === 'kling') {
+                const klingPower = config[12];
+                if(typeof klingPower === 'object') {
+                  singlePower = klingPower[duration] || klingPower[5] || 0;
+                } else {
+                  singlePower = klingPower || 0;
+                }
+              }
+            }
+            const count = node.data.drawCount || 1;
+            const totalPower = singlePower * count;
+            computingPowerValue.textContent = `${totalPower} 算力`;
+            computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
+          }
           
           // 更新首帧图片
           if(node.data.startUrl){

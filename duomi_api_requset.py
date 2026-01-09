@@ -4,6 +4,10 @@ import os
 import yaml
 import uuid
 import time
+import json
+from logger_config import setup_logger
+
+logger = setup_logger(__name__)
 
 config_path = get_config_path()
     
@@ -68,8 +72,21 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
         "Authorization": token
     }
     
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json()
+    logger.info(f"[Duomi Sora API] Request URL: {url}")
+    logger.info(f"[Duomi Sora API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"[Duomi Sora API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi Sora API] Error creating image to video task: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"[Duomi Sora API] Response Status Code: {e.response.status_code}")
+            logger.error(f"[Duomi Sora API] Response Body: {e.response.text}")
+        raise
 
 def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16", image_urls=None, image_size="1K"):
     """
@@ -195,20 +212,21 @@ def create_video_remix(video_id, prompt, aspect_ratio="16:9", duration=15):
         "Authorization": token
     }
     
-    response = requests.post(url, json=payload, headers=headers)
-    
-    # Log response for debugging
-    print(f"Remix API response status: {response.status_code}")
-    print(f"Remix API response text: {response.text[:500]}")  # First 500 chars
-    
-    # Check if response is successful
-    if response.status_code != 200:
-        raise Exception(f"API returned status {response.status_code}: {response.text}")
+    logger.info(f"[Duomi Sora API] Request URL: {url}")
+    logger.info(f"[Duomi Sora API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        return response.json()
-    except Exception as e:
-        raise Exception(f"Failed to parse JSON response: {response.text[:200]}")
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"[Duomi Sora API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi Sora API] Error creating video remix task: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"[Duomi Sora API] Response Status Code: {e.response.status_code}")
+            logger.error(f"[Duomi Sora API] Response Body: {e.response.text}")
+        raise
 
 def create_character(timestamps, url=None, from_task=None, callback_url=None):
     """
@@ -448,4 +466,141 @@ def get_ai_task_result(project_id, is_video):
             }
 
 
+def create_kling_image_to_video(
+    image_url: str,
+    prompt: str,
+    mode: str = "std",
+    duration: int = 5,
+    model_name: str = "kling-v2-5-turbo",
+    cfg_scale: float = 0.5,
+    negative_prompt: str = ""
+):
+    """
+    Create Kling image to video task
+    
+    Args:
+        image_url: URL of the input image
+        prompt: Text prompt for video generation
+        mode: Mode - "std" (standard, 5s) or "pro" (professional, >5s)
+        duration: Video duration in seconds (5 or 10)
+        model_name: Model name (default: "kling-v2-5-turbo")
+        cfg_scale: Creativity relevance, 0-1 (default: 0.5)
+        negative_prompt: Negative prompt (optional)
+    
+    Returns:
+        Response from the API with task_id
+    """
+    # 测试模式：返回mock task_id
+    if TEST_MODE_ENABLED:
+        mock_task_id = _generate_mock_task_id()
+        print(f"[TEST MODE] create_kling_image_to_video - Generated mock task_id: {mock_task_id}")
+        return {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "task_id": mock_task_id
+            }
+        }
+    
+    url = "https://duomiapi.com/api/video/kling/v1/videos/image2video"
+    
+    headers = {
+        "Authorization": token,
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model_name": model_name,
+        "image": image_url,
+        "prompt": prompt,
+        "mode": mode,
+        "duration": duration,
+        "cfg_scale": cfg_scale
+    }
+    
+    if negative_prompt:
+        payload["negative_prompt"] = negative_prompt
+    
+    # 记录请求日志
+    logger.info(f"[Duomi Kling API] Request URL: {url}")
+    logger.info(f"[Duomi Kling API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[Duomi Kling API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi Kling API] Error creating Kling video task: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"[Duomi Kling API] Response Status Code: {e.response.status_code}")
+            logger.error(f"[Duomi Kling API] Response Body: {e.response.text}")
+        return {
+            "code": -1,
+            "message": str(e),
+            "data": {}
+        }
 
+
+def get_kling_task_status(task_id: str):
+    """
+    Get Kling task status
+    
+    Args:
+        task_id: Task ID to check
+    
+    Returns:
+        Response from the API with task status and result
+    """
+    # 测试模式：返回mock结果
+    if TEST_MODE_ENABLED:
+        mock_video_url = MOCK_VIDEOS.get("image_to_video", "http://localhost:5178/upload/test_video.mp4")
+        print(f"[TEST MODE] get_kling_task_status - task_id: {task_id}, returning mock video: {mock_video_url}")
+        return {
+            "code": 0,
+            "message": "success",
+            "data": {
+                "task_id": task_id,
+                "task_status": "succeed",
+                "task_result": {
+                    "videos": [
+                        {
+                            "id": "mock_video_id",
+                            "url": mock_video_url,
+                            "duration": "5"
+                        }
+                    ]
+                }
+            }
+        }
+    
+    url = f"https://duomiapi.com/api/video/kling/v1/videos/image2video/{task_id}"
+    
+    headers = {
+        "Authorization": token
+    }
+    
+    # 记录请求日志
+    logger.info(f"[Duomi Kling API] Status Check URL: {url}")
+    logger.info(f"[Duomi Kling API] Task ID: {task_id}")
+    
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[Duomi Kling API] Status Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi Kling API] Error getting Kling task status: {e}")
+        return {
+            "code": -1,
+            "message": str(e),
+            "data": {}
+        }

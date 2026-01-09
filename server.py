@@ -1235,18 +1235,33 @@ async def ai_app_run_image(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     images: List[UploadFile] = File(None, description="Image files for the AI app (1-5 images)"),
     image_urls: str = Form(None, description="Comma-separated image URLs (alternative to uploading files)"),
-    ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9"),
-    duration_seconds: int = Form(15, description="Duration in seconds"),
+    video_model: str = Form("sora2", description="Video model: sora2, ltx2, wan22, kling"),
+    ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9 (sora2/kling); 9:16, 16:9, 3:4, 1:1, 4:3 (wan22)"),
+    duration_seconds: int = Form(15, description="Duration in seconds (sora2: 10/15, ltx2: 5/8/10, wan22: 5/10, kling: 5/10)"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
-    Submit task to RunningHub AI-app/run endpoint and wait for completion.
-    Supports two modes:
+    Submit image to video task.
+    Supports four video models:
+    1. sora2: Uses Sora2 model with ratio and duration parameters
+       - Ratio: 9:16, 16:9
+       - Duration: 10秒, 15秒
+    2. ltx2: Uses LTX2.0 model with duration parameter
+       - Fixed 24fps, auto-calculate frame count
+       - Duration: 5秒, 8秒, 10秒 (121帧, 201帧, 241帧)
+       - Ratio: matches input image
+    3. wan22: Uses Wan2.2 model with ratio and duration parameters
+       - Ratio: 9:16, 16:9, 3:4, 1:1, 4:3
+       - Duration: 5秒, 10秒
+    4. kling: Uses Kling model with ratio and duration parameters
+       - Ratio: 9:16, 16:9
+       - Duration: 5秒, 10秒
+    
+    Supports two image input modes:
     1. Upload images: Provide 1-5 images via 'images' parameter (will be concatenated horizontally)
     2. Use image URLs: Provide comma-separated URLs via 'image_urls' parameter
-    Automatically polls task status and returns final video/image URLs.
     """
     try:
         if CHECK_AUTH_TOKEN and auth_token is None:
@@ -1294,7 +1309,24 @@ async def ai_app_run_image(
                 detail="Either 'images' (uploaded files) or 'image_urls' (comma-separated URLs) must be provided"
             )
 
-        computing_power = TASK_COMPUTING_POWER[3]
+        # Determine task type and computing power based on video_model
+        if video_model == "ltx2":
+            task_type = 10  # LTX2.0 图生视频
+            computing_power = TASK_COMPUTING_POWER[task_type]
+        elif video_model == "wan22":
+            task_type = 11  # Wan2.2 图生视频
+            # Wan2.2根据时长区分算力：5秒=12，10秒=24
+            wan22_power_map = TASK_COMPUTING_POWER[task_type]
+            computing_power = wan22_power_map.get(duration_seconds, 12)
+        elif video_model == "kling":
+            task_type = 12  # 可灵图生视频
+            # 可灵根据时长区分算力：5秒=38，10秒=55
+            kling_power_map = TASK_COMPUTING_POWER[task_type]
+            computing_power = kling_power_map.get(duration_seconds, 38)
+        else:
+            task_type = 3   # Sora2 图生视频
+            computing_power = TASK_COMPUTING_POWER[task_type]
+        
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
@@ -1345,13 +1377,36 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
+                        # Determine type and ratio based on video_model
+                        if video_model == "ltx2":
+                            # LTX2.0 图生视频: type=10
+                            # 现在 LTX2.0 也支持比例选择（横屏/竖屏）
+                            task_type = 10  # LTX2.0 图生视频
+                            ratio_value = ratio
+                            duration_value = duration_seconds
+                        elif video_model == "wan22":
+                            # Wan2.2 图生视频: type=11
+                            task_type = 11
+                            ratio_value = ratio
+                            duration_value = duration_seconds
+                        elif video_model == "kling":
+                            # 可灵图生视频: type=12
+                            task_type = 12
+                            ratio_value = ratio
+                            duration_value = duration_seconds
+                        else:
+                            # Sora2 图生视频: type=3
+                            task_type = 3
+                            ratio_value = ratio
+                            duration_value = duration_seconds
+                        
                         id = AIToolsModel.create(
                             prompt=prompt,
                             user_id=user_id,
-                            type=3,  # 3-图片生成视频
+                            type=task_type,
                             image_path=image_url,
-                            ratio=ratio,
-                            duration=duration_seconds,
+                            ratio=ratio_value,
+                            duration=duration_value,
                             transaction_id=transaction_id,
                             status=0
                         )
@@ -1817,6 +1872,7 @@ async def get_ai_tools_history(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     type: Optional[int] = Query(None, description="Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)"),
+    types: Optional[str] = Query(None, description="Multiple tool types filter, comma-separated (e.g., '3,10,11,12')"),
     auth_token: Optional[str] = Query(None, description="Auth token for computing power refund")
 ):
     """
@@ -1906,14 +1962,38 @@ async def get_ai_tools_history(
                     logger.error(traceback.format_exc())
         
         # 查询历史记录
+        # Parse types parameter if provided
+        type_list_param = None
+        if types:
+            try:
+                type_list_param = [int(t.strip()) for t in types.split(',') if t.strip()]
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'success': False,
+                        'message': 'Invalid types parameter format'
+                    }
+                )
+        
         type_mapping = {
             1: [1, 4, 7],  # 图片编辑 + 图片高清放大
             2: [2, 5],  # AI视频生成 + 高清修复
-            3: [3, 6],  # 图片生成视频/图生视频智能体 + 高清修复
+            3: [3, 6, 10, 11, 12],  # 图片生成视频（Sora2、LTX2.0、Wan2.2、可灵）+ 高清修复
             4: [5, 6] # 高清修复
         }
 
-        if type in type_mapping:
+        if type_list_param:
+            # Use types parameter (comma-separated list)
+            result = AIToolsModel.list_by_user(
+                user_id=user_id,
+                page=page,
+                page_size=page_size,
+                order_by='create_time',
+                order_direction='DESC',
+                type_list=type_list_param
+            )
+        elif type in type_mapping:
             result = AIToolsModel.list_by_user(
                 user_id=user_id,
                 page=page,
@@ -1943,6 +2023,33 @@ async def get_ai_tools_history(
     except Exception as e:
         logger.error(f'查询历史记录失败: {str(e)}')
         logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
+@app.get('/api/computing-power-config')
+async def get_computing_power_config():
+    """
+    获取算力配置
+    返回各个任务类型的算力消耗配置
+    """
+    try:
+        return JSONResponse(
+            content={
+                'success': True,
+                'message': '获取成功',
+                'data': {
+                    'task_computing_power': TASK_COMPUTING_POWER
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f'获取算力配置失败: {str(e)}')
         return JSONResponse(
             status_code=500,
             content={
@@ -2295,14 +2402,15 @@ async def video_enhance(
                 "fieldValue": final_video_url,
                 "description": "video"
             }]
-            
+
             result = run_ai_app_task(
                 "1989206149524238338",  # webappId for video enhancement
                 "9549532f3c3d435ebe5e1ca78dcac1e8",  # apiKey
                 node_info_list,
                 None,
+                "plus"  # instanceType
             )
-            
+
             if result.get("code") != 0:
                 error_msg = result.get("msg", "Unknown error")
                 raise RuntimeError(f"Task submission failed: {error_msg}")

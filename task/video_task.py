@@ -15,8 +15,16 @@ from duomi_api_requset import (
     create_image_to_video,
     get_ai_task_result,
     create_text_to_image,
+    create_kling_image_to_video,
+    get_kling_task_status,
 )
-from model import TasksModel, AIToolsModel
+from runninghub_request import (
+    create_ltx2_image_to_video,
+    create_wan22_image_to_video,
+    check_ltx2_task_status,
+    TaskStatus
+)
+from model import TasksModel, AIToolsModel, RunningHubSlotsModel
 from config.constant import TASK_TYPE_GENERATE_VIDEO,AUTHENTICATION_ID
 
 logging.basicConfig(level=logging.INFO)
@@ -112,9 +120,78 @@ def _submit_new_task(ai_tool):
                 return False
             
             project_id = response.get("data", {}).get("task_id")
+    elif ai_tool_type == 10:
+        # LTX2.0 图生视频 (type=10)
+        result = create_ltx2_image_to_video(
+            image_url=ai_tool.image_path,
+            prompt=ai_tool.prompt,
+            duration=ai_tool.duration,
+            ratio=ai_tool.ratio
+        )
+        logger.info(f"Submit LTX2.0 task result: {result}")
+        
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "LTX2.0 API调用失败")
+            
+            # 特殊处理：RunningHub 队列已满错误
+            if error_msg == "TASK_QUEUE_MAXED":
+                logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
+                # 延迟60秒后重试，不增加重试计数
+                next_trigger = datetime.now() + timedelta(seconds=60)
+                TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
+                return True  # 返回True避免增加重试计数
+            
+            logger.error(f"LTX2.0 API error: {error_msg}")
+            return False
+        
+        project_id = result.get("data", {}).get("taskId")
+    elif ai_tool_type == 11:
+        # Wan2.2 图生视频 (type=11)
+        result = create_wan22_image_to_video(
+            image_url=ai_tool.image_path,
+            prompt=ai_tool.prompt,
+            duration=ai_tool.duration,
+            ratio=ai_tool.ratio,
+            quality="hd"  # 默认使用高清版
+        )
+        logger.info(f"Submit Wan2.2 task result: {result}")
+        
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Wan2.2 API调用失败")
+            
+            # 特殊处理：RunningHub 队列已满错误
+            if error_msg == "TASK_QUEUE_MAXED":
+                logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
+                # 延迟60秒后重试，不增加重试计数
+                next_trigger = datetime.now() + timedelta(seconds=60)
+                TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
+                return True  # 返回True避免增加重试计数
+            
+            logger.error(f"Wan2.2 API error: {error_msg}")
+            return False
+        
+        project_id = result.get("data", {}).get("taskId")
+    elif ai_tool_type == 12:
+        # 可灵图生视频 (type=12)
+        kling_mode = "std"
+        result = create_kling_image_to_video(
+            image_url=ai_tool.image_path,
+            prompt=ai_tool.prompt,
+            duration=ai_tool.duration,
+            mode=kling_mode
+        )
+        logger.info(f"Submit Kling task result: {result}")
+        
+        if result.get("code") != 0:
+            error_msg = result.get("message", "可灵 API调用失败")
+            logger.error(f"Kling API error: {error_msg}")
+            return False
+        
+        project_id = result.get("data", {}).get("task_id")
     elif ai_tool_type in [2, 3]:
+        # Sora2 视频生成 (type=2: 文生视频, type=3: 图生视频)
         result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
-        logger.info(f"Submit task result: {result}")
+        logger.info(f"Submit Sora2 task result: {result}")
         project_id = result.get("id")
     else:
         logger.error(f"Unsupported ai_tool_type: {ai_tool_type}")
@@ -126,6 +203,14 @@ def _submit_new_task(ai_tool):
     
     AIToolsModel.update(task_id, project_id=project_id, status=1)
     TasksModel.update_by_task_id(task_id, status=1)
+    
+    # 如果是 RunningHub 任务，更新槽位的 project_id
+    is_runninghub = ai_tool_type in [10, 11]
+    if is_runninghub:
+        task = TasksModel.get_by_task_id(task_id)
+        if task:
+            RunningHubSlotsModel.update_project_id(task.id, project_id)
+    
     logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
     return True
 
@@ -148,34 +233,96 @@ def _check_task_status(ai_tool):
         logger.error(f"AI tool {task_id} has no project_id while status=1")
         return False
 
-    is_video = ai_tool_type in [2, 3]
+    # Check if this is LTX2.0 or Wan2.2 model (type=10 or 11, both use RunningHub)
+    is_runninghub = ai_tool_type in [10, 11]
+    # Check if this is Kling model (type=12, uses Duomi API)
+    is_kling = ai_tool_type == 12
+    is_video = ai_tool_type in [2, 3, 10, 11, 12]
     
     if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] Checking status for mock task {project_id}")
     
-    result = get_ai_task_result(project_id, is_video)
-    
-    if not isinstance(result, dict):
-        logger.error(f"Unexpected task result format for project {project_id}: {result}")
-        return False
-
-    if result.get("code") != 0:
-        error_msg = result.get("msg", "Unknown error")
-        logger.error(f"Failed to get task result: {error_msg}")
-        return False
-
-    data = result.get("data", {})
-    task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-    media_url = data.get("mediaUrl")
-    reason = data.get("reason")
-
-    if task_status == 1:
-        return _handle_task_success(project_id, task_id, media_url)
-    elif task_status == 2:
-        return _handle_task_failure(project_id, task_id, ai_tool_type, reason,ai_tool.user_id)
+    if is_runninghub:
+        # LTX2.0 or Wan2.2 model - use RunningHub status check
+        try:
+            result = check_ltx2_task_status(project_id)
+            status = result.get("status")
+            
+            if status == "SUCCESS":
+                # Get video URL from results
+                results = result.get("results", [])
+                if results and len(results) > 0:
+                    media_url = results[0].file_url
+                    return _handle_task_success(project_id, task_id, media_url)
+                else:
+                    logger.error(f"LTX2.0 task {project_id} succeeded but no results")
+                    return _handle_task_failure(project_id, task_id, ai_tool_type, "No results returned", ai_tool.user_id)
+            elif status == "FAILED":
+                return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
+            else:
+                # Still processing (QUEUED or RUNNING)
+                logger.info(f"LTX2.0 task {project_id} still processing (status={status})")
+                return True
+        except Exception as e:
+            logger.error(f"Error checking LTX2.0 task status: {e}")
+            return False
+    elif is_kling:
+        # Kling model - use Kling status check
+        try:
+            result = get_kling_task_status(project_id)
+            
+            if result.get("code") != 0:
+                error_msg = result.get("message", "Unknown error")
+                logger.error(f"Failed to get Kling task status: {error_msg}")
+                return False
+            
+            data = result.get("data", {})
+            task_status = data.get("task_status")
+            
+            if task_status == "succeed":
+                # Get video URL from results
+                task_result = data.get("task_result", {})
+                videos = task_result.get("videos", [])
+                if videos and len(videos) > 0:
+                    media_url = videos[0].get("url")
+                    return _handle_task_success(project_id, task_id, media_url)
+                else:
+                    logger.error(f"Kling task {project_id} succeeded but no videos")
+                    return _handle_task_failure(project_id, task_id, ai_tool_type, "No videos returned", ai_tool.user_id)
+            elif task_status == "failed":
+                return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
+            else:
+                # Still processing
+                logger.info(f"Kling task {project_id} still processing (status={task_status})")
+                return True
+        except Exception as e:
+            logger.error(f"Error checking Kling task status: {e}")
+            return False
     else:
-        logger.info(f"Task {project_id} still processing (status={task_status})")
-        return True
+        # Sora2 or other models - use original logic
+        result = get_ai_task_result(project_id, is_video)
+        
+        if not isinstance(result, dict):
+            logger.error(f"Unexpected task result format for project {project_id}: {result}")
+            return False
+
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Unknown error")
+            logger.error(f"Failed to get task result: {error_msg}")
+            return False
+
+        data = result.get("data", {})
+        task_status = data.get("status")  # 0-进行中 1-成功 2-失败
+        media_url = data.get("mediaUrl")
+        reason = data.get("reason")
+
+        if task_status == 1:
+            return _handle_task_success(project_id, task_id, media_url)
+        elif task_status == 2:
+            return _handle_task_failure(project_id, task_id, ai_tool_type, reason,ai_tool.user_id)
+        else:
+            logger.info(f"Task {project_id} still processing (status={task_status})")
+            return True
 
 
 def _handle_task_success(project_id, task_id, media_url):
@@ -197,7 +344,11 @@ def _handle_task_success(project_id, task_id, media_url):
             status=2
         )
         TasksModel.update_by_task_id(task_id, status=2)
-        logger.info(f"Task {project_id} completed successfully")
+        
+        # 释放 RunningHub 槽位（通过 project_id）
+        RunningHubSlotsModel.release_slot_by_project_id(project_id)
+        
+        logger.info(f"Task {project_id} completed successfully, slot released")
         return True
     except Exception as db_error:
         logger.error(f"Failed to update records for success task {project_id}: {db_error}")
@@ -231,6 +382,18 @@ def _handle_task_failure(project_id, task_id, ai_tool_type, reason, user_id):
             message=reason
         )
         TasksModel.update_by_task_id(task_id, status=-1)
+        
+        # 释放 RunningHub 槽位
+        is_runninghub = ai_tool_type in [10, 11]
+        if is_runninghub:
+            if project_id:
+                RunningHubSlotsModel.release_slot_by_project_id(project_id)
+            else:
+                # 如果没有 project_id（提交失败），通过 task_id 释放
+                task = TasksModel.get_by_task_id(task_id)
+                if task:
+                    RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
+        
     except Exception as db_error:
         logger.error(f"Failed to update records for failed task {project_id}: {db_error}")
         return False
@@ -308,7 +471,7 @@ def process_generate_video(task):
 
 def process_task_with_retry(task_type, process_func):
     """
-    Generic task processing function with retry logic
+    Generic task processing function with retry logic and RunningHub concurrency control
     
     Args:
         task_type: Task type
@@ -330,10 +493,40 @@ def process_task_with_retry(task_type, process_func):
         # Loop through all tasks
         processed_count = 0
         success_count = 0
+        delayed_count = 0
         
         for task in tasks:
             try:
-                logger.info(f"Start processing task: {task.task_id}, status: {task.status}")
+                logger.info(f"Start processing task: task_id={task.task_id}, table_id={task.id}, status={task.status}")
+                
+                # 获取 AI 工具详情
+                ai_tool = AIToolsModel.get_by_id(task.task_id)
+                if not ai_tool:
+                    logger.error(f"AI tool {task.task_id} not found")
+                    continue
+                
+                is_runninghub = ai_tool.type in [10, 11]
+                
+                # 如果是 RunningHub 任务且状态为0（未提交）
+                if is_runninghub and task.status == 0:
+                    # 尝试获取槽位
+                    slot_acquired = RunningHubSlotsModel.try_acquire_slot(
+                        task_table_id=task.id,
+                        task_id=task.task_id,
+                        task_type=ai_tool.type
+                    )
+                    
+                    if not slot_acquired:
+                        # 槽位已满，延迟此任务
+                        delay_seconds = 30  # 延迟30秒
+                        next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
+                        TasksModel.update_by_task_id(
+                            task.task_id,
+                            next_trigger=next_trigger
+                        )
+                        logger.info(f"Task {task.task_id} delayed by {delay_seconds}s due to slot limit, next_trigger: {next_trigger}")
+                        delayed_count += 1
+                        continue  # 跳过此任务，处理下一个
                 
                 # Update status to 1 (处理中) if it's 0 (队列中)
                 if task.status == 0:
@@ -358,14 +551,14 @@ def process_task_with_retry(task_type, process_func):
                         try_count=new_try_count,
                         next_trigger=next_trigger
                     )
-                    logger.info(f"Task failed: {task.task_id}, retry count: {new_try_count}, status: -1 (处理失败), next trigger: {next_trigger}")
+                    logger.info(f"Task failed: {task.task_id}, retry count: {new_try_count}, next trigger: {next_trigger}")
                     
             except Exception as e:
                 logger.error(f"Error processing task {task.task_id}: {str(e)}")
                 import traceback
                 logger.error(traceback.format_exc())
                 
-        logger.info(f"Processed {processed_count} tasks, {success_count} succeeded")
+        logger.info(f"Summary: processed={processed_count}, succeeded={success_count}, delayed={delayed_count}")
         return processed_count > 0, success_count > 0
             
     except Exception as e:

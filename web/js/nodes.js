@@ -1770,7 +1770,7 @@
           prompt: '',
           duration: 15,
           ratio: state.ratio || '16:9',
-          model: 'sora',
+          videoModel: 'sora2',
           drawCount: 1,
           motionEnabled: false,
           motion: '',
@@ -1818,6 +1818,8 @@
             <select class="duration-select">
               <option value="10" selected>10秒</option>
               <option value="15">15秒</option>
+              <option value="5">5秒</option>
+              <option value="8">8秒</option>
             </select>
           </div>
           <div class="field">
@@ -1831,10 +1833,12 @@
             </select>
           </div>
           <div class="field">
-            <div class="label">模型</div>
-            <select class="model-select">
-              <option value="sora" selected>sora</option>
-              <option value="kling" disabled style="color:#999;">kling (暂未实现)</option>
+            <div class="label">视频模型</div>
+            <select class="video-model-select">
+              <option value="sora2" selected>Sora2</option>
+              <option value="ltx2">LTX2.0</option>
+              <option value="wan22">Wan2.2</option>
+              <option value="kling">可灵</option>
             </select>
           </div>
           <!-- 运镜功能暂时隐藏
@@ -1859,6 +1863,15 @@
             <div class="label">提示词</div>
             <textarea class="prompt" placeholder="请输入提示词..." rows="3"></textarea>
           </div>
+          <div class="field computing-power-field" style="padding: 6px; border-radius: 6px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: #9ca3af; font-size: 12px;">算力消耗：</span>
+              <span class="computing-power-value" style="color: #60a5fa; font-weight: bold; font-size: 14px;">0 算力</span>
+            </div>
+            <div class="computing-power-detail" style="margin-top: 4px; font-size: 11px; color: #6b7280;">
+              单个 0 算力 × 1 个 = 0 算力
+            </div>
+          </div>
           <div class="field">
             <div class="label">生成视频</div>
             <div class="gen-container">
@@ -1882,7 +1895,7 @@
       const promptEl = el.querySelector('.prompt');
       const durationSelect = el.querySelector('.duration-select');
       const ratioSelect = el.querySelector('.ratio-select');
-      const modelSelect = el.querySelector('.model-select');
+      const videoModelSelect = el.querySelector('.video-model-select');
       // 运镜功能暂时隐藏，相关元素不存在
       // const motionEnableEl = el.querySelector('.motion-enable');
       // const motionOptionsEl = el.querySelector('.motion-options');
@@ -1894,6 +1907,8 @@
       const genMenu = el.querySelector('.gen-menu');
       const genCountLabel = el.querySelector('.gen-count-label');
       const genStatus = el.querySelector('.gen-status');
+      const computingPowerValue = el.querySelector('.computing-power-value');
+      const computingPowerDetail = el.querySelector('.computing-power-detail');
       const outputPort = el.querySelector('.port.output');
       const startImagePort = el.querySelector('.start-image-port');
       const endImagePort = el.querySelector('.end-image-port');
@@ -1904,8 +1919,64 @@
         state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
       });
 
+      // 初始化videoModel
+      if(!node.data.videoModel){
+        node.data.videoModel = 'sora2';
+      }
+      
+      // 计算算力消耗
+      function calculateComputingPower() {
+        const config = getTaskComputingPowerConfig();
+        if(!config || Object.keys(config).length === 0) {
+          return 0;
+        }
+        
+        let power = 0;
+        const videoModel = node.data.videoModel || 'sora2';
+        const duration = node.data.duration || 10;
+        
+        if(videoModel === 'sora2') {
+          power = config[3] || 0;  // type=3: Sora2 图生视频
+        } else if(videoModel === 'ltx2') {
+          power = config[10] || 0;  // type=10: LTX2.0 图生视频
+        } else if(videoModel === 'wan22') {
+          // type=11: Wan2.2根据时长区分算力
+          const wan22Power = config[11];
+          if(typeof wan22Power === 'object') {
+            power = wan22Power[duration] || wan22Power[5] || 0;
+          } else {
+            power = wan22Power || 0;
+          }
+        } else if(videoModel === 'kling') {
+          // type=12: 可灵根据时长区分算力
+          const klingPower = config[12];
+          if(typeof klingPower === 'object') {
+            power = klingPower[duration] || klingPower[5] || 0;
+          } else {
+            power = klingPower || 0;
+          }
+        }
+        
+        return power;
+      }
+      
+      // 更新算力显示
+      function updateComputingPowerDisplay() {
+        const singlePower = calculateComputingPower();
+        const count = node.data.drawCount || 1;
+        const totalPower = singlePower * count;
+        
+        if(computingPowerValue) {
+          computingPowerValue.textContent = `${totalPower} 算力`;
+        }
+        if(computingPowerDetail) {
+          computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
+        }
+      }
+      
       durationSelect.addEventListener('change', () => {
         node.data.duration = Number(durationSelect.value);
+        updateComputingPowerDisplay();
       });
 
       ratioSelect.value = node.data.ratio;
@@ -1913,45 +1984,79 @@
         node.data.ratio = ratioSelect.value;
       });
 
-      // 根据模型更新比例选项
-      function updateRatioOptions(model) {
-        const currentRatio = ratioSelect.value;
-        ratioSelect.innerHTML = '';
+      // 根据模型更新时长选项
+      function updateDurationOptions(videoModel) {
+        const currentDuration = durationSelect.value;
+        durationSelect.innerHTML = '';
         
-        if(model === 'sora') {
-          // sora只支持16:9和9:16
-          ratioSelect.innerHTML = `
-            <option value="9:16">9:16</option>
-            <option value="16:9">16:9</option>
+        if(videoModel === 'ltx2') {
+          // LTX2.0: 5, 8, 10秒
+          durationSelect.innerHTML = `
+            <option value="5">5秒 (121帧)</option>
+            <option value="8">8秒 (201帧)</option>
+            <option value="10">10秒 (241帧)</option>
           `;
-          // 如果当前比例不在支持列表中，默认使用16:9
-          if(currentRatio !== '9:16' && currentRatio !== '16:9') {
-            ratioSelect.value = '16:9';
-            node.data.ratio = '16:9';
+          if(![5, 8, 10].includes(Number(currentDuration))) {
+            durationSelect.value = '5';
+            node.data.duration = 5;
           } else {
-            ratioSelect.value = currentRatio;
+            durationSelect.value = currentDuration;
+          }
+        } else if(videoModel === 'wan22' || videoModel === 'kling') {
+          // Wan2.2 和可灵: 5, 10秒
+          durationSelect.innerHTML = `
+            <option value="5">5秒</option>
+            <option value="10">10秒</option>
+          `;
+          if(![5, 10].includes(Number(currentDuration))) {
+            durationSelect.value = '5';
+            node.data.duration = 5;
+          } else {
+            durationSelect.value = currentDuration;
           }
         } else {
-          // 其他模型支持所有比例
-          ratioSelect.innerHTML = `
-            <option value="9:16">9:16</option>
-            <option value="3:4">3:4</option>
-            <option value="1:1">1:1</option>
-            <option value="4:3">4:3</option>
-            <option value="16:9">16:9</option>
+          // Sora2: 10, 15秒
+          durationSelect.innerHTML = `
+            <option value="10">10秒</option>
+            <option value="15">15秒</option>
           `;
+          if(![10, 15].includes(Number(currentDuration))) {
+            durationSelect.value = '10';
+            node.data.duration = 10;
+          } else {
+            durationSelect.value = currentDuration;
+          }
+        }
+      }
+      
+      // 根据模型更新比例选项（所有模型都只支持16:9和9:16）
+      function updateRatioOptions(videoModel) {
+        const currentRatio = ratioSelect.value;
+        ratioSelect.innerHTML = `
+          <option value="9:16">9:16 (竖屏)</option>
+          <option value="16:9">16:9 (横屏)</option>
+        `;
+        // 如果当前比例不在支持列表中，默认使用16:9
+        if(currentRatio !== '9:16' && currentRatio !== '16:9') {
+          ratioSelect.value = '16:9';
+          node.data.ratio = '16:9';
+        } else {
           ratioSelect.value = currentRatio;
         }
       }
       
-      modelSelect.value = node.data.model;
-      // 初始化时根据模型设置比例选项
-      updateRatioOptions(node.data.model);
+      videoModelSelect.value = node.data.videoModel;
+      // 初始化时根据模型设置时长和比例选项
+      updateDurationOptions(node.data.videoModel);
+      updateRatioOptions(node.data.videoModel);
       
-      modelSelect.addEventListener('change', () => {
-        node.data.model = modelSelect.value;
-        // 模型改变时更新比例选项
-        updateRatioOptions(modelSelect.value);
+      videoModelSelect.addEventListener('change', () => {
+        node.data.videoModel = videoModelSelect.value;
+        // 模型改变时更新时长和比例选项
+        updateDurationOptions(videoModelSelect.value);
+        updateRatioOptions(videoModelSelect.value);
+        // 更新算力显示
+        updateComputingPowerDisplay();
       });
 
       /* 运镜功能暂时隐藏
@@ -2035,6 +2140,8 @@
 
       function updateGenMeta(){
         genCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
+        // 同时更新算力显示
+        updateComputingPowerDisplay();
       }
       updateGenMeta();
 
@@ -2052,6 +2159,9 @@
           genMenu.classList.remove('show');
         });
       }
+      
+      // 初始化算力显示
+      updateComputingPowerDisplay();
 
       document.addEventListener('click', (e) => {
         if(!e.target.closest('.gen-container')){
@@ -2095,11 +2205,12 @@
           const duration = node.data.duration || 10;
           const prompt = node.data.prompt || '';
           const ratio = node.data.ratio || state.ratio || '9:16';
+          const videoModel = node.data.videoModel || 'sora2';
           
-          console.log('[DEBUG] 生成视频参数:', { drawCount: node.data.drawCount, desiredCount, duration, prompt, ratio });
+          console.log('[DEBUG] 生成视频参数:', { drawCount: node.data.drawCount, desiredCount, duration, prompt, ratio, videoModel });
 
           // 调用生成API
-          const result = await generateVideoFromImage(startImageUrl, prompt, duration, desiredCount, ratio);
+          const result = await generateVideoFromImage(startImageUrl, prompt, duration, desiredCount, ratio, videoModel);
           console.log('[DEBUG] API返回:', { projectIds: result.projectIds, count: result.projectIds?.length });
           
           genStatus.textContent = '任务已提交，正在生成视频...';
@@ -2255,6 +2366,11 @@
                 genStatus.style.color = '#dc2626';
                 genStatus.textContent = '生成完成但未获取到有效结果';
                 showToast('生成完成但未获取到有效结果', 'error');
+              }
+              
+              // 刷新用户算力显示
+              if(typeof fetchComputingPower === 'function'){
+                fetchComputingPower();
               }
             },
             (errorMsg) => {
@@ -2877,6 +2993,11 @@
               try{ autoSaveWorkflow(); } catch(e){}
               renderMinimap();
               showToast('图片编辑成功！', 'success');
+              
+              // 刷新用户算力显示
+              if(typeof fetchComputingPower === 'function'){
+                fetchComputingPower();
+              }
             },
             (errMsg) => {
               statusEl.style.color = '#dc2626';
@@ -3798,6 +3919,7 @@
           previewImageUrl: '',
           videoDrawCount: 1,
           videoDuration: 15,
+          videoModel: 'sora2',
         }
       };
       state.nodes.push(node);
@@ -3874,16 +3996,21 @@
             <img class="shot-frame-preview-image" src="${node.data.previewImageUrl || ''}" style="width: 100%; border-radius: 6px; cursor: pointer; display: ${node.data.previewImageUrl ? 'block' : 'none'};" />
           </div>
           <div class="field">
+            <div class="label">视频模型</div>
+            <select class="shot-frame-video-model">
+              <option value="sora2" selected>Sora2</option>
+              <option value="ltx2">LTX2.0</option>
+              <option value="wan22">Wan2.2</option>
+              <option value="kling">可灵</option>
+            </select>
+          </div>
+          <div class="field">
             <div class="label">视频时长</div>
             <select class="shot-frame-video-duration">
               <option value="10">10秒</option>
               <option value="15" selected>15秒</option>
-            </select>
-          </div>
-          <div class="field">
-            <div class="label">视频模型</div>
-            <select class="shot-frame-video-model">
-              <option value="sora">Sora</option>
+              <option value="5">5秒</option>
+              <option value="8">8秒</option>
             </select>
           </div>
           <div class="field">
@@ -3900,6 +4027,15 @@
               </div>
             </div>
             <div class="gen-meta shot-frame-video-draw-count-label"></div>
+            <div class="shot-frame-computing-power" style="margin-top: 6px; padding: 6px; border-radius: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #9ca3af; font-size: 11px;">算力消耗：</span>
+                <span class="shot-frame-computing-power-value" style="color: #60a5fa; font-weight: bold; font-size: 12px;">0 算力</span>
+              </div>
+              <div class="shot-frame-computing-power-detail" style="margin-top: 2px; font-size: 10px; color: #6b7280;">
+                单个 0 算力 × 1 个 = 0 算力
+              </div>
+            </div>
             <div class="shot-frame-video-error" style="display: none; margin-top: 8px; padding: 8px; background: #fee; border: 1px solid #fcc; border-radius: 6px; color: #c33; font-size: 12px; word-break: break-word;"></div>
           </div>
         </div>
@@ -3932,9 +4068,65 @@
       const firstFramePort = el.querySelector('.first-frame-port');
       const videoDurationEl = el.querySelector('.shot-frame-video-duration');
       const videoModelEl = el.querySelector('.shot-frame-video-model');
+      const computingPowerValue = el.querySelector('.shot-frame-computing-power-value');
+      const computingPowerDetail = el.querySelector('.shot-frame-computing-power-detail');
 
       // 设置模型选择器的初始值
       if(modelEl) modelEl.value = node.data.model;
+      
+      // 设置视频模型选择器的初始值
+      if(!node.data.videoModel){
+        node.data.videoModel = 'sora2';
+      }
+      if(videoModelEl) videoModelEl.value = node.data.videoModel;
+      
+      // 根据模型更新时长选项
+      function updateVideoDurationOptions(videoModel) {
+        const currentDuration = videoDurationEl.value;
+        videoDurationEl.innerHTML = '';
+        
+        if(videoModel === 'ltx2') {
+          // LTX2.0: 5, 8, 10秒
+          videoDurationEl.innerHTML = `
+            <option value="5">5秒 (121帧)</option>
+            <option value="8">8秒 (201帧)</option>
+            <option value="10">10秒 (241帧)</option>
+          `;
+          if(![5, 8, 10].includes(Number(currentDuration))) {
+            videoDurationEl.value = '5';
+            node.data.videoDuration = 5;
+          } else {
+            videoDurationEl.value = currentDuration;
+          }
+        } else if(videoModel === 'wan22' || videoModel === 'kling') {
+          // Wan2.2 和可灵: 5, 10秒
+          videoDurationEl.innerHTML = `
+            <option value="5">5秒</option>
+            <option value="10">10秒</option>
+          `;
+          if(![5, 10].includes(Number(currentDuration))) {
+            videoDurationEl.value = '5';
+            node.data.videoDuration = 5;
+          } else {
+            videoDurationEl.value = currentDuration;
+          }
+        } else {
+          // Sora2: 10, 15秒
+          videoDurationEl.innerHTML = `
+            <option value="10">10秒</option>
+            <option value="15">15秒</option>
+          `;
+          if(![10, 15].includes(Number(currentDuration))) {
+            videoDurationEl.value = '10';
+            node.data.videoDuration = 10;
+          } else {
+            videoDurationEl.value = currentDuration;
+          }
+        }
+      }
+      
+      // 初始化时根据模型设置时长选项
+      updateVideoDurationOptions(node.data.videoModel);
       
       // 设置视频时长选择器的初始值
       if(!node.data.videoDuration){
@@ -3942,11 +4134,55 @@
       }
       if(videoDurationEl) videoDurationEl.value = node.data.videoDuration;
       
-      // 设置视频模型选择器的初始值
-      if(!node.data.videoModel){
-        node.data.videoModel = 'sora';
+      // 计算视频生成算力消耗
+      function calculateVideoComputingPower() {
+        const config = getTaskComputingPowerConfig();
+        if(!config || Object.keys(config).length === 0) {
+          return 0;
+        }
+        
+        let power = 0;
+        const videoModel = node.data.videoModel || 'sora2';
+        const duration = node.data.videoDuration || 10;
+        
+        if(videoModel === 'sora2') {
+          power = config[3] || 0;  // type=3: Sora2 图生视频
+        } else if(videoModel === 'ltx2') {
+          power = config[10] || 0;  // type=10: LTX2.0 图生视频
+        } else if(videoModel === 'wan22') {
+          // type=11: Wan2.2根据时长区分算力
+          const wan22Power = config[11];
+          if(typeof wan22Power === 'object') {
+            power = wan22Power[duration] || wan22Power[5] || 0;
+          } else {
+            power = wan22Power || 0;
+          }
+        } else if(videoModel === 'kling') {
+          // type=12: 可灵根据时长区分算力
+          const klingPower = config[12];
+          if(typeof klingPower === 'object') {
+            power = klingPower[duration] || klingPower[5] || 0;
+          } else {
+            power = klingPower || 0;
+          }
+        }
+        
+        return power;
       }
-      if(videoModelEl) videoModelEl.value = node.data.videoModel;
+      
+      // 更新视频算力显示
+      function updateVideoComputingPowerDisplay() {
+        const singlePower = calculateVideoComputingPower();
+        const count = node.data.videoDrawCount || 1;
+        const totalPower = singlePower * count;
+        
+        if(computingPowerValue) {
+          computingPowerValue.textContent = `${totalPower} 算力`;
+        }
+        if(computingPowerDetail) {
+          computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
+        }
+      }
 
       // 初始化抽卡次数
       if(!node.data.drawCount){
@@ -3963,8 +4199,13 @@
 
       function updateVideoDrawCountLabel(){
         videoDrawCountLabel.textContent = `抽卡次数：X${node.data.videoDrawCount}`;
+        // 同时更新算力显示
+        updateVideoComputingPowerDisplay();
       }
       updateVideoDrawCountLabel();
+      
+      // 初始化算力显示
+      updateVideoComputingPowerDisplay();
 
       // 获取所有连接的图片节点（包括输出端口连接的和首帧连接的）
       function getConnectedImageNodes(){
@@ -4112,11 +4353,17 @@
       // 视频时长选择
       videoDurationEl.addEventListener('change', () => {
         node.data.videoDuration = Number(videoDurationEl.value);
+        // 更新算力显示
+        updateVideoComputingPowerDisplay();
       });
       
       // 视频模型选择
       videoModelEl.addEventListener('change', () => {
         node.data.videoModel = videoModelEl.value;
+        // 模型改变时更新时长选项
+        updateVideoDurationOptions(videoModelEl.value);
+        // 更新算力显示
+        updateVideoComputingPowerDisplay();
       });
 
       // 抽卡次数选择
