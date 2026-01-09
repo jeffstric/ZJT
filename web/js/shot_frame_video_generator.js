@@ -86,11 +86,11 @@ async function generateShotFrameVideo(nodeId, node){
     let videoPrompt = node.data.videoPromptText || node.data.videoPrompt || '';
     const duration = node.data.videoDuration || 15;
     const count = node.data.videoDrawCount || 1;
-    const videoModel = node.data.videoModel || 'sora';
+    const videoModel = node.data.videoModel || 'sora2';
     
     // 如果是Sora模型,需要替换提示词中的角色标记
     // 注意: 图生视频模式下禁用角色卡替换,因为效果不佳。等后期支持文生视频时再启用
-    // if(videoModel === 'sora'){
+    // if(videoModel === 'sora2'){
     //   videoPrompt = await replaceCharacterMarkers(videoPrompt);
     // }
     
@@ -116,6 +116,7 @@ async function generateShotFrameVideo(nodeId, node){
     form.append('duration_seconds', duration);
     form.append('count', count);
     form.append('ratio', '16:9');
+    form.append('video_model', videoModel);
     
     if(userId){
       form.append('user_id', userId);
@@ -226,6 +227,11 @@ async function generateShotFrameVideo(nodeId, node){
         generateBtn.disabled = false;
         generateBtn.textContent = '生成视频';
         showToast(`分镜视频生成成功！已创建 ${videoUrls.length} 个视频节点`, 'success');
+        
+        // 刷新用户算力显示
+        if(typeof fetchComputingPower === 'function'){
+          fetchComputingPower();
+        }
         
         try{ autoSaveWorkflow(); } catch(e){ console.error('Auto save failed:', e); }
       },
