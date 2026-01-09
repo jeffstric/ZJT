@@ -177,7 +177,7 @@ def _submit_new_task(ai_tool):
             image_url=ai_tool.image_path,
             prompt=ai_tool.prompt,
             duration=ai_tool.duration,
-            mode="kling-v2-5-turbo"  # 默认使用标准模式
+            mode="std"
         )
         logger.info(f"Submit Kling task result: {result}")
         
