@@ -2502,6 +2502,7 @@
       return {
         files: [],
         prompt: '',
+        videoModel: 'sora2',
         model: '9:16',
         durationSeconds: 15,
         count: 1,
@@ -2520,11 +2521,35 @@
         historyTotal: 0,
         enhancingVideos: {},  // Track enhancement status by index
         enhanceTaskIds: {},   // Track enhancement task IDs by index
+        taskComputingPower: {}  // 从接口获取的算力配置
       }
     },
     mounted() {
       // Get auth_token from localStorage (set by App component)
       this.authToken = localStorage.getItem('auth_token') || '';
+      // 获取算力配置
+      this.fetchComputingPowerConfig();
+    },
+    watch: {
+      videoModel(newModel, oldModel) {
+        // 当切换模型时，自动设置合适的默认时长
+        if (newModel === 'ltx2') {
+          // LTX2.0: 5, 8, 10秒
+          if (![5, 8, 10].includes(this.durationSeconds)) {
+            this.durationSeconds = 5;
+          }
+        } else if (newModel === 'wan22' || newModel === 'kling') {
+          // Wan2.2 和可灵: 5, 10秒
+          if (![5, 10].includes(this.durationSeconds)) {
+            this.durationSeconds = 5;
+          }
+        } else {
+          // Sora2: 10, 15秒
+          if (![10, 15].includes(this.durationSeconds)) {
+            this.durationSeconds = 10;
+          }
+        }
+      }
     },
     computed: {
       canSubmit() { return this.files.length > 0 && this.files.length <= 5 && !!this.prompt.trim() && !this.loading },
@@ -2533,13 +2558,35 @@
         if (this.loading) return '正在生成视频，请稍候...';
         return '';
       },
+      videoModelOptions() {
+        return [
+          { value: 'sora2', label: 'Sora2' },
+          { value: 'ltx2', label: 'LTX2.0' },
+          { value: 'wan22', label: 'Wan2.2' },
+          { value: 'kling', label: '可灵' }
+        ];
+      },
       modelOptions() {
+        // Wan2.2、LTX2.0、Sora2、可灵都只支持横屏和竖屏
         return [
           { value: '9:16', label: '竖屏' },
           { value: '16:9', label: '横屏' }
         ];
       },
       durationOptions() {
+        if (this.videoModel === 'ltx2') {
+          return [
+            { value: 5, label: '5秒 (121帧)' },
+            { value: 8, label: '8秒 (201帧)' },
+            { value: 10, label: '10秒 (241帧)' }
+          ];
+        }
+        if (this.videoModel === 'wan22' || this.videoModel === 'kling') {
+          return [
+            { value: 5, label: '5秒' },
+            { value: 10, label: '10秒' }
+          ];
+        }
         return [
           { value: 10, label: '10秒' },
           { value: 15, label: '15秒' }
@@ -2552,9 +2599,56 @@
           { value: 3, label: '3个' },
           { value: 4, label: '4个' }
         ];
+      },
+      computingPower() {
+        // 计算单个任务的算力消耗（从接口获取的配置）
+        if (!this.taskComputingPower || Object.keys(this.taskComputingPower).length === 0) {
+          return 0;  // 配置未加载时返回0
+        }
+        
+        let power = 0;
+        if (this.videoModel === 'sora2') {
+          power = this.taskComputingPower[3] || 0;  // type=3: Sora2 图生视频
+        } else if (this.videoModel === 'ltx2') {
+          power = this.taskComputingPower[10] || 0;  // type=10: LTX2.0 图生视频
+        } else if (this.videoModel === 'wan22') {
+          // type=11: Wan2.2根据时长区分算力
+          const wan22Power = this.taskComputingPower[11];
+          if (typeof wan22Power === 'object') {
+            power = wan22Power[this.durationSeconds] || wan22Power[5] || 0;
+          } else {
+            power = wan22Power || 0;
+          }
+        } else if (this.videoModel === 'kling') {
+          // type=12: 可灵根据时长区分算力
+          const klingPower = this.taskComputingPower[12];
+          if (typeof klingPower === 'object') {
+            power = klingPower[this.durationSeconds] || klingPower[5] || 0;
+          } else {
+            power = klingPower || 0;
+          }
+        }
+        return power;
+      },
+      totalComputingPower() {
+        // 总算力 = 单个算力 × 生成数量
+        return this.computingPower * this.count;
       }
     },
     methods: {
+      async fetchComputingPowerConfig() {
+        try {
+          const response = await axios.get('/api/computing-power-config');
+          if (response.data.success) {
+            this.taskComputingPower = response.data.data.task_computing_power;
+          } else {
+            console.error('获取算力配置失败:', response.data.message);
+          }
+        } catch (error) {
+          console.error('获取算力配置异常:', error);
+        }
+      },
+      
       getDurationText(item) {
         const duration = item?.original_duration ?? item?.duration ?? item?.video_duration ?? (typeof this.durationSeconds === 'number' ? this.durationSeconds : null);
         return duration ? `${duration}秒` : '未知';
@@ -2671,6 +2765,7 @@
             form.append('images', file);
           });
           form.append('prompt', this.prompt);
+          form.append('video_model', this.videoModel);
           form.append('ratio', this.model);
           form.append('duration_seconds', this.durationSeconds);
           form.append('count', this.count);
@@ -2906,8 +3001,11 @@
       
        getHistoryTypeText(type) {
         const typeMap = {
-        3: '图片生成视频',
-        6: '模糊视频高清放大'
+        3: '图片生成视频 (Sora2)',
+        6: '模糊视频高清放大',
+        10: '图片生成视频 (LTX2.0)',
+        11: '图片生成视频 (Wan2.2)',
+        12: '图片生成视频 (可灵)'
         };
         return typeMap[type] || '未知类型';
         },
@@ -2954,10 +3052,19 @@
           <div class="field">
             <label class="label">视频提示词</label>
             <textarea class="textarea" v-model.trim="prompt" placeholder="请输入视频内容描述，例如：让图片中的人物动起来..."></textarea>
-            <div class="muted" style="margin-top:6px; color: #fca5a5;">⚠️ 注意：1 不要有 有拟人化的内容  2 不要侵犯版权</div>
+            <div class="muted" v-if="videoModel === 'sora2'" style="margin-top:6px; color: #fca5a5;">⚠️ 注意：1 不要有 有拟人化的内容  2 不要侵犯版权</div>
           </div>
 
           <div class="field">
+            <label class="label">视频模型</label>
+            <select class="input" v-model="videoModel">
+              <option v-for="opt in videoModelOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field" v-if="videoModel === 'sora2' || videoModel === 'ltx2' || videoModel === 'wan22' || videoModel === 'kling'">
             <label class="label">视频模式</label>
             <select class="input" v-model="model">
               <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">
@@ -2980,6 +3087,16 @@
             <select class="input" v-model.number="count">
               <option v-for="opt in countOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
+          </div>
+
+          <div class="field" style="background: #1a1f2e; padding: 12px; border-radius: 8px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: var(--muted); font-size: 14px;">算力消耗：</span>
+              <span style="color: #60a5fa; font-weight: bold; font-size: 16px;">{{ totalComputingPower }} 算力</span>
+            </div>
+            <div style="margin-top: 6px; font-size: 12px; color: var(--muted);">
+              单个 {{ computingPower }} 算力 × {{ count }} 个 = {{ totalComputingPower }} 算力
+            </div>
           </div>
 
           <div class="field">
@@ -3429,7 +3546,7 @@
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              type: 2,  // 2-AI视频生成, 5-视频高清修复
+              types: '3,10,11,12',  // 3-Sora2图生视频, 10-LTX2.0, 11-Wan2.2, 12-可灵
               auth_token: authToken || undefined
             }
           });
@@ -4134,8 +4251,11 @@
 
       getHistoryTypeText(type) {
         const typeMap = {
-          3: '图片生成视频',
-          6: '模糊视频高清放大'
+          3: '图片生成视频 (Sora2)',
+          6: '模糊视频高清放大',
+          10: '图片生成视频 (LTX2.0)',
+          11: '图片生成视频 (Wan2.2)',
+          12: '图片生成视频 (可灵)'
         };
         return typeMap[type] || '未知类型';
       },

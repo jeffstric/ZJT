@@ -15,6 +15,14 @@ from duomi_api_requset import (
     create_image_to_video,
     get_ai_task_result,
     create_text_to_image,
+    create_kling_image_to_video,
+    get_kling_task_status,
+)
+from runninghub_request import (
+    create_ltx2_image_to_video,
+    create_wan22_image_to_video,
+    check_ltx2_task_status,
+    TaskStatus
 )
 from model import TasksModel, AIToolsModel
 from config.constant import TASK_TYPE_GENERATE_VIDEO,AUTHENTICATION_ID
@@ -112,9 +120,59 @@ def _submit_new_task(ai_tool):
                 return False
             
             project_id = response.get("data", {}).get("task_id")
+    elif ai_tool_type == 10:
+        # LTX2.0 图生视频 (type=10)
+        result = create_ltx2_image_to_video(
+            image_url=ai_tool.image_path,
+            prompt=ai_tool.prompt,
+            duration=ai_tool.duration,
+            ratio=ai_tool.ratio
+        )
+        logger.info(f"Submit LTX2.0 task result: {result}")
+        
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "LTX2.0 API调用失败")
+            logger.error(f"LTX2.0 API error: {error_msg}")
+            return False
+        
+        project_id = result.get("data", {}).get("taskId")
+    elif ai_tool_type == 11:
+        # Wan2.2 图生视频 (type=11)
+        result = create_wan22_image_to_video(
+            image_url=ai_tool.image_path,
+            prompt=ai_tool.prompt,
+            duration=ai_tool.duration,
+            ratio=ai_tool.ratio,
+            quality="hd"  # 默认使用高清版
+        )
+        logger.info(f"Submit Wan2.2 task result: {result}")
+        
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Wan2.2 API调用失败")
+            logger.error(f"Wan2.2 API error: {error_msg}")
+            return False
+        
+        project_id = result.get("data", {}).get("taskId")
+    elif ai_tool_type == 12:
+        # 可灵图生视频 (type=12)
+        result = create_kling_image_to_video(
+            image_url=ai_tool.image_path,
+            prompt=ai_tool.prompt,
+            duration=ai_tool.duration,
+            mode="kling-v2-5-turbo"  # 默认使用标准模式
+        )
+        logger.info(f"Submit Kling task result: {result}")
+        
+        if result.get("code") != 0:
+            error_msg = result.get("message", "可灵 API调用失败")
+            logger.error(f"Kling API error: {error_msg}")
+            return False
+        
+        project_id = result.get("data", {}).get("task_id")
     elif ai_tool_type in [2, 3]:
+        # Sora2 视频生成 (type=2: 文生视频, type=3: 图生视频)
         result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
-        logger.info(f"Submit task result: {result}")
+        logger.info(f"Submit Sora2 task result: {result}")
         project_id = result.get("id")
     else:
         logger.error(f"Unsupported ai_tool_type: {ai_tool_type}")
@@ -148,34 +206,96 @@ def _check_task_status(ai_tool):
         logger.error(f"AI tool {task_id} has no project_id while status=1")
         return False
 
-    is_video = ai_tool_type in [2, 3]
+    # Check if this is LTX2.0 or Wan2.2 model (type=10 or 11, both use RunningHub)
+    is_runninghub = ai_tool_type in [10, 11]
+    # Check if this is Kling model (type=12, uses Duomi API)
+    is_kling = ai_tool_type == 12
+    is_video = ai_tool_type in [2, 3, 10, 11, 12]
     
     if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] Checking status for mock task {project_id}")
     
-    result = get_ai_task_result(project_id, is_video)
-    
-    if not isinstance(result, dict):
-        logger.error(f"Unexpected task result format for project {project_id}: {result}")
-        return False
-
-    if result.get("code") != 0:
-        error_msg = result.get("msg", "Unknown error")
-        logger.error(f"Failed to get task result: {error_msg}")
-        return False
-
-    data = result.get("data", {})
-    task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-    media_url = data.get("mediaUrl")
-    reason = data.get("reason")
-
-    if task_status == 1:
-        return _handle_task_success(project_id, task_id, media_url)
-    elif task_status == 2:
-        return _handle_task_failure(project_id, task_id, ai_tool_type, reason,ai_tool.user_id)
+    if is_runninghub:
+        # LTX2.0 or Wan2.2 model - use RunningHub status check
+        try:
+            result = check_ltx2_task_status(project_id)
+            status = result.get("status")
+            
+            if status == "SUCCESS":
+                # Get video URL from results
+                results = result.get("results", [])
+                if results and len(results) > 0:
+                    media_url = results[0].file_url
+                    return _handle_task_success(project_id, task_id, media_url)
+                else:
+                    logger.error(f"LTX2.0 task {project_id} succeeded but no results")
+                    return _handle_task_failure(project_id, task_id, ai_tool_type, "No results returned", ai_tool.user_id)
+            elif status == "FAILED":
+                return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
+            else:
+                # Still processing (QUEUED or RUNNING)
+                logger.info(f"LTX2.0 task {project_id} still processing (status={status})")
+                return True
+        except Exception as e:
+            logger.error(f"Error checking LTX2.0 task status: {e}")
+            return False
+    elif is_kling:
+        # Kling model - use Kling status check
+        try:
+            result = get_kling_task_status(project_id)
+            
+            if result.get("code") != 0:
+                error_msg = result.get("message", "Unknown error")
+                logger.error(f"Failed to get Kling task status: {error_msg}")
+                return False
+            
+            data = result.get("data", {})
+            task_status = data.get("task_status")
+            
+            if task_status == "succeed":
+                # Get video URL from results
+                task_result = data.get("task_result", {})
+                videos = task_result.get("videos", [])
+                if videos and len(videos) > 0:
+                    media_url = videos[0].get("url")
+                    return _handle_task_success(project_id, task_id, media_url)
+                else:
+                    logger.error(f"Kling task {project_id} succeeded but no videos")
+                    return _handle_task_failure(project_id, task_id, ai_tool_type, "No videos returned", ai_tool.user_id)
+            elif task_status == "failed":
+                return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
+            else:
+                # Still processing
+                logger.info(f"Kling task {project_id} still processing (status={task_status})")
+                return True
+        except Exception as e:
+            logger.error(f"Error checking Kling task status: {e}")
+            return False
     else:
-        logger.info(f"Task {project_id} still processing (status={task_status})")
-        return True
+        # Sora2 or other models - use original logic
+        result = get_ai_task_result(project_id, is_video)
+        
+        if not isinstance(result, dict):
+            logger.error(f"Unexpected task result format for project {project_id}: {result}")
+            return False
+
+        if result.get("code") != 0:
+            error_msg = result.get("msg", "Unknown error")
+            logger.error(f"Failed to get task result: {error_msg}")
+            return False
+
+        data = result.get("data", {})
+        task_status = data.get("status")  # 0-进行中 1-成功 2-失败
+        media_url = data.get("mediaUrl")
+        reason = data.get("reason")
+
+        if task_status == 1:
+            return _handle_task_success(project_id, task_id, media_url)
+        elif task_status == 2:
+            return _handle_task_failure(project_id, task_id, ai_tool_type, reason,ai_tool.user_id)
+        else:
+            logger.info(f"Task {project_id} still processing (status={task_status})")
+            return True
 
 
 def _handle_task_success(project_id, task_id, media_url):

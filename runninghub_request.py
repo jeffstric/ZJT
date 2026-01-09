@@ -2,10 +2,14 @@ import requests
 import yaml
 import time
 import os
+import json
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 from config_util import get_config_path
+from logger_config import setup_logger
+
+logger = setup_logger(__name__)
 
 class TaskStatus(Enum):
     QUEUED = "QUEUED"
@@ -346,7 +350,8 @@ def run_ai_app_task(
     webapp_id: str,
     api_key: str,
     node_info_list: List[Dict[str, str]],
-    config_path: str = None
+    config_path: str = None,
+    instance_type: str = "plus"
 ) -> Dict[str, Any]:
     """
     Run AI app task using the ai-app/run endpoint
@@ -356,6 +361,7 @@ def run_ai_app_task(
         api_key: API key for authentication
         node_info_list: List of node information dictionaries with nodeId, fieldName, fieldValue, etc.
         config_path: Path to configuration file (default: auto-detect based on comfyui_env)
+        instance_type: Instance type for the task (default: "plus")
         
     Returns:
         API response as dictionary
@@ -386,8 +392,13 @@ def run_ai_app_task(
     payload = {
         "webappId": webapp_id,
         "apiKey": api_key,
+        "instanceType": instance_type,
         "nodeInfoList": node_info_list
     }
+    
+    # 记录请求日志
+    logger.info(f"[RunningHub API] Request URL: {url}")
+    logger.info(f"[RunningHub API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
         response = requests.post(
@@ -399,6 +410,9 @@ def run_ai_app_task(
         response.raise_for_status()
         
         result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[RunningHub API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
         
         # Return result directly, let caller handle code != 0
         return result
@@ -475,6 +489,264 @@ def run_ai_app_task_sync(
         
         # Still running or queued, wait before checking again
         time.sleep(check_interval)
+
+
+def create_ltx2_image_to_video(
+    image_url: str,
+    prompt: str,
+    duration: int = 5,
+    ratio: str = "9:16",
+    webapp_id: str = "2008785848120119297",
+    api_key: str = None,
+    config_path: str = None,
+    instance_type: str = "plus"
+) -> Dict[str, Any]:
+    """
+    Create LTX2.0 image to video task (async, returns task_id immediately)
+    
+    Args:
+        image_url: URL of the input image
+        prompt: Text prompt for video generation
+        duration: Video duration in seconds (5, 8, 10)
+        ratio: Video aspect ratio ("9:16" for vertical, "16:9" for horizontal)
+        webapp_id: The webapp ID for LTX2.0 (default: "2008785848120119297")
+        api_key: API key for authentication (default: from config)
+        config_path: Path to configuration file (default: auto-detect)
+        instance_type: Instance type for the task (default: "plus")
+        
+    Returns:
+        API response with task_id
+        
+    Raises:
+        requests.RequestException: If request fails
+        ValueError: If response format is invalid
+    """
+    # Auto-detect config file if not specified
+    if config_path is None:
+        config_path = get_config_path()
+    
+    # Load API key from config if not provided
+    if api_key is None:
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        api_key = config["runninghub"]["api_key"]
+    
+    # Determine width and height based on ratio
+    if ratio == "16:9":
+        width = 1280
+        height = 720
+    else:  # Default to 9:16
+        width = 720
+        height = 1280
+    
+    # Build node info list for LTX2.0
+    node_info_list = [
+        {
+            "nodeId": "235",
+            "fieldName": "select",
+            "fieldValue": "3",
+            "description": "出图方式"
+        },
+        {
+            "nodeId": "245",
+            "fieldName": "image",
+            "fieldValue": image_url,
+            "description": "上传图片"
+        },
+        {
+            "nodeId": "244",
+            "fieldName": "text",
+            "fieldValue": prompt,
+            "description": "输入提示词"
+        },
+        {
+            "nodeId": "269",
+            "fieldName": "value",
+            "fieldValue": str(width),
+            "description": "图片宽"
+        },
+        {
+            "nodeId": "270",
+            "fieldName": "value",
+            "fieldValue": str(height),
+            "description": "图片高"
+        },
+        {
+            "nodeId": "271",
+            "fieldName": "value",
+            "fieldValue": "1280",
+            "description": "视频最大分辨率（太大易爆）"
+        },
+        {
+            "nodeId": "263",
+            "fieldName": "value",
+            "fieldValue": "24",
+            "description": "帧数"
+        },
+        {
+            "nodeId": "264",
+            "fieldName": "value",
+            "fieldValue": str(duration),
+            "description": "秒数"
+        }
+    ]
+    
+    # Submit task (async)
+    result = run_ai_app_task(webapp_id, api_key, node_info_list, config_path, instance_type)
+    
+    return result
+
+
+def create_wan22_image_to_video(
+    image_url: str,
+    prompt: str,
+    duration: int = 5,
+    ratio: str = "9:16",
+    quality: str = "hd",
+    webapp_id: str = "1950219582398185474",
+    api_key: str = None,
+    config_path: str = None,
+    instance_type: str = "plus"
+) -> Dict[str, Any]:
+    """
+    Create Wan2.2 image to video task (async, returns task_id immediately)
+    
+    Args:
+        image_url: URL of the input image
+        prompt: Text prompt for video generation
+        duration: Video duration in seconds (default: 5)
+        ratio: Video aspect ratio (9:16, 16:9, 3:4, 1:1, 4:3)
+        quality: Quality mode - "hd" (高清版) or "fast" (极速版) (default: "hd")
+        webapp_id: The webapp ID for Wan2.2 (default: "1950219582398185474")
+        api_key: API key for authentication (default: from config)
+        config_path: Path to configuration file (default: auto-detect)
+        instance_type: Instance type for the task (default: "plus")
+        
+    Returns:
+        API response with task_id
+        
+    Raises:
+        requests.RequestException: If request fails
+        ValueError: If response format is invalid
+    """
+    # Auto-detect config file if not specified
+    if config_path is None:
+        config_path = get_config_path()
+    
+    # Load API key from config if not provided
+    if api_key is None:
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        api_key = config["runninghub"]["api_key"]
+    
+    # Map ratio to Wan2.2 ratio value
+    ratio_map = {
+        "16:9": "5",  # 横屏
+        "9:16": "4",  # 竖屏
+        "4:3": "3",   # 4:3
+        "3:4": "2",   # 3:4
+        "1:1": "1"    # 1:1
+    }
+    ratio_value = ratio_map.get(ratio, "4")  # Default to 9:16
+    
+    # Map quality to instance type value
+    quality_value = "1" if quality == "hd" else "2"  # 1=高清版, 2=极速版
+    
+    # Build node info list for Wan2.2
+    node_info_list = [
+        {
+            "nodeId": "135",
+            "fieldName": "image",
+            "fieldValue": image_url,
+            "description": "上传图像"
+        },
+        {
+            "nodeId": "107",
+            "fieldName": "value",
+            "fieldValue": str(duration),
+            "description": "设置时长（秒）"
+        },
+        {
+            "nodeId": "153",
+            "fieldName": "select",
+            "fieldValue": quality_value,
+            "description": "高清版/极速版切换"
+        },
+        {
+            "nodeId": "113",
+            "fieldName": "select",
+            "fieldValue": "2",
+            "description": "设置比例方式"
+        },
+        {
+            "nodeId": "247",
+            "fieldName": "select",
+            "fieldValue": ratio_value,
+            "description": "设置比例【 9:16=宽:高】"
+        },
+        {
+            "nodeId": "272",
+            "fieldName": "index",
+            "fieldValue": "2",
+            "description": "文本输入方式"
+        },
+        {
+            "nodeId": "116",
+            "fieldName": "text",
+            "fieldValue": prompt,
+            "description": "手写/润色 文本输入框"
+        }
+    ]
+    
+    # Submit task (async)
+    result = run_ai_app_task(webapp_id, api_key, node_info_list, config_path, instance_type)
+    
+    return result
+
+
+def check_ltx2_task_status(
+    task_id: str,
+    api_key: str = None,
+    config_path: str = None
+) -> Dict[str, Any]:
+    """
+    Check LTX2.0 task status
+    
+    Args:
+        task_id: Task ID to check
+        api_key: API key for authentication (default: from config)
+        config_path: Path to configuration file (default: auto-detect)
+        
+    Returns:
+        Status response with status and results (if completed)
+    """
+    # Auto-detect config file if not specified
+    if config_path is None:
+        config_path = get_config_path()
+    
+    # Load API key from config if not provided
+    if api_key is None:
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        api_key = config["runninghub"]["api_key"]
+    
+    # Create client instance
+    client = RunningHubClient(config_path=config_path, api_key=api_key)
+    
+    # Check status
+    status = client.check_status(task_id)
+    
+    response = {
+        "status": status.value,
+        "task_id": task_id
+    }
+    
+    # If completed, get results
+    if status == TaskStatus.SUCCESS:
+        results = client.get_outputs(task_id)
+        response["results"] = results
+    
+    return response
 
 # Example usage
 if __name__ == "__main__":
