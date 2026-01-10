@@ -323,11 +323,12 @@
     const shotDetailModalClose = document.getElementById('shotDetailModalClose');
     const shotDetailModalContent = document.getElementById('shotDetailModalContent');
     const shotDetailModalTitle = document.getElementById('shotDetailModalTitle');
+    let currentShotDetailContext = null;
 
     function openShotGroupModal(shotGroupData, nodeId){
       currentShotGroupNodeId = nodeId;
       shotGroupModalTitle.textContent = `分镜组详情 - ${shotGroupData.groupName || '未命名'}`;
-      shotGroupModalContent.innerHTML = renderShotGroupTable(shotGroupData);
+      shotGroupModalContent.innerHTML = renderShotGroupTable(shotGroupData, nodeId);
       shotGroupModal.classList.add('show');
       shotGroupModal.setAttribute('aria-hidden', 'false');
     }
@@ -338,9 +339,10 @@
       currentShotGroupNodeId = null;
     }
 
-    function openShotDetailModal(shot){
+    function openShotDetailModal(shot, nodeId, shotIndex){
+      currentShotDetailContext = { nodeId, shotIndex };
       shotDetailModalTitle.textContent = `分镜详情 - ${shot.shot_id || ''}`;
-      shotDetailModalContent.innerHTML = renderShotDetail(shot);
+      shotDetailModalContent.innerHTML = renderShotDetail(shot, nodeId, shotIndex);
       shotDetailModal.classList.add('show');
       shotDetailModal.setAttribute('aria-hidden', 'false');
     }
@@ -348,6 +350,7 @@
     function closeShotDetailModal(){
       shotDetailModal.classList.remove('show');
       shotDetailModal.setAttribute('aria-hidden', 'true');
+      currentShotDetailContext = null;
     }
 
     shotGroupModalClose.addEventListener('click', (e) => {
@@ -719,6 +722,7 @@
     }
 
     let currentLocationSelectionContext = null;
+    window.currentLocationSelectionContext = null;
 
     async function openLocationSelectorModal(shotIndex){
       const node = state.nodes.find(n => n.id === currentEditingNodeId);
@@ -730,6 +734,7 @@
         shotIndex: shotIndex,
         isEditModal: true
       };
+      window.currentLocationSelectionContext = currentLocationSelectionContext;
 
       // 打开场景选择弹窗
       openLocationModal();
@@ -756,6 +761,7 @@
         locationModal.setAttribute('aria-hidden', 'true');
       }
       currentLocationSelectionContext = null;
+      window.currentLocationSelectionContext = null;
     }
 
     async function loadWorldsForLocationModal(){
@@ -860,7 +866,7 @@
     function selectLocation(location){
       if(!currentLocationSelectionContext) return;
 
-      const { nodeId, shotIndex, isEditModal } = currentLocationSelectionContext;
+      const { nodeId, shotIndex, isEditModal, fromDetailModal } = currentLocationSelectionContext;
       const node = state.nodes.find(n => n.id === nodeId);
       if(!node || !node.data.shots[shotIndex]) return;
 
@@ -872,17 +878,32 @@
       // 关闭场景选择弹窗
       closeLocationModal();
 
+      // 清空上下文
+      currentLocationSelectionContext = null;
+      window.currentLocationSelectionContext = null;
+
       // 根据上下文重新渲染对应的界面
       if(isEditModal){
         shotGroupEditModalContent.innerHTML = renderShotGroupEditForm(node.data);
         bindShotEditEvents();
+      } else if(fromDetailModal){
+        // 如果是从分镜详情弹窗选择的场景，更新分镜详情弹窗
+        const updatedShot = node.data.shots[shotIndex];
+        shotDetailModalContent.innerHTML = renderShotDetail(updatedShot, nodeId, shotIndex);
+        // 同时更新分镜组详情弹窗（如果它是打开的）
+        if(shotGroupModal.classList.contains('show')){
+          shotGroupModalContent.innerHTML = renderShotGroupTable(node.data, nodeId);
+        }
       } else {
-        shotGroupModalContent.innerHTML = renderShotGroupTable(node.data);
+        shotGroupModalContent.innerHTML = renderShotGroupTable(node.data, nodeId);
       }
 
       showToast('场景设置成功', 'success');
       try{ autoSaveWorkflow(); } catch(e){}
     }
+    
+    // 将 selectLocation 暴露到全局作用域
+    window.selectLocation = selectLocation;
 
     function saveShotGroupEdit(){
       const node = state.nodes.find(n => n.id === currentEditingNodeId);
@@ -1031,7 +1052,7 @@
       }
     }
 
-    function renderShotGroupTable(shotGroupData){
+    function renderShotGroupTable(shotGroupData, nodeId){
       const shots = shotGroupData.shots || [];
       if(shots.length === 0){
         return '<p style="text-align: center; color: #999;">暂无分镜数据</p>';
@@ -1141,7 +1162,7 @@
             e.stopPropagation();
             const index = parseInt(btn.dataset.shotIndex);
             if(shots[index]){
-              openShotDetailModal(shots[index]);
+              openShotDetailModal(shots[index], nodeId, index);
             }
           });
         });
@@ -1170,12 +1191,30 @@
         shotIndex: shotIndex,
         isEditModal: false
       };
+      window.currentLocationSelectionContext = currentLocationSelectionContext;
 
       // 打开场景选择弹窗
       openLocationModal();
     }
 
-    function renderShotDetail(shot){
+    async function selectLocationForShotDetail(nodeId, shotIndex){
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node || !node.data.shots[shotIndex]) return;
+
+      // 保存上下文信息，标记为从详情弹窗打开
+      currentLocationSelectionContext = {
+        nodeId: nodeId,
+        shotIndex: shotIndex,
+        isEditModal: false,
+        fromDetailModal: true
+      };
+      window.currentLocationSelectionContext = currentLocationSelectionContext;
+
+      // 打开场景选择弹窗
+      openLocationModal();
+    }
+
+    function renderShotDetail(shot, nodeId, shotIndex){
       const fieldMap = {
         'shot_id': '镜头ID',
         'shot_number': '镜头编号',
@@ -1195,6 +1234,37 @@
       };
 
       let html = '<div style="font-size: 14px;">';
+
+      // 添加参考场景区域（放在最前面）
+      if(nodeId !== undefined && shotIndex !== undefined){
+        html += `
+          <div style="margin-bottom: 20px; padding: 16px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <div style="font-weight: 600; color: #374151; font-size: 14px;">参考场景</div>
+              <button class="mini-btn shot-detail-select-location" type="button" style="padding: 6px 12px; font-size: 13px;">选择场景</button>
+            </div>
+        `;
+        
+        if(shot.db_location_id && shot.db_location_pic){
+          html += `
+            <div style="display: flex; gap: 12px; align-items: center;">
+              <img src="${escapeHtml(shot.db_location_pic)}" style="width: 120px; height: 120px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" alt="${escapeHtml(shot.location_name || '场景')}" />
+              <div>
+                <div style="font-size: 14px; font-weight: 500; color: #111827; margin-bottom: 4px;">${escapeHtml(shot.location_name || '未命名场景')}</div>
+                <div style="font-size: 12px; color: #6b7280;">ID: ${shot.db_location_id}</div>
+              </div>
+            </div>
+          `;
+        } else {
+          html += `
+            <div style="text-align: center; padding: 20px; color: #9ca3af; font-size: 13px;">
+              未选择参考场景
+            </div>
+          `;
+        }
+        
+        html += `</div>`;
+      }
 
       for(const [key, label] of Object.entries(fieldMap)){
         if(shot[key] !== undefined && shot[key] !== null){
@@ -1223,6 +1293,20 @@
       }
 
       html += '</div>';
+      
+      // 绑定选择场景按钮事件
+      if(nodeId !== undefined && shotIndex !== undefined){
+        setTimeout(() => {
+          const selectBtn = document.querySelector('.shot-detail-select-location');
+          if(selectBtn){
+            selectBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              await selectLocationForShotDetail(nodeId, shotIndex);
+            });
+          }
+        }, 0);
+      }
+      
       return html;
     }
 

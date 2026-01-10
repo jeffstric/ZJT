@@ -1079,9 +1079,18 @@
               const locationId = item.dataset.locationId;
               const location = result.data.data.find(l => l.id == locationId);
               if (location) {
-                createLocationNode(location);
-                document.getElementById('locationModal').classList.remove('show');
-                renderMinimap();
+                // 检查是否有分镜选择上下文（从 nodes.js 传递过来）
+                if (window.currentLocationSelectionContext) {
+                  // 调用 nodes.js 中的 selectLocation 函数来更新分镜数据
+                  if (typeof window.selectLocation === 'function') {
+                    window.selectLocation(location);
+                  }
+                } else {
+                  // 没有上下文，创建场景节点
+                  createLocationNode(location);
+                  document.getElementById('locationModal').classList.remove('show');
+                  renderMinimap();
+                }
               }
             });
             
