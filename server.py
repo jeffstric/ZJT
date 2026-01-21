@@ -25,6 +25,7 @@ from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, Pay
 from model.world import WorldModel
 from model.character import CharacterModel
 from model.location import LocationModel
+from model.script import ScriptModel
 import uuid
 from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character as create_character_task, get_character_task_result, create_text_to_image
 from PIL import Image
@@ -4249,6 +4250,53 @@ async def delete_world(
         raise
     except Exception as e:
         logger.error(f"Failed to delete world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.get('/api/scripts')
+async def get_scripts(
+    world_id: int = Query(..., description="世界ID"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    order_by: str = Query('create_time', description="排序字段"),
+    order_direction: str = Query('DESC', description="排序方向"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    根据世界ID获取剧本列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        _ensure_world_owner(world_id, user_id)
+        
+        result = ScriptModel.list_by_world(
+            world_id=world_id,
+            page=page,
+            page_size=page_size,
+            order_by=order_by,
+            order_direction=order_direction
+        )
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get scripts for world {world_id}: {e}")
         return JSONResponse(
             status_code=500,
             content={

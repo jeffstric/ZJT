@@ -3191,12 +3191,16 @@
         </div>
         <div class="node-body">
           <div class="field">
-            <div class="label">输入剧本内容 <span class="script-char-count" style="float: right; color: #666; font-size: 12px;">0/2000</span></div>
-            <textarea class="script-textarea" rows="6" maxlength="2000" placeholder="在此输入剧本内容，或上传文件（最多2000字符）"></textarea>
+            <div class="label">输入剧本内容 <span class="script-char-count" style="float: right; color: #666; font-size: 12px;">0/30000</span></div>
+            <textarea class="script-textarea" rows="6" maxlength="30000" placeholder="在此输入剧本内容，或上传文件（最多30000字符）"></textarea>
           </div>
           <div class="field">
             <div class="label">或上传剧本文件</div>
             <input class="script-file" type="file" accept=".txt,.md" />
+          </div>
+          <div class="field">
+            <div class="label">或从已保存剧本中选择</div>
+            <button class="gen-btn script-load-btn" type="button" style="border-radius: 8px; width: 100%; background: #10b981; padding: 8px;">加载剧本</button>
           </div>
           <div class="field">
             <div class="label">镜头组最长时长</div>
@@ -3234,7 +3238,7 @@
             <div class="gen-meta script-length"></div>
           </div>
           <div class="field script-warning-field" style="display:none;">
-            <div class="gen-meta" style="color: #f59e0b;">文件内容超过2000字符，已自动截取前2000字符。建议将剧本分段处理。</div>
+            <div class="gen-meta" style="color: #f59e0b;">文件内容超过30000字符，已自动截取前30000字符。建议将剧本分段处理。</div>
           </div>
           <div class="field">
             <button class="gen-btn script-split-btn" type="button" style="border-radius: 10px; width: 100%;" disabled>拆分镜组</button>
@@ -3248,6 +3252,7 @@
       const outputPort = el.querySelector('.port.output');
       const textareaEl = el.querySelector('.script-textarea');
       const fileEl = el.querySelector('.script-file');
+      const loadBtn = el.querySelector('.script-load-btn');
       const durationSelectEl = el.querySelector('.script-duration-select');
       const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
       const noBgMusicEl = el.querySelector('.script-no-bg-music');
@@ -3268,10 +3273,10 @@
 
       // 更新字符计数器
       function updateCharCount(length) {
-        charCountEl.textContent = `${length}/2000`;
-        if(length > 1900) {
+        charCountEl.textContent = `${length}/30000`;
+        if(length > 28500) {
           charCountEl.style.color = '#dc2626';
-        } else if(length > 1700) {
+        } else if(length > 25500) {
           charCountEl.style.color = '#f59e0b';
         } else {
           charCountEl.style.color = '#666';
@@ -3348,6 +3353,12 @@
         updateScriptContent(content, '来源: 文本输入');
       });
 
+      // 加载剧本按钮监听
+      loadBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await showScriptSelectionModal(node, textareaEl, updateScriptContent, warningField);
+      });
+
       // 文件上传监听
       fileEl.addEventListener('change', async () => {
         const file = fileEl.files && fileEl.files[0];
@@ -3358,13 +3369,13 @@
           node.data.file = file;
           node.data.name = file.name;
           
-          // 检查是否超过2000字符
+          // 检查是否超过30000字符
           const originalLength = content.length;
-          const isTruncated = originalLength > 2000;
+          const isTruncated = originalLength > 30000;
           if(isTruncated) {
-            content = content.substring(0, 2000);
+            content = content.substring(0, 30000);
             warningField.style.display = 'block';
-            showToast(`文件内容已截取至2000字符（原${originalLength}字符）`, 'warning');
+            showToast(`文件内容已截取至30000字符（原${originalLength}字符）`, 'warning');
           } else {
             warningField.style.display = 'none';
             showToast('剧本文件加载成功', 'success');
@@ -4747,3 +4758,136 @@
       return id;
     }
 
+    async function showScriptSelectionModal(node, textareaEl, updateScriptContent, warningField) {
+      const defaultWorldId = state.defaultWorldId;
+      
+      if (!defaultWorldId) {
+        showToast('请先在页面顶部选择默认世界', 'error');
+        return;
+      }
+
+      const modal = document.createElement('div');
+      modal.className = 'modal-overlay';
+      modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+      
+      const modalContent = document.createElement('div');
+      modalContent.style.cssText = 'background: white; border-radius: 12px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow: auto;';
+      
+      modalContent.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+          <h3 style="margin: 0; font-size: 18px; font-weight: 600;">选择剧本</h3>
+          <button class="modal-close-btn" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #666;">&times;</button>
+        </div>
+        <div class="script-list-container" style="min-height: 200px;">
+          <div style="text-align: center; padding: 40px; color: #666;">加载中...</div>
+        </div>
+      `;
+      
+      modal.appendChild(modalContent);
+      document.body.appendChild(modal);
+
+      const closeBtn = modalContent.querySelector('.modal-close-btn');
+      const listContainer = modalContent.querySelector('.script-list-container');
+
+      closeBtn.addEventListener('click', () => {
+        document.body.removeChild(modal);
+      });
+
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          document.body.removeChild(modal);
+        }
+      });
+
+      try {
+        const response = await fetch(`/api/scripts?world_id=${defaultWorldId}&page=1&page_size=50`, {
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || ''
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error('获取剧本列表失败');
+        }
+
+        const result = await response.json();
+        
+        if (result.code !== 0) {
+          throw new Error(result.message || '获取剧本列表失败');
+        }
+
+        const scripts = result.data.data || [];
+
+        if (scripts.length === 0) {
+          listContainer.innerHTML = `
+            <div style="text-align: center; padding: 40px; color: #666;">
+              <p>当前世界下暂无保存的剧本</p>
+            </div>
+          `;
+          return;
+        }
+
+        listContainer.innerHTML = scripts.map(script => `
+          <div class="script-item" data-script-id="${script.id}" style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 12px; cursor: pointer; transition: all 0.2s;">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+              <div style="font-weight: 600; font-size: 14px; color: #111827;">${escapeHtml(script.title || '无标题')}</div>
+              ${script.episode_number ? `<div style="background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 4px; font-size: 12px;">第${script.episode_number}集</div>` : ''}
+            </div>
+            <div style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">
+              创建时间: ${new Date(script.create_time).toLocaleString('zh-CN')}
+            </div>
+            <div style="font-size: 13px; color: #374151; max-height: 60px; overflow: hidden; text-overflow: ellipsis;">
+              ${escapeHtml((script.content || '').substring(0, 100))}${(script.content || '').length > 100 ? '...' : ''}
+            </div>
+          </div>
+        `).join('');
+
+        const scriptItems = listContainer.querySelectorAll('.script-item');
+        scriptItems.forEach(item => {
+          item.addEventListener('mouseenter', () => {
+            item.style.background = '#f3f4f6';
+            item.style.borderColor = '#10b981';
+          });
+          
+          item.addEventListener('mouseleave', () => {
+            item.style.background = 'white';
+            item.style.borderColor = '#e5e7eb';
+          });
+
+          item.addEventListener('click', () => {
+            const scriptId = parseInt(item.dataset.scriptId);
+            const script = scripts.find(s => s.id === scriptId);
+            
+            if (script && script.content) {
+              let content = script.content;
+              const originalLength = content.length;
+              const isTruncated = originalLength > 30000;
+              
+              if (isTruncated) {
+                content = content.substring(0, 30000);
+                warningField.style.display = 'block';
+                showToast(`剧本内容已截取至30000字符（原${originalLength}字符）`, 'warning');
+              } else {
+                warningField.style.display = 'none';
+              }
+
+              textareaEl.value = content;
+              updateScriptContent(content, `来源: ${script.title || '剧本'} ${isTruncated ? '(已截取)' : ''}`);
+              
+              showToast('剧本加载成功', 'success');
+              document.body.removeChild(modal);
+            }
+          });
+        });
+
+      } catch (error) {
+        console.error('加载剧本列表失败:', error);
+        listContainer.innerHTML = `
+          <div style="text-align: center; padding: 40px; color: #ef4444;">
+            <p>加载失败: ${error.message}</p>
+          </div>
+        `;
+        showToast('加载剧本列表失败', 'error');
+      }
+    }
