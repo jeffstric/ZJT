@@ -115,7 +115,7 @@ async function generateShotFrameVideo(nodeId, node){
     form.append('prompt', videoPrompt);
     form.append('duration_seconds', duration);
     form.append('count', count);
-    form.append('ratio', '16:9');
+    form.append('ratio', state.ratio || '9:16');
     form.append('video_model', videoModel);
     
     if(userId){

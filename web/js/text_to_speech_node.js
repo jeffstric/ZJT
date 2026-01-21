@@ -38,7 +38,10 @@
         </div>
         <div class="node-body">
           <div class="field">
-            <div class="label">生成文本 <span style="color: red;">*</span></div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <div class="label" style="margin: 0;">生成文本 <span style="color: red;">*</span></div>
+              <button class="mini-btn tts-text-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="放大编辑">⤢</button>
+            </div>
             <textarea class="tts-text" rows="3" placeholder="输入要转换为语音的文本"></textarea>
           </div>
           <div class="field">
@@ -87,6 +90,7 @@
       const deleteBtn = el.querySelector('.icon-btn');
       const outputPort = el.querySelector('.port.output');
       const textEl = el.querySelector('.tts-text');
+      const textExpandBtn = el.querySelector('.tts-text-expand-btn');
       const refAudioEl = el.querySelector('.tts-ref-audio');
       const refPreviewEl = el.querySelector('.tts-ref-preview');
       const refAudioPlayer = el.querySelector('.tts-ref-audio-player');
@@ -135,6 +139,14 @@
 
       textEl.addEventListener('input', () => {
         node.data.text = textEl.value;
+      });
+
+      // 生成文本放大按钮
+      textExpandBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showPromptExpandModal(textEl, '生成文本', (newValue) => {
+          node.data.text = newValue;
+        });
       });
 
       refAudioEl.addEventListener('change', () => {
