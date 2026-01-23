@@ -64,12 +64,12 @@ llm:
 
 # Google Gemini API configuration
 google:
-  api_key: "sk_CJd40si_JJNrcy7VnwUVZ5ahonHlZwvy04WlJDjOans"
+  api_key: "sk_xxxxx"
   gemini_base_url: "https://api.jiekou.ai"
 
 # JIEKOU API configuration
 jiekou:
-  api_key: "sk_CJd40si_JJNrcy7VnwUVZ5ahonHlZwvy04WlJDjOans"
+  api_key: "sk_xxxx"
   base_url: "https://api.jiekou.ai"
 
 script_writer:
