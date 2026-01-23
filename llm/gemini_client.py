@@ -11,6 +11,7 @@ import requests
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from config_util import get_config_path
+from perseids_client import make_perseids_request
 
 # 导入日志函数
 try:
@@ -182,7 +183,10 @@ class GeminiClient:
         messages: List[Dict[str, str]], 
         tools: Optional[List[Dict]] = None,
         temperature: float = 0.7,
-        max_tokens: int = 65536
+        max_tokens: int = 65536,
+        auth_token: Optional[str] = None,
+        vendor_id: Optional[int] = None,
+        model_id: Optional[int] = None
     ) -> Any:
         """
         调用 Gemini 原生 API
@@ -193,7 +197,9 @@ class GeminiClient:
             tools: 工具定义列表
             temperature: 温度参数
             max_tokens: 最大输出 token 数
-            
+            auth_token: 认证token
+            vendor_id: 商家ID
+            model_id: 模型ID
         Returns:
             标准格式的响应对象
         """
@@ -311,7 +317,12 @@ class GeminiClient:
             logger.info("-"*80)
             
             # 转换响应为标准格式
-            converted_response = self._convert_gemini_response(response_json)
+            converted_response = self._convert_gemini_response(
+                response_json,
+                auth_token=auth_token,
+                vendor_id=vendor_id,
+                model_id=model_id
+            )
             
             # 记录转换后的响应
             if converted_response.choices:
@@ -334,21 +345,74 @@ class GeminiClient:
             logger.error(f"Gemini API call failed: {e}")
             raise
 
-    def _convert_gemini_response(self, data: Dict) -> Any:
+    def _analyze_token_usage(self, usage_metadata: Dict) -> Dict[str, int]:
+        """
+        分析 Gemini API 返回的 token 使用统计
+        
+        Args:
+            usage_metadata: API 响应中的 usageMetadata 字段
+            
+        Returns:
+            包含详细 token 统计的字典:
+            - input_token: 实际输入消耗（包括用户输入、系统指令、工具定义等）
+            - output_token: 模型输出消耗
+            - cache_read_token: 缓存读取的 token 数
+            - total_token: 总消耗
+            - overhead_token: 系统开销（差异部分，计入输入）
+        """
+        prompt_tokens = usage_metadata.get("promptTokenCount", 0)
+        completion_tokens = usage_metadata.get("candidatesTokenCount", 0)
+        total_tokens = usage_metadata.get("totalTokenCount", 0)
+        cached_tokens = usage_metadata.get("cachedContentTokenCount", 0)
+        
+        # 计算系统开销（差异部分）
+        overhead_tokens = total_tokens - prompt_tokens - completion_tokens
+        
+        # 实际输入 token = 用户输入 + 系统开销
+        input_tokens = prompt_tokens + overhead_tokens
+        
+        result = {
+            "input_token": input_tokens,
+            "output_token": completion_tokens,
+            "cache_read_token": cached_tokens,
+            "total_token": total_tokens,
+            "overhead_token": overhead_tokens,
+            # 保留原始数据供参考
+            "raw_prompt_tokens": prompt_tokens,
+            "raw_completion_tokens": completion_tokens
+        }
+        
+        logger.info(f"Token usage analysis: input={input_tokens}, output={completion_tokens}, "
+                       f"cache_read={cached_tokens}, overhead={overhead_tokens}, total={total_tokens}")
+        
+        return result
+    
+    def _convert_gemini_response(
+        self, data: Dict, 
+        auth_token: Optional[str] = None, 
+        vendor_id: Optional[int] = None, 
+        model_id: Optional[int] = None
+    ) -> Any:
         """将 Gemini 响应转换为标准格式"""
         class Message:
-            def __init__(self, content, tool_calls=None):
+            def __init__(self, content, tool_calls=None, thought_signature=None):
                 self.content = content
                 self.tool_calls = tool_calls
+                self.thought_signature = thought_signature
         
         class Choice:
             def __init__(self, message):
                 self.message = message
         
         class Response:
-            def __init__(self, choices):
+            def __init__(self, choices, usage=None):
                 self.choices = choices
+                self.usage = usage
         
+        # 提取并分析 token 使用统计
+        usage_metadata = data.get("usageMetadata", {})
+        usage = self._analyze_token_usage(usage_metadata)
+
         if not data.get("candidates"):
             logger.warning("Gemini response has no candidates")
             return Response([Choice(Message(""))])
@@ -386,6 +450,32 @@ class GeminiClient:
                 tool_calls.append(tool_call)
         
         message = Message(text_content, tool_calls if tool_calls else None)
+
+        # 解构 usage 数据，方便后续记录与上报
+        output_token = usage.get("output_token", 0)
+        cache_read_token = usage.get("cache_read_token", 0)
+        total_token = usage.get("total_token", 0)
+
+        logger.info(f"Gemini usage: {usage}")
+        logger.info(f"Gemini metadata - auth_token={auth_token}, vendor_id={vendor_id}, model_id={model_id}")
+        headers = {'Authorization': f'Bearer {auth_token}'}
+        # 发起请求，增加token日志
+        success, log_message, response_data = make_perseids_request(
+            endpoint='user/token_log',
+            method='POST',
+            headers=headers,
+            data={
+                "input_token": total_token-output_token,
+                "output_token": output_token,
+                "cache_creation": 0,
+                "cache_read": cache_read_token,
+                "model_id": model_id,
+                "vendor_id":vendor_id
+            }
+        )
+
+        if not success:
+            logger.info(f"增加token日志失败: {log_message}")
         return Response([Choice(message)])
 
 

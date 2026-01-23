@@ -3754,6 +3754,36 @@ async def parse_script(
                 status_code=400,
                 content={"code": -1, "message": "剧本内容不能为空"}
             )
+
+            # 检查算力是否充足
+        if auth_token:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': f'算力检查失败: {message}',
+                        'data': None
+                    }
+                )
+                    
+            # Check if computing power is sufficient
+            user_computing_power = response_data.get('computing_power', 0)
+            if user_computing_power < 1:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': '算力不足，请充值',
+                        'data': None
+                    }
+                )
         
         # 导入剧本解析模块
         from llm.script_parser import parse_script_to_shots
@@ -3763,11 +3793,14 @@ async def parse_script(
             script_content=script_content,
             max_group_duration=max_group_duration,
             world_id=world_id,
-            model=None,
+            model='gemini-3-flash-preview',
             temperature=0.5,
             force_medium_shot=force_medium_shot,
             no_bg_music=no_bg_music,
-            split_multi_dialogue=split_multi_dialogue
+            split_multi_dialogue=split_multi_dialogue,
+            auth_token=auth_token,
+            vendor_id=1,
+            model_id=1
         )
         
         if not parsed_data:

@@ -325,7 +325,10 @@ async def parse_script_to_shots(
     temperature: float = 0.7,
     force_medium_shot: bool = False,
     no_bg_music: bool = False,
-    split_multi_dialogue: bool = False
+    split_multi_dialogue: bool = False,
+    auth_token: Optional[str] = None,
+    vendor_id: Optional[int] = None,
+    model_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     将剧本内容解析为结构化的人物、场景和分镜数据
@@ -339,6 +342,9 @@ async def parse_script_to_shots(
         force_medium_shot: 是否强制对话内容使用中景(半身像)，默认False
         no_bg_music: 是否不生成背景音乐，默认False
         split_multi_dialogue: 是否将多人对话镜头拆分为单人对话镜头，默认False
+        auth_token: 认证token
+        vendor_id: 商家ID
+        model_id: 模型ID
     
     Returns:
         包含characters、locations、shots的结构化数据字典
@@ -646,7 +652,7 @@ JSON格式示例：
         
         # 使用默认模型或指定模型
         if not model:
-            model = "gemini-3-pro-preview"
+            model = "gemini-3-flash-preview"
         
         # 使用 asyncio.to_thread 包装同步调用
         import asyncio
@@ -655,7 +661,10 @@ JSON格式示例：
             model=model,
             messages=messages,
             temperature=temperature,
-            max_tokens=16000
+            max_tokens=16000,
+            auth_token=auth_token,
+            vendor_id=vendor_id,
+            model_id=model_id
         )
         
         # 提取响应内容
