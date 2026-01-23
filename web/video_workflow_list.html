@@ -383,6 +383,46 @@
     .toast.success{
       background: var(--primary);
     }
+    .agent-btn{
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      padding: 16px 24px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-bottom: 24px;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    }
+    .agent-btn:hover{
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    .agent-btn svg{
+      width: 20px;
+      height: 20px;
+    }
+    .agent-btn-title{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .agent-btn-desc{
+      font-size: 12px;
+      font-weight: 400;
+      opacity: 0.9;
+      line-height: 1.4;
+    }
   </style>
 </head>
 <body>
@@ -403,6 +443,18 @@
         新建工作流
       </button>
     </div>
+
+    <button class="agent-btn" id="agentBtn" onclick="handleAgentClick()">
+      <div class="agent-btn-title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7L12 12L22 7L12 2Z"></path>
+          <path d="M2 17L12 22L22 17"></path>
+          <path d="M2 12L12 17L22 12"></path>
+        </svg>
+        短剧智能体
+      </div>
+      <div class="agent-btn-desc">AI智能体生成剧本，人物，场景，道具</div>
+    </button>
 
     <div class="toolbar">
       <div class="search-box">
@@ -968,6 +1020,37 @@
           showToast(result.message || '创建失败', 'error');
         }
       } catch (error) {
+        showToast('网络错误', 'error');
+      }
+    }
+
+    async function handleAgentClick() {
+      if (!ensureLoggedIn()) return;
+      
+      try {
+        const response = await fetch('/api/script-writer-url', {
+          headers: {
+            'Authorization': getAuthToken(),
+            'X-User-Id': getUserId()
+          }
+        });
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data && result.data.url) {
+          const baseUrl = result.data.url;
+          const authToken = getAuthToken();
+          const userId = getUserId();
+          
+          // 拼接参数
+          const url = `${baseUrl}?auth_token=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
+          
+          // 打开新窗口
+          window.open(url, '_blank');
+        } else {
+          showToast(result.message || '获取服务地址失败', 'error');
+        }
+      } catch (error) {
+        console.error('Failed to get script writer url:', error);
         showToast('网络错误', 'error');
       }
     }

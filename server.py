@@ -76,6 +76,8 @@ else:
     SERVER_HOST = config["server"]["host"]
 API_KEY = config["runninghub"]["api_key"]
 
+SCRIPT_WRITER_URL = config["script_writer"]["url"]
+
 # 初始化微信支付工具
 wechat_pay_config = config.get("pay", {}).get("wxpay", {})
 wechat_pay_util = WechatPayUtil(
@@ -2056,6 +2058,32 @@ async def get_computing_power_config():
             status_code=500,
             content={
                 'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
+@app.get('/api/script-writer-url')
+async def get_script_writer_url():
+    """
+    获取短剧智能体服务地址
+    """
+    try:
+        return JSONResponse(
+            content={
+                'code': 0,
+                'message': '获取成功',
+                'data': {
+                    'url': SCRIPT_WRITER_URL
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f'获取短剧智能体服务地址失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
                 'message': '服务器错误'
             }
         )

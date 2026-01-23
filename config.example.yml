@@ -1,15 +1,16 @@
 runninghub:
   host: "https://www.runninghub.cn"
-  api_key: "xxx"
-  ai_app_webapp_id: "1973555977595301890"
-  ai_app_api_key: "xxxx"
-  ai_app_webapp_img_id: "1976487269899046914"
-  max_concurrent_slots: 3  # RunningHub 最大并发槽位数量
+  api_key: "9549532f3c3d435ebe5e1ca78dcac1e8"
 # Server configuration
 server:
-  host: "http://ailive.perseids.cn:11442"
-  port: 5178
-  
+  host: "http://ssh.perseids.cn:12000"
+  https_host: "https://ssh.perseids.cn:12443"
+  port: 9003                # 如需自定义端口可保留
+  https_port: 5174
+  https:
+    enabled: false
+    certfile: "secret/ssh.perseids.cn_bundle.pem"
+    keyfile: "secret/ssh.perseids.cn.key"
 # Default timeout settings
 timeout:
   request_timeout: 10000
@@ -17,14 +18,14 @@ timeout:
   status_check_interval: 10
 
 authentication:
-  url: "http://192.168.10.212:xxx/api/v1"
+  url: "http://192.168.10.212:8082/api/v1"
 
 # Database configuration
 database:
   host: "192.168.10.212"
   port: 3306
   user: "voice_replace_debug_admin"
-  password: "xxx"
+  password: "3bTgThWP2xeX"
   database: "voice_replace_debug"
   charset: "utf8mb4"
 
@@ -33,29 +34,44 @@ ai_tools:
   token: "b8733e482d434746becc44ea38c414a5"
 
 duomi:
-  token: "xxx"
+  token: "5q26ybqAX832s4vJ4cdnXdrDLs"
+
+pay:
+  wxpay:
+      #公众账号ID
+      appId: wxfcf09f56c3d2b2b8
+      #商户号
+      mchId: 1663740701
+      #商户API证书序列号
+      api_key: 3C57F96B3182B2D9616DA259FD6BEA0F6BCAECE8
+      #APIv3_key
+      APIv3_key: 76a3b7fdaf0f4b458ef7a7688553d7b2
+      appSecret: 3469277d2df7eb7e3e773e0a983816de
 
 bin:
   ffmpeg: "/usr/bin/ffmpeg"
   ffprobe: "/usr/bin/ffprobe"
 
-# LLM configuration
 llm:
   baidu:
-    api_key: "bce-v3/xxxx"
+    api_key: "bce-v3/ALTAK-RW7WrM9SbRGJBisQ6n41v/223a3bda9f1652f86d74d5d8b937201fc3c86dde"
     api_url: "https://qianfan.baidubce.com/v2/chat/completions"
     model: "ernie-4.5-turbo-vl-latest"
   qwen:
-    api_key: "sk-xxxx"
+    api_key: "sk-f3694dd044e0418d8ca412c4946eb9e0"
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     model: "qwen-plus"
 
-# Test mode configuration
-test_mode:
-  enabled: false  # 是否启用测试模式
-  mock_videos:
-    image_to_video: "https://cdn3.dmiapi.com/attachments/sora/20260107/968e1cf718e6e115fdb0a5874d39c470.mp4?e=1768198067&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:LWFb2h3-ecBwr-YBQWToVPcEkJw="  # 图生视频的测试视频URL
-    text_to_video: "https://cdn3.dmiapi.com/attachments/sora/20260107/968e1cf718e6e115fdb0a5874d39c470.mp4?e=1768198067&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:LWFb2h3-ecBwr-YBQWToVPcEkJw="  # 文生视频的测试视频URL
-  mock_images:
-    image_edit: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 图片编辑的测试图片URL
-    text_to_image: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 文生图的测试图片URL
+# Google Gemini API configuration
+google:
+  api_key: "sk_CJd40si_JJNrcy7VnwUVZ5ahonHlZwvy04WlJDjOans"
+  gemini_base_url: "https://api.jiekou.ai"
+
+# JIEKOU API configuration
+jiekou:
+  api_key: "sk_CJd40si_JJNrcy7VnwUVZ5ahonHlZwvy04WlJDjOans"
+  base_url: "https://api.jiekou.ai"
+
+script_writer:
+  url: "http://localhost:5000/"
+
