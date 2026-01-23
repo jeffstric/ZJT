@@ -587,6 +587,42 @@ select{
   border-color: var(--primary);
   transform: translateY(-1px);
 }
+.ai-btn-container{
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(calc(-50% - 60px));
+  z-index: 45;
+}
+.ai-btn{
+  width: 44px;
+  height: 60px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 22px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  box-shadow: 0 2px 8px rgba(34,197,94,0.4);
+  transition: transform 0.15s, box-shadow 0.15s;
+  letter-spacing: 0;
+  line-height: 1;
+}
+.ai-btn:hover{
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(34,197,94,0.5);
+}
+.ai-btn-text{
+  display: block;
+  margin: 0;
+  padding: 0;
+}
 .ratio-floating{
   position: absolute;
   top: 12px;
