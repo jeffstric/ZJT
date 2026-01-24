@@ -2164,21 +2164,18 @@
           return;
         }
         
-        // 验证音频时长
+        // 显示音频预览（不再验证时长，后端会自动裁剪）
         const url = URL.createObjectURL(file);
         const audio = new Audio();
         
         audio.addEventListener('loadedmetadata', () => {
-          const maxDuration = 20; // 20秒
+          voicePreviewAudio.src = url;
+          voicePreview.style.display = 'block';
+          
+          // 如果音频超过20秒，提示用户会自动裁剪
+          const maxDuration = 20;
           if(audio.duration > maxDuration){
-            showToast(`音频时长不能超过${maxDuration}秒，当前时长：${audio.duration.toFixed(1)}秒`, 'error');
-            voiceInput.value = '';
-            voicePreviewAudio.src = '';
-            voicePreview.style.display = 'none';
-            URL.revokeObjectURL(url);
-          } else {
-            voicePreviewAudio.src = url;
-            voicePreview.style.display = 'block';
+            showToast(`音频时长为${audio.duration.toFixed(1)}秒，上传后将自动裁剪至${maxDuration}秒`, 'info');
           }
         });
         
@@ -2225,31 +2222,18 @@
           return;
         }
         
-        // 验证音频时长
+        // 显示音频预览（不再验证时长，后端会自动裁剪）
         const url = URL.createObjectURL(file);
         const audio = new Audio();
         
         audio.addEventListener('loadedmetadata', () => {
-          const maxDuration = 20; // 20秒
+          voicePreviewAudio.src = url;
+          voicePreview.style.display = 'block';
+          
+          // 如果音频超过20秒，提示用户会自动裁剪
+          const maxDuration = 20;
           if(audio.duration > maxDuration){
-            showToast(`音频时长不能超过${maxDuration}秒，当前时长：${audio.duration.toFixed(1)}秒`, 'error');
-            voiceInput.value = '';
-            URL.revokeObjectURL(url);
-            // 恢复原始音频
-            const characterId = currentEditingCharacterNodeId;
-            if (characterId) {
-              const node = state.nodes.find(n => n.id === characterId);
-              if (node && node.data && node.data.default_voice) {
-                voicePreviewAudio.src = node.data.default_voice;
-                voicePreview.style.display = 'block';
-                return;
-              }
-            }
-            voicePreviewAudio.src = '';
-            voicePreview.style.display = 'none';
-          } else {
-            voicePreviewAudio.src = url;
-            voicePreview.style.display = 'block';
+            showToast(`音频时长为${audio.duration.toFixed(1)}秒，上传后将自动裁剪至${maxDuration}秒`, 'info');
           }
         });
         

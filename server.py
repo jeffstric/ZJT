@@ -521,6 +521,93 @@ def _save_uploaded_audio(upload_file: UploadFile) -> str:
     return file_path
 
 
+def _trim_audio_if_needed(audio_path: str, max_duration: float = 20.0) -> str:
+    """
+    Check audio duration and trim if it exceeds max_duration.
+    
+    Args:
+        audio_path: Path to the audio file
+        max_duration: Maximum duration in seconds (default: 20.0)
+        
+    Returns:
+        Path to the audio file (original or trimmed)
+        
+    Raises:
+        Exception: If audio processing fails
+    """
+    try:
+        ffmpeg_path = config.get("bin", {}).get("ffmpeg", "ffmpeg")
+        ffprobe_path = config.get("bin", {}).get("ffprobe", "ffprobe")
+        
+        # Check audio duration using ffprobe
+        duration_cmd = [
+            ffprobe_path, '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            audio_path
+        ]
+        
+        duration_result = subprocess.run(
+            duration_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if duration_result.returncode != 0:
+            logger.warning(f"Failed to get audio duration: {duration_result.stderr}")
+            return audio_path
+        
+        duration = float(duration_result.stdout.strip())
+        logger.info(f"Audio duration: {duration:.2f}s")
+        
+        # If duration is within limit, return original file
+        if duration <= max_duration:
+            return audio_path
+        
+        # Trim audio to max_duration
+        logger.info(f"Trimming audio from {duration:.2f}s to {max_duration:.2f}s")
+        
+        # Generate output filename
+        base_name = os.path.splitext(audio_path)[0]
+        ext = os.path.splitext(audio_path)[1]
+        trimmed_path = f"{base_name}_trimmed{ext}"
+        
+        # Use ffmpeg to trim audio
+        trim_cmd = [
+            ffmpeg_path, '-i', audio_path,
+            '-t', str(max_duration),
+            '-acodec', 'copy',
+            '-y',
+            trimmed_path
+        ]
+        
+        trim_result = subprocess.run(
+            trim_cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if trim_result.returncode != 0:
+            logger.error(f"ffmpeg trim error: {trim_result.stderr}")
+            return audio_path
+        
+        # Remove original file and rename trimmed file
+        os.remove(audio_path)
+        os.rename(trimmed_path, audio_path)
+        
+        logger.info(f"Audio trimmed successfully to {max_duration}s")
+        return audio_path
+        
+    except subprocess.TimeoutExpired:
+        logger.error("Audio processing timeout")
+        return audio_path
+    except Exception as e:
+        logger.error(f"Error trimming audio: {e}")
+        return audio_path
+
+
 def _download_and_extract_audio_from_video(video_url: str) -> str:
     """
     Download video from URL, validate size and duration, extract audio, and clean up.
@@ -4519,6 +4606,9 @@ async def create_character(
                 content = await default_voice.read()
                 f.write(content)
             
+            # 自动裁剪音频（如果超过20秒）
+            file_path = _trim_audio_if_needed(file_path, max_duration=20.0)
+            
             voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
         
         character_id = CharacterModel.create(
@@ -4616,6 +4706,9 @@ async def update_character(
             with open(file_path, "wb") as f:
                 content = await default_voice.read()
                 f.write(content)
+            
+            # 自动裁剪音频（如果超过20秒）
+            file_path = _trim_audio_if_needed(file_path, max_duration=20.0)
             
             voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
         
