@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>如何获取参考音频</title>
+  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 900px;
+      width: 100%;
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    
+    .header p {
+      font-size: 16px;
+      opacity: 0.95;
+    }
+    
+    .content {
+      padding: 40px;
+    }
+    
+    .step {
+      margin-bottom: 35px;
+    }
+    
+    .step-number {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 32px;
+      font-weight: 600;
+      margin-right: 12px;
+      font-size: 16px;
+    }
+    
+    .step-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #1f2937;
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+    }
+    
+    .step-content {
+      margin-left: 44px;
+      color: #4b5563;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+    
+    .link-button {
+      display: inline-block;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+      margin-top: 15px;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    .link-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+    }
+    
+    .guide-image {
+      width: 100%;
+      border-radius: 12px;
+      margin-top: 20px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      border: 1px solid #e5e7eb;
+    }
+    
+    .note {
+      background: #fef3c7;
+      border-left: 4px solid #f59e0b;
+      padding: 16px;
+      border-radius: 8px;
+      margin-top: 20px;
+      color: #92400e;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    
+    .note strong {
+      color: #78350f;
+      display: block;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>如何获取参考音频</h1>
+      <p>按照以下步骤，轻松获取高质量的参考音频</p>
+    </div>
+    
+    <div class="content">
+      <div class="step">
+        <div class="step-title">
+          <span class="step-number">1</span>
+          访问 ElevenLabs 语音库
+        </div>
+        <div class="step-content">
+          点击下方按钮访问 ElevenLabs 的中文语音库，这里有大量高质量的中文语音可供选择。
+          <br>
+          <a href="https://elevenlabs.io/app/voice-library?required_languages=zh" target="_blank" class="link-button">
+            前往 ElevenLabs 语音库
+          </a>
+        </div>
+      </div>
+      
+      <div class="step">
+        <div class="step-title">
+          <span class="step-number">2</span>
+          选择合适的语音
+        </div>
+        <div class="step-content">
+          在语音库中浏览并试听不同的语音，选择最符合您角色特点的声音。您可以通过筛选器来缩小选择范围：
+          <ul style="margin-top: 10px; margin-left: 20px;">
+            <li>性别：男性/女性</li>
+            <li>年龄：年轻/中年/老年</li>
+            <li>语言：确保选择支持中文的语音</li>
+          </ul>
+        </div>
+      </div>
+      
+      <div class="step">
+        <div class="step-title">
+          <span class="step-number">3</span>
+          下载参考音频
+        </div>
+        <div class="step-content">
+          找到合适的语音后，按照下图所示的步骤下载参考音频：
+          <img src="http://ailive.perseids.cn/upload/assert/how_to_find_reference_voice.jpg" alt="下载参考音频步骤" class="guide-image" onerror="this.style.display='none'">
+        </div>
+      </div>
+      
+      <div class="step">
+        <div class="step-title">
+          <span class="step-number">4</span>
+          上传到角色设置
+        </div>
+        <div class="step-content">
+          下载完成后，返回角色设置页面，在"参考音频"处上传您刚才下载的音频文件。
+          <div class="note">
+            <strong>提示：</strong>
+            支持 mp3、wav、m4a 等常见音频格式。如果音频时长超过 20 秒，系统会自动裁剪到 20 秒以确保最佳效果。
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -4801,10 +4801,28 @@
         this.fetchComputingPower();
       }
       
-      // 检查是否需要自动弹出登录窗口（从工作流页面跳转过来）
+      // 检查是否需要自动弹出登录窗口
+      // 方式1: 从工作流页面跳转过来（localStorage标记）
       const redirectAfterLogin = localStorage.getItem('redirect_after_login');
       if (redirectAfterLogin && !this.authToken) {
         this.showLoginModal = true;
+      }
+      
+      // 方式2: 通过URL参数触发登录框（支持跨域跳转）
+      // 复用前面已声明的 urlParams 变量
+      if (urlParams.get('login') === '1' && !this.authToken) {
+        this.showLoginModal = true;
+        
+        // 处理登录后跳转的目标路径（仅允许路径，不允许完整URL）
+        const redirectUrl = urlParams.get('redirect_url');
+        if (redirectUrl) {
+          // 验证是否为有效的路径（不包含协议和域名）
+          if (!redirectUrl.includes('://') && !redirectUrl.includes('//')) {
+            // 确保路径以 / 开头
+            const targetPath = redirectUrl.startsWith('/') ? redirectUrl : '/' + redirectUrl;
+            localStorage.setItem('redirect_after_login', targetPath);
+          }
+        }
       }
       
       // Load terms of service

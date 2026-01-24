@@ -124,7 +124,7 @@
             </div>
           </div>
           <div class="add-menu-group">
-            <div class="add-menu-label">添加素材</div>
+            <div class="add-menu-label">添加素材 <a href="javascript:void(0)" id="agentBtnMaterial" style="color: #3b82f6; text-decoration: none; font-size: 12px; font-weight: 600; margin-left: 8px; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="AI生成剧本，人物，场景，道具">一键生成素材</a></div>
             <div class="add-menu-item" id="menuAddCharacter">
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <circle cx="12" cy="8" r="3" stroke="currentColor" stroke-width="2"/>
@@ -138,6 +138,13 @@
                 <circle cx="12" cy="9" r="2.5" stroke="currentColor" stroke-width="2"/>
               </svg>
               <span class="add-menu-text">场景</span>
+            </div>
+            <div class="add-menu-item" id="menuAddProps">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+                <path d="M9 9L15 15M15 9L9 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">道具</span>
             </div>
           </div>
         </div>
@@ -238,7 +245,10 @@
       <div class="modal-body" style="background: #ffffff; padding: 20px;">
         <div style="display: flex; flex-direction: column; gap: 16px;">
           <div class="field">
-            <label class="label" style="color: #0f172a;">画风名称</label>
+            <label class="label" style="color: #0f172a;">
+              画风名称
+              <a href="/image-style-guide" target="_blank" style="margin-left: 8px; font-size: 12px; color: #3b82f6; text-decoration: none; font-weight: normal; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="查看画风说明">查看画风说明</a>
+            </label>
             <input type="text" id="styleNameInput" list="stylePresets" placeholder="选择或输入画风" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
             <datalist id="stylePresets">
               <option value="漫画风格">
@@ -384,11 +394,15 @@
               <input type="file" id="createCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
             </div>
             <div class="field">
-              <label class="label" style="color: #0f172a;">参考音频</label>
-              <input type="file" id="createCharacterVoiceInput" accept="audio/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <label class="label" style="color: #0f172a;">
+                参考音频
+                <a href="javascript:void(0)" id="createCharacterVoiceGuideLink" style="margin-left: 8px; font-size: 12px; color: #3b82f6; text-decoration: none; font-weight: normal; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="查看如何获取参考音频">如何获取参考音频?</a>
+              </label>
+              <input type="file" id="createCharacterVoiceInput" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
               <div id="createCharacterVoicePreview" style="margin-top: 8px; display: none;">
                 <audio id="createCharacterVoicePreviewAudio" controls style="width: 100%; max-height: 40px;"></audio>
               </div>
+              <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
             </div>
           </div>
         </div>
@@ -475,6 +489,116 @@
       <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
         <button class="mini-btn secondary" id="editLocationCancelBtn" type="button">取消</button>
         <button class="mini-btn" id="editLocationSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 道具选择模态框 -->
+  <div class="modal" id="propsModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">选择道具</div>
+        <button class="modal-close" id="propsModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">选择世界</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <select id="propsWorldSelect" style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+                <option value="">请先选择世界...</option>
+              </select>
+              <a id="propsCreateWorldBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #22c55e; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#22c55e'" onmouseout="this.style.borderColor='transparent'">创建世界</a>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">搜索道具</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="propsSearchInput" placeholder="输入道具名称搜索..." style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+              <a id="createPropsBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #3b82f6; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'">创建道具</a>
+            </div>
+          </div>
+          <div id="propsList" style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
+            <div style="text-align: center; color: #9ca3af; padding: 40px 20px;">
+              请先选择世界
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建道具模态框 -->
+  <div class="modal" id="createPropsModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">创建道具</div>
+        <button class="modal-close" id="createPropsModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">道具名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createPropsNameInput" placeholder="请输入道具名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">道具描述</label>
+            <textarea id="createPropsContentInput" placeholder="请输入道具描述（包括外观、材质、用途等）..." rows="4" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">其他信息</label>
+            <textarea id="createPropsOtherInfoInput" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="createPropsImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createPropsCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="createPropsSaveBtn" type="button">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑道具模态框 -->
+  <div class="modal" id="editPropsModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">编辑道具</div>
+        <button class="modal-close" id="editPropsModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <input type="hidden" id="editPropsId" />
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">道具名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="editPropsNameInput" placeholder="请输入道具名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">道具描述 <span style="color: #6b7280; font-size: 12px; font-weight: normal;">(最多200字)</span></label>
+            <textarea id="editPropsContentInput" placeholder="请输入道具描述..." rows="4" maxlength="200" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+            <div style="text-align: right; font-size: 12px; color: #6b7280; margin-top: 4px;">
+              <span id="editPropsContentCount">0</span>/200
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">其他信息</label>
+            <textarea id="editPropsOtherInfoInput" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="editPropsImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <div id="editPropsImagePreview" style="margin-top: 8px; display: none;">
+              <img id="editPropsImagePreviewImg" style="max-width: 100%; height: auto; border-radius: 8px;" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="editPropsCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="editPropsSaveBtn" type="button">保存</button>
       </div>
     </div>
   </div>
@@ -575,11 +699,15 @@
               </div>
             </div>
             <div class="field">
-              <label class="label" style="color: #0f172a;">参考音频</label>
-              <input type="file" id="editCharacterVoiceInput" accept="audio/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <label class="label" style="color: #0f172a;">
+                参考音频
+                <a href="javascript:void(0)" id="editCharacterVoiceGuideLink" style="margin-left: 8px; font-size: 12px; color: #3b82f6; text-decoration: none; font-weight: normal; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="查看如何获取参考音频">如何获取参考音频?</a>
+              </label>
+              <input type="file" id="editCharacterVoiceInput" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
               <div id="editCharacterVoicePreview" style="margin-top: 8px; display: none;">
                 <audio id="editCharacterVoicePreviewAudio" controls style="width: 100%;"></audio>
               </div>
+              <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
             </div>
           </div>
           <div class="field">

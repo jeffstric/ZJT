@@ -25,6 +25,8 @@ from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, Pay
 from model.world import WorldModel
 from model.character import CharacterModel
 from model.location import LocationModel
+from model.script import ScriptModel
+from model.props import PropsModel
 import uuid
 from duomi_api_requset import create_image_to_video, get_ai_task_result, create_ai_image, create_video_remix, create_character as create_character_task, get_character_task_result, create_text_to_image
 from PIL import Image
@@ -73,6 +75,8 @@ if https_config.get("enabled", False) and "https_host" in config["server"]:
 else:
     SERVER_HOST = config["server"]["host"]
 API_KEY = config["runninghub"]["api_key"]
+
+SCRIPT_WRITER_URL = config["script_writer"]["url"]
 
 # 初始化微信支付工具
 wechat_pay_config = config.get("pay", {}).get("wxpay", {})
@@ -515,6 +519,93 @@ def _save_uploaded_audio(upload_file: UploadFile) -> str:
     
     # Return relative path from upload directory
     return file_path
+
+
+def _trim_audio_if_needed(audio_path: str, max_duration: float = 20.0) -> str:
+    """
+    Check audio duration and trim if it exceeds max_duration.
+    
+    Args:
+        audio_path: Path to the audio file
+        max_duration: Maximum duration in seconds (default: 20.0)
+        
+    Returns:
+        Path to the audio file (original or trimmed)
+        
+    Raises:
+        Exception: If audio processing fails
+    """
+    try:
+        ffmpeg_path = config.get("bin", {}).get("ffmpeg", "ffmpeg")
+        ffprobe_path = config.get("bin", {}).get("ffprobe", "ffprobe")
+        
+        # Check audio duration using ffprobe
+        duration_cmd = [
+            ffprobe_path, '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            audio_path
+        ]
+        
+        duration_result = subprocess.run(
+            duration_cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        if duration_result.returncode != 0:
+            logger.warning(f"Failed to get audio duration: {duration_result.stderr}")
+            return audio_path
+        
+        duration = float(duration_result.stdout.strip())
+        logger.info(f"Audio duration: {duration:.2f}s")
+        
+        # If duration is within limit, return original file
+        if duration <= max_duration:
+            return audio_path
+        
+        # Trim audio to max_duration
+        logger.info(f"Trimming audio from {duration:.2f}s to {max_duration:.2f}s")
+        
+        # Generate output filename
+        base_name = os.path.splitext(audio_path)[0]
+        ext = os.path.splitext(audio_path)[1]
+        trimmed_path = f"{base_name}_trimmed{ext}"
+        
+        # Use ffmpeg to trim audio
+        trim_cmd = [
+            ffmpeg_path, '-i', audio_path,
+            '-t', str(max_duration),
+            '-acodec', 'copy',
+            '-y',
+            trimmed_path
+        ]
+        
+        trim_result = subprocess.run(
+            trim_cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if trim_result.returncode != 0:
+            logger.error(f"ffmpeg trim error: {trim_result.stderr}")
+            return audio_path
+        
+        # Remove original file and rename trimmed file
+        os.remove(audio_path)
+        os.rename(trimmed_path, audio_path)
+        
+        logger.info(f"Audio trimmed successfully to {max_duration}s")
+        return audio_path
+        
+    except subprocess.TimeoutExpired:
+        logger.error("Audio processing timeout")
+        return audio_path
+    except Exception as e:
+        logger.error(f"Error trimming audio: {e}")
+        return audio_path
 
 
 def _download_and_extract_audio_from_video(video_url: str) -> str:
@@ -2054,6 +2145,32 @@ async def get_computing_power_config():
             status_code=500,
             content={
                 'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
+@app.get('/api/script-writer-url')
+async def get_script_writer_url():
+    """
+    获取短剧智能体服务地址
+    """
+    try:
+        return JSONResponse(
+            content={
+                'code': 0,
+                'message': '获取成功',
+                'data': {
+                    'url': SCRIPT_WRITER_URL
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f'获取短剧智能体服务地址失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
                 'message': '服务器错误'
             }
         )
@@ -3752,6 +3869,36 @@ async def parse_script(
                 status_code=400,
                 content={"code": -1, "message": "剧本内容不能为空"}
             )
+
+            # 检查算力是否充足
+        if auth_token:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': f'算力检查失败: {message}',
+                        'data': None
+                    }
+                )
+                    
+            # Check if computing power is sufficient
+            user_computing_power = response_data.get('computing_power', 0)
+            if user_computing_power < 1:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        'code': -1,
+                        'message': '算力不足，请充值',
+                        'data': None
+                    }
+                )
         
         # 导入剧本解析模块
         from llm.script_parser import parse_script_to_shots
@@ -3761,11 +3908,14 @@ async def parse_script(
             script_content=script_content,
             max_group_duration=max_group_duration,
             world_id=world_id,
-            model=None,
+            model='gemini-3-flash-preview',
             temperature=0.5,
             force_medium_shot=force_medium_shot,
             no_bg_music=no_bg_music,
-            split_multi_dialogue=split_multi_dialogue
+            split_multi_dialogue=split_multi_dialogue,
+            auth_token=auth_token,
+            vendor_id=1,
+            model_id=1
         )
         
         if not parsed_data:
@@ -4259,6 +4409,53 @@ async def delete_world(
         )
 
 
+@app.get('/api/scripts')
+async def get_scripts(
+    world_id: int = Query(..., description="世界ID"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    order_by: str = Query('create_time', description="排序字段"),
+    order_direction: str = Query('DESC', description="排序方向"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    根据世界ID获取剧本列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        _ensure_world_owner(world_id, user_id)
+        
+        result = ScriptModel.list_by_world(
+            world_id=world_id,
+            page=page,
+            page_size=page_size,
+            order_by=order_by,
+            order_direction=order_direction
+        )
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get scripts for world {world_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
 @app.get('/api/characters')
 async def get_characters(
     world_id: int = Query(..., description="世界ID"),
@@ -4409,6 +4606,9 @@ async def create_character(
                 content = await default_voice.read()
                 f.write(content)
             
+            # 自动裁剪音频（如果超过20秒）
+            file_path = _trim_audio_if_needed(file_path, max_duration=20.0)
+            
             voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
         
         character_id = CharacterModel.create(
@@ -4506,6 +4706,9 @@ async def update_character(
             with open(file_path, "wb") as f:
                 content = await default_voice.read()
                 f.write(content)
+            
+            # 自动裁剪音频（如果超过20秒）
+            file_path = _trim_audio_if_needed(file_path, max_duration=20.0)
             
             voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
         
@@ -4812,6 +5015,316 @@ async def update_location(
         )
     except Exception as e:
         logger.error(f"Failed to update location: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+# ========== 道具相关接口 ==========
+
+@app.get('/api/props')
+async def get_props(
+    world_id: int = Query(..., description="世界ID"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取道具列表
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        logger.info(f"Getting props list - world_id: {world_id}, page: {page}, page_size: {page_size}, keyword: {keyword}")
+        
+        result = PropsModel.list_by_world(
+            world_id=world_id,
+            page=page,
+            page_size=page_size,
+            keyword=keyword
+        )
+        
+        logger.info(f"Props query result - total: {result.get('total', 0)}, data count: {len(result.get('data', []))}")
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': result
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get props: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.get('/api/props/{props_id}')
+async def get_props_by_id(
+    props_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    获取单个道具详情
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        logger.info(f"Getting props detail - props_id: {props_id}")
+        
+        props = PropsModel.get_by_id(props_id)
+        
+        if not props:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'code': -1,
+                    'message': '道具不存在',
+                    'data': None
+                }
+            )
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': 'success',
+                'data': props.to_dict()
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to get props detail: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.post('/api/props')
+async def create_props(
+    world_id: int = Form(..., description="世界ID"),
+    name: str = Form(..., description="道具名称"),
+    content: Optional[str] = Form(None, description="道具描述"),
+    other_info: Optional[str] = Form(None, description="其他信息"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    创建道具
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        if not name or not name.strip():
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '道具名称不能为空',
+                    'data': None
+                }
+            )
+        
+        # 处理图片上传
+        image_path = None
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"props_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            props_upload_dir = os.path.join(upload_dir, "props")
+            os.makedirs(props_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(props_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content_data = await reference_image.read()
+                f.write(content_data)
+            
+            image_path = f"{SERVER_HOST}/upload/props/{filename}"
+        
+        props_id = PropsModel.create(
+            world_id=world_id,
+            name=name.strip(),
+            user_id=user_id,
+            content=content.strip() if content else None,
+            other_info=other_info.strip() if other_info else None,
+            reference_image=image_path
+        )
+        
+        props = PropsModel.get_by_id(props_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '创建成功',
+                'data': props.to_dict() if props else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to create props: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.put('/api/props/{props_id}')
+async def update_props(
+    props_id: int,
+    name: Optional[str] = Form(None, description="道具名称"),
+    content: Optional[str] = Form(None, description="道具描述"),
+    other_info: Optional[str] = Form(None, description="其他信息"),
+    reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    更新道具
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        # 获取道具信息
+        props = PropsModel.get_by_id(props_id)
+        if not props:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'code': -1,
+                    'message': '道具不存在',
+                    'data': None
+                }
+            )
+        
+        # 验证权限
+        if props.user_id != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    'code': -1,
+                    'message': '无权限修改此道具',
+                    'data': None
+                }
+            )
+        
+        # 处理图片上传
+        image_path = props.reference_image
+        if reference_image and reference_image.filename:
+            file_ext = os.path.splitext(reference_image.filename)[1]
+            filename = f"props_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            
+            props_upload_dir = os.path.join(upload_dir, "props")
+            os.makedirs(props_upload_dir, exist_ok=True)
+            
+            file_path = os.path.join(props_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content_data = await reference_image.read()
+                f.write(content_data)
+            
+            image_path = f"{SERVER_HOST}/upload/props/{filename}"
+        
+        # 更新道具
+        PropsModel.update(
+            props_id=props_id,
+            name=name.strip() if name else props.name,
+            content=content.strip() if content else props.content,
+            other_info=other_info.strip() if other_info else props.other_info,
+            reference_image=image_path
+        )
+        
+        # 获取更新后的道具
+        updated_props = PropsModel.get_by_id(props_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '更新成功',
+                'data': updated_props.to_dict() if updated_props else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to update props: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.delete('/api/props/{props_id}')
+async def delete_props(
+    props_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除道具
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        
+        # 获取道具信息
+        props = PropsModel.get_by_id(props_id)
+        if not props:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'code': -1,
+                    'message': '道具不存在',
+                    'data': None
+                }
+            )
+        
+        # 验证权限
+        if props.user_id != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    'code': -1,
+                    'message': '无权限删除此道具',
+                    'data': None
+                }
+            )
+        
+        # 删除道具
+        PropsModel.delete(props_id)
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '删除成功',
+                'data': None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete props: {e}")
         return JSONResponse(
             status_code=500,
             content={
@@ -5342,6 +5855,13 @@ async def serve_video_workflow():
     if os.path.isfile(file_path):
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="Video workflow page not found")
+
+@app.get("/image-style-guide")
+async def serve_image_style_guide():
+    file_path = os.path.join(static_dir, "image_style_guide.html")
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Image style guide page not found")
 
 @app.get(f"{MP_VERIFY_ROUTE}")
 async def get_mp_verify_file():

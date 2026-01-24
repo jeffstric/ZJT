@@ -40,6 +40,11 @@
       addMenu.classList.remove('show');
     });
 
+    document.getElementById('menuAddProps').addEventListener('click', () => {
+      openPropsModal();
+      addMenu.classList.remove('show');
+    });
+
     document.getElementById('menuAddShotGroup').addEventListener('click', () => {
       const shotGroupData = {
         group_id: `grp_${Date.now()}`,
@@ -902,6 +907,24 @@
       modal.setAttribute('aria-hidden', 'false');
     }
     
+    // 打开道具选择模态框
+    async function openPropsModal() {
+      const modal = document.getElementById('propsModal');
+      const worldSelect = document.getElementById('propsWorldSelect');
+      
+      // 加载世界列表
+      await loadWorldsToSelect(worldSelect);
+      
+      // 如果有默认世界，自动选择并加载道具
+      if (state.defaultWorldId) {
+        worldSelect.value = state.defaultWorldId;
+        await loadProps(state.defaultWorldId);
+      }
+      
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+    
     // 加载世界列表到选择器
     async function loadWorldsToSelect(selectElement) {
       const authToken = getAuthToken();
@@ -1079,9 +1102,18 @@
               const locationId = item.dataset.locationId;
               const location = result.data.data.find(l => l.id == locationId);
               if (location) {
-                createLocationNode(location);
-                document.getElementById('locationModal').classList.remove('show');
-                renderMinimap();
+                // 检查是否有分镜选择上下文（从 nodes.js 传递过来）
+                if (window.currentLocationSelectionContext) {
+                  // 调用 nodes.js 中的 selectLocation 函数来更新分镜数据
+                  if (typeof window.selectLocation === 'function') {
+                    window.selectLocation(location);
+                  }
+                } else {
+                  // 没有上下文，创建场景节点
+                  createLocationNode(location);
+                  document.getElementById('locationModal').classList.remove('show');
+                  renderMinimap();
+                }
               }
             });
             
@@ -1098,6 +1130,87 @@
         }
       } catch (error) {
         console.error('加载场景列表失败:', error);
+        listEl.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 40px 20px;">加载失败</div>';
+      }
+    }
+    
+    // 加载道具列表
+    async function loadProps(worldId, keyword = '') {
+      const authToken = getAuthToken();
+      const userId = getUserId();
+      
+      if (!authToken || !userId) {
+        showToast('请先登录后再操作', 'error');
+        document.getElementById('propsModal')?.classList.remove('show');
+        return;
+      }
+      
+      const listEl = document.getElementById('propsList');
+      
+      if (!worldId) {
+        listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">请先选择世界</div>';
+        return;
+      }
+      
+      listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">加载中...</div>';
+      
+      try {
+        const url = new URL('/api/props', window.location.origin);
+        url.searchParams.append('world_id', worldId);
+        if (keyword) url.searchParams.append('keyword', keyword);
+        
+        const response = await fetch(url, {
+          headers: {
+            'Authorization': authToken,
+            'X-User-Id': userId
+          }
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data && result.data.data) {
+          if (result.data.data.length === 0) {
+            listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">暂无道具</div>';
+            return;
+          }
+          
+          listEl.innerHTML = result.data.data.map(props => `
+            <div class="props-item" data-props-id="${props.id}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+              <div style="display: flex; gap: 12px; align-items: start;">
+                ${props.reference_image ? `<img src="${props.reference_image}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                <div style="flex: 1;">
+                  <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(props.name)}</div>
+                  ${props.content ? `<div style="font-size: 12px; color: #666; line-height: 1.4;">${escapeHtml(props.content.slice(0, 100))}${props.content.length > 100 ? '...' : ''}</div>` : ''}
+                </div>
+              </div>
+            </div>
+          `).join('');
+          
+          // 添加点击事件
+          listEl.querySelectorAll('.props-item').forEach(item => {
+            item.addEventListener('click', () => {
+              const propsId = item.dataset.propsId;
+              const props = result.data.data.find(p => p.id == propsId);
+              if (props) {
+                createPropsNode(props);
+                document.getElementById('propsModal').classList.remove('show');
+                renderMinimap();
+              }
+            });
+            
+            item.addEventListener('mouseenter', () => {
+              item.style.background = '#f8fafc';
+              item.style.borderColor = '#22c55e';
+            });
+            
+            item.addEventListener('mouseleave', () => {
+              item.style.background = '';
+              item.style.borderColor = '#e5e7eb';
+            });
+          });
+        }
+      } catch (error) {
+        console.error('加载道具列表失败:', error);
         listEl.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 40px 20px;">加载失败</div>';
       }
     }
@@ -1546,6 +1659,191 @@
       try { autoSaveWorkflow(); } catch(e) {}
     }
     
+    function getPropsNodeBodyHtml(props) {
+      return `
+        ${props.reference_image ? `
+          <div class="field">
+            <div class="label">参考图</div>
+            <img src="${props.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+          </div>
+        ` : ''}
+        ${props.content ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(props.content)}</div></div>` : ''}
+        ${props.other_info ? `<div class="field"><div class="label">其他信息</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(props.other_info)}</div></div>` : ''}
+      `;
+    }
+
+    // 创建道具节点
+    function createPropsNode(props) {
+      const id = state.nextNodeId++;
+      const viewportPos = getViewportNodePosition();
+      const x = viewportPos.x;
+      const y = viewportPos.y;
+      
+      const node = {
+        id,
+        type: 'props',
+        title: props.name,
+        x,
+        y,
+        data: props
+      };
+      state.nodes.push(node);
+      
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.nodeId = String(id);
+      el.style.left = node.x + 'px';
+      el.style.top = node.y + 'px';
+      
+      el.innerHTML = `
+        <div class="node-header">
+          <div class="node-title">道具: ${escapeHtml(props.name)}</div>
+          <div style="display: flex; gap: 4px;">
+            <button class="icon-btn" data-action="edit" title="编辑" style="background: #3b82f6; color: white;">✎</button>
+            <button class="icon-btn" data-action="delete" title="删除">×</button>
+          </div>
+        </div>
+        <div class="node-body">
+          ${getPropsNodeBodyHtml(props)}
+        </div>
+        <div class="port output" data-port="output" title="输出"></div>
+      `;
+      
+      canvasEl.appendChild(el);
+      
+      // 绑定事件
+      const headerEl = el.querySelector('.node-header');
+      const editBtn = el.querySelector('[data-action="edit"]');
+      const deleteBtn = el.querySelector('[data-action="delete"]');
+      const outputPort = el.querySelector('.port.output');
+      
+      if (editBtn) {
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openEditPropsModal(id, props);
+        });
+      }
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeNode(id);
+      });
+      
+      el.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.stopPropagation();
+        setSelected(id);
+      });
+      
+      headerEl.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if(!state.selectedNodeIds.includes(id)){
+          setSelected(id);
+        }
+        initNodeDrag(id, e.clientX, e.clientY);
+      });
+      
+      if(outputPort) {
+        outputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      
+      setSelected(id);
+      showToast('道具已添加', 'success');
+      try { autoSaveWorkflow(); } catch(e) {}
+    }
+    
+    // 带数据创建道具节点（用于恢复工作流）
+    function createPropsNodeWithData(nodeData) {
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+      
+      const id = state.nextNodeId++;
+      const node = {
+        id,
+        type: 'props',
+        title: nodeData.title || nodeData.data.name,
+        x: nodeData.x,
+        y: nodeData.y,
+        data: nodeData.data
+      };
+      state.nodes.push(node);
+      
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.nodeId = String(id);
+      el.style.left = node.x + 'px';
+      el.style.top = node.y + 'px';
+
+      const props = nodeData.data;
+      el.innerHTML = `
+        <div class="node-header">
+          <div class="node-title">道具: ${escapeHtml(props.name)}</div>
+          <div style="display: flex; gap: 4px;">
+            <button class="icon-btn" data-action="edit" title="编辑" style="background: #3b82f6; color: white;">✎</button>
+            <button class="icon-btn" data-action="delete" title="删除">×</button>
+          </div>
+        </div>
+        <div class="node-body">
+          ${getPropsNodeBodyHtml(props)}
+        </div>
+        <div class="port output" data-port="output" title="输出"></div>
+      `;
+      
+      canvasEl.appendChild(el);
+      
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+      
+      // 绑定事件
+      const headerEl = el.querySelector('.node-header');
+      const editBtn = el.querySelector('[data-action="edit"]');
+      const deleteBtn = el.querySelector('[data-action="delete"]');
+      const outputPort = el.querySelector('.port.output');
+
+      if (editBtn) {
+        editBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openEditPropsModal(id, props);
+        });
+      }
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeNode(id);
+      });
+      
+      el.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.stopPropagation();
+        setSelected(id);
+      });
+      
+      headerEl.addEventListener('mousedown', (e) => {
+        if(e.target.classList.contains('port')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if(!state.selectedNodeIds.includes(id)){
+          setSelected(id);
+        }
+        initNodeDrag(id, e.clientX, e.clientY);
+      });
+      
+      if(outputPort) {
+        outputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+    }
+    
     // 角色模态框事件
     document.getElementById('characterModalClose').addEventListener('click', () => {
       document.getElementById('characterModal').classList.remove('show');
@@ -1578,6 +1876,22 @@
       }
     });
     
+    // 道具模态框事件
+    document.getElementById('propsModalClose').addEventListener('click', () => {
+      document.getElementById('propsModal').classList.remove('show');
+    });
+    
+    document.getElementById('propsWorldSelect').addEventListener('change', (e) => {
+      loadProps(e.target.value);
+    });
+    
+    document.getElementById('propsSearchInput').addEventListener('input', (e) => {
+      const worldId = document.getElementById('propsWorldSelect').value;
+      if (worldId) {
+        loadProps(worldId, e.target.value);
+      }
+    });
+    
     // 点击模态框背景关闭
     document.getElementById('characterModal').addEventListener('click', (e) => {
       if (e.target.id === 'characterModal') {
@@ -1588,6 +1902,12 @@
     document.getElementById('locationModal').addEventListener('click', (e) => {
       if (e.target.id === 'locationModal') {
         document.getElementById('locationModal').classList.remove('show');
+      }
+    });
+    
+    document.getElementById('propsModal').addEventListener('click', (e) => {
+      if (e.target.id === 'propsModal') {
+        document.getElementById('propsModal').classList.remove('show');
       }
     });
     
@@ -1677,6 +1997,10 @@
     
     document.getElementById('locationCreateWorldBtn').addEventListener('click', () => {
       openCreateWorldModal(document.getElementById('locationWorldSelect'));
+    });
+    
+    document.getElementById('propsCreateWorldBtn').addEventListener('click', () => {
+      openCreateWorldModal(document.getElementById('propsWorldSelect'));
     });
     
     // 创建世界模态框事件
@@ -1840,21 +2164,18 @@
           return;
         }
         
-        // 验证音频时长
+        // 显示音频预览（不再验证时长，后端会自动裁剪）
         const url = URL.createObjectURL(file);
         const audio = new Audio();
         
         audio.addEventListener('loadedmetadata', () => {
-          const maxDuration = 20; // 20秒
+          voicePreviewAudio.src = url;
+          voicePreview.style.display = 'block';
+          
+          // 如果音频超过20秒，提示用户会自动裁剪
+          const maxDuration = 20;
           if(audio.duration > maxDuration){
-            showToast(`音频时长不能超过${maxDuration}秒，当前时长：${audio.duration.toFixed(1)}秒`, 'error');
-            voiceInput.value = '';
-            voicePreviewAudio.src = '';
-            voicePreview.style.display = 'none';
-            URL.revokeObjectURL(url);
-          } else {
-            voicePreviewAudio.src = url;
-            voicePreview.style.display = 'block';
+            showToast(`音频时长为${audio.duration.toFixed(1)}秒，上传后将自动裁剪至${maxDuration}秒`, 'info');
           }
         });
         
@@ -1871,6 +2192,12 @@
         voicePreviewAudio.src = '';
         voicePreview.style.display = 'none';
       }
+    });
+    
+    // 创建角色 - 如何获取参考音频指南链接
+    document.getElementById('createCharacterVoiceGuideLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.open('/reference_audio_guide.html', '_blank');
     });
     
     // 编辑角色音频文件选择预览
@@ -1901,31 +2228,18 @@
           return;
         }
         
-        // 验证音频时长
+        // 显示音频预览（不再验证时长，后端会自动裁剪）
         const url = URL.createObjectURL(file);
         const audio = new Audio();
         
         audio.addEventListener('loadedmetadata', () => {
-          const maxDuration = 20; // 20秒
+          voicePreviewAudio.src = url;
+          voicePreview.style.display = 'block';
+          
+          // 如果音频超过20秒，提示用户会自动裁剪
+          const maxDuration = 20;
           if(audio.duration > maxDuration){
-            showToast(`音频时长不能超过${maxDuration}秒，当前时长：${audio.duration.toFixed(1)}秒`, 'error');
-            voiceInput.value = '';
-            URL.revokeObjectURL(url);
-            // 恢复原始音频
-            const characterId = currentEditingCharacterNodeId;
-            if (characterId) {
-              const node = state.nodes.find(n => n.id === characterId);
-              if (node && node.data && node.data.default_voice) {
-                voicePreviewAudio.src = node.data.default_voice;
-                voicePreview.style.display = 'block';
-                return;
-              }
-            }
-            voicePreviewAudio.src = '';
-            voicePreview.style.display = 'none';
-          } else {
-            voicePreviewAudio.src = url;
-            voicePreview.style.display = 'block';
+            showToast(`音频时长为${audio.duration.toFixed(1)}秒，上传后将自动裁剪至${maxDuration}秒`, 'info');
           }
         });
         
@@ -1962,6 +2276,12 @@
         voicePreviewAudio.src = '';
         voicePreview.style.display = 'none';
       }
+    });
+    
+    // 编辑角色 - 如何获取参考音频指南链接
+    document.getElementById('editCharacterVoiceGuideLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.open('/reference_audio_guide.html', '_blank');
     });
     
     // ========== 创建场景功能 ==========
@@ -2076,6 +2396,236 @@
       }
     }
     
+    // ========== 创建道具功能 ==========
+    
+    // 打开创建道具模态框
+    async function openCreatePropsModal() {
+      const worldId = document.getElementById('propsWorldSelect').value;
+      if (!worldId) {
+        showToast('请先选择世界', 'error');
+        return;
+      }
+      
+      document.getElementById('createPropsNameInput').value = '';
+      document.getElementById('createPropsContentInput').value = '';
+      document.getElementById('createPropsOtherInfoInput').value = '';
+      document.getElementById('createPropsImageInput').value = '';
+      
+      document.getElementById('createPropsModal').classList.add('show');
+    }
+    
+    // 创建道具
+    async function createPropsItem() {
+      const worldId = document.getElementById('propsWorldSelect').value;
+      const nameInput = document.getElementById('createPropsNameInput');
+      const contentInput = document.getElementById('createPropsContentInput');
+      const otherInfoInput = document.getElementById('createPropsOtherInfoInput');
+      const imageInput = document.getElementById('createPropsImageInput');
+      const saveBtn = document.getElementById('createPropsSaveBtn');
+      
+      const name = nameInput.value.trim();
+      if (!name) {
+        showToast('请输入道具名称', 'error');
+        nameInput.focus();
+        return;
+      }
+      
+      saveBtn.disabled = true;
+      saveBtn.textContent = '创建中...';
+      
+      try {
+        const formData = new FormData();
+        formData.append('world_id', worldId);
+        formData.append('name', name);
+        
+        if (contentInput.value.trim()) formData.append('content', contentInput.value.trim());
+        if (otherInfoInput.value.trim()) formData.append('other_info', otherInfoInput.value.trim());
+        if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
+        
+        const response = await fetch('/api/props', {
+          method: 'POST',
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          },
+          body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (result.code === 0 && result.data) {
+          showToast('道具创建成功', 'success');
+          
+          const modalEl = document.getElementById('createPropsModal');
+          modalEl.classList.remove('show');
+          
+          loadProps(worldId);
+        } else {
+          showToast(result.message || '创建失败', 'error');
+        }
+      } catch (error) {
+        console.error('创建道具失败:', error);
+        showToast('创建道具失败', 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '创建';
+      }
+    }
+    
+    // ========== 编辑道具功能 ==========
+    
+    let currentEditingPropsNodeId = null;
+
+    function openEditPropsModal(nodeId, props) {
+      if (!props || !props.id) {
+        showToast('无法获取道具信息', 'error');
+        return;
+      }
+
+      currentEditingPropsNodeId = nodeId;
+
+      document.getElementById('editPropsId').value = props.id;
+      document.getElementById('editPropsNameInput').value = props.name || '';
+      document.getElementById('editPropsContentInput').value = props.content || '';
+      document.getElementById('editPropsOtherInfoInput').value = props.other_info || '';
+      document.getElementById('editPropsImageInput').value = '';
+
+      const contentCountEl = document.getElementById('editPropsContentCount');
+      if (contentCountEl) {
+        contentCountEl.textContent = (props.content || '').length;
+      }
+
+      const imagePreview = document.getElementById('editPropsImagePreview');
+      const imagePreviewImg = document.getElementById('editPropsImagePreviewImg');
+      if (props.reference_image) {
+        imagePreviewImg.src = props.reference_image;
+        imagePreview.style.display = 'block';
+      } else {
+        imagePreview.style.display = 'none';
+      }
+
+      document.getElementById('editPropsModal').classList.add('show');
+    }
+
+    async function savePropsEdit() {
+      const nameInput = document.getElementById('editPropsNameInput');
+      const contentInput = document.getElementById('editPropsContentInput');
+      const otherInfoInput = document.getElementById('editPropsOtherInfoInput');
+      const imageInput = document.getElementById('editPropsImageInput');
+      const saveBtn = document.getElementById('editPropsSaveBtn');
+
+      const name = nameInput.value.trim();
+      if (!name) {
+        showToast('请输入道具名称', 'error');
+        nameInput.focus();
+        return;
+      }
+
+      if (!currentEditingPropsNodeId) {
+        showToast('未选择道具节点', 'error');
+        return;
+      }
+
+      const node = state.nodes.find(n => n.id === currentEditingPropsNodeId);
+      if (!node || !node.data || !node.data.id) {
+        showToast('找不到道具信息', 'error');
+        return;
+      }
+
+      const propsId = node.data.id;
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中...';
+
+      try {
+        const formData = new FormData();
+        formData.append('name', name);
+        if (contentInput.value.trim()) formData.append('content', contentInput.value.trim());
+        if (otherInfoInput.value.trim()) formData.append('other_info', otherInfoInput.value.trim());
+        if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
+
+        const response = await fetch(`/api/props/${propsId}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          },
+          body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.code === 0 && result.data) {
+          showToast('道具更新成功', 'success');
+
+          const updatedProps = result.data;
+          Object.assign(node.data, updatedProps);
+          node.title = updatedProps.name;
+
+          const nodeEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+          if (nodeEl) {
+            const titleEl = nodeEl.querySelector('.node-title');
+            if (titleEl) {
+              titleEl.textContent = `道具: ${updatedProps.name || ''}`;
+            }
+            const bodyEl = nodeEl.querySelector('.node-body');
+            if (bodyEl) {
+              bodyEl.innerHTML = getPropsNodeBodyHtml(updatedProps);
+            }
+          }
+
+          try { autoSaveWorkflow(); } catch (e) {}
+
+          const propsModalWorld = document.getElementById('propsWorldSelect');
+          if (propsModalWorld && propsModalWorld.value) {
+            const keyword = document.getElementById('propsSearchInput')?.value || '';
+            loadProps(propsModalWorld.value, keyword);
+          }
+
+          document.getElementById('editPropsModal').classList.remove('show');
+          currentEditingPropsNodeId = null;
+        } else {
+          showToast(result.message || '更新失败', 'error');
+        }
+      } catch (error) {
+        console.error('更新道具失败:', error);
+        showToast('更新道具失败', 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存';
+        imageInput.value = '';
+      }
+    }
+
+    document.getElementById('editPropsModalClose').addEventListener('click', () => {
+      document.getElementById('editPropsModal').classList.remove('show');
+      currentEditingPropsNodeId = null;
+    });
+
+    document.getElementById('editPropsCancelBtn').addEventListener('click', () => {
+      document.getElementById('editPropsModal').classList.remove('show');
+      currentEditingPropsNodeId = null;
+    });
+
+    document.getElementById('editPropsSaveBtn').addEventListener('click', () => {
+      savePropsEdit();
+    });
+
+    document.getElementById('editPropsModal').addEventListener('click', (e) => {
+      if (e.target.id === 'editPropsModal') {
+        document.getElementById('editPropsModal').classList.remove('show');
+        currentEditingPropsNodeId = null;
+      }
+    });
+
+    const editPropsContentInput = document.getElementById('editPropsContentInput');
+    const editPropsContentCount = document.getElementById('editPropsContentCount');
+    if (editPropsContentInput && editPropsContentCount) {
+      editPropsContentInput.addEventListener('input', () => {
+        editPropsContentCount.textContent = editPropsContentInput.value.length;
+      });
+    }
+
     // 编辑场景功能
     async function openEditLocationModal(locationId) {
       const worldId = document.getElementById('locationWorldSelect').value;
@@ -2274,6 +2824,30 @@
     document.getElementById('createLocationModal').addEventListener('click', (e) => {
       if (e.target.id === 'createLocationModal') {
         document.getElementById('createLocationModal').classList.remove('show');
+      }
+    });
+    
+    // 创建道具按钮事件
+    document.getElementById('createPropsBtn').addEventListener('click', () => {
+      openCreatePropsModal();
+    });
+    
+    // 创建道具模态框事件
+    document.getElementById('createPropsModalClose').addEventListener('click', () => {
+      document.getElementById('createPropsModal').classList.remove('show');
+    });
+    
+    document.getElementById('createPropsCancelBtn').addEventListener('click', () => {
+      document.getElementById('createPropsModal').classList.remove('show');
+    });
+    
+    document.getElementById('createPropsSaveBtn').addEventListener('click', () => {
+      createPropsItem();
+    });
+    
+    document.getElementById('createPropsModal').addEventListener('click', (e) => {
+      if (e.target.id === 'createPropsModal') {
+        document.getElementById('createPropsModal').classList.remove('show');
       }
     });
 
@@ -2993,3 +3567,44 @@
     window.addEventListener('beforeunload', () => {
       stopAutoSave();
     });
+
+    // 一键生成素材按钮点击事件
+    const agentBtnMaterial = document.getElementById('agentBtnMaterial');
+    if (agentBtnMaterial) {
+      agentBtnMaterial.addEventListener('click', async () => {
+        const authToken = localStorage.getItem('auth_token') || '';
+        const userId = localStorage.getItem('user_id') || '';
+        
+        if (!userId) {
+          showToast('请先登录', 'error');
+          return;
+        }
+        
+        try {
+          const response = await fetch('/api/script-writer-url', {
+            headers: {
+              'Authorization': authToken,
+              'X-User-Id': userId
+            }
+          });
+          const result = await response.json();
+          
+          if (result.code === 0 && result.data && result.data.url) {
+            const baseUrl = result.data.url;
+            let url = `${baseUrl}?auth_token=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
+            
+            // 如果已选择世界，添加 world_id 参数
+            if (state.defaultWorldId) {
+              url += `&world_id=${encodeURIComponent(state.defaultWorldId)}`;
+            }
+            
+            window.open(url, '_blank');
+          } else {
+            showToast(result.message || '获取服务地址失败', 'error');
+          }
+        } catch (error) {
+          console.error('Failed to get script writer url:', error);
+          showToast('网络错误', 'error');
+        }
+      });
+    }

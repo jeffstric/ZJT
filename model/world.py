@@ -16,6 +16,11 @@ class World:
         self.id = kwargs.get('id')
         self.name = kwargs.get('name')
         self.description = kwargs.get('description')
+        self.story_outline = kwargs.get('story_outline')
+        self.visual_style = kwargs.get('visual_style')
+        self.era_environment = kwargs.get('era_environment')
+        self.color_language = kwargs.get('color_language')
+        self.composition_preference = kwargs.get('composition_preference')
         self.user_id = kwargs.get('user_id')
         self.create_time = kwargs.get('create_time')
         self.update_time = kwargs.get('update_time')
@@ -26,6 +31,11 @@ class World:
             'id': self.id,
             'name': self.name,
             'description': self.description,
+            'story_outline': self.story_outline,
+            'visual_style': self.visual_style,
+            'era_environment': self.era_environment,
+            'color_language': self.color_language,
+            'composition_preference': self.composition_preference,
             'user_id': self.user_id,
             'create_time': self.create_time.isoformat() if self.create_time else None,
             'update_time': self.update_time.isoformat() if self.update_time else None
@@ -39,7 +49,12 @@ class WorldModel:
     def create(
         name: str,
         user_id: int,
-        description: Optional[str] = None
+        description: Optional[str] = None,
+        story_outline: Optional[str] = None,
+        visual_style: Optional[str] = None,
+        era_environment: Optional[str] = None,
+        color_language: Optional[str] = None,
+        composition_preference: Optional[str] = None
     ) -> int:
         """
         Create a new world record
@@ -48,16 +63,21 @@ class WorldModel:
             name: World name
             user_id: User ID
             description: World description (optional)
+            story_outline: Story outline (optional)
+            visual_style: Visual style (optional)
+            era_environment: Era environment (optional)
+            color_language: Color language (optional)
+            composition_preference: Composition preference (optional)
         
         Returns:
             Inserted record ID
         """
         sql = """
             INSERT INTO world 
-            (name, user_id, description)
-            VALUES (%s, %s, %s)
+            (name, user_id, description, story_outline, visual_style, era_environment, color_language, composition_preference)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (name, user_id, description)
+        params = (name, user_id, description, story_outline, visual_style, era_environment, color_language, composition_preference)
         
         try:
             record_id = execute_insert(sql, params)
@@ -191,7 +211,7 @@ class WorldModel:
         Returns:
             Number of affected rows
         """
-        allowed_fields = ['name', 'description']
+        allowed_fields = ['name', 'description', 'story_outline', 'visual_style', 'era_environment', 'color_language', 'composition_preference']
         
         update_fields = []
         params = []

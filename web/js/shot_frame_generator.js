@@ -204,6 +204,70 @@ async function generateShotFrameImage(nodeId, node){
       }
     }
     
+    // 4. 添加道具参考图
+    const propsPresent = shotData.props_present || [];
+    if(propsPresent.length > 0){
+      console.log('[生成分镜图] 检测到道具列表:', propsPresent);
+      console.log('[生成分镜图] shotData.scriptData 存在:', !!shotData.scriptData);
+      console.log('[生成分镜图] shotData.scriptData.props:', shotData.scriptData?.props);
+      
+      if(!shotData.scriptData || !shotData.scriptData.props){
+        console.warn('[生成分镜图] 警告: shotData.scriptData 或 scriptData.props 不存在，无法获取道具信息');
+      }
+    }
+    
+    if(propsPresent.length > 0 && shotData.scriptData && shotData.scriptData.props){
+      console.log('[生成分镜图] 进入道具处理逻辑');
+      const scriptProps = shotData.scriptData.props;
+      console.log('[生成分镜图] scriptProps:', scriptProps);
+      
+      for(const propId of propsPresent){
+        console.log(`[生成分镜图] 处理道具ID: ${propId}`);
+        const prop = scriptProps.find(p => p.id === propId);
+        console.log(`[生成分镜图] 找到的道具:`, prop);
+        if(prop && prop.props_db_id){
+          console.log(`[生成分镜图] 道具有 props_db_id: ${prop.props_db_id}`);
+          // 从数据库获取道具的参考图
+          try {
+            const userId = localStorage.getItem('user_id') || '1';
+            const authToken = localStorage.getItem('auth_token') || '';
+            
+            console.log(`[道具匹配] 开始调用API获取道具 ${prop.name} (ID: ${prop.props_db_id})`);
+            const response = await fetch(`/api/props/${prop.props_db_id}`, {
+              headers: {
+                'Authorization': authToken,
+                'X-User-Id': userId
+              }
+            });
+            
+            console.log(`[道具匹配] API响应状态: ${response.status}, ok: ${response.ok}`);
+            if(response.ok){
+              const result = await response.json();
+              console.log(`[道具匹配] 道具"${prop.name}"查询结果:`, result);
+              if(result.code === 0 && result.data && result.data.reference_image){
+                console.log(`[道具匹配] 道具有参考图: ${result.data.reference_image}`);
+                const propsFile = await fetchFileFromUrl(result.data.reference_image);
+                if(propsFile){
+                  referenceImages.push(propsFile);
+                  promptSuffix.push(`图${imageIndex}是${prop.name}`);
+                  imageIndex++;
+                  console.log(`[道具匹配] 成功添加道具参考图: ${prop.name}`);
+                } else {
+                  console.warn(`[道具匹配] fetchFileFromUrl 返回空`);
+                }
+              } else {
+                console.warn(`[道具匹配] 数据结构不符合预期或无参考图`);
+              }
+            } else {
+              console.error(`[道具匹配] API调用失败: ${response.status}`);
+            }
+          } catch(error){
+            console.error(`[道具匹配] 添加道具 ${prop.name} 参考图失败:`, error);
+          }
+        }
+      }
+    }
+    
     // 4. 构建最终提示词
     let finalPrompt = imagePrompt;
     
