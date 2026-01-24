@@ -25,7 +25,7 @@ database:
   host: "192.168.10.212"
   port: 3306
   user: "voice_replace_debug_admin"
-  password: "3bTgThWP2xeX"
+  password: "xxxxx"
   database: "voice_replace_debug"
   charset: "utf8mb4"
 
