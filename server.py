@@ -5856,6 +5856,13 @@ async def serve_video_workflow():
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="Video workflow page not found")
 
+@app.get("/image-style-guide")
+async def serve_image_style_guide():
+    file_path = os.path.join(static_dir, "image_style_guide.html")
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Image style guide page not found")
+
 @app.get(f"{MP_VERIFY_ROUTE}")
 async def get_mp_verify_file():
     """
