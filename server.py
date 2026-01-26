@@ -898,10 +898,17 @@ async def image_edit(
             
             # Check if computing power is sufficient
             user_computing_power = response_data.get('computing_power', 0)
-            if user_computing_power < computing_power:
+            total_computing_power = computing_power * count
+            user_id_from_token = response_data.get('user_id')
+            if user_computing_power < total_computing_power:
                 raise HTTPException(
                     status_code=400, 
-                    detail="您的算力不足，无法生成视频"
+                    detail="您的算力不足，无法生成图片"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="用户ID不匹配"
                 )
 
         # Handle multiple images - limit to maximum 5 images
@@ -1010,10 +1017,16 @@ async def text_to_image(
             # Check if computing power is sufficient
             user_computing_power = response_data.get('computing_power', 0)
             total_computing_power = computing_power * count
+            user_id_from_token = response_data.get('user_id')
             if user_computing_power < total_computing_power:
                 raise HTTPException(
                     status_code=400, 
                     detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="用户ID不匹配"
                 )
 
         # Submit tasks according to generation count
@@ -1123,6 +1136,17 @@ async def runninghub_status(
                 # 生成交易ID
                 transaction_id = str(uuid.uuid4())
                 headers = {'Authorization': f'Bearer {auth_token}'}
+                #发起请求，获取用户ID
+                success, message, response_data = make_perseids_request(
+                    endpoint='user/get_user_id_by_auth_token',
+                    method='POST',
+                    headers=headers
+                )
+                if not success:
+                    raise HTTPException(status_code=400, detail=message)
+                user_id_from_token = response_data.get('user_id')
+                if user_id_from_token != task_record.user_id:
+                    raise HTTPException(status_code=400, detail="用户ID不匹配")
                 #发起请求，增加算力
                 type = task_record.type
                 computing_power = TASK_COMPUTING_POWER[type]
@@ -1257,10 +1281,17 @@ async def ai_app_run(
             
             # Check if computing power is sufficient
             user_computing_power = response_data.get('computing_power', 0)
-            if user_computing_power < computing_power:
+            total_computing_power = computing_power * count
+            user_id_from_token = response_data.get('user_id')
+            if user_computing_power < total_computing_power:
                 raise HTTPException(
                     status_code=400, 
                     detail="您的算力不足，无法生成视频"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="用户ID不匹配"
                 )
             
             
@@ -1435,10 +1466,16 @@ async def ai_app_run_image(
             # Check if computing power is sufficient for all generations
             user_computing_power = response_data.get('computing_power', 0)
             total_computing_power = computing_power * count
+            user_id_from_token = response_data.get('user_id')
             if user_computing_power < total_computing_power:
                 raise HTTPException(
                     status_code=400, 
                     detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="用户ID不匹配"
                 )
         
         project_ids = []
@@ -2030,7 +2067,17 @@ async def get_ai_tools_history(
                         # 生成交易ID
                         transaction_id = str(uuid.uuid4())
                         headers = {'Authorization': f'Bearer {auth_token}'}
-                        
+                        #发起请求，获取用户ID
+                        success, message, response_data = make_perseids_request(
+                            endpoint='user/get_user_id_by_auth_token',
+                            method='POST',
+                            headers=headers
+                        )
+                        if not success:
+                            raise HTTPException(status_code=400, detail=message)
+                        user_id_from_token = response_data.get('user_id')
+                        if user_id != user_id_from_token:
+                            raise HTTPException(status_code=400, detail="用户ID不匹配")
                         # 发起请求，增加算力（补回）
                         success, message, response_data = make_perseids_request(
                             endpoint='user/calculate_computing_power',
@@ -2350,10 +2397,16 @@ async def image_upscale(
                 )
             
             user_computing_power = response_data.get('computing_power', 0)
+            user_id_from_token = response_data.get('user_id')
             if user_computing_power < computing_power:
                 raise HTTPException(
                     status_code=400, 
                     detail="您的算力不足，无法进行高清放大"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="用户ID不匹配"
                 )
                   
         # 1. Get the original image record from database using project_id
@@ -2478,10 +2531,16 @@ async def video_enhance(
                     detail=message
                 )
             user_computing_power = response_data.get('computing_power', 0)
+            user_id_from_token = response_data.get('user_id')
             if user_computing_power < computing_power:
                 raise HTTPException(
                     status_code=400,
                     detail="您的算力不足，无法进行视频修复"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="用户ID不匹配"
                 )
         
         # Determine video URL - either from upload or from parameter
@@ -2646,12 +2705,17 @@ async def video_remix(
             # 检查算力是否足够生成所有视频
             user_computing_power = response_data.get('computing_power', 0)
             total_computing_power = computing_power * count
+            user_id_from_token = response_data.get('user_id')
             if user_computing_power < total_computing_power:
                 raise HTTPException(
                     status_code=400,
                     detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
                 )
-        
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="用户ID不匹配"
+                )
         project_ids = []
         
         # 循环创建多个任务
@@ -2820,10 +2884,16 @@ async def api_create_character(
             
             # 检查算力是否足够
             user_computing_power = response_data.get('computing_power', 0)
+            user_id_from_token = response_data.get('user_id')
             if user_computing_power < computing_power:
                 raise HTTPException(
                     status_code=400,
                     detail=f"您的算力不足，需要 {computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="用户ID不匹配"
                 )
         
         # 生成交易ID
@@ -3109,6 +3179,17 @@ async def api_character_status(
                     if CHECK_AUTH_TOKEN and auth_token and task_record:
                         transaction_id = str(uuid.uuid4())
                         headers = {'Authorization': f'Bearer {auth_token}'}
+                        #发起请求，获取用户ID
+                        success, message, response_data = make_perseids_request(
+                            endpoint='user/get_user_id_by_auth_token',
+                            method='POST',
+                            headers=headers
+                        )
+                        if not success:
+                            raise HTTPException(status_code=400, detail=message)
+                        user_id_from_token = response_data.get('user_id')
+                        if task_record.user_id != user_id_from_token:
+                            raise HTTPException(status_code=400, detail="用户ID不匹配")
                         computing_power = TASK_COMPUTING_POWER.get(task_record.type, 0)
                         if computing_power > 0:
                             success, message, _ = make_perseids_request(
