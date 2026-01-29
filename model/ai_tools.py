@@ -84,6 +84,7 @@ class AIToolsModel:
             status: Status (0-未处理, 1-正在处理, -1-处理失败, 2-处理完成, default: 0)
             message: Error message (optional)
             image_size: Image size (1K, 2K, 4K) (optional)
+
         
         Returns:
             Inserted record ID
@@ -262,7 +263,7 @@ class AIToolsModel:
         Args:
             record_id: Record ID
             **kwargs: Fields to update (prompt, type, image_path, duration, ratio, 
-                     project_id, transaction_id, result_url, user_id, status)
+                     project_id, transaction_id, result_url, user_id, status, message, image_size)
         
         Returns:
             Number of affected rows

@@ -16,10 +16,20 @@ from model import TasksModel, AIAudioModel
 from config.constant import TASK_TYPE_GENERATE_AUDIO, AUTHENTICATION_ID
 from utils.index_tts_util import generate_audio, validate_emotion_vector
 import os
+import yaml
+from config_util import get_config_path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Load task queue configuration
+config_path = get_config_path()
+with open(config_path, 'r', encoding='utf-8') as f:
+    config = yaml.safe_load(f)
+task_queue_config = config.get("task_queue", {})
+MAX_RETRY_COUNT = task_queue_config.get("max_retry_count", 30)
+TASK_EXPIRE_DAYS = task_queue_config.get("task_expire_days", 7)
+ENABLE_EXPIRE_CHECK = task_queue_config.get("enable_expire_check", True)
 
 # Get upload directory path
 UPLOAD_DIR = "/nas/comfyui_upload/tts/result_audio/"
@@ -147,6 +157,47 @@ def calculate_next_retry_delay(try_count):
     return min(delay_seconds, max_delay)
 
 
+def _check_task_expiration(task):
+    """
+    检查任务是否已过期
+    
+    Args:
+        task: Task对象
+    
+    Returns:
+        bool: True表示任务已过期
+    """
+    if not ENABLE_EXPIRE_CHECK:
+        return False
+    
+    if not task.created_at:
+        return False
+    
+    task_age = datetime.now() - task.created_at
+    if task_age.days >= TASK_EXPIRE_DAYS:
+        logger.warning(f"Task {task.task_id} expired (created {task_age.days} days ago)")
+        return True
+    
+    return False
+
+
+def _check_max_retry_exceeded(task):
+    """
+    检查任务是否超过最大重试次数
+    
+    Args:
+        task: Task对象
+    
+    Returns:
+        bool: True表示超过最大重试次数
+    """
+    if task.try_count and task.try_count >= MAX_RETRY_COUNT:
+        logger.warning(f"Task {task.task_id} exceeded max retry count ({task.try_count}/{MAX_RETRY_COUNT})")
+        return True
+    
+    return False
+
+
 def process_generate_audio(task):
     """Process audio generation task logic"""
     try:
@@ -195,10 +246,27 @@ def process_task_with_retry(task_type, process_func):
         # Loop through all tasks
         processed_count = 0
         success_count = 0
+        expired_count = 0
         
         for task in tasks:
             try:
-                logger.info(f"Start processing task: {task.task_id}, status: {task.status}")
+                logger.info(f"Start processing task: {task.task_id}, status: {task.status}, try_count: {task.try_count}")
+                
+                # 检查任务是否过期
+                if _check_task_expiration(task):
+                    TasksModel.update_by_task_id(task.task_id, status=-1)
+                    AIAudioModel.update(task.task_id, status=-1, message="任务已过期")
+                    expired_count += 1
+                    logger.info(f"Task {task.task_id} marked as expired")
+                    continue
+                
+                # 检查是否超过最大重试次数
+                if _check_max_retry_exceeded(task):
+                    TasksModel.update_by_task_id(task.task_id, status=-1)
+                    AIAudioModel.update(task.task_id, status=-1, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
+                    expired_count += 1
+                    logger.info(f"Task {task.task_id} marked as failed due to max retry exceeded")
+                    continue
                 
                 # Update status to 1 (处理中) if it's 0 (队列中)
                 if task.status == 0:
@@ -230,7 +298,7 @@ def process_task_with_retry(task_type, process_func):
                 import traceback
                 logger.error(traceback.format_exc())
                 
-        logger.info(f"Processed {processed_count} tasks, {success_count} succeeded")
+        logger.info(f"Summary: processed={processed_count}, succeeded={success_count}, expired={expired_count}")
         return processed_count > 0, success_count > 0
             
     except Exception as e:

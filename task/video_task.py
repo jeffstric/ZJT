@@ -37,6 +37,12 @@ with open(config_path, 'r', encoding='utf-8') as f:
 test_mode_config = config.get("test_mode", {})
 TEST_MODE_ENABLED = test_mode_config.get("enabled", False)
 
+# Load task queue configuration
+task_queue_config = config.get("task_queue", {})
+MAX_RETRY_COUNT = task_queue_config.get("max_retry_count", 30)
+TASK_EXPIRE_DAYS = task_queue_config.get("task_expire_days", 7)
+ENABLE_EXPIRE_CHECK = task_queue_config.get("enable_expire_check", True)
+
 if TEST_MODE_ENABLED:
     logger.info("=" * 60)
     logger.info("TEST MODE ENABLED - Using mock API responses")
@@ -104,7 +110,7 @@ def _submit_new_task(ai_tool):
             # Get image_size from database if available (only for gemini-3-pro-image-preview)
             image_size = None
             if ai_tool_type == 7:  # Only for gemini-3-pro-image-preview
-                image_size = ai_tool.image_size  # Default, could be stored in ai_tool if needed
+                image_size = ai_tool.image_size or "1K"  # Use stored value or default
             
             response = create_text_to_image(
                 model=model,
@@ -472,6 +478,47 @@ def process_generate_video(task):
         return False
 
 
+def _check_task_expiration(task):
+    """
+    检查任务是否已过期
+    
+    Args:
+        task: Task对象
+    
+    Returns:
+        bool: True表示任务已过期
+    """
+    if not ENABLE_EXPIRE_CHECK:
+        return False
+    
+    if not task.created_at:
+        return False
+    
+    task_age = datetime.now() - task.created_at
+    if task_age.days >= TASK_EXPIRE_DAYS:
+        logger.warning(f"Task {task.task_id} expired (created {task_age.days} days ago)")
+        return True
+    
+    return False
+
+
+def _check_max_retry_exceeded(task):
+    """
+    检查任务是否超过最大重试次数
+    
+    Args:
+        task: Task对象
+    
+    Returns:
+        bool: True表示超过最大重试次数
+    """
+    if task.try_count and task.try_count >= MAX_RETRY_COUNT:
+        logger.warning(f"Task {task.task_id} exceeded max retry count ({task.try_count}/{MAX_RETRY_COUNT})")
+        return True
+    
+    return False
+
+
 def process_task_with_retry(task_type, process_func):
     """
     Generic task processing function with retry logic and RunningHub concurrency control
@@ -497,10 +544,47 @@ def process_task_with_retry(task_type, process_func):
         processed_count = 0
         success_count = 0
         delayed_count = 0
+        expired_count = 0
         
         for task in tasks:
             try:
-                logger.info(f"Start processing task: task_id={task.task_id}, table_id={task.id}, status={task.status}")
+                logger.info(f"Start processing task: task_id={task.task_id}, table_id={task.id}, status={task.status}, try_count={task.try_count}")
+                
+                # 检查任务是否过期
+                if _check_task_expiration(task):
+                    # 标记任务为失败
+                    TasksModel.update_by_task_id(task.task_id, status=-1)
+                    AIToolsModel.update(task.task_id, status=-1, message="任务已过期")
+                    
+                    # 释放 RunningHub 槽位
+                    ai_tool = AIToolsModel.get_by_id(task.task_id)
+                    if ai_tool and ai_tool.type in [10, 11]:
+                        if ai_tool.project_id:
+                            RunningHubSlotsModel.release_slot_by_project_id(ai_tool.project_id)
+                        else:
+                            RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
+                    
+                    expired_count += 1
+                    logger.info(f"Task {task.task_id} marked as expired")
+                    continue
+                
+                # 检查是否超过最大重试次数
+                if _check_max_retry_exceeded(task):
+                    # 标记任务为失败
+                    TasksModel.update_by_task_id(task.task_id, status=-1)
+                    AIToolsModel.update(task.task_id, status=-1, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
+                    
+                    # 释放 RunningHub 槽位
+                    ai_tool = AIToolsModel.get_by_id(task.task_id)
+                    if ai_tool and ai_tool.type in [10, 11]:
+                        if ai_tool.project_id:
+                            RunningHubSlotsModel.release_slot_by_project_id(ai_tool.project_id)
+                        else:
+                            RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
+                    
+                    expired_count += 1
+                    logger.info(f"Task {task.task_id} marked as failed due to max retry exceeded")
+                    continue
                 
                 # 获取 AI 工具详情
                 ai_tool = AIToolsModel.get_by_id(task.task_id)
@@ -561,7 +645,7 @@ def process_task_with_retry(task_type, process_func):
                 import traceback
                 logger.error(traceback.format_exc())
                 
-        logger.info(f"Summary: processed={processed_count}, succeeded={success_count}, delayed={delayed_count}")
+        logger.info(f"Summary: processed={processed_count}, succeeded={success_count}, delayed={delayed_count}, expired={expired_count}")
         return processed_count > 0, success_count > 0
             
     except Exception as e:

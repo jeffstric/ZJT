@@ -87,3 +87,9 @@ jiekou:
 script_writer:
   url: "http://localhost:5000/"
 
+# Task queue management
+task_queue:
+  max_retry_count: 30  # 最大重试次数，超过后任务将被标记为失败
+  task_expire_days: 7  # 任务过期天数，创建后超过此天数的任务将被自动失败
+  enable_expire_check: true  # 是否启用任务过期检查
+
