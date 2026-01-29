@@ -1888,9 +1888,9 @@
         y,
         data: {
           prompt: '',
-          duration: 15,
+          duration: 5,
           ratio: state.ratio || '16:9',
-          videoModel: 'sora2',
+          videoModel: 'wan22',
           drawCount: 1,
           motionEnabled: false,
           motion: '',
@@ -1936,10 +1936,8 @@
           <div class="field">
             <div class="label">视频长度</div>
             <select class="duration-select">
-              <option value="10" selected>10秒</option>
-              <option value="15">15秒</option>
-              <option value="5">5秒</option>
-              <option value="8">8秒</option>
+              <option value="5" selected>5秒</option>
+              <option value="10">10秒</option>
             </select>
           </div>
           <div class="field">
@@ -1955,9 +1953,9 @@
           <div class="field">
             <div class="label">视频模型</div>
             <select class="video-model-select">
-              <option value="sora2" selected>Sora2</option>
+              <option value="wan22" selected>Wan2.2</option>
+              <option value="sora2">Sora2</option>
               <option value="ltx2">LTX2.0</option>
-              <option value="wan22">Wan2.2</option>
               <option value="kling">可灵</option>
             </select>
           </div>
@@ -2041,7 +2039,7 @@
 
       // 初始化videoModel
       if(!node.data.videoModel){
-        node.data.videoModel = 'sora2';
+        node.data.videoModel = 'wan22';
       }
       
       // 计算算力消耗
@@ -4094,8 +4092,8 @@
           drawCount: 1,
           previewImageUrl: '',
           videoDrawCount: 1,
-          videoDuration: 15,
-          videoModel: 'sora2',
+          videoDuration: 5,
+          videoModel: 'wan22',
         }
       };
       state.nodes.push(node);
@@ -4180,19 +4178,17 @@
           <div class="field">
             <div class="label">视频模型</div>
             <select class="shot-frame-video-model">
-              <option value="sora2" selected>Sora2</option>
+              <option value="wan22" selected>Wan2.2</option>
+              <option value="sora2">Sora2</option>
               <option value="ltx2">LTX2.0</option>
-              <option value="wan22">Wan2.2</option>
               <option value="kling">可灵</option>
             </select>
           </div>
           <div class="field">
             <div class="label">视频时长</div>
             <select class="shot-frame-video-duration">
+              <option value="5" selected>5秒</option>
               <option value="10">10秒</option>
-              <option value="15" selected>15秒</option>
-              <option value="5">5秒</option>
-              <option value="8">8秒</option>
             </select>
           </div>
           <div class="field">
@@ -4260,7 +4256,7 @@
       
       // 设置视频模型选择器的初始值
       if(!node.data.videoModel){
-        node.data.videoModel = 'sora2';
+        node.data.videoModel = 'wan22';
       }
       if(videoModelEl) videoModelEl.value = node.data.videoModel;
       
@@ -4314,7 +4310,7 @@
       
       // 设置视频时长选择器的初始值
       if(!node.data.videoDuration){
-        node.data.videoDuration = 15;
+        node.data.videoDuration = 5;
       }
       if(videoDurationEl) videoDurationEl.value = node.data.videoDuration;
       
