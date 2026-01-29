@@ -27,6 +27,7 @@ class AITool:
         self.type = kwargs.get('type')
         self.status = kwargs.get('status')
         self.message = kwargs.get('message')
+        self.image_size = kwargs.get('image_size')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -44,7 +45,8 @@ class AITool:
             'user_id': self.user_id,
             'type': self.type,
             'status': self.status,
-            'message': self.message
+            'message': self.message,
+            'image_size': self.image_size
         }
 
 
@@ -63,7 +65,8 @@ class AIToolsModel:
         transaction_id: Optional[str] = None,
         result_url: Optional[str] = None,
         status: Optional[int] = 0,
-        message: Optional[str] = None
+        message: Optional[str] = None,
+        image_size: Optional[str] = None
     ) -> int:
         """
         Create a new AI tool record
@@ -80,16 +83,17 @@ class AIToolsModel:
             result_url: Result URL (optional)
             status: Status (0-未处理, 1-正在处理, -1-处理失败, 2-处理完成, default: 0)
             message: Error message (optional)
+            image_size: Image size (1K, 2K, 4K) (optional)
         
         Returns:
             Inserted record ID
         """
         sql = """
             INSERT INTO ai_tools 
-            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message)
+        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size)
         
         try:
             record_id = execute_insert(sql, params)
@@ -266,7 +270,7 @@ class AIToolsModel:
         # Build update fields
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message'
+            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size'
         ]
         
         update_fields = []
@@ -309,7 +313,7 @@ class AIToolsModel:
         """
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'transaction_id', 'result_url', 'user_id', 'status', 'message'
+            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size'
         ]
         
         update_fields = []

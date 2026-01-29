@@ -951,7 +951,8 @@ async def image_edit(
                         image_path=image_path_str,
                         ratio=ratio,
                         transaction_id=transaction_id,
-                        status=0
+                        status=0,
+                        image_size=image_size
                     )
                     TasksModel.create(
                         task_type=TASK_TYPE_GENERATE_VIDEO,
@@ -1062,7 +1063,8 @@ async def text_to_image(
                         type=text_to_image_type,
                         ratio=aspect_ratio,
                         transaction_id=transaction_id,
-                        status=0
+                        status=0,
+                        image_size=image_size
                     )
                     TasksModel.create(
                         task_type=TASK_TYPE_GENERATE_VIDEO,

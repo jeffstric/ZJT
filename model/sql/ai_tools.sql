@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS `ai_tools` (
     `type` TINYINT DEFAULT NULL COMMENT '类型（1-图片编辑，2-AI视频生成，3-图片生成视频，4-图片高清）',
     `status` TINYINT DEFAULT NULL COMMENT '状态: 0-未处理, 1-正在处理, -1-处理失败, 2-处理完成',
     `message` TEXT COMMENT '错误信息',
+    `image_size` VARCHAR(20) DEFAULT NULL COMMENT '图片尺寸（1K, 2K, 4K）',
     PRIMARY KEY (`id`),
     INDEX `idx_user_id_type_create_time` (`user_id`, `type`, `create_time`),
     INDEX `idx_user_id_create_time` (`user_id`, `create_time`)

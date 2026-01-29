@@ -91,7 +91,7 @@ def _submit_new_task(ai_tool):
                 model = "gemini-2.5-pro-image-preview"
             else:
                 model = "gemini-3-pro-image-preview"
-            response = create_ai_image(model, ai_tool.prompt, ai_tool.ratio, image_urls)
+            response = create_ai_image(model, ai_tool.prompt, ai_tool.ratio, image_urls,ai_tool.image_size)
             logger.info(response)
             project_id = response.get("data", {}).get("task_id")
         else:
@@ -104,7 +104,7 @@ def _submit_new_task(ai_tool):
             # Get image_size from database if available (only for gemini-3-pro-image-preview)
             image_size = None
             if ai_tool_type == 7:  # Only for gemini-3-pro-image-preview
-                image_size = "1K"  # Default, could be stored in ai_tool if needed
+                image_size = ai_tool.image_size  # Default, could be stored in ai_tool if needed
             
             response = create_text_to_image(
                 model=model,
