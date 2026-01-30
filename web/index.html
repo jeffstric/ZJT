@@ -2620,9 +2620,9 @@
       return {
         files: [],
         prompt: '',
-        videoModel: 'sora2',
+        videoModel: 'wan22',
         model: '9:16',
-        durationSeconds: 15,
+        durationSeconds: 5,
         count: 1,
         loading: false,
         error: '',
@@ -3167,7 +3167,8 @@
           <div class="field">
             <label class="label">上传图片 (最多5张，可多次选择累加)</label>
             <input class="input" type="file" accept="image/*" multiple @change="onFile" />
-            <div class="muted" style="margin-top:6px; color: #fca5a5;">⚠️ 注意：请勿上传真人图片。多张图片将自动拼接成一张</div>
+            <div class="muted" v-if="videoModel === 'sora2'" style="margin-top:6px; color: #fca5a5;">⚠️ 注意：请勿上传真人图片</div>
+            <div class="muted" style="margin-top:6px; color: var(--muted);">多张图片将自动拼接成一张</div>
             <div v-if="files.length > 0" style="margin-top: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <div style="font-size: 13px; color: var(--muted);">已选择 {{ files.length }}/5 张图片:</div>

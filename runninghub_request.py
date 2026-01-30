@@ -493,26 +493,32 @@ def run_ai_app_task_sync(
 
 def create_ltx2_image_to_video(
     image_url: str,
-    prompt: str,
-    duration: int = 5,
-    ratio: str = "9:16",
-    webapp_id: str = "2008785848120119297",
+    prompt: str = "",
+    duration: int = 15,
+    max_edge: int = 1280,
+    camera_movement: int = 7,
+    prompt_mode: int = 1,
+    webapp_id: str = "2008966334171844609",
     api_key: str = None,
     config_path: str = None,
-    instance_type: str = "plus"
+    instance_type: str = "plus",
+    use_personal_queue: str = "false"
 ) -> Dict[str, Any]:
     """
-    Create LTX2.0 image to video task (async, returns task_id immediately)
+    Create LTX2.0 image to video task using v2 API (async, returns task_id immediately)
     
     Args:
-        image_url: URL of the input image
-        prompt: Text prompt for video generation
-        duration: Video duration in seconds (5, 8, 10)
-        ratio: Video aspect ratio ("9:16" for vertical, "16:9" for horizontal)
-        webapp_id: The webapp ID for LTX2.0 (default: "2008785848120119297")
+        image_url: URL or filename of the input image
+        prompt: Text prompt for video generation (optional, can be empty for auto mode)
+        duration: Video duration in seconds (default: 15)
+        max_edge: Maximum edge length in pixels (default: 1280)
+        camera_movement: Camera movement selection (default: 7)
+        prompt_mode: Prompt mode switch - 1=auto, 2=manual (default: 1)
+        webapp_id: The webapp ID for LTX2.0 v2 (default: "2008966334171844609")
         api_key: API key for authentication (default: from config)
         config_path: Path to configuration file (default: auto-detect)
         instance_type: Instance type for the task (default: "plus")
+        use_personal_queue: Whether to use personal queue (default: "false")
         
     Returns:
         API response with task_id
@@ -525,76 +531,98 @@ def create_ltx2_image_to_video(
     if config_path is None:
         config_path = get_config_path()
     
+    # Load config
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as file:
+        config = yaml.safe_load(file)
+    
     # Load API key from config if not provided
     if api_key is None:
-        with open(config_path, 'r', encoding='utf-8') as file:
-            config = yaml.safe_load(file)
         api_key = config["runninghub"]["api_key"]
     
-    # Determine width and height based on ratio
-    if ratio == "16:9":
-        width = 1280
-        height = 720
-    else:  # Default to 9:16
-        width = 720
-        height = 1280
+    host = config["runninghub"]["host"]
+    endpoint = f"/openapi/v2/run/ai-app/{webapp_id}"
+    url = f"{host}{endpoint}"
     
-    # Build node info list for LTX2.0
+    # Build node info list for LTX2.0 v2
     node_info_list = [
         {
-            "nodeId": "235",
-            "fieldName": "select",
-            "fieldValue": "3",
-            "description": "出图方式"
-        },
-        {
-            "nodeId": "245",
+            "nodeId": "106",
             "fieldName": "image",
             "fieldValue": image_url,
-            "description": "上传图片"
+            "description": "图像image"
         },
         {
-            "nodeId": "244",
-            "fieldName": "text",
-            "fieldValue": prompt,
-            "description": "输入提示词"
-        },
-        {
-            "nodeId": "269",
-            "fieldName": "value",
-            "fieldValue": str(width),
-            "description": "图片宽"
-        },
-        {
-            "nodeId": "270",
-            "fieldName": "value",
-            "fieldValue": str(height),
-            "description": "图片高"
-        },
-        {
-            "nodeId": "271",
-            "fieldName": "value",
-            "fieldValue": "1280",
-            "description": "视频最大分辨率（太大易爆）"
-        },
-        {
-            "nodeId": "263",
-            "fieldName": "value",
-            "fieldValue": "24",
-            "description": "帧数"
-        },
-        {
-            "nodeId": "264",
+            "nodeId": "120",
             "fieldName": "value",
             "fieldValue": str(duration),
-            "description": "秒数"
+            "description": "时长"
+        },
+        {
+            "nodeId": "129",
+            "fieldName": "value",
+            "fieldValue": str(max_edge),
+            "description": "最长边"
+        },
+        {
+            "nodeId": "193",
+            "fieldName": "select",
+            "fieldValue": str(camera_movement),
+            "description": "镜头运动选择"
+        },
+        {
+            "nodeId": "208",
+            "fieldName": "select",
+            "fieldValue": str(prompt_mode),
+            "description": "提示词模式切换"
+        },
+        {
+            "nodeId": "162",
+            "fieldName": "text",
+            "fieldValue": prompt,
+            "description": "提示词【自动可不填】"
         }
     ]
     
-    # Submit task (async)
-    result = run_ai_app_task(webapp_id, api_key, node_info_list, config_path, instance_type)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
     
-    return result
+    payload = {
+        "nodeInfoList": node_info_list,
+        "instanceType": instance_type,
+        "usePersonalQueue": use_personal_queue
+    }
+    
+    # 记录请求日志
+    logger.info(f"[RunningHub API v2] Request URL: {url}")
+    logger.info(f"[RunningHub API v2] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+    
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=config["timeout"]["request_timeout"]
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[RunningHub API v2] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        
+        return result
+        
+    except requests.RequestException as e:
+        logger.error(f"[RunningHub API v2] Request failed: {str(e)}")
+        raise requests.RequestException(f"Request failed: {str(e)}")
+    except ValueError as e:
+        logger.error(f"[RunningHub API v2] Invalid response format: {str(e)}")
+        raise ValueError(f"Invalid response format: {str(e)}")
 
 
 def create_wan22_image_to_video(
@@ -606,13 +634,14 @@ def create_wan22_image_to_video(
     webapp_id: str = "1950219582398185474",
     api_key: str = None,
     config_path: str = None,
-    instance_type: str = "plus"
+    instance_type: str = "plus",
+    use_personal_queue: str = "false"
 ) -> Dict[str, Any]:
     """
-    Create Wan2.2 image to video task (async, returns task_id immediately)
+    Create Wan2.2 image to video task using v2 API (async, returns task_id immediately)
     
     Args:
-        image_url: URL of the input image
+        image_url: URL or filename of the input image
         prompt: Text prompt for video generation
         duration: Video duration in seconds (default: 5)
         ratio: Video aspect ratio (9:16, 16:9, 3:4, 1:1, 4:3)
@@ -621,6 +650,7 @@ def create_wan22_image_to_video(
         api_key: API key for authentication (default: from config)
         config_path: Path to configuration file (default: auto-detect)
         instance_type: Instance type for the task (default: "plus")
+        use_personal_queue: Whether to use personal queue (default: "false")
         
     Returns:
         API response with task_id
@@ -633,11 +663,20 @@ def create_wan22_image_to_video(
     if config_path is None:
         config_path = get_config_path()
     
+    # Load config
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as file:
+        config = yaml.safe_load(file)
+    
     # Load API key from config if not provided
     if api_key is None:
-        with open(config_path, 'r', encoding='utf-8') as file:
-            config = yaml.safe_load(file)
         api_key = config["runninghub"]["api_key"]
+    
+    host = config["runninghub"]["host"]
+    endpoint = f"/openapi/v2/run/ai-app/{webapp_id}"
+    url = f"{host}{endpoint}"
     
     # Map ratio to Wan2.2 ratio value
     ratio_map = {
@@ -649,10 +688,10 @@ def create_wan22_image_to_video(
     }
     ratio_value = ratio_map.get(ratio, "4")  # Default to 9:16
     
-    # Map quality to instance type value
-    quality_value = "1" if quality == "hd" else "2"  # 1=高清版, 2=极速版
+    # Map quality to quality value: 1=高清版, 2=极速版
+    quality_value = "1" if quality == "hd" else "2"
     
-    # Build node info list for Wan2.2
+    # Build node info list for Wan2.2 v2
     node_info_list = [
         {
             "nodeId": "135",
@@ -698,10 +737,43 @@ def create_wan22_image_to_video(
         }
     ]
     
-    # Submit task (async)
-    result = run_ai_app_task(webapp_id, api_key, node_info_list, config_path, instance_type)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
     
-    return result
+    payload = {
+        "nodeInfoList": node_info_list,
+        "instanceType": instance_type,
+        "usePersonalQueue": use_personal_queue
+    }
+    
+    # 记录请求日志
+    logger.info(f"[RunningHub API v2 Wan2.2] Request URL: {url}")
+    logger.info(f"[RunningHub API v2 Wan2.2] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+    
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=config["timeout"]["request_timeout"]
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[RunningHub API v2 Wan2.2] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        
+        return result
+        
+    except requests.RequestException as e:
+        logger.error(f"[RunningHub API v2 Wan2.2] Request failed: {str(e)}")
+        raise requests.RequestException(f"Request failed: {str(e)}")
+    except ValueError as e:
+        logger.error(f"[RunningHub API v2 Wan2.2] Invalid response format: {str(e)}")
+        raise ValueError(f"Invalid response format: {str(e)}")
 
 
 def check_ltx2_task_status(
