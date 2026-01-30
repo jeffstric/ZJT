@@ -2656,7 +2656,7 @@
           if (![5, 8, 10].includes(this.durationSeconds)) {
             this.durationSeconds = 5;
           }
-        } else if (newModel === 'wan22' || newModel === 'kling') {
+        } else if (newModel === 'wan22' || newModel === 'kling'|| newModel === 'vidu') {
           // Wan2.2 和可灵: 5, 10秒
           if (![5, 10].includes(this.durationSeconds)) {
             this.durationSeconds = 5;
@@ -2681,7 +2681,8 @@
           { value: 'sora2', label: 'Sora2' },
           { value: 'ltx2', label: 'LTX2.0' },
           { value: 'wan22', label: 'Wan2.2' },
-          { value: 'kling', label: '可灵' }
+          { value: 'kling', label: '可灵' },
+          { value: 'vidu', label: 'Vidu' }
         ];
       },
       modelOptions() {
@@ -2703,6 +2704,12 @@
           return [
             { value: 5, label: '5秒' },
             { value: 10, label: '10秒' }
+          ];
+        }
+        if (this.videoModel === 'vidu') {
+          return [
+            { value: 5, label: '5秒' },
+            { value: 8, label: '8秒' }
           ];
         }
         return [
@@ -2744,6 +2751,14 @@
             power = klingPower[this.durationSeconds] || klingPower[5] || 0;
           } else {
             power = klingPower || 0;
+          }
+        } else if (this.videoModel === 'vidu') {
+          // type=13: Vidu根据时长区分算力
+          const viduPower = this.taskComputingPower[13];
+          if (typeof viduPower === 'object') {
+            power = viduPower[this.durationSeconds] || viduPower[5] || 0;
+          } else {
+            power = viduPower || 0;
           }
         }
         return power;
@@ -3182,7 +3197,7 @@
             </select>
           </div>
 
-          <div class="field" v-if="videoModel === 'sora2' || videoModel === 'ltx2' || videoModel === 'wan22' || videoModel === 'kling'">
+          <div class="field" v-if="videoModel !== 'vidu'">
             <label class="label">视频模式</label>
             <select class="input" v-model="model">
               <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">

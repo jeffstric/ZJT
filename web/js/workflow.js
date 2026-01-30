@@ -911,6 +911,14 @@
               if(![5, 10].includes(node.data.duration)) {
                 node.data.duration = 5;
               }
+            } else if(videoModel === 'vidu') {
+              durationSelect.innerHTML = `
+                <option value="5">5秒</option>
+                <option value="8">8秒</option>
+              `;
+              if(![5, 8].includes(node.data.duration)) {
+                node.data.duration = 5;
+              }
             } else {
               durationSelect.innerHTML = `
                 <option value="10">10秒</option>
@@ -923,18 +931,29 @@
             durationSelect.value = node.data.duration;
           }
           
-          // 根据模型更新比例选项（所有模型都只支持16:9和9:16）
+          // 根据模型更新比例选项
           const ratioSelect = el.querySelector('.ratio-select');
           if(ratioSelect) {
-            ratioSelect.innerHTML = `
-              <option value="9:16">9:16 (竖屏)</option>
-              <option value="16:9">16:9 (横屏)</option>
-            `;
-            // 如果保存的比例不在支持列表中，使用16:9
-            if(node.data.ratio !== '9:16' && node.data.ratio !== '16:9') {
-              node.data.ratio = '16:9';
+            const ratioField = ratioSelect.closest('.field');
+            const videoModel = node.data.videoModel;
+            
+            // vidu 模型隐藏比例选择器
+            if(videoModel === 'vidu') {
+              if(ratioField) ratioField.style.display = 'none';
+            } else {
+              // 其他模型显示比例选择器
+              if(ratioField) ratioField.style.display = '';
+              
+              ratioSelect.innerHTML = `
+                <option value="9:16">9:16 (竖屏)</option>
+                <option value="16:9">16:9 (横屏)</option>
+              `;
+              // 如果保存的比例不在支持列表中，使用16:9
+              if(node.data.ratio !== '9:16' && node.data.ratio !== '16:9') {
+                node.data.ratio = '16:9';
+              }
+              ratioSelect.value = node.data.ratio;
             }
-            ratioSelect.value = node.data.ratio;
           }
           
           // 更新抽卡次数标签
@@ -969,6 +988,13 @@
                   singlePower = klingPower[duration] || klingPower[5] || 0;
                 } else {
                   singlePower = klingPower || 0;
+                }
+              } else if(videoModel === 'vidu') {
+                const viduPower = config[13];
+                if(typeof viduPower === 'object') {
+                  singlePower = viduPower[duration] || viduPower[5] || 0;
+                } else {
+                  singlePower = viduPower || 0;
                 }
               }
             }
