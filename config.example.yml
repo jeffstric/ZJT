@@ -37,6 +37,9 @@ ai_tools:
 duomi:
   token: "5q26ybqAXXXXX"
 
+vidu:
+  token: "vda_xxxx"
+
 pay:
   wxpay:
       #公众账号ID

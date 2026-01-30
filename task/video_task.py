@@ -24,6 +24,11 @@ from runninghub_request import (
     check_ltx2_task_status,
     TaskStatus
 )
+from vidu_api_requset import (
+    create_vidu_image_to_video,
+    create_vidu_start_end_to_video,
+    get_vidu_task_status
+)
 from model import TasksModel, AIToolsModel, RunningHubSlotsModel
 from config.constant import TASK_TYPE_GENERATE_VIDEO,AUTHENTICATION_ID
 
@@ -197,6 +202,45 @@ def _submit_new_task(ai_tool):
             return False
         
         project_id = result.get("data", {}).get("task_id")
+    elif ai_tool_type == 13:
+        # Vidu 图生视频 (type=13)
+        # 根据 image_path 中的图片数量决定调用哪个 API
+        image_urls = ai_tool.image_path.split(',') if ai_tool.image_path else []
+        image_urls = [url.strip() for url in image_urls if url.strip()]  # 去除空字符串和空格
+        
+        if len(image_urls) == 2:
+            # 两张图片：调用首尾图生视频 API
+            logger.info(f"Vidu task - using start-end mode: start={image_urls[0]}, end={image_urls[1]}")
+            result = create_vidu_start_end_to_video(
+                start_image_url=image_urls[0],
+                end_image_url=image_urls[1],
+                prompt=ai_tool.prompt,
+                duration=ai_tool.duration,
+                resolution="720p",
+                movement_amplitude="auto"
+            )
+        elif len(image_urls) == 1:
+            # 一张图片：调用单图生视频 API
+            logger.info(f"Vidu task - using single image mode: {image_urls[0]}")
+            result = create_vidu_image_to_video(
+                image_url=image_urls[0],
+                prompt=ai_tool.prompt,
+                duration=ai_tool.duration,
+                resolution="720p",
+                movement_amplitude="auto"
+            )
+        else:
+            logger.error(f"Vidu task - invalid image count: {len(image_urls)}")
+            return False
+        
+        logger.info(f"Submit Vidu task result: {result}")
+        
+        if result.get("state") != "created":
+            error_msg = result.get("error", "Vidu API调用失败")
+            logger.error(f"Vidu API error: {error_msg}")
+            return False
+        
+        project_id = result.get("task_id")
     elif ai_tool_type in [2, 3]:
         # Sora2 视频生成 (type=2: 文生视频, type=3: 图生视频)
         result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
@@ -246,7 +290,9 @@ def _check_task_status(ai_tool):
     is_runninghub = ai_tool_type in [10, 11]
     # Check if this is Kling model (type=12, uses Duomi API)
     is_kling = ai_tool_type == 12
-    is_video = ai_tool_type in [2, 3, 10, 11, 12]
+    # Check if this is Vidu model (type=13, uses Vidu API)
+    is_vidu = ai_tool_type == 13
+    is_video = ai_tool_type in [2, 3, 10, 11, 12, 13]
     
     if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] Checking status for mock task {project_id}")
@@ -306,6 +352,41 @@ def _check_task_status(ai_tool):
                 return True
         except Exception as e:
             logger.error(f"Error checking Kling task status: {e}")
+            return False
+    elif is_vidu:
+        # Vidu model - use Vidu status check
+        try:
+            result = get_vidu_task_status(project_id)
+            
+            if result.get("error"):
+                error_msg = result.get("error", "Unknown error")
+                logger.error(f"Failed to get Vidu task status: {error_msg}")
+                return False
+            
+            task_state = result.get("state")
+            
+            if task_state == "success":
+                # Get video URL from creations array
+                creations = result.get("creations", [])
+                if creations and len(creations) > 0:
+                    video_url = creations[0].get("url")
+                    if video_url:
+                        return _handle_task_success(project_id, task_id, video_url)
+                    else:
+                        logger.error(f"Vidu task {project_id} succeeded but no url in creations")
+                        return _handle_task_failure(project_id, task_id, ai_tool_type, "No url in creations", ai_tool.user_id)
+                else:
+                    logger.error(f"Vidu task {project_id} succeeded but no creations")
+                    return _handle_task_failure(project_id, task_id, ai_tool_type, "No creations returned", ai_tool.user_id)
+            elif task_state == "failed":
+                error_reason = result.get("err_code", "Task failed")
+                return _handle_task_failure(project_id, task_id, ai_tool_type, error_reason, ai_tool.user_id)
+            else:
+                # Still processing (state could be "processing", "queued", etc.)
+                logger.info(f"Vidu task {project_id} still processing (state={task_state})")
+                return True
+        except Exception as e:
+            logger.error(f"Error checking Vidu task status: {e}")
             return False
     else:
         # Sora2 or other models - use original logic
@@ -409,7 +490,19 @@ def _handle_task_failure(project_id, task_id, ai_tool_type, reason, user_id):
     
     # Refund computing power (note: auth_token not available in background task)
     try:
-        computing_power = TASK_COMPUTING_POWER.get(ai_tool_type)
+        computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
+        
+        # Handle dict-based computing power (e.g., Wan2.2, Kling, Vidu)
+        if isinstance(computing_power_config, dict):
+            # Get AI tool to retrieve duration
+            ai_tool = AIToolsModel.get_by_id(task_id)
+            duration = ai_tool.duration if ai_tool else 5
+            computing_power = computing_power_config.get(duration)
+            if not computing_power:
+                # Use first available value as fallback
+                computing_power = list(computing_power_config.values())[0]
+        else:
+            computing_power = computing_power_config
         
         if computing_power:
             transaction_id = str(uuid.uuid4())

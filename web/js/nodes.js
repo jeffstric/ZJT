@@ -1957,6 +1957,7 @@
               <option value="sora2">Sora2</option>
               <option value="ltx2">LTX2.0</option>
               <option value="kling">可灵</option>
+              <option value="vidu">Vidu</option>
             </select>
           </div>
           <!-- 运镜功能暂时隐藏
@@ -2073,6 +2074,14 @@
           } else {
             power = klingPower || 0;
           }
+        } else if(videoModel === 'vidu') {
+          // type=13: Vidu根据时长区分算力
+          const viduPower = config[13];
+          if(typeof viduPower === 'object') {
+            power = viduPower[duration] || viduPower[5] || 0;
+          } else {
+            power = viduPower || 0;
+          }
         }
         
         return power;
@@ -2114,11 +2123,11 @@
             <option value="8">8秒 (201帧)</option>
             <option value="10">10秒 (241帧)</option>
           `;
-          if(![5, 8, 10].includes(Number(currentDuration))) {
+          if(['5', '8', '10'].includes(currentDuration)) {
+            durationSelect.value = currentDuration;
+          } else {
             durationSelect.value = '5';
             node.data.duration = 5;
-          } else {
-            durationSelect.value = currentDuration;
           }
         } else if(videoModel === 'wan22' || videoModel === 'kling') {
           // Wan2.2 和可灵: 5, 10秒
@@ -2126,11 +2135,23 @@
             <option value="5">5秒</option>
             <option value="10">10秒</option>
           `;
-          if(![5, 10].includes(Number(currentDuration))) {
+          if(['5', '10'].includes(currentDuration)) {
+            durationSelect.value = currentDuration;
+          } else {
             durationSelect.value = '5';
             node.data.duration = 5;
-          } else {
+          }
+        } else if(videoModel === 'vidu') {
+          // Vidu: 5, 8秒
+          durationSelect.innerHTML = `
+            <option value="5">5秒</option>
+            <option value="8">8秒</option>
+          `;
+          if(['5', '8'].includes(currentDuration)) {
             durationSelect.value = currentDuration;
+          } else {
+            durationSelect.value = '5';
+            node.data.duration = 5;
           }
         } else {
           // Sora2: 10, 15秒
@@ -2138,17 +2159,28 @@
             <option value="10">10秒</option>
             <option value="15">15秒</option>
           `;
-          if(![10, 15].includes(Number(currentDuration))) {
+          if(['10', '15'].includes(currentDuration)) {
+            durationSelect.value = currentDuration;
+          } else {
             durationSelect.value = '10';
             node.data.duration = 10;
-          } else {
-            durationSelect.value = currentDuration;
           }
         }
       }
       
       // 根据模型更新比例选项（所有模型都只支持16:9和9:16）
       function updateRatioOptions(videoModel) {
+        const ratioField = ratioSelect.closest('.field');
+        
+        // vidu 模型隐藏比例选择器
+        if(videoModel === 'vidu') {
+          if(ratioField) ratioField.style.display = 'none';
+          return;
+        }
+        
+        // 其他模型显示比例选择器
+        if(ratioField) ratioField.style.display = '';
+        
         const currentRatio = ratioSelect.value;
         ratioSelect.innerHTML = `
           <option value="9:16">9:16 (竖屏)</option>
@@ -2311,6 +2343,23 @@
           return;
         }
 
+        // 获取尾帧图片URL（可选）
+        let endImageUrl = '';
+        if(node.data.endUrl){
+          endImageUrl = node.data.endUrl;
+        } else {
+          const endConn = state.imageConnections.find(c => c.to === id && c.portType === 'end');
+          if(endConn){
+            const fromNode = state.nodes.find(n => n.id === endConn.from);
+            if(fromNode && fromNode.type === 'image' && fromNode.data && fromNode.data.url){
+              endImageUrl = fromNode.data.url;
+            }
+          }
+        }
+
+        // 拼接图片URL：如果有尾帧，用逗号拼接；否则只传首帧
+        const imageUrls = endImageUrl ? `${startImageUrl},${endImageUrl}` : startImageUrl;
+
         // 禁用按钮
         genBtnMain.disabled = true;
         genBtnMain.textContent = '生成中...';
@@ -2325,10 +2374,10 @@
           const ratio = node.data.ratio || state.ratio || '9:16';
           const videoModel = node.data.videoModel || 'sora2';
           
-          console.log('[DEBUG] 生成视频参数:', { drawCount: node.data.drawCount, desiredCount, duration, prompt, ratio, videoModel });
+          console.log('[DEBUG] 生成视频参数:', { drawCount: node.data.drawCount, desiredCount, duration, prompt, ratio, videoModel, imageUrls });
 
           // 调用生成API
-          const result = await generateVideoFromImage(startImageUrl, prompt, duration, desiredCount, ratio, videoModel);
+          const result = await generateVideoFromImage(imageUrls, prompt, duration, desiredCount, ratio, videoModel);
           console.log('[DEBUG] API返回:', { projectIds: result.projectIds, count: result.projectIds?.length });
           
           genStatus.textContent = '任务已提交，正在生成视频...';
@@ -4182,6 +4231,7 @@
               <option value="sora2">Sora2</option>
               <option value="ltx2">LTX2.0</option>
               <option value="kling">可灵</option>
+              <option value="vidu">Vidu</option>
             </select>
           </div>
           <div class="field">
@@ -4272,11 +4322,11 @@
             <option value="8">8秒 (201帧)</option>
             <option value="10">10秒 (241帧)</option>
           `;
-          if(![5, 8, 10].includes(Number(currentDuration))) {
+          if(['5', '8', '10'].includes(currentDuration)) {
+            videoDurationEl.value = currentDuration;
+          } else {
             videoDurationEl.value = '5';
             node.data.videoDuration = 5;
-          } else {
-            videoDurationEl.value = currentDuration;
           }
         } else if(videoModel === 'wan22' || videoModel === 'kling') {
           // Wan2.2 和可灵: 5, 10秒
@@ -4284,11 +4334,23 @@
             <option value="5">5秒</option>
             <option value="10">10秒</option>
           `;
-          if(![5, 10].includes(Number(currentDuration))) {
+          if(['5', '10'].includes(currentDuration)) {
+            videoDurationEl.value = currentDuration;
+          } else {
             videoDurationEl.value = '5';
             node.data.videoDuration = 5;
-          } else {
+          }
+        } else if(videoModel === 'vidu') {
+          // Vidu: 5, 8秒
+          videoDurationEl.innerHTML = `
+            <option value="5">5秒</option>
+            <option value="8">8秒</option>
+          `;
+          if(['5', '8'].includes(currentDuration)) {
             videoDurationEl.value = currentDuration;
+          } else {
+            videoDurationEl.value = '5';
+            node.data.videoDuration = 5;
           }
         } else {
           // Sora2: 10, 15秒
@@ -4296,11 +4358,11 @@
             <option value="10">10秒</option>
             <option value="15">15秒</option>
           `;
-          if(![10, 15].includes(Number(currentDuration))) {
+          if(['10', '15'].includes(currentDuration)) {
+            videoDurationEl.value = currentDuration;
+          } else {
             videoDurationEl.value = '10';
             node.data.videoDuration = 10;
-          } else {
-            videoDurationEl.value = currentDuration;
           }
         }
       }
@@ -4344,6 +4406,14 @@
             power = klingPower[duration] || klingPower[5] || 0;
           } else {
             power = klingPower || 0;
+          }
+        } else if(videoModel === 'vidu') {
+          // type=13: Vidu根据时长区分算力
+          const viduPower = config[13];
+          if(typeof viduPower === 'object') {
+            power = viduPower[duration] || viduPower[5] || 0;
+          } else {
+            power = viduPower || 0;
           }
         }
         
