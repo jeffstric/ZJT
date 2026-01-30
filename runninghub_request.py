@@ -561,7 +561,7 @@ def create_ltx2_image_to_video(
             "description": "时长"
         },
         {
-            "nodeId": "129",
+            "nodeId": "210",
             "fieldName": "value",
             "fieldValue": str(max_edge),
             "description": "最长边"
