@@ -404,10 +404,14 @@ async def proxy_image(url: str = Query(..., description="Image URL to proxy")):
 
 def _save_uploaded_image(upload_file: UploadFile) -> str:
     """
-    Save uploaded image to upload directory and return the file URL
+    Save uploaded image to upload/temp/date directory and return the file URL
     """
-    # Ensure upload directory exists
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    # Get current date for directory name
+    date_str = datetime.now().strftime("%Y%m%d")
+    
+    # Create upload/temp/date directory structure
+    temp_dir = os.path.join(UPLOAD_DIR, "temp", date_str)
+    os.makedirs(temp_dir, exist_ok=True)
     
     # Generate unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -416,13 +420,13 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     filename = f"upload_{timestamp}_{unique_id}{file_extension}"
     
     # Save file
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    file_path = os.path.join(temp_dir, filename)
     with open(file_path, "wb") as f:
         content = upload_file.file.read()
         f.write(content)
     
     # Return URL that can be accessed via static file serving
-    return f"{SERVER_HOST}/upload/{filename}"
+    return f"{SERVER_HOST}/upload/temp/{date_str}/{filename}"
 
 def _save_user_asset(
     upload_file: UploadFile,
@@ -2974,6 +2978,127 @@ async def api_create_character(
         logger.error(f"Character creation failed: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"创建角色失败: {str(e)}")
+
+
+@app.post("/api/digital-human")
+async def digital_human_generate(
+    image: UploadFile = File(..., description="Input image for digital human"),
+    text: str = Form(..., description="Text content for digital human to speak (max 1000 characters)"),
+    audio: UploadFile = File(..., description="Reference audio file"),
+    aspect_ratio: str = Form("9:16", description="Video aspect ratio: 9:16, 16:9, 1:1, 3:2, 4:3, 2:3, 3:4"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token")
+):
+    """
+    Generate digital human video from image, text and audio
+    """
+    try:
+        if CHECK_AUTH_TOKEN and auth_token is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Authentication token is required"
+            )
+        
+        # Validate text length
+        if len(text) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail="文本内容不能超过1000个字"
+            )
+        
+        # Save uploaded image
+        image_url = _save_uploaded_image(image)
+        
+        # Save uploaded audio
+        audio_url = _save_uploaded_image(audio)  # Reuse the same function for audio
+        
+        # Task type for digital human
+        task_type = 13
+        computing_power = TASK_COMPUTING_POWER[task_type]
+        
+        if CHECK_AUTH_TOKEN:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            # Check computing power
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers
+            )
+            if not success:
+                raise HTTPException(
+                    status_code=400,
+                    detail=message
+                )
+            
+            user_computing_power = response_data.get('computing_power', 0)
+            user_id_from_token = response_data.get('user_id')
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，需要 {computing_power} 算力，当前仅有 {user_computing_power} 算力"
+                )
+            if user_id_from_token != user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="用户ID不匹配"
+                )
+        
+        # Generate unique transaction ID
+        transaction_id = str(uuid.uuid4())
+        
+        # Deduct computing power
+        if CHECK_AUTH_TOKEN:
+            success, message, response_data = make_perseids_request(
+                endpoint='user/calculate_computing_power',
+                method='POST',
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id
+                }
+            )
+            if not success:
+                logger.error(f"Computing power deduction failed: {message}")
+        
+        # Create database record
+        if user_id:
+            try:
+                id = AIToolsModel.create(
+                    prompt=text,
+                    user_id=user_id,
+                    type=task_type,
+                    image_path=image_url,
+                    ratio=aspect_ratio,
+                    message=audio_url,  # Store audio URL in message field
+                    transaction_id=transaction_id,
+                    status=0
+                )
+                TasksModel.create(
+                    task_type=TASK_TYPE_GENERATE_VIDEO,
+                    task_id=id,
+                    status=0
+                )
+                
+                return JSONResponse({
+                    "success": True,
+                    "project_id": id,
+                    "status": "submitted",
+                    "image_url": image_url,
+                    "audio_url": audio_url
+                })
+            except Exception as db_error:
+                logger.error(f"Failed to create database record: {db_error}")
+                raise HTTPException(status_code=500, detail=f"数据库错误: {str(db_error)}")
+        else:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Digital human generation failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"数字人生成失败: {str(e)}")
 
 
 @app.post("/api/audio-generate")

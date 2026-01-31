@@ -21,6 +21,7 @@ from duomi_api_requset import (
 from runninghub_request import (
     create_ltx2_image_to_video,
     create_wan22_image_to_video,
+    create_digital_human,
     check_ltx2_task_status,
     TaskStatus
 )
@@ -196,7 +197,35 @@ def _submit_new_task(ai_tool):
             logger.error(f"Kling API error: {error_msg}")
             return False
         
-        project_id = result.get("data", {}).get("task_id")
+        project_id = result.get("taskId")
+    elif ai_tool_type == 13:
+        # 数字人生成 (type=13)
+        # 从 ai_tool 中获取音频路径，假设存储在 message 字段中
+        audio_url = ai_tool.message or ""
+        result = create_digital_human(
+            image_url=ai_tool.image_path,
+            text=ai_tool.prompt,
+            audio_url=audio_url,
+            aspect_ratio=ai_tool.ratio or "9:16"
+        )
+        logger.info(f"Submit Digital Human task result: {result}")
+        
+        # v2 API 响应格式：直接返回 taskId, status, errorCode, errorMessage
+        if not result.get("taskId"):
+            error_msg = result.get("errorMessage") or result.get("msg", "数字人生成 API调用失败")
+            
+            # 特殊处理：RunningHub 队列已满错误
+            if error_msg == "TASK_QUEUE_MAXED" or result.get("errorCode") == "TASK_QUEUE_MAXED":
+                logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
+                # 延迟60秒后重试，不增加重试计数
+                next_trigger = datetime.now() + timedelta(seconds=60)
+                TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
+                return True  # 返回True避免增加重试计数
+            
+            logger.error(f"Digital Human API error: {error_msg}")
+            return False
+        
+        project_id = result.get("taskId")
     elif ai_tool_type in [2, 3]:
         # Sora2 视频生成 (type=2: 文生视频, type=3: 图生视频)
         result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
@@ -214,7 +243,7 @@ def _submit_new_task(ai_tool):
     TasksModel.update_by_task_id(task_id, status=1)
     
     # 如果是 RunningHub 任务，更新槽位的 project_id
-    is_runninghub = ai_tool_type in [10, 11]
+    is_runninghub = ai_tool_type in [10, 11, 13]
     if is_runninghub:
         task = TasksModel.get_by_task_id(task_id)
         if task:
@@ -242,38 +271,54 @@ def _check_task_status(ai_tool):
         logger.error(f"AI tool {task_id} has no project_id while status=1")
         return False
 
-    # Check if this is LTX2.0 or Wan2.2 model (type=10 or 11, both use RunningHub)
-    is_runninghub = ai_tool_type in [10, 11]
+    # Check if this is LTX2.0, Wan2.2 or Digital Human model (type=10, 11, 13, all use RunningHub)
+    is_runninghub = ai_tool_type in [10, 11, 13]
     # Check if this is Kling model (type=12, uses Duomi API)
     is_kling = ai_tool_type == 12
-    is_video = ai_tool_type in [2, 3, 10, 11, 12]
+    is_video = ai_tool_type in [2, 3, 10, 11, 12, 13]
     
     if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] Checking status for mock task {project_id}")
     
     if is_runninghub:
-        # LTX2.0 or Wan2.2 model - use RunningHub status check
+        # LTX2.0, Wan2.2 or Digital Human model - use RunningHub status check
         try:
             result = check_ltx2_task_status(project_id)
             status = result.get("status")
             
             if status == "SUCCESS":
-                # Get video URL from results
+                # Get results
                 results = result.get("results", [])
                 if results and len(results) > 0:
-                    media_url = results[0].file_url
+                    # For Digital Human (type=13), filter for video results
+                    # The workflow may return multiple results (audio + video)
+                    if ai_tool_type == 13:
+                        # Filter for video files (mp4, mov, avi, etc.)
+                        video_results = [r for r in results if r.file_url and any(r.file_url.lower().endswith(ext) for ext in ['.mp4', '.mov', '.avi', '.webm', '.mkv'])]
+                        if video_results:
+                            media_url = video_results[0].file_url
+                            logger.info(f"Digital Human task {project_id} - Found video result: {media_url}")
+                        else:
+                            # If no video found, log all results for debugging
+                            logger.warning(f"Digital Human task {project_id} - No video found in results. All results: {[r.file_url for r in results]}")
+                            # Try to use the last result (usually video is last)
+                            media_url = results[-1].file_url
+                    else:
+                        # For LTX2.0 and Wan2.2, use first result
+                        media_url = results[0].file_url
+                    
                     return _handle_task_success(project_id, task_id, media_url)
                 else:
-                    logger.error(f"LTX2.0 task {project_id} succeeded but no results")
+                    logger.error(f"RunningHub task {project_id} succeeded but no results")
                     return _handle_task_failure(project_id, task_id, ai_tool_type, "No results returned", ai_tool.user_id)
             elif status == "FAILED":
                 return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
             else:
                 # Still processing (QUEUED or RUNNING)
-                logger.info(f"LTX2.0 task {project_id} still processing (status={status})")
+                logger.info(f"RunningHub task {project_id} still processing (status={status})")
                 return True
         except Exception as e:
-            logger.error(f"Error checking LTX2.0 task status: {e}")
+            logger.error(f"Error checking RunningHub task status: {e}")
             return False
     elif is_kling:
         # Kling model - use Kling status check

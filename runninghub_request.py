@@ -776,6 +776,151 @@ def create_wan22_image_to_video(
         raise ValueError(f"Invalid response format: {str(e)}")
 
 
+def create_digital_human(
+    image_url: str,
+    text: str,
+    audio_url: str,
+    aspect_ratio: str = "9:16",
+    webapp_id: str = "2017494689997398017",
+    api_key: str = None,
+    config_path: str = None,
+    instance_type: str = "plus",
+    use_personal_queue: str = "false"
+) -> Dict[str, Any]:
+    """
+    Create digital human video using v2 API (async, returns task_id immediately)
+    
+    Args:
+        image_url: URL or filename of the input image
+        text: Text content for the digital human to speak (max 1000 characters)
+        audio_url: URL or filename of the reference audio
+        aspect_ratio: Video aspect ratio (9:16, 16:9, 1:1, 3:2, 4:3, 2:3, 3:4, original, custom)
+        webapp_id: The webapp ID for digital human (default: "2017494689997398017")
+        api_key: API key for authentication (default: from config)
+        config_path: Path to configuration file (default: auto-detect)
+        instance_type: Instance type for the task (default: "default")
+        use_personal_queue: Whether to use personal queue (default: "false")
+        
+    Returns:
+        API response with task_id
+        
+    Raises:
+        requests.RequestException: If request fails
+        ValueError: If response format is invalid
+    """
+    # Auto-detect config file if not specified
+    if config_path is None:
+        config_path = get_config_path()
+    
+    # Load config
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as file:
+        config = yaml.safe_load(file)
+    
+    # Load API key from config if not provided
+    if api_key is None:
+        api_key = config["runninghub"]["api_key"]
+    
+    host = config["runninghub"]["host"]
+    endpoint = f"/openapi/v2/run/ai-app/{webapp_id}"
+    url = f"{host}{endpoint}"
+    
+    # Map aspect_ratio to value
+    ratio_map = {
+        "original": "original",
+        "custom": "custom",
+        "1:1": "1:1",
+        "3:2": "3:2",
+        "4:3": "4:3",
+        "16:9": "16:9",
+        "2:3": "2:3",
+        "3:4": "3:4",
+        "9:16": "9:16"
+    }
+    ratio_value = ratio_map.get(aspect_ratio, "3:4")  # Default to 9:16 (竖屏)
+    
+    # Build node info list for digital human
+    node_info_list = [
+        {
+            "nodeId": "126",
+            "fieldName": "image",
+            "fieldValue": image_url,
+            "description": "上传图像"
+        },
+        {
+            "nodeId": "127",
+            "fieldName": "aspect_ratio",
+            "fieldData": "[[\"original\", \"custom\", \"1:1\", \"3:2\", \"4:3\", \"16:9\", \"2:3\", \"3:4\", \"9:16\"]]",
+            "fieldValue": ratio_value,
+            "description": "设置输出比例"
+        },
+        {
+            "nodeId": "184",
+            "fieldName": "text",
+            "fieldValue": text,
+            "description": "输入一段讲话内容（文本不要超过1000个字）"
+        },
+        {
+            "nodeId": "185",
+            "fieldName": "audio",
+            "fieldValue": audio_url,
+            "description": "audio"
+        },
+        {
+            "nodeId": "217",
+            "fieldName": "select",
+            "fieldValue": "11",
+            "description": "select"
+        },
+        {
+            "nodeId": "249",
+            "fieldName": "prompt",
+            "fieldValue": "",
+            "description": "prompt"
+        }
+    ]
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "nodeInfoList": node_info_list,
+        "instanceType": instance_type,
+        "usePersonalQueue": use_personal_queue
+    }
+    
+    # 记录请求日志
+    logger.info(f"[RunningHub API v2 Digital Human] Request URL: {url}")
+    logger.info(f"[RunningHub API v2 Digital Human] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+    
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=config["timeout"]["request_timeout"]
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[RunningHub API v2 Digital Human] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        
+        return result
+        
+    except requests.RequestException as e:
+        logger.error(f"[RunningHub API v2 Digital Human] Request failed: {str(e)}")
+        raise requests.RequestException(f"Request failed: {str(e)}")
+    except ValueError as e:
+        logger.error(f"[RunningHub API v2 Digital Human] Invalid response format: {str(e)}")
+        raise ValueError(f"Invalid response format: {str(e)}")
+
+
 def check_ltx2_task_status(
     task_id: str,
     api_key: str = None,

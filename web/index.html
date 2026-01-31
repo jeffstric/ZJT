@@ -465,6 +465,13 @@
           </div>
           <button class="btn" @click="$router.push({name:'audio-generate'})">打开</button>
         </div>
+        <div class="list-item">
+          <div>
+            <div style="font-weight:700">在线图片数字人</div>
+            <div class="muted">上传图片+文本+音频生成数字人视频</div>
+          </div>
+          <button class="btn" @click="$router.push({name:'digital-human'})">打开</button>
+        </div>
         <!-- <div class="list-item">
           <div>
             <div style="font-weight:700">小红书笔记修改</div>
@@ -509,6 +516,391 @@
         }
       }
     }
+  };
+
+
+  const DigitalHuman = {
+    name: 'DigitalHuman',
+    data() {
+      return {
+        imageFile: null,
+        audioFile: null,
+        text: '',
+        aspectRatio: '9:16',
+        loading: false,
+        error: '',
+        results: [],
+        projectId: '',
+        status: '',
+        statusInterval: null,
+        authToken: '',
+        showHistory: false,
+        historyList: [],
+        historyLoading: false,
+        historyPage: 1,
+        historyTotal: 0,
+      }
+    },
+    mounted() {
+      this.authToken = localStorage.getItem('auth_token') || '';
+    },
+    computed: {
+      canSubmit() {
+        return !!this.imageFile && !!this.audioFile && !!this.text.trim() && !this.loading && this.text.length <= 1000;
+      },
+      statusText() {
+        if (this.status === 'submitted') return '任务已提交，正在生成数字人视频...';
+        if (this.status === 'QUEUED') return '任务排队中...';
+        if (this.status === 'RUNNING') return '正在生成数字人视频...';
+        if (this.status === 'SUCCESS') return '数字人视频生成完成！';
+        if (this.status === 'FAILED') return '任务失败';
+        return '';
+      },
+      aspectRatioOptions() {
+        return [
+          { value: '9:16', label: '9:16 (竖屏)' },
+          { value: '16:9', label: '16:9 (横屏)' },
+          { value: '1:1', label: '1:1 (方形)' },
+          { value: '3:2', label: '3:2' },
+          { value: '4:3', label: '4:3' },
+          { value: '2:3', label: '2:3' },
+          { value: '3:4', label: '3:4' }
+        ];
+      },
+      computingPower() {
+        return 12;
+      }
+    },
+    methods: {
+      onImageFile(e) {
+        this.imageFile = e.target.files[0] || null;
+      },
+      onAudioFile(e) {
+        this.audioFile = e.target.files[0] || null;
+      },
+      
+      async submit() {
+        if (!this.canSubmit) return;
+        
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.error = '请先登录后再使用数字人生成功能';
+          return;
+        }
+        
+        this.loading = true;
+        this.error = '';
+        this.results = [];
+        this.projectId = '';
+        this.status = '';
+        this.clearStatusCheck();
+        
+        try {
+          const form = new FormData();
+          form.append('image', this.imageFile);
+          form.append('audio', this.audioFile);
+          form.append('text', this.text);
+          form.append('aspect_ratio', this.aspectRatio);
+          form.append('user_id', userId);
+          
+          if (this.authToken) {
+            form.append('auth_token', this.authToken);
+          }
+          
+          const res = await axios.post('/api/digital-human', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          });
+          
+          this.projectId = res.data.project_id || '';
+          this.status = res.data.status || 'submitted';
+          
+          this.startStatusCheck();
+          
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || err?.message || '请求失败';
+          this.loading = false;
+        }
+      },
+      
+      async checkStatus() {
+        if (!this.projectId) return;
+        
+        try {
+          const authToken = localStorage.getItem('auth_token');
+          const params = authToken ? { auth_token: authToken } : {};
+          const res = await axios.get(`/api/get-status/${this.projectId}`, { params });
+          const responseData = res?.data;
+          
+          if (!responseData) {
+            console.error('Invalid status response:', responseData);
+            return;
+          }
+          
+          // Parse response: {tasks: [{project_id, status, results, reason}]}
+          let payload;
+          if (responseData.tasks && responseData.tasks.length > 0) {
+            payload = responseData.tasks[0];
+          } else {
+            console.error('Invalid status response format:', responseData);
+            return;
+          }
+          
+          if (!payload || typeof payload.status === 'undefined') {
+            console.error('Invalid task payload:', payload);
+            return;
+          }
+          
+          this.status = payload.status;
+          
+          if (payload.status === 'SUCCESS') {
+            this.results = payload.results || [];
+            this.loading = false;
+            this.clearStatusCheck();
+          } else if (payload.status === 'FAILED') {
+            this.error = payload.reason || '任务处理失败';
+            this.loading = false;
+            this.clearStatusCheck();
+          }
+        } catch (err) {
+          console.error('Status check error:', err);
+        }
+      },
+      
+      startStatusCheck() {
+        this.statusInterval = setInterval(() => {
+          this.checkStatus();
+        }, 10000);
+      },
+      
+      clearStatusCheck() {
+        if (this.statusInterval) {
+          clearInterval(this.statusInterval);
+          this.statusInterval = null;
+        }
+      },
+      
+      downloadVideo(url, index) {
+        if (this.$root.isWechatBrowser()) {
+          this.$root.showWechatGuideModal = true;
+          return;
+        }
+        
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = `digital_human_${dateStr}_${timeStr}_${index + 1}.mp4`;
+        const downloadUrl = `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+        window.open(downloadUrl, '_blank');
+      },
+      
+      async fetchHistory(reset = true) {
+        if (reset) {
+          this.historyPage = 1;
+          this.historyList = [];
+        }
+        
+        const userId = localStorage.getItem('user_id');
+        if (!userId) {
+          this.error = '请先登录';
+          this.showHistory = true;
+          return;
+        }
+        
+        this.historyLoading = true;
+        try {
+          const authToken = localStorage.getItem('auth_token');
+          
+          const res = await axios.get('/api/ai-tools/history', {
+            params: {
+              user_id: parseInt(userId, 10),
+              page: this.historyPage,
+              page_size: 20,
+              type: 13,
+              auth_token: authToken || undefined
+            }
+          });
+          
+          if (res.data.success) {
+            const payload = res.data.data || {};
+            const newItems = payload.data || payload.items || [];
+            this.historyList = reset ? newItems : [...this.historyList, ...newItems];
+            this.historyTotal = payload.total || 0;
+            this.showHistory = true;
+          }
+        } catch (err) {
+          console.error(err);
+          this.error = err?.response?.data?.detail || '获取历史记录失败';
+          this.showHistory = true;
+        } finally {
+          this.historyLoading = false;
+        }
+      },
+      
+      handleHistoryScroll(e) {
+        const { scrollTop, scrollHeight, clientHeight } = e.target;
+        if (scrollHeight - scrollTop - clientHeight < 50 && !this.historyLoading) {
+          this.loadMoreHistory();
+        }
+      },
+      
+      async loadMoreHistory() {
+        if (this.historyList.length >= this.historyTotal) return;
+        this.historyPage++;
+        await this.fetchHistory(false);
+      },
+      
+      closeHistory() {
+        this.showHistory = false;
+        this.historyPage = 1;
+        this.historyList = [];
+      },
+      
+      getHistoryStatusText(status) {
+        const statusMap = {
+          0: '未处理',
+          1: '处理中',
+          2: '处理完成',
+          '-1': '处理失败'
+        };
+        return statusMap[status] || '未知';
+      },
+      
+      getHistoryStatusColor(status) {
+        const colorMap = {
+          0: '#888',
+          1: '#3b82f6',
+          2: '#10b981',
+          '-1': '#ef4444'
+        };
+        return colorMap[status] || '#888';
+      },
+      
+      downloadHistoryVideo(item, index) {
+        if (!item || !item.result_url) {
+          alert('下载链接不可用');
+          return;
+        }
+        
+        if (this.$root.isWechatBrowser()) {
+          this.$root.showWechatGuideModal = true;
+          return;
+        }
+        
+        const now = new Date();
+        const dateStr = now.getFullYear().toString() + 
+                       (now.getMonth() + 1).toString().padStart(2, '0') + 
+                       now.getDate().toString().padStart(2, '0');
+        const timeStr = now.getHours().toString().padStart(2, '0') + 
+                       now.getMinutes().toString().padStart(2, '0');
+        const filename = `digital_human_history_${dateStr}_${timeStr}_${index + 1}.mp4`;
+        const downloadUrl = `/api/download?url=${encodeURIComponent(item.result_url)}&filename=${encodeURIComponent(filename)}`;
+        window.open(downloadUrl, '_blank');
+      }
+    },
+    beforeUnmount() {
+      this.clearStatusCheck();
+    },
+    template: `
+      <div class="form">
+        <div class="field">
+          <label class="label">上传图片 <span style="color: red;">*</span></label>
+          <input class="input" type="file" accept="image/*" @change="onImageFile" :disabled="loading" />
+          <div class="muted" style="margin-top: 4px;">上传数字人的图片</div>
+        </div>
+        
+        <div class="field">
+          <label class="label">讲话文本 <span style="color: red;">*</span></label>
+          <textarea class="input" v-model="text" placeholder="输入数字人要讲的话（最多1000个字）" rows="5" :disabled="loading"></textarea>
+          <div class="muted" style="margin-top: 4px;">
+            当前字数: {{ text.length }}/1000
+            <span v-if="text.length > 1000" style="color: var(--danger); margin-left: 8px;">文本超出限制！</span>
+          </div>
+        </div>
+        
+        <div class="field">
+          <label class="label">参考音频 <span style="color: red;">*</span></label>
+          <input class="input" type="file" accept="audio/*" @change="onAudioFile" :disabled="loading" />
+          <div class="muted" style="margin-top: 4px;">上传参考音频文件，用于声音克隆</div>
+        </div>
+        
+        <div class="field">
+          <label class="label">视频比例</label>
+          <select class="input" v-model="aspectRatio" :disabled="loading">
+            <option v-for="opt in aspectRatioOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </div>
+        
+        <div class="field" style="background: #1a1f2e; padding: 12px; border-radius: 8px; border: 1px solid var(--border);">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="color: var(--muted); font-size: 14px;">算力消耗：</span>
+            <span style="color: #60a5fa; font-weight: bold; font-size: 16px;">{{ computingPower }} 算力</span>
+          </div>
+        </div>
+        
+        <div class="field">
+          <div class="row">
+            <button class="btn" :disabled="!canSubmit" @click="submit">
+              {{ loading ? '生成中...' : '开始生成' }}
+            </button>
+            <button class="btn secondary" @click="showHistory = true; fetchHistory()" :disabled="historyLoading">
+              {{ historyLoading ? '加载中...' : '历史记录' }}
+            </button>
+          </div>
+        </div>
+        
+        <div v-if="statusText" class="status" :class="{'success': status==='SUCCESS', 'danger': status==='FAILED'}">
+          {{ statusText }}
+        </div>
+        
+        <div v-if="error && !loading" class="status danger">{{ error }}</div>
+        
+        <div v-if="results.length" class="results">
+          <div class="result-title">生成结果</div>
+          <div v-for="(result, idx) in results" :key="idx" class="result-item">
+            <video :src="result.file_url" controls style="width:100%; max-height:400px; border-radius:8px;"></video>
+            <div style="margin-top:8px; display:flex; gap:8px;">
+              <button class="btn secondary" @click="downloadVideo(result.file_url, idx)">下载视频</button>
+              <span v-if="result.task_cost_time" class="muted">耗时: {{ result.task_cost_time }}秒</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
+          <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
+            <button class="modal-close" @click="closeHistory">×</button>
+            <div class="modal-title">数字人生成历史记录</div>
+            <div v-if="historyList.length === 0 && !historyLoading" style="text-align: center; padding: 40px; color: var(--muted);">
+              暂无历史记录
+            </div>
+            <div v-for="(item, idx) in historyList" :key="idx" style="padding: 16px; border-bottom: 1px solid var(--border);">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                <div style="flex: 1;">
+                  <div style="font-size: 14px; color: var(--text); margin-bottom: 4px;">{{ item.prompt }}</div>
+                  <div style="font-size: 12px; color: var(--muted);">比例: {{ item.ratio || '-' }}</div>
+                </div>
+                <span :style="{color: getHistoryStatusColor(item.status), fontSize: '12px', fontWeight: '600'}">
+                  {{ getHistoryStatusText(item.status) }}
+                </span>
+              </div>
+              <div v-if="item.result_url" style="margin-top: 8px;">
+                <video :src="item.result_url" controls style="width: 100%; max-height: 200px; border-radius: 8px;"></video>
+                <button class="btn secondary" style="margin-top: 8px; font-size: 12px;" @click="downloadHistoryVideo(item, idx)">下载视频</button>
+              </div>
+              <div style="font-size: 11px; color: var(--muted); margin-top: 8px;">
+                创建时间: {{ new Date(item.create_time).toLocaleString() }}
+              </div>
+            </div>
+            <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
+              加载中...
+            </div>
+          </div>
+        </div>
+      </div>
+    `
   };
 
 
@@ -4809,7 +5201,8 @@
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
     { path: '/video-enhance', name: 'video-enhance', component: VideoEnhance },
     { path: '/video-remix', name: 'video-remix', component: VideoRemix },
-    { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate }
+    { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate },
+    { path: '/digital-human', name: 'digital-human', component: DigitalHuman }
   ];
   const router = VueRouter.createRouter({
     history: VueRouter.createWebHistory(),
