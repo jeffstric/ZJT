@@ -619,13 +619,46 @@ def process_task_with_retry(task_type, process_func):
                     TasksModel.update_by_task_id(task.task_id, status=-1)
                     AIToolsModel.update(task.task_id, status=-1, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
                     
-                    # 释放 RunningHub 槽位
+                    # 获取 AI 工具详情用于退还算力和释放槽位
                     ai_tool = AIToolsModel.get_by_id(task.task_id)
-                    if ai_tool and ai_tool.type in [10, 11]:
-                        if ai_tool.project_id:
-                            RunningHubSlotsModel.release_slot_by_project_id(ai_tool.project_id)
-                        else:
-                            RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
+                    if ai_tool:
+                        # 退还算力
+                        try:
+                            computing_power = TASK_COMPUTING_POWER.get(ai_tool.type)
+                            if computing_power:
+                                transaction_id = str(uuid.uuid4())
+                                success, message, response_data = make_perseids_request(
+                                    endpoint='get_auth_token_by_user_id',
+                                    method='POST',
+                                    data={
+                                        "user_id": ai_tool.user_id,
+                                        "authentication_id": AUTHENTICATION_ID
+                                    }
+                                )
+                                if success:
+                                    auth_token = response_data['token']
+                                    headers = {'Authorization': f'Bearer {auth_token}'}
+                                    success, message, response_data = make_perseids_request(
+                                        endpoint='user/calculate_computing_power',
+                                        method='POST',
+                                        headers=headers,
+                                        data={
+                                            "computing_power": computing_power,
+                                            "behavior": "increase",
+                                            "transaction_id": transaction_id
+                                        }
+                                    )
+                                    if success:
+                                        logger.info(f"Task {task.task_id} exceeded max retry, refunded {computing_power} computing power")
+                        except Exception as e:
+                            logger.error(f"Failed to refund computing power for task {task.task_id}: {e}")
+                        
+                        # 释放 RunningHub 槽位
+                        if ai_tool.type in [10, 11, 13]:
+                            if ai_tool.project_id:
+                                RunningHubSlotsModel.release_slot_by_project_id(ai_tool.project_id)
+                            else:
+                                RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
                     
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as failed due to max retry exceeded")
