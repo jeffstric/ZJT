@@ -5052,6 +5052,13 @@
 
         const scripts = result.data.data || [];
 
+        // 按集数排序（升序）
+        scripts.sort((a, b) => {
+          const epA = a.episode_number || 0;
+          const epB = b.episode_number || 0;
+          return epA - epB;
+        });
+
         if (scripts.length === 0) {
           listContainer.innerHTML = `
             <div style="text-align: center; padding: 40px; color: #666;">
