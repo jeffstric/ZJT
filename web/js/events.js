@@ -1286,7 +1286,10 @@
           ${character.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${character.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${character.reference_image}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button class="mini-btn character-download-btn" type="button" data-img-url="${character.reference_image}">下载图片</button>
+              </div>
             </div>
           ` : ''}
           ${character.age ? `<div class="field"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
@@ -1322,6 +1325,18 @@
         e.stopPropagation();
         removeNode(id);
       });
+      
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.character-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${character.name || '角色'}.png`);
+          }
+        });
+      }
       
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1416,7 +1431,10 @@
           ${character.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${character.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${character.reference_image}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button class="mini-btn character-download-btn" type="button" data-img-url="${character.reference_image}">下载图片</button>
+              </div>
             </div>
           ` : ''}
           ${character.age ? `<div class="field"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
@@ -1452,6 +1470,18 @@
         e.stopPropagation();
         removeNode(id);
       });
+      
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.character-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${character.name || '角色'}.png`);
+          }
+        });
+      }
       
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1733,7 +1763,10 @@
         ${props.reference_image ? `
           <div class="field">
             <div class="label">参考图</div>
-            <img src="${props.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            <img src="${props.reference_image}" class="preview props-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button class="mini-btn props-download-btn" type="button" data-img-url="${props.reference_image}">下载图片</button>
+            </div>
           </div>
         ` : ''}
         ${props.content ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(props.content)}</div></div>` : ''}
@@ -1790,6 +1823,18 @@
         editBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           openEditPropsModal(id, props);
+        });
+      }
+
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.props-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${props.name || '道具'}.png`);
+          }
         });
       }
 
@@ -1879,6 +1924,18 @@
         editBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           openEditPropsModal(id, props);
+        });
+      }
+
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.props-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${props.name || '道具'}.png`);
+          }
         });
       }
 
