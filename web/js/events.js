@@ -964,6 +964,24 @@
       modal.setAttribute('aria-hidden', 'false');
     }
     
+    // 为分镜选择道具打开模态框（供 nodes.js 调用）
+    window.openPropsModalForShot = async function() {
+      const modal = document.getElementById('propsModal');
+      const worldSelect = document.getElementById('propsWorldSelect');
+      
+      // 加载世界列表
+      await loadWorldsToSelect(worldSelect);
+      
+      // 如果有默认世界，自动选择并加载道具
+      if (state.defaultWorldId) {
+        worldSelect.value = state.defaultWorldId;
+        await loadProps(state.defaultWorldId);
+      }
+      
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    };
+    
     // 加载世界列表到选择器
     async function loadWorldsToSelect(selectElement) {
       const authToken = getAuthToken();
@@ -1231,9 +1249,18 @@
               const propsId = item.dataset.propsId;
               const props = result.data.data.find(p => p.id == propsId);
               if (props) {
-                createPropsNode(props);
-                document.getElementById('propsModal').classList.remove('show');
-                renderMinimap();
+                // 检查是否有分镜选择上下文（从 nodes.js 传递过来）
+                if (window.currentPropsSelectionContext) {
+                  // 调用 nodes.js 中的 addPropsToShot 函数来更新分镜数据
+                  if (typeof window.addPropsToShot === 'function') {
+                    window.addPropsToShot(props);
+                  }
+                } else {
+                  // 没有上下文，创建道具节点
+                  createPropsNode(props);
+                  document.getElementById('propsModal').classList.remove('show');
+                  renderMinimap();
+                }
               }
             });
             

@@ -610,6 +610,22 @@
               <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">对话（JSON格式）</label>
               <textarea class="shot-field" data-field="dialogue" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; min-height: 80px; resize: vertical; font-family: monospace;">${escapeHtml(Array.isArray(shot.dialogue) ? JSON.stringify(shot.dialogue, null, 2) : (shot.dialogue || '[]'))}</textarea>
             </div>
+            <div style="grid-column: 1 / -1;">
+              <label style="display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px;">参考道具</label>
+              <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 8px;">
+                <button class="mini-btn secondary add-props-btn" data-shot-index="${index}" type="button">添加道具</button>
+              </div>
+              <div class="shot-props-container" data-shot-index="${index}" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                ${(shot.props && shot.props.length > 0) ? shot.props.map((prop, propIdx) => `
+                  <div style="display: flex; gap: 6px; align-items: center; padding: 6px; background: #fff; border: 1px solid #e5e7eb; border-radius: 4px;">
+                    ${prop.reference_image ? `<img src="${escapeHtml(prop.reference_image)}" style="width: 32px; height: 32px; object-fit: cover; border-radius: 3px;" alt="${escapeHtml(prop.name || '道具')}" />` : '<div style="width: 32px; height: 32px; background: #f3f4f6; border-radius: 3px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 9px;">无图</div>'}
+                    <span style="font-size: 11px; color: #374151;">${escapeHtml(prop.name || '未命名')}</span>
+                    <button class="remove-props-btn" data-shot-index="${index}" data-props-index="${propIdx}" type="button" style="padding: 2px 6px; font-size: 10px; color: #ef4444; background: none; border: 1px solid #fca5a5; border-radius: 3px; cursor: pointer;">x</button>
+                  </div>
+                `).join('') : '<div style="padding: 8px; background: #f3f4f6; border-radius: 4px; font-size: 11px; color: #6b7280; text-align: center; width: 100%;">未选择参考道具</div>'}
+              </div>
+              <input type="hidden" class="shot-field" data-field="props" value="${escapeHtml(JSON.stringify(shot.props || []))}" />
+            </div>
           </div>
         </div>
       `;
@@ -642,6 +658,27 @@
           openLocationSelectorModal(shotIndex);
         });
       });
+      
+      // 绑定添加道具按钮事件
+      const addPropsBtns = shotGroupEditModalContent.querySelectorAll('.add-props-btn');
+      addPropsBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const shotIndex = parseInt(btn.dataset.shotIndex);
+          openPropsSelectorForEditModal(shotIndex);
+        });
+      });
+      
+      // 绑定移除道具按钮事件
+      const removePropsBtns = shotGroupEditModalContent.querySelectorAll('.remove-props-btn');
+      removePropsBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const shotIndex = parseInt(btn.dataset.shotIndex);
+          const propsIndex = parseInt(btn.dataset.propsIndex);
+          removePropsFromEditModal(shotIndex, propsIndex);
+        });
+      });
     }
 
     function renumberShots(shots){
@@ -651,6 +688,38 @@
           s.shot_number = i + 1;
         }
       });
+    }
+    
+    // 为编辑弹窗打开道具选择
+    function openPropsSelectorForEditModal(shotIndex){
+      window.currentPropsSelectionContext = {
+        nodeId: currentEditingNodeId,
+        shotIndex,
+        fromEditModal: true
+      };
+      
+      if(typeof window.openPropsModalForShot === 'function'){
+        window.openPropsModalForShot();
+      } else {
+        showToast('道具选择功能未初始化', 'error');
+      }
+    }
+    
+    // 从编辑弹窗中移除道具
+    function removePropsFromEditModal(shotIndex, propsIndex){
+      const node = state.nodes.find(n => n.id === currentEditingNodeId);
+      if(!node || !node.data.shots || !node.data.shots[shotIndex]) return;
+      
+      const shot = node.data.shots[shotIndex];
+      if(!shot.props || !Array.isArray(shot.props)) return;
+      
+      shot.props.splice(propsIndex, 1);
+      
+      // 更新编辑弹窗
+      shotGroupEditModalContent.innerHTML = renderShotGroupEditForm(node.data);
+      bindShotEditEvents();
+      
+      showToast('已移除道具', 'success');
     }
 
     function addNewShot(insertIndex){
@@ -678,7 +747,8 @@
         action: '',
         mood: '',
         environment_sound: '',
-        background_music: ''
+        background_music: '',
+        props: []
       };
 
       node.data.shots.splice(idx, 0, newShot);
@@ -910,6 +980,12 @@
               }
             } else if(fieldName === 'db_location_id'){
               shot[fieldName] = value ? parseInt(value) : null;
+            } else if(fieldName === 'props'){
+              try{
+                shot[fieldName] = value ? JSON.parse(value) : [];
+              } catch(e){
+                shot[fieldName] = [];
+              }
             } else {
               shot[fieldName] = value;
             }
@@ -1127,21 +1203,32 @@
           ? `<div style="display: flex; align-items: center; gap: 4px;">${shot.db_location_pic ? `<img src="${escapeHtml(shot.db_location_pic)}" style="width: 30px; height: 30px; object-fit: cover; border-radius: 4px;" alt="场景" />` : ''}<span style="font-size: 11px;">${escapeHtml(shot.location_name || 'ID:' + shot.db_location_id)}</span></div>`
           : '<span style="color: #9ca3af; font-size: 11px;">未匹配</span>';
         
-        // 生成道具显示内容 - 只显示该分镜中涉及的道具
+        // 生成道具显示内容 - 显示该分镜中涉及的道具（包括脚本道具和参考道具）
         let propsDisplay = '<span style="color: #9ca3af; font-size: 11px;">无</span>';
+        const shotPropsList = [];
+        
+        // 显示来自脚本的道具 (props_present)
         const propsPresent = shot.props_present || [];
         if(propsPresent.length > 0 && node && node.data.scriptData && node.data.scriptData.props){
           const scriptProps = node.data.scriptData.props;
-          const shotPropsList = [];
           propsPresent.forEach(propId => {
             const prop = scriptProps.find(p => p.id === propId);
             if(prop && prop.props_db_id){
               shotPropsList.push(`<div style="display: inline-block; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 4px; padding: 2px 6px; margin: 2px; font-size: 11px; color: #92400e;" title="${escapeHtml(prop.description || '')}">${escapeHtml(prop.name)}</div>`);
             }
           });
-          if(shotPropsList.length > 0){
-            propsDisplay = `<div style="display: flex; flex-wrap: wrap; gap: 4px;">${shotPropsList.join('')}</div>`;
-          }
+        }
+        
+        // 显示参考道具 (shot.props) - 带删除按钮
+        const refProps = shot.props || [];
+        if(refProps.length > 0){
+          refProps.forEach((prop, propIdx) => {
+            shotPropsList.push(`<div style="display: inline-flex; align-items: center; gap: 4px; background: #dbeafe; border: 1px solid #3b82f6; border-radius: 4px; padding: 2px 6px; margin: 2px; font-size: 11px; color: #1e40af;">${prop.reference_image ? `<img src="${escapeHtml(prop.reference_image)}" style="width: 16px; height: 16px; object-fit: cover; border-radius: 2px;" />` : ''}${escapeHtml(prop.name)}<button class="remove-shot-props-btn" data-shot-index="${index}" data-props-index="${propIdx}" type="button" style="margin-left: 4px; padding: 0 4px; background: none; border: none; color: #ef4444; cursor: pointer; font-size: 12px; line-height: 1;" title="删除道具">×</button></div>`);
+          });
+        }
+        
+        if(shotPropsList.length > 0){
+          propsDisplay = `<div style="display: flex; flex-wrap: wrap; gap: 4px;">${shotPropsList.join('')}</div>`;
         }
         
         html += `
@@ -1157,7 +1244,8 @@
             <td style="padding: 10px; border: 1px solid #ddd; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${description}</td>
             <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">
               <button class="mini-btn view-shot-detail" data-shot-index="${index}" style="padding: 4px 8px; font-size: 12px; margin-right: 4px;">查看</button>
-              <button class="mini-btn secondary select-shot-location" data-shot-index="${index}" style="padding: 4px 8px; font-size: 12px;">选择场景</button>
+              <button class="mini-btn secondary select-shot-location" data-shot-index="${index}" style="padding: 4px 8px; font-size: 12px; margin-right: 4px;">选择场景</button>
+              <button class="mini-btn secondary select-shot-props" data-shot-index="${index}" style="padding: 4px 8px; font-size: 12px;">选择道具</button>
             </td>
           </tr>
         `;
@@ -1188,6 +1276,26 @@
             }
           });
         });
+        
+        document.querySelectorAll('.select-shot-props').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const index = parseInt(btn.dataset.shotIndex);
+            if(shots[index]){
+              await selectPropsForShot(currentShotGroupNodeId, index);
+            }
+          });
+        });
+        
+        // 绑定删除道具按钮事件
+        document.querySelectorAll('.remove-shot-props-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const shotIndex = parseInt(btn.dataset.shotIndex);
+            const propsIndex = parseInt(btn.dataset.propsIndex);
+            removePropsFromShotTable(currentShotGroupNodeId, shotIndex, propsIndex);
+          });
+        });
       }, 0);
 
       return html;
@@ -1207,6 +1315,45 @@
 
       // 打开场景选择弹窗
       openLocationModal();
+    }
+    
+    // 从分镜组预览表格选择道具
+    async function selectPropsForShot(nodeId, shotIndex){
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node || !node.data.shots[shotIndex]) return;
+
+      // 设置道具选择上下文
+      window.currentPropsSelectionContext = {
+        nodeId: nodeId,
+        shotIndex: shotIndex,
+        fromGroupTable: true
+      };
+
+      // 打开道具选择弹窗
+      if(typeof window.openPropsModalForShot === 'function'){
+        await window.openPropsModalForShot();
+      } else {
+        showToast('道具选择功能未初始化', 'error');
+      }
+    }
+    
+    // 从分镜组预览表格删除道具
+    function removePropsFromShotTable(nodeId, shotIndex, propsIndex){
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node || !node.data.shots || !node.data.shots[shotIndex]) return;
+      
+      const shot = node.data.shots[shotIndex];
+      if(!shot.props || !Array.isArray(shot.props)) return;
+      
+      shot.props.splice(propsIndex, 1);
+      
+      // 更新分镜组预览表格
+      if(shotGroupModal.classList.contains('show')){
+        shotGroupModalContent.innerHTML = renderShotGroupTable(node.data, nodeId);
+      }
+      
+      try{ autoSaveWorkflow(); } catch(e){}
+      showToast('已删除道具', 'success');
     }
 
     async function selectLocationForShotDetail(nodeId, shotIndex){
@@ -1276,6 +1423,41 @@
         }
         
         html += `</div>`;
+
+        // 添加参考道具区域（支持多选）
+        html += `
+          <div style="margin-bottom: 20px; padding: 16px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+              <div style="font-weight: 600; color: #374151; font-size: 14px;">参考道具</div>
+              <button class="mini-btn shot-detail-add-props" type="button" style="padding: 6px 12px; font-size: 13px;">添加道具</button>
+            </div>
+        `;
+        
+        const propsArray = shot.props || [];
+        if(propsArray.length > 0){
+          html += `<div style="display: flex; flex-wrap: wrap; gap: 12px;">`;
+          propsArray.forEach((prop, propIndex) => {
+            html += `
+              <div style="display: flex; gap: 8px; align-items: center; padding: 8px; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px;">
+                ${prop.reference_image ? `<img src="${escapeHtml(prop.reference_image)}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px; border: 1px solid #e5e7eb;" alt="${escapeHtml(prop.name || '道具')}" />` : '<div style="width: 50px; height: 50px; background: #f3f4f6; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 10px;">无图</div>'}
+                <div style="flex: 1;">
+                  <div style="font-size: 13px; font-weight: 500; color: #111827;">${escapeHtml(prop.name || '未命名道具')}</div>
+                  <div style="font-size: 11px; color: #6b7280;">ID: ${prop.id}</div>
+                </div>
+                <button class="mini-btn secondary shot-detail-remove-props" data-props-index="${propIndex}" type="button" style="padding: 4px 8px; font-size: 11px; color: #ef4444;">移除</button>
+              </div>
+            `;
+          });
+          html += `</div>`;
+        } else {
+          html += `
+            <div style="text-align: center; padding: 20px; color: #9ca3af; font-size: 13px;">
+              未选择参考道具
+            </div>
+          `;
+        }
+        
+        html += `</div>`;
       }
 
       for(const [key, label] of Object.entries(fieldMap)){
@@ -1316,11 +1498,119 @@
               await selectLocationForShotDetail(nodeId, shotIndex);
             });
           }
+          
+          // 绑定添加道具按钮事件
+          const addPropsBtn = document.querySelector('.shot-detail-add-props');
+          if(addPropsBtn){
+            addPropsBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              await selectPropsForShotDetail(nodeId, shotIndex);
+            });
+          }
+          
+          // 绑定移除道具按钮事件
+          const removePropsBtn = document.querySelectorAll('.shot-detail-remove-props');
+          removePropsBtn.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const propsIndex = parseInt(btn.dataset.propsIndex);
+              removePropsFromShot(nodeId, shotIndex, propsIndex);
+            });
+          });
         }, 0);
       }
       
       return html;
     }
+    
+    // 为分镜详情选择道具
+    async function selectPropsForShotDetail(nodeId, shotIndex){
+      window.currentPropsSelectionContext = {
+        nodeId,
+        shotIndex,
+        fromDetailModal: true
+      };
+      
+      // 打开道具选择弹窗
+      if(typeof window.openPropsModalForShot === 'function'){
+        await window.openPropsModalForShot();
+      } else {
+        showToast('道具选择功能未初始化', 'error');
+      }
+    }
+    
+    // 从分镜中移除道具
+    function removePropsFromShot(nodeId, shotIndex, propsIndex){
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node || !node.data.shots || !node.data.shots[shotIndex]) return;
+      
+      const shot = node.data.shots[shotIndex];
+      if(!shot.props || !Array.isArray(shot.props)) return;
+      
+      shot.props.splice(propsIndex, 1);
+      
+      // 更新分镜详情弹窗
+      shotDetailModalContent.innerHTML = renderShotDetail(shot, nodeId, shotIndex);
+      
+      // 同时更新分镜组详情弹窗（如果它是打开的）
+      if(shotGroupModal.classList.contains('show')){
+        shotGroupModalContent.innerHTML = renderShotGroupTable(node.data, nodeId);
+      }
+      
+      try{ autoSaveWorkflow(); } catch(e){}
+      showToast('已移除道具', 'success');
+    }
+    
+    // 添加道具到分镜（供 events.js 调用）
+    window.addPropsToShot = function(props){
+      const context = window.currentPropsSelectionContext;
+      if(!context) return;
+      
+      const { nodeId, shotIndex, fromDetailModal, fromEditModal } = context;
+      const node = state.nodes.find(n => n.id === nodeId);
+      if(!node || !node.data.shots || !node.data.shots[shotIndex]) return;
+      
+      const shot = node.data.shots[shotIndex];
+      if(!shot.props) shot.props = [];
+      
+      // 检查是否已存在该道具
+      const exists = shot.props.some(p => p.id === props.id);
+      if(exists){
+        showToast('该道具已添加', 'warning');
+        return;
+      }
+      
+      // 添加道具
+      shot.props.push({
+        id: props.id,
+        name: props.name,
+        reference_image: props.reference_image || ''
+      });
+      
+      // 更新UI
+      if(fromDetailModal){
+        shotDetailModalContent.innerHTML = renderShotDetail(shot, nodeId, shotIndex);
+        if(shotGroupModal.classList.contains('show')){
+          shotGroupModalContent.innerHTML = renderShotGroupTable(node.data, nodeId);
+        }
+      } else if(fromEditModal){
+        // 更新编辑弹窗
+        shotGroupEditModalContent.innerHTML = renderShotGroupEditForm(node.data);
+        bindShotEditEvents();
+      } else if(context.fromGroupTable){
+        // 更新分镜组预览表格
+        if(shotGroupModal.classList.contains('show')){
+          shotGroupModalContent.innerHTML = renderShotGroupTable(node.data, nodeId);
+        }
+      }
+      
+      // 关闭道具选择弹窗
+      document.getElementById('propsModal').classList.remove('show');
+      window.currentPropsSelectionContext = null;
+      
+      try{ autoSaveWorkflow(); } catch(e){}
+      showToast('已添加道具', 'success');
+    };
 
     function escapeHtml(value){
       if(value === null || value === undefined) return '';
