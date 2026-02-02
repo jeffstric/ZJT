@@ -22,7 +22,18 @@ TASK_COMPUTING_POWER = {
     11: {5: 6, 10: 12},  # Wan2.2根据时长区分算力，原先是5:12 10:24，现在由于sora挂掉，需要它先半价。
     12: {5: 38, 10: 70},  # 可灵根据时长区分算力
     13: 12,  # 数字人生成
-    14: {5: 16, 8:22},  # Vidu根据时长区分算力
+    14: {5: 16, 8: 22},  # Vidu根据时长区分算力
+}
+
+# 视频模型时长选项配置
+# 注意：时长选项必须与 TASK_COMPUTING_POWER 中对应任务类型的 key 保持一致
+# ltx2 -> 任务类型10, wan22 -> 任务类型11, kling -> 任务类型12, vidu -> 任务类型14, sora2 -> 任务类型3
+VIDEO_MODEL_DURATION_OPTIONS = {
+    'ltx2': [5, 8, 10],  # LTX2.0 固定算力，支持5/8/10秒
+    'wan22': list(TASK_COMPUTING_POWER[11].keys()),  # 从算力配置中自动获取时长选项
+    'kling': list(TASK_COMPUTING_POWER[12].keys()),  # 从算力配置中自动获取时长选项
+    'vidu': list(TASK_COMPUTING_POWER[14].keys()),   # 从算力配置中自动获取时长选项
+    'sora2': [10, 15],  # Sora2 固定算力，支持10/15秒
 }
 
 AUTHENTICATION_ID = 'aa63d4090d59401b9862223087c25b98'

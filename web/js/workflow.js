@@ -86,17 +86,25 @@
 
     // 算力配置（用于节点算力预估）
     let taskComputingPowerConfig = {};
+    // 视频模型时长选项配置（全局缓存，只请求一次）
+    let videoModelDurationOptions = {};
     
     async function fetchComputingPowerConfig(){
       try {
         const response = await fetch('/api/computing-power-config');
         if(response.ok){
           const data = await response.json();
-          if(data.success && data.data && data.data.task_computing_power){
-            taskComputingPowerConfig = data.data.task_computing_power;
-            console.log('[算力配置] 已加载:', taskComputingPowerConfig);
-            // 配置加载完成后，更新所有图生视频节点的算力显示
-            updateAllImageToVideoNodesPower();
+          if(data.success && data.data){
+            if(data.data.task_computing_power){
+              taskComputingPowerConfig = data.data.task_computing_power;
+              console.log('[算力配置] 已加载:', taskComputingPowerConfig);
+              // 配置加载完成后，更新所有图生视频节点的算力显示
+              updateAllImageToVideoNodesPower();
+            }
+            if(data.data.video_model_duration_options){
+              videoModelDurationOptions = data.data.video_model_duration_options;
+              console.log('[视频模型时长配置] 已加载:', videoModelDurationOptions);
+            }
           }
         }
       } catch(error){
@@ -107,6 +115,11 @@
     // 获取算力配置的函数（供节点使用）
     function getTaskComputingPowerConfig(){
       return taskComputingPowerConfig;
+    }
+    
+    // 获取视频模型时长选项配置（供节点使用）
+    function getVideoModelDurationOptions(){
+      return videoModelDurationOptions;
     }
     
     // 更新所有图生视频节点的算力显示
@@ -1467,6 +1480,48 @@
             const videoPromptEl = nodeEl.querySelector('.shot-frame-video-prompt');
             if(videoPromptEl){
               videoPromptEl.value = nodeData.data.videoPromptText;
+            }
+          }
+          
+          // 恢复视频模型和视频时长选择器
+          const videoModelEl = nodeEl.querySelector('.shot-frame-video-model');
+          const videoDurationEl = nodeEl.querySelector('.shot-frame-video-duration');
+          
+          if(videoModelEl && nodeData.data.videoModel){
+            videoModelEl.value = nodeData.data.videoModel;
+          }
+          
+          // 先更新时长选项（基于视频模型），再设置时长值
+          if(videoDurationEl){
+            const videoModel = nodeData.data.videoModel || 'wan22';
+            videoDurationEl.innerHTML = '';
+            
+            // 从全局配置获取时长选项
+            const durationConfig = getVideoModelDurationOptions();
+            let durationOptions = durationConfig[videoModel];
+            
+            // 如果配置未加载或不存在，使用默认值
+            if(!durationOptions || durationOptions.length === 0) {
+              const defaultOptions = {
+                'ltx2': [5, 8, 10],
+                'wan22': [5, 10],
+                'kling': [5, 10],
+                'vidu': [5, 8],
+                'sora2': [10, 15]
+              };
+              durationOptions = defaultOptions[videoModel] || [5, 10];
+            }
+            
+            durationOptions.forEach(d => {
+              const opt = document.createElement('option');
+              opt.value = d;
+              opt.textContent = `${d}秒`;
+              videoDurationEl.appendChild(opt);
+            });
+            
+            // 设置保存的时长值
+            if(nodeData.data.videoDuration){
+              videoDurationEl.value = nodeData.data.videoDuration;
             }
           }
         }

@@ -35,7 +35,7 @@ from duomi_api_requset import create_video_remix, create_character as create_cha
 from PIL import Image
 from llm import call_ernie_vl_api
 from task.scheduler import init_scheduler
-from config.constant import TASK_COMPUTING_POWER, TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO, RECHARGE_PACKAGES, AUTHENTICATION_ID
+from config.constant import TASK_COMPUTING_POWER, TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO, RECHARGE_PACKAGES, AUTHENTICATION_ID, VIDEO_MODEL_DURATION_OPTIONS
 from utils.wechat_pay_util import WechatPayUtil
 
 def _get_user_id_from_header(user_id: Optional[int]) -> int:
@@ -372,7 +372,8 @@ async def download_image(
                 media_type=content_type,
                 headers={
                     "Content-Disposition": f"attachment; filename={filename}",
-                    "Content-Type": content_type
+                    "Content-Type": content_type,
+                    "Cache-Control": "public, max-age=31536000, immutable"
                 }
             )
     except httpx.HTTPStatusError as e:
@@ -2226,7 +2227,7 @@ async def get_ai_tools_history(
 async def get_computing_power_config():
     """
     获取算力配置
-    返回各个任务类型的算力消耗配置
+    返回各个任务类型的算力消耗配置和视频模型时长选项
     """
     try:
         return JSONResponse(
@@ -2234,7 +2235,8 @@ async def get_computing_power_config():
                 'success': True,
                 'message': '获取成功',
                 'data': {
-                    'task_computing_power': TASK_COMPUTING_POWER
+                    'task_computing_power': TASK_COMPUTING_POWER,
+                    'video_model_duration_options': VIDEO_MODEL_DURATION_OPTIONS
                 }
             }
         )

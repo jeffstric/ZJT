@@ -1,6 +1,45 @@
     const addBtn = document.getElementById('addBtn');
     const addMenu = document.getElementById('addMenu');
 
+    // 下载图片辅助函数
+    async function downloadImage(imgUrl, fileName) {
+      if (!imgUrl) {
+        showToast('没有可下载的图片', 'error');
+        return;
+      }
+      
+      try {
+        // 如果是 data URL、blob URL 或同源图片，直接下载
+        if (imgUrl.startsWith('data:') || imgUrl.startsWith('blob:') || 
+            (typeof isSameOriginUrl === 'function' && isSameOriginUrl(imgUrl))) {
+          const a = document.createElement('a');
+          a.href = imgUrl;
+          a.download = fileName || 'image.png';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        } else {
+          // 跨域图片，使用 fetch+blob 方式下载
+          const response = await fetch(typeof proxyImageUrl === 'function' ? proxyImageUrl(imgUrl) : imgUrl);
+          const blob = await response.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = fileName || 'image.png';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+        }
+        showToast('开始下载图片', 'success');
+      } catch (error) {
+        console.error('下载图片失败:', error);
+        showToast('下载图片失败', 'error');
+      }
+    }
+
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       addMenu.classList.toggle('show');
@@ -925,6 +964,24 @@
       modal.setAttribute('aria-hidden', 'false');
     }
     
+    // 为分镜选择道具打开模态框（供 nodes.js 调用）
+    window.openPropsModalForShot = async function() {
+      const modal = document.getElementById('propsModal');
+      const worldSelect = document.getElementById('propsWorldSelect');
+      
+      // 加载世界列表
+      await loadWorldsToSelect(worldSelect);
+      
+      // 如果有默认世界，自动选择并加载道具
+      if (state.defaultWorldId) {
+        worldSelect.value = state.defaultWorldId;
+        await loadProps(state.defaultWorldId);
+      }
+      
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    };
+    
     // 加载世界列表到选择器
     async function loadWorldsToSelect(selectElement) {
       const authToken = getAuthToken();
@@ -1192,9 +1249,18 @@
               const propsId = item.dataset.propsId;
               const props = result.data.data.find(p => p.id == propsId);
               if (props) {
-                createPropsNode(props);
-                document.getElementById('propsModal').classList.remove('show');
-                renderMinimap();
+                // 检查是否有分镜选择上下文（从 nodes.js 传递过来）
+                if (window.currentPropsSelectionContext) {
+                  // 调用 nodes.js 中的 addPropsToShot 函数来更新分镜数据
+                  if (typeof window.addPropsToShot === 'function') {
+                    window.addPropsToShot(props);
+                  }
+                } else {
+                  // 没有上下文，创建道具节点
+                  createPropsNode(props);
+                  document.getElementById('propsModal').classList.remove('show');
+                  renderMinimap();
+                }
               }
             });
             
@@ -1247,7 +1313,10 @@
           ${character.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${character.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${character.reference_image}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button class="mini-btn character-download-btn" type="button" data-img-url="${character.reference_image}">下载图片</button>
+              </div>
             </div>
           ` : ''}
           ${character.age ? `<div class="field"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
@@ -1283,6 +1352,18 @@
         e.stopPropagation();
         removeNode(id);
       });
+      
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.character-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${character.name || '角色'}.png`);
+          }
+        });
+      }
       
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1377,7 +1458,10 @@
           ${character.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${character.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${character.reference_image}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button class="mini-btn character-download-btn" type="button" data-img-url="${character.reference_image}">下载图片</button>
+              </div>
             </div>
           ` : ''}
           ${character.age ? `<div class="field"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
@@ -1413,6 +1497,18 @@
         e.stopPropagation();
         removeNode(id);
       });
+      
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.character-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${character.name || '角色'}.png`);
+          }
+        });
+      }
       
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1512,7 +1608,10 @@
           ${location.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${location.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${location.reference_image}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button class="mini-btn location-download-btn" type="button" data-img-url="${location.reference_image}">下载图片</button>
+              </div>
             </div>
           ` : ''}
           ${location.description ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(location.description)}</div></div>` : ''}
@@ -1532,6 +1631,18 @@
         e.stopPropagation();
         openEditLocationModal(location.id);
       });
+      
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.location-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${location.name || '场景'}.png`);
+          }
+        });
+      }
       
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1602,7 +1713,10 @@
           ${location.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${location.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${location.reference_image}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button class="mini-btn location-download-btn" type="button" data-img-url="${location.reference_image}">下载图片</button>
+              </div>
             </div>
           ` : ''}
           ${location.description ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(location.description)}</div></div>` : ''}
@@ -1622,6 +1736,18 @@
         e.stopPropagation();
         openEditLocationModal(location.id);
       });
+      
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.location-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${location.name || '场景'}.png`);
+          }
+        });
+      }
       
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1664,7 +1790,10 @@
         ${props.reference_image ? `
           <div class="field">
             <div class="label">参考图</div>
-            <img src="${props.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            <img src="${props.reference_image}" class="preview props-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button class="mini-btn props-download-btn" type="button" data-img-url="${props.reference_image}">下载图片</button>
+            </div>
           </div>
         ` : ''}
         ${props.content ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(props.content)}</div></div>` : ''}
@@ -1721,6 +1850,18 @@
         editBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           openEditPropsModal(id, props);
+        });
+      }
+
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.props-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${props.name || '道具'}.png`);
+          }
         });
       }
 
@@ -1810,6 +1951,18 @@
         editBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           openEditPropsModal(id, props);
+        });
+      }
+
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.props-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${props.name || '道具'}.png`);
+          }
         });
       }
 
