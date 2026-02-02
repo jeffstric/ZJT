@@ -4,7 +4,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import requests
+import httpx
+import asyncio
 import uuid
+from io import BytesIO
 import json
 import os
 import time
@@ -113,18 +116,21 @@ def _normalize_server(server: str) -> str:
     return server
 
 
-def _upload_image_to_comfyui(server: str, upload_file: UploadFile) -> str:
+async def _upload_image_to_comfyui(server: str, upload_file: UploadFile) -> str:
     """
     Upload the file to ComfyUI's /upload/image endpoint and return the stored filename.
     """
     url = f"{server}upload/image"
+    file_content = await upload_file.read()
+    await upload_file.seek(0)
     files = {
-        "image": (upload_file.filename, upload_file.file, upload_file.content_type or "application/octet-stream")
+        "image": (upload_file.filename, file_content, upload_file.content_type or "application/octet-stream")
     }
     try:
-        resp = requests.post(url, files=files, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, files=files)
+            resp.raise_for_status()
+            data = resp.json()
         # ComfyUI commonly returns {"name": "uploaded.png"}
         name = data.get("name") if isinstance(data, dict) else None
         if not name:
@@ -134,7 +140,7 @@ def _upload_image_to_comfyui(server: str, upload_file: UploadFile) -> str:
         if not name:
             raise HTTPException(status_code=502, detail=f"Unexpected upload response: {data}")
         return name
-    except requests.RequestException as e:
+    except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"Failed to upload image to ComfyUI: {e}")
 
 
@@ -186,78 +192,81 @@ def _build_prompt_payload(image_name: str, text_prompt: str) -> dict:
     return data
 
 
-def _submit_prompt(server: str, payload: dict) -> str:
+async def _submit_prompt(server: str, payload: dict) -> str:
     url = f"{server}prompt"
     try:
-        resp = requests.post(url, json=payload, timeout=30)
-        resp.raise_for_status()
-        # Prefer server-assigned prompt_id if present
-        try:
-            rj = resp.json()
-            prompt_id = rj.get("prompt_id") or payload.get("client_id")
-        except Exception:
-            prompt_id = payload.get("client_id")
-        return prompt_id
-    except requests.RequestException as e:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            # Prefer server-assigned prompt_id if present
+            try:
+                rj = resp.json()
+                prompt_id = rj.get("prompt_id") or payload.get("client_id")
+            except Exception:
+                prompt_id = payload.get("client_id")
+            return prompt_id
+    except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=502, detail=f"Failed to submit prompt: {e}")
 
 
-def _check_queue_status(server: str, prompt_id: str) -> str:
+async def _check_queue_status(server: str, prompt_id: str) -> str:
     """Check if prompt is in queue (running or pending)"""
     try:
         queue_url = f"{server}queue"
-        r = requests.get(queue_url, timeout=5)
-        if r.status_code == 200:
-            queue_data = r.json()
-            
-            # Check running jobs
-            if "queue_running" in queue_data:
-                running_jobs = queue_data["queue_running"]
-                if isinstance(running_jobs, list):
-                    for job in running_jobs:
-                        if isinstance(job, list) and len(job) >= 2 and job[1] == prompt_id:
-                            return "running"
-            
-            # Check pending jobs
-            if "queue_pending" in queue_data:
-                pending_jobs = queue_data["queue_pending"]
-                if isinstance(pending_jobs, list):
-                    for job in pending_jobs:
-                        if isinstance(job, list) and len(job) >= 2 and job[1] == prompt_id:
-                            return "pending"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(queue_url)
+            if r.status_code == 200:
+                queue_data = r.json()
+                
+                # Check running jobs
+                if "queue_running" in queue_data:
+                    running_jobs = queue_data["queue_running"]
+                    if isinstance(running_jobs, list):
+                        for job in running_jobs:
+                            if isinstance(job, list) and len(job) >= 2 and job[1] == prompt_id:
+                                return "running"
+                
+                # Check pending jobs
+                if "queue_pending" in queue_data:
+                    pending_jobs = queue_data["queue_pending"]
+                    if isinstance(pending_jobs, list):
+                        for job in pending_jobs:
+                            if isinstance(job, list) and len(job) >= 2 and job[1] == prompt_id:
+                                return "pending"
         return "not_found"
     except Exception:
         return "error"
 
 
-def _check_history_for_images(server: str, prompt_id: str) -> List[str]:
+async def _check_history_for_images(server: str, prompt_id: str) -> List[str]:
     """Check history for completed results"""
     try:
         history_url = f"{server}history/{prompt_id}"
         view_url = f"{server}view?filename="
         
-        r = requests.get(history_url, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            # ComfyUI history format: {prompt_id: {outputs: {...}, status: {...}, ...}}
-            if isinstance(data, dict) and prompt_id in data:
-                prompt_data = data[prompt_id]
-                outputs = prompt_data.get("outputs") if isinstance(prompt_data, dict) else None
-                if outputs:
-                    image_urls: List[str] = []
-                    for node_id, node_out in outputs.items():
-                        if not isinstance(node_out, dict):
-                            continue
-                        for out_type, out_items in node_out.items():
-                            if not isinstance(out_items, list):
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(history_url)
+            if r.status_code == 200:
+                data = r.json()
+                # ComfyUI history format: {prompt_id: {outputs: {...}, status: {...}, ...}}
+                if isinstance(data, dict) and prompt_id in data:
+                    prompt_data = data[prompt_id]
+                    outputs = prompt_data.get("outputs") if isinstance(prompt_data, dict) else None
+                    if outputs:
+                        image_urls: List[str] = []
+                        for node_id, node_out in outputs.items():
+                            if not isinstance(node_out, dict):
                                 continue
-                            for item in out_items:
-                                if not isinstance(item, dict):
+                            for out_type, out_items in node_out.items():
+                                if not isinstance(out_items, list):
                                     continue
-                                fname = item.get("filename")
-                                if fname:
-                                    image_urls.append(view_url + fname)
-                    return image_urls
+                                for item in out_items:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    fname = item.get("filename")
+                                    if fname:
+                                        image_urls.append(view_url + fname)
+                        return image_urls
         return []
     except Exception:
         return []
@@ -276,13 +285,13 @@ async def qwen_image_edit(
     srv = _normalize_server(server)
 
     # Step 1: Upload image to ComfyUI input folder via API
-    image_name = _upload_image_to_comfyui(srv, image)
+    image_name = await _upload_image_to_comfyui(srv, image)
 
     # Step 2: Build workflow payload with updated nodes
     payload = _build_prompt_payload(image_name, prompt)
 
     # Step 3: Submit prompt
-    prompt_id = _submit_prompt(srv, payload)
+    prompt_id = await _submit_prompt(srv, payload)
 
     return JSONResponse({
         "prompt_id": prompt_id,
@@ -302,7 +311,7 @@ async def check_status(
     srv = _normalize_server(server)
     
     # First check if it's completed
-    image_urls = _check_history_for_images(srv, prompt_id)
+    image_urls = await _check_history_for_images(srv, prompt_id)
     if image_urls:
         return JSONResponse({
             "status": "completed",
@@ -310,7 +319,7 @@ async def check_status(
         })
     
     # Check queue status
-    queue_status = _check_queue_status(srv, prompt_id)
+    queue_status = await _check_queue_status(srv, prompt_id)
     
     return JSONResponse({
         "status": queue_status,
@@ -327,47 +336,47 @@ async def download_image(
     Proxy download for media files (images/videos) to handle CORS and provide proper download headers
     """
     try:
-        # Fetch the file from remote server
-        response = requests.get(url, timeout=30, stream=True)
-        response.raise_for_status()
-        
-        # Determine filename
-        if not filename:
-            # Extract filename from URL or generate one
-            if "filename=" in url:
-                filename = url.split("filename=")[-1].split("&")[0]
-            else:
-                # Try to get extension from URL
-                url_path = url.split('?')[0]
-                ext = url_path.split('.')[-1] if '.' in url_path else 'bin'
-                filename = f"generated_file_{int(time.time())}.{ext}"
-        
-        # Don't add extension if filename already has a valid one
-        valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv')
-        if not filename.lower().endswith(valid_extensions):
-            # Try to detect from content-type
-            content_type = response.headers.get('content-type', '')
-            if 'video' in content_type:
-                filename += '.mp4'
-            elif 'image' in content_type:
-                filename += '.png'
-        
-        # Get content type
-        content_type = response.headers.get('content-type', 'application/octet-stream')
-        
-        def generate():
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
-        
-        return StreamingResponse(
-            generate(),
-            media_type=content_type,
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}",
-                "Content-Type": content_type
-            }
-        )
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            
+            # Determine filename
+            if not filename:
+                # Extract filename from URL or generate one
+                if "filename=" in url:
+                    filename = url.split("filename=")[-1].split("&")[0]
+                else:
+                    # Try to get extension from URL
+                    url_path = url.split('?')[0]
+                    ext = url_path.split('.')[-1] if '.' in url_path else 'bin'
+                    filename = f"generated_file_{int(time.time())}.{ext}"
+            
+            # Don't add extension if filename already has a valid one
+            valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv')
+            if not filename.lower().endswith(valid_extensions):
+                # Try to detect from content-type
+                content_type = response.headers.get('content-type', '')
+                if 'video' in content_type:
+                    filename += '.mp4'
+                elif 'image' in content_type:
+                    filename += '.png'
+            
+            # Get content type
+            content_type = response.headers.get('content-type', 'application/octet-stream')
+            
+            # Return content as streaming response
+            content_stream = BytesIO(response.content)
+            
+            return StreamingResponse(
+                content_stream,
+                media_type=content_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}",
+                    "Content-Type": content_type
+                }
+            )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Download failed: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
@@ -378,26 +387,26 @@ async def proxy_image(url: str = Query(..., description="Image URL to proxy")):
     Proxy image requests to avoid CORS issues in Electron
     """
     try:
-        # Fetch the image from the external server
-        response = requests.get(url, timeout=30, stream=True)
-        response.raise_for_status()
-        
-        # Get content type
-        content_type = response.headers.get('content-type', 'image/png')
-        
-        def generate():
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    yield chunk
-        
-        return StreamingResponse(
-            generate(),
-            media_type=content_type,
-            headers={
-                "Content-Type": content_type,
-                "Cache-Control": "public, max-age=3600"
-            }
-        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            
+            # Get content type
+            content_type = response.headers.get('content-type', 'image/png')
+            
+            # Return content as streaming response
+            content_stream = BytesIO(response.content)
+            
+            return StreamingResponse(
+                content_stream,
+                media_type=content_type,
+                headers={
+                    "Content-Type": content_type,
+                    "Cache-Control": "public, max-age=3600"
+                }
+            )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Image proxy failed: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Image proxy failed: {str(e)}")
 
@@ -612,7 +621,7 @@ def _trim_audio_if_needed(audio_path: str, max_duration: float = 20.0) -> str:
         return audio_path
 
 
-def _download_and_extract_audio_from_video(video_url: str) -> str:
+async def _download_and_extract_audio_from_video(video_url: str) -> str:
     """
     Download video from URL, validate size and duration, extract audio, and clean up.
     
@@ -633,39 +642,39 @@ def _download_and_extract_audio_from_video(video_url: str) -> str:
         temp_dir = tempfile.mkdtemp(prefix="video_audio_extract_")
         video_path = os.path.join(temp_dir, "temp_video.mp4")
         
-        # Download video with size limit check
+        # Download video with size limit check (async)
         logger.info(f"Downloading video from: {video_url}")
-        response = requests.get(video_url, stream=True, timeout=30)
-        response.raise_for_status()
-        
-        # Check Content-Length header if available
-        content_length = response.headers.get('Content-Length')
-        if content_length:
-            size_mb = int(content_length) / (1024 * 1024)
-            if size_mb > 40:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"视频文件过大: {size_mb:.1f}MB，限制为40MB"
-                )
-        
-        # Download video with size check
-        downloaded_size = 0
-        max_size = 40 * 1024 * 1024  # 40MB in bytes
-        
-        with open(video_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    downloaded_size += len(chunk)
-                    if downloaded_size > max_size:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            async with client.stream('GET', video_url) as response:
+                response.raise_for_status()
+                
+                # Check Content-Length header if available
+                content_length = response.headers.get('Content-Length')
+                if content_length:
+                    size_mb = int(content_length) / (1024 * 1024)
+                    if size_mb > 40:
                         raise HTTPException(
                             status_code=400,
-                            detail=f"视频文件超过40MB限制"
+                            detail=f"视频文件过大: {size_mb:.1f}MB, 限制为40MB"
                         )
-                    f.write(chunk)
+                
+                # Download video with size check
+                downloaded_size = 0
+                max_size = 40 * 1024 * 1024  # 40MB in bytes
+                
+                with open(video_path, 'wb') as f:
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        downloaded_size += len(chunk)
+                        if downloaded_size > max_size:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"视频文件超过40MB限制"
+                            )
+                        f.write(chunk)
         
         logger.info(f"Video downloaded: {downloaded_size / (1024*1024):.2f}MB")
         
-        # Check video duration using ffprobe
+        # Check video duration using ffprobe (async subprocess)
         try:
             duration_cmd = [
                 'ffprobe', '-v', 'error',
@@ -673,30 +682,31 @@ def _download_and_extract_audio_from_video(video_url: str) -> str:
                 '-of', 'default=noprint_wrappers=1:nokey=1',
                 video_path
             ]
-            duration_result = subprocess.run(
-                duration_cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
+            proc = await asyncio.create_subprocess_exec(
+                *duration_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            
-            if duration_result.returncode == 0:
-                duration = float(duration_result.stdout.strip())
-                logger.info(f"Video duration: {duration:.2f}s")
-                
-                if duration > 20:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"视频时长过长: {duration:.1f}秒，限制为20秒"
-                    )
-            else:
-                logger.warning(f"Failed to get video duration: {duration_result.stderr}")
-        except subprocess.TimeoutExpired:
-            logger.warning("ffprobe timeout when checking duration")
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+                if proc.returncode == 0:
+                    duration = float(stdout.decode().strip())
+                    logger.info(f"Video duration: {duration:.2f}s")
+                    
+                    if duration > 20:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"视频时长过长: {duration:.1f}秒, 限制为20秒"
+                        )
+                else:
+                    logger.warning(f"Failed to get video duration: {stderr.decode()}")
+            except asyncio.TimeoutError:
+                proc.kill()
+                logger.warning("ffprobe timeout when checking duration")
         except Exception as e:
             logger.warning(f"Error checking video duration: {e}")
         
-        # Extract audio using ffmpeg
+        # Extract audio using ffmpeg (async subprocess)
         audio_dir = "/nas/comfyui_upload/tts/tmp_ref_audio"
         os.makedirs(audio_dir, exist_ok=True)
         
@@ -718,18 +728,27 @@ def _download_and_extract_audio_from_video(video_url: str) -> str:
             audio_path
         ]
         
-        result = subprocess.run(
-            ffmpeg_cmd,
-            capture_output=True,
-            text=True,
-            timeout=60
+        proc = await asyncio.create_subprocess_exec(
+            *ffmpeg_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
-        
-        if result.returncode != 0:
-            logger.error(f"ffmpeg error: {result.stderr}")
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except asyncio.TimeoutError:
+            proc.kill()
+            logger.error("ffmpeg timeout")
             raise HTTPException(
                 status_code=500,
-                detail=f"音频提取失败: {result.stderr[:200]}"
+                detail="音频提取超时"
+            )
+        
+        if proc.returncode != 0:
+            error_msg = stderr.decode()[:200] if stderr else "Unknown error"
+            logger.error(f"ffmpeg error: {error_msg}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"音频提取失败: {error_msg}"
             )
         
         if not os.path.exists(audio_path):
@@ -743,17 +762,11 @@ def _download_and_extract_audio_from_video(video_url: str) -> str:
         
     except HTTPException:
         raise
-    except requests.RequestException as e:
+    except httpx.HTTPStatusError as e:
         logger.error(f"Failed to download video: {e}")
         raise HTTPException(
             status_code=400,
             detail=f"视频下载失败: {str(e)}"
-        )
-    except subprocess.TimeoutExpired:
-        logger.error("ffmpeg timeout")
-        raise HTTPException(
-            status_code=500,
-            detail="音频提取超时"
         )
     except Exception as e:
         logger.error(f"Error processing video: {e}")
@@ -3140,7 +3153,7 @@ async def audio_generate(
             emo_ref_path = _save_uploaded_audio(emo_ref_audio)
         elif emo_ref_video_url:
             # Download video and extract audio
-            emo_ref_path = _download_and_extract_audio_from_video(emo_ref_video_url)
+            emo_ref_path = await _download_and_extract_audio_from_video(emo_ref_video_url)
         elif emo_ref_audio_url:
             emo_ref_path = emo_ref_audio_url
         
@@ -3384,8 +3397,6 @@ async def get_wechat_openid(code: str):
         包含openid的响应
     """
     try:
-        import requests
-        
         # 从配置文件读取微信配置
         wechat_config = config.get("pay", {}).get("wxpay", {})
         app_id = wechat_config.get("appId")
@@ -3394,7 +3405,7 @@ async def get_wechat_openid(code: str):
         if not app_id or not app_secret:
             raise HTTPException(status_code=500, detail="微信配置不完整")
         
-        # 调用微信接口获取openid
+        # 调用微信接口获取openid (使用异步 httpx)
         url = "https://api.weixin.qq.com/sns/oauth2/access_token"
         params = {
             "appid": app_id,
@@ -3403,8 +3414,9 @@ async def get_wechat_openid(code: str):
             "grant_type": "authorization_code"
         }
         
-        response = requests.get(url, params=params)
-        result = response.json()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, params=params)
+            result = response.json()
         
         if "openid" in result:
             return JSONResponse({
@@ -5648,27 +5660,26 @@ async def export_timeline_draft(
                     else:
                         logger.info(f"正在下载视频 {idx + 1}/{len(payload.video_clips)}: {video_name}")
                         
-                        # 下载视频
-                        response = requests.get(video_url, stream=True, timeout=300)
-                        response.raise_for_status()
-                        
-                        # 确定文件扩展名
-                        file_ext = '.mp4'
-                        if 'content-type' in response.headers:
-                            content_type = response.headers['content-type']
-                            if 'video/quicktime' in content_type or video_url.endswith('.mov'):
-                                file_ext = '.mov'
-                            elif 'video/x-msvideo' in content_type or video_url.endswith('.avi'):
-                                file_ext = '.avi'
-                        
-                        # 保存文件
-                        safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                        file_path = os.path.join(temp_download_dir, safe_name)
-                        
-                        with open(file_path, 'wb') as f:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                if chunk:
-                                    f.write(chunk)
+                        # 下载视频 (异步)
+                        async with httpx.AsyncClient(timeout=300.0) as http_client:
+                            async with http_client.stream('GET', video_url) as response:
+                                response.raise_for_status()
+                                
+                                # 确定文件扩展名
+                                file_ext = '.mp4'
+                                content_type = response.headers.get('content-type', '')
+                                if 'video/quicktime' in content_type or video_url.endswith('.mov'):
+                                    file_ext = '.mov'
+                                elif 'video/x-msvideo' in content_type or video_url.endswith('.avi'):
+                                    file_ext = '.avi'
+                                
+                                # 保存文件
+                                safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                                file_path = os.path.join(temp_download_dir, safe_name)
+                                
+                                with open(file_path, 'wb') as f:
+                                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                                        f.write(chunk)
                         
                         logger.info(f"视频下载完成: {safe_name}")
                     
@@ -5722,29 +5733,28 @@ async def export_timeline_draft(
                     else:
                         logger.info(f"正在下载音频 {idx + 1}/{len(payload.audio_clips)}: {audio_name}")
                         
-                        # 下载音频
-                        response = requests.get(audio_url, stream=True, timeout=300)
-                        response.raise_for_status()
-                        
-                        # 确定文件扩展名
-                        file_ext = '.mp3'
-                        if 'content-type' in response.headers:
-                            content_type = response.headers['content-type']
-                            if 'audio/wav' in content_type or audio_url.endswith('.wav'):
-                                file_ext = '.wav'
-                            elif 'audio/aac' in content_type or audio_url.endswith('.aac'):
-                                file_ext = '.aac'
-                            elif 'audio/mpeg' in content_type or audio_url.endswith('.mp3'):
+                        # 下载音频 (异步)
+                        async with httpx.AsyncClient(timeout=300.0) as http_client:
+                            async with http_client.stream('GET', audio_url) as response:
+                                response.raise_for_status()
+                                
+                                # 确定文件扩展名
                                 file_ext = '.mp3'
-                        
-                        # 保存文件
-                        safe_name = f"audio_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                        file_path = os.path.join(temp_download_dir, safe_name)
-                        
-                        with open(file_path, 'wb') as f:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                if chunk:
-                                    f.write(chunk)
+                                content_type = response.headers.get('content-type', '')
+                                if 'audio/wav' in content_type or audio_url.endswith('.wav'):
+                                    file_ext = '.wav'
+                                elif 'audio/aac' in content_type or audio_url.endswith('.aac'):
+                                    file_ext = '.aac'
+                                elif 'audio/mpeg' in content_type or audio_url.endswith('.mp3'):
+                                    file_ext = '.mp3'
+                                
+                                # 保存文件
+                                safe_name = f"audio_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                                file_path = os.path.join(temp_download_dir, safe_name)
+                                
+                                with open(file_path, 'wb') as f:
+                                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                                        f.write(chunk)
                         
                         logger.info(f"音频下载完成: {safe_name}")
                     

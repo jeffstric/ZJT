@@ -1,7 +1,8 @@
-0. 请说中文，谢谢
-1. 功能相关的改动后，请你同步 docs 目录下的文档
-2. 新增、调整功能后，或者发现bug后，请结合 auto_test/test_modules 目录下中的测试用例，判断是否需要添加或者调整测试用例。如果新增了测试模块，请补充到测试模块的索引文件 auto_test/test_modules/index.json 中。
-3. auto_test/test_modules 目录 是提供给智能体调用playwright进行端到端自动化测试的测试用例清单，而非单元测试用例，用于验证完整业务流程。
-4. 脚本的输出信息，避免出现\u2713这类windows gbk编码无法识别的符号，如✅、❌等。
-5. video_workflow.html 中，需要将css以及js等相关代码，尽量独立成文件，降低token消耗。
-6. 涉及到video_workflow.html 工作流相关改动时，注意工作流有重新加载功能，新建的节点需要考虑重新加载后复原。
+0. 请说中文
+1. 所有的接口，都必须是非阻塞模型，不允许阻塞其他接口访问。禁止在异步函数中调用同步函数，例如request库，会阻塞整个事件循环（Event Loop），导致异步特性失效
+2. 功能相关的改动后，请你同步 docs 目录下的文档
+3. 新增、调整功能后，或者发现bug后，请结合 auto_test/test_modules 目录下中的测试用例，判断是否需要添加或者调整测试用例。如果新增了测试模块，请补充到测试模块的索引文件 auto_test/test_modules/index.json 中。
+4. auto_test/test_modules 目录 是提供给智能体调用playwright进行端到端自动化测试的测试用例清单，而非单元测试用例，用于验证完整业务流程。
+5. 脚本的输出信息，避免出现\u2713这类windows gbk编码无法识别的符号，如✅、❌等。
+6. video_workflow.html 中，需要将css以及js等相关代码，尽量独立成文件，降低token消耗。
+7. 涉及到video_workflow.html 工作流相关改动时，注意工作流有重新加载功能，新建的节点需要考虑重新加载后复原。
