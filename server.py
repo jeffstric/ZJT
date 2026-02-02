@@ -372,7 +372,8 @@ async def download_image(
                 media_type=content_type,
                 headers={
                     "Content-Disposition": f"attachment; filename={filename}",
-                    "Content-Type": content_type
+                    "Content-Type": content_type,
+                    "Cache-Control": "public, max-age=31536000, immutable"
                 }
             )
     except httpx.HTTPStatusError as e:
