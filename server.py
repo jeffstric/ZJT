@@ -1539,8 +1539,8 @@ async def ai_app_run_image(
                             ratio_value = ratio
                             duration_value = duration_seconds
                         elif video_model == "vidu":
-                            # Vidu 图生视频: type=13
-                            task_type = 13
+                            # Vidu 图生视频: type=14
+                            task_type = 14
                             ratio_value = ratio
                             duration_value = duration_seconds
                         else:
