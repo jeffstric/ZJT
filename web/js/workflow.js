@@ -990,7 +990,7 @@
                   singlePower = klingPower || 0;
                 }
               } else if(videoModel === 'vidu') {
-                const viduPower = config[13];
+                const viduPower = config[14];
                 if(typeof viduPower === 'object') {
                   singlePower = viduPower[duration] || viduPower[5] || 0;
                 } else {

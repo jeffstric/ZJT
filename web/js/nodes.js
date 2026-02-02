@@ -2076,8 +2076,8 @@
             power = klingPower || 0;
           }
         } else if(videoModel === 'vidu') {
-          // type=13: Vidu根据时长区分算力
-          const viduPower = config[13];
+          // type=14: Vidu根据时长区分算力
+          const viduPower = config[14];
           if(typeof viduPower === 'object') {
             power = viduPower[duration] || viduPower[5] || 0;
           } else {
@@ -4471,8 +4471,8 @@
             power = klingPower || 0;
           }
         } else if(videoModel === 'vidu') {
-          // type=13: Vidu根据时长区分算力
-          const viduPower = config[13];
+          // type=14: Vidu根据时长区分算力
+          const viduPower = config[14];
           if(typeof viduPower === 'object') {
             power = viduPower[duration] || viduPower[5] || 0;
           } else {
