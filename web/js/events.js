@@ -1,6 +1,45 @@
     const addBtn = document.getElementById('addBtn');
     const addMenu = document.getElementById('addMenu');
 
+    // 下载图片辅助函数
+    async function downloadImage(imgUrl, fileName) {
+      if (!imgUrl) {
+        showToast('没有可下载的图片', 'error');
+        return;
+      }
+      
+      try {
+        // 如果是 data URL、blob URL 或同源图片，直接下载
+        if (imgUrl.startsWith('data:') || imgUrl.startsWith('blob:') || 
+            (typeof isSameOriginUrl === 'function' && isSameOriginUrl(imgUrl))) {
+          const a = document.createElement('a');
+          a.href = imgUrl;
+          a.download = fileName || 'image.png';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        } else {
+          // 跨域图片，使用 fetch+blob 方式下载
+          const response = await fetch(typeof proxyImageUrl === 'function' ? proxyImageUrl(imgUrl) : imgUrl);
+          const blob = await response.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = fileName || 'image.png';
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+        }
+        showToast('开始下载图片', 'success');
+      } catch (error) {
+        console.error('下载图片失败:', error);
+        showToast('下载图片失败', 'error');
+      }
+    }
+
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       addMenu.classList.toggle('show');
@@ -1512,7 +1551,10 @@
           ${location.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${location.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${location.reference_image}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button class="mini-btn location-download-btn" type="button" data-img-url="${location.reference_image}">下载图片</button>
+              </div>
             </div>
           ` : ''}
           ${location.description ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(location.description)}</div></div>` : ''}
@@ -1532,6 +1574,18 @@
         e.stopPropagation();
         openEditLocationModal(location.id);
       });
+      
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.location-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${location.name || '场景'}.png`);
+          }
+        });
+      }
       
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1602,7 +1656,10 @@
           ${location.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${location.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${location.reference_image}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <div style="display: flex; gap: 8px; margin-top: 8px;">
+                <button class="mini-btn location-download-btn" type="button" data-img-url="${location.reference_image}">下载图片</button>
+              </div>
             </div>
           ` : ''}
           ${location.description ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(location.description)}</div></div>` : ''}
@@ -1622,6 +1679,18 @@
         e.stopPropagation();
         openEditLocationModal(location.id);
       });
+      
+      // 下载图片按钮事件
+      const downloadImgBtn = el.querySelector('.location-download-btn');
+      if (downloadImgBtn) {
+        downloadImgBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = downloadImgBtn.dataset.imgUrl;
+          if (imgUrl) {
+            downloadImage(imgUrl, `${location.name || '场景'}.png`);
+          }
+        });
+      }
       
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
