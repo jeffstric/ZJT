@@ -3546,9 +3546,9 @@
         statusEl.textContent = '正在提交任务...';
 
         try{
-          let submitFile = node.data.file;
-          if(!submitFile && node.data.url){
-            submitFile = await fetchFileFromUrl(node.data.url);
+          let submitData = node.data.file;
+          if(!submitData && node.data.url){
+            submitData = node.data.url;
           }
 
           let finalPrompt = node.data.prompt;
@@ -3557,7 +3557,7 @@
           }
 
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
-          const submitRes = await generateEditedImage(submitFile, finalPrompt, node.data.ratio, node.data.model, desiredCount);
+          const submitRes = await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount);
           statusEl.textContent = '任务已提交，正在生成图片...';
           node.data.projectIds = submitRes.projectIds;
 

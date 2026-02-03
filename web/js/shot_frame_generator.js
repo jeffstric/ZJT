@@ -46,8 +46,8 @@ async function generateShotFrameImage(nodeId, node){
     
     console.log('[生成分镜图] 提取到的角色列表:', characterNames);
     
-    // 2. 匹配角色并获取参考图
-    const referenceImages = [];
+    // 2. 匹配角色并获取参考图 URL
+    const referenceImageUrls = [];
     const promptSuffix = [];
     let imageIndex = 1;
     
@@ -88,13 +88,10 @@ async function generateShotFrameImage(nodeId, node){
                 console.log(`[角色匹配] 最终匹配角色:`, matchedChar.name, '参考图:', matchedChar.reference_image);
                 
                 if(matchedChar && matchedChar.reference_image){
-                  // 将参考图URL转换为File对象
-                  const imageFile = await fetchFileFromUrl(matchedChar.reference_image);
-                  if(imageFile){
-                    referenceImages.push(imageFile);
-                    promptSuffix.push(`图${imageIndex}是${characterName}`);
-                    imageIndex++;
-                  }
+                  // 直接收集参考图 URL
+                  referenceImageUrls.push(matchedChar.reference_image);
+                  promptSuffix.push(`图${imageIndex}是${characterName}`);
+                  imageIndex++;
                 }
               } else {
                 missingCharacters.add(characterName);
@@ -141,16 +138,12 @@ async function generateShotFrameImage(nodeId, node){
           console.log(`[场景匹配] 场景查询结果:`, result);
           if(result.code === 0 && result.data && result.data.reference_image){
             console.log(`[场景匹配] 场景有参考图: ${result.data.reference_image}`);
-            const locationFile = await fetchFileFromUrl(result.data.reference_image);
-            if(locationFile){
-              referenceImages.push(locationFile);
-              const locationName = result.data.name || shotData.location_name || '场景';
-              promptSuffix.push(`图${imageIndex}是${locationName}所在地点`);
-              imageIndex++;
-              console.log(`[场景匹配] 成功添加场景参考图: ${locationName}`);
-            } else {
-              console.warn(`[场景匹配] fetchFileFromUrl 返回空`);
-            }
+            // 直接收集场景参考图 URL
+            referenceImageUrls.push(result.data.reference_image);
+            const locationName = result.data.name || shotData.location_name || '场景';
+            promptSuffix.push(`图${imageIndex}是${locationName}所在地点`);
+            imageIndex++;
+            console.log(`[场景匹配] 成功添加场景参考图: ${locationName}`);
           } else {
             console.warn(`[场景匹配] 数据结构不符合预期或无参考图`);
           }
@@ -204,15 +197,11 @@ async function generateShotFrameImage(nodeId, node){
               console.log(`[道具匹配] 道具"${prop.name}"查询结果:`, result);
               if(result.code === 0 && result.data && result.data.reference_image){
                 console.log(`[道具匹配] 道具有参考图: ${result.data.reference_image}`);
-                const propsFile = await fetchFileFromUrl(result.data.reference_image);
-                if(propsFile){
-                  referenceImages.push(propsFile);
-                  promptSuffix.push(`图${imageIndex}是${prop.name}`);
-                  imageIndex++;
-                  console.log(`[道具匹配] 成功添加道具参考图: ${prop.name}`);
-                } else {
-                  console.warn(`[道具匹配] fetchFileFromUrl 返回空`);
-                }
+                // 直接收集道具参考图 URL
+                referenceImageUrls.push(result.data.reference_image);
+                promptSuffix.push(`图${imageIndex}是${prop.name}`);
+                imageIndex++;
+                console.log(`[道具匹配] 成功添加道具参考图: ${prop.name}`);
               } else {
                 console.warn(`[道具匹配] 数据结构不符合预期或无参考图`);
               }
@@ -245,7 +234,7 @@ async function generateShotFrameImage(nodeId, node){
     const ratio = canvasRatio;
     
     let res;
-    if(referenceImages.length === 0){
+    if(referenceImageUrls.length === 0){
       // 没有参考图，使用文生图API
       generateBtn.textContent = '生成中...';
       showToast('未找到参考图，使用文生图模式生成...', 'info');
@@ -271,22 +260,20 @@ async function generateShotFrameImage(nodeId, node){
       // 有参考图，使用图片编辑API
       // 5.5. 限制参考图数量不超过5个
       const MAX_REFERENCE_IMAGES = 5;
-      if(referenceImages.length > MAX_REFERENCE_IMAGES){
-        console.warn(`参考图数量 ${referenceImages.length} 超过限制 ${MAX_REFERENCE_IMAGES}，将只使用前 ${MAX_REFERENCE_IMAGES} 张`);
-        referenceImages.splice(MAX_REFERENCE_IMAGES);
+      if(referenceImageUrls.length > MAX_REFERENCE_IMAGES){
+        console.warn(`参考图数量 ${referenceImageUrls.length} 超过限制 ${MAX_REFERENCE_IMAGES}，将只使用前 ${MAX_REFERENCE_IMAGES} 张`);
+        referenceImageUrls.splice(MAX_REFERENCE_IMAGES);
         promptSuffix.splice(MAX_REFERENCE_IMAGES);
         showToast(`参考图数量超过${MAX_REFERENCE_IMAGES}张，已自动限制为${MAX_REFERENCE_IMAGES}张`, 'warning');
       }
       
       generateBtn.textContent = '生成中...';
-      showToast(`找到${referenceImages.length}张参考图，开始生成...`, 'info');
+      showToast(`找到${referenceImageUrls.length}张参考图，开始生成...`, 'info');
       
       const form = new FormData();
       
-      // 添加所有参考图
-      referenceImages.forEach(file => {
-        form.append('image', file);
-      });
+      // 直接传递参考图 URL 列表
+      form.append('ref_image_urls', referenceImageUrls.join(','));
       
       form.append('prompt', finalPrompt);
       form.append('ratio', ratio);

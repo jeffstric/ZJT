@@ -820,12 +820,20 @@
     
     // ============ 画风管理功能结束 ============
 
-    async function generateEditedImage(file, prompt, ratio, model, count){
+    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count){
       const userId = localStorage.getItem('user_id');
       const authToken = getAuthToken();
       const form = new FormData();
 
-      form.append('image', file);
+      // 判断是 File 对象还是 URL 字符串
+      if(typeof fileOrUrl === 'string'){
+        // 如果是 URL，使用 ref_image_urls 参数
+        form.append('ref_image_urls', fileOrUrl);
+      } else {
+        // 如果是 File 对象，使用 image 参数
+        form.append('image', fileOrUrl);
+      }
+      
       form.append('prompt', prompt || '');
       form.append('ratio', ratio || '9:16');
       form.append('count', count || 1);
