@@ -5067,6 +5067,19 @@
             <button class="mini-btn secondary shot-group-detail-btn" type="button">详情</button>
             <button class="mini-btn shot-group-generate-btn" type="button" style="background: #22c55e; color: white; flex: 1;">生成分镜</button>
           </div>
+          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
+          <div class="field">
+            <div class="label">宫格生图模型</div>
+            <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="auto">智能模式 (自动选择)</option>
+              <option value="gemini-2.5-pro-image-preview">标准版 (4宫格, 2算力/张)</option>
+              <option value="gemini-3-pro-image-preview">加强版 (9宫格, 6算力/张)</option>
+            </select>
+          </div>
+          <div class="field btn-row">
+            <button class="mini-btn shot-group-grid-btn" type="button" style="background: #8b5cf6; color: white; width: 100%;">宫格生图</button>
+          </div>
+          <div class="gen-meta shot-group-grid-status" style="display:none; margin-top: 8px;"></div>
         </div>
       `;
 
@@ -5148,12 +5161,315 @@
         openShotGroupModal(node.data, id);
       });
 
+      // 宫格生图按钮和模型选择器
+      const gridBtn = el.querySelector('.shot-group-grid-btn');
+      const gridModelSelect = el.querySelector('.shot-group-grid-model');
+      const gridStatusEl = el.querySelector('.shot-group-grid-status');
+      
+      // 初始化宫格模型选择（默认智能模式）
+      if(!node.data.gridModel){
+        node.data.gridModel = 'auto';
+      }
+      if(gridModelSelect){
+        gridModelSelect.value = node.data.gridModel;
+        gridModelSelect.addEventListener('change', () => {
+          node.data.gridModel = gridModelSelect.value;
+        });
+      }
+      
+      // 宫格生图按钮点击事件
+      if(gridBtn){
+        gridBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          generateShotGroupGridImages(id, node, gridStatusEl);
+        });
+      }
+
       // 添加调试按钮
       addDebugButtonToNode(el, node);
       
       canvasEl.appendChild(el);
       setSelected(id);
       return id;
+    }
+
+    // 分镜组节点宫格生图功能
+    async function generateShotGroupGridImages(shotGroupNodeId, shotGroupNode, gridStatusEl) {
+      try {
+        gridStatusEl.style.display = 'block';
+        gridStatusEl.style.color = '#666';
+        gridStatusEl.textContent = '正在检查分镜节点...';
+        
+        // 第一步：检查是否已有分镜节点
+        const existingConnections = state.connections.filter(c => c.from === shotGroupNodeId);
+        const existingShotFrameNodes = existingConnections
+          .map(conn => state.nodes.find(n => n.id === conn.to && n.type === 'shot_frame'))
+          .filter(Boolean);
+        
+        let allShotFrameNodes = [];
+        
+        if(existingShotFrameNodes.length === 0) {
+          // 没有分镜节点，先生成分镜节点
+          gridStatusEl.textContent = '正在生成分镜节点...';
+          const shotFrameNodeIds = await generateShotFramesIndependentAsync(shotGroupNodeId, shotGroupNode);
+          
+          if(!shotFrameNodeIds || shotFrameNodeIds.length === 0) {
+            throw new Error('生成分镜节点失败');
+          }
+          
+          allShotFrameNodes = shotFrameNodeIds.map(nid => state.nodes.find(n => n.id === nid)).filter(Boolean);
+        } else {
+          // 已有分镜节点，直接使用
+          allShotFrameNodes = existingShotFrameNodes;
+        }
+        
+        console.log(`[宫格生图] 总共收集到 ${allShotFrameNodes.length} 个分镜节点`);
+        
+        if(allShotFrameNodes.length === 0) {
+          throw new Error('未找到分镜节点');
+        }
+        
+        // 第二步：收集参考图片URL（角色、场景、道具）
+        gridStatusEl.textContent = '正在收集参考图片...';
+        const { referenceImageUrls, promptSuffix } = await collectReferenceImagesForGrid(allShotFrameNodes);
+        console.log(`[宫格生图] 收集到 ${referenceImageUrls.length} 张参考图片URL`);
+        
+        // 第三步：根据分镜数量决定宫格大小
+        const shotCount = allShotFrameNodes.length;
+        if(shotCount === 1) {
+          gridStatusEl.style.color = '#f59e0b';
+          gridStatusEl.textContent = '只有1个分镜，无需宫格生图';
+          showToast('只有1个分镜，无需宫格生图', 'warning');
+          return;
+        }
+        
+        const gridModel = shotGroupNode.data.gridModel || 'auto';
+        let gridSize, gridLayout, finalModel;
+        
+        // 如果参考图片超过5张，必须使用增强版模型（支持13张参考图）
+        const forceEnhancedModel = referenceImageUrls.length > 5;
+        if(forceEnhancedModel) {
+          console.log(`[宫格生图] 参考图片数量(${referenceImageUrls.length})超过5张，强制使用增强版模型`);
+        }
+        
+        if(gridModel === 'auto') {
+          // 智能模式：根据分镜数量和参考图片数量自动选择
+          if(shotCount <= 5 && !forceEnhancedModel) {
+            gridSize = 4;
+            gridLayout = '2x2';
+            finalModel = 'gemini-2.5-pro-image-preview';
+          } else {
+            gridSize = 9;
+            gridLayout = '3x3';
+            finalModel = 'gemini-3-pro-image-preview';
+          }
+        } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+          // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
+          gridSize = 4;
+          gridLayout = '2x2';
+          finalModel = gridModel;
+        } else {
+          // 加强版：固定9宫格，或因参考图数量强制升级
+          gridSize = 9;
+          gridLayout = '3x3';
+          finalModel = 'gemini-3-pro-image-preview';
+        }
+        
+        // 限制参考图片数量（标准版最多5张，增强版最多13张）
+        const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;
+        if(referenceImageUrls.length > maxRefImages) {
+          console.warn(`[宫格生图] 参考图片数量 ${referenceImageUrls.length} 超过限制 ${maxRefImages}，将只使用前 ${maxRefImages} 张`);
+          referenceImageUrls.splice(maxRefImages);
+          promptSuffix.splice(maxRefImages);
+        }
+        
+        shotGroupNode.data.gridModel = finalModel;
+        
+        const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+        const imageCount = Math.ceil(shotCount / gridSize);
+        const totalPower = imageCount * imagePower;
+        
+        const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
+        const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
+          `分镜数量：${shotCount}个\n` +
+          `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+          `预计消耗算力：${totalPower}\n\n` +
+          `确认生成吗？`;
+        
+        if(!window.confirm(confirmMsg)) {
+          gridStatusEl.style.color = '#666';
+          gridStatusEl.textContent = '已取消';
+          return;
+        }
+        
+        // 第四步：拼接提示词并调用API
+        gridStatusEl.textContent = `正在生成${imageCount}张${gridLayout}宫格图片...`;
+        
+        const gridTasks = [];
+        for(let i = 0; i < imageCount; i++) {
+          const startIdx = i * gridSize;
+          const endIdx = Math.min(startIdx + gridSize, shotCount);
+          const batchNodes = allShotFrameNodes.slice(startIdx, endIdx);
+          
+          const shots = [];
+          for(let idx = 0; idx < gridSize; idx++){
+            // 如果分镜数量不足填满宫格，用最后一个分镜的提示词填充
+            const nodeIndex = idx < batchNodes.length ? idx : batchNodes.length - 1;
+            const shotNode = batchNodes[nodeIndex];
+            shots.push({
+              shot_number: `Shot ${startIdx + idx + 1}`,
+              prompt_text: shotNode.data.imagePrompt || ''
+            });
+          }
+          
+          const gridPrompt = JSON.stringify({
+            grid_layout: gridLayout,
+            grid_aspect_ratio: state.ratio || '16:9',
+            global_watermark: '',
+            style_guidance: "NO TEXT, NO TITLE, NO LABELS, clean grid lines only.",
+            shots: shots
+          });
+          
+          gridTasks.push({
+            batchNodes,
+            gridPrompt,
+            startIdx
+          });
+        }
+        
+        // 构建参考图片说明后缀
+        const refSuffixText = promptSuffix.length > 0 ? `\n\n${promptSuffix.join('，')}。` : '';
+        
+        const apiPromises = gridTasks.map(async (task) => {
+          const form = new FormData();
+          
+          // 添加参考图片说明到提示词
+          let finalGridPrompt = task.gridPrompt;
+          if(refSuffixText) {
+            try {
+              const promptObj = JSON.parse(task.gridPrompt);
+              promptObj.reference_images_description = promptSuffix.join('，') + '。';
+              finalGridPrompt = JSON.stringify(promptObj);
+            } catch(e) {
+              finalGridPrompt = task.gridPrompt + refSuffixText;
+            }
+          }
+          
+          form.append('prompt', finalGridPrompt);
+          form.append('count', '1');
+          form.append('model', finalModel);
+          form.append('user_id', getUserId());
+          form.append('auth_token', getAuthToken());
+          
+          if(finalModel === 'gemini-3-pro-image-preview') {
+            form.append('image_size', '3840x2160');
+          }
+          
+          let apiUrl, res;
+          if(referenceImageUrls.length > 0) {
+            // 有参考图片URL，使用图片编辑API，直接传URL
+            form.append('ref_image_urls', referenceImageUrls.join(','));
+            form.append('ratio', state.ratio || '16:9');
+            apiUrl = '/api/image-edit';
+          } else {
+            // 无参考图片，使用文生图API
+            form.append('aspect_ratio', state.ratio || '16:9');
+            apiUrl = '/api/text-to-image';
+          }
+          
+          res = await fetch(apiUrl, {
+            method: 'POST',
+            body: form
+          });
+          
+          const data = await res.json();
+          
+          if(!res.ok) {
+            const errorMsg = typeof data.detail === 'string' ? data.detail :
+                           typeof data.message === 'string' ? data.message :
+                           JSON.stringify(data.detail || data.message || '提交任务失败');
+            throw new Error(errorMsg);
+          }
+          
+          if(!data.project_ids || data.project_ids.length === 0) {
+            throw new Error('提交任务失败：未返回项目ID');
+          }
+          
+          return {
+            ...task,
+            aiToolsId: data.project_ids[0]
+          };
+        });
+        
+        const completedTasks = await Promise.all(apiPromises);
+        
+        gridStatusEl.textContent = '正在创建分镜图节点...';
+        
+        const aiToolsMap = {};
+        completedTasks.forEach((task) => {
+          aiToolsMap[String(task.aiToolsId)] = {
+            batchNodes: task.batchNodes,
+            gridSize: gridSize
+          };
+          
+          task.batchNodes.forEach((shotFrameNode, idx) => {
+            const gridIndex = idx + 1;
+            const gridImageNodeId = createImageNode({
+              x: shotFrameNode.x + 380,
+              y: shotFrameNode.y
+            });
+            
+            const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
+            if(gridImageNode) {
+              gridImageNode.data.name = `分镜图 ${gridIndex}/${gridSize}`;
+              gridImageNode.data.project_id = task.aiToolsId;
+              gridImageNode.data.aiToolsId = task.aiToolsId;
+              gridImageNode.data.gridIndex = gridIndex;
+              gridImageNode.data.gridSize = gridSize;
+              gridImageNode.data.shotFrameNodeId = shotFrameNode.id;
+              gridImageNode.title = gridImageNode.data.name;
+              
+              const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
+              if(nodeEl) {
+                const titleEl = nodeEl.querySelector('.node-title');
+                if(titleEl) titleEl.textContent = gridImageNode.title;
+              }
+              
+              const exists = state.connections.some(c => c.from === shotFrameNode.id && c.to === gridImageNodeId);
+              if(!exists){
+                state.connections.push({
+                  id: state.nextConnId++,
+                  from: shotFrameNode.id,
+                  to: gridImageNodeId
+                });
+              }
+            }
+          });
+        });
+        
+        renderConnections();
+        renderImageConnections();
+        renderFirstFrameConnections();
+        renderVideoConnections();
+        renderMinimap();
+        
+        if(!state.aiToolsMap) {
+          state.aiToolsMap = {};
+        }
+        Object.assign(state.aiToolsMap, aiToolsMap);
+        
+        gridStatusEl.style.color = '#22c55e';
+        gridStatusEl.textContent = `已提交${imageCount}张宫格图片生成任务，等待AI生成...`;
+        showToast(`已提交${imageCount}张宫格图片生成任务`, 'success');
+        
+        try{ autoSaveWorkflow(); } catch(e){}
+        
+      } catch(error) {
+        console.error('[宫格生图] 错误:', error);
+        gridStatusEl.style.color = '#ef4444';
+        gridStatusEl.textContent = `生成失败: ${error.message}`;
+        showToast(`宫格生图失败: ${error.message}`, 'error');
+      }
     }
 
     // 生成分镜图节点 - 独立分镜模式
