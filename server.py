@@ -935,18 +935,23 @@ def _concatenate_images(upload_files: List[UploadFile]) -> str:
 
 @app.post("/api/image-edit")
 async def image_edit(
-    image: List[UploadFile] = File(...),
+    image: List[UploadFile] = File(default=None),
     prompt: str = Form(...),
     ratio: str = Form("9:16", description="Model type: 9:16, 16:9, 1:1 ,3:4, 4:3"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
     model: str = Form("gemini-2.5-pro-image-preview", description="Model type: gemini-2.5-pro-image-preview, gemini-3-pro-image-preview"),
-    image_size: str = Form("1K", description="Image resolution: 1K, 2K, 4K")
+    image_size: str = Form("1K", description="Image resolution: 1K, 2K, 4K"),
+    ref_image_urls: str = Form(None, description="Reference image URLs, comma separated")
 ):
     """
     Submit image editing task to RunningHub nanobanana service
     Supports multiple images - will concatenate them horizontally if more than one
+    
+    Can accept images via:
+    1. File upload (image parameter)
+    2. URL list (ref_image_urls parameter, comma separated)
     """
     try:
         if CHECK_AUTH_TOKEN and auth_token is None:
@@ -991,9 +996,25 @@ async def image_edit(
                     detail="用户ID不匹配"
                 )
 
-        # Handle multiple images - limit to maximum 5 images
-        images_to_process = image[:5] if len(image) > 5 else image
-        image_urls = [_save_uploaded_image(img) for img in images_to_process]
+        # Handle multiple images - limit to maximum 10 images (for enhanced model)
+        # Support both file upload and URL list
+        image_urls = []
+        
+        # 1. Process uploaded files
+        if image:
+            images_to_process = image[:10] if len(image) > 10 else image
+            for img in images_to_process:
+                if img.filename:  # Check if it's a real file
+                    image_urls.append(_save_uploaded_image(img))
+        
+        # 2. Process URL list (if provided)
+        if ref_image_urls:
+            urls = [url.strip() for url in ref_image_urls.split(',') if url.strip()]
+            image_urls.extend(urls[:10 - len(image_urls)])  # Limit total to 10
+        
+        if not image_urls:
+            raise HTTPException(status_code=400, detail="At least one image is required (via file upload or URL)")
+        
         logger.info(f"[image_edit] Input image URLs: {image_urls}")
         
         # Submit tasks according to generation count
@@ -1262,34 +1283,45 @@ async def runninghub_status(
         raise HTTPException(status_code=500, detail=f"Failed to check runninghub status: {str(e)}")
 
 
-@app.get("/api/get-status/{project_id}")
+@app.get("/api/get-status/{ai_tool_id}")
 async def get_status(
-    project_id: str,
+    ai_tool_id: str,
     auth_token: Optional[str] = Query(None, description="Auth token for computing power refund")
 ):
     """
     Check the status of one or more AI tasks.
-    - For a single project_id: returns the original shape {status, results, reason?}
-    - For multiple project_ids (comma-separated): returns {tasks: [{project_id, status, results, reason}]}
+    - For a single ai_tool_id: returns the original shape {status, results, reason?}
+    - For multiple ai_tool_ids (comma-separated): returns {tasks: [{ai_tool_id, status, results, reason}]}
     If task fails, will refund computing power.
     """
     try:
-        project_ids = [pid.strip() for pid in project_id.split(",") if pid.strip()]
-        if not project_ids:
-            raise HTTPException(status_code=400, detail="project_id is required")
+        ai_tool_ids = [pid.strip() for pid in ai_tool_id.split(",") if pid.strip()]
+        if not ai_tool_ids:
+            raise HTTPException(status_code=400, detail="ai_tool_id is required")
 
         tasks_response = []
 
-        for pid in project_ids:
+        for ai_tool_id in ai_tool_ids:
             # Query database to get task type
-            task_record = AIToolsModel.get_by_id(pid)
+            task_record = AIToolsModel.get_by_id(ai_tool_id)
             
-            if task_record and task_record.create_time:
+            if not task_record:
+                tasks_response.append({
+                    "project_id": ai_tool_id,
+                    "status": "NOT_FOUND",
+                    "results": [],
+                    "reason": "任务记录不存在"
+                })
+                continue
+            
+            task_cost_time = 0
+            if task_record.create_time:
                 # Calculate time difference in seconds
                 from datetime import datetime
                 current_time = datetime.now()
                 time_diff = current_time - task_record.create_time
                 task_cost_time = int(time_diff.total_seconds())
+            
             status = task_record.status
             reason = task_record.message
             status_str = "RUNNING"
@@ -1311,7 +1343,7 @@ async def get_status(
                 reason_payload = reason
 
             tasks_response.append({
-                "project_id": pid,
+                "project_id": ai_tool_id,
                 "status": status_str,
                 "results": results_payload,
                 "reason": reason_payload
@@ -4114,15 +4146,16 @@ async def poll_workflow_node_status(
                 "data": {"updated_nodes": []}
             })
         
-        # 查找有 project_id 但 url 为空的节点
+        # 查找有 project_id 但结果为空的节点
         nodes = workflow_data.get('nodes', [])
         updated_nodes = []
         
         for node in nodes:
             node_data = node.get('data', {})
+            node_type = node.get('type', '')
             project_id = node_data.get('project_id')
             url = node_data.get('url', '')
-            
+
             # 只处理有 project_id 但 url 为空的节点
             if project_id and not url:
                 # 查询 ai_tools 表获取状态
@@ -4133,7 +4166,7 @@ async def poll_workflow_node_status(
                         if ai_tool.status == 2 and ai_tool.result_url:
                             updated_nodes.append({
                                 'node_id': node.get('id'),
-                                'node_type': node.get('type'),
+                                'node_type': node_type,
                                 'project_id': project_id,
                                 'url': ai_tool.result_url,
                                 'status': ai_tool.status,
@@ -4143,7 +4176,7 @@ async def poll_workflow_node_status(
                         elif ai_tool.status == -1:
                             updated_nodes.append({
                                 'node_id': node.get('id'),
-                                'node_type': node.get('type'),
+                                'node_type': node_type,
                                 'project_id': project_id,
                                 'url': None,
                                 'status': ai_tool.status,
