@@ -449,9 +449,9 @@
       const hasPillars = state.timeline.pillars.length > 0;
       const hasClips = state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0;
       
-      if (!state.timeline.visible || (!hasPillars && !hasClips)) {
+      if (!state.timeline.visible) {
         container.style.display = 'none';
-        expandBtn.style.display = 'none';
+        expandBtn.style.display = 'flex';
         canvasContainer.classList.remove('timeline-visible');
         return;
       }
@@ -459,6 +459,14 @@
       container.style.display = 'flex';
       expandBtn.style.display = 'none';
       canvasContainer.classList.add('timeline-visible');
+
+      if (!hasPillars && !hasClips) {
+        track.innerHTML = '';
+        audioTrack.innerHTML = '';
+        ruler.innerHTML = '';
+        totalDurationEl.textContent = '总时长: 0:00';
+        return;
+      }
       
       // 如果有柱子系统，按柱子渲染；否则按原有方式渲染
       if (hasPillars) {

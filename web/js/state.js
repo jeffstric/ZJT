@@ -44,7 +44,8 @@
       history: [],
       historyPointer: -1,
       historyLimit: 50,
-      isRestoringHistory: false
+      isRestoringHistory: false,
+      debugMode: false
     };
 
     function normalizeVideoUrl(item){
