@@ -3053,6 +3053,9 @@
           if (![5, 10].includes(this.durationSeconds)) {
             this.durationSeconds = 5;
           }
+        } else if (newModel === 'veo3') {
+          // VEO3: 固定8秒
+          this.durationSeconds = 8;
         } else {
           // Sora2: 10, 15秒
           if (![10, 15].includes(this.durationSeconds)) {
@@ -3074,7 +3077,8 @@
           { value: 'ltx2', label: 'LTX2.0' },
           { value: 'wan22', label: 'Wan2.2' },
           { value: 'kling', label: '可灵' },
-          { value: 'vidu', label: 'Vidu' }
+          { value: 'vidu', label: 'Vidu' },
+          { value: 'veo3', label: 'VEO3.1' }
         ];
       },
       modelOptions() {
@@ -3101,6 +3105,11 @@
         if (this.videoModel === 'vidu') {
           return [
             { value: 5, label: '5秒' },
+            { value: 8, label: '8秒' }
+          ];
+        }
+        if (this.videoModel === 'veo3') {
+          return [
             { value: 8, label: '8秒' }
           ];
         }
@@ -3145,13 +3154,16 @@
             power = klingPower || 0;
           }
         } else if (this.videoModel === 'vidu') {
-          // type=13: Vidu根据时长区分算力
-          const viduPower = this.taskComputingPower[13];
+          // type=14: Vidu根据时长区分算力
+          const viduPower = this.taskComputingPower[14];
           if (typeof viduPower === 'object') {
             power = viduPower[this.durationSeconds] || viduPower[5] || 0;
           } else {
             power = viduPower || 0;
           }
+        } else if (this.videoModel === 'veo3') {
+          // type=15: VEO3固定算力
+          power = this.taskComputingPower[15] || 0;
         }
         return power;
       },
@@ -3530,7 +3542,9 @@
         6: '模糊视频高清放大',
         10: '图片生成视频 (LTX2.0)',
         11: '图片生成视频 (Wan2.2)',
-        12: '图片生成视频 (可灵)'
+        12: '图片生成视频 (可灵)',
+        14: '图片生成视频 (Vidu)',
+        15: '图片生成视频 (VEO3.1)'
         };
         return typeMap[type] || '未知类型';
         },
@@ -4072,7 +4086,7 @@
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              types: '3,10,11,12',  // 3-Sora2图生视频, 10-LTX2.0, 11-Wan2.2, 12-可灵
+              types: '3,10,11,12,14,15',  // 3-Sora2图生视频, 10-LTX2.0, 11-Wan2.2, 12-可灵, 14-Vidu, 15-VEO3
               auth_token: authToken || undefined
             }
           });
@@ -4781,7 +4795,9 @@
           6: '模糊视频高清放大',
           10: '图片生成视频 (LTX2.0)',
           11: '图片生成视频 (Wan2.2)',
-          12: '图片生成视频 (可灵)'
+          12: '图片生成视频 (可灵)',
+          14: '图片生成视频 (Vidu)',
+          15: '图片生成视频 (VEO3.1)'
         };
         return typeMap[type] || '未知类型';
       },

@@ -2224,6 +2224,7 @@
               <option value="ltx2">LTX2.0</option>
               <option value="kling">可灵</option>
               <option value="vidu">Vidu</option>
+              <option value="veo3">VEO3.1</option>
             </select>
           </div>
           <!-- 运镜功能暂时隐藏
@@ -2348,6 +2349,9 @@
           } else {
             power = viduPower || 0;
           }
+        } else if(videoModel === 'veo3') {
+          // type=15: VEO3固定算力
+          power = config[15] || 0;
         }
         
         return power;
@@ -2419,6 +2423,13 @@
             durationSelect.value = '5';
             node.data.duration = 5;
           }
+        } else if(videoModel === 'veo3') {
+          // VEO3: 固定8秒
+          durationSelect.innerHTML = `
+            <option value="8">8秒</option>
+          `;
+          durationSelect.value = '8';
+          node.data.duration = 8;
         } else {
           // Sora2: 10, 15秒
           durationSelect.innerHTML = `
@@ -4597,6 +4608,7 @@
               <option value="ltx2">LTX2.0</option>
               <option value="kling">可灵</option>
               <option value="vidu">Vidu</option>
+              <option value="veo3">VEO3.1</option>
             </select>
           </div>
           <div class="field">
@@ -4691,6 +4703,7 @@
             'wan22': [5, 10],
             'kling': [5, 10],
             'vidu': [5, 8],
+            'veo3': [8],
             'sora2': [10, 15]
           };
           durationOptions = defaultOptions[videoModel] || [5, 10];
@@ -4764,6 +4777,9 @@
           } else {
             power = viduPower || 0;
           }
+        } else if(videoModel === 'veo3') {
+          // type=15: VEO3固定算力
+          power = config[15] || 0;
         }
         
         return power;

@@ -58,7 +58,7 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
     url = "https://duomiapi.com/v1/videos/generations"
     
     payload = {
-        "model": "sora-2",
+        "model": "sora-2-temporary",
         "prompt": prompt,
         "aspect_ratio": ratio,
         "duration": duration,
@@ -86,6 +86,62 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
         if hasattr(e, 'response') and e.response is not None:
             logger.error(f"[Duomi Sora API] Response Status Code: {e.response.status_code}")
             logger.error(f"[Duomi Sora API] Response Body: {e.response.text}")
+        raise
+
+def create_image_to_video_veo(prompt, ratio="9:16", img_url=None, duration=8):
+    """
+    Create video from image using Veo3.1-fast API
+    
+    Args:
+        prompt: Text prompt for video generation
+        ratio: Video aspect ratio (default: "9:16")
+        img_url: Optional image URL
+        duration: Video duration in seconds (default: 15)
+    
+    Returns:
+        Response from the API
+    """
+    if TEST_MODE_ENABLED:
+        mock_task_id = _generate_mock_task_id()
+        print(f"[TEST MODE] create_image_to_video_veo - Generated mock task_id: {mock_task_id}")
+        return {
+            "id": mock_task_id,
+            "state": "processing",
+            "message": "Test mode - task created"
+        }
+    
+    url = "https://duomiapi.com/v1/videos/generations"
+    
+    payload = {
+        "model": "veo3.1-fast",
+        "prompt": prompt,
+        "aspect_ratio": ratio,
+        "duration": duration,
+        "image_urls": [
+            img_url
+        ],
+        "generation_type":"FIRST&LAST"
+    }
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": token
+    }
+    
+    logger.info(f"[Duomi Veo API] Request URL: {url}")
+    logger.info(f"[Duomi Veo API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        logger.info(f"[Duomi Veo API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi Veo API] Error creating image to video task: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"[Duomi Veo API] Response Status Code: {e.response.status_code}")
+            logger.error(f"[Duomi Veo API] Response Body: {e.response.text}")
         raise
 
 def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16", image_urls=None, image_size="1K"):
@@ -369,6 +425,7 @@ def get_ai_task_result(project_id, is_video):
     
     response = requests.get(url, headers=headers)
     raw_result = response.json()
+    logger.info(f"get_ai_task_result response: {raw_result}")
     # Normalize the response format
     if is_video:
         # Video format: {"id": "...", "state": "succeeded/failed/processing", "data": {"videos": [...]}, ...}

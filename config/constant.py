@@ -7,11 +7,11 @@ TASK_TYPE_GENERATE_VIDEO = 'generate_video'
 TASK_TYPE_GENERATE_AUDIO = 'generate_audio'
 
 # 1: 图片编辑, 2: Sora2文生视频, 3: Sora2图生视频, 4: 高清放大, 5: ai视频高清修复, 6: 图生视频高清修复，7：图片编辑(nano-banana-pro), 8: 创建角色卡, 
-# 9: AI音频生成, 10: LTX2.0图生视频, 11: Wan2.2图生视频（5秒=12，10秒=24）, 12: 可灵图生视频（5秒=38，10秒=55）, 13: 数字人生成, 14: Vidu图生视频（5秒=8）
+# 9: AI音频生成, 10: LTX2.0图生视频, 11: Wan2.2图生视频（5秒=12，10秒=24）, 12: 可灵图生视频（5秒=38，10秒=55）, 13: 数字人生成, 14: Vidu图生视频（5秒=8）, 15: VEO3图生视频（8秒=6）
 TASK_COMPUTING_POWER = {
     1: 2,
-    2: 8,
-    3: 8,
+    2: 18, #原算力8
+    3: 18, #原算力8
     4: 1,
     5: 10,
     6: 10,
@@ -23,6 +23,7 @@ TASK_COMPUTING_POWER = {
     12: {5: 38, 10: 70},  # 可灵根据时长区分算力
     13: 12,  # 数字人生成
     14: {5: 16, 8: 22},  # Vidu根据时长区分算力
+    15: 6,  # VEO3固定算力
 }
 
 # 视频模型时长选项配置
@@ -34,6 +35,7 @@ VIDEO_MODEL_DURATION_OPTIONS = {
     'kling': list(TASK_COMPUTING_POWER[12].keys()),  # 从算力配置中自动获取时长选项
     'vidu': list(TASK_COMPUTING_POWER[14].keys()),   # 从算力配置中自动获取时长选项
     'sora2': [10, 15],  # Sora2 固定算力，支持10/15秒
+    'veo3': [8],  # VEO3 固定算力，支持8秒
 }
 
 AUTHENTICATION_ID = 'aa63d4090d59401b9862223087c25b98'

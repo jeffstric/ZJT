@@ -1427,9 +1427,9 @@ async def ai_app_run_image(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     images: List[UploadFile] = File(None, description="Image files for the AI app (1-5 images)"),
     image_urls: str = Form(None, description="Comma-separated image URLs (alternative to uploading files)"),
-    video_model: str = Form("sora2", description="Video model: sora2, ltx2, wan22, kling, vidu"),
-    ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9 (sora2/kling); 9:16, 16:9, 3:4, 1:1, 4:3 (wan22); 16:9, 9:16, 1:1 (vidu)"),
-    duration_seconds: int = Form(15, description="Duration in seconds (sora2: 10/15, ltx2: 5/8/10, wan22: 5/10, kling: 5/10, vidu: 5/8)"),
+    video_model: str = Form("sora2", description="Video model: sora2, ltx2, wan22, kling, vidu, veo3"),
+    ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9 (sora2/kling/veo3); 9:16, 16:9, 3:4, 1:1, 4:3 (wan22); 16:9, 9:16, 1:1 (vidu)"),
+    duration_seconds: int = Form(15, description="Duration in seconds (sora2: 10/15, ltx2: 5/8/10, wan22: 5/10, kling: 5/10, vidu: 5/8, veo3: 8)"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
@@ -1453,6 +1453,9 @@ async def ai_app_run_image(
     5. vidu: Uses Vidu model with ratio and duration parameters
        - Ratio: 16:9, 9:16, 1:1
        - Duration: 5秒, 8秒
+    6. veo3: Uses VEO3.1-fast model with ratio and duration parameters
+       - Ratio: 9:16, 16:9
+       - Duration: 8秒
     
     Supports two image input modes:
     1. Upload images: Provide 1-5 images via 'images' parameter (will be concatenated horizontally)
@@ -1542,6 +1545,9 @@ async def ai_app_run_image(
             # Vidu根据时长区分算力：5秒=16
             vidu_power_map = TASK_COMPUTING_POWER[task_type]
             computing_power = vidu_power_map.get(duration_seconds, 16)
+        elif video_model == "veo3":
+            task_type = 15  # VEO3 图生视频
+            computing_power = TASK_COMPUTING_POWER[task_type]
         else:
             task_type = 3   # Sora2 图生视频
             computing_power = TASK_COMPUTING_POWER[task_type]
@@ -1607,28 +1613,23 @@ async def ai_app_run_image(
                             # LTX2.0 图生视频: type=10
                             # 现在 LTX2.0 也支持比例选择（横屏/竖屏）
                             task_type = 10  # LTX2.0 图生视频
-                            ratio_value = ratio
-                            duration_value = duration_seconds
                         elif video_model == "wan22":
                             # Wan2.2 图生视频: type=11
                             task_type = 11
-                            ratio_value = ratio
-                            duration_value = duration_seconds
                         elif video_model == "kling":
                             # 可灵图生视频: type=12
                             task_type = 12
-                            ratio_value = ratio
-                            duration_value = duration_seconds
                         elif video_model == "vidu":
                             # Vidu 图生视频: type=14
                             task_type = 14
-                            ratio_value = ratio
-                            duration_value = duration_seconds
+                        elif video_model == "veo3":
+                            # VEO3 图生视频: type=15
+                            task_type = 15
                         else:
                             # Sora2 图生视频: type=3
                             task_type = 3
-                            ratio_value = ratio
-                            duration_value = duration_seconds
+                        ratio_value = ratio
+                        duration_value = duration_seconds
                         
                         id = AIToolsModel.create(
                             prompt=prompt,

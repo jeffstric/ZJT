@@ -12,6 +12,7 @@ from config_util import get_config_path
 from duomi_api_requset import (
     create_ai_image,
     create_image_to_video,
+    create_image_to_video_veo,
     get_ai_task_result,
     create_text_to_image,
     create_kling_image_to_video,
@@ -268,6 +269,16 @@ def _submit_new_task(ai_tool):
             return False
         
         project_id = result.get("task_id")
+    elif ai_tool_type == 15:
+        # VEO3 图生视频 (type=15)
+        result = create_image_to_video_veo(
+            prompt=ai_tool.prompt,
+            ratio=ai_tool.ratio,
+            img_url=ai_tool.image_path,
+            duration=ai_tool.duration
+        )
+        logger.info(f"Submit VEO3 task result: {result}")
+        project_id = result.get("id")
     elif ai_tool_type in [2, 3]:
         # Sora2 视频生成 (type=2: 文生视频, type=3: 图生视频)
         result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
@@ -317,9 +328,9 @@ def _check_task_status(ai_tool):
     is_runninghub = ai_tool_type in [10, 11, 13]
     # Check if this is Kling model (type=12, uses Duomi API)
     is_kling = ai_tool_type == 12
-    # Check if this is Vidu model (type=13, uses Vidu API)
+    # Check if this is Vidu model (type=14, uses Vidu API)
     is_vidu = ai_tool_type == 14
-    is_video = ai_tool_type in [2, 3, 10, 11, 12, 13]
+    is_video = ai_tool_type in [2, 3, 10, 11, 12, 13, 15]
     
     if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] Checking status for mock task {project_id}")
