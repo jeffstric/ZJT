@@ -437,12 +437,25 @@ async function generateShotFrameImage(nodeId, node){
         newNode.data.project_id = projectIds[i] || projectIds[0];
         newNode.title = newNode.data.name;
         
-        // 更新节点标题显示
+        // 更新节点标题显示并添加生成状态
         const canvasEl = document.getElementById('canvas');
         const newNodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${newNodeId}"]`) : null;
         if(newNodeEl){
           const titleEl = newNodeEl.querySelector('.node-title');
           if(titleEl) titleEl.textContent = newNode.title;
+          
+          // 添加生成状态显示元素
+          const nodeBody = newNodeEl.querySelector('.node-body');
+          if(nodeBody){
+            let statusEl = nodeBody.querySelector('.generation-status');
+            if(!statusEl){
+              statusEl = document.createElement('div');
+              statusEl.className = 'generation-status';
+              statusEl.style.cssText = 'padding: 8px; margin: 8px 0; background: #e0f2fe; color: #0369a1; border-radius: 4px; font-size: 12px; text-align: center;';
+              nodeBody.insertBefore(statusEl, nodeBody.firstChild);
+            }
+            statusEl.textContent = '生成中...';
+          }
         }
         
         // 创建从分镜节点到图片节点的连接
@@ -463,11 +476,26 @@ async function generateShotFrameImage(nodeId, node){
     renderFirstFrameConnections();
     renderMinimap();
     
+    // 立即保存工作流,确保新增的节点被持久化
+    try{ autoSaveWorkflow(); } catch(e){ console.error('Auto save failed:', e); }
+    
     // 轮询任务状态,更新图片URL
     pollVideoStatus(
       data.project_ids,
       (progressText) => {
         generateBtn.textContent = progressText;
+        
+        // 更新所有新创建节点的状态显示
+        createdImageNodeIds.forEach(imageNodeId => {
+          const canvasEl = document.getElementById('canvas');
+          const nodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${imageNodeId}"]`) : null;
+          if(nodeEl){
+            const statusEl = nodeEl.querySelector('.generation-status');
+            if(statusEl){
+              statusEl.textContent = progressText;
+            }
+          }
+        });
       },
       (statusResult) => {
         console.log('Shot frame generation status result:', statusResult);
@@ -518,6 +546,12 @@ async function generateShotFrameImage(nodeId, node){
               if(previewImg && previewRow){
                 previewImg.src = proxyImageUrl(imageUrl);
                 previewRow.style.display = 'flex';
+              }
+              
+              // 移除生成状态显示
+              const statusEl = imageNodeEl.querySelector('.generation-status');
+              if(statusEl){
+                statusEl.remove();
               }
             }
             
