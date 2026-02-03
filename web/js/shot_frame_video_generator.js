@@ -157,7 +157,7 @@ async function generateShotFrameVideo(nodeId, node){
         newVideoNode.data.project_id = projectIds[i] || projectIds[0];
         newVideoNode.title = newVideoNode.data.name;
         
-        // 更新节点标题显示并添加生成状态
+        // 更新节点标题显示
         const canvasEl = document.getElementById('canvas');
         const newNodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${newVideoNodeId}"]`) : null;
         if(newNodeEl){
@@ -166,19 +166,6 @@ async function generateShotFrameVideo(nodeId, node){
           
           const nameEl = newNodeEl.querySelector('.video-name');
           if(nameEl) nameEl.textContent = newVideoNode.data.name;
-          
-          // 添加生成状态显示元素
-          const nodeBody = newNodeEl.querySelector('.node-body');
-          if(nodeBody){
-            let statusEl = nodeBody.querySelector('.generation-status');
-            if(!statusEl){
-              statusEl = document.createElement('div');
-              statusEl.className = 'generation-status';
-              statusEl.style.cssText = 'padding: 8px; margin: 8px 0; background: #e0f2fe; color: #0369a1; border-radius: 4px; font-size: 12px; text-align: center;';
-              nodeBody.insertBefore(statusEl, nodeBody.firstChild);
-            }
-            statusEl.textContent = '生成中...';
-          }
         }
         
         // 创建从分镜节点到视频节点的连接
@@ -199,26 +186,11 @@ async function generateShotFrameVideo(nodeId, node){
     renderFirstFrameConnections();
     renderMinimap();
 
-    // 立即保存工作流,确保新增的节点被持久化
-    try{ autoSaveWorkflow(); } catch(e){ console.error('Auto save failed:', e); }
-
     // 轮询视频生成状态,更新视频URL
     pollVideoStatus(
       projectIds,
       (msg) => {
         generateBtn.textContent = msg;
-        
-        // 更新所有新创建节点的状态显示
-        createdVideoNodeIds.forEach(videoNodeId => {
-          const canvasEl = document.getElementById('canvas');
-          const nodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`) : null;
-          if(nodeEl){
-            const statusEl = nodeEl.querySelector('.generation-status');
-            if(statusEl){
-              statusEl.textContent = msg;
-            }
-          }
-        });
       },
       (statusResult) => {
         console.log('Shot frame video generation status result:', statusResult);
@@ -287,12 +259,6 @@ async function generateShotFrameVideo(nodeId, node){
                 };
                 try{ thumbVideo.load(); } catch(e){}
                 previewField.style.display = 'block';
-              }
-              
-              // 移除生成状态显示
-              const statusEl = videoNodeEl.querySelector('.generation-status');
-              if(statusEl){
-                statusEl.remove();
               }
             }
             
