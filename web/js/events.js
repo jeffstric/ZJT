@@ -1,6 +1,79 @@
     const addBtn = document.getElementById('addBtn');
     const addMenu = document.getElementById('addMenu');
 
+    function applyFeedbackBtnState(isMinimized) {
+        const wrapper = document.getElementById('feedbackBtnWrapper');
+        const feedbackBtn = document.getElementById('feedbackBtn');
+        const minimizeBtn = document.getElementById('feedbackMinimizeBtn');
+        if (!wrapper || !feedbackBtn) return;
+
+        wrapper.classList.toggle('minimized', !!isMinimized);
+        if (minimizeBtn) {
+            minimizeBtn.style.display = isMinimized ? 'none' : '';
+        }
+
+        feedbackBtn.textContent = isMinimized ? '?' : '意见反馈';
+        feedbackBtn.setAttribute('aria-label', isMinimized ? '意见反馈（已最小化）' : '意见反馈');
+        feedbackBtn.title = isMinimized ? '意见反馈' : '意见反馈';
+    }
+
+    // 最小化意见反馈按钮：变成一个很小的“?”
+    function minimizeFeedbackBtn() {
+        try {
+            localStorage.setItem('feedbackBtnMinimized', 'true');
+            localStorage.removeItem('feedbackBtnDeleted');
+        } catch (e) {}
+        applyFeedbackBtnState(true);
+    }
+
+    function restoreFeedbackBtn() {
+        try {
+            localStorage.setItem('feedbackBtnMinimized', 'false');
+            localStorage.removeItem('feedbackBtnDeleted');
+        } catch (e) {}
+        applyFeedbackBtnState(false);
+    }
+
+    function handleFeedbackBtnClick(e) {
+        if (e) {
+            e.stopPropagation();
+            e.preventDefault();
+        }
+        const minimized = (function () {
+            try {
+                return localStorage.getItem('feedbackBtnMinimized') === 'true';
+            } catch (err) {
+                return false;
+            }
+        })();
+        if (minimized) {
+            restoreFeedbackBtn();
+        }
+        const modal = document.getElementById('feedbackModal');
+        if (modal) modal.classList.add('active');
+    }
+
+    function initFeedbackBtn() {
+        let minimized = false;
+        try {
+            const legacyDeleted = localStorage.getItem('feedbackBtnDeleted') === 'true';
+            const minimizedFlag = localStorage.getItem('feedbackBtnMinimized');
+            minimized = legacyDeleted || minimizedFlag === 'true';
+            if (legacyDeleted) {
+                localStorage.setItem('feedbackBtnMinimized', 'true');
+                localStorage.removeItem('feedbackBtnDeleted');
+            }
+        } catch (e) {}
+        applyFeedbackBtnState(minimized);
+    }
+
+    // 页面加载完成后初始化
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initFeedbackBtn);
+    } else {
+        initFeedbackBtn();
+    }
+
     // 上传配置
     let uploadConfig = {
       max_image_size_mb: 10 // 默认值
