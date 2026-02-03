@@ -96,3 +96,7 @@ task_queue:
   task_expire_days: 7  # 任务过期天数，创建后超过此天数的任务将被自动失败
   enable_expire_check: true  # 是否启用任务过期检查
 
+# Upload file size limits (in MB)
+upload:
+  max_image_size_mb: 10  # 角色、场景、道具的参考图片最大大小限制（MB）
+

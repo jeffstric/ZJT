@@ -1,6 +1,27 @@
     const addBtn = document.getElementById('addBtn');
     const addMenu = document.getElementById('addMenu');
 
+    // 上传配置
+    let uploadConfig = {
+      max_image_size_mb: 10 // 默认值
+    };
+
+    // 获取上传配置
+    async function fetchUploadConfig() {
+      try {
+        const response = await fetch('/api/config/upload');
+        const result = await response.json();
+        if (result.code === 0 && result.data) {
+          uploadConfig = result.data;
+        }
+      } catch (error) {
+        console.error('获取上传配置失败:', error);
+      }
+    }
+
+    // 页面加载时获取配置
+    fetchUploadConfig();
+
     // 下载图片辅助函数
     async function downloadImage(imgUrl, fileName) {
       if (!imgUrl) {
@@ -2231,6 +2252,16 @@
         return;
       }
       
+      // 验证图片文件大小
+      if (imageInput.files.length > 0) {
+        const maxSize = uploadConfig.max_image_size_mb * 1024 * 1024;
+        if (imageInput.files[0].size > maxSize) {
+          showToast(`图片文件不能超过${uploadConfig.max_image_size_mb}MB`, 'error');
+          imageInput.value = '';
+          return;
+        }
+      }
+      
       saveBtn.disabled = true;
       saveBtn.textContent = '创建中...';
       
@@ -2501,6 +2532,16 @@
         return;
       }
       
+      // 验证图片文件大小
+      if (imageInput.files.length > 0) {
+        const maxSize = uploadConfig.max_image_size_mb * 1024 * 1024;
+        if (imageInput.files[0].size > maxSize) {
+          showToast(`图片文件不能超过${uploadConfig.max_image_size_mb}MB`, 'error');
+          imageInput.value = '';
+          return;
+        }
+      }
+      
       saveBtn.disabled = true;
       saveBtn.textContent = '创建中...';
       
@@ -2581,6 +2622,16 @@
         showToast('请输入道具名称', 'error');
         nameInput.focus();
         return;
+      }
+      
+      // 验证图片文件大小
+      if (imageInput.files.length > 0) {
+        const maxSize = uploadConfig.max_image_size_mb * 1024 * 1024;
+        if (imageInput.files[0].size > maxSize) {
+          showToast(`图片文件不能超过${uploadConfig.max_image_size_mb}MB`, 'error');
+          imageInput.value = '';
+          return;
+        }
       }
       
       saveBtn.disabled = true;
@@ -2686,6 +2737,16 @@
       }
 
       const propsId = node.data.id;
+
+      // 验证图片文件大小
+      if (imageInput.files.length > 0) {
+        const maxSize = uploadConfig.max_image_size_mb * 1024 * 1024;
+        if (imageInput.files[0].size > maxSize) {
+          showToast(`图片文件不能超过${uploadConfig.max_image_size_mb}MB`, 'error');
+          imageInput.value = '';
+          return;
+        }
+      }
 
       saveBtn.disabled = true;
       saveBtn.textContent = '保存中...';
@@ -2874,6 +2935,16 @@
         showToast('请输入场景名称', 'error');
         nameInput.focus();
         return;
+      }
+      
+      // 验证图片文件大小
+      if (imageInput.files.length > 0) {
+        const maxSize = uploadConfig.max_image_size_mb * 1024 * 1024;
+        if (imageInput.files[0].size > maxSize) {
+          showToast(`图片文件不能超过${uploadConfig.max_image_size_mb}MB`, 'error');
+          imageInput.value = '';
+          return;
+        }
       }
       
       saveBtn.disabled = true;
@@ -3065,6 +3136,16 @@
       if (!node || !node.data || !node.data.id) {
         showToast('找不到角色信息', 'error');
         return;
+      }
+      
+      // 验证图片文件大小
+      if (imageInput.files.length > 0) {
+        const maxSize = uploadConfig.max_image_size_mb * 1024 * 1024;
+        if (imageInput.files[0].size > maxSize) {
+          showToast(`图片文件不能超过${uploadConfig.max_image_size_mb}MB`, 'error');
+          imageInput.value = '';
+          return;
+        }
       }
       
       saveBtn.disabled = true;

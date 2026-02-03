@@ -49,6 +49,37 @@ def _get_user_id_from_header(user_id: Optional[int]) -> int:
         raise HTTPException(status_code=400, detail="invalid user_id")
 
 
+async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> tuple[bool, str]:
+    """
+    验证上传图片文件大小
+    
+    Args:
+        file: 上传的文件对象
+        max_size_bytes: 最大文件大小（字节），默认使用全局配置
+        
+    Returns:
+        (是否有效, 错误消息)
+    """
+    if not file or not file.filename:
+        return True, ""
+    
+    if max_size_bytes is None:
+        max_size_bytes = MAX_IMAGE_SIZE_BYTES
+    
+    # 读取文件内容获取大小
+    content = await file.read()
+    file_size = len(content)
+    
+    # 重置文件指针以便后续读取
+    await file.seek(0)
+    
+    if file_size > max_size_bytes:
+        max_size_mb = max_size_bytes / (1024 * 1024)
+        return False, f"图片文件大小不能超过{max_size_mb:.0f}MB"
+    
+    return True, ""
+
+
 def _ensure_world_owner(world_id: int, user_id: int):
     world = WorldModel.get_by_id(world_id)
     if not world:
@@ -80,6 +111,10 @@ else:
 API_KEY = config["runninghub"]["api_key"]
 
 SCRIPT_WRITER_URL = config["script_writer"]["url"]
+
+# 上传文件大小限制配置（单位：MB）
+MAX_IMAGE_SIZE_MB = config.get("upload", {}).get("max_image_size_mb", 10)
+MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 
 # 初始化微信支付工具
 wechat_pay_config = config.get("pay", {}).get("wxpay", {})
@@ -296,6 +331,20 @@ async def qwen_image_edit(
     return JSONResponse({
         "prompt_id": prompt_id,
         "status": "submitted"
+    })
+
+
+@app.get("/api/config/upload")
+async def get_upload_config():
+    """
+    获取上传文件配置
+    """
+    return JSONResponse({
+        "code": 0,
+        "message": "success",
+        "data": {
+            "max_image_size_mb": MAX_IMAGE_SIZE_MB
+        }
     })
 
 
@@ -4930,6 +4979,18 @@ async def create_character(
                 }
             )
         
+        # 验证图片文件大小
+        is_valid, error_msg = await _validate_image_size(reference_image)
+        if not is_valid:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': error_msg,
+                    'data': None
+                }
+            )
+        
         # 处理图片上传
         image_path = None
         if reference_image and reference_image.filename:
@@ -5027,6 +5088,18 @@ async def update_character(
                 content={
                     'code': -1,
                     'message': '角色名称不能为空',
+                    'data': None
+                }
+            )
+        
+        # 验证图片文件大小
+        is_valid, error_msg = await _validate_image_size(reference_image)
+        if not is_valid:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': error_msg,
                     'data': None
                 }
             )
@@ -5250,6 +5323,18 @@ async def create_location(
                 }
             )
         
+        # 验证图片文件大小
+        is_valid, error_msg = await _validate_image_size(reference_image)
+        if not is_valid:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': error_msg,
+                    'data': None
+                }
+            )
+        
         # 处理图片上传
         image_path = None
         if reference_image and reference_image.filename:
@@ -5336,6 +5421,18 @@ async def update_location(
         
         if description is not None:
             update_data['description'] = description.strip() if description else None
+        
+        # 验证图片文件大小
+        is_valid, error_msg = await _validate_image_size(reference_image)
+        if not is_valid:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': error_msg,
+                    'data': None
+                }
+            )
         
         # 处理图片上传
         if reference_image and reference_image.filename:
@@ -5497,6 +5594,18 @@ async def create_props(
                 }
             )
         
+        # 验证图片文件大小
+        is_valid, error_msg = await _validate_image_size(reference_image)
+        if not is_valid:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': error_msg,
+                    'data': None
+                }
+            )
+        
         # 处理图片上传
         image_path = None
         if reference_image and reference_image.filename:
@@ -5579,6 +5688,18 @@ async def update_props(
                 content={
                     'code': -1,
                     'message': '无权限修改此道具',
+                    'data': None
+                }
+            )
+        
+        # 验证图片文件大小
+        is_valid, error_msg = await _validate_image_size(reference_image)
+        if not is_valid:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': error_msg,
                     'data': None
                 }
             )
