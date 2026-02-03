@@ -156,7 +156,9 @@ done:
 1. 【feature】【p2】sora2接口切换，修改算力
 1. 【feature】【p2】veo3.1 对接
 
-
+2026-2-3 上线:
+1. 【feature】【p1】sora2换成临时线路
+1. 【feature】【p2】接入veo3
 
 2026-2-4 上线:
 
