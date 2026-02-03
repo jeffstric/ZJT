@@ -1,48 +1,3 @@
-// 计算合并分镜的最佳比例
-function calculateMergedShotRatio(shotCount, canvasRatio) {
-  if (!shotCount || shotCount <= 0) {
-    return '1:1';
-  }
-
-  const availableRatios = [
-    { name: '16:9', width: 16, height: 9 },
-    { name: '4:3', width: 4, height: 3 },
-    { name: '1:1', width: 1, height: 1 },
-    { name: '3:4', width: 3, height: 4 },
-    { name: '9:16', width: 9, height: 16 }
-  ];
-
-  const canvasRatioObj = availableRatios.find(r => r.name === canvasRatio) || { width: 16, height: 9 };
-  
-  const isVerticalStacking = canvasRatioObj.width >= canvasRatioObj.height;
-  
-  let mergedWidth, mergedHeight;
-  if (isVerticalStacking) {
-    mergedWidth = canvasRatioObj.width;
-    mergedHeight = canvasRatioObj.height * shotCount;
-  } else {
-    mergedWidth = canvasRatioObj.width * shotCount;
-    mergedHeight = canvasRatioObj.height;
-  }
-  
-  const mergedAspectRatio = mergedWidth / mergedHeight;
-  
-  let closestRatio = availableRatios[0];
-  let minDifference = Math.abs(mergedAspectRatio - (closestRatio.width / closestRatio.height));
-  
-  for (const ratio of availableRatios) {
-    const ratioValue = ratio.width / ratio.height;
-    const difference = Math.abs(mergedAspectRatio - ratioValue);
-    
-    if (difference < minDifference) {
-      minDifference = difference;
-      closestRatio = ratio;
-    }
-  }
-  
-  return closestRatio.name;
-}
-
 // 移除不存在角色的【【】】标记
 function removeMissingCharacterMarkers(prompt, missingCharacters){
   if(!prompt || !missingCharacters || missingCharacters.size === 0){
@@ -167,89 +122,43 @@ async function generateShotFrameImage(nodeId, node){
     // 3. 添加场景参考图
     const shotData = node.data.shotJson || {};
     
-    // 检查是否是合并分镜模式
-    const isMerged = node.data.isMerged || false;
-    
-    if(isMerged){
-      // 合并分镜模式：收集所有场景的参考图
-      const allLocationInfo = shotData.allLocationInfo || [];
-      for(const locInfo of allLocationInfo){
-        if(locInfo.id){
-          try {
-            const userId = localStorage.getItem('user_id') || '1';
-            const authToken = localStorage.getItem('auth_token') || '';
-            
-            const response = await fetch(`/api/location/${locInfo.id}`, {
-              headers: {
-                'Authorization': authToken,
-                'X-User-Id': userId
-              }
-            });
-            
-            if(response.ok){
-              const result = await response.json();
-              if(result.code === 0 && result.data && result.data.reference_image){
-                console.log(`[场景匹配] 场景有参考图: ${result.data.reference_image}`);
-                const locationFile = await fetchFileFromUrl(result.data.reference_image);
-                if(locationFile){
-                  referenceImages.push(locationFile);
-                  const locationName = result.data.name || locInfo.name || '场景';
-                  promptSuffix.push(`图${imageIndex}是${locationName}所在地点`);
-                  imageIndex++;
-                } else {
-                  console.warn(`[场景匹配] fetchFileFromUrl 返回空`);
-                }
-              } else {
-                console.warn(`[场景匹配] 数据结构不符合预期或无参考图`);
-              }
-            } else {
-              console.error(`[场景匹配] API调用失败: ${response.status}`);
-            }
-          } catch(error){
-            console.error('添加场景参考图失败:', error);
+    if(shotData.db_location_id){
+      try {
+        const userId = localStorage.getItem('user_id') || '1';
+        const authToken = localStorage.getItem('auth_token') || '';
+        
+        console.log(`[场景匹配] 开始调用API获取场景 (ID: ${shotData.db_location_id})`);
+        const response = await fetch(`/api/location/${shotData.db_location_id}`, {
+          headers: {
+            'Authorization': authToken,
+            'X-User-Id': userId
           }
-        }
-      }
-    } else {
-      // 独立分镜模式：只添加单个场景参考图
-      if(shotData.db_location_id){
-        try {
-          const userId = localStorage.getItem('user_id') || '1';
-          const authToken = localStorage.getItem('auth_token') || '';
-          
-          console.log(`[场景匹配] 开始调用API获取场景 (ID: ${shotData.db_location_id})`);
-          const response = await fetch(`/api/location/${shotData.db_location_id}`, {
-            headers: {
-              'Authorization': authToken,
-              'X-User-Id': userId
-            }
-          });
-          
-          console.log(`[场景匹配] API响应状态: ${response.status}, ok: ${response.ok}`);
-          if(response.ok){
-            const result = await response.json();
-            console.log(`[场景匹配] 场景查询结果:`, result);
-            if(result.code === 0 && result.data && result.data.reference_image){
-              console.log(`[场景匹配] 场景有参考图: ${result.data.reference_image}`);
-              const locationFile = await fetchFileFromUrl(result.data.reference_image);
-              if(locationFile){
-                referenceImages.push(locationFile);
-                const locationName = result.data.name || shotData.location_name || '场景';
-                promptSuffix.push(`图${imageIndex}是${locationName}所在地点`);
-                imageIndex++;
-                console.log(`[场景匹配] 成功添加场景参考图: ${locationName}`);
-              } else {
-                console.warn(`[场景匹配] fetchFileFromUrl 返回空`);
-              }
+        });
+        
+        console.log(`[场景匹配] API响应状态: ${response.status}, ok: ${response.ok}`);
+        if(response.ok){
+          const result = await response.json();
+          console.log(`[场景匹配] 场景查询结果:`, result);
+          if(result.code === 0 && result.data && result.data.reference_image){
+            console.log(`[场景匹配] 场景有参考图: ${result.data.reference_image}`);
+            const locationFile = await fetchFileFromUrl(result.data.reference_image);
+            if(locationFile){
+              referenceImages.push(locationFile);
+              const locationName = result.data.name || shotData.location_name || '场景';
+              promptSuffix.push(`图${imageIndex}是${locationName}所在地点`);
+              imageIndex++;
+              console.log(`[场景匹配] 成功添加场景参考图: ${locationName}`);
             } else {
-              console.warn(`[场景匹配] 数据结构不符合预期或无参考图`);
+              console.warn(`[场景匹配] fetchFileFromUrl 返回空`);
             }
           } else {
-            console.error(`[场景匹配] API调用失败: ${response.status}`);
+            console.warn(`[场景匹配] 数据结构不符合预期或无参考图`);
           }
-        } catch(error){
-          console.error('添加场景参考图失败:', error);
+        } else {
+          console.error(`[场景匹配] API调用失败: ${response.status}`);
         }
+      } catch(error){
+        console.error('添加场景参考图失败:', error);
       }
     }
     
@@ -320,11 +229,7 @@ async function generateShotFrameImage(nodeId, node){
     // 4. 构建最终提示词
     let finalPrompt = imagePrompt;
     
-    // 4.5. 如果是合并分镜模式，添加角色和场景说明
-    if(isMerged && promptSuffix.length > 0){
-      finalPrompt = `${imagePrompt}\n\n${promptSuffix.join('。')}。`;
-    } else if(!isMerged && promptSuffix.length > 0){
-      // 独立分镜模式，使用逗号分隔
+    if(promptSuffix.length > 0){
       finalPrompt = `${imagePrompt}\n\n${promptSuffix.join('，')}。`;
     }
     
@@ -336,17 +241,8 @@ async function generateShotFrameImage(nodeId, node){
     // 5. 确定使用哪个API（图片编辑或文生图）
     const userId = localStorage.getItem('user_id');
     const authToken = localStorage.getItem('auth_token') || '';
-    let ratio;
-    if (isMerged) {
-      const canvasRatio = state.ratio || '16:9';
-      const mergedShots = shotData.mergedShots || [];
-      const shotCount = mergedShots.length || 1;
-      ratio = calculateMergedShotRatio(shotCount, canvasRatio);
-      console.log(`Merged shot frame: ${shotCount} shots with canvas ratio ${canvasRatio} -> using ratio ${ratio}`);
-    } else {
-      const canvasRatio = state.ratio || '16:9';
-      ratio = canvasRatio;
-    }
+    const canvasRatio = state.ratio || '16:9';
+    const ratio = canvasRatio;
     
     let res;
     if(referenceImages.length === 0){

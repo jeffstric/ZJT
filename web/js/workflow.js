@@ -842,13 +842,21 @@
         body: form
       });
       const data = await res.json();
+      
+      if(!res.ok) {
+        const errorMsg = typeof data.detail === 'string' ? data.detail : 
+                         typeof data.message === 'string' ? data.message :
+                         JSON.stringify(data.detail || data.message || '提交任务失败');
+        throw new Error(errorMsg);
+      }
+      
       if(data.project_ids && data.project_ids.length > 0){
         return {
           projectIds: data.project_ids,
           status: data.status
         };
       }
-      throw new Error(data.detail || data.message || '提交任务失败');
+      throw new Error('提交任务失败：未返回项目ID');
     }
 
     async function fetchFileFromUrl(url){
@@ -1250,7 +1258,6 @@
               
               if(node && node.data){
                 if(updatedNode.status === 2 && updatedNode.url){
-                  // 成功状态:更新URL和预览
                   node.data.url = updatedNode.url;
                   updateNodePreview(node, updatedNode.url);
                 } else if(updatedNode.status === -1){
@@ -1340,6 +1347,55 @@
           previewField.style.display = 'block';
         }
       } else if(node.type === 'image'){
+        // 检查是否为宫格分镜图节点（有gridIndex但未拆分）
+        if(node.data.gridIndex && node.data.gridSize && !node.data.isSplit){
+          // 需要调用拆分接口获取单张图片
+          const aiToolsId = node.data.aiToolsId || node.data.project_id;
+          const gridIndex = node.data.gridIndex;
+          
+          if(aiToolsId){
+            (async () => {
+              try {
+                console.log(`[轮询] 调用拆分接口: aiToolsId=${aiToolsId}, gridIndex=${gridIndex}`);
+                const splitResponse = await fetch(
+                  `/api/ai-tools/${aiToolsId}/grid-split?grid_index=${gridIndex}&user_id=${getUserId()}`,
+                  {
+                    headers: {
+                      'Authorization': getAuthToken(),
+                      'X-User-Id': getUserId()
+                    }
+                  }
+                );
+                
+                if(splitResponse.ok){
+                  const splitData = await splitResponse.json();
+                  if(splitData.code === 0 && splitData.data && splitData.data.image_url){
+                    node.data.url = splitData.data.image_url;
+                    node.data.preview = splitData.data.image_url;
+                    node.data.isSplit = true;
+                    node.data.status = 'completed';
+                    
+                    console.log(`[轮询] 拆分成功: ${node.id} -> ${splitData.data.image_url}`);
+                    
+                    const previewImg = nodeEl.querySelector('.image-preview');
+                    const previewRow = nodeEl.querySelector('.image-preview-row');
+                    
+                    if(previewImg && previewRow){
+                      previewImg.src = proxyImageUrl(splitData.data.image_url);
+                      previewRow.style.display = 'flex';
+                    }
+                    
+                    try { await autoSaveWorkflow(); } catch(e){}
+                  }
+                }
+              } catch(e){
+                console.error('[轮询] 拆分宫格图片失败:', e);
+              }
+            })();
+            return;
+          }
+        }
+        
         // 更新图片节点预览
         node.data.preview = url;
         const previewImg = nodeEl.querySelector('.image-preview');
