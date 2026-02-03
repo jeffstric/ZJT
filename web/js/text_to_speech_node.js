@@ -373,6 +373,9 @@
         showToast('开始下载', 'success');
       });
 
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       setSelected(id);
       return id;

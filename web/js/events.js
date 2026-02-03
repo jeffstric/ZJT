@@ -1358,6 +1358,9 @@
         <div class="port output" data-port="output" title="输出"></div>
       `;
       
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       
       // 绑定事件
@@ -1503,6 +1506,9 @@
         <div class="port output" data-port="output" title="输出"></div>
       `;
       
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       
       // 绑定事件
@@ -1640,6 +1646,9 @@
         <div class="port output" data-port="output" title="输出"></div>
       `;
       
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       
       // 绑定事件
@@ -1744,6 +1753,9 @@
         </div>
         <div class="port output" data-port="output" title="输出"></div>
       `;
+      
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
       
       canvasEl.appendChild(el);
       
@@ -1858,6 +1870,9 @@
         </div>
         <div class="port output" data-port="output" title="输出"></div>
       `;
+      
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
       
       canvasEl.appendChild(el);
       

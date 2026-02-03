@@ -1529,3 +1529,55 @@
       
       state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
     }
+
+    // ============ Debug 模式功能 ============
+    
+    // 从 URL 参数中检查是否需要启用 Debug 模式
+    function initDebugMode(){
+      const urlParams = new URLSearchParams(window.location.search);
+      const debugParam = urlParams.get('debug');
+      
+      if(debugParam === '1' && !state.debugMode){
+        // 开启 Debug 模式需要密码
+        const password = prompt('请输入 Debug 模式密码:');
+        if(!password){
+          return;
+        }
+        
+        // 验证密码
+        fetch('/api/config/debug-password')
+          .then(res => res.json())
+          .then(data => {
+            if(data.success && data.password === password){
+              state.debugMode = true;
+              updateDebugModeUI();
+              showToast('Debug 模式已开启', 'success');
+            } else {
+              showToast('密码错误', 'error');
+            }
+          })
+          .catch(err => {
+            console.error('验证密码失败:', err);
+            showToast('验证失败', 'error');
+          });
+      }
+    }
+    
+    // 更新 Debug 模式 UI
+    function updateDebugModeUI(){
+      // 更新所有节点的调试按钮显示状态
+      state.nodes.forEach(node => {
+        const nodeEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+        if(nodeEl){
+          const debugBtn = nodeEl.querySelector('.node-debug-btn');
+          if(debugBtn){
+            debugBtn.style.display = state.debugMode ? 'block' : 'none';
+          }
+        }
+      });
+    }
+    
+    // 初始化 Debug 模式
+    initDebugMode();
+    
+    // ============ Debug 模式功能结束 ============

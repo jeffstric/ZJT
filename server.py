@@ -348,6 +348,18 @@ async def get_upload_config():
     })
 
 
+@app.get("/api/config/debug-password")
+async def get_debug_password():
+    """
+    获取前端 Debug 模式密码
+    """
+    debug_password = config.get('frontend', {}).get('debug_password', 'debug123')
+    return JSONResponse({
+        "success": True,
+        "password": debug_password
+    })
+
+
 @app.get("/api/status/{prompt_id}")
 async def check_status(
     prompt_id: str,

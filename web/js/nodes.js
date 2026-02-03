@@ -248,6 +248,9 @@
         showToast('开始下载', 'success');
       });
 
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       setSelected(id);
       return id;
@@ -3099,6 +3102,9 @@
         endImagePort.classList.remove('disabled');
       });
 
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       setSelected(id);
     }
@@ -3580,6 +3586,9 @@
         }
       });
 
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       setSelected(id);
       return id;
@@ -4146,6 +4155,9 @@
         openShotGroupModal(node.data, id);
       });
 
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       setSelected(id);
       return id;
@@ -5276,6 +5288,9 @@
         state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
       });
 
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       setSelected(id);
       return id;

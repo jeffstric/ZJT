@@ -100,3 +100,7 @@ task_queue:
 upload:
   max_image_size_mb: 10  # 角色、场景、道具的参考图片最大大小限制（MB）
 
+# Frontend debug mode
+frontend:
+  debug_password: "123"  # 前端 Debug 模式密码
+

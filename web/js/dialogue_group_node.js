@@ -1153,6 +1153,9 @@
       // 暴露渲染参考音频列表的方法，供恢复节点时使用
       node.renderRefAudiosList = renderRefAudiosList;
       
+      // 添加调试按钮
+      addDebugButtonToNode(el, node);
+      
       canvasEl.appendChild(el);
       setSelected(id);
       return id;
