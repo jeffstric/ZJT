@@ -4087,16 +4087,6 @@ async def poll_workflow_node_status(
                                 'status': ai_tool.status,
                                 'message': ai_tool.message or '生成失败'
                             })
-                        # 其他状态(正在处理中)
-                        else:
-                            updated_nodes.append({
-                                'node_id': node.get('id'),
-                                'node_type': node.get('type'),
-                                'project_id': project_id,
-                                'url': None,
-                                'status': ai_tool.status,
-                                'message': '正在处理中...'
-                            })
                 except Exception as e:
                     logger.error(f"Failed to query ai_tool for project_id {project_id}: {e}")
                     continue

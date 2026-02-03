@@ -1253,19 +1253,11 @@
                   // 成功状态:更新URL和预览
                   node.data.url = updatedNode.url;
                   updateNodePreview(node, updatedNode.url);
-                  // 移除处理状态显示
-                  updateNodeProcessingDisplay(node, null);
                 } else if(updatedNode.status === -1){
                   // 失败状态:显示错误信息
                   const errorMessage = updatedNode.message || '生成失败';
                   node.data.error = errorMessage;
                   updateNodeErrorDisplay(node, errorMessage);
-                  // 移除处理状态显示
-                  updateNodeProcessingDisplay(node, null);
-                } else {
-                  // 其他状态:正在处理中
-                  const processingMessage = updatedNode.message || '正在处理中...';
-                  updateNodeProcessingDisplay(node, processingMessage);
                 }
               }
             });
@@ -1279,40 +1271,6 @@
         }
       } catch(error){
         console.error('[轮询] 查询节点状态失败:', error);
-      }
-    }
-    
-    // 更新节点处理状态显示
-    function updateNodeProcessingDisplay(node, processingMessage){
-      const canvasEl = document.getElementById('canvas');
-      const nodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${node.id}"]`) : null;
-      
-      if(!nodeEl) return;
-      
-      let processingEl = nodeEl.querySelector('.node-processing-message');
-      
-      if(processingMessage){
-        // 显示处理状态
-        if(!processingEl){
-          // 创建处理状态元素
-          processingEl = document.createElement('div');
-          processingEl.className = 'node-processing-message';
-          processingEl.style.cssText = 'background: #e0f2fe; color: #0369a1; padding: 8px; margin: 8px 0; border-radius: 4px; font-size: 12px; text-align: center;';
-          
-          // 插入到 .node-body 的顶部
-          const nodeBody = nodeEl.querySelector('.node-body');
-          if(nodeBody){
-            nodeBody.insertBefore(processingEl, nodeBody.firstChild);
-          } else {
-            nodeEl.insertBefore(processingEl, nodeEl.firstChild);
-          }
-        }
-        processingEl.textContent = processingMessage;
-      } else {
-        // 移除处理状态显示
-        if(processingEl){
-          processingEl.remove();
-        }
       }
     }
     
