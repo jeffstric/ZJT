@@ -200,7 +200,8 @@ def _submit_new_task(ai_tool):
             error_msg = result.get("message", "可灵 API调用失败")
             logger.error(f"Kling API error: {error_msg}")
             return False
-        project_id = result.get("taskId")
+        # Kling API 返回格式: {"code": 0, "data": {"task_id": "xxx"}}
+        project_id = result.get("data", {}).get("task_id")
     elif ai_tool_type == 13:
         # 数字人生成 (type=13)
         # 从 ai_tool 中获取音频路径，假设存储在 message 字段中
@@ -229,7 +230,7 @@ def _submit_new_task(ai_tool):
             return False
         
         project_id = result.get("taskId")
-        project_id = result.get("data", {}).get("task_id")
+        # 注意：RunningHub v2 API 返回 taskId 在顶层，不要用 data.task_id 覆盖
     elif ai_tool_type == 14:
         # Vidu 图生视频 (type=14)
         # 根据 image_path 中的图片数量决定调用哪个 API
