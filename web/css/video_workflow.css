@@ -2011,3 +2011,29 @@ textarea:focus{ border-color: var(--primary); }
   margin-top: 16px;
   line-height: 1.6;
 }
+
+.coloring-canvas-container{
+  position: relative;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f9fafb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.coloring-canvas-container canvas{
+  display: block;
+  max-width: 100%;
+  max-height: 500px;
+  cursor: crosshair;
+}
+.coloring-tools{
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}

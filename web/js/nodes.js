@@ -3321,6 +3321,7 @@
                 </div>
               </div>
               <button class="mini-btn image-download-btn" type="button" style="border-radius: 10px;">下载图片</button>
+              <button class="mini-btn secondary image-coloring-btn" type="button" style="border-radius: 10px;">涂色编辑</button>
             </div>
             <div class="gen-meta image-draw-count-label"></div>
             <div class="muted image-edit-status" style="display:none;"></div>
@@ -3400,6 +3401,7 @@
       const modelEl = el.querySelector('.image-model');
       const editBtn = el.querySelector('.image-edit-btn');
       const downloadBtn = el.querySelector('.image-download-btn');
+      const coloringBtn = el.querySelector('.image-coloring-btn');
       const statusEl = el.querySelector('.image-edit-status');
       const drawCountLabel = el.querySelector('.image-draw-count-label');
       const genCaret = el.querySelector('.gen-btn-caret');
@@ -3421,6 +3423,70 @@
         } else {
           confirmFieldEl.style.display = 'none';
         }
+      }
+
+      // 涂色编辑按钮
+      if(coloringBtn){
+        coloringBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if(!node.data.url && !node.data.preview){
+            showToast('请先上传或生成图片', 'error');
+            return;
+          }
+          const imageUrl = node.data.url || node.data.preview;
+          
+          if(window.imageColoringEditor && window.imageColoringEditor.open){
+            window.imageColoringEditor.open(imageUrl, id, async (result) => {
+              try {
+                coloringBtn.disabled = true;
+                statusEl.style.display = 'block';
+                statusEl.style.color = '#666';
+                statusEl.textContent = '正在上传涂色图片...';
+                
+                const coloredImageBlob = await fetch(result.coloredImage).then(r => r.blob());
+                const uploadFormData = new FormData();
+                uploadFormData.append('file', coloredImageBlob, 'colored_image.png');
+                
+                const uploadRes = await fetch('/api/video-workflow/upload', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': getAuthToken ? getAuthToken() : '',
+                    'X-User-Id': getUserId ? getUserId() : localStorage.getItem('user_id') || ''
+                  },
+                  body: uploadFormData
+                });
+                
+                if(!uploadRes.ok) throw new Error('上传涂色图片失败');
+                const uploadData = await uploadRes.json();
+                if(uploadData.code !== 0 || !uploadData.data || !uploadData.data.url){
+                  throw new Error(uploadData.message || '上传失败');
+                }
+                const coloredImageUrl = uploadData.data.url;
+                
+                node.data.url = coloredImageUrl;
+                node.data.preview = coloredImageUrl;
+                imagePreviewImg.src = coloredImageUrl;
+                imagePreviewRow.style.display = 'block';
+                
+                statusEl.style.color = '#22c55e';
+                statusEl.textContent = '涂色完成！';
+                showToast('涂色完成！', 'success');
+                
+                try{ autoSaveWorkflow(); } catch(e){}
+                renderMinimap();
+              } catch(err){
+                console.error('涂色编辑失败:', err);
+                statusEl.style.color = '#dc2626';
+                statusEl.textContent = '涂色失败';
+                showToast('涂色失败: ' + err.message, 'error');
+              } finally {
+                coloringBtn.disabled = false;
+              }
+            });
+          } else {
+            showToast('涂色编辑器未加载', 'error');
+          }
+        });
       }
 
       // 确认分镜图按钮
