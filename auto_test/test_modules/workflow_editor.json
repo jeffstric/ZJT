@@ -1797,6 +1797,105 @@
         }
       ],
       "is_processed": false
+    },
+    {
+      "id": "editor_005",
+      "name": "意见反馈按钮最小化与恢复",
+      "description": "验证右下角意见反馈入口可以最小化为问号，刷新后保持，点击问号可恢复并打开弹窗",
+      "priority": "P2",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "导航到编辑器页面",
+          "mcp_tool": "mcp1_browser_navigate",
+          "mcp_params": {
+            "url": "${config.base_url}/video-workflow?id=1"
+          },
+          "expected_result": "页面开始加载",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "等待页面加载完成",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "保存",
+            "time": 5
+          },
+          "expected_result": "保存按钮出现",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击最小化按钮",
+          "operation": "click",
+          "selector": "#feedbackMinimizeBtn",
+          "expected_result": "意见反馈按钮最小化",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "验证按钮显示为问号",
+          "operation": "verify",
+          "selector": "#feedbackBtn",
+          "expected_result": "按钮文本为 ?",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "刷新页面",
+          "mcp_tool": "mcp1_browser_navigate",
+          "mcp_params": {
+            "url": "${config.base_url}/video-workflow?id=1"
+          },
+          "expected_result": "页面刷新",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "验证最小化状态仍然存在",
+          "operation": "verify",
+          "selector": "#feedbackBtn",
+          "expected_result": "按钮文本仍为 ?",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "点击问号打开反馈弹窗",
+          "operation": "click",
+          "selector": "#feedbackBtn",
+          "expected_result": "反馈弹窗出现",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 8,
+          "action": "验证反馈弹窗处于打开状态",
+          "operation": "verify",
+          "selector": "#feedbackModal.active",
+          "expected_result": "feedbackModal 具有 active 类",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
     }
   ],
   "remark": ""

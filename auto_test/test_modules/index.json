@@ -59,6 +59,12 @@
       "name": "错误处理与边界场景",
       "description": "验证系统对各种错误情况和边界场景的处理能力",
       "file": "error_handling.json"
+    },
+    {
+      "id": "grid_image_generation",
+      "name": "宫格图片生成模块",
+      "description": "测试剧本节点的4宫格和9宫格图片生成功能，包括自动拆分、状态同步等",
+      "file": "grid_image_generation.json"
     }
   ]
 }
