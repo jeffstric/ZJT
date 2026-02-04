@@ -153,33 +153,66 @@ def register_all_drivers():
     # 注册格式：实现驱动名称 -> 驱动类
     
     try:
-        from .sora2_driver import Sora2VideoDriver
+        from .sora2_duomi_v1_driver import Sora2DuomiV1Driver
         # 注册 Sora2 多米供应商 v1 版本
-        VideoDriverFactory.register_driver("sora2_duomi_v1", Sora2VideoDriver)
+        VideoDriverFactory.register_driver("sora2_duomi_v1", Sora2DuomiV1Driver)
     except ImportError as e:
-        logger.warning(f"Failed to import Sora2VideoDriver: {e}")
+        logger.warning(f"Failed to import Sora2DuomiV1Driver: {e}")
     
-    # TODO: 逐步添加其他驱动的注册
-    # from .ltx2_driver import LTX2VideoDriver
-    # VideoDriverFactory.register_driver("ltx2_default", LTX2VideoDriver)
+    try:
+        from .kling_duomi_v1_driver import KlingDuomiV1Driver
+        # 注册 Kling 多米供应商 v1 版本
+        VideoDriverFactory.register_driver("kling_duomi_v1", KlingDuomiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import KlingDuomiV1Driver: {e}")
     
-    # from .wan22_driver import Wan22VideoDriver
-    # VideoDriverFactory.register_driver("wan22_default", Wan22VideoDriver)
+    try:
+        from .gemini_duomi_v1_driver import GeminiDuomiV1Driver
+        # 注册 Gemini 多米供应商 v1 版本（标准版）
+        VideoDriverFactory.register_driver("gemini_duomi_v1", GeminiDuomiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GeminiDuomiV1Driver: {e}")
     
-    # from .kling_driver import KlingVideoDriver
-    # VideoDriverFactory.register_driver("kling_default", KlingVideoDriver)
+    try:
+        from .gemini_pro_duomi_v1_driver import GeminiProDuomiV1Driver
+        # 注册 Gemini Pro 多米供应商 v1 版本（加强版）
+        VideoDriverFactory.register_driver("gemini_pro_duomi_v1", GeminiProDuomiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GeminiProDuomiV1Driver: {e}")
     
-    # from .vidu_driver import ViduVideoDriver
-    # VideoDriverFactory.register_driver("vidu_default", ViduVideoDriver)
+    try:
+        from .veo3_duomi_v1_driver import Veo3DuomiV1Driver
+        # 注册 VEO3 多米供应商 v1 版本
+        VideoDriverFactory.register_driver("veo3_duomi_v1", Veo3DuomiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Veo3DuomiV1Driver: {e}")
     
-    # from .veo3_driver import VEO3VideoDriver
-    # VideoDriverFactory.register_driver("veo3_default", VEO3VideoDriver)
+    try:
+        from .ltx2_runninghub_v1_driver import Ltx2RunninghubV1Driver
+        # 注册 LTX2 RunningHub v1 版本
+        VideoDriverFactory.register_driver("ltx2_runninghub_v1", Ltx2RunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Ltx2RunninghubV1Driver: {e}")
     
-    # from .digital_human_driver import DigitalHumanDriver
-    # VideoDriverFactory.register_driver("digital_human_default", DigitalHumanDriver)
+    try:
+        from .wan22_runninghub_v1_driver import Wan22RunninghubV1Driver
+        # 注册 Wan22 RunningHub v1 版本
+        VideoDriverFactory.register_driver("wan22_runninghub_v1", Wan22RunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Wan22RunninghubV1Driver: {e}")
     
-    # from .gemini_image_edit_driver import GeminiImageEditDriver
-    # VideoDriverFactory.register_driver("gemini_default", GeminiImageEditDriver)
-    # VideoDriverFactory.register_driver("gemini_pro_default", GeminiImageEditDriver)
+    try:
+        from .digital_human_runninghub_v1_driver import DigitalHumanRunninghubV1Driver
+        # 注册 Digital Human RunningHub v1 版本
+        VideoDriverFactory.register_driver("digital_human_runninghub_v1", DigitalHumanRunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import DigitalHumanRunninghubV1Driver: {e}")
+    
+    try:
+        from .vidu_default_driver import ViduDefaultDriver
+        # 注册 Vidu 默认驱动
+        VideoDriverFactory.register_driver("vidu_default", ViduDefaultDriver)
+    except ImportError as e:
+        logger.warning(f"Failed to import ViduDefaultDriver: {e}")
     
     logger.info(f"Registered {len(VideoDriverFactory.get_supported_drivers())} video drivers")
