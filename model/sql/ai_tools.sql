@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS `ai_tools` (
     `status` TINYINT DEFAULT NULL COMMENT '状态: 0-未处理, 1-正在处理, -1-处理失败, 2-处理完成',
     `message` TEXT COMMENT '错误信息',
     `image_size` VARCHAR(20) DEFAULT NULL COMMENT '图片尺寸（1K, 2K, 4K）',
+    `completed_time` DATETIME NULL DEFAULT NULL COMMENT '完成时间',
+    `extra_config` TEXT COMMENT '额外配置（JSON格式）',
     PRIMARY KEY (`id`),
     INDEX `idx_user_id_type_create_time` (`user_id`, `type`, `create_time`),
     INDEX `idx_user_id_create_time` (`user_id`, `create_time`)
