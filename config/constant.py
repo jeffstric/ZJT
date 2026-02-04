@@ -50,15 +50,23 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     "sora2_text_to_video": "sora2_duomi_v1",      # 使用多米供应商的 Sora2 v1 版本
     "sora2_image_to_video": "sora2_duomi_v1",     # 使用多米供应商的 Sora2 v1 版本
     
-    # 其他驱动（待实现）
-    "ltx2_image_to_video": "ltx2_default",
-    "wan22_image_to_video": "wan22_default",
-    "kling_image_to_video": "kling_default",
-    "vidu_image_to_video": "vidu_default",
-    "veo3_image_to_video": "veo3_default",
-    "digital_human": "digital_human_default",
-    "gemini_image_edit": "gemini_default",
-    "gemini_image_edit_pro": "gemini_pro_default",
+    # Kling 相关驱动
+    "kling_image_to_video": "kling_duomi_v1",     # 使用多米供应商的 Kling v1 版本
+    
+    # Gemini 相关驱动
+    "gemini_image_edit": "gemini_duomi_v1",       # 使用多米供应商的 Gemini v1 版本（标准版）
+    "gemini_image_edit_pro": "gemini_pro_duomi_v1",  # 使用多米供应商的 Gemini Pro v1 版本（加强版）
+    
+    # VEO3 相关驱动
+    "veo3_image_to_video": "veo3_duomi_v1",       # 使用多米供应商的 VEO3 v1 版本
+    
+    # RunningHub 相关驱动
+    "ltx2_image_to_video": "ltx2_runninghub_v1",  # 使用 RunningHub 的 LTX2 v1 版本
+    "wan22_image_to_video": "wan22_runninghub_v1", # 使用 RunningHub 的 Wan22 v1 版本
+    "digital_human": "digital_human_runninghub_v1", # 使用 RunningHub 的数字人 v1 版本
+    
+    # Vidu 相关驱动
+    "vidu_image_to_video": "vidu_default",         # 使用 Vidu 官方 API
 }
 
 # 视频模型时长选项配置
