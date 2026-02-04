@@ -723,6 +723,8 @@
         createTextToSpeechNodeWithData(nodeData);
       } else if(nodeData.type === 'dialogue_group'){
         createDialogueGroupNodeWithData(nodeData);
+      } else if(nodeData.type === 'text'){
+        createTextNodeWithData(nodeData);
       }
     }
 

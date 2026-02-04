@@ -2160,3 +2160,36 @@ textarea:focus{ border-color: var(--primary); }
   align-items: flex-start;
   flex-wrap: wrap;
 }
+
+/* 文本节点样式 */
+.node[data-type="text"] {
+  min-width: 240px;
+}
+
+.node[data-type="text"] .text-content {
+  width: 100%;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px;
+  outline: none;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.node[data-type="text"] .text-content:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
+}
+
+.node[data-type="text"] .text-expand-btn {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--primary);
+}
+
+.node[data-type="text"] .text-expand-btn:hover {
+  background: var(--primary);
+  color: white;
+}
