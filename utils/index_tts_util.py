@@ -2,7 +2,7 @@
 Index TTS Utility - Functions for interacting with TTS API
 """
 import logging
-import requests
+import httpx
 import traceback
 from typing import Optional, List
 
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 # TTS API configuration - should be set via environment or config
 TTS_API_URL = "http://192.168.10.243:6007"  # Default, should be configured
 
-def generate_audio(
+async def generate_audio(
     text: str,
     spk_audio_path: str,
     emo_control_method: int = 0,
@@ -69,11 +69,12 @@ def generate_audio(
         logger.info(f"Calling TTS API: {url}")
         logger.debug(f"Request data: {data}")
         
-        response = requests.post(
-            url,
-            json=data,
-            timeout=timeout
-        )
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                json=data,
+                timeout=timeout
+            )
         
         # Check response status
         if response.status_code == 200:
@@ -103,12 +104,12 @@ def generate_audio(
             logger.error(f"TTS API error: {error_msg}")
             return False, error_msg
     
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         error_msg = f"TTS API request timeout after {timeout} seconds"
         logger.error(error_msg)
         return False, error_msg
     
-    except requests.exceptions.ConnectionError:
+    except httpx.ConnectError:
         error_msg = f"Failed to connect to TTS API at {TTS_API_URL}"
         logger.error(error_msg)
         return False, error_msg

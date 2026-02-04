@@ -35,7 +35,7 @@ ENABLE_EXPIRE_CHECK = task_queue_config.get("enable_expire_check", True)
 UPLOAD_DIR = "/nas/comfyui_upload/tts/result_audio/"
 
 
-def _submit_new_task(ai_audio):
+async def _submit_new_task(ai_audio):
     """
     Submit a new audio generation task (status == 0)
     
@@ -106,7 +106,7 @@ def _submit_new_task(ai_audio):
         logger.info(f"Task {task_id}: Calling generate_audio with text='{text[:50]}...', emo_control_method={emo_control_method}, result_path={result_path}")
         
         # Call generate_audio utility
-        success, audio_path_or_error = generate_audio(
+        success, audio_path_or_error = await generate_audio(
             text=text,
             spk_audio_path=spk_audio_path,
             emo_control_method=emo_control_method,
@@ -198,7 +198,7 @@ def _check_max_retry_exceeded(task):
     return False
 
 
-def process_generate_audio(task):
+async def process_generate_audio(task):
     """Process audio generation task logic"""
     try:
         logger.info(f"Processing audio generation task: {task.task_id}")
@@ -212,7 +212,7 @@ def process_generate_audio(task):
         status = ai_audio.status
         
         if status == 0:
-            return _submit_new_task(ai_audio)
+            return await _submit_new_task(ai_audio)
         else:
             logger.warning(f"Unexpected status {status} for task {task.task_id}")
             return False
@@ -222,7 +222,7 @@ def process_generate_audio(task):
         return False
 
 
-def process_task_with_retry(task_type, process_func):
+async def process_task_with_retry(task_type, process_func):
     """
     Generic task processing function with retry logic
     
@@ -274,7 +274,7 @@ def process_task_with_retry(task_type, process_func):
                     logger.info(f"Updated task {task.task_id} status to 1 (处理中)")
                 
                 # Call the specific processing function
-                success= process_func(task)
+                success = await process_func(task)
                 processed_count += 1
                 
                 if success:
@@ -308,6 +308,6 @@ def process_task_with_retry(task_type, process_func):
         return False, False
 
 
-def generate_audio_task(app=None):
+async def generate_audio_task(app=None):
     """Audio generation task entry point"""
-    process_task_with_retry(TASK_TYPE_GENERATE_AUDIO, process_generate_audio)
+    await process_task_with_retry(TASK_TYPE_GENERATE_AUDIO, process_generate_audio)

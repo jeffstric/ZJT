@@ -1,6 +1,7 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 import logging
+import asyncio
 from task.video_task import generate_video_task
 from task.audio_task import generate_audio_task
 from functools import partial
@@ -13,6 +14,21 @@ logger = logging.getLogger(__name__)
 scheduler = None
 
 
+def _run_async_task(async_func, *args, **kwargs):
+    """
+    在同步调度器中运行异步任务的包装函数
+    """
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(async_func(*args, **kwargs))
+        loop.close()
+    except Exception as e:
+        logger.error(f"Error running async task: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
 def init_scheduler(app):
     """
     初始化定时任务调度器
@@ -22,7 +38,7 @@ def init_scheduler(app):
     
     # 创建一个带有app参数的任务函数
     task_with_app_video = partial(generate_video_task, app=app)
-    task_with_app_audio = partial(generate_audio_task, app=app)
+    task_with_app_audio = partial(_run_async_task, generate_audio_task, app=app)
     
     logger.info('启用视频生成任务')
     scheduler.add_job(
