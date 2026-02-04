@@ -22,6 +22,11 @@
           "description": "点击添加剧本节点"
         },
         {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
           "action": "type",
           "selector": ".script-textarea",
           "text": "清晨，阳光洒在城市街道上。\n小明走进咖啡店，点了一杯拿铁。\n他坐在窗边，看着窗外的行人。\n咖啡的香气弥漫在空气中。",
@@ -87,6 +92,11 @@
           "description": "点击添加剧本节点"
         },
         {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
           "action": "type",
           "selector": ".script-textarea",
           "text": "场景1：清晨的城市。\n场景2：咖啡店内部。\n场景3：主角点咖啡。\n场景4：坐在窗边。\n场景5：看着窗外。\n场景6：喝咖啡。\n场景7：思考人生。",
@@ -146,6 +156,11 @@
           "description": "点击添加剧本节点"
         },
         {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
           "action": "type",
           "selector": ".script-textarea",
           "text": "场景1。\n场景2。\n场景3。\n场景4。\n场景5。\n场景6。",
@@ -193,6 +208,11 @@
           "action": "click",
           "selector": "#menuAddScript",
           "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
         },
         {
           "action": "type",
@@ -243,6 +263,11 @@
           "action": "click",
           "selector": "#menuAddScript",
           "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
         },
         {
           "action": "type",
@@ -307,6 +332,11 @@
           "action": "click",
           "selector": "#menuAddScript",
           "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
         },
         {
           "action": "type",
@@ -431,6 +461,11 @@
           "action": "click",
           "selector": "#menuAddScript",
           "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
         },
         {
           "action": "type",

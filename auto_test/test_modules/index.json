@@ -65,6 +65,12 @@
       "name": "宫格图片生成模块",
       "description": "测试剧本节点的4宫格和9宫格图片生成功能，包括自动拆分、状态同步等",
       "file": "grid_image_generation.json"
+    },
+    {
+      "id": "shot_group_video",
+      "name": "分镜组节点生成视频模块",
+      "description": "测试分镜组节点的视频生成功能，包括视频提示词拼接、首帧选择、视频模型选择等",
+      "file": "shot_group_video.json"
     }
   ]
 }

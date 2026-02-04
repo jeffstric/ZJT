@@ -52,6 +52,19 @@
           "is_processed": false
         },
         {
+          "step": 3.5,
+          "action": "点击剧本节点标题栏展开编辑区",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "剧本节点标题栏",
+            "ref": ".node .node-header"
+          },
+          "expected_result": "剧本节点编辑区展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
           "step": 4,
           "action": "填写剧本内容",
           "mcp_tool": "mcp1_browser_type",

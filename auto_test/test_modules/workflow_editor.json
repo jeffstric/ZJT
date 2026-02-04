@@ -396,6 +396,16 @@
           "is_processed": false
         },
         {
+          "step": 5.5,
+          "action": "点击图生视频节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
           "step": 6,
           "action": "获取节点快照验证结构",
           "mcp_tool": "mcp1_browser_snapshot",
@@ -442,6 +452,16 @@
           "action": "验证节点创建",
           "operation": "verify",
           "expected_result": "画布上出现新节点，节点标题为「视频」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3.5,
+          "action": "点击视频节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
           "pass": false,
           "remark": "",
           "is_processed": false
@@ -497,6 +517,16 @@
           "action": "验证节点创建",
           "operation": "verify",
           "expected_result": "画布上出现新节点，节点标题为「图片」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3.5,
+          "action": "点击图片节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
           "pass": false,
           "remark": "",
           "is_processed": false

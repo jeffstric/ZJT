@@ -24,6 +24,16 @@
           "is_processed": false
         },
         {
+          "step": 1.5,
+          "action": "点击图生视频节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
           "step": 2,
           "action": "点击首帧画面文件输入触发文件选择",
           "mcp_tool": "mcp1_browser_click",
@@ -777,6 +787,16 @@
           "is_processed": false
         },
         {
+          "step": 1.5,
+          "action": "点击视频节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
           "step": 2,
           "action": "选择视频文件",
           "mcp_tool": "mcp1_browser_file_upload",
@@ -922,6 +942,16 @@
           "operation": "click",
           "selector": ".image-file",
           "expected_result": "打开文件选择器",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 1.5,
+          "action": "点击图片节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
           "pass": false,
           "remark": "",
           "is_processed": false
