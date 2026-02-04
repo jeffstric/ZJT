@@ -6,3 +6,4 @@ upload/*
 auto_test/test_todo_list.json
 logs/*
 script_parser_logs/*
+scheduler.lock
