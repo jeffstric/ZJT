@@ -26,6 +26,41 @@ TASK_COMPUTING_POWER = {
     15: 6,  # VEO3固定算力
 }
 
+# 视频驱动映射配置
+# 任务类型 -> 业务驱动名称 -> 具体实现驱动
+# 通过修改这个配置可以随时切换供应商或驱动版本
+VIDEO_DRIVER_MAPPING = {
+    1: "gemini_image_edit",           # 图片编辑（标准版）
+    2: "sora2_text_to_video",          # Sora2 文生视频
+    3: "sora2_image_to_video",         # Sora2 图生视频
+    7: "gemini_image_edit_pro",        # 图片编辑（加强版）
+    10: "ltx2_image_to_video",         # LTX2.0 图生视频
+    11: "wan22_image_to_video",        # Wan2.2 图生视频
+    12: "kling_image_to_video",        # 可灵图生视频
+    13: "digital_human",               # 数字人生成
+    14: "vidu_image_to_video",         # Vidu 图生视频
+    15: "veo3_image_to_video",         # VEO3 图生视频
+}
+
+# 业务驱动名称到具体实现驱动的映射
+# 修改这里可以切换不同的供应商或驱动版本
+# 格式：业务驱动名称 -> 实现驱动类名
+DRIVER_IMPLEMENTATION_MAPPING = {
+    # Sora2 相关驱动
+    "sora2_text_to_video": "sora2_duomi_v1",      # 使用多米供应商的 Sora2 v1 版本
+    "sora2_image_to_video": "sora2_duomi_v1",     # 使用多米供应商的 Sora2 v1 版本
+    
+    # 其他驱动（待实现）
+    "ltx2_image_to_video": "ltx2_default",
+    "wan22_image_to_video": "wan22_default",
+    "kling_image_to_video": "kling_default",
+    "vidu_image_to_video": "vidu_default",
+    "veo3_image_to_video": "veo3_default",
+    "digital_human": "digital_human_default",
+    "gemini_image_edit": "gemini_default",
+    "gemini_image_edit_pro": "gemini_pro_default",
+}
+
 # 视频模型时长选项配置
 # 注意：时长选项必须与 TASK_COMPUTING_POWER 中对应任务类型的 key 保持一致
 # ltx2 -> 任务类型10, wan22 -> 任务类型11, kling -> 任务类型12, vidu -> 任务类型14, sora2 -> 任务类型3

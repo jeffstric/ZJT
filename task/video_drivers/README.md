@@ -1,8 +1,8 @@
-# 视频生成模型架构
+# 视频生成驱动架构
 
 ## 概述
 
-此模块提供了一个基于抽象基类的视频生成模型架构，所有视频生成模型都继承自 `BaseVideoModel`，通过工厂模式统一管理和调用。
+此模块提供了一个基于抽象基类的视频生成驱动架构，所有视频生成驱动都继承自 `BaseVideoDriver`，通过工厂模式统一管理和调用。
 
 ## 架构优势
 
@@ -15,7 +15,7 @@
 ## 目录结构
 
 ```
-task/video_models/
+task/video_drivers/
 ├── __init__.py                 # 模块导出
 ├── README.md                   # 本文档
 ├── base_video_model.py         # 抽象基类
@@ -32,9 +32,9 @@ task/video_models/
 
 ## 核心类说明
 
-### 1. BaseVideoModel（抽象基类）
+### 1. BaseVideoDriver（抽象基类）
 
-所有视频生成模型的基类，定义了统一的接口。
+所有视频生成驱动的基类，定义了统一的接口。
 
 **必须实现的抽象方法：**
 
@@ -45,13 +45,13 @@ task/video_models/
 
 - `validate_parameters(ai_tool)`: 验证任务参数
 
-### 2. VideoModelFactory（工厂类）
+### 2. VideoDriverFactory（工厂类）
 
-负责创建和管理所有模型实例。
+负责创建和管理所有驱动实例。
 
 **主要方法：**
 
-- `register_model(model_name, model_class)`: 注册模型类
+- `register_model(model_name, model_class)`: 注册驱动类
 - `create_model_by_type(model_type)`: 根据类型创建模型
 - `create_model_by_name(model_name)`: 根据名称创建模型
 - `get_supported_types()`: 获取支持的类型列表
@@ -62,21 +62,21 @@ task/video_models/
 ### 1. 应用启动时注册所有模型
 
 ```python
-from task.video_models import register_all_models
+from task.video_drivers import register_all_drivers
 
 # 在应用启动时调用
-register_all_models()
+register_all_drivers()
 ```
 
 ### 2. 在任务处理中使用
 
 ```python
-from task.video_models import VideoModelFactory
+from task.video_drivers import VideoDriverFactory
 
 def _submit_new_task(ai_tool):
     """提交新任务"""
-    # 根据 ai_tool.type 创建对应的模型实例
-    model = VideoModelFactory.create_model_by_type(ai_tool.type)
+    # 根据 ai_tool.type 创建对应的驱动实例
+    model = VideoDriverFactory.create_model_by_type(ai_tool.type)
     
     if not model:
         logger.error(f"Unsupported model type: {ai_tool.type}")
@@ -111,7 +111,7 @@ def _submit_new_task(ai_tool):
 
 def _check_task_status(ai_tool):
     """检查任务状态"""
-    model = VideoModelFactory.create_model_by_type(ai_tool.type)
+    model = VideoDriverFactory.create_model_by_type(ai_tool.type)
     
     if not model:
         return False
@@ -144,16 +144,16 @@ def _check_task_status(ai_tool):
 
 ## 如何添加新模型
 
-### 步骤 1: 创建模型类文件
+### 步骤 1: 创建驱动类文件
 
-在 `task/video_models/` 目录下创建新的模型文件，例如 `ltx2_model.py`：
+在 `task/video_drivers/` 目录下创建新的模型文件，例如 `ltx2_model.py`：
 
 ```python
 from typing import Dict, Any
-from .base_video_model import BaseVideoModel
+from .base_video_model import BaseVideoDriver
 from runninghub_request import create_ltx2_image_to_video, check_ltx2_task_status
 
-class LTX2VideoModel(BaseVideoModel):
+class LTX2VideoModel(BaseVideoDriver):
     """LTX2.0 图生视频模型"""
     
     def __init__(self):
@@ -226,25 +226,25 @@ class LTX2VideoModel(BaseVideoModel):
 
 ### 步骤 2: 在工厂类中注册模型
 
-在 `model_factory.py` 的 `register_all_models()` 函数中添加：
+在 `model_factory.py` 的 `register_all_drivers()` 函数中添加：
 
 ```python
 from .ltx2_model import LTX2VideoModel
-VideoModelFactory.register_model("ltx2", LTX2VideoModel)
+VideoDriverFactory.register_model("ltx2", LTX2VideoModel)
 ```
 
 ### 步骤 3: 测试
 
 ```python
 # 测试模型创建
-model = VideoModelFactory.create_model_by_type(10)
+model = VideoDriverFactory.create_model_by_type(10)
 assert model is not None
 assert model.model_name == "ltx2"
 ```
 
-## 模型类型映射
+## 驱动类型映射
 
-| 类型 | 模型名称 | 说明 |
+| 类型 | 驱动名称 | 说明 |
 |------|---------|------|
 | 1 | gemini_image_edit | 图片编辑（标准版） |
 | 2 | sora2_text_to_video | Sora2 文生视频 |
@@ -259,7 +259,7 @@ assert model.model_name == "ltx2"
 
 ## 注意事项
 
-1. 所有模型类必须继承 `BaseVideoModel`
+1. 所有驱动类必须继承 `BaseVideoDriver`
 2. 必须实现 `submit_task` 和 `check_status` 两个抽象方法
 3. 返回值格式必须符合接口定义
 4. 新增模型后需要在 `model_factory.py` 中注册

@@ -53,6 +53,7 @@ from config.constant import (
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.image_grid_splitter import ImageGridSplitter
+from utils.sentry_util import SentryUtil
 
 def _get_user_id_from_header(user_id: Optional[int]) -> int:
     if user_id is None:
@@ -149,6 +150,9 @@ app = FastAPI(title="ComfyUI Qwen Image Edit Proxy")
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Initialize Sentry for error monitoring and alerting
+SentryUtil.init_from_env()
 
 # Allow CORS for local dev if needed
 app.add_middleware(

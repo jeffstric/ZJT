@@ -1,20 +1,21 @@
 """
-Sora2 视频生成模型实现
+Sora2 视频生成驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
-from .base_video_model import BaseVideoModel
+from .base_video_driver import BaseVideoDriver
 from duomi_api_requset import create_image_to_video, get_ai_task_result
+from utils.sentry_util import SentryUtil, AlertLevel
 
 
-class Sora2VideoModel(BaseVideoModel):
+class Sora2VideoDriver(BaseVideoDriver):
     """
-    Sora2 视频生成模型
+    Sora2 视频生成驱动
     支持文生视频和图生视频
     """
     
     def __init__(self):
-        super().__init__(model_name="sora2", model_type=3)
+        super().__init__(driver_name="sora2", driver_type=3)
     
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """
@@ -24,12 +25,13 @@ class Sora2VideoModel(BaseVideoModel):
             alert_type: 报警类型，如 "INVALID_RESPONSE_FORMAT", "UNEXPECTED_EXCEPTION"
             message: 报警消息
             context: 上下文信息（可选）
-        
-        TODO: 实现具体的报警逻辑（钉钉、邮件、监控系统等）
         """
-        self.logger.error(f"[ALERT] {alert_type}: {message}")
-        if context:
-            self.logger.error(f"[ALERT_CONTEXT] {context}")
+        SentryUtil.send_alert(
+            alert_type=alert_type,
+            message=message,
+            level=AlertLevel.ERROR,
+            context=context
+        )
     
     def _validate_submit_response(self, result: Any) -> tuple[bool, Optional[str]]:
         """
@@ -116,7 +118,8 @@ class Sora2VideoModel(BaseVideoModel):
                 self.logger.warning(f"Network error during Sora2 task submission: {str(network_error)}")
                 return {
                     "success": False,
-                    "error": f"网络异常: {str(network_error)}",
+                    "error": "网络连接异常，请稍后重试",
+                    "error_type": "USER",
                     "retry": True
                 }
             
@@ -137,7 +140,9 @@ class Sora2VideoModel(BaseVideoModel):
                 )
                 return {
                     "success": False,
-                    "error": f"API响应格式错误: {validation_error}",
+                    "error": "服务异常，请联系技术支持",
+                    "error_type": "SYSTEM",
+                    "error_detail": f"API响应格式错误: {validation_error}",
                     "retry": False
                 }
             
@@ -145,7 +150,9 @@ class Sora2VideoModel(BaseVideoModel):
             if not project_id:
                 return {
                     "success": False,
-                    "error": "Sora2 API未返回任务ID",
+                    "error": "服务异常，请联系技术支持",
+                    "error_type": "SYSTEM",
+                    "error_detail": "Sora2 API未返回任务ID",
                     "retry": False
                 }
             
@@ -174,7 +181,9 @@ class Sora2VideoModel(BaseVideoModel):
             
             return {
                 "success": False,
-                "error": f"系统异常: {str(e)}",
+                "error": "服务异常，请联系技术支持",
+                "error_type": "SYSTEM",
+                "error_detail": f"系统异常: {str(e)}",
                 "retry": False
             }
     
@@ -214,7 +223,9 @@ class Sora2VideoModel(BaseVideoModel):
                 )
                 return {
                     "status": "FAILED",
-                    "error": f"API响应格式错误: {validation_error}"
+                    "error": "服务异常，请联系技术支持",
+                    "error_type": "SYSTEM",
+                    "error_detail": f"API响应格式错误: {validation_error}"
                 }
             
             if result.get("code") != 0:
@@ -222,7 +233,9 @@ class Sora2VideoModel(BaseVideoModel):
                 self.logger.error(f"Failed to get task result: {error_msg}")
                 return {
                     "status": "FAILED",
-                    "error": error_msg
+                    "error": "服务异常，请联系技术支持",
+                    "error_type": "SYSTEM",
+                    "error_detail": error_msg
                 }
             
             data = result.get("data", {})
@@ -243,7 +256,9 @@ class Sora2VideoModel(BaseVideoModel):
                     )
                     return {
                         "status": "FAILED",
-                        "error": "任务成功但未返回视频URL"
+                        "error": "服务异常，请联系技术支持",
+                        "error_type": "SYSTEM",
+                        "error_detail": "任务成功但未返回视频URL"
                     }
                 
                 return {
@@ -252,14 +267,16 @@ class Sora2VideoModel(BaseVideoModel):
                 }
             elif task_status == 2:
                 # 翻译错误信息
+                user_error = reason
                 if reason and "We currently do not support uploads of images containing photorealistic people" in reason:
-                    reason = "图片包含真人，无法处理"
+                    user_error = "图片包含真人，无法处理"
                 elif reason and "This content may violate our guardrails concerning similarity to third-party content." in reason:
-                    reason = "此内容可能违反了我们关于与第三方内容相似性的规定"
+                    user_error = "此内容可能违反了我们关于与第三方内容相似性的规定"
                 
                 return {
                     "status": "FAILED",
-                    "error": reason or "任务失败"
+                    "error": user_error or "任务失败",
+                    "error_type": "USER"
                 }
             else:
                 # 处理中或其他状态
@@ -287,7 +304,9 @@ class Sora2VideoModel(BaseVideoModel):
             
             return {
                 "status": "FAILED",
-                "error": f"系统异常: {str(e)}"
+                "error": "服务异常，请联系技术支持",
+                "error_type": "SYSTEM",
+                "error_detail": f"系统异常: {str(e)}"
             }
     
     def validate_parameters(self, ai_tool) -> tuple[bool, str]:
