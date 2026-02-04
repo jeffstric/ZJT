@@ -40,11 +40,16 @@ function convertCameraToPrompt(camera) {
   const pitchModified = hasModifiedTracking ? camera.modified.pitch : true;
   
   if (pitchModified) {
-    if (pitch <= -30) parts.push('高角度俯视 (High Angle)');
-    else if (pitch > -30 && pitch <= -10) parts.push('略微俯视 (Slight High Angle)');
-    else if (pitch > -10 && pitch < 10) parts.push('水平视线 (Eye Level)');
-    else if (pitch >= 10 && pitch < 30) parts.push('略微仰视 (Slight Low Angle)');
-    else if (pitch >= 30) parts.push('低角度仰视 (Low Angle)');
+    // 细化垂直角度控制提示词
+    // Pitch < 0: 相机位置在下方，向上仰视 (Low Angle)
+    // Pitch > 0: 相机位置在上方，向下俯视 (High Angle)
+    if (pitch <= -45) parts.push('极低角度仰视，蚂蚁视角 (Extreme Low Angle, Worm\'s-eye view, Looking up)');
+    else if (pitch > -45 && pitch <= -25) parts.push('低角度仰视，从下方拍摄 (Low Angle, Looking up from below)');
+    else if (pitch > -25 && pitch <= -10) parts.push('略微仰视 (Slight Low Angle, Camera slightly below eye level)');
+    else if (pitch > -10 && pitch < 10) parts.push('水平视线 (Eye Level Shot)');
+    else if (pitch >= 10 && pitch < 25) parts.push('略微俯视 (Slight High Angle, Camera slightly above eye level)');
+    else if (pitch >= 25 && pitch < 45) parts.push('高角度俯视，从上方拍摄 (High Angle, Looking down from above)');
+    else if (pitch >= 45) parts.push('极高角度俯视，上帝视角 (Extreme High Angle, Overhead View, Bird\'s-eye view)');
   }
   
   return parts.join('，');

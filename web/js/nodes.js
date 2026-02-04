@@ -3427,8 +3427,11 @@
             </select>
           </div>
           <div class="field field-collapsible camera-control-section">
-            <div class="label">相机控制</div>
-            <div style="display: flex; flex-direction: column; gap: 12px; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <div class="label" style="margin: 0;">相机控制</div>
+              <button class="mini-btn camera-control-toggle-btn" type="button" style="font-size: 11px; padding: 4px 8px;">展开</button>
+            </div>
+            <div class="camera-control-content" style="display: none; flex-direction: column; gap: 12px; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 4px;">
               <div class="camera-param-row" data-param="yaw">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                   <label style="font-size: 11px; font-weight: 600; color: #374151;">左右旋转 (Yaw)</label>
@@ -3471,9 +3474,9 @@
                 </div>
                 <input type="range" class="camera-slider image-camera-pitch-slider" min="-60" max="60" step="1" value="0" style="width: 100%;" />
                 <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
-                  <span>-60° (俯视)</span>
+                  <span>-60° (仰视)</span>
                   <span>0° (平视)</span>
-                  <span>+60° (仰视)</span>
+                  <span>+60° (俯视)</span>
                 </div>
               </div>
               <div style="margin-top: 8px;">
@@ -4081,6 +4084,8 @@
       const cameraPitchInput = el.querySelector('.image-camera-pitch');
       const cameraPitchReset = el.querySelector('.image-camera-reset-pitch');
       const cameraCanvas = el.querySelector('.image-camera-canvas');
+      const cameraControlToggleBtn = el.querySelector('.camera-control-toggle-btn');
+      const cameraControlContent = el.querySelector('.camera-control-content');
       
       // 初始化相机数据
       if(!node.data.camera){
@@ -4114,6 +4119,23 @@
         }
       }
       
+      // 相机控制折叠切换
+      if(cameraControlToggleBtn && cameraControlContent){
+        cameraControlToggleBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isHidden = cameraControlContent.style.display === 'none';
+          if(isHidden){
+            cameraControlContent.style.display = 'flex';
+            cameraControlToggleBtn.textContent = '收起';
+            // 展开时更新预览
+            updateImageCameraPreview();
+          } else {
+            cameraControlContent.style.display = 'none';
+            cameraControlToggleBtn.textContent = '展开';
+          }
+        });
+      }
+
       // Yaw 滑块和输入框
       if(cameraYawSlider){
         cameraYawSlider.addEventListener('input', (e) => {

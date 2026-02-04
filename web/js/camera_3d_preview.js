@@ -96,8 +96,8 @@ function drawCamera(ctx, yaw, dolly, pitch, cubeSize) {
   // Yaw=0° 时相机在 Z轴负方向（从前方看向立方体）
   // Yaw 负值：相机向左移动
   // Yaw 正值：相机向右移动
-  // Pitch 负值：相机向下（俯视）
-  // Pitch 正值：相机向上（仰视）
+  // Pitch 负值：相机向下（仰视 - Low Angle）
+  // Pitch 正值：相机向上（俯视 - High Angle）
   const camX = distance * Math.sin(yawRad) * Math.cos(pitchRad);
   const camY = -distance * Math.sin(pitchRad);
   const camZ = -distance * Math.cos(yawRad) * Math.cos(pitchRad);
