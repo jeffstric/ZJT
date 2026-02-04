@@ -473,12 +473,9 @@
           btn.style.display = isSelected ? 'inline-block' : 'none';
         });
         
-        const resultDivs = el.querySelectorAll('.dialogue-result');
-        resultDivs.forEach(div => {
-          const btnContainer = div.querySelector('div[style*="display: flex"]');
-          if(btnContainer){
-            btnContainer.style.display = isSelected ? 'flex' : 'none';
-          }
+        const actionContainers = el.querySelectorAll('.dialogue-actions');
+        actionContainers.forEach(container => {
+          container.style.display = isSelected ? 'flex' : 'none';
         });
       }
       
@@ -535,7 +532,7 @@
               <div class="dialogue-status" data-index="${index}" style="display:none; font-size: 12px; color: #6b7280; margin-bottom: 8px;"></div>
               <div class="dialogue-result" data-index="${index}" style="display:${hasAudio ? 'block' : 'none'};">
                 <audio controls style="width:100%; max-height:32px; margin-bottom: 6px;"></audio>
-                <div style="display: flex; gap: 4px; display: none;">
+                <div class="dialogue-actions" style="display: none; gap: 4px;">
                   <button class="mini-btn dialogue-download-btn" data-index="${index}" type="button" style="font-size: 11px; padding: 4px 8px;">下载</button>
                   <button class="mini-btn dialogue-add-timeline-btn" data-index="${index}" type="button" style="font-size: 11px; padding: 4px 8px; background: #10b981; color: white;">添加到时间轴</button>
                 </div>
