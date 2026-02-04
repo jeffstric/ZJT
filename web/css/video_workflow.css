@@ -981,6 +981,41 @@ svg.connections path.temp{
 .icon-btn:hover{ background: rgba(0,0,0,0.05); }
 .node-body{ padding: 12px; display:flex; flex-direction:column; gap:12px; }
 .field{ display:flex; flex-direction:column; gap:6px; }
+
+.field-always-visible{
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-collapsible{
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  transition: all 0.2s ease;
+}
+
+.node.selected .field-collapsible{
+  max-height: 500px;
+  opacity: 1;
+  margin: 0 !important;
+  padding: 0 !important;
+  gap: 6px !important;
+}
+
+body.tour-script-input-locked .node:has(.script-textarea) .field-collapsible,
+body.tour-split-shots-locked .node:has(.shot-group-generate-btn) .field-collapsible,
+body.tour-generate-storyboard-locked .node:has(.shot-frame-generate-btn) .field-collapsible,
+body.tour-generate-video-locked .node:has(.shot-frame-generate-video-btn) .field-collapsible,
+body.tour-add-to-timeline-locked .node:has(.video-add-timeline) .field-collapsible{
+  max-height: 500px;
+  opacity: 1;
+  gap: 6px !important;
+}
+
 .field-row{
   display: flex;
   gap: 12px;

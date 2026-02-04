@@ -4549,6 +4549,16 @@
                                       previewRow.style.display = 'flex';
                                     }
                                   }
+                                  
+                                  // 触发连接的分镜节点更新视频首帧预览
+                                  const connectedShotFrameNode = state.connections
+                                    .filter(c => c.from === gridNode.id)
+                                    .map(c => state.nodes.find(n => n.id === c.to && n.type === 'shot_frame'))
+                                    .find(Boolean);
+                                  
+                                  if(connectedShotFrameNode && connectedShotFrameNode.updatePreview) {
+                                    connectedShotFrameNode.updatePreview();
+                                  }
                                 }
                               }
                             }
@@ -4992,8 +5002,9 @@
                             );
                             
                             if(gridNode) {
-                              gridNode.data.url = splitData.data.image_url;
-                              gridNode.data.preview = splitData.data.image_url;
+                              const normalizedUrl = normalizeImageUrl(splitData.data.image_url);
+                              gridNode.data.url = normalizedUrl;
+                              gridNode.data.preview = normalizedUrl;
                               gridNode.data.isSplit = true;
                               gridNode.data.status = 'completed';
                               
@@ -5004,6 +5015,15 @@
                                 if(previewImg && previewRow) {
                                   previewImg.src = proxyImageUrl(splitData.data.image_url);
                                   previewRow.style.display = 'flex';
+                                }
+                              }
+                              
+                              // 触发连接的分镜节点更新视频首帧预览
+                              if(gridNode.data.shotFrameNodeId) {
+                                const shotFrameNode = state.nodes.find(n => n.id === gridNode.data.shotFrameNodeId);
+                                if(shotFrameNode && shotFrameNode.updatePreview) {
+                                  shotFrameNode.updatePreview();
+                                  console.log(`[宫格生图] 分镜节点 ${shotFrameNode.id} 更新后 previewImageUrl:`, shotFrameNode.data.previewImageUrl);
                                 }
                               }
                             }
@@ -5082,6 +5102,9 @@
           shots: shotGroupData.shots || [],
           scriptData: scriptData,
           model: shotGroupData.model || 'gemini-2.5-pro-image-preview',
+          videoModel: shotGroupData.videoModel || 'wan22',
+          videoDuration: shotGroupData.videoDuration || 5,
+          videoDrawCount: shotGroupData.videoDrawCount || 1,
         }
       };
       state.nodes.push(node);
@@ -5140,10 +5163,53 @@
               <option value="gemini-3-pro-image-preview">加强版 (9宫格, 6算力/张)</option>
             </select>
           </div>
-          <div class="field btn-row">
+          <div class="field field-collapsible btn-row">
             <button class="mini-btn gen-btn-green shot-group-grid-btn" type="button" style="width: 100%;">宫格生图</button>
           </div>
           <div class="gen-meta shot-group-grid-status" style="display:none; margin-top: 8px;"></div>
+          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
+          <div class="field field-collapsible">
+            <div class="label">视频模型</div>
+            <select class="shot-group-video-model">
+              <option value="wan22" selected>Wan2.2</option>
+              <option value="sora2">Sora2</option>
+              <option value="ltx2">LTX2.0</option>
+              <option value="kling">可灵</option>
+              <option value="vidu">Vidu</option>
+              <option value="veo3">VEO3.1</option>
+            </select>
+          </div>
+          <div class="field field-collapsible">
+            <div class="label">视频时长</div>
+            <select class="shot-group-video-duration">
+              <option value="5" selected>5秒</option>
+              <option value="10">10秒</option>
+            </select>
+          </div>
+          <div class="field field-collapsible">
+            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start;">
+              <div class="gen-container">
+                <button class="gen-btn gen-btn-main shot-group-generate-video-btn" type="button" style="background: #22c55e; color: white;">生成视频</button>
+                <button class="gen-btn gen-btn-caret shot-group-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
+                <div class="gen-menu shot-group-video-menu">
+                  <div class="gen-item" data-count="1">X1</div>
+                  <div class="gen-item" data-count="2">X2</div>
+                  <div class="gen-item" data-count="3">X3</div>
+                  <div class="gen-item" data-count="4">X4</div>
+                </div>
+              </div>
+            </div>
+            <div class="gen-meta shot-group-video-draw-count-label"></div>
+            <div class="shot-group-computing-power" style="margin-top: 6px; padding: 6px; border-radius: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #9ca3af; font-size: 11px;">算力消耗：</span>
+                <span class="shot-group-computing-power-value" style="color: #60a5fa; font-weight: bold; font-size: 12px;">0 算力</span>
+              </div>
+              <div class="shot-group-computing-power-detail" style="margin-top: 2px; font-size: 10px; color: #6b7280;">
+                单个 0 算力 × 1 个 = 0 算力
+              </div>
+            </div>
+          </div>
         </div>
       `;
 
@@ -5248,6 +5314,160 @@
           generateShotGroupGridImages(id, node, gridStatusEl);
         });
       }
+
+      // 视频生成相关元素
+      const videoModelEl = el.querySelector('.shot-group-video-model');
+      const videoDurationEl = el.querySelector('.shot-group-video-duration');
+      const generateVideoBtn = el.querySelector('.shot-group-generate-video-btn');
+      const videoCaret = el.querySelector('.shot-group-video-caret');
+      const videoMenu = el.querySelector('.shot-group-video-menu');
+      const videoDrawCountLabel = el.querySelector('.shot-group-video-draw-count-label');
+      const computingPowerValue = el.querySelector('.shot-group-computing-power-value');
+      const computingPowerDetail = el.querySelector('.shot-group-computing-power-detail');
+
+      // 初始化视频模型和时长
+      if(videoModelEl) videoModelEl.value = node.data.videoModel;
+      if(videoDurationEl) videoDurationEl.value = node.data.videoDuration;
+
+      // 根据模型更新时长选项
+      function updateVideoDurationOptions(videoModel) {
+        const currentDuration = node.data.videoDuration;
+        videoDurationEl.innerHTML = '';
+        
+        const durationConfig = getVideoModelDurationOptions();
+        let durationOptions = durationConfig[videoModel];
+        
+        if(!durationOptions || durationOptions.length === 0) {
+          const defaultOptions = {
+            'ltx2': [5, 8, 10],
+            'wan22': [5, 10],
+            'kling': [5, 10],
+            'vidu': [5, 8],
+            'veo3': [8],
+            'sora2': [10, 15]
+          };
+          durationOptions = defaultOptions[videoModel] || [5, 10];
+        }
+        
+        durationOptions.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = d;
+          opt.textContent = `${d}秒`;
+          videoDurationEl.appendChild(opt);
+        });
+        
+        const durationStrings = durationOptions.map(d => String(d));
+        if(durationStrings.includes(String(currentDuration))) {
+          videoDurationEl.value = currentDuration;
+        } else {
+          const firstOption = durationOptions[0];
+          videoDurationEl.value = firstOption;
+          node.data.videoDuration = firstOption;
+        }
+      }
+      
+      updateVideoDurationOptions(node.data.videoModel);
+
+      // 计算视频生成算力消耗
+      function calculateVideoComputingPower() {
+        const config = getTaskComputingPowerConfig();
+        if(!config || Object.keys(config).length === 0) {
+          return 0;
+        }
+        
+        let power = 0;
+        const videoModel = node.data.videoModel || 'wan22';
+        const duration = node.data.videoDuration || 5;
+        
+        if(videoModel === 'sora2') {
+          power = config[3] || 0;
+        } else if(videoModel === 'ltx2') {
+          power = config[10] || 0;
+        } else if(videoModel === 'wan22') {
+          const wan22Power = config[11];
+          if(typeof wan22Power === 'object') {
+            power = wan22Power[duration] || wan22Power[5] || 0;
+          } else {
+            power = wan22Power || 0;
+          }
+        } else if(videoModel === 'kling') {
+          const klingPower = config[12];
+          if(typeof klingPower === 'object') {
+            power = klingPower[duration] || klingPower[5] || 0;
+          } else {
+            power = klingPower || 0;
+          }
+        } else if(videoModel === 'vidu') {
+          const viduPower = config[14];
+          if(typeof viduPower === 'object') {
+            power = viduPower[duration] || viduPower[5] || 0;
+          } else {
+            power = viduPower || 0;
+          }
+        } else if(videoModel === 'veo3') {
+          power = config[15] || 0;
+        }
+        
+        return power;
+      }
+      
+      // 更新视频算力显示
+      function updateVideoComputingPowerDisplay() {
+        const singlePower = calculateVideoComputingPower();
+        const count = node.data.videoDrawCount || 1;
+        const totalPower = singlePower * count;
+        
+        if(computingPowerValue) {
+          computingPowerValue.textContent = `${totalPower} 算力`;
+        }
+        if(computingPowerDetail) {
+          computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
+        }
+      }
+
+      // 初始化抽卡次数显示
+      function updateVideoDrawCountLabel(){
+        videoDrawCountLabel.textContent = `抽卡次数：X${node.data.videoDrawCount}`;
+        updateVideoComputingPowerDisplay();
+      }
+      updateVideoDrawCountLabel();
+      updateVideoComputingPowerDisplay();
+
+      // 视频模型选择事件
+      videoModelEl.addEventListener('change', () => {
+        node.data.videoModel = videoModelEl.value;
+        updateVideoDurationOptions(videoModelEl.value);
+        updateVideoComputingPowerDisplay();
+      });
+
+      // 视频时长选择事件
+      videoDurationEl.addEventListener('change', () => {
+        node.data.videoDuration = Number(videoDurationEl.value);
+        updateVideoComputingPowerDisplay();
+      });
+
+      // 视频抽卡次数选择
+      videoCaret.addEventListener('click', (e) => {
+        e.stopPropagation();
+        videoMenu.classList.toggle('show');
+      });
+
+      const videoGenItems = videoMenu.querySelectorAll('.gen-item');
+      for(const item of videoGenItems){
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const count = Number(item.dataset.count || '1');
+          node.data.videoDrawCount = count;
+          updateVideoDrawCountLabel();
+          videoMenu.classList.remove('show');
+        });
+      }
+
+      // 生成视频按钮点击事件
+      generateVideoBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        generateShotGroupVideo(id, node);
+      });
 
       // 添加调试按钮
       addDebugButtonToNode(el, node);
@@ -5491,6 +5711,8 @@
               gridImageNode.data.gridIndex = gridIndex;
               gridImageNode.data.gridSize = gridSize;
               gridImageNode.data.shotFrameNodeId = shotFrameNode.id;
+              gridImageNode.data.isSplit = false;
+              gridImageNode.data.status = 'pending';
               gridImageNode.title = gridImageNode.data.name;
               
               const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
@@ -6199,7 +6421,7 @@
       // 更新预览图
       function updatePreviewImage(){
         const connectedImageNodes = getConnectedImageNodes();
-        
+
         if(connectedImageNodes.length > 0){
           // 如果已有预览图URL且该图片仍然存在，保持不变
           const existingImage = connectedImageNodes.find(n => n.data.url === node.data.previewImageUrl);
@@ -6210,6 +6432,7 @@
               ? connectedImageNodes[0]
               : connectedImageNodes[Math.floor(Math.random() * connectedImageNodes.length)];
             
+            console.log(`[分镜节点 ${id}] 选择图片节点 ${imageNode.id}，URL:`, imageNode.data.url);
             node.data.previewImageUrl = imageNode.data.url;
           }
           
@@ -6881,4 +7104,231 @@
       // 自动聚焦到文本框末尾
       expandTextarea.focus();
       expandTextarea.setSelectionRange(expandTextarea.value.length, expandTextarea.value.length);
+    }
+
+    // 分镜组节点生成视频功能
+    async function generateShotGroupVideo(shotGroupNodeId, shotGroupNode) {
+      try {
+        // 获取所有子分镜节点
+        const shotFrameConnections = state.connections.filter(c => c.from === shotGroupNodeId);
+        const shotFrameNodes = shotFrameConnections
+          .map(conn => state.nodes.find(n => n.id === conn.to && n.type === 'shot_frame'))
+          .filter(Boolean);
+        
+        if(shotFrameNodes.length === 0) {
+          showToast('请先生成分镜节点', 'warning');
+          return;
+        }
+        
+        // 获取第一个分镜节点的首帧图片
+        const firstShotFrame = shotFrameNodes[0];
+        if(!firstShotFrame.data.previewImageUrl) {
+          showToast('第一个分镜节点没有首帧图片，请先生成分镜图', 'warning');
+          return;
+        }
+        
+        const generateBtn = document.querySelector(`.node[data-node-id="${shotGroupNodeId}"] .shot-group-generate-video-btn`);
+        if(!generateBtn) return;
+        
+        generateBtn.disabled = true;
+        generateBtn.textContent = '生成中...';
+        
+        // 拼接所有分镜的视频提示词，每个镜头标明时间范围
+        let cumulativeTime = 0;
+        const videoPromptParts = [];
+        
+        shotFrameNodes.forEach((shotNode, index) => {
+          const shotDuration = shotNode.data.duration || 5;
+          const startTime = cumulativeTime;
+          const endTime = cumulativeTime + shotDuration;
+          
+          // 使用分镜节点的视频提示词文本
+          let shotPrompt = shotNode.data.videoPromptText || shotNode.data.videoPrompt || '';
+          
+          // 如果是JSON格式，尝试转换为文本
+          if(shotPrompt.startsWith('{')) {
+            try {
+              const promptObj = JSON.parse(shotPrompt);
+              shotPrompt = convertVideoPromptToText(shotPrompt);
+            } catch(e) {
+              // 保持原样
+            }
+          }
+          
+          videoPromptParts.push(`镜头${index + 1}：${startTime}~${endTime}S，${shotPrompt}`);
+          cumulativeTime = endTime;
+        });
+        
+        const combinedVideoPrompt = videoPromptParts.join('；');
+        
+        // 添加视频提示词后缀
+        let finalVideoPrompt = combinedVideoPrompt;
+        if(typeof getVideoPromptWithSuffix === 'function'){
+          finalVideoPrompt = getVideoPromptWithSuffix(combinedVideoPrompt);
+        }
+        
+        const imageUrl = firstShotFrame.data.previewImageUrl;
+        const duration = shotGroupNode.data.videoDuration || 5;
+        const count = shotGroupNode.data.videoDrawCount || 1;
+        const videoModel = shotGroupNode.data.videoModel || 'wan22';
+        
+        showToast(`正在生成 ${count} 个视频...`, 'info');
+        
+        // 调用图生视频API
+        const userId = localStorage.getItem('user_id') || '1';
+        const authToken = localStorage.getItem('auth_token') || '';
+        const form = new FormData();
+        
+        form.append('image_urls', imageUrl);
+        form.append('prompt', finalVideoPrompt);
+        form.append('duration_seconds', duration);
+        form.append('count', count);
+        form.append('ratio', state.ratio || '9:16');
+        form.append('video_model', videoModel);
+        
+        if(userId){
+          form.append('user_id', userId);
+        }
+        if(authToken){
+          form.append('auth_token', authToken);
+        }
+        
+        const res = await fetch('/api/ai-app-run-image', {
+          method: 'POST',
+          body: form
+        });
+        
+        const data = await res.json();
+        
+        if(!data.project_ids || data.project_ids.length === 0){
+          throw new Error(data.detail || data.message || '提交任务失败');
+        }
+        
+        const projectIds = data.project_ids;
+        showToast(`视频生成任务已提交，正在处理...`, 'info');
+        
+        // 立即创建对应数量的视频节点并绑定 project_id
+        const createdVideoNodeIds = [];
+        const videoCount = projectIds.length;
+        
+        for(let i = 0; i < videoCount; i++){
+          const offsetY = i * 280;
+          const newVideoNodeId = createVideoNode({ 
+            x: firstShotFrame.x + 380, 
+            y: firstShotFrame.y + offsetY 
+          });
+          
+          const newVideoNode = state.nodes.find(n => n.id === newVideoNodeId);
+          if(newVideoNode){
+            newVideoNode.data.name = videoCount > 1 ? `分镜组视频${i + 1}` : '分镜组视频';
+            newVideoNode.data.project_id = projectIds[i] || projectIds[0];
+            newVideoNode.title = newVideoNode.data.name;
+            
+            // 更新节点标题显示
+            const canvasEl = document.getElementById('canvas');
+            const newNodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${newVideoNodeId}"]`) : null;
+            if(newNodeEl){
+              const titleEl = newNodeEl.querySelector('.node-title');
+              if(titleEl) titleEl.textContent = newVideoNode.title;
+              
+              const nameEl = newNodeEl.querySelector('.video-name');
+              if(nameEl) nameEl.textContent = newVideoNode.data.name;
+            }
+            
+            // 创建从第一个分镜节点到视频节点的连接
+            state.connections.push({
+              id: state.nextConnId++,
+              from: firstShotFrame.id,
+              to: newVideoNodeId
+            });
+            
+            createdVideoNodeIds.push(newVideoNodeId);
+            console.log(`[分镜组视频] 创建视频节点 ${newVideoNodeId} 并绑定 project_id:`, newVideoNode.data.project_id);
+          }
+        }
+        
+        // 重新渲染连接线
+        renderConnections();
+        renderImageConnections();
+        renderFirstFrameConnections();
+        renderVideoConnections();
+        renderMinimap();
+        
+        // 轮询视频生成状态,更新视频URL
+        pollVideoStatus(
+          projectIds,
+          (msg) => {
+            generateBtn.textContent = msg;
+          },
+          (statusResult) => {
+            console.log('Shot group video generation status result:', statusResult);
+            
+            // 从 tasks 数组中提取结果
+            let videoUrls = [];
+            if(statusResult.tasks && Array.isArray(statusResult.tasks)){
+              videoUrls = statusResult.tasks
+                .filter(task => task.status === 'SUCCESS' && task.result)
+                .map(task => normalizeVideoUrl(task.result))
+                .filter(Boolean);
+            } else {
+              const rawResults = extractResultsArray(statusResult);
+              videoUrls = Array.isArray(rawResults)
+                ? rawResults.map(normalizeVideoUrl).filter(Boolean)
+                : [];
+            }
+
+            
+            if(videoUrls.length === 0){
+              const errorMsg = '视频生成失败，未获取到结果';
+              showToast(errorMsg, 'error');
+              generateBtn.textContent = '生成视频';
+              generateBtn.disabled = false;
+              return;
+            }
+            
+            // 更新视频节点的URL
+            createdVideoNodeIds.forEach((videoNodeId, index) => {
+              const videoNode = state.nodes.find(n => n.id === videoNodeId);
+              if(videoNode && videoUrls[index]){
+                videoNode.data.url = videoUrls[index];
+                
+                // 更新视频节点的显示
+                const canvasEl = document.getElementById('canvas');
+                const videoNodeEl = canvasEl ? canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`) : null;
+                if(videoNodeEl){
+                  const videoEl = videoNodeEl.querySelector('.video-preview');
+                  if(videoEl){
+                    videoEl.src = proxyVideoUrl(videoUrls[index]);
+                    videoEl.style.display = 'block';
+                  }
+                }
+                
+                console.log(`[分镜组视频] 视频节点 ${videoNodeId} 更新URL:`, videoUrls[index]);
+              }
+            });
+            
+            showToast(`分镜组视频生成成功！`, 'success');
+            generateBtn.textContent = '生成视频';
+            generateBtn.disabled = false;
+            
+            try{ autoSaveWorkflow(); } catch(e){}
+          },
+          (error) => {
+            console.error('Shot group video generation error:', error);
+            showToast(`视频生成失败: ${error}`, 'error');
+            generateBtn.textContent = '生成视频';
+            generateBtn.disabled = false;
+          }
+        );
+        
+      } catch(error) {
+        console.error('Generate shot group video error:', error);
+        showToast(`生成视频失败: ${error.message}`, 'error');
+        
+        const generateBtn = document.querySelector(`.node[data-node-id="${shotGroupNodeId}"] .shot-group-generate-video-btn`);
+        if(generateBtn){
+          generateBtn.textContent = '生成视频';
+          generateBtn.disabled = false;
+        }
+      }
     }

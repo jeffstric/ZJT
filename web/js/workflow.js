@@ -1164,9 +1164,9 @@
       
       const node = state.nodes.find(n => n.id === nodeData.id);
       if(node && nodeData.data){
-        node.data.url = nodeData.data.url || '';
+        node.data.url = normalizeImageUrl(nodeData.data.url || '');
         node.data.name = nodeData.data.name || '';
-        node.data.preview = nodeData.data.preview || nodeData.data.url || '';
+        node.data.preview = normalizeImageUrl(nodeData.data.preview || nodeData.data.url || '');
         node.data.prompt = nodeData.data.prompt || '';
         node.data.ratio = nodeData.data.ratio || '9:16';
         node.data.model = nodeData.data.model || 'gemini-2.5-pro-image-preview';
@@ -1420,8 +1420,9 @@
                 if(splitResponse.ok){
                   const splitData = await splitResponse.json();
                   if(splitData.code === 0 && splitData.data && splitData.data.image_url){
-                    node.data.url = splitData.data.image_url;
-                    node.data.preview = splitData.data.image_url;
+                    const normalizedUrl = normalizeImageUrl(splitData.data.image_url);
+                    node.data.url = normalizedUrl;
+                    node.data.preview = normalizedUrl;
                     node.data.isSplit = true;
                     node.data.status = 'completed';
                     
@@ -1435,6 +1436,15 @@
                       previewRow.style.display = 'flex';
                     }
                     
+                    // 触发连接的分镜节点更新视频首帧预览
+                    if(node.data.shotFrameNodeId) {
+                      const shotFrameNode = state.nodes.find(n => n.id === node.data.shotFrameNodeId);
+                      if(shotFrameNode && shotFrameNode.updatePreview) {
+                        shotFrameNode.updatePreview();
+                        console.log(`[轮询] 分镜节点 ${shotFrameNode.id} 更新后 previewImageUrl:`, shotFrameNode.data.previewImageUrl);
+                      }
+                    }
+
                     try { await autoSaveWorkflow(); } catch(e){}
                   }
                 }
@@ -1532,6 +1542,13 @@
       const node = state.nodes.find(n => n.id === nodeData.id);
       if(node && nodeData.data){
         node.data = { ...node.data, ...nodeData.data };
+        // 转换图片URL为完整HTTP地址
+        if(node.data.imageUrl){
+          node.data.imageUrl = normalizeImageUrl(node.data.imageUrl);
+        }
+        if(node.data.previewImageUrl){
+          node.data.previewImageUrl = normalizeImageUrl(node.data.previewImageUrl);
+        }
         node.title = nodeData.title || node.title;
         
         const nodeEl = document.querySelector(`.node[data-node-id="${nodeData.id}"]`);

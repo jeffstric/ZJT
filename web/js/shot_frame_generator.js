@@ -389,8 +389,9 @@ async function generateShotFrameImage(nodeId, node){
           const imageNode = state.nodes.find(n => n.id === imageNodeId);
           
           if(imageNode){
-            imageNode.data.url = imageUrl;
-            imageNode.data.preview = imageUrl;
+            const normalizedUrl = normalizeImageUrl(imageUrl);
+            imageNode.data.url = normalizedUrl;
+            imageNode.data.preview = normalizedUrl;
             
             // 更新节点显示
             const canvasEl = document.getElementById('canvas');
