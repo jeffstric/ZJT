@@ -98,8 +98,9 @@
             if(data.data.task_computing_power){
               taskComputingPowerConfig = data.data.task_computing_power;
               console.log('[算力配置] 已加载:', taskComputingPowerConfig);
-              // 配置加载完成后，更新所有图生视频节点的算力显示
+              // 配置加载完成后，更新所有图生视频节点和分镜节点的算力显示
               updateAllImageToVideoNodesPower();
+              updateAllShotFrameNodesPower();
             }
             if(data.data.video_model_duration_options){
               videoModelDurationOptions = data.data.video_model_duration_options;
@@ -122,6 +123,46 @@
       return videoModelDurationOptions;
     }
     
+    // 计算视频生成算力（公共函数）
+    function calculateVideoGenerationPower(videoModel, duration){
+      if(!taskComputingPowerConfig || Object.keys(taskComputingPowerConfig).length === 0){
+        return 0;
+      }
+      
+      let power = 0;
+      
+      if(videoModel === 'sora2'){
+        power = taskComputingPowerConfig[3] || 0;
+      } else if(videoModel === 'ltx2'){
+        power = taskComputingPowerConfig[10] || 0;
+      } else if(videoModel === 'wan22'){
+        const wan22Power = taskComputingPowerConfig[11];
+        if(typeof wan22Power === 'object'){
+          power = wan22Power[duration] || wan22Power[5] || 0;
+        } else {
+          power = wan22Power || 0;
+        }
+      } else if(videoModel === 'kling'){
+        const klingPower = taskComputingPowerConfig[12];
+        if(typeof klingPower === 'object'){
+          power = klingPower[duration] || klingPower[5] || 0;
+        } else {
+          power = klingPower || 0;
+        }
+      } else if(videoModel === 'vidu'){
+        const viduPower = taskComputingPowerConfig[14];
+        if(typeof viduPower === 'object'){
+          power = viduPower[duration] || viduPower[5] || 0;
+        } else {
+          power = viduPower || 0;
+        }
+      } else if(videoModel === 'veo3'){
+        power = taskComputingPowerConfig[15] || 0;
+      }
+      
+      return power;
+    }
+    
     // 更新所有图生视频节点的算力显示
     function updateAllImageToVideoNodesPower(){
       if(!state || !state.nodes) return;
@@ -133,33 +174,34 @@
             const computingPowerValue = el.querySelector('.computing-power-value');
             const computingPowerDetail = el.querySelector('.computing-power-detail');
             if(computingPowerValue && computingPowerDetail){
-              // 计算算力
-              let singlePower = 0;
-              if(taskComputingPowerConfig && Object.keys(taskComputingPowerConfig).length > 0){
-                const videoModel = node.data.videoModel || 'sora2';
-                const duration = node.data.duration || 10;
-                
-                if(videoModel === 'sora2'){
-                  singlePower = taskComputingPowerConfig[3] || 0;
-                } else if(videoModel === 'ltx2'){
-                  singlePower = taskComputingPowerConfig[10] || 0;
-                } else if(videoModel === 'wan22'){
-                  const wan22Power = taskComputingPowerConfig[11];
-                  if(typeof wan22Power === 'object'){
-                    singlePower = wan22Power[duration] || wan22Power[5] || 0;
-                  } else {
-                    singlePower = wan22Power || 0;
-                  }
-                } else if(videoModel === 'kling'){
-                  const klingPower = taskComputingPowerConfig[12];
-                  if(typeof klingPower === 'object'){
-                    singlePower = klingPower[duration] || klingPower[5] || 0;
-                  } else {
-                    singlePower = klingPower || 0;
-                  }
-                }
-              }
+              const videoModel = node.data.videoModel || 'sora2';
+              const duration = node.data.duration || 10;
+              const singlePower = calculateVideoGenerationPower(videoModel, duration);
               const count = node.data.drawCount || 1;
+              const totalPower = singlePower * count;
+              computingPowerValue.textContent = `${totalPower} 算力`;
+              computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
+            }
+          }
+        }
+      });
+    }
+    
+    // 更新所有分镜节点的视频算力显示
+    function updateAllShotFrameNodesPower(){
+      if(!state || !state.nodes) return;
+      
+      state.nodes.forEach(node => {
+        if(node.type === 'shot_frame'){
+          const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+          if(el){
+            const computingPowerValue = el.querySelector('.shot-frame-computing-power-value');
+            const computingPowerDetail = el.querySelector('.shot-frame-computing-power-detail');
+            if(computingPowerValue && computingPowerDetail){
+              const videoModel = node.data.videoModel || 'sora2';
+              const duration = node.data.videoDuration || 10;
+              const singlePower = calculateVideoGenerationPower(videoModel, duration);
+              const count = node.data.videoDrawCount || 1;
               const totalPower = singlePower * count;
               computingPowerValue.textContent = `${totalPower} 算力`;
               computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
