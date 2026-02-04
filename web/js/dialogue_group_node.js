@@ -57,7 +57,7 @@
               <div class="dialogue-status" data-index="${index}" style="display:none; font-size: 12px; color: #6b7280; margin-bottom: 8px;"></div>
               <div class="dialogue-result" data-index="${index}" style="display:none;">
                 <audio controls style="width:100%; max-height:32px; margin-bottom: 6px;"></audio>
-                <button class="mini-btn dialogue-download-btn" data-index="${index}" type="button" style="font-size: 11px; padding: 4px 8px;">下载</button>
+                <button class="mini-btn dialogue-download-btn" data-index="${index}" type="button" style="font-size: 11px; padding: 4px 8px; display: none;">下载</button>
               </div>
             </div>
           `;
@@ -175,6 +175,7 @@
         e.stopPropagation();
         setSelected(id);
         bringNodeToFront(id);
+        updateButtonsVisibility(true);
       });
 
       headerEl.addEventListener('mousedown', (e) => {
@@ -184,6 +185,7 @@
           setSelected(id);
         }
         bringNodeToFront(id);
+        updateButtonsVisibility(true);
         initNodeDrag(id, e.clientX, e.clientY);
       });
 
@@ -457,6 +459,39 @@
 
       renderRefAudiosList();
 
+      function updateButtonsVisibility(isSelected){
+        const addDialogueBtns = el.querySelectorAll('.dialogue-add-btn');
+        addDialogueBtns.forEach(btn => {
+          const container = btn.parentElement;
+          if(container){
+            container.style.display = isSelected ? 'block' : 'none';
+          }
+        });
+        
+        const downloadBtns = el.querySelectorAll('.dialogue-download-btn');
+        downloadBtns.forEach(btn => {
+          btn.style.display = isSelected ? 'inline-block' : 'none';
+        });
+        
+        const resultDivs = el.querySelectorAll('.dialogue-result');
+        resultDivs.forEach(div => {
+          const btnContainer = div.querySelector('div[style*="display: flex"]');
+          if(btnContainer){
+            btnContainer.style.display = isSelected ? 'flex' : 'none';
+          }
+        });
+      }
+      
+      const nodeObserver = new MutationObserver(() => {
+        const isSelected = el.classList.contains('selected');
+        updateButtonsVisibility(isSelected);
+      });
+      
+      nodeObserver.observe(el, {
+        attributes: true,
+        attributeFilter: ['class']
+      });
+
       function updateDialogueList(){
         const container = el.querySelector('.dialogue-items-container');
         if(!container) return;
@@ -464,7 +499,7 @@
         if(!node.data.dialogues || node.data.dialogues.length === 0){
           container.innerHTML = `
             <div class="gen-meta" style="text-align:center; padding: 20px;">暂无对话数据</div>
-            <div style="margin-top: 12px; text-align: center;">
+            <div style="margin-top: 12px; text-align: center; display: none;">
               <button class="mini-btn dialogue-add-btn" type="button" style="font-size: 11px; padding: 6px 12px; background: #3b82f6; color: white;">+ 添加对话</button>
             </div>
           `;
@@ -500,7 +535,7 @@
               <div class="dialogue-status" data-index="${index}" style="display:none; font-size: 12px; color: #6b7280; margin-bottom: 8px;"></div>
               <div class="dialogue-result" data-index="${index}" style="display:${hasAudio ? 'block' : 'none'};">
                 <audio controls style="width:100%; max-height:32px; margin-bottom: 6px;"></audio>
-                <div style="display: flex; gap: 4px;">
+                <div style="display: flex; gap: 4px; display: none;">
                   <button class="mini-btn dialogue-download-btn" data-index="${index}" type="button" style="font-size: 11px; padding: 4px 8px;">下载</button>
                   <button class="mini-btn dialogue-add-timeline-btn" data-index="${index}" type="button" style="font-size: 11px; padding: 4px 8px; background: #10b981; color: white;">添加到时间轴</button>
                 </div>
@@ -510,13 +545,16 @@
         });
         
         html += `
-          <div style="margin-top: 12px; text-align: center;">
+          <div style="margin-top: 12px; text-align: center; display: none;">
             <button class="mini-btn dialogue-add-btn" type="button" style="font-size: 11px; padding: 6px 12px; background: #3b82f6; color: white;">+ 添加对话</button>
           </div>
         `;
         
         container.innerHTML = html;
         attachDialogueItemEvents();
+        
+        const isSelected = el.classList.contains('selected');
+        updateButtonsVisibility(isSelected);
         
         node.data.dialogues.forEach((dialogue, index) => {
           if(node.data.audioResults[index] && node.data.audioResults[index].audioUrl){

@@ -210,14 +210,14 @@
             <div class="label">预览</div>
             <div class="video-preview">
               <video class="video-thumb" playsinline></video>
+              <div class="video-preview-actions">
+                <button class="vp-btn vp-play" type="button" aria-label="播放">▶</button>
+                <button class="vp-btn vp-zoom" type="button" aria-label="放大">⤢</button>
+              </div>
             </div>
             <div class="gen-meta video-name"></div>
           </div>
           <div class="field field-collapsible video-preview-actions-field" style="display:none;">
-            <div class="video-preview-actions">
-              <button class="vp-btn vp-play" type="button" aria-label="播放">▶</button>
-              <button class="vp-btn vp-zoom" type="button" aria-label="放大">⤢</button>
-            </div>
             <div class="preview-row" style="margin-top: 8px; justify-content: space-between;">
               <div style="display: flex; gap: 8px;">
                 <button class="mini-btn video-add-timeline" type="button">加时间轴</button>

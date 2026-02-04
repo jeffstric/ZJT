@@ -110,6 +110,10 @@
         const nid = Number(nodeEl.dataset.nodeId);
         nodeEl.classList.toggle('selected', nid === id);
       }
+      setTimeout(() => {
+        if(typeof renderConnections === 'function') renderConnections();
+        if(typeof renderImageConnections === 'function') renderImageConnections();
+      }, 250);
     }
 
     function bringNodeToFront(nodeId){
@@ -128,6 +132,10 @@
       for(const nodeEl of canvasEl.querySelectorAll('.node')){
         nodeEl.classList.remove('selected');
       }
+      setTimeout(() => {
+        if(typeof renderConnections === 'function') renderConnections();
+        if(typeof renderImageConnections === 'function') renderImageConnections();
+      }, 250);
     }
 
     function setMultipleSelected(nodeIds){
@@ -137,6 +145,10 @@
         const nid = Number(nodeEl.dataset.nodeId);
         nodeEl.classList.toggle('selected', nodeIds.includes(nid));
       }
+      setTimeout(() => {
+        if(typeof renderConnections === 'function') renderConnections();
+        if(typeof renderImageConnections === 'function') renderImageConnections();
+      }, 250);
     }
 
     function addToSelection(nodeId){
@@ -144,6 +156,10 @@
         state.selectedNodeIds.push(nodeId);
         const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
         if(nodeEl) nodeEl.classList.add('selected');
+        setTimeout(() => {
+          if(typeof renderConnections === 'function') renderConnections();
+          if(typeof renderImageConnections === 'function') renderImageConnections();
+        }, 250);
       }
     }
 
@@ -151,6 +167,10 @@
       state.selectedNodeIds = state.selectedNodeIds.filter(id => id !== nodeId);
       const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
       if(nodeEl) nodeEl.classList.remove('selected');
+      setTimeout(() => {
+        if(typeof renderConnections === 'function') renderConnections();
+        if(typeof renderImageConnections === 'function') renderImageConnections();
+      }, 250);
     }
 
     function initNodeDrag(nodeId, startX, startY){

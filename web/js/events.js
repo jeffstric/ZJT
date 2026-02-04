@@ -1456,6 +1456,15 @@
         removeNode(id);
       });
       
+      // 图片点击放大事件
+      const characterImg = el.querySelector('.character-preview-img');
+      if (characterImg) {
+        characterImg.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openImageModal(character.reference_image, `角色: ${character.name}`);
+        });
+      }
+      
       // 下载图片按钮事件
       const downloadImgBtn = el.querySelector('.character-download-btn');
       if (downloadImgBtn) {
@@ -1604,6 +1613,15 @@
         removeNode(id);
       });
       
+      // 图片点击放大事件
+      const characterImg = el.querySelector('.character-preview-img');
+      if (characterImg) {
+        characterImg.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openImageModal(character.reference_image, `角色: ${character.name}`);
+        });
+      }
+      
       // 下载图片按钮事件
       const downloadImgBtn = el.querySelector('.character-download-btn');
       if (downloadImgBtn) {
@@ -1741,6 +1759,15 @@
         openEditLocationModal(location.id);
       });
       
+      // 图片点击放大事件
+      const locationImg = el.querySelector('.location-preview-img');
+      if (locationImg) {
+        locationImg.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openImageModal(location.reference_image, `场景: ${location.name}`);
+        });
+      }
+      
       // 下载图片按钮事件
       const downloadImgBtn = el.querySelector('.location-download-btn');
       if (downloadImgBtn) {
@@ -1848,6 +1875,15 @@
         e.stopPropagation();
         openEditLocationModal(location.id);
       });
+      
+      // 图片点击放大事件
+      const locationImg = el.querySelector('.location-preview-img');
+      if (locationImg) {
+        locationImg.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openImageModal(location.reference_image, `场景: ${location.name}`);
+        });
+      }
       
       // 下载图片按钮事件
       const downloadImgBtn = el.querySelector('.location-download-btn');
@@ -1968,6 +2004,15 @@
         });
       }
 
+      // 图片点击放大事件
+      const propsImg = el.querySelector('.props-preview-img');
+      if (propsImg) {
+        propsImg.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openImageModal(props.reference_image, `道具: ${props.name}`);
+        });
+      }
+
       // 下载图片按钮事件
       const downloadImgBtn = el.querySelector('.props-download-btn');
       if (downloadImgBtn) {
@@ -2066,6 +2111,15 @@
         editBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           openEditPropsModal(id, props);
+        });
+      }
+
+      // 图片点击放大事件
+      const propsImg = el.querySelector('.props-preview-img');
+      if (propsImg) {
+        propsImg.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openImageModal(props.reference_image, `道具: ${props.name}`);
         });
       }
 

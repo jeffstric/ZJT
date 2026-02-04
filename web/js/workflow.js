@@ -1170,14 +1170,16 @@
       
       const node = state.nodes.find(n => n.id === nodeData.id);
       if(node && nodeData.data){
-        node.data.url = normalizeImageUrl(nodeData.data.url || '');
-        node.data.name = nodeData.data.name || '';
-        node.data.preview = normalizeImageUrl(nodeData.data.preview || nodeData.data.url || '');
-        node.data.prompt = nodeData.data.prompt || '';
-        node.data.ratio = nodeData.data.ratio || '9:16';
-        node.data.model = nodeData.data.model || 'gemini-2.5-pro-image-preview';
-        node.data.drawCount = nodeData.data.drawCount || 1;
-        node.data.project_id = nodeData.data.project_id !== undefined ? nodeData.data.project_id : null;
+        // 直接使用保存的所有属性，确保包括 gridIndex、gridSize、isSplit 等分镜图相关属性都能被恢复
+        Object.assign(node.data, nodeData.data);
+        
+        // 规范化图片 URL
+        if(node.data.url){
+          node.data.url = normalizeImageUrl(node.data.url);
+        }
+        if(node.data.preview){
+          node.data.preview = normalizeImageUrl(node.data.preview);
+        }
         
         // 恢复节点标题
         if(nodeData.title){
