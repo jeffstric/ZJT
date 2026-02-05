@@ -1173,6 +1173,14 @@
         // 直接使用保存的所有属性，确保包括 gridIndex、gridSize、isSplit 等分镜图相关属性都能被恢复
         Object.assign(node.data, nodeData.data);
         
+        // 强制重置相机参数为默认值（用户需求：每次加载都重置）
+        if(node.data.camera){
+          node.data.camera.yaw = 0;
+          node.data.camera.pitch = 0;
+          node.data.camera.dolly = 0;
+          node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+        }
+        
         // 规范化图片 URL
         if(node.data.url){
           node.data.url = normalizeImageUrl(node.data.url);
@@ -1199,6 +1207,27 @@
           if(modelEl) modelEl.value = node.data.model;
           if(drawCountLabel) drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;
+          
+          // 同步相机控制 UI 为重置后的值
+          const cameraYawSlider = el.querySelector('.image-camera-yaw-slider');
+          const cameraYawInput = el.querySelector('.image-camera-yaw');
+          const cameraDollySlider = el.querySelector('.image-camera-dolly-slider');
+          const cameraDollyInput = el.querySelector('.image-camera-dolly');
+          const cameraPitchSlider = el.querySelector('.image-camera-pitch-slider');
+          const cameraPitchInput = el.querySelector('.image-camera-pitch');
+          
+          if(cameraYawSlider) cameraYawSlider.value = 0;
+          if(cameraYawInput) cameraYawInput.value = 0;
+          if(cameraDollySlider) cameraDollySlider.value = 0;
+          if(cameraDollyInput) cameraDollyInput.value = 0;
+          if(cameraPitchSlider) cameraPitchSlider.value = 0;
+          if(cameraPitchInput) cameraPitchInput.value = 0;
+          
+          // 更新 3D 预览
+          const cameraCanvas = el.querySelector('.image-camera-canvas');
+          if(cameraCanvas && typeof window.updateCameraPreview === 'function'){
+            window.updateCameraPreview(cameraCanvas, node.data.camera);
+          }
           
           if(node.data.url || node.data.preview){
             const previewImg = el.querySelector('.image-preview');

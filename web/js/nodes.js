@@ -4087,23 +4087,13 @@
       const cameraControlToggleBtn = el.querySelector('.camera-control-toggle-btn');
       const cameraControlContent = el.querySelector('.camera-control-content');
       
-      // 初始化相机数据
-      if(!node.data.camera){
-        node.data.camera = { 
-          yaw: 0, 
-          dolly: 0, 
-          pitch: 0,
-          modified: { yaw: false, dolly: false, pitch: false }
-        };
-      }
-      // 确保 modified 对象存在（兼容旧数据）
-      if(!node.data.camera.modified){
-        node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
-        // 如果从旧数据加载且参数不为 0，标记为已修改
-        if(node.data.camera.yaw !== 0) node.data.camera.modified.yaw = true;
-        if(node.data.camera.dolly !== 0) node.data.camera.modified.dolly = true;
-        if(node.data.camera.pitch !== 0) node.data.camera.modified.pitch = true;
-      }
+      // 初始化相机数据（强制重置为默认值）
+      node.data.camera = { 
+        yaw: 0, 
+        dolly: 0, 
+        pitch: 0,
+        modified: { yaw: false, dolly: false, pitch: false }
+      };
       
       // 从数据恢复相机参数
       if(cameraYawSlider) cameraYawSlider.value = node.data.camera.yaw ?? 0;
