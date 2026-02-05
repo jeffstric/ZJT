@@ -306,12 +306,14 @@
         nextImgConnId: state.nextImgConnId,
         nextFirstFrameConnId: state.nextFirstFrameConnId,
         nextVideoConnId: state.nextVideoConnId,
+        nextReferenceConnId: state.nextReferenceConnId,
         nextScriptId: state.nextScriptId,
         nodes: serializableNodes,
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
         firstFrameConnections: state.firstFrameConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         videoConnections: state.videoConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        referenceConnections: state.referenceConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         timeline: {
           clips: state.timeline.clips.map(c => ({ ...c })),
           audioClips: state.timeline.audioClips.map(c => ({ ...c })),
@@ -612,6 +614,7 @@
         state.nextImgConnId = data.nextImgConnId || 1;
         state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
         state.nextVideoConnId = data.nextVideoConnId || 1;
+        state.nextReferenceConnId = data.nextReferenceConnId || 1;
         state.nextScriptId = data.nextScriptId || 1;
         
         // 恢复节点
@@ -636,6 +639,10 @@
         
         if(data.videoConnections && Array.isArray(data.videoConnections)){
           state.videoConnections = data.videoConnections;
+        }
+        
+        if(data.referenceConnections && Array.isArray(data.referenceConnections)){
+          state.referenceConnections = data.referenceConnections;
         }
         
         // 恢复时间轴
@@ -672,6 +679,7 @@
         renderImageConnections();
         renderFirstFrameConnections();
         renderVideoConnections();
+        renderReferenceConnections();
         renderMinimap();
         
         // 恢复完成后，更新所有分镜节点的图片选择菜单和角色节点的按钮状态
@@ -683,6 +691,10 @@
             // 更新角色节点的创建角色卡按钮状态
             if(node.type === 'character'){
               updateCharacterCardButtonState(node.id);
+            }
+            // 更新图片节点的参考图显示
+            if(node.type === 'image' && node.updateReferenceImages){
+              node.updateReferenceImages();
             }
           });
         }, 100);
@@ -864,7 +876,7 @@
     
     // ============ 画风管理功能结束 ============
 
-    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count){
+    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count, referenceImageUrls){
       const userId = localStorage.getItem('user_id');
       const authToken = getAuthToken();
       const form = new FormData();
@@ -876,6 +888,13 @@
       } else {
         // 如果是 File 对象，使用 image 参数
         form.append('image', fileOrUrl);
+      }
+      
+      // 添加参考图URL
+      if(referenceImageUrls && Array.isArray(referenceImageUrls) && referenceImageUrls.length > 0){
+        referenceImageUrls.forEach(url => {
+          form.append('reference_image_urls', url);
+        });
       }
       
       form.append('prompt', prompt || '');
@@ -1173,6 +1192,14 @@
         // 直接使用保存的所有属性，确保包括 gridIndex、gridSize、isSplit 等分镜图相关属性都能被恢复
         Object.assign(node.data, nodeData.data);
         
+        // 强制重置相机参数为默认值（用户需求：每次加载都重置）
+        if(node.data.camera){
+          node.data.camera.yaw = 0;
+          node.data.camera.pitch = 0;
+          node.data.camera.dolly = 0;
+          node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+        }
+        
         // 规范化图片 URL
         if(node.data.url){
           node.data.url = normalizeImageUrl(node.data.url);
@@ -1199,6 +1226,27 @@
           if(modelEl) modelEl.value = node.data.model;
           if(drawCountLabel) drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;
+          
+          // 同步相机控制 UI 为重置后的值
+          const cameraYawSlider = el.querySelector('.image-camera-yaw-slider');
+          const cameraYawInput = el.querySelector('.image-camera-yaw');
+          const cameraDollySlider = el.querySelector('.image-camera-dolly-slider');
+          const cameraDollyInput = el.querySelector('.image-camera-dolly');
+          const cameraPitchSlider = el.querySelector('.image-camera-pitch-slider');
+          const cameraPitchInput = el.querySelector('.image-camera-pitch');
+          
+          if(cameraYawSlider) cameraYawSlider.value = 0;
+          if(cameraYawInput) cameraYawInput.value = 0;
+          if(cameraDollySlider) cameraDollySlider.value = 0;
+          if(cameraDollyInput) cameraDollyInput.value = 0;
+          if(cameraPitchSlider) cameraPitchSlider.value = 0;
+          if(cameraPitchInput) cameraPitchInput.value = 0;
+          
+          // 更新 3D 预览
+          const cameraCanvas = el.querySelector('.image-camera-canvas');
+          if(cameraCanvas && typeof window.updateCameraPreview === 'function'){
+            window.updateCameraPreview(cameraCanvas, node.data.camera);
+          }
           
           if(node.data.url || node.data.preview){
             const previewImg = el.querySelector('.image-preview');

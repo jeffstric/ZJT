@@ -1,3 +1,60 @@
+// 将相机参数转换为提示词
+function convertCameraToPrompt(camera) {
+  if (!camera) return '';
+  
+  const parts = [];
+  
+  // 检查是否有 modified 标记（向后兼容：如果没有 modified 对象，则生成所有参数的提示词）
+  const hasModifiedTracking = camera.modified && typeof camera.modified === 'object';
+  
+  // Yaw 转换（0度为正面，负值为左侧，正值为右侧）
+  // 用户的"Camera Move Right" (+Yaw) = 相机在右侧 = 看到人物左脸 = 人物面向左
+  // 用户的"Camera Move Left" (-Yaw) = 相机在左侧 = 看到人物右脸 = 人物面向右
+  const yaw = camera.yaw ?? 0;
+  const yawModified = hasModifiedTracking ? camera.modified.yaw : true;
+  
+  if (yawModified) {
+    if (yaw <= -75) parts.push('正侧面轮廓视图，人物面朝右 (Profile View, Facing Right)');
+    else if (yaw > -75 && yaw <= -45) parts.push('侧面视图，人物面朝右 (Side View, Facing Right)');
+    else if (yaw > -45 && yaw <= -5) parts.push('四分之三侧面视图，人物面朝右 (3/4 View, Facing Right)');
+    else if (yaw > -5 && yaw < 5) parts.push('正面视图 (Front View)');
+    else if (yaw >= 5 && yaw < 45) parts.push('四分之三侧面视图，人物面朝左 (3/4 View, Facing Left)');
+    else if (yaw >= 45 && yaw < 75) parts.push('侧面视图，人物面朝左 (Side View, Facing Left)');
+    else if (yaw >= 75) parts.push('正侧面轮廓视图，人物面朝左 (Profile View, Facing Left)');
+  }
+  
+  // Dolly 转换 - 景别
+  const dolly = camera.dolly ?? 0;
+  const dollyModified = hasModifiedTracking ? camera.modified.dolly : true;
+  
+  if (dollyModified) {
+    if (dolly >= 0 && dolly < 2) parts.push('极远景 (Extreme Long Shot)');
+    else if (dolly >= 2 && dolly < 4) parts.push('远景 (Long Shot)');
+    else if (dolly >= 4 && dolly < 6) parts.push('中景 (Medium Shot)');
+    else if (dolly >= 6 && dolly < 8) parts.push('近景 (Close-up)');
+    else if (dolly >= 8 && dolly <= 10) parts.push('特写 (Extreme Close-up)');
+  }
+  
+  // Pitch 转换 - 拍摄角度
+  const pitch = camera.pitch ?? 0;
+  const pitchModified = hasModifiedTracking ? camera.modified.pitch : true;
+  
+  if (pitchModified) {
+    // 细化垂直角度控制提示词
+    // Pitch < 0: 相机位置在下方，向上仰视 (Low Angle)
+    // Pitch > 0: 相机位置在上方，向下俯视 (High Angle)
+    if (pitch <= -45) parts.push('极低角度仰视，蚂蚁视角 (Extreme Low Angle, Worm\'s-eye view, Looking up)');
+    else if (pitch > -45 && pitch <= -25) parts.push('低角度仰视，从下方拍摄 (Low Angle, Looking up from below)');
+    else if (pitch > -25 && pitch <= -10) parts.push('略微仰视 (Slight Low Angle, Camera slightly below eye level)');
+    else if (pitch > -10 && pitch < 10) parts.push('水平视线 (Eye Level Shot)');
+    else if (pitch >= 10 && pitch < 25) parts.push('略微俯视 (Slight High Angle, Camera slightly above eye level)');
+    else if (pitch >= 25 && pitch < 45) parts.push('高角度俯视，从上方拍摄 (High Angle, Looking down from above)');
+    else if (pitch >= 45) parts.push('极高角度俯视，上帝视角 (Extreme High Angle, Overhead View, Bird\'s-eye view)');
+  }
+  
+  return parts.join('，');
+}
+
 // 移除不存在角色的【【】】标记
 function removeMissingCharacterMarkers(prompt, missingCharacters){
   if(!prompt || !missingCharacters || missingCharacters.size === 0){
@@ -220,6 +277,19 @@ async function generateShotFrameImage(nodeId, node){
     
     if(promptSuffix.length > 0){
       finalPrompt = `${imagePrompt}\n\n${promptSuffix.join('，')}。`;
+    }
+    
+    // 4.5. 添加相机视角描述（从连接的图片节点读取）
+    const connectedImageNode = state.connections
+      .filter(c => c.from === nodeId)
+      .map(c => state.nodes.find(n => n.id === c.to))
+      .find(n => n && n.type === 'image');
+    
+    if(connectedImageNode && connectedImageNode.data.camera){
+      const cameraDesc = convertCameraToPrompt(connectedImageNode.data.camera);
+      if(cameraDesc){
+        finalPrompt = `${finalPrompt}\n\n视角描述：${cameraDesc}`;
+      }
     }
     
     // 4.6. 添加画风文字描述

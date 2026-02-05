@@ -761,6 +761,22 @@ svg.connections path.temp{
   stroke-dasharray: 5,5;
   pointer-events: none;
 }
+svg.connections path.reference-line{
+  fill: none;
+  stroke: #8b5cf6;
+  stroke-width: 3;
+  stroke-dasharray: 5,5;
+  stroke-linecap: round;
+  pointer-events: none;
+  transition: stroke 0.15s, stroke-width 0.15s;
+}
+svg.connections path.reference-line.hover{
+  stroke-width: 5;
+}
+svg.connections path.reference-line.selected{
+  stroke: var(--danger);
+  stroke-width: 5;
+}
 
 .conn-delete-btn{
   position: absolute;
@@ -1301,6 +1317,77 @@ textarea:focus{ border-color: var(--primary); }
   transform: scale(1.1);
   box-shadow: 0 2px 8px rgba(34, 197, 94, 0.4);
 }
+.reference-images-section{
+  padding: 10px;
+  background: #faf5ff;
+  border: 1px solid #e9d5ff;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+.reference-images-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #7c3aed;
+}
+.reference-images-count{
+  color: #8b5cf6;
+}
+.reference-images-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+  gap: 6px;
+}
+.reference-image-item{
+  position: relative;
+  width: 100%;
+  padding-bottom: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 2px solid #e9d5ff;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.reference-image-item:hover{
+  border-color: #8b5cf6;
+}
+.reference-image-item img{
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.reference-image-remove{
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  background: rgba(220, 38, 38, 0.9);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 10;
+}
+.reference-image-item:hover .reference-image-remove{
+  opacity: 1;
+}
+.reference-image-remove:hover{
+  background: rgba(220, 38, 38, 1);
+}
 .video-preview{
   position: relative;
   width: 100%;
@@ -1618,6 +1705,22 @@ textarea:focus{ border-color: var(--primary); }
 .port.video-input-port.can-connect{
   background: #93c5fd;
   box-shadow: 0 0 0 4px rgba(59,130,246,0.3);
+  transform: translateY(-50%) scale(1.3);
+}
+.port.reference{
+  left: -9px;
+  top: 25%;
+  transform: translateY(-50%);
+  border-color: #8b5cf6;
+  background: #8b5cf6;
+}
+.port.reference:hover{
+  background: #c4b5fd;
+  transform: translateY(-50%) scale(1.2);
+}
+.port.reference.can-connect{
+  background: #c4b5fd;
+  box-shadow: 0 0 0 4px rgba(139,92,246,0.3);
   transform: translateY(-50%) scale(1.3);
 }
 
@@ -2192,4 +2295,67 @@ textarea:focus{ border-color: var(--primary); }
 .node[data-type="text"] .text-expand-btn:hover {
   background: var(--primary);
   color: white;
+}
+
+/* 相机控制样式 */
+.camera-control-section {
+  margin-top: 8px;
+}
+
+.camera-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  outline: none;
+  transition: background 0.2s;
+}
+
+.camera-slider:hover {
+  background: #d1d5db;
+}
+
+.camera-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--primary);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.camera-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.camera-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--primary);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  transition: transform 0.2s;
+}
+
+.camera-slider::-moz-range-thumb:hover {
+  transform: scale(1.2);
+}
+
+.camera-input {
+  font-family: 'Courier New', monospace;
+}
+
+.camera-reset-btn:hover {
+  background: #f3f4f6 !important;
+  border-color: #9ca3af !important;
+  color: #374151 !important;
+}
+
+.camera-preview-canvas {
+  display: block;
+  margin: 0 auto;
 }

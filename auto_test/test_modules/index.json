@@ -71,6 +71,12 @@
       "name": "分镜组节点生成视频模块",
       "description": "测试分镜组节点的视频生成功能，包括视频提示词拼接、首帧选择、视频模型选择等",
       "file": "shot_group_video.json"
+    },
+    {
+      "id": "camera_control",
+      "name": "相机控制模块",
+      "description": "测试图片节点上的相机控制功能，包括UI交互、参数同步、3D预览和重置功能",
+      "file": "camera_control.json"
     }
   ]
 }
