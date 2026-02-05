@@ -154,6 +154,11 @@ logger = logging.getLogger(__name__)
 # Initialize Sentry for error monitoring and alerting
 SentryUtil.init_from_env()
 
+# Register all video drivers
+from task.video_drivers import register_all_drivers
+register_all_drivers()
+logger.info("Video drivers registered successfully")
+
 # Allow CORS for local dev if needed
 app.add_middleware(
     CORSMiddleware,
