@@ -77,13 +77,13 @@ class ViduDefaultDriver(BaseVideoDriver):
         
         期望的正确响应格式:
         {
-            "id": "task_123456789",
-            "status": "completed",  # processing, completed, failed
-            "creations": [
-                {
-                    "url": "https://example.com/video.mp4"
-                }
-            ]
+            "id": "916920905987280896",
+            "state": "processing",  # created, queueing, processing, success, failed
+            "err_code": "",
+            "creations": [],  # 处理中时为空，完成后包含结果
+            "credits": 4,
+            "payload": "",
+            ...
         }
         """
         if not isinstance(result, dict):
@@ -96,19 +96,20 @@ class ViduDefaultDriver(BaseVideoDriver):
         if "id" not in result:
             return False, f"响应缺少 'id' 字段，实际字段: {list(result.keys())}"
         
-        if "status" not in result:
-            return False, f"响应缺少 'status' 字段，实际字段: {list(result.keys())}"
+        if "state" not in result:
+            return False, f"响应缺少 'state' 字段，实际字段: {list(result.keys())}"
         
-        task_status = result.get("status")
-        if task_status == "completed":
-            if "creations" not in result:
-                return False, "任务成功但缺少 'creations' 字段"
-            
+        if "creations" not in result:
+            return False, f"响应缺少 'creations' 字段，实际字段: {list(result.keys())}"
+        
+        task_state = result.get("state")
+        if task_state == "success":
             creations = result.get("creations")
-            if not isinstance(creations, list) or len(creations) == 0:
-                return False, "任务成功但 'creations' 为空或类型错误"
+            if not isinstance(creations, list):
+                return False, "任务成功但 'creations' 类型错误"
             
-            if "url" not in creations[0]:
+            # creations 可以为空列表（表示任务完成但没有结果）
+            if len(creations) > 0 and "url" not in creations[0]:
                 return False, "创作对象缺少 'url' 字段"
         
         return True, None
@@ -275,16 +276,16 @@ class ViduDefaultDriver(BaseVideoDriver):
                     "error_type": "SYSTEM"
                 }
             
-            task_status = result.get("status", "")
+            task_state = result.get("state", "")
             
             # 映射 Vidu 状态到统一状态
-            if task_status == "completed":
+            if task_state == "success":
                 creations = result.get("creations", [])
                 if creations and len(creations) > 0:
-                    video_url = creations[0].get("url")
+                    result_url = creations[0].get("url")
                     return {
                         "status": "SUCCESS",
-                        "video_url": video_url
+                        "result_url": result_url
                     }
                 else:
                     return {
@@ -292,18 +293,25 @@ class ViduDefaultDriver(BaseVideoDriver):
                         "error": "任务成功但未返回视频URL",
                         "error_type": "SYSTEM"
                     }
-            elif task_status == "failed":
+            elif task_state == "failed":
                 error_code = result.get("err_code", "任务失败")
                 return {
                     "status": "FAILED",
                     "error": error_code,
                     "error_type": "USER"
                 }
-            else:
-                # processing 或其他状态
+            elif task_state in ["created", "queueing", "processing"]:
+                # 任务创建、排队或处理中
                 return {
                     "status": "RUNNING",
                     "message": "任务处理中..."
+                }
+            else:
+                # 未知状态
+                self.logger.warning(f"Unknown Vidu task state: {task_state}")
+                return {
+                    "status": "RUNNING",
+                    "message": f"任务状态: {task_state}"
                 }
                 
         except Exception as e:

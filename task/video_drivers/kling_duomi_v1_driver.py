@@ -317,10 +317,10 @@ class KlingDuomiV1Driver(BaseVideoDriver):
             if task_status == "succeed":
                 videos = data.get("task_result", {}).get("videos", [])
                 if videos and len(videos) > 0:
-                    video_url = videos[0].get("url")
+                    result_url = videos[0].get("url")
                     return {
                         "status": "SUCCESS",
-                        "video_url": video_url
+                        "result_url": result_url
                     }
                 else:
                     return {

@@ -306,10 +306,10 @@ class GeminiProDuomiV1Driver(BaseVideoDriver):
             # 映射状态到统一状态
             if task_status == 1:
                 # 成功
-                image_url = data.get("mediaUrl")
+                result_url = data.get("mediaUrl")
                 return {
                     "status": "SUCCESS",
-                    "image_url": image_url
+                    "result_url": result_url
                 }
             elif task_status == 2:
                 # 失败

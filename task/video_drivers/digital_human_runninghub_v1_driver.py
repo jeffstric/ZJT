@@ -4,7 +4,7 @@ Digital Human RunningHub v1 版本驱动实现
 from typing import Dict, Any, Optional
 import traceback
 from .base_video_driver import BaseVideoDriver
-from runninghub_request import create_digital_human, get_task_status
+from runninghub_request import create_digital_human, check_ltx2_task_status
 from utils.sentry_util import SentryUtil, AlertLevel
 
 
@@ -45,31 +45,21 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
         
         期望的正确响应格式:
         {
-            "code": 0,
-            "msg": "success",
-            "data": {
-                "taskId": "task_123456789"
-            }
+            "taskId": "2019324151986266113",
+            "status": "RUNNING",
+            "errorCode": "",
+            "errorMessage": "",
+            ...
         }
         """
         if not isinstance(result, dict):
             return False, f"响应不是字典类型，实际类型: {type(result)}"
         
-        if "code" not in result:
-            return False, f"响应缺少 'code' 字段，实际字段: {list(result.keys())}"
+        if "taskId" not in result:
+            return False, f"响应缺少 'taskId' 字段，实际字段: {list(result.keys())}"
         
-        if result.get("code") != 0:
-            return True, None  # code != 0 表示业务错误，格式仍然有效
-        
-        if "data" not in result:
-            return False, f"响应缺少 'data' 字段，实际字段: {list(result.keys())}"
-        
-        data = result.get("data")
-        if not isinstance(data, dict):
-            return False, f"'data' 字段类型错误，期望 dict，实际: {type(data)}"
-        
-        if "taskId" not in data:
-            return False, f"'data' 缺少 'taskId' 字段，实际字段: {list(data.keys())}"
+        if "status" not in result:
+            return False, f"响应缺少 'status' 字段，实际字段: {list(result.keys())}"
         
         return True, None
     
@@ -196,18 +186,19 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
                     "retry": False
                 }
             
-            # 检查业务错误
-            if result.get("code") != 0:
-                error_msg = result.get("msg", "未知错误")
-                self.logger.warning(f"Digital Human API returned error: code={result.get('code')}, msg={error_msg}")
+            # 检查业务错误（通过 errorCode 或 errorMessage 判断）
+            error_code = result.get("errorCode", "")
+            error_message = result.get("errorMessage", "")
+            if error_code or error_message:
+                self.logger.warning(f"Digital Human API returned error: errorCode={error_code}, errorMessage={error_message}")
                 return {
                     "success": False,
-                    "error": f"任务提交失败: {error_msg}",
+                    "error": f"任务提交失败: {error_message or error_code}",
                     "error_type": "USER",
                     "retry": False
                 }
             
-            task_id = result.get("data", {}).get("taskId")
+            task_id = result.get("taskId")
             if not task_id:
                 return {
                     "success": False,
@@ -260,7 +251,7 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
             
             # 调用外部 API
             try:
-                result = get_task_status(task_id=project_id)
+                result = check_ltx2_task_status(task_id=project_id)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Digital Human status check: {str(network_error)}")
@@ -271,15 +262,13 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
             
             self.logger.info(f"Digital Human status API response: {result}")
             
-            # 验证响应格式
-            is_valid, validation_error = self._validate_status_response(result)
-            if not is_valid:
-                # 格式错误，发送报警
+            # check_ltx2_task_status 返回格式: {"status": "SUCCESS/RUNNING/FAILED", "task_id": "...", "results": [...]}
+            if not isinstance(result, dict) or "status" not in result:
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message=f"Digital Human check_status 响应格式错误: {validation_error}",
+                    message="Digital Human check_ltx2_task_status 响应格式异常",
                     context={
-                        "api": "get_task_status",
+                        "api": "check_ltx2_task_status",
                         "response": result,
                         "project_id": project_id
                     }
@@ -288,31 +277,32 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
                     "status": "FAILED",
                     "error": "服务异常，请联系技术支持",
                     "error_type": "SYSTEM",
-                    "error_detail": f"API响应格式错误: {validation_error}"
+                    "error_detail": "RunningHub 响应格式错误"
                 }
             
-            # 检查业务错误
-            if result.get("code") != 0:
-                error_msg = result.get("msg", "未知错误")
-                self.logger.warning(f"Digital Human status API returned error: code={result.get('code')}, msg={error_msg}")
-                return {
-                    "status": "FAILED",
-                    "error": f"查询任务状态失败: {error_msg}",
-                    "error_type": "SYSTEM"
-                }
-            
-            data = result.get("data", {})
-            task_status = data.get("status", "")
+            task_status = result.get("status", "")
             
             # 映射 RunningHub 状态到统一状态
             if task_status == "SUCCESS":
-                video_url = data.get("result", {}).get("videoUrl")
+                # 从 results 中提取视频 URL
+                results = result.get("results", [])
+                result_url = None
+                if results:
+                    for item in results:
+                        if hasattr(item, 'file_url'):
+                            result_url = item.file_url
+                            break
+                        elif isinstance(item, dict):
+                            result_url = item.get("file_url") or item.get("fileUrl")
+                            if result_url:
+                                break
+                
                 return {
                     "status": "SUCCESS",
-                    "video_url": video_url
+                    "result_url": result_url
                 }
             elif task_status == "FAILED":
-                error_msg = data.get("errorMessage", "任务失败")
+                error_msg = result.get("error") or result.get("message") or "任务失败"
                 return {
                     "status": "FAILED",
                     "error": error_msg,

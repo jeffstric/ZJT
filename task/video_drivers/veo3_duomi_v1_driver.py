@@ -276,10 +276,10 @@ class Veo3DuomiV1Driver(BaseVideoDriver):
             # 映射状态到统一状态
             if task_status == 1:
                 # 成功
-                video_url = data.get("mediaUrl")
+                result_url = data.get("mediaUrl")
                 return {
                     "status": "SUCCESS",
-                    "video_url": video_url
+                    "result_url": result_url
                 }
             elif task_status == 2:
                 # 失败
