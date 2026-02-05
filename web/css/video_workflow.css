@@ -1380,6 +1380,7 @@ textarea:focus{ border-color: var(--primary); }
   justify-content: center;
   opacity: 0;
   transition: opacity 0.2s;
+  z-index: 10;
 }
 .reference-image-item:hover .reference-image-remove{
   opacity: 1;

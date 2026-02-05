@@ -1865,6 +1865,7 @@
       renderImageConnections();
       renderFirstFrameConnections();
       renderVideoConnections();
+      renderReferenceConnections();
       
       // 如果删除的连接涉及分镜节点，更新其预览图和选择菜单
       if(conn){
@@ -3540,18 +3541,12 @@
               <button class="reference-image-remove" data-conn-id="${conn.id}">×</button>
             `;
             
-            // 点击图片预览
-            item.querySelector('img').addEventListener('click', (e) => {
-              e.stopPropagation();
-              if(window.imageModal){
-                window.imageModalImg.src = imgUrl;
-                window.imageModalTitle.textContent = sourceNode.title || '参考图';
-                window.imageModal.style.display = 'flex';
-              }
-            });
+            const imgEl = item.querySelector('img');
+            const removeBtn = item.querySelector('.reference-image-remove');
             
-            // 删除参考连接
-            item.querySelector('.reference-image-remove').addEventListener('click', (e) => {
+            // 删除参考连接（先绑定删除按钮事件，优先级更高）
+            removeBtn.addEventListener('click', (e) => {
+              e.preventDefault();
               e.stopPropagation();
               const connId = parseInt(e.target.dataset.connId);
               const idx = state.referenceConnections.findIndex(c => c.id === connId);
@@ -3559,7 +3554,26 @@
                 state.referenceConnections.splice(idx, 1);
                 renderReferenceConnections();
                 updateReferenceImages();
-                try{ autoSaveWorkflow(); } catch(e){}
+                try{ autoSaveWorkflow(); } catch(err){}
+              }
+            });
+            
+            // 点击图片预览（使用 mousedown 而不是 click，避免与删除按钮冲突）
+            imgEl.addEventListener('mousedown', (e) => {
+              // 检查是否点击的是删除按钮区域
+              if(e.target === removeBtn) return;
+              e.stopPropagation();
+            });
+            
+            imgEl.addEventListener('click', (e) => {
+              // 检查是否点击的是删除按钮区域
+              if(e.target === removeBtn) return;
+              e.stopPropagation();
+              if(window.imageModal){
+                window.imageModalImg.src = imgUrl;
+                window.imageModalTitle.textContent = sourceNode.title || '参考图';
+                window.imageModal.classList.add('show');
+                window.imageModal.setAttribute('aria-hidden', 'false');
               }
             });
             
@@ -3915,8 +3929,18 @@
             finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
           }
 
+          // 收集参考图URL
+          const referenceImageUrls = [];
+          const referenceConns = state.referenceConnections.filter(c => c.to === node.id);
+          for(const conn of referenceConns){
+            const refNode = state.nodes.find(n => n.id === conn.from);
+            if(refNode && refNode.data && refNode.data.url){
+              referenceImageUrls.push(refNode.data.url);
+            }
+          }
+
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
-          const submitRes = await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount);
+          const submitRes = await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount, referenceImageUrls);
           statusEl.textContent = '任务已提交，正在生成图片...';
           node.data.projectIds = submitRes.projectIds;
 
@@ -3952,6 +3976,7 @@
           renderImageConnections();
           renderFirstFrameConnections();
           renderVideoConnections();
+          renderReferenceConnections();
 
           try{ autoSaveWorkflow(); } catch(e){}
           renderMinimap();
@@ -5737,6 +5762,7 @@
               renderImageConnections();
               renderFirstFrameConnections();
               renderVideoConnections();
+              renderReferenceConnections();
               renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }

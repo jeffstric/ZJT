@@ -306,12 +306,14 @@
         nextImgConnId: state.nextImgConnId,
         nextFirstFrameConnId: state.nextFirstFrameConnId,
         nextVideoConnId: state.nextVideoConnId,
+        nextReferenceConnId: state.nextReferenceConnId,
         nextScriptId: state.nextScriptId,
         nodes: serializableNodes,
         connections: state.connections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         imageConnections: state.imageConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType })),
         firstFrameConnections: state.firstFrameConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         videoConnections: state.videoConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        referenceConnections: state.referenceConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         timeline: {
           clips: state.timeline.clips.map(c => ({ ...c })),
           audioClips: state.timeline.audioClips.map(c => ({ ...c })),
@@ -612,6 +614,7 @@
         state.nextImgConnId = data.nextImgConnId || 1;
         state.nextFirstFrameConnId = data.nextFirstFrameConnId || 1;
         state.nextVideoConnId = data.nextVideoConnId || 1;
+        state.nextReferenceConnId = data.nextReferenceConnId || 1;
         state.nextScriptId = data.nextScriptId || 1;
         
         // 恢复节点
@@ -636,6 +639,10 @@
         
         if(data.videoConnections && Array.isArray(data.videoConnections)){
           state.videoConnections = data.videoConnections;
+        }
+        
+        if(data.referenceConnections && Array.isArray(data.referenceConnections)){
+          state.referenceConnections = data.referenceConnections;
         }
         
         // 恢复时间轴
@@ -672,6 +679,7 @@
         renderImageConnections();
         renderFirstFrameConnections();
         renderVideoConnections();
+        renderReferenceConnections();
         renderMinimap();
         
         // 恢复完成后，更新所有分镜节点的图片选择菜单和角色节点的按钮状态
@@ -683,6 +691,10 @@
             // 更新角色节点的创建角色卡按钮状态
             if(node.type === 'character'){
               updateCharacterCardButtonState(node.id);
+            }
+            // 更新图片节点的参考图显示
+            if(node.type === 'image' && node.updateReferenceImages){
+              node.updateReferenceImages();
             }
           });
         }, 100);
@@ -864,7 +876,7 @@
     
     // ============ 画风管理功能结束 ============
 
-    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count){
+    async function generateEditedImage(fileOrUrl, prompt, ratio, model, count, referenceImageUrls){
       const userId = localStorage.getItem('user_id');
       const authToken = getAuthToken();
       const form = new FormData();
@@ -876,6 +888,13 @@
       } else {
         // 如果是 File 对象，使用 image 参数
         form.append('image', fileOrUrl);
+      }
+      
+      // 添加参考图URL
+      if(referenceImageUrls && Array.isArray(referenceImageUrls) && referenceImageUrls.length > 0){
+        referenceImageUrls.forEach(url => {
+          form.append('reference_image_urls', url);
+        });
       }
       
       form.append('prompt', prompt || '');
