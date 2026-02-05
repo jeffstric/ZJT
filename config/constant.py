@@ -38,6 +38,24 @@ VIDEO_MODEL_DURATION_OPTIONS = {
     'veo3': [8],  # VEO3 固定算力，支持8秒
 }
 
+# AI Tools 状态常量
+AI_TOOL_STATUS_PENDING = 0      # 未处理
+AI_TOOL_STATUS_PROCESSING = 1   # 正在处理
+AI_TOOL_STATUS_FAILED = -1      # 处理失败
+AI_TOOL_STATUS_COMPLETED = 2    # 处理完成
+
+# Tasks 状态常量
+TASK_STATUS_QUEUED = 0          # 队列中
+TASK_STATUS_PROCESSING = 1      # 处理中
+TASK_STATUS_COMPLETED = 2       # 处理完成
+TASK_STATUS_FAILED = -1         # 处理失败
+
+# AI Audio 状态常量
+AI_AUDIO_STATUS_PENDING = 0     # 未处理
+AI_AUDIO_STATUS_PROCESSING = 1  # 处理中
+AI_AUDIO_STATUS_FAILED = -1     # 处理失败
+AI_AUDIO_STATUS_COMPLETED = 2   # 处理完成
+
 AUTHENTICATION_ID = 'aa63d4090d59401b9862223087c25b98'
 
 RECHARGE_PACKAGES = [

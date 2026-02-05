@@ -35,7 +35,22 @@ from duomi_api_requset import create_video_remix, create_character as create_cha
 from PIL import Image
 from llm import call_ernie_vl_api
 from task.scheduler import init_scheduler
-from config.constant import TASK_COMPUTING_POWER, TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO, RECHARGE_PACKAGES, AUTHENTICATION_ID, VIDEO_MODEL_DURATION_OPTIONS
+from config.constant import (
+    TASK_COMPUTING_POWER, 
+    TASK_TYPE_GENERATE_VIDEO, 
+    TASK_TYPE_GENERATE_AUDIO, 
+    RECHARGE_PACKAGES, 
+    AUTHENTICATION_ID, 
+    VIDEO_MODEL_DURATION_OPTIONS,
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_PROCESSING,
+    AI_TOOL_STATUS_COMPLETED,
+    AI_TOOL_STATUS_FAILED,
+    TASK_STATUS_QUEUED,
+    TASK_STATUS_PROCESSING,
+    TASK_STATUS_COMPLETED,
+    TASK_STATUS_FAILED
+)
 from utils.wechat_pay_util import WechatPayUtil
 from utils.image_grid_splitter import ImageGridSplitter
 
@@ -1053,13 +1068,13 @@ async def image_edit(
                         image_path=image_path_str,
                         ratio=ratio,
                         transaction_id=transaction_id,
-                        status=0,
+                        status=AI_TOOL_STATUS_PENDING,
                         image_size=image_size
                     )
                     TasksModel.create(
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
-                        status=0
+                        status=TASK_STATUS_QUEUED
                     )
                     project_ids.append(id)
                 except Exception as db_error:
@@ -1156,7 +1171,7 @@ async def text_to_image(
                         detail=message
                     )
 
-            # Create database record (status=0, will be processed by scheduler)
+            # Create database record (status=AI_TOOL_STATUS_PENDING, will be processed by scheduler)
             if user_id:
                 try:
                     id = AIToolsModel.create(
@@ -1165,13 +1180,13 @@ async def text_to_image(
                         type=text_to_image_type,
                         ratio=aspect_ratio,
                         transaction_id=transaction_id,
-                        status=0,
+                        status=AI_TOOL_STATUS_PENDING,
                         image_size=image_size
                     )
                     TasksModel.create(
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
-                        status=0
+                        status=TASK_STATUS_QUEUED
                     )
                     project_ids.append(id)
                 except Exception as db_error:
@@ -1214,7 +1229,7 @@ async def runninghub_status(
                     AIToolsModel.update_by_project_id(
                         project_id=project_id,
                         result_url=result_url,
-                        status=2
+                        status=AI_TOOL_STATUS_COMPLETED
                     )
                 except Exception as db_error:
                     logger.error(f"Failed to update database record: {db_error}")
@@ -1234,7 +1249,7 @@ async def runninghub_status(
         elif status == TaskStatus.FAILED:
             AIToolsModel.update_by_project_id(
                 project_id=project_id,
-                status=-1
+                status=AI_TOOL_STATUS_FAILED
             )
             if CHECK_AUTH_TOKEN and auth_token:
                 # 生成交易ID
@@ -1444,12 +1459,12 @@ async def ai_app_run(
                         ratio=ratio,
                         transaction_id=transaction_id,
                         duration=duration_seconds,
-                        status=0
+                        status=AI_TOOL_STATUS_PENDING
                     )
                     TasksModel.create(
                         task_type=TASK_TYPE_GENERATE_VIDEO,
                         task_id=id,
-                        status=0
+                        status=TASK_STATUS_QUEUED
                     )
                     project_ids.append(id)
                 except Exception as db_error:
@@ -1684,12 +1699,12 @@ async def ai_app_run_image(
                             ratio=ratio_value,
                             duration=duration_value,
                             transaction_id=transaction_id,
-                            status=0
+                            status=AI_TOOL_STATUS_PENDING
                         )
                         TasksModel.create(
                             task_type=TASK_TYPE_GENERATE_VIDEO,
                             task_id=id,
-                            status=0
+                            status=TASK_STATUS_QUEUED
                         )
                         project_ids.append(id)
                     except Exception as db_error:
@@ -2184,14 +2199,14 @@ async def get_ai_tools_history(
                                 AIToolsModel.update_by_project_id(
                                     project_id=task.project_id,
                                     result_url=result_url,
-                                    status=2  # 处理完成
+                                    status=AI_TOOL_STATUS_COMPLETED
                                 )
                                 updated_count += 1
                                 logger.info(f"Upscale task {task.project_id} completed successfully")
                         elif status == TaskStatus.FAILED:
                             AIToolsModel.update_by_project_id(
                                 project_id=task.project_id,
-                                status=-1,  # 处理失败
+                                status=AI_TOOL_STATUS_FAILED,
                                 message="高清放大失败"
                             )
                             updated_count += 1
@@ -2614,7 +2629,7 @@ async def image_upscale(
             project_id=task_id,  # Use the new task_id as project_id
             ratio=original_record.ratio,
             transaction_id=transaction_id,  # Store transaction ID
-            status=1  # 1-正在处理
+            status=AI_TOOL_STATUS_PROCESSING
         )
         
         logger.info(f"Created upscale record with ID: {new_record_id}, project_id: {task_id}")
@@ -2779,7 +2794,7 @@ async def video_enhance(
                     image_path=final_video_url,
                     project_id=project_id,
                     transaction_id=transaction_id,
-                    status=1
+                    status=AI_TOOL_STATUS_PROCESSING
                 )
             except Exception as db_error:
                 logger.error(f"Failed to create database record: {db_error}")
@@ -2935,7 +2950,7 @@ async def video_remix(
                             duration=duration,
                             project_id=project_id,
                             transaction_id=transaction_id,
-                            status=1,  # 1-正在处理
+                            status=AI_TOOL_STATUS_PROCESSING,
                             message=f"原视频ID: {video_id}"
                         )
                     except Exception as db_error:
@@ -3102,7 +3117,7 @@ async def api_create_character(
                     type=8,  # 8-创建角色卡
                     project_id=task_id,
                     transaction_id=transaction_id,
-                    status=1,  # 1-正在处理
+                    status=AI_TOOL_STATUS_PROCESSING,
                     message=source_info
                 )
             except Exception as db_error:
@@ -3215,12 +3230,12 @@ async def digital_human_generate(
                     ratio=aspect_ratio,
                     message=audio_url,  # Store audio URL in message field
                     transaction_id=transaction_id,
-                    status=0
+                    status=AI_TOOL_STATUS_PENDING
                 )
                 TasksModel.create(
                     task_type=TASK_TYPE_GENERATE_VIDEO,
                     task_id=id,
-                    status=0
+                    status=TASK_STATUS_QUEUED
                 )
                 
                 return JSONResponse({
@@ -3306,12 +3321,12 @@ async def audio_generate(
                     emo_weight=emo_weight,
                     emo_vec=emo_vec,
                     emo_control_method=emo_control_method,
-                    status=0
+                    status=AI_AUDIO_STATUS_PENDING
                 )
                 TasksModel.create(
                     task_type=TASK_TYPE_GENERATE_AUDIO,
                     task_id=audio_id,
-                    status=0
+                    status=TASK_STATUS_QUEUED
                 )
             except Exception as db_error:
                 logger.error(f"Failed to create audio database record: {db_error}")
@@ -3336,8 +3351,8 @@ async def audio_status(audio_id: int):
     查询音频生成任务状态。
     
     根据 ai_audio 表记录判断：
-    - status == 2 且 result_url 有值：SUCCESS
-    - status == -1：FAILED
+    - status == AI_AUDIO_STATUS_COMPLETED 且 result_url 有值：SUCCESS
+    - status == AI_AUDIO_STATUS_FAILED：FAILED
     - 其他：RUNNING
     """
     try:
@@ -3345,7 +3360,7 @@ async def audio_status(audio_id: int):
         if not record:
             raise HTTPException(status_code=404, detail=f"未找到音频任务 {audio_id}")
         
-        if record.status == 2 and record.result_url:
+        if record.status == AI_AUDIO_STATUS_COMPLETED and record.result_url:
             file_path = record.result_url
             if not os.path.isfile(file_path):
                 logger.error(f"Audio file not found for task {audio_id}: {file_path}")
@@ -3362,7 +3377,7 @@ async def audio_status(audio_id: int):
                 media_type=media_type or "audio/wav",
                 headers=headers
             )
-        elif record.status == -1:
+        elif record.status == AI_AUDIO_STATUS_FAILED:
             return JSONResponse({
                 "audio_id": record.id,
                 "status": "FAILED",
@@ -3421,7 +3436,7 @@ async def api_character_status(
                 AIToolsModel.update_by_project_id(
                     project_id=task_id,
                     result_url=character_ids,  # Store character IDs in result_url field
-                    status=2  # 2-处理完成
+                    status=AI_TOOL_STATUS_COMPLETED
                 )
             except Exception as db_error:
                 logger.error(f"Failed to update character record: {db_error}")
@@ -3436,12 +3451,12 @@ async def api_character_status(
             # Update database record as failed
             try:
                 task_record = AIToolsModel.get_by_project_id(task_id)
-                already_failed = task_record and task_record.status == -1
+                already_failed = task_record and task_record.status == AI_TOOL_STATUS_FAILED
                 
                 if not already_failed:
                     AIToolsModel.update_by_project_id(
                         project_id=task_id,
-                        status=-1,  # -1-处理失败
+                        status=AI_TOOL_STATUS_FAILED,
                         message=response.get("message", "任务失败")
                     )
                     

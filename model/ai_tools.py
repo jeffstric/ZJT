@@ -4,6 +4,12 @@ AI Tools Model - Database operations for ai_tools table
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from .database import execute_query, execute_update, execute_insert
+from config.constant import (
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_PROCESSING,
+    AI_TOOL_STATUS_FAILED,
+    AI_TOOL_STATUS_COMPLETED
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -64,7 +70,7 @@ class AIToolsModel:
         project_id: Optional[str] = None,
         transaction_id: Optional[str] = None,
         result_url: Optional[str] = None,
-        status: Optional[int] = 0,
+        status: Optional[int] = AI_TOOL_STATUS_PENDING,
         message: Optional[str] = None,
         image_size: Optional[str] = None
     ) -> int:
@@ -81,7 +87,7 @@ class AIToolsModel:
             project_id: Project ID (optional)
             transaction_id: Transaction ID (optional)
             result_url: Result URL (optional)
-            status: Status (0-未处理, 1-正在处理, -1-处理失败, 2-处理完成, default: 0)
+            status: Status (AI_TOOL_STATUS_PENDING-未处理, AI_TOOL_STATUS_PROCESSING-正在处理, AI_TOOL_STATUS_FAILED-处理失败, AI_TOOL_STATUS_COMPLETED-处理完成, default: AI_TOOL_STATUS_PENDING)
             message: Error message (optional)
             image_size: Image size (1K, 2K, 4K) (optional)
 
@@ -240,12 +246,12 @@ class AIToolsModel:
         """
         sql = """
             SELECT * FROM ai_tools 
-            WHERE user_id = %s AND status = 1
+            WHERE user_id = %s AND status = %s
             ORDER BY create_time DESC
         """
         
         try:
-            results = execute_query(sql, (user_id,), fetch_all=True)
+            results = execute_query(sql, (user_id, AI_TOOL_STATUS_PROCESSING), fetch_all=True)
             tools = [AITool(**row) for row in results] if results else []
             return tools
         except Exception as e:

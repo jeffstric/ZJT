@@ -30,7 +30,18 @@ from vidu_api_requset import (
     get_vidu_task_status
 )
 from model import TasksModel, AIToolsModel, RunningHubSlotsModel
-from config.constant import TASK_TYPE_GENERATE_VIDEO,AUTHENTICATION_ID
+from config.constant import (
+    TASK_TYPE_GENERATE_VIDEO,
+    AUTHENTICATION_ID,
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_PROCESSING,
+    AI_TOOL_STATUS_COMPLETED,
+    AI_TOOL_STATUS_FAILED,
+    TASK_STATUS_QUEUED,
+    TASK_STATUS_PROCESSING,
+    TASK_STATUS_COMPLETED,
+    TASK_STATUS_FAILED
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -72,7 +83,7 @@ def calculate_next_retry_delay(try_count):
 
 def _submit_new_task(ai_tool):
     """
-    Submit a new task to external API (status == 0)
+    Submit a new task to external API (status == AI_TOOL_STATUS_PENDING)
     
     Args:
         ai_tool: AITool object
@@ -293,8 +304,8 @@ def _submit_new_task(ai_tool):
         logger.error("Failed to create project")
         return False
     
-    AIToolsModel.update(task_id, project_id=project_id, status=1)
-    TasksModel.update_by_task_id(task_id, status=1)
+    AIToolsModel.update(task_id, project_id=project_id, status=AI_TOOL_STATUS_PROCESSING)
+    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
     
     # 如果是 RunningHub 任务，更新槽位的 project_id
     is_runninghub = ai_tool_type in [10, 11, 13]
@@ -309,7 +320,7 @@ def _submit_new_task(ai_tool):
 
 def _check_task_status(ai_tool):
     """
-    Check task status from external API (status == 1)
+    Check task status from external API (status == AI_TOOL_STATUS_PROCESSING)
     
     Args:
         ai_tool: AITool object
@@ -322,7 +333,7 @@ def _check_task_status(ai_tool):
     task_id = ai_tool.id
     
     if not project_id:
-        logger.error(f"AI tool {task_id} has no project_id while status=1")
+        logger.error(f"AI tool {task_id} has no project_id while status=AI_TOOL_STATUS_PROCESSING")
         return False
 
     # Check if this is LTX2.0, Wan2.2 or Digital Human model (type=10, 11, 13, all use RunningHub)
@@ -486,9 +497,9 @@ def _handle_task_success(project_id, task_id, media_url):
         AIToolsModel.update_by_project_id(
             project_id=project_id,
             result_url=media_url,
-            status=2
+            status=AI_TOOL_STATUS_COMPLETED
         )
-        TasksModel.update_by_task_id(task_id, status=2)
+        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
         
         # 释放 RunningHub 槽位（通过 project_id）
         RunningHubSlotsModel.release_slot_by_project_id(project_id)
@@ -523,10 +534,10 @@ def _handle_task_failure(project_id, task_id, ai_tool_type, reason, user_id):
     try:
         AIToolsModel.update_by_project_id(
             project_id=project_id,
-            status=-1,
+            status=AI_TOOL_STATUS_FAILED,
             message=reason
         )
-        TasksModel.update_by_task_id(task_id, status=-1)
+        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
         
         # 释放 RunningHub 槽位
         is_runninghub = ai_tool_type in [10, 11]
@@ -613,9 +624,9 @@ def process_generate_video(task):
         
         status = ai_tool.status
         
-        if status == 0:
+        if status == AI_TOOL_STATUS_PENDING:
             return _submit_new_task(ai_tool)
-        elif status == 1:
+        elif status == AI_TOOL_STATUS_PROCESSING:
             return _check_task_status(ai_tool)
         else:
             logger.warning(f"Unexpected status {status} for task {task.task_id}")
@@ -701,8 +712,8 @@ def process_task_with_retry(task_type, process_func):
                 # 检查任务是否过期
                 if _check_task_expiration(task):
                     # 标记任务为失败
-                    TasksModel.update_by_task_id(task.task_id, status=-1)
-                    AIToolsModel.update(task.task_id, status=-1, message="任务已过期")
+                    TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_FAILED)
+                    AIToolsModel.update(task.task_id, status=AI_TOOL_STATUS_FAILED, message="任务已过期")
                     
                     # 释放 RunningHub 槽位
                     ai_tool = AIToolsModel.get_by_id(task.task_id)
@@ -719,8 +730,8 @@ def process_task_with_retry(task_type, process_func):
                 # 检查是否超过最大重试次数
                 if _check_max_retry_exceeded(task):
                     # 标记任务为失败
-                    TasksModel.update_by_task_id(task.task_id, status=-1)
-                    AIToolsModel.update(task.task_id, status=-1, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
+                    TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_FAILED)
+                    AIToolsModel.update(task.task_id, status=AI_TOOL_STATUS_FAILED, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
                     
                     # 获取 AI 工具详情用于退还算力和释放槽位
                     ai_tool = AIToolsModel.get_by_id(task.task_id)
@@ -776,7 +787,7 @@ def process_task_with_retry(task_type, process_func):
                 is_runninghub = ai_tool.type in [10, 11]
                 
                 # 如果是 RunningHub 任务且状态为0（未提交）
-                if is_runninghub and task.status == 0:
+                if is_runninghub and task.status == TASK_STATUS_QUEUED:
                     # 尝试获取槽位
                     slot_acquired = RunningHubSlotsModel.try_acquire_slot(
                         task_table_id=task.id,
@@ -797,9 +808,9 @@ def process_task_with_retry(task_type, process_func):
                         continue  # 跳过此任务，处理下一个
                 
                 # Update status to 1 (处理中) if it's 0 (队列中)
-                if task.status == 0:
-                    TasksModel.update_by_task_id(task.task_id, status=1)
-                    logger.info(f"Updated task {task.task_id} status to 1 (处理中)")
+                if task.status == TASK_STATUS_QUEUED:
+                    TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_PROCESSING)
+                    logger.info(f"Updated task {task.task_id} status to TASK_STATUS_PROCESSING (处理中)")
                 
                 # Call the specific processing function
                 success= process_func(task)
