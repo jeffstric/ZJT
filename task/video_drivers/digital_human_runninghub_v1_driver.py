@@ -136,14 +136,7 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
             self.logger.info(f"Submitting Digital Human task: text='{ai_tool.prompt[:50]}...', ratio={ai_tool.ratio}")
             
             # 从 extra_config 中获取 audio_url
-            import json
-            audio_url = ""
-            if ai_tool.extra_config:
-                try:
-                    extra_config = json.loads(ai_tool.extra_config)
-                    audio_url = extra_config.get("audio_url", "")
-                except json.JSONDecodeError:
-                    self.logger.warning(f"Failed to parse extra_config: {ai_tool.extra_config}")
+            audio_url = ai_tool.message or ""
             
             # 调用外部 API
             try:

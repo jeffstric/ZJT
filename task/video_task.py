@@ -81,253 +81,525 @@ def calculate_next_retry_delay(try_count):
     return min(delay_seconds, max_delay)
 
 
+# def _submit_new_task(ai_tool):
+#     """
+#     Submit a new task to external API (status == AI_TOOL_STATUS_PENDING)
+    
+#     Args:
+#         ai_tool: AITool object
+    
+#     Returns:
+#         bool: True if successful, False otherwise
+#     """
+#     ai_tool_type = ai_tool.type
+#     task_id = ai_tool.id
+    
+#     if TEST_MODE_ENABLED:
+#         logger.info(f"[TEST MODE] Submitting task {task_id} (type: {ai_tool_type})")
+    
+#     # Parse image_urls from comma-separated string to array
+#     image_urls = None
+#     if ai_tool.image_path:
+#         if isinstance(ai_tool.image_path, str):
+#             image_urls = [url.strip() for url in ai_tool.image_path.split(',') if url.strip()]
+#         else:
+#             image_urls = ai_tool.image_path
+    
+#     if ai_tool_type in [1, 7]:
+#         # Check if this is image-edit (has image_urls) or text-to-image (no image_urls)
+#         if image_urls:
+#             # Image editing task
+#             if ai_tool_type == 1:
+#                 model = "gemini-2.5-pro-image-preview"
+#             else:
+#                 model = "gemini-3-pro-image-preview"
+#             response = create_ai_image(model, ai_tool.prompt, ai_tool.ratio, image_urls,ai_tool.image_size)
+#             logger.info(response)
+#             project_id = response.get("data", {}).get("task_id")
+#         else:
+#             # Text-to-image task
+#             if ai_tool_type == 1:
+#                 model = "gemini-2.5-pro-image-preview"  # 标准版
+#             else:
+#                 model = "gemini-3-pro-image-preview"  # 加强版
+            
+#             # Get image_size from database if available (only for gemini-3-pro-image-preview)
+#             image_size = None
+#             if ai_tool_type == 7:  # Only for gemini-3-pro-image-preview
+#                 image_size = ai_tool.image_size or "1K"  # Use stored value or default
+            
+#             response = create_text_to_image(
+#                 model=model,
+#                 prompt=ai_tool.prompt,
+#                 aspect_ratio=ai_tool.ratio or "9:16",
+#                 image_size=image_size
+#             )
+#             logger.info(f"Text-to-image response: {response}")
+            
+#             if response.get("code") != 200:
+#                 error_msg = response.get("msg", "API调用失败")
+#                 logger.error(f"Text-to-image API error: {error_msg}")
+#                 return False
+            
+#             project_id = response.get("data", {}).get("task_id")
+#     elif ai_tool_type == 10:
+#         # LTX2.0 图生视频 (type=10)
+#         result = create_ltx2_image_to_video(
+#             image_url=ai_tool.image_path,
+#             prompt=ai_tool.prompt or "",
+#             duration=ai_tool.duration
+#         )
+#         logger.info(f"Submit LTX2.0 task result: {result}")
+        
+#         # v2 API 响应格式：直接返回 taskId, status, errorCode, errorMessage
+#         # 成功时 taskId 存在，失败时 errorCode 或 errorMessage 有值
+#         if not result.get("taskId"):
+#             error_msg = result.get("errorMessage") or result.get("msg", "LTX2.0 API调用失败")
+            
+#             # 特殊处理：RunningHub 队列已满错误
+#             if error_msg == "TASK_QUEUE_MAXED" or result.get("errorCode") == "TASK_QUEUE_MAXED":
+#                 logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
+#                 # 延迟60秒后重试，不增加重试计数
+#                 next_trigger = datetime.now() + timedelta(seconds=60)
+#                 TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
+#                 return True  # 返回True避免增加重试计数
+            
+#             logger.error(f"LTX2.0 API error: {error_msg}")
+#             return False
+        
+#         project_id = result.get("taskId")
+#     elif ai_tool_type == 11:
+#         # Wan2.2 图生视频 (type=11)
+#         result = create_wan22_image_to_video(
+#             image_url=ai_tool.image_path,
+#             prompt=ai_tool.prompt,
+#             duration=ai_tool.duration,
+#             ratio=ai_tool.ratio,
+#             quality="hd"  # 默认使用高清版
+#         )
+#         logger.info(f"Submit Wan2.2 task result: {result}")
+        
+#         # v2 API 响应格式：直接返回 taskId, status, errorCode, errorMessage
+#         # 成功时 taskId 存在，失败时 errorCode 或 errorMessage 有值
+#         if not result.get("taskId"):
+#             error_msg = result.get("errorMessage") or result.get("msg", "Wan2.2 API调用失败")
+            
+#             # 特殊处理：RunningHub 队列已满错误
+#             if error_msg == "TASK_QUEUE_MAXED" or result.get("errorCode") == "TASK_QUEUE_MAXED":
+#                 logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
+#                 # 延迟60秒后重试，不增加重试计数
+#                 next_trigger = datetime.now() + timedelta(seconds=60)
+#                 TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
+#                 return True  # 返回True避免增加重试计数
+            
+#             logger.error(f"Wan2.2 API error: {error_msg}")
+#             return False
+        
+#         project_id = result.get("taskId")
+#     elif ai_tool_type == 12:
+#         # 可灵图生视频 (type=12)
+#         kling_mode = "std"
+#         result = create_kling_image_to_video(
+#             image_url=ai_tool.image_path,
+#             prompt=ai_tool.prompt,
+#             duration=ai_tool.duration,
+#             mode=kling_mode
+#         )
+#         logger.info(f"Submit Kling task result: {result}")
+        
+#         if result.get("code") != 0:
+#             error_msg = result.get("message", "可灵 API调用失败")
+#             logger.error(f"Kling API error: {error_msg}")
+#             return False
+#         # Kling API 返回格式: {"code": 0, "data": {"task_id": "xxx"}}
+#         project_id = result.get("data", {}).get("task_id")
+#     elif ai_tool_type == 13:
+#         # 数字人生成 (type=13)
+#         # 从 ai_tool 中获取音频路径，假设存储在 message 字段中
+#         audio_url = ai_tool.message or ""
+#         result = create_digital_human(
+#             image_url=ai_tool.image_path,
+#             text=ai_tool.prompt,
+#             audio_url=audio_url,
+#             aspect_ratio=ai_tool.ratio or "9:16"
+#         )
+#         logger.info(f"Submit Digital Human task result: {result}")
+        
+#         # v2 API 响应格式：直接返回 taskId, status, errorCode, errorMessage
+#         if not result.get("taskId"):
+#             error_msg = result.get("errorMessage") or result.get("msg", "数字人生成 API调用失败")
+            
+#             # 特殊处理：RunningHub 队列已满错误
+#             if error_msg == "TASK_QUEUE_MAXED" or result.get("errorCode") == "TASK_QUEUE_MAXED":
+#                 logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
+#                 # 延迟60秒后重试，不增加重试计数
+#                 next_trigger = datetime.now() + timedelta(seconds=60)
+#                 TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
+#                 return True  # 返回True避免增加重试计数
+            
+#             logger.error(f"Digital Human API error: {error_msg}")
+#             return False
+        
+#         project_id = result.get("taskId")
+#         # 注意：RunningHub v2 API 返回 taskId 在顶层，不要用 data.task_id 覆盖
+#     elif ai_tool_type == 14:
+#         # Vidu 图生视频 (type=14)
+#         # 根据 image_path 中的图片数量决定调用哪个 API
+#         image_urls = ai_tool.image_path.split(',') if ai_tool.image_path else []
+#         image_urls = [url.strip() for url in image_urls if url.strip()]  # 去除空字符串和空格
+        
+#         if len(image_urls) == 2:
+#             # 两张图片：调用首尾图生视频 API
+#             logger.info(f"Vidu task - using start-end mode: start={image_urls[0]}, end={image_urls[1]}")
+#             result = create_vidu_start_end_to_video(
+#                 start_image_url=image_urls[0],
+#                 end_image_url=image_urls[1],
+#                 prompt=ai_tool.prompt,
+#                 duration=ai_tool.duration,
+#                 resolution="720p",
+#                 movement_amplitude="auto"
+#             )
+#         elif len(image_urls) == 1:
+#             # 一张图片：调用单图生视频 API
+#             logger.info(f"Vidu task - using single image mode: {image_urls[0]}")
+#             result = create_vidu_image_to_video(
+#                 image_url=image_urls[0],
+#                 prompt=ai_tool.prompt,
+#                 duration=ai_tool.duration,
+#                 resolution="720p",
+#                 movement_amplitude="auto"
+#             )
+#         else:
+#             logger.error(f"Vidu task - invalid image count: {len(image_urls)}")
+#             return False
+        
+#         logger.info(f"Submit Vidu task result: {result}")
+        
+#         if result.get("state") != "created":
+#             error_msg = result.get("error", "Vidu API调用失败")
+#             logger.error(f"Vidu API error: {error_msg}")
+#             return False
+        
+#         project_id = result.get("task_id")
+#     elif ai_tool_type == 15:
+#         # VEO3 图生视频 (type=15)
+#         result = create_image_to_video_veo(
+#             prompt=ai_tool.prompt,
+#             ratio=ai_tool.ratio,
+#             img_url=ai_tool.image_path,
+#             duration=ai_tool.duration
+#         )
+#         logger.info(f"Submit VEO3 task result: {result}")
+#         project_id = result.get("id")
+#     elif ai_tool_type in [2, 3]:
+#         # Sora2 视频生成 (type=2: 文生视频, type=3: 图生视频)
+#         result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
+#         logger.info(f"Submit Sora2 task result: {result}")
+#         project_id = result.get("id")
+#     else:
+#         logger.error(f"Unsupported ai_tool_type: {ai_tool_type}")
+#         return False
+    
+#     if not project_id:
+#         logger.error("Failed to create project")
+#         return False
+    
+#     AIToolsModel.update(task_id, project_id=project_id, status=AI_TOOL_STATUS_PROCESSING)
+#     TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
+    
+#     # 如果是 RunningHub 任务，更新槽位的 project_id
+#     is_runninghub = ai_tool_type in [10, 11, 13]
+#     if is_runninghub:
+#         task = TasksModel.get_by_task_id(task_id)
+#         if task:
+#             RunningHubSlotsModel.update_project_id(task.id, project_id)
+    
+#     logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
+#     return True
+
+
+# def _check_task_status(ai_tool):
+#     """
+#     Check task status from external API (status == AI_TOOL_STATUS_PROCESSING)
+    
+#     Args:
+#         ai_tool: AITool object
+    
+#     Returns:
+#         bool: True if task completed (success or failed), False if still processing
+#     """
+#     project_id = ai_tool.project_id
+#     ai_tool_type = ai_tool.type
+#     task_id = ai_tool.id
+    
+#     if not project_id:
+#         logger.error(f"AI tool {task_id} has no project_id while status=AI_TOOL_STATUS_PROCESSING")
+#         return False
+
+#     # Check if this is LTX2.0, Wan2.2 or Digital Human model (type=10, 11, 13, all use RunningHub)
+#     is_runninghub = ai_tool_type in [10, 11, 13]
+#     # Check if this is Kling model (type=12, uses Duomi API)
+#     is_kling = ai_tool_type == 12
+#     # Check if this is Vidu model (type=14, uses Vidu API)
+#     is_vidu = ai_tool_type == 14
+#     is_video = ai_tool_type in [2, 3, 10, 11, 12, 13, 15]
+    
+#     if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
+#         logger.info(f"[TEST MODE] Checking status for mock task {project_id}")
+    
+#     if is_runninghub:
+#         # LTX2.0, Wan2.2 or Digital Human model - use RunningHub status check
+#         try:
+#             result = check_ltx2_task_status(project_id)
+#             status = result.get("status")
+            
+#             if status == "SUCCESS":
+#                 # Get results
+#                 results = result.get("results", [])
+#                 if results and len(results) > 0:
+#                     # For Digital Human (type=13), filter for video results
+#                     # The workflow may return multiple results (audio + video)
+#                     if ai_tool_type == 13:
+#                         # Filter for video files (mp4, mov, avi, etc.)
+#                         video_results = [r for r in results if r.file_url and any(r.file_url.lower().endswith(ext) for ext in ['.mp4', '.mov', '.avi', '.webm', '.mkv'])]
+#                         if video_results:
+#                             media_url = video_results[0].file_url
+#                             logger.info(f"Digital Human task {project_id} - Found video result: {media_url}")
+#                         else:
+#                             # If no video found, log all results for debugging
+#                             logger.warning(f"Digital Human task {project_id} - No video found in results. All results: {[r.file_url for r in results]}")
+#                             # Try to use the last result (usually video is last)
+#                             media_url = results[-1].file_url
+#                     else:
+#                         # For LTX2.0 and Wan2.2, use first result
+#                         media_url = results[0].file_url
+                    
+#                     return _handle_task_success(project_id, task_id, media_url)
+#                 else:
+#                     logger.error(f"RunningHub task {project_id} succeeded but no results")
+#                     return _handle_task_failure(project_id, task_id, ai_tool_type, "No results returned", ai_tool.user_id)
+#             elif status == "FAILED":
+#                 return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
+#             else:
+#                 # Still processing (QUEUED or RUNNING)
+#                 logger.info(f"RunningHub task {project_id} still processing (status={status})")
+#                 return True
+#         except Exception as e:
+#             logger.error(f"Error checking RunningHub task status: {e}")
+#             return False
+#     elif is_kling:
+#         # Kling model - use Kling status check
+#         try:
+#             result = get_kling_task_status(project_id)
+            
+#             if result.get("code") != 0:
+#                 error_msg = result.get("message", "Unknown error")
+#                 logger.error(f"Failed to get Kling task status: {error_msg}")
+#                 return False
+            
+#             data = result.get("data", {})
+#             task_status = data.get("task_status")
+            
+#             if task_status == "succeed":
+#                 # Get video URL from results
+#                 task_result = data.get("task_result", {})
+#                 videos = task_result.get("videos", [])
+#                 if videos and len(videos) > 0:
+#                     media_url = videos[0].get("url")
+#                     return _handle_task_success(project_id, task_id, media_url)
+#                 else:
+#                     logger.error(f"Kling task {project_id} succeeded but no videos")
+#                     return _handle_task_failure(project_id, task_id, ai_tool_type, "No videos returned", ai_tool.user_id)
+#             elif task_status == "failed":
+#                 return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
+#             else:
+#                 # Still processing
+#                 logger.info(f"Kling task {project_id} still processing (status={task_status})")
+#                 return True
+#         except Exception as e:
+#             logger.error(f"Error checking Kling task status: {e}")
+#             return False
+#     elif is_vidu:
+#         # Vidu model - use Vidu status check
+#         try:
+#             result = get_vidu_task_status(project_id)
+            
+#             if result.get("error"):
+#                 error_msg = result.get("error", "Unknown error")
+#                 logger.error(f"Failed to get Vidu task status: {error_msg}")
+#                 return False
+            
+#             task_state = result.get("state")
+            
+#             if task_state == "success":
+#                 # Get video URL from creations array
+#                 creations = result.get("creations", [])
+#                 if creations and len(creations) > 0:
+#                     video_url = creations[0].get("url")
+#                     if video_url:
+#                         return _handle_task_success(project_id, task_id, video_url)
+#                     else:
+#                         logger.error(f"Vidu task {project_id} succeeded but no url in creations")
+#                         return _handle_task_failure(project_id, task_id, ai_tool_type, "No url in creations", ai_tool.user_id)
+#                 else:
+#                     logger.error(f"Vidu task {project_id} succeeded but no creations")
+#                     return _handle_task_failure(project_id, task_id, ai_tool_type, "No creations returned", ai_tool.user_id)
+#             elif task_state == "failed":
+#                 error_reason = result.get("err_code", "Task failed")
+#                 return _handle_task_failure(project_id, task_id, ai_tool_type, error_reason, ai_tool.user_id)
+#             else:
+#                 # Still processing (state could be "processing", "queued", etc.)
+#                 logger.info(f"Vidu task {project_id} still processing (state={task_state})")
+#                 return True
+#         except Exception as e:
+#             logger.error(f"Error checking Vidu task status: {e}")
+#             return False
+#     else:
+#         # Sora2 or other models - use original logic
+#         result = get_ai_task_result(project_id, is_video)
+        
+#         if not isinstance(result, dict):
+#             logger.error(f"Unexpected task result format for project {project_id}: {result}")
+#             return False
+
+#         if result.get("code") != 0:
+#             error_msg = result.get("msg", "Unknown error")
+#             logger.error(f"Failed to get task result: {error_msg}")
+#             return False
+
+#         data = result.get("data", {})
+#         task_status = data.get("status")  # 0-进行中 1-成功 2-失败
+#         media_url = data.get("mediaUrl")
+#         reason = data.get("reason")
+
+#         if task_status == 1:
+#             return _handle_task_success(project_id, task_id, media_url)
+#         elif task_status == 2:
+#             return _handle_task_failure(project_id, task_id, ai_tool_type, reason,ai_tool.user_id)
+#         else:
+#             logger.info(f"Task {project_id} still processing (status={task_status})")
+#             return True
+
+
 def _submit_new_task(ai_tool):
     """
-    Submit a new task to external API (status == AI_TOOL_STATUS_PENDING)
+    使用驱动架构提交新任务 (status == AI_TOOL_STATUS_PENDING)
+    
+    这是新的实现方法，使用统一的驱动架构替代原有的 if-elif 分支逻辑。
+    测试通过后将替换 _submit_new_task 方法。
     
     Args:
-        ai_tool: AITool object
+        ai_tool: AITool 对象
     
     Returns:
-        bool: True if successful, False otherwise
+        bool: True 表示成功，False 表示失败
     """
+    from task.video_drivers import VideoDriverFactory
+    
     ai_tool_type = ai_tool.type
     task_id = ai_tool.id
     
     if TEST_MODE_ENABLED:
-        logger.info(f"[TEST MODE] Submitting task {task_id} (type: {ai_tool_type})")
+        logger.info(f"[TEST MODE] [DRIVER] Submitting task {task_id} (type: {ai_tool_type})")
     
-    # Parse image_urls from comma-separated string to array
-    image_urls = None
-    if ai_tool.image_path:
-        if isinstance(ai_tool.image_path, str):
-            image_urls = [url.strip() for url in ai_tool.image_path.split(',') if url.strip()]
-        else:
-            image_urls = ai_tool.image_path
-    
-    if ai_tool_type in [1, 7]:
-        # Check if this is image-edit (has image_urls) or text-to-image (no image_urls)
-        if image_urls:
-            # Image editing task
-            if ai_tool_type == 1:
-                model = "gemini-2.5-pro-image-preview"
+    try:
+        # 1. 根据任务类型创建对应的驱动实例
+        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type)
+        
+        if not driver:
+            logger.error(f"Unsupported driver type: {ai_tool_type}")
+            # 更新任务状态为失败
+            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=f"不支持的任务类型: {ai_tool_type}")
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
+            return False
+        
+        logger.info(f"Using driver: {driver.driver_name} for task {task_id}")
+        
+        # 2. 调用驱动提交任务
+        result = driver.submit_task(ai_tool)
+        
+        # 3. 处理提交结果
+        if not result.get("success"):
+            error = result.get("error", "未知错误")
+            error_type = result.get("error_type", "SYSTEM")
+            error_detail = result.get("error_detail", "")
+            
+            logger.error(f"Task {task_id} submission failed: {error}")
+            if error_detail:
+                logger.error(f"Error detail: {error_detail}")
+            
+            # 处理需要重试的情况（通常是网络异常）
+            if result.get("retry"):
+                logger.warning(f"Task {task_id} will retry later due to network error")
+                # 延迟60秒后重试，不增加重试计数
+                next_trigger = datetime.now() + timedelta(seconds=60)
+                TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
+                return True  # 返回 True 避免增加重试计数
+            
+            # 根据错误类型处理
+            if error_type == "USER":
+                # 用户错误，直接返回给用户，标记任务失败
+                AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error)
+                TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
             else:
-                model = "gemini-3-pro-image-preview"
-            response = create_ai_image(model, ai_tool.prompt, ai_tool.ratio, image_urls,ai_tool.image_size)
-            logger.info(response)
-            project_id = response.get("data", {}).get("task_id")
-        else:
-            # Text-to-image task
-            if ai_tool_type == 1:
-                model = "gemini-2.5-pro-image-preview"  # 标准版
-            else:
-                model = "gemini-3-pro-image-preview"  # 加强版
+                # 系统错误，已通过 Sentry 报警，标记任务失败
+                AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error)
+                TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
             
-            # Get image_size from database if available (only for gemini-3-pro-image-preview)
-            image_size = None
-            if ai_tool_type == 7:  # Only for gemini-3-pro-image-preview
-                image_size = ai_tool.image_size or "1K"  # Use stored value or default
-            
-            response = create_text_to_image(
-                model=model,
-                prompt=ai_tool.prompt,
-                aspect_ratio=ai_tool.ratio or "9:16",
-                image_size=image_size
-            )
-            logger.info(f"Text-to-image response: {response}")
-            
-            if response.get("code") != 200:
-                error_msg = response.get("msg", "API调用失败")
-                logger.error(f"Text-to-image API error: {error_msg}")
-                return False
-            
-            project_id = response.get("data", {}).get("task_id")
-    elif ai_tool_type == 10:
-        # LTX2.0 图生视频 (type=10)
-        result = create_ltx2_image_to_video(
-            image_url=ai_tool.image_path,
-            prompt=ai_tool.prompt or "",
-            duration=ai_tool.duration
-        )
-        logger.info(f"Submit LTX2.0 task result: {result}")
-        
-        # v2 API 响应格式：直接返回 taskId, status, errorCode, errorMessage
-        # 成功时 taskId 存在，失败时 errorCode 或 errorMessage 有值
-        if not result.get("taskId"):
-            error_msg = result.get("errorMessage") or result.get("msg", "LTX2.0 API调用失败")
-            
-            # 特殊处理：RunningHub 队列已满错误
-            if error_msg == "TASK_QUEUE_MAXED" or result.get("errorCode") == "TASK_QUEUE_MAXED":
-                logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
-                # 延迟60秒后重试，不增加重试计数
-                next_trigger = datetime.now() + timedelta(seconds=60)
-                TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
-                return True  # 返回True避免增加重试计数
-            
-            logger.error(f"LTX2.0 API error: {error_msg}")
             return False
         
-        project_id = result.get("taskId")
-    elif ai_tool_type == 11:
-        # Wan2.2 图生视频 (type=11)
-        result = create_wan22_image_to_video(
-            image_url=ai_tool.image_path,
-            prompt=ai_tool.prompt,
-            duration=ai_tool.duration,
-            ratio=ai_tool.ratio,
-            quality="hd"  # 默认使用高清版
-        )
-        logger.info(f"Submit Wan2.2 task result: {result}")
+        # 4. 提交成功，更新数据库
+        project_id = result.get("project_id")
         
-        # v2 API 响应格式：直接返回 taskId, status, errorCode, errorMessage
-        # 成功时 taskId 存在，失败时 errorCode 或 errorMessage 有值
-        if not result.get("taskId"):
-            error_msg = result.get("errorMessage") or result.get("msg", "Wan2.2 API调用失败")
-            
-            # 特殊处理：RunningHub 队列已满错误
-            if error_msg == "TASK_QUEUE_MAXED" or result.get("errorCode") == "TASK_QUEUE_MAXED":
-                logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
-                # 延迟60秒后重试，不增加重试计数
-                next_trigger = datetime.now() + timedelta(seconds=60)
-                TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
-                return True  # 返回True避免增加重试计数
-            
-            logger.error(f"Wan2.2 API error: {error_msg}")
+        if not project_id:
+            logger.error(f"Task {task_id} submitted but no project_id returned")
+            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，未返回任务ID")
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
             return False
         
-        project_id = result.get("taskId")
-    elif ai_tool_type == 12:
-        # 可灵图生视频 (type=12)
-        kling_mode = "std"
-        result = create_kling_image_to_video(
-            image_url=ai_tool.image_path,
-            prompt=ai_tool.prompt,
-            duration=ai_tool.duration,
-            mode=kling_mode
-        )
-        logger.info(f"Submit Kling task result: {result}")
+        # 更新 AITools 和 Tasks 表状态
+        AIToolsModel.update(task_id, project_id=project_id, status=AI_TOOL_STATUS_PROCESSING)
+        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
         
-        if result.get("code") != 0:
-            error_msg = result.get("message", "可灵 API调用失败")
-            logger.error(f"Kling API error: {error_msg}")
-            return False
-        # Kling API 返回格式: {"code": 0, "data": {"task_id": "xxx"}}
-        project_id = result.get("data", {}).get("task_id")
-    elif ai_tool_type == 13:
-        # 数字人生成 (type=13)
-        # 从 ai_tool 中获取音频路径，假设存储在 message 字段中
-        audio_url = ai_tool.message or ""
-        result = create_digital_human(
-            image_url=ai_tool.image_path,
-            text=ai_tool.prompt,
-            audio_url=audio_url,
-            aspect_ratio=ai_tool.ratio or "9:16"
-        )
-        logger.info(f"Submit Digital Human task result: {result}")
+        # 如果是 RunningHub 任务，更新槽位的 project_id
+        is_runninghub = ai_tool_type in [10, 11, 13]
+        if is_runninghub:
+            task = TasksModel.get_by_task_id(task_id)
+            if task:
+                RunningHubSlotsModel.update_project_id(task.id, project_id)
+                logger.info(f"Updated RunningHub slot project_id for task {task_id}")
         
-        # v2 API 响应格式：直接返回 taskId, status, errorCode, errorMessage
-        if not result.get("taskId"):
-            error_msg = result.get("errorMessage") or result.get("msg", "数字人生成 API调用失败")
-            
-            # 特殊处理：RunningHub 队列已满错误
-            if error_msg == "TASK_QUEUE_MAXED" or result.get("errorCode") == "TASK_QUEUE_MAXED":
-                logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
-                # 延迟60秒后重试，不增加重试计数
-                next_trigger = datetime.now() + timedelta(seconds=60)
-                TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
-                return True  # 返回True避免增加重试计数
-            
-            logger.error(f"Digital Human API error: {error_msg}")
-            return False
+        logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
+        return True
         
-        project_id = result.get("taskId")
-        # 注意：RunningHub v2 API 返回 taskId 在顶层，不要用 data.task_id 覆盖
-    elif ai_tool_type == 14:
-        # Vidu 图生视频 (type=14)
-        # 根据 image_path 中的图片数量决定调用哪个 API
-        image_urls = ai_tool.image_path.split(',') if ai_tool.image_path else []
-        image_urls = [url.strip() for url in image_urls if url.strip()]  # 去除空字符串和空格
+    except Exception as e:
+        # 捕获所有未预期的异常
+        logger.error(f"Unexpected exception in _submit_new_task_with_driver for task {task_id}: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         
-        if len(image_urls) == 2:
-            # 两张图片：调用首尾图生视频 API
-            logger.info(f"Vidu task - using start-end mode: start={image_urls[0]}, end={image_urls[1]}")
-            result = create_vidu_start_end_to_video(
-                start_image_url=image_urls[0],
-                end_image_url=image_urls[1],
-                prompt=ai_tool.prompt,
-                duration=ai_tool.duration,
-                resolution="720p",
-                movement_amplitude="auto"
-            )
-        elif len(image_urls) == 1:
-            # 一张图片：调用单图生视频 API
-            logger.info(f"Vidu task - using single image mode: {image_urls[0]}")
-            result = create_vidu_image_to_video(
-                image_url=image_urls[0],
-                prompt=ai_tool.prompt,
-                duration=ai_tool.duration,
-                resolution="720p",
-                movement_amplitude="auto"
-            )
-        else:
-            logger.error(f"Vidu task - invalid image count: {len(image_urls)}")
-            return False
+        # 更新任务状态为失败
+        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，请联系技术支持")
+        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
         
-        logger.info(f"Submit Vidu task result: {result}")
-        
-        if result.get("state") != "created":
-            error_msg = result.get("error", "Vidu API调用失败")
-            logger.error(f"Vidu API error: {error_msg}")
-            return False
-        
-        project_id = result.get("task_id")
-    elif ai_tool_type == 15:
-        # VEO3 图生视频 (type=15)
-        result = create_image_to_video_veo(
-            prompt=ai_tool.prompt,
-            ratio=ai_tool.ratio,
-            img_url=ai_tool.image_path,
-            duration=ai_tool.duration
-        )
-        logger.info(f"Submit VEO3 task result: {result}")
-        project_id = result.get("id")
-    elif ai_tool_type in [2, 3]:
-        # Sora2 视频生成 (type=2: 文生视频, type=3: 图生视频)
-        result = create_image_to_video(ai_tool.prompt, ai_tool.ratio, ai_tool.image_path, ai_tool.duration)
-        logger.info(f"Submit Sora2 task result: {result}")
-        project_id = result.get("id")
-    else:
-        logger.error(f"Unsupported ai_tool_type: {ai_tool_type}")
         return False
-    
-    if not project_id:
-        logger.error("Failed to create project")
-        return False
-    
-    AIToolsModel.update(task_id, project_id=project_id, status=AI_TOOL_STATUS_PROCESSING)
-    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
-    
-    # 如果是 RunningHub 任务，更新槽位的 project_id
-    is_runninghub = ai_tool_type in [10, 11, 13]
-    if is_runninghub:
-        task = TasksModel.get_by_task_id(task_id)
-        if task:
-            RunningHubSlotsModel.update_project_id(task.id, project_id)
-    
-    logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
-    return True
 
 
 def _check_task_status(ai_tool):
     """
-    Check task status from external API (status == AI_TOOL_STATUS_PROCESSING)
+    使用驱动架构检查任务状态 (status == AI_TOOL_STATUS_PROCESSING)
+    
+    这是新的实现方法，使用统一的驱动架构替代原有的 if-elif 分支逻辑。
+    测试通过后将替换 _check_task_status 方法。
     
     Args:
-        ai_tool: AITool object
+        ai_tool: AITool 对象
     
     Returns:
-        bool: True if task completed (success or failed), False if still processing
+        bool: True 表示任务已完成（成功或失败），False 表示仍在处理中
     """
+    from task.video_drivers import VideoDriverFactory
+    
     project_id = ai_tool.project_id
     ai_tool_type = ai_tool.type
     task_id = ai_tool.id
@@ -335,151 +607,66 @@ def _check_task_status(ai_tool):
     if not project_id:
         logger.error(f"AI tool {task_id} has no project_id while status=AI_TOOL_STATUS_PROCESSING")
         return False
-
-    # Check if this is LTX2.0, Wan2.2 or Digital Human model (type=10, 11, 13, all use RunningHub)
-    is_runninghub = ai_tool_type in [10, 11, 13]
-    # Check if this is Kling model (type=12, uses Duomi API)
-    is_kling = ai_tool_type == 12
-    # Check if this is Vidu model (type=14, uses Vidu API)
-    is_vidu = ai_tool_type == 14
-    is_video = ai_tool_type in [2, 3, 10, 11, 12, 13, 15]
     
     if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
-        logger.info(f"[TEST MODE] Checking status for mock task {project_id}")
+        logger.info(f"[TEST MODE] [DRIVER] Checking status for mock task {project_id}")
     
-    if is_runninghub:
-        # LTX2.0, Wan2.2 or Digital Human model - use RunningHub status check
-        try:
-            result = check_ltx2_task_status(project_id)
-            status = result.get("status")
-            
-            if status == "SUCCESS":
-                # Get results
-                results = result.get("results", [])
-                if results and len(results) > 0:
-                    # For Digital Human (type=13), filter for video results
-                    # The workflow may return multiple results (audio + video)
-                    if ai_tool_type == 13:
-                        # Filter for video files (mp4, mov, avi, etc.)
-                        video_results = [r for r in results if r.file_url and any(r.file_url.lower().endswith(ext) for ext in ['.mp4', '.mov', '.avi', '.webm', '.mkv'])]
-                        if video_results:
-                            media_url = video_results[0].file_url
-                            logger.info(f"Digital Human task {project_id} - Found video result: {media_url}")
-                        else:
-                            # If no video found, log all results for debugging
-                            logger.warning(f"Digital Human task {project_id} - No video found in results. All results: {[r.file_url for r in results]}")
-                            # Try to use the last result (usually video is last)
-                            media_url = results[-1].file_url
-                    else:
-                        # For LTX2.0 and Wan2.2, use first result
-                        media_url = results[0].file_url
-                    
-                    return _handle_task_success(project_id, task_id, media_url)
-                else:
-                    logger.error(f"RunningHub task {project_id} succeeded but no results")
-                    return _handle_task_failure(project_id, task_id, ai_tool_type, "No results returned", ai_tool.user_id)
-            elif status == "FAILED":
-                return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
-            else:
-                # Still processing (QUEUED or RUNNING)
-                logger.info(f"RunningHub task {project_id} still processing (status={status})")
-                return True
-        except Exception as e:
-            logger.error(f"Error checking RunningHub task status: {e}")
-            return False
-    elif is_kling:
-        # Kling model - use Kling status check
-        try:
-            result = get_kling_task_status(project_id)
-            
-            if result.get("code") != 0:
-                error_msg = result.get("message", "Unknown error")
-                logger.error(f"Failed to get Kling task status: {error_msg}")
-                return False
-            
-            data = result.get("data", {})
-            task_status = data.get("task_status")
-            
-            if task_status == "succeed":
-                # Get video URL from results
-                task_result = data.get("task_result", {})
-                videos = task_result.get("videos", [])
-                if videos and len(videos) > 0:
-                    media_url = videos[0].get("url")
-                    return _handle_task_success(project_id, task_id, media_url)
-                else:
-                    logger.error(f"Kling task {project_id} succeeded but no videos")
-                    return _handle_task_failure(project_id, task_id, ai_tool_type, "No videos returned", ai_tool.user_id)
-            elif task_status == "failed":
-                return _handle_task_failure(project_id, task_id, ai_tool_type, "Task failed", ai_tool.user_id)
-            else:
-                # Still processing
-                logger.info(f"Kling task {project_id} still processing (status={task_status})")
-                return True
-        except Exception as e:
-            logger.error(f"Error checking Kling task status: {e}")
-            return False
-    elif is_vidu:
-        # Vidu model - use Vidu status check
-        try:
-            result = get_vidu_task_status(project_id)
-            
-            if result.get("error"):
-                error_msg = result.get("error", "Unknown error")
-                logger.error(f"Failed to get Vidu task status: {error_msg}")
-                return False
-            
-            task_state = result.get("state")
-            
-            if task_state == "success":
-                # Get video URL from creations array
-                creations = result.get("creations", [])
-                if creations and len(creations) > 0:
-                    video_url = creations[0].get("url")
-                    if video_url:
-                        return _handle_task_success(project_id, task_id, video_url)
-                    else:
-                        logger.error(f"Vidu task {project_id} succeeded but no url in creations")
-                        return _handle_task_failure(project_id, task_id, ai_tool_type, "No url in creations", ai_tool.user_id)
-                else:
-                    logger.error(f"Vidu task {project_id} succeeded but no creations")
-                    return _handle_task_failure(project_id, task_id, ai_tool_type, "No creations returned", ai_tool.user_id)
-            elif task_state == "failed":
-                error_reason = result.get("err_code", "Task failed")
-                return _handle_task_failure(project_id, task_id, ai_tool_type, error_reason, ai_tool.user_id)
-            else:
-                # Still processing (state could be "processing", "queued", etc.)
-                logger.info(f"Vidu task {project_id} still processing (state={task_state})")
-                return True
-        except Exception as e:
-            logger.error(f"Error checking Vidu task status: {e}")
-            return False
-    else:
-        # Sora2 or other models - use original logic
-        result = get_ai_task_result(project_id, is_video)
+    try:
+        # 1. 根据任务类型创建对应的驱动实例
+        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type)
         
-        if not isinstance(result, dict):
-            logger.error(f"Unexpected task result format for project {project_id}: {result}")
-            return False
-
-        if result.get("code") != 0:
-            error_msg = result.get("msg", "Unknown error")
-            logger.error(f"Failed to get task result: {error_msg}")
-            return False
-
-        data = result.get("data", {})
-        task_status = data.get("status")  # 0-进行中 1-成功 2-失败
-        media_url = data.get("mediaUrl")
-        reason = data.get("reason")
-
-        if task_status == 1:
-            return _handle_task_success(project_id, task_id, media_url)
-        elif task_status == 2:
-            return _handle_task_failure(project_id, task_id, ai_tool_type, reason,ai_tool.user_id)
+        if not driver:
+            logger.error(f"Unsupported driver type: {ai_tool_type}")
+            # 更新任务状态为失败
+            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=f"不支持的任务类型: {ai_tool_type}")
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
+            return True  # 返回 True 表示任务已完成（失败）
+        
+        logger.info(f"Checking status for task {task_id} using driver: {driver.driver_name}")
+        
+        # 2. 调用驱动检查状态
+        result = driver.check_status(project_id)
+        
+        # 3. 处理状态检查结果
+        status = result.get("status")
+        
+        if status == "SUCCESS":
+            # 任务成功完成
+            result_url = result.get("result_url")        
+            if not result_url:
+                logger.error(f"Task {task_id} succeeded but no result URL returned")
+                return _handle_task_failure(project_id, task_id, ai_tool_type, "任务成功但未返回结果URL", ai_tool.user_id)
+            
+            logger.info(f"Task {task_id} completed successfully, result_url: {result_url}")
+            return _handle_task_success(project_id, task_id, result_url)
+            
+        elif status == "FAILED":
+            # 任务失败
+            error = result.get("error", "任务失败")
+            error_type = result.get("error_type", "SYSTEM")
+            
+            logger.error(f"Task {task_id} failed: {error} (type: {error_type})")
+            return _handle_task_failure(project_id, task_id, ai_tool_type, error, ai_tool.user_id)
+            
+        elif status == "RUNNING":
+            # 任务仍在处理中
+            message = result.get("message", "任务处理中...")
+            logger.info(f"Task {task_id} still processing: {message}")
+            return False  # 返回 False 表示仍在处理中
+            
         else:
-            logger.info(f"Task {project_id} still processing (status={task_status})")
-            return True
-
+            # 未知状态
+            logger.warning(f"Task {task_id} returned unknown status: {status}")
+            return False  # 继续等待
+        
+    except Exception as e:
+        # 捕获所有未预期的异常
+        logger.error(f"Unexpected exception in _check_task_status_with_driver for task {task_id}: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        
+        # 不立即标记为失败，继续重试
+        return False
 
 def _handle_task_success(project_id, task_id, media_url):
     """

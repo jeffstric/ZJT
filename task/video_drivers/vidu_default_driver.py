@@ -4,7 +4,7 @@ Vidu 默认驱动实现
 from typing import Dict, Any, Optional
 import traceback
 from .base_video_driver import BaseVideoDriver
-from vidu_api_requset import create_vidu_image_to_video, get_vidu_task_status
+from vidu_api_requset import create_vidu_image_to_video, create_vidu_start_end_to_video, get_vidu_task_status
 from utils.sentry_util import SentryUtil, AlertLevel
 
 
@@ -45,8 +45,10 @@ class ViduDefaultDriver(BaseVideoDriver):
         
         期望的正确响应格式:
         {
-            "id": "task_123456789",
-            "status": "processing",
+            "task_id": "task_123456789",
+            "state": "created",  # created, queueing, processing, success, failed
+            "model": "Vidu3.1-图生视频-720p",
+            "credits": 4,
             ...
         }
         """
@@ -57,11 +59,14 @@ class ViduDefaultDriver(BaseVideoDriver):
         if "error" in result:
             return True, None  # 有错误字段，格式有效但业务失败
         
-        if "id" not in result:
-            return False, f"响应缺少 'id' 字段，实际字段: {list(result.keys())}"
+        if "task_id" not in result:
+            return False, f"响应缺少 'task_id' 字段，实际字段: {list(result.keys())}"
         
-        if not isinstance(result.get("id"), str):
-            return False, f"'id' 字段类型错误，期望 str，实际: {type(result.get('id'))}"
+        if not isinstance(result.get("task_id"), str):
+            return False, f"'task_id' 字段类型错误，期望 str，实际: {type(result.get('task_id'))}"
+        
+        if "state" not in result:
+            return False, f"响应缺少 'state' 字段，实际字段: {list(result.keys())}"
         
         return True, None
     
@@ -121,23 +126,61 @@ class ViduDefaultDriver(BaseVideoDriver):
         Args:
             ai_tool: AITool 对象
                 - prompt: 提示词
-                - image_path: 图片路径
+                - image_path: 图片路径（单张或两张图片，用逗号分隔）
                 - duration: 视频时长 (5, 8)
         
         Returns:
             Dict[str, Any]: 提交结果
         """
         try:
-            self.logger.info(f"Submitting Vidu task: prompt='{ai_tool.prompt[:50]}...', duration={ai_tool.duration}")
+            # 解析图片路径
+            image_urls = []
+            if ai_tool.image_path:
+                if isinstance(ai_tool.image_path, str):
+                    image_urls = [url.strip() for url in ai_tool.image_path.split(',') if url.strip()]
+                else:
+                    image_urls = ai_tool.image_path
+            
+            if not image_urls:
+                return {
+                    "success": False,
+                    "error": "缺少图片路径",
+                    "error_type": "USER",
+                    "retry": False
+                }
+            
+            self.logger.info(f"Submitting Vidu task: prompt='{ai_tool.prompt[:50]}...', duration={ai_tool.duration}, images={len(image_urls)}")
             
             # 调用外部 API
             try:
-                result = create_vidu_image_to_video(
-                    image_url=ai_tool.image_path,
-                    prompt=ai_tool.prompt,
-                    duration=ai_tool.duration or 5,
-                    movement_amplitude="auto"
-                )
+                if len(image_urls) == 2:
+                    # 两张图片：调用首尾图生视频 API
+                    self.logger.info(f"Vidu - using start-end mode: start={image_urls[0]}, end={image_urls[1]}")
+                    result = create_vidu_start_end_to_video(
+                        start_image_url=image_urls[0],
+                        end_image_url=image_urls[1],
+                        prompt=ai_tool.prompt,
+                        duration=ai_tool.duration or 5,
+                        resolution="720p",
+                        movement_amplitude="auto"
+                    )
+                elif len(image_urls) == 1:
+                    # 一张图片：调用单图生视频 API
+                    self.logger.info(f"Vidu - using single image mode: {image_urls[0]}")
+                    result = create_vidu_image_to_video(
+                        image_url=image_urls[0],
+                        prompt=ai_tool.prompt,
+                        duration=ai_tool.duration or 5,
+                        resolution="720p",
+                        movement_amplitude="auto"
+                    )
+                else:
+                    return {
+                        "success": False,
+                        "error": f"图片数量错误，需要1张或2张图片，实际: {len(image_urls)}张",
+                        "error_type": "USER",
+                        "retry": False
+                    }
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Vidu task submission: {str(network_error)}")
@@ -182,8 +225,18 @@ class ViduDefaultDriver(BaseVideoDriver):
                     "retry": False
                 }
             
-            task_id = result.get("id")
+            task_id = result.get("task_id")
             if not task_id:
+                # task_id 已在 _validate_submit_response 中验证，这里理论上不会发生
+                self._send_alert(
+                    alert_type="MISSING_TASK_ID",
+                    message="Vidu submit_task 响应缺少 task_id",
+                    context={
+                        "api": "create_vidu_image_to_video",
+                        "response": result,
+                        "ai_tool_id": ai_tool.id
+                    }
+                )
                 return {
                     "success": False,
                     "error": "服务异常，请联系技术支持",
