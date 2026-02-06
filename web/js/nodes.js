@@ -1865,6 +1865,7 @@
       renderImageConnections();
       renderFirstFrameConnections();
       renderVideoConnections();
+      renderReferenceConnections();
       
       // 如果删除的连接涉及分镜节点，更新其预览图和选择菜单
       if(conn){
@@ -2182,6 +2183,105 @@
       }
       } catch(error) {
         console.error('[renderVideoConnections] Error:', error);
+      }
+    }
+
+    function renderReferenceConnections(){
+      // 清除旧的参考连接线
+      const oldLines = document.querySelectorAll('.reference-conn-group');
+      oldLines.forEach(l => l.remove());
+      
+      // 隐藏删除按钮（如果选中的连接已被删除）
+      if(state.selectedReferenceConnId !== null){
+        const stillExists = state.referenceConnections.some(c => c.id === state.selectedReferenceConnId);
+        if(!stillExists){
+          state.selectedReferenceConnId = null;
+          connDeleteBtn.style.display = 'none';
+        }
+      }
+      
+      // 绘制参考连接线
+      for(const conn of state.referenceConnections){
+        const fromEl = canvasEl.querySelector(`.node[data-node-id="${conn.from}"]`);
+        const toEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+        if(!fromEl || !toEl) continue;
+        
+        const outputPort = fromEl.querySelector('.port.output');
+        const referencePort = toEl.querySelector('.port.reference');
+        if(!outputPort || !referencePort) continue;
+        
+        const fromRect = outputPort.getBoundingClientRect();
+        const toRect = referencePort.getBoundingClientRect();
+        const containerRect = canvasContainer.getBoundingClientRect();
+        
+        const fromX = (fromRect.left + fromRect.width/2 - containerRect.left - state.panX) / state.zoom;
+        const fromY = (fromRect.top + fromRect.height/2 - containerRect.top - state.panY) / state.zoom;
+        const toX = (toRect.left + toRect.width/2 - containerRect.left - state.panX) / state.zoom;
+        const toY = (toRect.top + toRect.height/2 - containerRect.top - state.panY) / state.zoom;
+        
+        const dx = Math.abs(toX - fromX) * 0.5;
+        const pathD = `M${fromX},${fromY} C${fromX+dx},${fromY} ${toX-dx},${toY} ${toX},${toY}`;
+        
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'reference-conn-group');
+        group.dataset.referenceConnId = String(conn.id);
+        
+        // hitbox（透明宽线，方便点击）
+        const hitbox = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        hitbox.setAttribute('d', pathD);
+        hitbox.setAttribute('class', 'hitbox');
+        hitbox.style.fill = 'none';
+        hitbox.style.stroke = 'transparent';
+        hitbox.style.strokeWidth = '20';
+        hitbox.style.cursor = 'pointer';
+        
+        // 可见线（紫色虚线）
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', pathD);
+        path.setAttribute('class', 'reference-line');
+        
+        if(state.selectedReferenceConnId === conn.id){
+          path.classList.add('selected');
+        }
+        
+        group.appendChild(hitbox);
+        group.appendChild(path);
+        connectionsSvg.appendChild(group);
+        
+        // 点击选中
+        hitbox.addEventListener('click', (e) => {
+          e.stopPropagation();
+          state.selectedConnId = null;
+          state.selectedImgConnId = null;
+          state.selectedFirstFrameConnId = null;
+          state.selectedVideoConnId = null;
+          state.selectedReferenceConnId = conn.id;
+          renderConnections();
+          renderImageConnections();
+          renderFirstFrameConnections();
+          renderVideoConnections();
+          renderReferenceConnections();
+        });
+        
+        // 显示删除按钮（计算贝塞尔曲线t=0.5处的实际位置）
+        if(state.selectedReferenceConnId === conn.id){
+          // 控制点
+          const cx1 = fromX + dx;
+          const cy1 = fromY;
+          const cx2 = toX - dx;
+          const cy2 = toY;
+          // 三次贝塞尔曲线 t=0.5 时的点
+          const t = 0.5;
+          const mt = 1 - t;
+          const bezierX = mt*mt*mt*fromX + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*toX;
+          const bezierY = mt*mt*mt*fromY + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*toY;
+          // 转换为屏幕坐标
+          const screenX = bezierX * state.zoom + state.panX;
+          const screenY = bezierY * state.zoom + state.panY;
+          connDeleteBtn.style.display = 'flex';
+          connDeleteBtn.style.left = (screenX - 12) + 'px';
+          connDeleteBtn.style.top = (screenY - 12) + 'px';
+        }
       }
     }
 
@@ -3259,6 +3359,12 @@
           model: 'gemini-2.5-pro-image-preview',
           drawCount: 1,
           project_id: null,
+          camera: {
+            yaw: 0,
+            dolly: 0,
+            pitch: 0,
+            modified: { yaw: false, dolly: false, pitch: false }
+          }
         }
       };
       state.nodes.push(node);
@@ -3270,6 +3376,7 @@
       el.style.top = node.y + 'px';
 
       el.innerHTML = `
+        <div class="port reference" title="参考端口（接收其他图片作为参考）"></div>
         <div class="port input" title="输入（连接分镜节点）"></div>
         <div class="port output" title="输出（连接到图生视频节点）"></div>
         <div class="node-header">
@@ -3281,6 +3388,12 @@
             <div class="preview-row image-preview-row" style="display:none;">
               <img class="preview image-preview" />
             </div>
+          </div>
+          <div class="reference-images-section" style="display:none;">
+            <div class="reference-images-header">
+              <span>参考图片 (<span class="reference-images-count">0</span>)</span>
+            </div>
+            <div class="reference-images-grid"></div>
           </div>
           <div class="field field-collapsible">
             <div class="label">上传图片</div>
@@ -3314,6 +3427,65 @@
               <option value="4:3">横屏 (4:3)</option>
             </select>
           </div>
+          <div class="field field-collapsible camera-control-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <div class="label" style="margin: 0;">相机控制</div>
+              <button class="mini-btn camera-control-toggle-btn" type="button" style="font-size: 11px; padding: 4px 8px;">展开</button>
+            </div>
+            <div class="camera-control-content" style="display: none; flex-direction: column; gap: 12px; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 4px;">
+              <div class="camera-param-row" data-param="yaw">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <label style="font-size: 11px; font-weight: 600; color: #374151;">左右旋转 (Yaw)</label>
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <input type="number" class="camera-input image-camera-yaw" value="0" min="-90" max="90" step="1" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
+                    <span style="font-size: 11px; color: #6b7280;">°</span>
+                    <button type="button" class="camera-reset-btn image-camera-reset-yaw" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
+                  </div>
+                </div>
+                <input type="range" class="camera-slider image-camera-yaw-slider" min="-90" max="90" step="1" value="0" style="width: 100%;" />
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
+                  <span>-90° (左侧)</span>
+                  <span>0° (正面)</span>
+                  <span>+90° (右侧)</span>
+                </div>
+              </div>
+              <div class="camera-param-row" data-param="dolly">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <label style="font-size: 11px; font-weight: 600; color: #374151;">镜头距离 (Dolly)</label>
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <input type="number" class="camera-input image-camera-dolly" value="0" min="0" max="10" step="0.5" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
+                    <button type="button" class="camera-reset-btn image-camera-reset-dolly" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
+                  </div>
+                </div>
+                <input type="range" class="camera-slider image-camera-dolly-slider" min="0" max="10" step="0.5" value="0" style="width: 100%;" />
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
+                  <span>0 (远景)</span>
+                  <span>5 (中景)</span>
+                  <span>10 (特写)</span>
+                </div>
+              </div>
+              <div class="camera-param-row" data-param="pitch">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <label style="font-size: 11px; font-weight: 600; color: #374151;">垂直角度 (Pitch)</label>
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <input type="number" class="camera-input image-camera-pitch" value="0" min="-60" max="60" step="1" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
+                    <span style="font-size: 11px; color: #6b7280;">°</span>
+                    <button type="button" class="camera-reset-btn image-camera-reset-pitch" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
+                  </div>
+                </div>
+                <input type="range" class="camera-slider image-camera-pitch-slider" min="-60" max="60" step="1" value="0" style="width: 100%;" />
+                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
+                  <span>-60° (仰视)</span>
+                  <span>0° (平视)</span>
+                  <span>+60° (俯视)</span>
+                </div>
+              </div>
+              <div style="margin-top: 8px;">
+                <label style="display: block; font-size: 11px; font-weight: 600; color: #374151; margin-bottom: 6px;">3D 预览</label>
+                <canvas class="camera-preview-canvas image-camera-canvas" width="200" height="150" style="width: 100%; max-width: 200px; height: 150px; border: 1px solid #e5e7eb; border-radius: 4px; background: #ffffff;"></canvas>
+              </div>
+            </div>
+          </div>
           <div class="field field-collapsible">
             <div class="btn-row" style="display: flex; gap: 8px;">
               <div class="gen-container">
@@ -3341,6 +3513,122 @@
       const deleteBtn = el.querySelector('.icon-btn');
       const inputPort = el.querySelector('.port.input');
       const outputPort = el.querySelector('.port.output');
+      const referencePort = el.querySelector('.port.reference');
+      const referenceSection = el.querySelector('.reference-images-section');
+      const referenceGrid = el.querySelector('.reference-images-grid');
+      const referenceCount = el.querySelector('.reference-images-count');
+
+      // 更新参考图显示
+      function updateReferenceImages(){
+        const refConns = state.referenceConnections.filter(c => c.to === id);
+        if(refConns.length === 0){
+          referenceSection.style.display = 'none';
+          return;
+        }
+        
+        referenceSection.style.display = 'block';
+        referenceCount.textContent = refConns.length;
+        referenceGrid.innerHTML = '';
+        
+        refConns.forEach(conn => {
+          const sourceNode = state.nodes.find(n => n.id === conn.from);
+          if(sourceNode && sourceNode.type === 'image' && (sourceNode.data.url || sourceNode.data.preview)){
+            const imgUrl = sourceNode.data.url || sourceNode.data.preview;
+            const item = document.createElement('div');
+            item.className = 'reference-image-item';
+            item.innerHTML = `
+              <img src="${imgUrl}" alt="参考图" />
+              <button class="reference-image-remove" data-conn-id="${conn.id}">×</button>
+            `;
+            
+            const imgEl = item.querySelector('img');
+            const removeBtn = item.querySelector('.reference-image-remove');
+            
+            // 删除参考连接（先绑定删除按钮事件，优先级更高）
+            removeBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              const connId = parseInt(e.target.dataset.connId);
+              const idx = state.referenceConnections.findIndex(c => c.id === connId);
+              if(idx !== -1){
+                state.referenceConnections.splice(idx, 1);
+                renderReferenceConnections();
+                updateReferenceImages();
+                try{ autoSaveWorkflow(); } catch(err){}
+              }
+            });
+            
+            // 点击图片预览（使用 mousedown 而不是 click，避免与删除按钮冲突）
+            imgEl.addEventListener('mousedown', (e) => {
+              // 检查是否点击的是删除按钮区域
+              if(e.target === removeBtn) return;
+              e.stopPropagation();
+            });
+            
+            imgEl.addEventListener('click', (e) => {
+              // 检查是否点击的是删除按钮区域
+              if(e.target === removeBtn) return;
+              e.stopPropagation();
+              if(window.imageModal){
+                window.imageModalImg.src = imgUrl;
+                window.imageModalTitle.textContent = sourceNode.title || '参考图';
+                window.imageModal.classList.add('show');
+                window.imageModal.setAttribute('aria-hidden', 'false');
+              }
+            });
+            
+            referenceGrid.appendChild(item);
+          }
+        });
+      }
+
+      // 参考端口接收连接
+      referencePort.addEventListener('mouseup', (e) => {
+        if(state.connecting && state.connecting.fromId !== id){
+          const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
+          if(fromNode && fromNode.type === 'image'){
+            // 检查是否已存在连接
+            const exists = state.referenceConnections.some(c => c.from === state.connecting.fromId && c.to === id);
+            if(!exists){
+              // 检查循环引用
+              function hasCircularReference(fromId, toId){
+                const visited = new Set();
+                function dfs(currentId){
+                  if(currentId === fromId) return true;
+                  if(visited.has(currentId)) return false;
+                  visited.add(currentId);
+                  const outgoing = state.referenceConnections.filter(c => c.from === currentId);
+                  for(const conn of outgoing){
+                    if(dfs(conn.to)) return true;
+                  }
+                  return false;
+                }
+                return dfs(toId);
+              }
+              
+              if(hasCircularReference(state.connecting.fromId, id)){
+                showToast('不能创建循环参考', 'error');
+              } else {
+                // 检查参考图数量限制
+                const currentRefCount = state.referenceConnections.filter(c => c.to === id).length;
+                const maxRefs = node.data.model === 'gemini-3-pro-image-preview' ? 13 : 5;
+                if(currentRefCount >= maxRefs){
+                  showToast(`最多支持${maxRefs}张参考图`, 'error');
+                } else {
+                  state.referenceConnections.push({
+                    id: state.nextReferenceConnId++,
+                    from: state.connecting.fromId,
+                    to: id
+                  });
+                  renderReferenceConnections();
+                  updateReferenceImages();
+                  try{ autoSaveWorkflow(); } catch(e){}
+                }
+              }
+            }
+          }
+        }
+      });
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3604,10 +3892,15 @@
           statusEl.textContent = '请先上传图片';
           return;
         }
-        if(!node.data.prompt){
+        
+        // 检查是否有相机参数修改
+        const hasCameraModifications = node.data.camera && node.data.camera.modified && 
+          (node.data.camera.modified.yaw || node.data.camera.modified.dolly || node.data.camera.modified.pitch);
+        
+        if(!node.data.prompt && !hasCameraModifications){
           statusEl.style.display = 'block';
           statusEl.style.color = '#dc2626';
-          statusEl.textContent = '请先输入编辑提示词';
+          statusEl.textContent = '请先输入编辑提示词或调整相机参数';
           return;
         }
 
@@ -3622,13 +3915,32 @@
             submitData = node.data.url;
           }
 
-          let finalPrompt = node.data.prompt;
+          let finalPrompt = node.data.prompt || '';
+          
+          // 添加相机视角描述
+          if(node.data.camera && typeof convertCameraToPrompt === 'function'){
+            const cameraDesc = convertCameraToPrompt(node.data.camera);
+            if(cameraDesc){
+              finalPrompt = `${finalPrompt}\n\n视角描述：${cameraDesc}`;
+            }
+          }
+          
           if(state.style && state.style.name){
             finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
           }
 
+          // 收集参考图URL
+          const referenceImageUrls = [];
+          const referenceConns = state.referenceConnections.filter(c => c.to === node.id);
+          for(const conn of referenceConns){
+            const refNode = state.nodes.find(n => n.id === conn.from);
+            if(refNode && refNode.data && refNode.data.url){
+              referenceImageUrls.push(refNode.data.url);
+            }
+          }
+
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
-          const submitRes = await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount);
+          const submitRes = await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount, referenceImageUrls);
           statusEl.textContent = '任务已提交，正在生成图片...';
           node.data.projectIds = submitRes.projectIds;
 
@@ -3664,6 +3976,7 @@
           renderImageConnections();
           renderFirstFrameConnections();
           renderVideoConnections();
+          renderReferenceConnections();
 
           try{ autoSaveWorkflow(); } catch(e){}
           renderMinimap();
@@ -3784,6 +4097,170 @@
           showToast('下载图片失败', 'error');
         }
       });
+
+      // 相机控制事件绑定
+      const cameraYawSlider = el.querySelector('.image-camera-yaw-slider');
+      const cameraYawInput = el.querySelector('.image-camera-yaw');
+      const cameraYawReset = el.querySelector('.image-camera-reset-yaw');
+      const cameraDollySlider = el.querySelector('.image-camera-dolly-slider');
+      const cameraDollyInput = el.querySelector('.image-camera-dolly');
+      const cameraDollyReset = el.querySelector('.image-camera-reset-dolly');
+      const cameraPitchSlider = el.querySelector('.image-camera-pitch-slider');
+      const cameraPitchInput = el.querySelector('.image-camera-pitch');
+      const cameraPitchReset = el.querySelector('.image-camera-reset-pitch');
+      const cameraCanvas = el.querySelector('.image-camera-canvas');
+      const cameraControlToggleBtn = el.querySelector('.camera-control-toggle-btn');
+      const cameraControlContent = el.querySelector('.camera-control-content');
+      
+      // 初始化相机数据（强制重置为默认值）
+      node.data.camera = { 
+        yaw: 0, 
+        dolly: 0, 
+        pitch: 0,
+        modified: { yaw: false, dolly: false, pitch: false }
+      };
+      
+      // 从数据恢复相机参数
+      if(cameraYawSlider) cameraYawSlider.value = node.data.camera.yaw ?? 0;
+      if(cameraYawInput) cameraYawInput.value = node.data.camera.yaw ?? 0;
+      if(cameraDollySlider) cameraDollySlider.value = node.data.camera.dolly ?? 0;
+      if(cameraDollyInput) cameraDollyInput.value = node.data.camera.dolly ?? 0;
+      if(cameraPitchSlider) cameraPitchSlider.value = node.data.camera.pitch ?? 0;
+      if(cameraPitchInput) cameraPitchInput.value = node.data.camera.pitch ?? 0;
+      
+      function updateImageCameraPreview(){
+        if(cameraCanvas && typeof window.updateCameraPreview === 'function'){
+          window.updateCameraPreview(cameraCanvas, node.data.camera);
+        }
+      }
+      
+      // 相机控制折叠切换
+      if(cameraControlToggleBtn && cameraControlContent){
+        cameraControlToggleBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isHidden = cameraControlContent.style.display === 'none';
+          if(isHidden){
+            cameraControlContent.style.display = 'flex';
+            cameraControlToggleBtn.textContent = '收起';
+            // 展开时更新预览
+            updateImageCameraPreview();
+          } else {
+            cameraControlContent.style.display = 'none';
+            cameraControlToggleBtn.textContent = '展开';
+          }
+        });
+      }
+
+      // Yaw 滑块和输入框
+      if(cameraYawSlider){
+        cameraYawSlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
+          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+          node.data.camera.yaw = value;
+          node.data.camera.modified.yaw = true;
+          if(cameraYawInput) cameraYawInput.value = value;
+          updateImageCameraPreview();
+        });
+      }
+      if(cameraYawInput){
+        cameraYawInput.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
+          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+          node.data.camera.yaw = value;
+          node.data.camera.modified.yaw = true;
+          if(cameraYawSlider) cameraYawSlider.value = value;
+          updateImageCameraPreview();
+        });
+      }
+      if(cameraYawReset){
+        cameraYawReset.addEventListener('click', (e) => {
+          e.stopPropagation();
+          node.data.camera.yaw = 0;
+          node.data.camera.modified.yaw = false;
+          if(cameraYawSlider) cameraYawSlider.value = 0;
+          if(cameraYawInput) cameraYawInput.value = 0;
+          updateImageCameraPreview();
+        });
+      }
+      
+      // Dolly 滑块和输入框
+      if(cameraDollySlider){
+        cameraDollySlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
+          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+          node.data.camera.dolly = value;
+          node.data.camera.modified.dolly = true;
+          if(cameraDollyInput) cameraDollyInput.value = value;
+          updateImageCameraPreview();
+        });
+      }
+      if(cameraDollyInput){
+        cameraDollyInput.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
+          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+          node.data.camera.dolly = value;
+          node.data.camera.modified.dolly = true;
+          if(cameraDollySlider) cameraDollySlider.value = value;
+          updateImageCameraPreview();
+        });
+      }
+      if(cameraDollyReset){
+        cameraDollyReset.addEventListener('click', (e) => {
+          e.stopPropagation();
+          node.data.camera.dolly = 0;
+          node.data.camera.modified.dolly = false;
+          if(cameraDollySlider) cameraDollySlider.value = 0;
+          if(cameraDollyInput) cameraDollyInput.value = 0;
+          updateImageCameraPreview();
+        });
+      }
+      
+      // Pitch 滑块和输入框
+      if(cameraPitchSlider){
+        cameraPitchSlider.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
+          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+          node.data.camera.pitch = value;
+          node.data.camera.modified.pitch = true;
+          if(cameraPitchInput) cameraPitchInput.value = value;
+          updateImageCameraPreview();
+        });
+      }
+      if(cameraPitchInput){
+        cameraPitchInput.addEventListener('input', (e) => {
+          const value = parseFloat(e.target.value);
+          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
+          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+          node.data.camera.pitch = value;
+          node.data.camera.modified.pitch = true;
+          if(cameraPitchSlider) cameraPitchSlider.value = value;
+          updateImageCameraPreview();
+        });
+      }
+      if(cameraPitchReset){
+        cameraPitchReset.addEventListener('click', (e) => {
+          e.stopPropagation();
+          node.data.camera.pitch = 0;
+          node.data.camera.modified.pitch = false;
+          if(cameraPitchSlider) cameraPitchSlider.value = 0;
+          if(cameraPitchInput) cameraPitchInput.value = 0;
+          updateImageCameraPreview();
+        });
+      }
+      
+      // 初始化预览
+      updateImageCameraPreview();
+
+      // 暴露更新函数给节点对象
+      node.updateReferenceImages = updateReferenceImages;
+      
+      // 初始化参考图显示
+      updateReferenceImages();
 
       // 添加调试按钮
       addDebugButtonToNode(el, node);
@@ -4486,6 +4963,8 @@
                     gridImageNode.data.gridIndex = gridIndex;
                     gridImageNode.data.gridSize = gridSize;
                     gridImageNode.data.shotFrameNodeId = shotFrameNode.id;
+                    gridImageNode.data.isSplit = false;
+                    gridImageNode.data.status = 'pending';
                     gridImageNode.title = gridImageNode.data.name;
                     
                     const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
@@ -4949,6 +5428,8 @@
                 gridImageNode.data.gridIndex = gridIndex;
                 gridImageNode.data.gridSize = gridSize;
                 gridImageNode.data.shotFrameNodeId = shotFrameNode.id;
+                gridImageNode.data.isSplit = false;
+                gridImageNode.data.status = 'pending';
                 gridImageNode.title = gridImageNode.data.name;
                 
                 const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
@@ -5281,6 +5762,7 @@
               renderImageConnections();
               renderFirstFrameConnections();
               renderVideoConnections();
+              renderReferenceConnections();
               renderMinimap();
               try{ autoSaveWorkflow(); } catch(e){}
             }

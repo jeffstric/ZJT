@@ -93,6 +93,7 @@
       renderImageConnections();
       renderFirstFrameConnections();
       renderVideoConnections();
+      renderReferenceConnections();
     }
 
     function zoomIn(){
@@ -113,6 +114,7 @@
       setTimeout(() => {
         if(typeof renderConnections === 'function') renderConnections();
         if(typeof renderImageConnections === 'function') renderImageConnections();
+        if(typeof renderReferenceConnections === 'function') renderReferenceConnections();
       }, 250);
     }
 
@@ -135,6 +137,7 @@
       setTimeout(() => {
         if(typeof renderConnections === 'function') renderConnections();
         if(typeof renderImageConnections === 'function') renderImageConnections();
+        if(typeof renderReferenceConnections === 'function') renderReferenceConnections();
       }, 250);
     }
 
@@ -148,6 +151,7 @@
       setTimeout(() => {
         if(typeof renderConnections === 'function') renderConnections();
         if(typeof renderImageConnections === 'function') renderImageConnections();
+        if(typeof renderReferenceConnections === 'function') renderReferenceConnections();
       }, 250);
     }
 
@@ -159,6 +163,7 @@
         setTimeout(() => {
           if(typeof renderConnections === 'function') renderConnections();
           if(typeof renderImageConnections === 'function') renderImageConnections();
+          if(typeof renderReferenceConnections === 'function') renderReferenceConnections();
         }, 250);
       }
     }
@@ -170,6 +175,7 @@
       setTimeout(() => {
         if(typeof renderConnections === 'function') renderConnections();
         if(typeof renderImageConnections === 'function') renderImageConnections();
+        if(typeof renderReferenceConnections === 'function') renderReferenceConnections();
       }, 250);
     }
 
@@ -293,17 +299,32 @@
       // 清除该节点相关的视频连接
       state.videoConnections = state.videoConnections.filter(c => c.from !== id && c.to !== id);
       
+      // 清除该节点相关的参考连接
+      const affectedNodes = new Set();
+      state.referenceConnections.filter(c => c.to === id).forEach(c => affectedNodes.add(c.to));
+      state.referenceConnections = state.referenceConnections.filter(c => c.from !== id && c.to !== id);
+      
       // 删除节点
       state.nodes = state.nodes.filter(n => n.id !== id);
       state.connections = state.connections.filter(c => c.from !== id && c.to !== id);
       const el = canvasEl.querySelector(`.node[data-node-id="${id}"]`);
       if(el) el.remove();
       if(state.selectedNodeId === id) state.selectedNodeId = null;
+      
+      // 更新受影响节点的参考图显示
+      affectedNodes.forEach(nodeId => {
+        const affectedNode = state.nodes.find(n => n.id === nodeId);
+        if(affectedNode && affectedNode.updateReferenceImages){
+          affectedNode.updateReferenceImages();
+        }
+      });
+      
       renderConnections();
       renderMinimap();
       renderImageConnections();
       renderFirstFrameConnections();
       renderVideoConnections();
+      renderReferenceConnections();
       
       // 自动保存
       try{ autoSaveWorkflow(); } catch(e){}
