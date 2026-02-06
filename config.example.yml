@@ -30,6 +30,15 @@ database:
   database: "voice_replace_debug"
   charset: "utf8mb4"
 
+# Test Database configuration
+test_database:
+  host: "192.168.10.212"
+  port: 3306
+  user: "xxxxxxxx"
+  password: "xxxxxxxx"
+  database: "voice_replace_unittest"
+  charset: "utf8mb4"
+
 # AI Tools configuration
 ai_tools:
   token: "b8733e482d43474XXXXX"
