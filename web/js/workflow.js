@@ -884,17 +884,19 @@
       // 判断是 File 对象还是 URL 字符串
       if(typeof fileOrUrl === 'string'){
         // 如果是 URL，使用 ref_image_urls 参数
-        form.append('ref_image_urls', fileOrUrl);
+        // 将被编辑的图片和参考图片URL拼接在一起
+        const allUrls = [fileOrUrl];
+        if(referenceImageUrls && Array.isArray(referenceImageUrls) && referenceImageUrls.length > 0){
+          allUrls.push(...referenceImageUrls);
+        }
+        form.append('ref_image_urls', allUrls.join(','));
       } else {
         // 如果是 File 对象，使用 image 参数
         form.append('image', fileOrUrl);
-      }
-      
-      // 添加参考图URL
-      if(referenceImageUrls && Array.isArray(referenceImageUrls) && referenceImageUrls.length > 0){
-        referenceImageUrls.forEach(url => {
-          form.append('reference_image_urls', url);
-        });
+        // 添加参考图URL（如果有）
+        if(referenceImageUrls && Array.isArray(referenceImageUrls) && referenceImageUrls.length > 0){
+          form.append('ref_image_urls', referenceImageUrls.join(','));
+        }
       }
       
       form.append('prompt', prompt || '');
