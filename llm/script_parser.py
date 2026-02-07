@@ -322,6 +322,129 @@ JSON_FORMAT_EXAMPLE = """{
 }"""
 
 
+# 解说剧转换系统提示词
+NARRATION_CONVERSION_SYSTEM_PROMPT = """你是一个专业的影视剧本改编专家，擅长将包含角色对话的剧本转换为纯旁白解说风格的剧本。
+
+你的任务是将输入的剧本（可能包含角色对话、动作描写、镜头提示等）转换为"解说剧"格式，即：
+- 所有角色对话和动作都转化为画面描述和旁白解说
+- 不再有角色直接说话，而是通过旁白来叙述故事
+- 保持原剧本的故事情节、场景结构和戏剧张力
+
+输出格式要求：
+1. 保留原剧本的场景划分结构
+2. 每个场景包含两部分：
+   - 【画面描述】：详细描述该场景中的画面内容，包括人物动作、表情、环境细节等
+   - 【旁白台本】：用第三人称旁白的方式叙述故事，语气生动有吸引力，适合短视频解说风格
+3. 画面描述要非常详细，包含人物的动作、表情、位置、环境细节等，方便后续生成画面
+4. 旁白台本要流畅自然，有叙事节奏感，适合配音朗读
+5. 将角色的对话内容融入旁白叙述中，而不是直接引用
+6. 保持原文的情绪和戏剧冲突
+7. 只输出转换后的剧本文本，不要添加任何解释性文字"""
+
+
+async def convert_script_to_narration(
+    script_content: str,
+    model: Optional[str] = None,
+    temperature: float = 0.5,
+    auth_token: Optional[str] = None,
+    vendor_id: Optional[int] = None,
+    model_id: Optional[int] = None
+) -> str:
+    """
+    将包含角色对话的剧本转换为纯旁白解说格式的剧本
+    
+    Args:
+        script_content: 原始剧本文本内容
+        model: 使用的LLM模型
+        temperature: 温度参数
+        auth_token: 认证token
+        vendor_id: 商家ID
+        model_id: 模型ID
+    
+    Returns:
+        转换后的纯旁白解说格式剧本文本
+    
+    Raises:
+        Exception: 当API调用失败时
+    """
+    import asyncio
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    logger.info("开始将剧本转换为解说剧（纯旁白）格式...")
+    
+    # 保存转换日志
+    from pathlib import Path
+    from datetime import datetime
+    
+    if ENABLE_SCRIPT_PARSER_LOGGING:
+        log_dir = Path("script_parser_logs")
+        log_dir.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    else:
+        log_dir = None
+        timestamp = None
+    
+    user_prompt = f"""请将以下包含角色对话的剧本转换为纯旁白解说风格的剧本。
+
+原始剧本：
+```
+{script_content}
+```
+
+转换要求：
+1. 保留原剧本的场景划分（如"场景1"、"场景2"等）
+2. 每个场景输出两部分：
+   - 【画面描述】：详细描述画面中发生的一切，包括人物的动作、表情、肢体语言、环境变化等，要非常具体和生动，方便后续AI生成画面
+   - 【旁白台本】：用旁白的方式讲述这个场景发生了什么，语气要像短视频解说一样引人入胜
+3. 将所有角色对话转化为旁白叙述，不要保留任何角色直接说话的形式
+4. 画面描述中不要出现角色说的具体台词，而是描述角色说话时的动作和表情
+5. 旁白台本中可以概括角色说了什么，但要用第三人称叙述
+6. 保持故事的完整性和戏剧张力
+
+请直接输出转换后的剧本，不要添加任何额外的说明文字。"""
+
+    messages = [
+        {"role": "system", "content": NARRATION_CONVERSION_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt}
+    ]
+    
+    # 保存转换请求日志
+    _save_log_file(log_dir, f"{timestamp}_narration_convert_system_prompt.txt", NARRATION_CONVERSION_SYSTEM_PROMPT)
+    _save_log_file(log_dir, f"{timestamp}_narration_convert_user_prompt.txt", user_prompt)
+    
+    # 获取 Gemini 客户端
+    gemini_client = get_gemini_client()
+    
+    if not model:
+        model = "gemini-3-flash-preview"
+    
+    # 使用 asyncio.to_thread 包装同步调用
+    response = await asyncio.to_thread(
+        gemini_client.call_api,
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=16000,
+        auth_token=auth_token,
+        vendor_id=vendor_id,
+        model_id=model_id
+    )
+    
+    # 提取响应内容
+    converted_script = response.choices[0].message.content if response.choices else ""
+    
+    logger.info(f"剧本转换完成，转换后长度: {len(converted_script)} 字符")
+    
+    # 保存转换结果日志
+    _save_log_file(log_dir, f"{timestamp}_narration_convert_result.txt", converted_script)
+    
+    if not converted_script.strip():
+        raise Exception("剧本转换失败：LLM返回空内容")
+    
+    return converted_script
+
+
 async def parse_script_to_shots(
     script_content: str,
     max_group_duration: int = 15,
@@ -348,7 +471,7 @@ async def parse_script_to_shots(
         force_medium_shot: 是否强制对话内容使用中景(半身像)，默认False
         no_bg_music: 是否不生成背景音乐，默认False
         split_multi_dialogue: 是否将多人对话镜头拆分为单人对话镜头，默认False
-        narration_as_dialogue: 是否将旁白内容视为角色"旁白"的对话，默认False
+        narration_as_dialogue: 是否为解说剧模式（先将对话剧本转为纯旁白剧本，再解析），默认False
         auth_token: 认证token
         vendor_id: 商家ID
         model_id: 模型ID
@@ -374,6 +497,23 @@ async def parse_script_to_shots(
         else:
             log_dir = None
             timestamp = None
+
+        # 解说剧模式：先将对话剧本转换为纯旁白剧本
+        if narration_as_dialogue:
+            logger.info("解说剧模式已启用，先将剧本转换为纯旁白格式...")
+            _save_log_file(log_dir, f"{timestamp}_00_original_script_before_narration_convert.txt", script_content)
+            
+            script_content = await convert_script_to_narration(
+                script_content=script_content,
+                model=model,
+                temperature=0.5,
+                auth_token=auth_token,
+                vendor_id=vendor_id,
+                model_id=model_id
+            )
+            
+            logger.info(f"剧本已转换为纯旁白格式，新内容长度: {len(script_content)} 字符")
+            _save_log_file(log_dir, f"{timestamp}_00_converted_narration_script.txt", script_content)
 
         # 获取数据库中的场景列表（如果提供了world_id）
         db_locations_text = ""

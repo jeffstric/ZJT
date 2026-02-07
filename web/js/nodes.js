@@ -4358,9 +4358,9 @@
           <div class="field field-collapsible">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
               <input type="checkbox" class="script-narration-as-dialogue" style="cursor: pointer;" />
-              <span>旁白视为对话</span>
+              <span>解说剧（仅旁白说话）</span>
             </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将剧本中的旁白内容视为角色"旁白"的对话</div>
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将有角色对话的剧本转换为仅旁白解说的剧本格式</div>
           </div>
           <div class="field field-always-visible script-warning-field" style="display:none;">
             <div class="gen-meta" style="color: #f59e0b;">文件内容超过30000字符，已自动截取前30000字符。建议将剧本分段处理。</div>
@@ -4491,7 +4491,7 @@
         node.data.splitMultiDialogue = splitMultiDialogueEl.checked;
       });
 
-      // 旁白视为对话选项监听
+      // 解说剧（仅旁白说话）选项监听
       narrationAsDialogueEl.addEventListener('change', () => {
         node.data.narrationAsDialogue = narrationAsDialogueEl.checked;
       });
@@ -4584,7 +4584,7 @@
         splitBtn.disabled = true;
         statusEl.style.display = 'block';
         statusEl.style.color = '#666';
-        statusEl.textContent = '正在调用LLM解析剧本...';
+        statusEl.textContent = node.data.narrationAsDialogue ? '正在将剧本转换为解说剧格式，再解析分镜...' : '正在调用LLM解析剧本...';
 
         try {
           const response = await fetch('/api/parse-script', {
@@ -4631,15 +4631,17 @@
               });
               
               const createdShotGroupNodes = [];
+              let cumulativeY = 0;
               result.data.shot_groups.forEach((shotGroup, index) => {
                 const offsetX = 400;
-                const offsetY = index * 465;
+                const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
                 const shotGroupNodeId = createShotGroupNode({
                   x: node.x + offsetX,
-                  y: node.y + offsetY,
+                  y: node.y + cumulativeY,
                   shotGroupData: shotGroup,
                   scriptData: result.data
                 });
+                cumulativeY += shotCount * 700;
                 
                 // 创建从剧本节点到分镜组节点的连线
                 if(shotGroupNodeId) {
@@ -5109,7 +5111,7 @@
 
         gridStatusEl.style.display = 'block';
         gridStatusEl.style.color = '#666';
-        gridStatusEl.textContent = '正在调用LLM解析剧本...';
+        gridStatusEl.textContent = node.data.narrationAsDialogue ? '正在将剧本转换为解说剧格式，再解析分镜...' : '正在调用LLM解析剧本...';
 
         try {
           // 第一步：解析剧本
@@ -5162,15 +5164,17 @@
 
           // 创建分镜组节点
           const createdShotGroupNodes = [];
+          let cumulativeY = 0;
           result.data.shot_groups.forEach((shotGroup, index) => {
             const offsetX = 400;
-            const offsetY = index * 465;
+            const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
             const shotGroupNodeId = createShotGroupNode({
               x: node.x + offsetX,
-              y: node.y + offsetY,
+              y: node.y + cumulativeY,
               shotGroupData: shotGroup,
               scriptData: result.data
             });
+            cumulativeY += shotCount * 700;
             
             if(shotGroupNodeId) {
               state.connections.push({
@@ -6356,6 +6360,9 @@
         console.log('[宫格生图] 分镜组没有分镜数据');
         return [];
       }
+
+      // 按 shot_number 排序，确保分镜按顺序创建
+      shots.sort((a, b) => (a.shot_number || 0) - (b.shot_number || 0));
 
       // 获取已存在的分镜节点（通过连接关系查找）
       // 注意：只查找真实存在的节点，忽略已删除节点的连接

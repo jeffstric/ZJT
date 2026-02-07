@@ -332,6 +332,12 @@ async def _check_history_for_images(server: str, prompt_id: str) -> List[str]:
         return []
 
 
+def _sync_write_file(path: str, data: bytes):
+    """同步写入文件，供 asyncio.to_thread 调用"""
+    with open(path, "wb") as f:
+        f.write(data)
+
+
 @app.post("/api/qwen-image-edit")
 async def qwen_image_edit(
     image: UploadFile = File(...),
@@ -2693,7 +2699,8 @@ async def video_enhance(
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             # Check if computing power is sufficient
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await asyncio.to_thread(
+                make_perseids_request,
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -2729,8 +2736,7 @@ async def video_enhance(
             os.makedirs(UPLOAD_DIR, exist_ok=True)
             video_filename = f"{uuid.uuid4()}_{video.filename}"
             local_video_path = os.path.join(UPLOAD_DIR, video_filename)
-            with open(local_video_path, "wb") as f:
-                f.write(file_bytes)
+            await asyncio.to_thread(_sync_write_file, local_video_path, file_bytes)
             
             # Create accessible URL for frontend
             final_video_url = f"{SERVER_HOST}/upload/{video_filename}"
@@ -2752,7 +2758,8 @@ async def video_enhance(
                 "description": "video"
             }]
 
-            result = run_ai_app_task(
+            result = await asyncio.to_thread(
+                run_ai_app_task,
                 "1989206149524238338",  # webappId for video enhancement
                 "9549532f3c3d435ebe5e1ca78dcac1e8",  # apiKey
                 node_info_list,
@@ -2779,7 +2786,8 @@ async def video_enhance(
         
         # Deduct computing power
         if CHECK_AUTH_TOKEN:
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await asyncio.to_thread(
+                make_perseids_request,
                 endpoint='user/calculate_computing_power',
                 method='POST',
                 headers=headers,
@@ -2796,7 +2804,8 @@ async def video_enhance(
         # Create database record
         if user_id:
             try:
-                AIToolsModel.create(
+                await asyncio.to_thread(
+                    AIToolsModel.create,
                     prompt="视频高清修复",
                     user_id=user_id,
                     type=enhance_type,  # Use provided enhance_type

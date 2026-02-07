@@ -3,6 +3,7 @@
 ## 更新日期
 - 2026年2月3日：自动生成分镜功能
 - 2026年2月4日：新增"旁白视为对话"功能
+- 2026年2月7日：将"旁白视为对话"升级为"解说剧（仅旁白说话）"，新增对话剧本→纯旁白剧本的LLM转换步骤
 
 ## 功能概述
 
@@ -10,7 +11,7 @@
 
 1. **检查重复拆分**：检测剧本节点下是否已有分镜组节点，避免重复拆分
 2. **自动生成分镜**：为每个分镜组自动调用"生成分镜"功能，无需手动点击
-3. **旁白视为对话**：支持将剧本中的旁白内容自动转换为角色"旁白"的对话
+3. **解说剧（仅旁白说话）**：支持将包含角色对话的剧本先转换为纯旁白解说格式，再进行分镜解析
 
 ## 功能改进详情
 
@@ -163,112 +164,106 @@ async function generateShotFramesIndependentAsync(shotGroupNodeId, shotGroupNode
 - 不影响已有的工作流数据
 - 支持工作流的保存和加载
 
-## 旁白视为对话功能（2026年2月4日新增）
+## 解说剧（仅旁白说话）功能（2026年2月4日新增，2月7日升级）
 
 ### 功能说明
 
-在剧本节点中新增"旁白视为对话"选项，启用后系统会自动将剧本中的旁白内容转换为角色"旁白"的对话。
+在剧本节点中提供"解说剧（仅旁白说话）"选项。启用后，系统会先通过LLM将包含角色对话的剧本转换为纯旁白解说格式（每个场景包含【画面描述】和【旁白台本】两部分），然后再用转换后的剧本进行正常的分镜解析流程。
 
 ### 使用场景
 
-适用于需要为旁白内容生成配音的场景，例如：
-- 纪录片风格的视频
-- 故事叙述类视频
-- 需要画外音解说的视频
+适用于短视频解说类内容的制作：
+- 用户提供的剧本可能是传统的角色对话格式
+- 但目标产出是"解说剧"风格：画面 + 旁白配音，无角色直接说话
+- 系统自动完成格式转换，省去用户手动改写
 
-### 功能特点
+### 两步处理流程
 
-1. **自动识别旁白**：
-   - 识别剧本中标注为"旁白台本"、"旁白"、"narration"的内容
-   - 识别"画面描述"中的叙述性文字
-   - 识别非角色对话的叙述性文字
+1. **第一步：剧本格式转换（新增）**
+   - 调用LLM（`convert_script_to_narration`函数）将对话剧本转换为纯旁白格式
+   - 每个场景输出【画面描述】和【旁白台本】
+   - 角色对话转为第三人称旁白叙述
+   - 画面描述详细包含人物动作、表情、环境等
 
-2. **自动创建旁白角色**：
-   - 角色ID：`char_narrator`
-   - 角色名称：旁白
-   - 角色类型：旁白
-   - 描述：剧本旁白角色，用于叙述画面描述和背景信息
+2. **第二步：正常分镜解析**
+   - 使用转换后的纯旁白剧本进行结构化解析
+   - 旁白内容自动创建旁白角色（`char_narrator`）并添加到dialogue数组
+   - 后续流程与正常剧本解析完全一致
 
-3. **对话格式转换**：
-   - 将旁白内容添加到对应镜头的dialogue数组中
-   - 格式：`{"character_id": "char_narrator", "character_name": "【【旁白】】", "text": "旁白内容"}`
+### 转换示例
 
-### 使用示例
-
-**原剧本内容**：
+**原剧本（角色对话格式）**：
 ```
-**【画面描述】**
-航拍视角。清晨的阳光洒在如森林般的摩天大楼上。镜头快速穿梭，最后停留在正走向顶级西餐厅"云端之上"的男人身上。
+场景 1：顶级西餐厅"天瑞阁" - 中午
 
-**【旁白台本】**
-注意看，这个男人叫苏晨。
-他刚刚发现，自己穿越到了一个疯掉的世界。
-这里的货币价值疯涨了亿万倍，金钱的购买力产生了降维打击般的膨胀。
+[环境描述]：极度奢华的装修，每一个餐具都闪烁着金边。
+
+**服务员**（一脸傲慢）："先生，您这一桌消费了0.002元，这笔'巨款'怕是得攒半年吧？"
+
+**林枫**（无奈）："不好意思，这100块你找得开吗？"
 ```
 
-**启用"旁白视为对话"后的解析结果**：
-- 在characters数组中自动添加"旁白"角色
-- 在对应镜头的dialogue数组中添加旁白对话
-- 旁白内容可以通过"文字转语音"节点生成配音
+**转换后（纯旁白格式）**：
+```
+场景 1：顶级西餐厅"天瑞阁" - 中午
+
+【画面描述】
+餐厅内部装修极度奢华，大理石地面映着水晶灯的光芒。一名穿着普通运动服的年轻男子坐在餐桌前，
+与周围精致华贵的环境格格不入。服务员一脸傲慢地站在桌前，手中捏着账单...
+
+【旁白台本】
+注意看这个穿着运动服的男人，他叫林枫，只是一个刚领到3000元工资的普通打工人。
+服务员的傲慢嘲讽都没能让林枫多想，他随手拿出的一张百元大钞，
+却在不经意间打破了这个世界的平静...
+```
 
 ### 前端实现
 
 **位置**：`/web/js/nodes.js`
 
-1. **HTML选项**（约3887-3893行）：
-```javascript
+1. **HTML选项**：
+```html
 <div class="field field-collapsible">
   <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
     <input type="checkbox" class="script-narration-as-dialogue" style="cursor: pointer;" />
-    <span>旁白视为对话</span>
+    <span>解说剧（仅旁白说话）</span>
   </label>
-  <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将剧本中的旁白内容视为角色"旁白"的对话</div>
+  <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将有角色对话的剧本转换为仅旁白解说的剧本格式</div>
 </div>
 ```
 
-2. **数据初始化**（约3944行）：
-```javascript
-node.data.narrationAsDialogue = false;
-```
+2. **状态提示**：启用时显示"正在将剧本转换为解说剧格式，再解析分镜..."
 
-3. **事件监听**（约4023-4026行）：
-```javascript
-narrationAsDialogueEl.addEventListener('change', () => {
-  node.data.narrationAsDialogue = narrationAsDialogueEl.checked;
-});
-```
-
-4. **API调用**（约4133、4657行）：
-```javascript
-narration_as_dialogue: node.data.narrationAsDialogue || false
-```
+3. **数据字段**：`node.data.narrationAsDialogue`（布尔值，默认false）
 
 ### 后端实现
 
-**位置**：`/home/appuser/comfyui_server_dev2/`
+**位置**：`llm/script_parser.py`
 
-1. **API接口**（`server.py`，约4489、4540行）：
-```python
-narration_as_dialogue = body.get('narration_as_dialogue', False)
+1. **新增函数**：`convert_script_to_narration(script_content, model, temperature, auth_token, vendor_id, model_id)`
+   - 使用专门的系统提示词 `NARRATION_CONVERSION_SYSTEM_PROMPT` 进行剧本格式转换
+   - 异步调用Gemini API（通过`asyncio.to_thread`包装）
+   - 返回转换后的纯旁白格式剧本文本
 
-parsed_data = await parse_script_to_shots(
-    # ...
-    narration_as_dialogue=narration_as_dialogue,
-    # ...
-)
-```
+2. **修改函数**：`parse_script_to_shots`
+   - 当`narration_as_dialogue=True`时，在函数开头先调用`convert_script_to_narration`
+   - 将转换后的剧本替换原始`script_content`
+   - 后续正常走分镜解析流程（包括旁白视为对话的提示词）
 
-2. **剧本解析模块**（`llm/script_parser.py`）：
-   - 函数签名添加`narration_as_dialogue`参数（约334行）
-   - 在提示词中添加旁白处理规则（约549-598行）
-   - LLM会根据提示词自动识别和转换旁白内容
+3. **日志记录**：
+   - `{timestamp}_00_original_script_before_narration_convert.txt`：转换前的原始剧本
+   - `{timestamp}_00_converted_narration_script.txt`：转换后的纯旁白剧本
+   - `{timestamp}_narration_convert_system_prompt.txt`：转换系统提示词
+   - `{timestamp}_narration_convert_user_prompt.txt`：转换用户提示词
+   - `{timestamp}_narration_convert_result.txt`：LLM转换结果
 
 ### 注意事项
 
 1. **默认关闭**：该选项默认不启用，需要用户手动勾选
-2. **与其他选项兼容**：可以与"对话禁止全景"、"拆分多人对话镜头"等选项同时使用
-3. **旁白角色固定**：系统会自动创建ID为`char_narrator`的旁白角色，无需手动创建
-4. **配音生成**：旁白对话可以通过"文字转语音"节点生成配音，与普通角色对话一样处理
+2. **两次LLM调用**：启用后会产生两次LLM调用（一次转换 + 一次解析），消耗更多token和时间
+3. **与其他选项兼容**：可以与"对话禁止全景"、"不生成背景音乐"、"拆分多人对话镜头"等选项同时使用
+4. **旁白角色固定**：解析阶段会自动创建ID为`char_narrator`的旁白角色
+5. **配音生成**：旁白对话可以通过"文字转语音"节点生成配音
 
 ## 未来优化方向
 

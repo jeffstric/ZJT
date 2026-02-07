@@ -1,0 +1,239 @@
+{
+  "id": "camera_control",
+  "name": "相机控制模块",
+  "description": "测试图片节点上的相机控制功能，包括UI交互、参数同步、3D预览和重置功能",
+  "features": [
+    {
+      "id": "camera_ctrl_001",
+      "name": "相机参数UI交互测试",
+      "description": "验证相机控制面板的滑块和输入框交互正常，数值能够双向同步",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "导航到视频工作流页面",
+          "mcp_tool": "mcp1_browser_navigate",
+          "mcp_params": {
+            "url": "${config.base_url}/video-workflow"
+          },
+          "expected_result": "成功加载视频工作流页面",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "创建图片节点",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加按钮",
+            "ref": "#addBtn"
+          },
+          "expected_result": "显示添加菜单",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "选择图片节点",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "图片菜单项",
+            "ref": "#menuAddImage"
+          },
+          "expected_result": "创建图片节点成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3.5,
+          "action": "点击图片节点标题栏展开编辑区",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "图片节点标题栏",
+            "ref": ".node[data-type='image'] .node-header"
+          },
+          "expected_result": "图片节点编辑区展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "验证相机控制区域存在并点击展开",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const section = document.querySelector('.camera-control-section'); const toggleBtn = document.querySelector('.camera-control-toggle-btn'); if(section && toggleBtn) { toggleBtn.click(); return true; } return false; }"
+          },
+          "verify": "相机控制区域存在且已展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4.5,
+          "action": "验证展开后的控件可见性",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const content = document.querySelector('.camera-control-content'); return content && content.style.display !== 'none'; }"
+          },
+          "verify": "相机控制内容区域可见",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "调整Pitch滑块",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const slider = document.querySelector('.image-camera-pitch-slider'); if(slider) { slider.value = 45; slider.dispatchEvent(new Event('input')); return true; } return false; }"
+          },
+          "expected_result": "Pitch滑块调整为45",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "验证Pitch输入框同步更新",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const input = document.querySelector('.image-camera-pitch'); return { value: input ? input.value : null }; }"
+          },
+          "verify": "输入框值为 '45'",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "修改Yaw输入框",
+          "mcp_tool": "mcp1_browser_type",
+          "mcp_params": {
+            "element": "Yaw输入框",
+            "ref": ".image-camera-yaw",
+            "text": "-30"
+          },
+          "expected_result": "Yaw输入框修改为-30",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 8,
+          "action": "验证Yaw滑块同步更新",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const slider = document.querySelector('.image-camera-yaw-slider'); return { value: slider ? slider.value : null }; }"
+          },
+          "verify": "滑块值为 '-30'",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 9,
+          "action": "点击Pitch重置按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "Pitch重置按钮",
+            "ref": ".image-camera-reset-pitch"
+          },
+          "expected_result": "Pitch参数重置为0",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 10,
+          "action": "验证Pitch归零",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const input = document.querySelector('.image-camera-pitch'); const slider = document.querySelector('.image-camera-pitch-slider'); return { inputValue: input?.value, sliderValue: slider?.value }; }"
+          },
+          "verify": "输入框和滑块值都为 '0'",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "camera_ctrl_002",
+      "name": "相机参数提示词生成测试",
+      "description": "验证调整相机参数后，提示词生成逻辑是否正确反映了新的角度描述",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建分镜节点和图片节点并连接",
+          "operation": "custom",
+          "remark": "复用基础流程，确保有连接的分镜和图片节点",
+          "expected_result": "节点连接成功",
+          "pass": false,
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "设置Pitch为-50度（极低角度仰视）",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const node = window.state.nodes.find(n => n.type === 'image'); if(node) { if(!node.data.camera) node.data.camera = { modified: {} }; node.data.camera.pitch = -50; node.data.camera.modified.pitch = true; return true; } return false; }"
+          },
+          "expected_result": "参数设置成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "调用转换函数验证提示词",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const node = window.state.nodes.find(n => n.type === 'image'); return { prompt: window.convertCameraToPrompt ? window.convertCameraToPrompt(node.data.camera) : '' }; }"
+          },
+          "verify": "提示词包含 '极低角度仰视' 或 'Extreme Low Angle'",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "设置Pitch为50度（极高角度俯视）",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const node = window.state.nodes.find(n => n.type === 'image'); if(node) { node.data.camera.pitch = 50; return true; } return false; }"
+          },
+          "expected_result": "参数设置成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "调用转换函数验证提示词",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const node = window.state.nodes.find(n => n.type === 'image'); return { prompt: window.convertCameraToPrompt ? window.convertCameraToPrompt(node.data.camera) : '' }; }"
+          },
+          "verify": "提示词包含 '极高角度俯视' 或 'Extreme High Angle'",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    }
+  ],
+  "remark": ""
+}
