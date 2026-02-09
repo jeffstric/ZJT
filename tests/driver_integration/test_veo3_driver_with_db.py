@@ -1,5 +1,6 @@
 """
 VEO3 Duomi 驱动数据库集成测试
+直接测试驱动方法，不依赖 video_task.py 的业务逻辑
 """
 import sys
 from unittest.mock import patch, MagicMock
@@ -9,46 +10,131 @@ sys.modules['utils.sentry_util'] = MagicMock()
 
 from tests.base_video_driver_test import BaseVideoDriverTest
 from task.video_drivers.veo3_duomi_v1_driver import Veo3DuomiV1Driver
+from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING
+
+VEO3_IMAGE_TO_VIDEO_TYPE = 15
 
 
-class TestVEO3DriverWithDB(BaseVideoDriverTest):
+class TestVeo3DuomiWithDB(BaseVideoDriverTest):
     """VEO3 驱动数据库集成测试"""
     
     def setUp(self):
-        """测试前准备"""
         super().setUp()
         self.driver = Veo3DuomiV1Driver()
-        
-        self.test_ai_tool_id = self.create_test_ai_tool(
-            ai_tool_type=17,
-            prompt='生成专业视频',
-            image_path='https://example.com/veo3_image.jpg',
-            duration=5
-        )
+    
+    def tearDown(self):
+        pass
     
     def test_driver_initialization(self):
-        """测试驱动初始化"""
         self.assertIsNotNone(self.driver)
         self.assertEqual(self.driver.driver_name, 'veo3_duomi_v1')
+        self.assertEqual(self.driver.driver_type, VEO3_IMAGE_TO_VIDEO_TYPE)
     
-    def test_create_veo3_task(self):
-        """测试创建 VEO3 任务记录"""
+    @patch('task.video_drivers.veo3_duomi_v1_driver.create_image_to_video_veo')
+    def test_submit_task_success(self, mock_api):
         task_id = self.create_test_ai_tool(
-            ai_tool_type=17,
-            prompt='测试 VEO3',
+            ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试 VEO3 提交成功',
             image_path='https://example.com/test.jpg',
-            duration=8,
-            status=0
+            duration=5,
+            status=AI_TOOL_STATUS_PENDING
         )
         
-        result = self.execute_query(
-            "SELECT * FROM `ai_tools` WHERE id = %s AND type = %s",
-            (task_id, 17)
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.return_value = {"id": "veo3_task_123"}
+        result = self.driver.submit_task(tool)
+        
+        self.assertTrue(result['success'])
+        self.assertEqual(result['project_id'], 'veo3_task_123')
+    
+    @patch('task.video_drivers.veo3_duomi_v1_driver.create_image_to_video_veo')
+    def test_submit_task_invalid_response(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试响应格式错误',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PENDING
         )
         
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['type'], 17)
-        self.assertEqual(result[0]['duration'], 8)
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.return_value = {"error": "invalid"}
+        result = self.driver.submit_task(tool)
+        
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'SYSTEM')
+    
+    @patch('task.video_drivers.veo3_duomi_v1_driver.create_image_to_video_veo')
+    def test_submit_task_network_error(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试网络错误',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PENDING
+        )
+        
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.side_effect = ConnectionError('Network timeout')
+        result = self.driver.submit_task(tool)
+        
+        self.assertFalse(result['success'])
+        self.assertTrue(result['retry'])
+    
+    @patch('task.video_drivers.veo3_duomi_v1_driver.get_ai_task_result')
+    def test_check_status_success(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试状态检查成功',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='veo3_task_456'
+        )
+        
+        mock_api.return_value = {
+            "code": 0,
+            "msg": "success",
+            "data": {"status": 1, "mediaUrl": "https://example.com/result.mp4"}
+        }
+        
+        result = self.driver.check_status('veo3_task_456')
+        self.assertEqual(result['status'], 'SUCCESS')
+    
+    @patch('task.video_drivers.veo3_duomi_v1_driver.get_ai_task_result')
+    def test_check_status_failed(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试状态检查失败',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='veo3_task_789'
+        )
+        
+        mock_api.return_value = {
+            "code": 0,
+            "msg": "success",
+            "data": {"status": 2, "reason": "内容违规"}
+        }
+        
+        result = self.driver.check_status('veo3_task_789')
+        self.assertEqual(result['status'], 'FAILED')
+    
+    @patch('task.video_drivers.veo3_duomi_v1_driver.get_ai_task_result')
+    def test_check_status_processing(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试状态检查处理中',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='veo3_task_999'
+        )
+        
+        mock_api.return_value = {
+            "code": 0,
+            "msg": "success",
+            "data": {"status": 0}
+        }
+        
+        result = self.driver.check_status('veo3_task_999')
+        self.assertEqual(result['status'], 'RUNNING')
 
 
 if __name__ == '__main__':

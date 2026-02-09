@@ -1,5 +1,6 @@
 """
 Digital Human RunningHub 驱动数据库集成测试
+直接测试驱动方法，不依赖 video_task.py 的业务逻辑
 """
 import sys
 from unittest.mock import patch, MagicMock
@@ -9,45 +10,118 @@ sys.modules['utils.sentry_util'] = MagicMock()
 
 from tests.base_video_driver_test import BaseVideoDriverTest
 from task.video_drivers.digital_human_runninghub_v1_driver import DigitalHumanRunninghubV1Driver
+from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING
+
+DIGITAL_HUMAN_VIDEO_TYPE = 13
 
 
-class TestDigitalHumanDriverWithDB(BaseVideoDriverTest):
+class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
     """Digital Human 驱动数据库集成测试"""
     
     def setUp(self):
-        """测试前准备"""
         super().setUp()
         self.driver = DigitalHumanRunninghubV1Driver()
-        
-        self.test_ai_tool_id = self.create_test_ai_tool(
-            ai_tool_type=11,
-            prompt='生成数字人视频',
-            image_path='https://example.com/digital_human.jpg',
-            duration=5
-        )
+    
+    def tearDown(self):
+        pass
     
     def test_driver_initialization(self):
-        """测试驱动初始化"""
         self.assertIsNotNone(self.driver)
         self.assertEqual(self.driver.driver_name, 'digital_human_runninghub_v1')
+        self.assertEqual(self.driver.driver_type, DIGITAL_HUMAN_VIDEO_TYPE)
     
-    def test_create_digital_human_task(self):
-        """测试创建数字人任务记录"""
+    @patch('task.video_drivers.digital_human_runninghub_v1_driver.create_digital_human')
+    def test_submit_task_success(self, mock_api):
         task_id = self.create_test_ai_tool(
-            ai_tool_type=11,
-            prompt='测试数字人',
+            ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
+            prompt='测试 Digital Human 提交成功',
             image_path='https://example.com/test.jpg',
             duration=5,
-            status=0
+            status=AI_TOOL_STATUS_PENDING
         )
         
-        result = self.execute_query(
-            "SELECT * FROM `ai_tools` WHERE id = %s AND type = %s",
-            (task_id, 11)
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.return_value = {"taskId": "digital_human_task_123", "status": "QUEUED"}
+        result = self.driver.submit_task(tool)
+        
+        self.assertTrue(result['success'])
+        self.assertEqual(result['project_id'], 'digital_human_task_123')
+    
+    @patch('task.video_drivers.digital_human_runninghub_v1_driver.create_digital_human')
+    def test_submit_task_invalid_response(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
+            prompt='测试响应格式错误',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PENDING
         )
         
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['type'], 11)
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.return_value = {"errorCode": "INVALID"}
+        result = self.driver.submit_task(tool)
+        
+        self.assertFalse(result['success'])
+    
+    @patch('task.video_drivers.digital_human_runninghub_v1_driver.create_digital_human')
+    def test_submit_task_network_error(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
+            prompt='测试网络错误',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PENDING
+        )
+        
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.side_effect = ConnectionError('Network timeout')
+        result = self.driver.submit_task(tool)
+        
+        self.assertFalse(result['success'])
+        self.assertTrue(result['retry'])
+    
+    @patch('task.video_drivers.digital_human_runninghub_v1_driver.check_ltx2_task_status')
+    def test_check_status_success(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
+            prompt='测试状态检查成功',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='digital_human_task_456'
+        )
+        
+        class MockResult:
+            file_url = "https://example.com/result.mp4"
+        
+        mock_api.return_value = {"status": "SUCCESS", "results": [MockResult()]}
+        result = self.driver.check_status('digital_human_task_456')
+        self.assertEqual(result['status'], 'SUCCESS')
+    
+    @patch('task.video_drivers.digital_human_runninghub_v1_driver.check_ltx2_task_status')
+    def test_check_status_failed(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
+            prompt='测试状态检查失败',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='digital_human_task_789'
+        )
+        
+        mock_api.return_value = {"status": "FAILED"}
+        result = self.driver.check_status('digital_human_task_789')
+        self.assertEqual(result['status'], 'FAILED')
+    
+    @patch('task.video_drivers.digital_human_runninghub_v1_driver.check_ltx2_task_status')
+    def test_check_status_processing(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
+            prompt='测试状态检查处理中',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='digital_human_task_999'
+        )
+        
+        mock_api.return_value = {"status": "RUNNING"}
+        result = self.driver.check_status('digital_human_task_999')
+        self.assertEqual(result['status'], 'RUNNING')
 
 
 if __name__ == '__main__':

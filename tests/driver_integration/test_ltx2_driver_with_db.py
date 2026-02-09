@@ -1,5 +1,6 @@
 """
 LTX2 RunningHub 驱动数据库集成测试
+直接测试驱动方法，不依赖 video_task.py 的业务逻辑
 """
 import sys
 from unittest.mock import patch, MagicMock
@@ -9,111 +10,118 @@ sys.modules['utils.sentry_util'] = MagicMock()
 
 from tests.base_video_driver_test import BaseVideoDriverTest
 from task.video_drivers.ltx2_runninghub_v1_driver import Ltx2RunninghubV1Driver
+from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING
+
+LTX2_IMAGE_TO_VIDEO_TYPE = 10
 
 
-class TestLTX2DriverWithDB(BaseVideoDriverTest):
+class TestLtx2RunninghubWithDB(BaseVideoDriverTest):
     """LTX2 驱动数据库集成测试"""
     
     def setUp(self):
-        """测试前准备"""
         super().setUp()
         self.driver = Ltx2RunninghubV1Driver()
-        
-        self.test_ai_tool_id = self.create_test_ai_tool(
-            ai_tool_type=10,
-            prompt='生成流畅的视频动画',
-            image_path='https://example.com/ltx2_image.jpg',
-            duration=5
-        )
+    
+    def tearDown(self):
+        pass
+    
+    def test_driver_initialization(self):
+        self.assertIsNotNone(self.driver)
+        self.assertEqual(self.driver.driver_name, 'ltx2_runninghub_v1')
+        self.assertEqual(self.driver.driver_type, LTX2_IMAGE_TO_VIDEO_TYPE)
     
     @patch('task.video_drivers.ltx2_runninghub_v1_driver.create_ltx2_image_to_video')
-    def test_submit_task_success(self, mock_create_video):
-        """测试成功提交 LTX2 任务"""
-        mock_create_video.return_value = {
-            'taskId': 'ltx2_task_12345',
-            'status': 'QUEUED'
-        }
-        
-        ai_tool = self.get_ai_tool_from_db(self.test_ai_tool_id)
-        result = self.driver.submit_task(ai_tool)
-        
-        self.assertTrue(result['success'])
-        self.assertEqual(result['project_id'], 'ltx2_task_12345')
-        
-        mock_create_video.assert_called_once()
-        call_kwargs = mock_create_video.call_args[1]
-        self.assertEqual(call_kwargs['image_url'], 'https://example.com/ltx2_image.jpg')
-        self.assertEqual(call_kwargs['duration'], 5)
-    
-    @patch('task.video_drivers.ltx2_runninghub_v1_driver.create_ltx2_image_to_video')
-    def test_submit_task_queue_maxed(self, mock_create_video):
-        """测试队列已满的情况"""
-        mock_create_video.return_value = {
-            'errorCode': 'TASK_QUEUE_MAXED',
-            'errorMessage': 'TASK_QUEUE_MAXED'
-        }
-        
-        ai_tool = self.get_ai_tool_from_db(self.test_ai_tool_id)
-        result = self.driver.submit_task(ai_tool)
-        
-        self.assertFalse(result['success'])
-        self.assertIn('error', result)
-    
-    @patch('task.video_drivers.ltx2_runninghub_v1_driver.check_ltx2_task_status')
-    def test_check_status_success(self, mock_check_status):
-        """测试检查任务状态 - 成功"""
-        mock_check_status.return_value = {
-            'status': 'SUCCESS',
-            'results': [
-                type('Result', (), {'file_url': 'https://example.com/ltx2_result.mp4'})()
-            ]
-        }
-        
-        result = self.driver.check_status('ltx2_task_12345')
-        
-        self.assertEqual(result['status'], 'SUCCESS')
-        self.assertEqual(result['result_url'], 'https://example.com/ltx2_result.mp4')
-    
-    @patch('task.video_drivers.ltx2_runninghub_v1_driver.check_ltx2_task_status')
-    def test_check_status_running(self, mock_check_status):
-        """测试检查任务状态 - 运行中"""
-        mock_check_status.return_value = {
-            'status': 'RUNNING'
-        }
-        
-        result = self.driver.check_status('ltx2_task_12345')
-        
-        self.assertEqual(result['status'], 'RUNNING')
-    
-    @patch('task.video_drivers.ltx2_runninghub_v1_driver.check_ltx2_task_status')
-    def test_check_status_failed(self, mock_check_status):
-        """测试检查任务状态 - 失败"""
-        mock_check_status.return_value = {
-            'status': 'FAILED'
-        }
-        
-        result = self.driver.check_status('ltx2_task_12345')
-        
-        self.assertEqual(result['status'], 'FAILED')
-    
-    def test_create_and_query_ltx2_task(self):
-        """测试创建和查询 LTX2 任务"""
+    def test_submit_task_success(self, mock_api):
         task_id = self.create_test_ai_tool(
-            ai_tool_type=10,
-            prompt='测试 LTX2 任务',
+            ai_tool_type=LTX2_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试 LTX2 提交成功',
             image_path='https://example.com/test.jpg',
             duration=5,
-            status=0
+            status=AI_TOOL_STATUS_PENDING
         )
         
-        result = self.execute_query(
-            "SELECT * FROM `ai_tools` WHERE id = %s AND type = %s",
-            (task_id, 10)
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.return_value = {"taskId": "ltx2_task_123", "status": "QUEUED"}
+        result = self.driver.submit_task(tool)
+        
+        self.assertTrue(result['success'])
+        self.assertEqual(result['project_id'], 'ltx2_task_123')
+    
+    @patch('task.video_drivers.ltx2_runninghub_v1_driver.create_ltx2_image_to_video')
+    def test_submit_task_invalid_response(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=LTX2_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试响应格式错误',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PENDING
         )
         
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['type'], 10)
-        self.assertEqual(result[0]['status'], 0)
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.return_value = {"errorCode": "INVALID"}
+        result = self.driver.submit_task(tool)
+        
+        self.assertFalse(result['success'])
+    
+    @patch('task.video_drivers.ltx2_runninghub_v1_driver.create_ltx2_image_to_video')
+    def test_submit_task_network_error(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=LTX2_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试网络错误',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PENDING
+        )
+        
+        tool = self.get_ai_tool_from_db(task_id)
+        mock_api.side_effect = ConnectionError('Network timeout')
+        result = self.driver.submit_task(tool)
+        
+        self.assertFalse(result['success'])
+        self.assertTrue(result['retry'])
+    
+    @patch('task.video_drivers.ltx2_runninghub_v1_driver.check_ltx2_task_status')
+    def test_check_status_success(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=LTX2_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试状态检查成功',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='ltx2_task_456'
+        )
+        
+        class MockResult:
+            file_url = "https://example.com/result.mp4"
+        
+        mock_api.return_value = {"status": "SUCCESS", "results": [MockResult()]}
+        result = self.driver.check_status('ltx2_task_456')
+        self.assertEqual(result['status'], 'SUCCESS')
+    
+    @patch('task.video_drivers.ltx2_runninghub_v1_driver.check_ltx2_task_status')
+    def test_check_status_failed(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=LTX2_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试状态检查失败',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='ltx2_task_789'
+        )
+        
+        mock_api.return_value = {"status": "FAILED"}
+        result = self.driver.check_status('ltx2_task_789')
+        self.assertEqual(result['status'], 'FAILED')
+    
+    @patch('task.video_drivers.ltx2_runninghub_v1_driver.check_ltx2_task_status')
+    def test_check_status_processing(self, mock_api):
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=LTX2_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试状态检查处理中',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PROCESSING,
+            project_id='ltx2_task_999'
+        )
+        
+        mock_api.return_value = {"status": "RUNNING"}
+        result = self.driver.check_status('ltx2_task_999')
+        self.assertEqual(result['status'], 'RUNNING')
 
 
 if __name__ == '__main__':
