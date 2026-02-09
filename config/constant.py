@@ -26,6 +26,49 @@ TASK_COMPUTING_POWER = {
     15: 6,  # VEO3固定算力
 }
 
+# 视频驱动映射配置
+# 任务类型 -> 业务驱动名称 -> 具体实现驱动
+# 通过修改这个配置可以随时切换供应商或驱动版本
+VIDEO_DRIVER_MAPPING = {
+    1: "gemini_image_edit",           # 图片编辑（标准版）
+    2: "sora2_text_to_video",          # Sora2 文生视频
+    3: "sora2_image_to_video",         # Sora2 图生视频
+    7: "gemini_image_edit_pro",        # 图片编辑（加强版）
+    10: "ltx2_image_to_video",         # LTX2.0 图生视频
+    11: "wan22_image_to_video",        # Wan2.2 图生视频
+    12: "kling_image_to_video",        # 可灵图生视频
+    13: "digital_human",               # 数字人生成
+    14: "vidu_image_to_video",         # Vidu 图生视频
+    15: "veo3_image_to_video",         # VEO3 图生视频
+}
+
+# 业务驱动名称到具体实现驱动的映射
+# 修改这里可以切换不同的供应商或驱动版本
+# 格式：业务驱动名称 -> 实现驱动类名
+DRIVER_IMPLEMENTATION_MAPPING = {
+    # Sora2 相关驱动
+    "sora2_text_to_video": "sora2_duomi_v1",      # 使用多米供应商的 Sora2 v1 版本
+    "sora2_image_to_video": "sora2_duomi_v1",     # 使用多米供应商的 Sora2 v1 版本
+    
+    # Kling 相关驱动
+    "kling_image_to_video": "kling_duomi_v1",     # 使用多米供应商的 Kling v1 版本
+    
+    # Gemini 相关驱动
+    "gemini_image_edit": "gemini_duomi_v1",       # 使用多米供应商的 Gemini v1 版本（标准版）
+    "gemini_image_edit_pro": "gemini_pro_duomi_v1",  # 使用多米供应商的 Gemini Pro v1 版本（加强版）
+    
+    # VEO3 相关驱动
+    "veo3_image_to_video": "veo3_duomi_v1",       # 使用多米供应商的 VEO3 v1 版本
+    
+    # RunningHub 相关驱动
+    "ltx2_image_to_video": "ltx2_runninghub_v1",  # 使用 RunningHub 的 LTX2 v1 版本
+    "wan22_image_to_video": "wan22_runninghub_v1", # 使用 RunningHub 的 Wan22 v1 版本
+    "digital_human": "digital_human_runninghub_v1", # 使用 RunningHub 的数字人 v1 版本
+    
+    # Vidu 相关驱动
+    "vidu_image_to_video": "vidu_default",         # 使用 Vidu 官方 API
+}
+
 # 视频模型时长选项配置
 # 注意：时长选项必须与 TASK_COMPUTING_POWER 中对应任务类型的 key 保持一致
 # ltx2 -> 任务类型10, wan22 -> 任务类型11, kling -> 任务类型12, vidu -> 任务类型14, sora2 -> 任务类型3
@@ -37,6 +80,24 @@ VIDEO_MODEL_DURATION_OPTIONS = {
     'sora2': [10, 15],  # Sora2 固定算力，支持10/15秒
     'veo3': [8],  # VEO3 固定算力，支持8秒
 }
+
+# AI Tools 状态常量
+AI_TOOL_STATUS_PENDING = 0      # 未处理
+AI_TOOL_STATUS_PROCESSING = 1   # 正在处理
+AI_TOOL_STATUS_FAILED = -1      # 处理失败
+AI_TOOL_STATUS_COMPLETED = 2    # 处理完成
+
+# Tasks 状态常量
+TASK_STATUS_QUEUED = 0          # 队列中
+TASK_STATUS_PROCESSING = 1      # 处理中
+TASK_STATUS_COMPLETED = 2       # 处理完成
+TASK_STATUS_FAILED = -1         # 处理失败
+
+# AI Audio 状态常量
+AI_AUDIO_STATUS_PENDING = 0     # 未处理
+AI_AUDIO_STATUS_PROCESSING = 1  # 处理中
+AI_AUDIO_STATUS_FAILED = -1     # 处理失败
+AI_AUDIO_STATUS_COMPLETED = 2   # 处理完成
 
 AUTHENTICATION_ID = 'aa63d4090d59401b9862223087c25b98'
 

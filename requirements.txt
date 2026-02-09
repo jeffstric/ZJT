@@ -9,3 +9,5 @@ httpx>=0.24.0
 pyJianYingDraft>=0.2.5
 apscheduler==3.10.4
 cryptography==41.0.3
+# 错误监控
+sentry-sdk>=2.0.0

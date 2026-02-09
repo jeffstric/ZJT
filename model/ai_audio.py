@@ -4,6 +4,12 @@ AI Audio Model - Database operations for ai_audio table
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from .database import execute_query, execute_update, execute_insert
+from config.constant import (
+    AI_AUDIO_STATUS_PENDING,
+    AI_AUDIO_STATUS_PROCESSING,
+    AI_AUDIO_STATUS_FAILED,
+    AI_AUDIO_STATUS_COMPLETED
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -65,7 +71,7 @@ class AIAudioModel:
         emo_weight: Optional[float] = None,
         emo_vec: Optional[str] = None,
         emo_control_method: Optional[int] = None,
-        status: Optional[int] = 0,
+        status: Optional[int] = AI_AUDIO_STATUS_PENDING,
         message: Optional[str] = None
     ) -> int:
         """
@@ -82,7 +88,7 @@ class AIAudioModel:
             emo_weight: Emotion weight (optional)
             emo_vec: Emotion vector control (optional)
             emo_control_method: Emotion control method (0-same as voice reference, 1-use emotion reference, 2-use emotion vector, 3-use emotion text, optional)
-            status: Status (0-unprocessed, 1-processing, -1-failed, 2-completed, default: 0)
+            status: Status (AI_AUDIO_STATUS_PENDING-未处理, AI_AUDIO_STATUS_PROCESSING-处理中, AI_AUDIO_STATUS_FAILED-处理失败, AI_AUDIO_STATUS_COMPLETED-处理完成, default: AI_AUDIO_STATUS_PENDING)
             message: Error message (optional)
         
         Returns:

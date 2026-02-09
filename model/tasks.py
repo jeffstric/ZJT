@@ -4,6 +4,12 @@ Tasks Model - Database operations for tasks table
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from .database import execute_query, execute_update, execute_insert
+from config.constant import (
+    TASK_STATUS_QUEUED,
+    TASK_STATUS_PROCESSING,
+    TASK_STATUS_COMPLETED,
+    TASK_STATUS_FAILED
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,7 +23,7 @@ class Task:
         self.task_type = kwargs.get('task_type')
         self.task_id = kwargs.get('task_id')
         self.try_count = kwargs.get('try_count', 0)
-        self.status = kwargs.get('status', 0)
+        self.status = kwargs.get('status', TASK_STATUS_QUEUED)
         self.next_trigger = kwargs.get('next_trigger')
         self.created_at = kwargs.get('created_at')
         self.updated_at = kwargs.get('updated_at')
@@ -44,7 +50,7 @@ class TasksModel:
         task_type: str,
         task_id: int,
         try_count: int = 0,
-        status: int = 0
+        status: int = TASK_STATUS_QUEUED
     ) -> int:
         """
         Create a new task record
@@ -53,7 +59,7 @@ class TasksModel:
             task_type: Task type
             task_id: Task ID
             try_count: Failure retry count (default: 0)
-            status: Status (0-队列中, 1-处理中, 2-处理完成, -1-处理失败, default: 0)
+            status: Status (TASK_STATUS_QUEUED-队列中, TASK_STATUS_PROCESSING-处理中, TASK_STATUS_COMPLETED-处理完成, TASK_STATUS_FAILED-处理失败, default: TASK_STATUS_QUEUED)
             next_trigger: Next execution time (optional)
         
         Returns:
@@ -209,13 +215,13 @@ class TasksModel:
         
         Args:
             task_type: Task type
-            status_list: List of status values to filter (default: [0, 1])
+            status_list: List of status values to filter (default: [TASK_STATUS_QUEUED, TASK_STATUS_PROCESSING])
         
         Returns:
             List of Task objects
         """
         if status_list is None:
-            status_list = [0, 1]
+            status_list = [TASK_STATUS_QUEUED, TASK_STATUS_PROCESSING]
         
         placeholders = ','.join(['%s'] * len(status_list))
         sql = f"""

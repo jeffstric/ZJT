@@ -13,7 +13,18 @@ from duomi_api_requset import (
     get_ai_task_result,
 )
 from model import TasksModel, AIAudioModel
-from config.constant import TASK_TYPE_GENERATE_AUDIO, AUTHENTICATION_ID
+from config.constant import (
+    TASK_TYPE_GENERATE_AUDIO,
+    AUTHENTICATION_ID,
+    AI_AUDIO_STATUS_PENDING,
+    AI_AUDIO_STATUS_PROCESSING,
+    AI_AUDIO_STATUS_COMPLETED,
+    AI_AUDIO_STATUS_FAILED,
+    TASK_STATUS_QUEUED,
+    TASK_STATUS_PROCESSING,
+    TASK_STATUS_COMPLETED,
+    TASK_STATUS_FAILED
+)
 from utils.index_tts_util import generate_audio, validate_emotion_vector
 import os
 import yaml
@@ -37,7 +48,7 @@ UPLOAD_DIR = "/nas/comfyui_upload/tts/result_audio/"
 
 async def _submit_new_task(ai_audio):
     """
-    Submit a new audio generation task (status == 0)
+    Submit a new audio generation task (status == AI_AUDIO_STATUS_PENDING)
     
     Args:
         ai_audio: AIAudio object
@@ -48,8 +59,8 @@ async def _submit_new_task(ai_audio):
     task_id = ai_audio.id
     
     try:
-        AIAudioModel.update(task_id, status=1, message="任务处理中")
-        TasksModel.update_by_task_id(task_id, status=1)
+        AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_PROCESSING, message="任务处理中")
+        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
         # Prepare parameters for generate_audio
         text = ai_audio.text
         
@@ -57,8 +68,8 @@ async def _submit_new_task(ai_audio):
         spk_audio_path = ai_audio.ref_path
         if not spk_audio_path:
             logger.error(f"Task {task_id}: No reference audio path provided")
-            AIAudioModel.update(task_id, status=-1, message="缺少参考音频")
-            TasksModel.update_by_task_id(task_id, status=-1)
+            AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_FAILED, message="缺少参考音频")
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
             return False
         
         
@@ -86,13 +97,13 @@ async def _submit_new_task(ai_audio):
                 is_valid, error_msg = validate_emotion_vector(emo_vec)
                 if not is_valid:
                     logger.error(f"Task {task_id}: Invalid emotion vector - {error_msg}")
-                    AIAudioModel.update(task_id, status=-1, message=error_msg)
-                    TasksModel.update_by_task_id(task_id, status=-1)
+                    AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_FAILED, message=error_msg)
+                    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
                     return False
             except Exception as e:
                 logger.error(f"Task {task_id}: Failed to parse emotion vector - {str(e)}")
-                AIAudioModel.update(task_id, status=-1, message=f"情感向量解析失败: {str(e)}")
-                TasksModel.update_by_task_id(task_id, status=-1)
+                AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_FAILED, message=f"情感向量解析失败: {str(e)}")
+                TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
                 return False
         
         # Prepare target path for generated audio
@@ -119,8 +130,8 @@ async def _submit_new_task(ai_audio):
         
         if not success:
             logger.error(f"Task {task_id}: Audio generation failed - {audio_path_or_error}")
-            AIAudioModel.update(task_id, status=-1, message=audio_path_or_error)
-            TasksModel.update_by_task_id(task_id, status=-1)
+            AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_FAILED, message=audio_path_or_error)
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
             return False
         
         audio_file_path = audio_path_or_error or result_path
@@ -128,8 +139,8 @@ async def _submit_new_task(ai_audio):
         logger.info(f"Task {task_id}: Audio saved to {audio_file_path}")
         
         # Update database with result
-        AIAudioModel.update(task_id, status=2, result_url=result_path, message="音频生成成功")
-        TasksModel.update_by_task_id(task_id, status=2)
+        AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED, result_url=result_path, message="音频生成成功")
+        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
         
         logger.info(f"Task {task_id}: Audio generation completed successfully")
         return True
@@ -211,7 +222,7 @@ async def process_generate_audio(task):
         
         status = ai_audio.status
         
-        if status == 0:
+        if status == AI_AUDIO_STATUS_PENDING:
             return await _submit_new_task(ai_audio)
         else:
             logger.warning(f"Unexpected status {status} for task {task.task_id}")
@@ -254,24 +265,24 @@ async def process_task_with_retry(task_type, process_func):
                 
                 # 检查任务是否过期
                 if _check_task_expiration(task):
-                    TasksModel.update_by_task_id(task.task_id, status=-1)
-                    AIAudioModel.update(task.task_id, status=-1, message="任务已过期")
+                    TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_FAILED)
+                    AIAudioModel.update(task.task_id, status=AI_AUDIO_STATUS_FAILED, message="任务已过期")
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as expired")
                     continue
                 
                 # 检查是否超过最大重试次数
                 if _check_max_retry_exceeded(task):
-                    TasksModel.update_by_task_id(task.task_id, status=-1)
-                    AIAudioModel.update(task.task_id, status=-1, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
+                    TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_FAILED)
+                    AIAudioModel.update(task.task_id, status=AI_AUDIO_STATUS_FAILED, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as failed due to max retry exceeded")
                     continue
                 
                 # Update status to 1 (处理中) if it's 0 (队列中)
-                if task.status == 0:
-                    TasksModel.update_by_task_id(task.task_id, status=1)
-                    logger.info(f"Updated task {task.task_id} status to 1 (处理中)")
+                if task.status == TASK_STATUS_QUEUED:
+                    TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_PROCESSING)
+                    logger.info(f"Updated task {task.task_id} status to TASK_STATUS_PROCESSING (处理中)")
                 
                 # Call the specific processing function
                 success = await process_func(task)

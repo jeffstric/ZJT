@@ -4,6 +4,12 @@ AI Tools Model - Database operations for ai_tools table
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from .database import execute_query, execute_update, execute_insert
+from config.constant import (
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_PROCESSING,
+    AI_TOOL_STATUS_FAILED,
+    AI_TOOL_STATUS_COMPLETED
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,8 @@ class AITool:
         self.status = kwargs.get('status')
         self.message = kwargs.get('message')
         self.image_size = kwargs.get('image_size')
+        self.completed_time = kwargs.get('completed_time')
+        self.extra_config = kwargs.get('extra_config')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -46,7 +54,9 @@ class AITool:
             'type': self.type,
             'status': self.status,
             'message': self.message,
-            'image_size': self.image_size
+            'image_size': self.image_size,
+            'completed_time': self.completed_time.isoformat() if self.completed_time else None,
+            'extra_config': self.extra_config
         }
 
 
@@ -64,9 +74,11 @@ class AIToolsModel:
         project_id: Optional[str] = None,
         transaction_id: Optional[str] = None,
         result_url: Optional[str] = None,
-        status: Optional[int] = 0,
+        status: Optional[int] = AI_TOOL_STATUS_PENDING,
         message: Optional[str] = None,
-        image_size: Optional[str] = None
+        image_size: Optional[str] = None,
+        completed_time: Optional[datetime] = None,
+        extra_config: Optional[str] = None
     ) -> int:
         """
         Create a new AI tool record
@@ -81,20 +93,21 @@ class AIToolsModel:
             project_id: Project ID (optional)
             transaction_id: Transaction ID (optional)
             result_url: Result URL (optional)
-            status: Status (0-未处理, 1-正在处理, -1-处理失败, 2-处理完成, default: 0)
+            status: Status (AI_TOOL_STATUS_PENDING-未处理, AI_TOOL_STATUS_PROCESSING-正在处理, AI_TOOL_STATUS_FAILED-处理失败, AI_TOOL_STATUS_COMPLETED-处理完成, default: AI_TOOL_STATUS_PENDING)
             message: Error message (optional)
             image_size: Image size (1K, 2K, 4K) (optional)
-
+            completed_time: Completion time (optional)
+            extra_config: Extra configuration in JSON format (optional)
         
         Returns:
             Inserted record ID
         """
         sql = """
             INSERT INTO ai_tools 
-            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size)
+        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config)
         
         try:
             record_id = execute_insert(sql, params)
@@ -240,12 +253,12 @@ class AIToolsModel:
         """
         sql = """
             SELECT * FROM ai_tools 
-            WHERE user_id = %s AND status = 1
+            WHERE user_id = %s AND status = %s
             ORDER BY create_time DESC
         """
         
         try:
-            results = execute_query(sql, (user_id,), fetch_all=True)
+            results = execute_query(sql, (user_id, AI_TOOL_STATUS_PROCESSING), fetch_all=True)
             tools = [AITool(**row) for row in results] if results else []
             return tools
         except Exception as e:
@@ -263,7 +276,7 @@ class AIToolsModel:
         Args:
             record_id: Record ID
             **kwargs: Fields to update (prompt, type, image_path, duration, ratio, 
-                     project_id, transaction_id, result_url, user_id, status, message, image_size)
+                     project_id, transaction_id, result_url, user_id, status, message, image_size, completed_time, extra_config)
         
         Returns:
             Number of affected rows
@@ -271,7 +284,7 @@ class AIToolsModel:
         # Build update fields
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size'
+            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config'
         ]
         
         update_fields = []
@@ -314,7 +327,7 @@ class AIToolsModel:
         """
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size'
+            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config'
         ]
         
         update_fields = []

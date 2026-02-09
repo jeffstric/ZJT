@@ -4,7 +4,7 @@ import logging
 import asyncio
 import os
 import fcntl
-from task.video_task import generate_video_task
+from task.visual_task import generate_video_task
 from task.audio_task import generate_audio_task
 from functools import partial
 

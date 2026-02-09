@@ -1,7 +1,7 @@
 -- 道具表
 -- Props Table
 -- 用于存储道具信息
-CREATE TABLE `props` (
+CREATE TABLE IF NOT EXISTS `props` (
   `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `world_id` int unsigned NOT NULL COMMENT '所属世界ID',
   `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '道具名称',
@@ -17,4 +17,4 @@ CREATE TABLE `props` (
   KEY `idx_name` (`name`),
   KEY `idx_create_time` (`create_time`),
   CONSTRAINT `fk_props_world` FOREIGN KEY (`world_id`) REFERENCES `world` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=26 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='道具表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='道具表';
