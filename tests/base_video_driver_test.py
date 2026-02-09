@@ -2,11 +2,35 @@
 视频驱动测试基类
 提供视频驱动测试的通用方法和数据库操作
 """
+import logging
 from tests.base_db_test import DatabaseTestCase
+
+logger = logging.getLogger(__name__)
 
 
 class BaseVideoDriverTest(DatabaseTestCase):
     """视频驱动测试基类"""
+    
+    def tearDown(self):
+        """驱动测试结束后：提交事务（保留测试数据）"""
+        if self._connection:
+            try:
+                # 提交事务，保留测试数据
+                self._connection.commit()
+                logger.debug("驱动测试数据已提交到数据库")
+            except Exception as e:
+                logger.error(f"提交事务失败: {e}")
+                try:
+                    self._connection.rollback()
+                except:
+                    pass
+            finally:
+                try:
+                    self._connection.close()
+                except Exception as e:
+                    logger.warning(f"关闭连接失败: {e}")
+                self._connection = None
+                self._cursor = None
     
     def create_test_ai_tool(self, ai_tool_type, **kwargs):
         """

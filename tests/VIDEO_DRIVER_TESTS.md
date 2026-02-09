@@ -162,7 +162,7 @@ sys.modules['your_api_module'] = MagicMock()
 sys.modules['utils.sentry_util'] = MagicMock()
 
 from tests.base_video_driver_test import BaseVideoDriverTest
-from task.video_drivers.your_driver import YourDriver
+from task.visual_drivers.your_driver import YourDriver
 
 
 class TestYourDriverWithDB(BaseVideoDriverTest):
@@ -185,7 +185,7 @@ class TestYourDriverWithDB(BaseVideoDriverTest):
 ### 步骤 2：编写测试用例
 
 ```python
-    @patch('task.video_drivers.your_driver.your_api_function')
+    @patch('task.visual_drivers.your_driver.your_api_function')
     def test_submit_task_success(self, mock_api):
         """测试成功提交任务"""
         # 设置 Mock 返回值
