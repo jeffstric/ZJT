@@ -1006,7 +1006,7 @@ svg.connections path.reference-line.selected{
 
 .field-collapsible{
   max-height: 0;
-  overflow: visible;
+  overflow: hidden;
   opacity: 0;
   margin: 0 !important;
   padding: 0 !important;

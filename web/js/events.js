@@ -579,6 +579,27 @@
         }
 
         
+        // 如果从角色/场景/道具节点拖拽，查找图片节点的参考端口
+        let nearestRefPort = null;
+        if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
+          let nearestRefDist = 50;
+          for(const node of state.nodes){
+            if(node.type !== 'image') continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+            if(!toEl) continue;
+            const portEl = toEl.querySelector('.port.reference');
+            if(!portEl) continue;
+            const rect = portEl.getBoundingClientRect();
+            const portX = (rect.left + rect.width/2 - containerRect.left - state.panX) / state.zoom;
+            const portY = (rect.top + rect.height/2 - containerRect.top - state.panY) / state.zoom;
+            const dist = Math.sqrt(Math.pow(toX - portX, 2) + Math.pow(toY - portY, 2));
+            if(dist < nearestRefDist){
+              nearestRefDist = dist;
+              nearestRefPort = { nodeId: node.id, x: portX, y: portY };
+            }
+          }
+        }
+
         // 如果从图生视频节点拖拽，查找视频节点输入端口
         // 如果从剧本节点拖拽，查找分镜组节点输入端口
         // 如果从角色节点拖拽，查找视频节点输入端口
@@ -657,6 +678,14 @@
           portEl.classList.toggle('can-connect', isNearest);
         }
         
+        // 更新参考端口高亮状态（角色/场景/道具拖拽时）
+        for(const portEl of canvasEl.querySelectorAll('.port.reference')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          const isNearest = nearestRefPort && nearestRefPort.nodeId === nodeId;
+          portEl.classList.toggle('can-connect', isNearest);
+        }
+        
         // 如果找到最近端口，虚线吸附到该端口
         let targetX = toX, targetY = toY;
         if(nearestImgPort){
@@ -674,6 +703,10 @@
         if(nearestVideoInputPort){
           targetX = nearestVideoInputPort.x;
           targetY = nearestVideoInputPort.y;
+        }
+        if(nearestRefPort){
+          targetX = nearestRefPort.x;
+          targetY = nearestRefPort.y;
         }
         
         renderConnections({
@@ -913,6 +946,52 @@
               
               renderFirstFrameConnections();
               try{ autoSaveWorkflow(); } catch(e){}
+            }
+          }
+        }
+
+        // 如果从角色/场景/道具节点拖拽，查找图片节点的参考端口
+        if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
+          let nearestReferencePort = null;
+          let nearestReferenceDist = 50;
+          
+          for(const node of state.nodes){
+            if(node.type !== 'image') continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+            if(!toEl) continue;
+            const portEl = toEl.querySelector('.port.reference');
+            if(!portEl) continue;
+            const rect = portEl.getBoundingClientRect();
+            const portX = (rect.left + rect.width/2 - containerRect.left - state.panX) / state.zoom;
+            const portY = (rect.top + rect.height/2 - containerRect.top - state.panY) / state.zoom;
+            const dist = Math.sqrt(Math.pow(mouseX - portX, 2) + Math.pow(mouseY - portY, 2));
+            if(dist < nearestReferenceDist){
+              nearestReferenceDist = dist;
+              nearestReferencePort = { nodeId: node.id, node: node };
+            }
+          }
+          
+          if(nearestReferencePort){
+            const exists = state.referenceConnections.some(c => c.from === state.connecting.fromId && c.to === nearestReferencePort.nodeId);
+            if(!exists){
+              // 检查参考图数量限制
+              const currentRefCount = state.referenceConnections.filter(c => c.to === nearestReferencePort.nodeId).length;
+              const maxRefs = nearestReferencePort.node.data.model === 'gemini-3-pro-image-preview' ? 13 : 5;
+              if(currentRefCount >= maxRefs){
+                showToast(`最多支持${maxRefs}张参考图`, 'error');
+              } else {
+                state.referenceConnections.push({
+                  id: state.nextReferenceConnId++,
+                  from: state.connecting.fromId,
+                  to: nearestReferencePort.nodeId
+                });
+                // 更新目标节点的参考图显示
+                if(nearestReferencePort.node.updateReferenceImages){
+                  nearestReferencePort.node.updateReferenceImages();
+                }
+                renderReferenceConnections();
+                try{ autoSaveWorkflow(); } catch(e){}
+              }
             }
           }
         }

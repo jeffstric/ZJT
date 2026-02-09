@@ -3526,12 +3526,24 @@
         
         refConns.forEach(conn => {
           const sourceNode = state.nodes.find(n => n.id === conn.from);
-          if(sourceNode && sourceNode.type === 'image' && (sourceNode.data.url || sourceNode.data.preview)){
-            const imgUrl = sourceNode.data.url || sourceNode.data.preview;
+          if(!sourceNode) return;
+          
+          // 根据节点类型获取图片URL
+          let imgUrl = null;
+          let imgLabel = '参考图';
+          if(sourceNode.type === 'image' && (sourceNode.data.url || sourceNode.data.preview)){
+            imgUrl = sourceNode.data.url || sourceNode.data.preview;
+          } else if((sourceNode.type === 'character' || sourceNode.type === 'location' || sourceNode.type === 'props') && sourceNode.data.reference_image){
+            imgUrl = sourceNode.data.reference_image;
+            const typeLabels = { character: '角色', location: '场景', props: '道具' };
+            imgLabel = `${typeLabels[sourceNode.type]}: ${sourceNode.data.name || ''}`;
+          }
+          
+          if(imgUrl){
             const item = document.createElement('div');
             item.className = 'reference-image-item';
             item.innerHTML = `
-              <img src="${imgUrl}" alt="参考图" />
+              <img src="${imgUrl}" alt="${imgLabel}" title="${imgLabel}" />
               <button class="reference-image-remove" data-conn-id="${conn.id}">×</button>
             `;
             
@@ -3580,27 +3592,32 @@
       referencePort.addEventListener('mouseup', (e) => {
         if(state.connecting && state.connecting.fromId !== id){
           const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
-          if(fromNode && fromNode.type === 'image'){
+          const allowedTypes = ['image', 'character', 'location', 'props'];
+          if(fromNode && allowedTypes.includes(fromNode.type)){
             // 检查是否已存在连接
             const exists = state.referenceConnections.some(c => c.from === state.connecting.fromId && c.to === id);
             if(!exists){
-              // 检查循环引用
-              function hasCircularReference(fromId, toId){
-                const visited = new Set();
-                function dfs(currentId){
-                  if(currentId === fromId) return true;
-                  if(visited.has(currentId)) return false;
-                  visited.add(currentId);
-                  const outgoing = state.referenceConnections.filter(c => c.from === currentId);
-                  for(const conn of outgoing){
-                    if(dfs(conn.to)) return true;
+              // 检查循环引用（仅对图片节点需要检查）
+              let isCircular = false;
+              if(fromNode.type === 'image'){
+                function hasCircularReference(fromId, toId){
+                  const visited = new Set();
+                  function dfs(currentId){
+                    if(currentId === fromId) return true;
+                    if(visited.has(currentId)) return false;
+                    visited.add(currentId);
+                    const outgoing = state.referenceConnections.filter(c => c.from === currentId);
+                    for(const conn of outgoing){
+                      if(dfs(conn.to)) return true;
+                    }
+                    return false;
                   }
-                  return false;
+                  return dfs(toId);
                 }
-                return dfs(toId);
+                isCircular = hasCircularReference(state.connecting.fromId, id);
               }
               
-              if(hasCircularReference(state.connecting.fromId, id)){
+              if(isCircular){
                 showToast('不能创建循环参考', 'error');
               } else {
                 // 检查参考图数量限制
@@ -3923,14 +3940,36 @@
             finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
           }
 
-          // 收集参考图URL
+          // 收集参考图URL和描述后缀
+          // 注意：原图占据图1，参考图从图2开始编号
           const referenceImageUrls = [];
+          const promptSuffix = [];
+          let refImageIndex = 2;
           const referenceConns = state.referenceConnections.filter(c => c.to === node.id);
           for(const conn of referenceConns){
             const refNode = state.nodes.find(n => n.id === conn.from);
-            if(refNode && refNode.data && refNode.data.url){
+            if(!refNode || !refNode.data) continue;
+            if(refNode.type === 'image' && refNode.data.url){
               referenceImageUrls.push(refNode.data.url);
+              refImageIndex++;
+            } else if(refNode.type === 'character' && refNode.data.reference_image){
+              referenceImageUrls.push(refNode.data.reference_image);
+              promptSuffix.push(`图${refImageIndex}是${refNode.data.name || '角色'}`);
+              refImageIndex++;
+            } else if(refNode.type === 'location' && refNode.data.reference_image){
+              referenceImageUrls.push(refNode.data.reference_image);
+              promptSuffix.push(`图${refImageIndex}是${refNode.data.name || '场景'}`);
+              refImageIndex++;
+            } else if(refNode.type === 'props' && refNode.data.reference_image){
+              referenceImageUrls.push(refNode.data.reference_image);
+              promptSuffix.push(`图${refImageIndex}是${refNode.data.name || '道具'}`);
+              refImageIndex++;
             }
+          }
+
+          // 将参考图描述追加到提示词末尾
+          if(promptSuffix.length > 0){
+            finalPrompt = `${finalPrompt}\n\n${promptSuffix.join('，')}。`;
           }
 
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
@@ -6880,6 +6919,14 @@
       // 渲染道具标签
       function renderPropTags() {
         propTagsEl.innerHTML = '';
+        // 过滤掉 state.worldProps 中不存在的道具
+        const worldProps = state.worldProps || [];
+        if(worldProps.length > 0) {
+          node.data.refProps = (node.data.refProps || []).filter(p => {
+            const dbId = p.props_db_id || p.id;
+            return worldProps.some(wp => wp.id === dbId || wp.name === p.name);
+          });
+        }
         (node.data.refProps || []).forEach((prop, idx) => {
           const tag = document.createElement('span');
           tag.className = 'shot-ref-tag prop';
@@ -7259,16 +7306,14 @@
         const connectedImageNodes = getConnectedImageNodes();
 
         if(connectedImageNodes.length > 0){
-          // 如果已有预览图URL且该图片仍然存在，保持不变
-          const existingImage = connectedImageNodes.find(n => n.data.url === node.data.previewImageUrl);
-          
-          if(!existingImage){
-            // 否则选择第一个或随机一个
+          // 如果分镜节点已有预览图，不自动替换
+          if(!node.data.previewImageUrl){
+            // 没有预览图时，自动选择一个
             const imageNode = connectedImageNodes.length === 1 
               ? connectedImageNodes[0]
               : connectedImageNodes[Math.floor(Math.random() * connectedImageNodes.length)];
             
-            console.log(`[分镜节点 ${id}] 选择图片节点 ${imageNode.id}，URL:`, imageNode.data.url);
+            console.log(`[分镜节点 ${id}] 自动选择图片节点 ${imageNode.id}，URL:`, imageNode.data.url);
             node.data.previewImageUrl = imageNode.data.url;
           }
           

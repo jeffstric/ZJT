@@ -332,6 +332,7 @@
       
       // 清除该节点相关的参考连接
       const affectedNodes = new Set();
+      state.referenceConnections.filter(c => c.from === id).forEach(c => affectedNodes.add(c.to));
       state.referenceConnections.filter(c => c.to === id).forEach(c => affectedNodes.add(c.to));
       state.referenceConnections = state.referenceConnections.filter(c => c.from !== id && c.to !== id);
       

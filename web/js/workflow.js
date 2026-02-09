@@ -1550,7 +1550,7 @@
         const connectedNodes = incomingConnections.map(c => state.nodes.find(n => n.id === c.from));
         const connectedShotFrameNode = connectedNodes.find(n => n && n.type === 'shot_frame');
         
-        if(connectedShotFrameNode){
+        if(connectedShotFrameNode && !connectedShotFrameNode.data.previewImageUrl){
           connectedShotFrameNode.data.previewImageUrl = url;
           
           const shotFrameNodeEl = canvasEl.querySelector(`.node[data-node-id="${connectedShotFrameNode.id}"]`);

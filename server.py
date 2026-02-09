@@ -6632,6 +6632,65 @@ async def get_mp_verify_file():
         raise HTTPException(status_code=404, detail="Verification file not found")
     return FileResponse(file_path, media_type="text/plain")
 
+
+@app.get("/robots.txt")
+async def get_robots_txt():
+    """
+    Serve robots.txt for search engine crawlers.
+    Allows all crawlers to access all parts of the site.
+    """
+    content = """User-agent: *
+Allow: /
+
+Sitemap: /sitemap.xml
+"""
+    return StreamingResponse(
+        BytesIO(content.encode('utf-8')),
+        media_type="text/plain",
+        headers={"Content-Type": "text/plain; charset=utf-8"}
+    )
+
+
+@app.get("/sitemap.xml")
+async def get_sitemap_xml():
+    """
+    Serve sitemap.xml for search engine crawlers.
+    Lists all main pages of the application.
+    """
+    base_url = SERVER_HOST.rstrip('/')
+    base_url = base_url + '/'  # 确保末尾有一个斜杠
+    today = datetime.now().strftime("%Y-%m-%d")
+    
+    urls = [
+        ("", "1.0"),
+        ("video-workflow-list", "0.9"),
+        ("video-workflow", "0.9"),
+        ("image-style-guide", "0.8"),
+        ("character_card.html", "0.8"),
+    ]
+    
+    xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+"""
+    
+    for path, priority in urls:
+        full_url = f"{base_url}{path}" if path else base_url.rstrip('/')
+        xml_content += f"""    <url>
+        <loc>{full_url}</loc>
+        <lastmod>{today}</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>{priority}</priority>
+    </url>
+"""
+    
+    xml_content += "</urlset>"
+    
+    return StreamingResponse(
+        BytesIO(xml_content.encode('utf-8')),
+        media_type="application/xml",
+        headers={"Content-Type": "application/xml; charset=utf-8"}
+    )
+
 # Serve frontend static files
 static_dir = os.path.join(APP_DIR, "web")
 if not os.path.exists(static_dir):
