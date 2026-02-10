@@ -77,7 +77,7 @@ VIDEO_MODEL_DURATION_OPTIONS = {
     'wan22': list(TASK_COMPUTING_POWER[11].keys()),  # 从算力配置中自动获取时长选项
     'kling': list(TASK_COMPUTING_POWER[12].keys()),  # 从算力配置中自动获取时长选项
     'vidu': list(TASK_COMPUTING_POWER[14].keys()),   # 从算力配置中自动获取时长选项
-    'sora2': [10, 15],  # Sora2 固定算力，支持10/15秒
+    'sora2': [15, 10],  # Sora2 固定算力，支持10/15秒
     'veo3': [8],  # VEO3 固定算力，支持8秒
 }
 
