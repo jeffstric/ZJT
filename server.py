@@ -49,7 +49,10 @@ from config.constant import (
     TASK_STATUS_QUEUED,
     TASK_STATUS_PROCESSING,
     TASK_STATUS_COMPLETED,
-    TASK_STATUS_FAILED
+    TASK_STATUS_FAILED,
+    IMAGE_TO_VIDEO_TYPES,
+    IMAGE_EDIT_TYPES,
+    TASK_TYPE_NAME_MAP
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.image_grid_splitter import ImageGridSplitter
@@ -2367,6 +2370,35 @@ async def get_computing_power_config():
         )
     except Exception as e:
         logger.error(f'获取算力配置失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
+@app.get('/api/task-type-config')
+async def get_task_type_config():
+    """
+    获取任务类型配置
+    返回图生视频、图片编辑等任务类型列表和类型名称映射
+    """
+    try:
+        return JSONResponse(
+            content={
+                'success': True,
+                'message': '获取成功',
+                'data': {
+                    'image_to_video_types': IMAGE_TO_VIDEO_TYPES,
+                    'image_edit_types': IMAGE_EDIT_TYPES,
+                    'task_type_name_map': TASK_TYPE_NAME_MAP
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f'获取任务类型配置失败: {str(e)}')
         return JSONResponse(
             status_code=500,
             content={

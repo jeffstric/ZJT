@@ -81,6 +81,32 @@ VIDEO_MODEL_DURATION_OPTIONS = {
     'veo3': [8],  # VEO3 固定算力，支持8秒
 }
 
+# AI Tools 类型分类配置
+# 图生视频任务类型列表
+IMAGE_TO_VIDEO_TYPES = [3, 10, 11, 12, 14, 15]
+
+# 图片编辑任务类型列表
+IMAGE_EDIT_TYPES = [1, 7]
+
+# 任务类型名称映射
+TASK_TYPE_NAME_MAP = {
+    1: '图片编辑',
+    2: 'Sora2文生视频',
+    3: '图片生成视频 (Sora2)',
+    4: '视频高清放大',
+    5: 'AI视频高清修复',
+    6: '图生视频高清修复',
+    7: '图片编辑 (Pro)',
+    8: '创建角色卡',
+    9: 'AI音频生成',
+    10: '图片生成视频 (LTX2.0)',
+    11: '图片生成视频 (Wan2.2)',
+    12: '图片生成视频 (可灵)',
+    13: '数字人生成',
+    14: '图片生成视频 (Vidu)',
+    15: '图片生成视频 (VEO3.1)'
+}
+
 # AI Tools 状态常量
 AI_TOOL_STATUS_PENDING = 0      # 未处理
 AI_TOOL_STATUS_PROCESSING = 1   # 正在处理
