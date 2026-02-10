@@ -3542,8 +3542,10 @@
           if(imgUrl){
             const item = document.createElement('div');
             item.className = 'reference-image-item';
+            const index = refConns.indexOf(conn) + 2;
             item.innerHTML = `
               <img src="${imgUrl}" alt="${imgLabel}" title="${imgLabel}" />
+              <span class="reference-image-label">图${index}</span>
               <button class="reference-image-remove" data-conn-id="${conn.id}">×</button>
             `;
             

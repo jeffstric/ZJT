@@ -1365,6 +1365,19 @@ textarea:focus{ border-color: var(--primary); }
   height: 100%;
   object-fit: cover;
 }
+.reference-image-label{
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 4px;
+  z-index: 5;
+  pointer-events: none;
+}
 .reference-image-remove{
   position: absolute;
   top: 2px;
