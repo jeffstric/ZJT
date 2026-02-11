@@ -1,5 +1,6 @@
 import logging
 import requests
+import httpx
 import traceback
 import hmac
 import hashlib
@@ -146,6 +147,92 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
         logger.error(f'调用认证服务器时发生错误: {str(e)}')
         logger.error(traceback.format_exc())
         return False, '服务器内部错误', {}
+
+async def async_make_perseids_request(endpoint=None, data=None, method='POST', headers=None):
+    """
+    向 Go 服务器发起异步请求（非阻塞版本）
+    :param endpoint: str 接口路径
+    :param data: dict 请求数据
+    :param method: str 请求方法
+    :param headers: dict 请求头
+    :return: tuple (bool, str, dict) 是否成功，消息，响应数据
+    """
+    try:
+        timeout = 30
+        
+        # 构建认证 URL，已含有添加 api/v1 前缀
+        auth_url = f"{BASE_URL}/{endpoint}"
+        logger.info(f"调用认证服务器 URL: {auth_url}")
+        
+        # 生成签名所需参数
+        timestamp = int(time.time())
+        nonce = secrets.token_hex(16)
+        
+        # 构建请求数据
+        payload = data or {}
+        logger.debug(f"请求数据: {payload}")
+        
+        # 生成签名
+        signature = generate_signature(payload, timestamp, nonce)
+        
+        # 构建请求头
+        request_headers = headers or {}
+        request_headers.update({
+            'X-Timestamp': str(timestamp),
+            'X-Nonce': nonce,
+            'X-Signature': signature
+        })
+        logger.debug(f"请求头: {request_headers}")
+        
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(method, auth_url, json=payload, headers=request_headers)
+        logger.debug(f"响应状态码: {response.status_code}")
+        logger.debug(f"响应内容: {response.text}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('success', False), data.get('message', ''), data.get('data', {})
+        else:
+            # 尝试解析错误响应
+            try:
+                error_data = response.json()
+                error_message = error_data.get('message', '未知错误')
+            except:
+                error_message = f'服务器错误 ({response.status_code}): {response.text}'
+            
+            logger.error(f'认证服务器返回错误: {error_message}')
+            return False, error_message, { }
+
+    except Exception as e:
+        logger.error(f'调用认证服务器时发生错误: {str(e)}')
+        logger.error(traceback.format_exc())
+        return False, '服务器内部错误', {}
+
+
+async def async_call_external_auth_server(phone, password, device_uuid=None, auth_type='login', extra_data=None):
+    """
+    调用外部认证服务器（异步非阻塞版本）
+    :param phone: 手机号
+    :param password: 密码
+    :param device_uuid: 设备UUID
+    :param auth_type: 认证类型，'login' 或 'register'
+    :param extra_data: 额外数据
+    :return: (bool, str, dict) 是否成功，消息，数据
+    """
+    # 构建请求数据
+    payload = {
+        'phone': phone,
+        'password': password,
+        'device_uuid': device_uuid
+    }
+    
+    if extra_data:
+        logger.debug(f"调用认证服务器 包含extra_data: {extra_data}")
+        payload.update(extra_data)
+
+    logger.debug(f"调用认证服务器 参数: {payload}")
+    return await async_make_perseids_request(auth_type, payload)
+
 
 def call_external_auth_server(phone, password, device_uuid=None, auth_type='login', extra_data=None):
     """

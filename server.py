@@ -23,13 +23,14 @@ import mimetypes
 from pydantic import BaseModel
 from runninghub_request import RunningHubClient, TaskStatus, run_ai_app_task
 from config_util import get_config_path
-from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid
+from perseids_client import make_perseids_request, call_external_auth_server, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
 from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
 from model.world import WorldModel
 from model.character import CharacterModel
 from model.location import LocationModel
 from model.script import ScriptModel
 from model.props import PropsModel
+from model.public_voice import VoiceModel
 import uuid
 from duomi_api_requset import create_video_remix, create_character as create_character_task, get_character_task_result
 from PIL import Image
@@ -1004,7 +1005,7 @@ async def image_edit(
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -1039,7 +1040,7 @@ async def image_edit(
             images_to_process = image[:10] if len(image) > 10 else image
             for img in images_to_process:
                 if img.filename:  # Check if it's a real file
-                    image_urls.append(_save_uploaded_image(img))
+                    image_urls.append(await asyncio.to_thread(_save_uploaded_image, img))
         
         # 2. Process URL list (if provided)
         if ref_image_urls:
@@ -1059,7 +1060,7 @@ async def image_edit(
 
             if CHECK_AUTH_TOKEN:
                 #发起请求，扣除算力
-                success, message, response_data = make_perseids_request(
+                success, message, response_data = await async_make_perseids_request(
                     endpoint='user/calculate_computing_power',
                     method='POST',
                     headers=headers,
@@ -1140,7 +1141,7 @@ async def text_to_image(
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             # Check computing power
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -1174,7 +1175,7 @@ async def text_to_image(
 
             if CHECK_AUTH_TOKEN:
                 # Deduct computing power
-                success, message, response_data = make_perseids_request(
+                success, message, response_data = await async_make_perseids_request(
                     endpoint='user/calculate_computing_power',
                     method='POST',
                     headers=headers,
@@ -1235,11 +1236,11 @@ async def runninghub_status(
         if task_record is None:
             raise HTTPException(status_code=404, detail="未找到对应的图片记录")
         client = RunningHubClient()
-        status = client.check_status(project_id)
+        status = await asyncio.to_thread(client.check_status, project_id)
         
         if status == TaskStatus.SUCCESS:
             # Get results
-            results = client.get_outputs(project_id)
+            results = await asyncio.to_thread(client.get_outputs, project_id)
             
             # Update database record with result_url
             if results:
@@ -1275,7 +1276,7 @@ async def runninghub_status(
                 transaction_id = str(uuid.uuid4())
                 headers = {'Authorization': f'Bearer {auth_token}'}
                 #发起请求，获取用户ID
-                success, message, response_data = make_perseids_request(
+                success, message, response_data = await async_make_perseids_request(
                     endpoint='user/get_user_id_by_auth_token',
                     method='POST',
                     headers=headers
@@ -1288,7 +1289,7 @@ async def runninghub_status(
                 #发起请求，增加算力
                 type = task_record.type
                 computing_power = TASK_COMPUTING_POWER[type]
-                success, message, response_data = make_perseids_request(
+                success, message, response_data = await async_make_perseids_request(
                     endpoint='user/calculate_computing_power',
                     method='POST',
                     headers=headers,
@@ -1417,7 +1418,7 @@ async def ai_app_run(
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -1452,7 +1453,7 @@ async def ai_app_run(
             transaction_id = str(uuid.uuid4())
             if CHECK_AUTH_TOKEN:
                 #发起请求，增加算力
-                success, message, response_data = make_perseids_request(
+                success, message, response_data = await async_make_perseids_request(
                     endpoint='user/calculate_computing_power',
                     method='POST',
                     headers=headers,
@@ -1593,9 +1594,9 @@ async def ai_app_run_image(
                 )
             # If single image, save it directly; if multiple, concatenate them
             if len(images) == 1:
-                image_url = _save_uploaded_image(images[0])
+                image_url = await asyncio.to_thread(_save_uploaded_image, images[0])
             else:
-                image_url = _concatenate_images(images)
+                image_url = await asyncio.to_thread(_concatenate_images, images)
         else:
             raise HTTPException(
                 status_code=400,
@@ -1634,7 +1635,7 @@ async def ai_app_run_image(
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -1670,7 +1671,7 @@ async def ai_app_run_image(
                 
                 # Deduct computing power for each task
                 if CHECK_AUTH_TOKEN:
-                    success, message, response_data = make_perseids_request(
+                    success, message, response_data = await async_make_perseids_request(
                         endpoint='user/calculate_computing_power',
                         method='POST',
                         headers=headers,
@@ -1772,7 +1773,7 @@ async def get_computing_power(auth_token: str = Header(None, alias="Authorizatio
         
         # 调用 perseids_server 的查询算力接口
         headers = {'Authorization': f'Bearer {auth_token}'}
-        success, message, response_data = make_perseids_request(
+        success, message, response_data = await async_make_perseids_request(
             endpoint='user/check_computing_power',
             method='GET',
             headers=headers
@@ -1855,7 +1856,7 @@ async def send_verify_code(request: SendVerifyCodeRequest):
             )
 
         # 调用 Go 服务器发送验证码
-        success, message, response_data = make_perseids_request(
+        success, message, response_data = await async_make_perseids_request(
             endpoint='send_verify_code',
             data={
                 'phone': phone,
@@ -1942,7 +1943,7 @@ async def register(request: RegisterRequest):
             )
 
         # 调用认证服务器注册
-        success, message, auth_data = call_external_auth_server(
+        success, message, auth_data = await async_call_external_auth_server(
             phone=phone,
             password=password,
             auth_type='register',
@@ -2016,7 +2017,7 @@ async def login(request: LoginRequest):
                     'message': '无效的手机号格式'
                 }
             )
-        device_uuid = get_device_uuid()
+        device_uuid = await asyncio.to_thread(get_device_uuid)
         if device_uuid is None:
             return JSONResponse(
                 status_code=400,
@@ -2027,7 +2028,7 @@ async def login(request: LoginRequest):
             )
         # 调用认证服务器登录
         extra_data={'terms_agreed': terms_agreed}
-        success, message, auth_data = call_external_auth_server(phone, password, device_uuid,'login', extra_data)
+        success, message, auth_data = await async_call_external_auth_server(phone, password, device_uuid,'login', extra_data)
         
         if success:
             logger.info(f"用户登录成功 - 手机号: {phone}")
@@ -2079,7 +2080,7 @@ async def logout(request: LogoutRequest):
             )
 
         # 调用 perseids_server 的登出接口
-        success, message, response_data = make_perseids_request(
+        success, message, response_data = await async_make_perseids_request(
             endpoint='auth/logout',
             method='POST',
             headers={'Authorization': f"Bearer {auth_token}"}
@@ -2137,7 +2138,7 @@ async def reset_password(request: ResetPasswordRequest):
             )
 
         # 调用外部认证服务器重置密码
-        success, message, response_data = call_external_auth_server(
+        success, message, response_data = await async_call_external_auth_server(
             phone=phone,
             password=new_password,
             auth_type='reset_password',
@@ -2207,11 +2208,11 @@ async def get_ai_tools_history(
                     if task.type in [4,5,6]:
                         # Use RunningHub client for upscale tasks
                         client = RunningHubClient()
-                        status = client.check_status(task.project_id)
+                        status = await asyncio.to_thread(client.check_status, task.project_id)
                         
                         if status == TaskStatus.SUCCESS:
                             # Get results
-                            results = client.get_outputs(task.project_id)
+                            results = await asyncio.to_thread(client.get_outputs, task.project_id)
                             
                             if results:
                                 result_url = results[0].file_url
@@ -2250,7 +2251,7 @@ async def get_ai_tools_history(
                         transaction_id = str(uuid.uuid4())
                         headers = {'Authorization': f'Bearer {auth_token}'}
                         #发起请求，获取用户ID
-                        success, message, response_data = make_perseids_request(
+                        success, message, response_data = await async_make_perseids_request(
                             endpoint='user/get_user_id_by_auth_token',
                             method='POST',
                             headers=headers
@@ -2261,7 +2262,7 @@ async def get_ai_tools_history(
                         if user_id != user_id_from_token:
                             raise HTTPException(status_code=400, detail="用户ID不匹配")
                         # 发起请求，增加算力（补回）
-                        success, message, response_data = make_perseids_request(
+                        success, message, response_data = await async_make_perseids_request(
                             endpoint='user/calculate_computing_power',
                             method='POST',
                             headers=headers,
@@ -2497,11 +2498,11 @@ async def ai_script_generate(
                 detail="请登录"
             )
         # 保存上传的图片并获取URL
-        image_url1 = _save_uploaded_image(image1)
-        image_url2 = _save_uploaded_image(image2) if image2 else None
-        image_url3 = _save_uploaded_image(image3) if image3 else None
-        image_url4 = _save_uploaded_image(image4) if image4 else None
-        image_url5 = _save_uploaded_image(image5) if image5 else None
+        image_url1 = await asyncio.to_thread(_save_uploaded_image, image1)
+        image_url2 = (await asyncio.to_thread(_save_uploaded_image, image2)) if image2 else None
+        image_url3 = (await asyncio.to_thread(_save_uploaded_image, image3)) if image3 else None
+        image_url4 = (await asyncio.to_thread(_save_uploaded_image, image4)) if image4 else None
+        image_url5 = (await asyncio.to_thread(_save_uploaded_image, image5)) if image5 else None
         
         logger.info(f"AI script generation started with images: {image_url1}, {image_url2}, {image_url3}, {image_url4}, {image_url5}")
         
@@ -2597,7 +2598,7 @@ async def image_upscale(
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             # Check if computing power is sufficient
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -2640,7 +2641,7 @@ async def image_upscale(
                 "description": "用户图片"
             }
         ]
-        result = run_ai_app_task("1987213919284563970", API_KEY, node_info_list, None)
+        result = await asyncio.to_thread(run_ai_app_task, "1987213919284563970", API_KEY, node_info_list, None)
         if result.get("code") != 0:
             error_msg = result.get("msg", "Unknown error")
             raise RuntimeError(f"Task submission failed: {error_msg}")
@@ -2652,7 +2653,7 @@ async def image_upscale(
         logger.info(f"Upscale task created with task_id: {task_id}")
         if CHECK_AUTH_TOKEN:
             # Deduct computing power
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/calculate_computing_power',
                 method='POST',
                 headers=headers,
@@ -2732,8 +2733,7 @@ async def video_enhance(
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             # Check if computing power is sufficient
-            success, message, response_data = await asyncio.to_thread(
-                make_perseids_request,
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -2819,8 +2819,7 @@ async def video_enhance(
         
         # Deduct computing power
         if CHECK_AUTH_TOKEN:
-            success, message, response_data = await asyncio.to_thread(
-                make_perseids_request,
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/calculate_computing_power',
                 method='POST',
                 headers=headers,
@@ -2906,7 +2905,7 @@ async def video_remix(
             headers = {'Authorization': f'Bearer {auth_token}'}
             
             # 检查算力是否充足
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -2941,7 +2940,8 @@ async def video_remix(
                 
                 # 调用remix API
                 try:
-                    result = create_video_remix(
+                    result = await asyncio.to_thread(
+                        create_video_remix,
                         video_id=video_id,
                         prompt=prompt,
                         aspect_ratio=aspect_ratio,
@@ -2976,7 +2976,7 @@ async def video_remix(
                 
                 # 扣除算力
                 if CHECK_AUTH_TOKEN:
-                    success, message, response_data = make_perseids_request(
+                    success, message, response_data = await async_make_perseids_request(
                         endpoint='user/calculate_computing_power',
                         method='POST',
                         headers=headers,
@@ -3086,7 +3086,7 @@ async def api_create_character(
             headers = {'Authorization': f'Bearer {auth_token}'}
             
             # 检查算力是否充足
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -3115,7 +3115,8 @@ async def api_create_character(
         transaction_id = str(uuid.uuid4())
         
         # Call the character creation API
-        response = create_character_task(
+        response = await asyncio.to_thread(
+            create_character_task,
             timestamps=timestamps,
             url=url,
             from_task=from_task,
@@ -3145,7 +3146,7 @@ async def api_create_character(
         
         # 扣除算力
         if CHECK_AUTH_TOKEN:
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/calculate_computing_power',
                 method='POST',
                 headers=headers,
@@ -3216,10 +3217,10 @@ async def digital_human_generate(
             )
         
         # Save uploaded image
-        image_url = _save_uploaded_image(image)
+        image_url = await asyncio.to_thread(_save_uploaded_image, image)
         
         # Save uploaded audio
-        audio_url = _save_uploaded_image(audio)  # Reuse the same function for audio
+        audio_url = await asyncio.to_thread(_save_uploaded_image, audio)  # Reuse the same function for audio
         
         # Task type for digital human
         task_type = 13
@@ -3228,7 +3229,7 @@ async def digital_human_generate(
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             # Check computing power
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
@@ -3257,7 +3258,7 @@ async def digital_human_generate(
         
         # Deduct computing power
         if CHECK_AUTH_TOKEN:
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/calculate_computing_power',
                 method='POST',
                 headers=headers,
@@ -3339,14 +3340,14 @@ async def audio_generate(
         # Calculate computing power cost
         ref_path = None
         if ref_audio:
-            ref_path = _save_uploaded_audio(ref_audio)  # Reuse upload function for audio
+            ref_path = await asyncio.to_thread(_save_uploaded_audio, ref_audio)  # Reuse upload function for audio
         elif ref_audio_url:
             ref_path = ref_audio_url
         
         # Handle emotion reference audio upload
         emo_ref_path = None
         if emo_ref_audio:
-            emo_ref_path = _save_uploaded_audio(emo_ref_audio)
+            emo_ref_path = await asyncio.to_thread(_save_uploaded_audio, emo_ref_audio)
         elif emo_ref_video_url:
             # Download video and extract audio
             emo_ref_path = await _download_and_extract_audio_from_video(emo_ref_video_url)
@@ -3468,7 +3469,7 @@ async def api_character_status(
     }
     """
     try:
-        response = get_character_task_result(task_id)
+        response = await asyncio.to_thread(get_character_task_result, task_id)
         
         logger.info(f"Character status response: {response}")
         
@@ -3516,7 +3517,7 @@ async def api_character_status(
                         transaction_id = str(uuid.uuid4())
                         headers = {'Authorization': f'Bearer {auth_token}'}
                         #发起请求，获取用户ID
-                        success, message, response_data = make_perseids_request(
+                        success, message, response_data = await async_make_perseids_request(
                             endpoint='user/get_user_id_by_auth_token',
                             method='POST',
                             headers=headers
@@ -3528,7 +3529,7 @@ async def api_character_status(
                             raise HTTPException(status_code=400, detail="用户ID不匹配")
                         computing_power = TASK_COMPUTING_POWER.get(task_record.type, 0)
                         if computing_power > 0:
-                            success, message, _ = make_perseids_request(
+                            success, message, _ = await async_make_perseids_request(
                                 endpoint='user/calculate_computing_power',
                                 method='POST',
                                 headers=headers,
@@ -3635,7 +3636,7 @@ async def get_wechat_openid(code: str):
         raise HTTPException(status_code=500, detail=f"获取openid失败: {str(e)}")
 
 
-def _has_completed_first_recharge(auth_token: str) -> bool:
+async def _has_completed_first_recharge(auth_token: str) -> bool:
     """
     调用认证服务接口，判断用户是否已经完成首充
     
@@ -3645,7 +3646,7 @@ def _has_completed_first_recharge(auth_token: str) -> bool:
     Returns:
         True 表示已经首充，False 表示仍是首充用户
     """
-    success, message, response_data = make_perseids_request(
+    success, message, response_data = await async_make_perseids_request(
         endpoint='user/check_first_recharge',
         method='GET',
         headers={'Authorization': f'Bearer {auth_token}'}
@@ -3680,14 +3681,14 @@ def _append_redirect_url(h5_url: Optional[str], redirect_url: str) -> Optional[s
         return h5_url
 
 
-def _update_first_recharge_status(auth_token: str) -> None:
+async def _update_first_recharge_status(auth_token: str) -> None:
     """
     调用认证服务接口，更新用户首充状态
     
     Args:
         auth_token: 用户认证 token
     """
-    success, message, response_data = make_perseids_request(
+    success, message, response_data = await async_make_perseids_request(
         endpoint='user/update_first_recharge',
         method='POST',
         headers={'Authorization': f'Bearer {auth_token}'}
@@ -3714,7 +3715,7 @@ async def get_recharge_packages(auth_token: str):
     """
     try:
         # 查询用户是否已经首充
-        has_completed_first_recharge = _has_completed_first_recharge(auth_token)
+        has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
 
         # 如果用户已经充值过，过滤掉首充福利套餐（第一个套餐）
         packages = RECHARGE_PACKAGES.copy()
@@ -3766,7 +3767,7 @@ async def create_wechat_payment(request: WechatPayRequest):
         
         # 验证用户登录状态：通过查询算力判断token是否有效
         try:
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers={'Authorization': f'Bearer {request.auth_token}'}
@@ -3802,7 +3803,7 @@ async def create_wechat_payment(request: WechatPayRequest):
 
         # 首充套餐校验：如果package_id为1且用户已首充，禁止再次购买
         if request.package_id == 1:
-            has_completed_first_recharge = _has_completed_first_recharge(request.auth_token)
+            has_completed_first_recharge = await _has_completed_first_recharge(request.auth_token)
             if has_completed_first_recharge:
                 logger.warning(f"User {request.user_id} attempted to purchase first-charge package again")
                 raise HTTPException(
@@ -3835,7 +3836,8 @@ async def create_wechat_payment(request: WechatPayRequest):
                     detail="微信支付需要用户openid，请先进行微信授权"
                 )
             
-            payment_result = wechat_pay_util.create_jsapi_payment(
+            payment_result = await asyncio.to_thread(
+                wechat_pay_util.create_jsapi_payment,
                 order_id=order_id,
                 total_fee=total_fee,
                 body=body,
@@ -3847,11 +3849,12 @@ async def create_wechat_payment(request: WechatPayRequest):
             # 外部浏览器使用Native扫码支付
             payment_type = "NATIVE"
             
-            payment_result = wechat_pay_util.create_native_payment(
+            payment_result = await asyncio.to_thread(
+                wechat_pay_util.create_native_payment,
                 order_id=order_id,
                 total_fee=total_fee,
                 body=body,
-                notify_url=notify_url,
+                redirect_url=_append_redirect_url(request.redirect_url, notify_url),
                 payer_client_ip=request.payment_ip or "127.0.0.1"
             )
         
@@ -4003,7 +4006,7 @@ async def wechat_payment_callback(request: Request):
             user_id = order.user_id
             # TODO: 增加用户算力
             logger.info(f"Refunding {user_id} , {AUTHENTICATION_ID}")
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='get_auth_token_by_user_id',
                 method='POST',
                 data={
@@ -4021,7 +4024,7 @@ async def wechat_payment_callback(request: Request):
             
             # 检查是否为首充福利
             if order.package_id == 1:
-                has_completed_first_recharge = _has_completed_first_recharge(auth_token)
+                has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
                 if has_completed_first_recharge:
                     computing_power = 4
                     logger.warning(f"User {order.user_id} attempted to purchase first-charge package again, downgrade computing power to {computing_power}")
@@ -4031,7 +4034,7 @@ async def wechat_payment_callback(request: Request):
                         logger.error(f"Failed to update computing power for repeated first-charge order {order_id}: {e}")
                 else:
                     # 更新用户首充状态
-                    _update_first_recharge_status(auth_token=auth_token)
+                    await _update_first_recharge_status(auth_token=auth_token)
             
             # 更新订单状态为已支付
             PaymentOrdersModel.update_paid(order_id, transaction_id)
@@ -4039,7 +4042,7 @@ async def wechat_payment_callback(request: Request):
             headers = {'Authorization': f'Bearer {auth_token}'}
                         
             # 发起请求，增加算力
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/calculate_computing_power',
                 method='POST',
                 headers=headers,
@@ -4322,7 +4325,7 @@ async def upload_workflow_asset(
         
         # 保存文件并获取URL（用户隔离目录）
         request_host = str(request.base_url).rstrip("/")
-        file_url = _save_user_asset(file, user_id, category="workflow", base_host=request_host)
+        file_url = await asyncio.to_thread(_save_user_asset, file, user_id, "workflow", request_host)
         
         return JSONResponse({
             "code": 0,
@@ -4470,14 +4473,16 @@ async def get_grid_split_image(
             
             try:
                 if grid_size == 4:
-                    output_paths = splitter.split_2x2_grid(
+                    output_paths = await asyncio.to_thread(
+                        splitter.split_2x2_grid,
                         grid_image_path=grid_image_path,
                         output_dir=output_dir,
                         output_names=[str(i) for i in range(1, 5)],
                         output_format="png"
                     )
                 else:  # grid_size == 9
-                    output_paths = splitter.split_3x3_grid(
+                    output_paths = await asyncio.to_thread(
+                        splitter.split_3x3_grid,
                         grid_image_path=grid_image_path,
                         output_dir=output_dir,
                         output_names=[str(i) for i in range(1, 10)],
@@ -4645,7 +4650,7 @@ async def parse_script(
             # 检查算力是否充足
         if auth_token:
             headers = {'Authorization': f'Bearer {auth_token}'}
-            success, message, response_data = make_perseids_request(
+            success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
                 headers=headers
