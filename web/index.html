@@ -3046,7 +3046,8 @@
         historyTotal: 0,
         enhancingVideos: {},  // Track enhancement status by index
         enhanceTaskIds: {},   // Track enhancement task IDs by index
-        taskComputingPower: {}  // 从接口获取的算力配置
+        taskComputingPower: {},  // 从接口获取的算力配置
+        taskTypeConfig: null  // 从接口获取的任务类型配置
       }
     },
     mounted() {
@@ -3054,6 +3055,8 @@
       this.authToken = localStorage.getItem('auth_token') || '';
       // 获取算力配置
       this.fetchComputingPowerConfig();
+      // 获取任务类型配置
+      this.fetchTaskTypeConfig();
     },
     watch: {
       videoModel(newModel, oldModel) {
@@ -3198,6 +3201,19 @@
           }
         } catch (error) {
           console.error('获取算力配置异常:', error);
+        }
+      },
+      
+      async fetchTaskTypeConfig() {
+        try {
+          const response = await axios.get('/api/task-type-config');
+          if (response.data.success) {
+            this.taskTypeConfig = response.data.data;
+          } else {
+            console.error('获取任务类型配置失败:', response.data.message);
+          }
+        } catch (error) {
+          console.error('获取任务类型配置异常:', error);
         }
       },
       
@@ -3479,12 +3495,22 @@
         this.historyLoading = true;
         try {
           const authToken = localStorage.getItem('auth_token');
+          
+          // 如果没有获取到任务类型配置，先获取
+          if (!this.taskTypeConfig) {
+            await this.fetchTaskTypeConfig();
+          }
+          
+          // 使用后端返回的图生视频类型列表，如果没有则使用默认值
+          const imageToVideoTypes = this.taskTypeConfig?.image_to_video_types || [3, 10, 11, 12, 14, 15];
+          const typesStr = imageToVideoTypes.join(',');
+          
           const response = await axios.get('/api/ai-tools/history', {
             params: {
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              type: 3,  // 3-图片生成视频, 6-视频高清修复
+              types: typesStr,  // 使用后端配置的所有图生视频类型
               auth_token: authToken || undefined
             }
           });
@@ -3551,18 +3577,10 @@
         return colorMap[status] || '#888';
       },
       
-       getHistoryTypeText(type) {
-        const typeMap = {
-        3: '图片生成视频 (Sora2)',
-        6: '模糊视频高清放大',
-        10: '图片生成视频 (LTX2.0)',
-        11: '图片生成视频 (Wan2.2)',
-        12: '图片生成视频 (可灵)',
-        14: '图片生成视频 (Vidu)',
-        15: '图片生成视频 (VEO3.1)'
-        };
-        return typeMap[type] || '未知类型';
-        },
+      getHistoryTypeText(type) {
+        // 使用后端返回的任务类型名称映射
+        return this.taskTypeConfig?.task_type_name_map?.[type] || '未知类型';
+      },
 
       getModelLabel(item) {
         const modelMap = {
@@ -3733,6 +3751,13 @@
                   <span>模式: {{ getModelLabel(item) }}</span>
                   <span>时长: {{ getDurationText(item) }}</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
+                </div>
+                <div v-if="item.image_path" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">
+                  <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">输入图片:</div>
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <img :src="item.image_path" style="max-width: 120px; max-height: 80px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border);" />
+                    <a :href="item.image_path" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">查看原图</a>
+                  </div>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
@@ -4409,6 +4434,7 @@
         enhancingVideos: {}, 
         enhanceTaskIds: {},
         oneClickLoading: false,
+        taskTypeConfig: null  // 从接口获取的任务类型配置
       };
     },
     computed: {
@@ -4416,7 +4442,24 @@
         return !!this.image1 && !this.loading;
       }
     },
+    mounted() {
+      // 获取任务类型配置
+      this.fetchTaskTypeConfig();
+    },
     methods: {
+      async fetchTaskTypeConfig() {
+        try {
+          const response = await axios.get('/api/task-type-config');
+          if (response.data.success) {
+            this.taskTypeConfig = response.data.data;
+          } else {
+            console.error('获取任务类型配置失败:', response.data.message);
+          }
+        } catch (error) {
+          console.error('获取任务类型配置异常:', error);
+        }
+      },
+
       onFileChange(e, index) {
         const file = e.target.files[0] || null;
         const key = `image${index}`;
@@ -4740,12 +4783,22 @@
         this.historyLoading = true;
         try {
           const authToken = localStorage.getItem('auth_token') || this.authToken;
+          
+          // 如果没有获取到任务类型配置，先获取
+          if (!this.taskTypeConfig) {
+            await this.fetchTaskTypeConfig();
+          }
+          
+          // 使用后端返回的图生视频类型列表，如果没有则使用默认值
+          const imageToVideoTypes = this.taskTypeConfig?.image_to_video_types || [3, 10, 11, 12, 14, 15];
+          const typesStr = imageToVideoTypes.join(',');
+          
           const response = await axios.get('/api/ai-tools/history', {
             params: {
               user_id: parseInt(userId, 10),
               page: this.historyPage,
               page_size: 20,
-              type: 3, // 3-图片生成视频, 6-高清放大
+              types: typesStr,
               auth_token: authToken || undefined
             }
           });
@@ -4805,16 +4858,8 @@
       },
 
       getHistoryTypeText(type) {
-        const typeMap = {
-          3: '图片生成视频 (Sora2)',
-          6: '模糊视频高清放大',
-          10: '图片生成视频 (LTX2.0)',
-          11: '图片生成视频 (Wan2.2)',
-          12: '图片生成视频 (可灵)',
-          14: '图片生成视频 (Vidu)',
-          15: '图片生成视频 (VEO3.1)'
-        };
-        return typeMap[type] || '未知类型';
+        // 使用后端返回的任务类型名称映射
+        return this.taskTypeConfig?.task_type_name_map?.[type] || '未知类型';
       },
 
       getModelLabel(item) {

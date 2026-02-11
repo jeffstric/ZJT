@@ -77,8 +77,34 @@ VIDEO_MODEL_DURATION_OPTIONS = {
     'wan22': list(TASK_COMPUTING_POWER[11].keys()),  # 从算力配置中自动获取时长选项
     'kling': list(TASK_COMPUTING_POWER[12].keys()),  # 从算力配置中自动获取时长选项
     'vidu': list(TASK_COMPUTING_POWER[14].keys()),   # 从算力配置中自动获取时长选项
-    'sora2': [10, 15],  # Sora2 固定算力，支持10/15秒
+    'sora2': [15, 10],  # Sora2 固定算力，支持10/15秒
     'veo3': [8],  # VEO3 固定算力，支持8秒
+}
+
+# AI Tools 类型分类配置
+# 图生视频任务类型列表
+IMAGE_TO_VIDEO_TYPES = [3, 10, 11, 12, 14, 15]
+
+# 图片编辑任务类型列表
+IMAGE_EDIT_TYPES = [1, 7]
+
+# 任务类型名称映射
+TASK_TYPE_NAME_MAP = {
+    1: '图片编辑',
+    2: 'Sora2文生视频',
+    3: '图片生成视频 (Sora2)',
+    4: '视频高清放大',
+    5: 'AI视频高清修复',
+    6: '图生视频高清修复',
+    7: '图片编辑 (Pro)',
+    8: '创建角色卡',
+    9: 'AI音频生成',
+    10: '图片生成视频 (LTX2.0)',
+    11: '图片生成视频 (Wan2.2)',
+    12: '图片生成视频 (可灵)',
+    13: '数字人生成',
+    14: '图片生成视频 (Vidu)',
+    15: '图片生成视频 (VEO3.1)'
 }
 
 # AI Tools 状态常量

@@ -1566,6 +1566,15 @@
               shotFramePreviewField.style.display = 'block';
             }
           }
+          
+          // 刷新关联分镜组节点的宫格预览
+          const parentGroupConn = state.connections.find(c => c.to === connectedShotFrameNode.id);
+          if(parentGroupConn) {
+            const parentGroupNode = state.nodes.find(n => n.id === parentGroupConn.from && n.type === 'shot_group');
+            if(parentGroupNode && parentGroupNode.refreshGridPreview) {
+              parentGroupNode.refreshGridPreview();
+            }
+          }
         }
       }
     }

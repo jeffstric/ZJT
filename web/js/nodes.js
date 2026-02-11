@@ -1899,6 +1899,14 @@
               previewImageEl.src = '';
             }
           }
+          // 刷新父分镜组的宫格预览
+          const parentConn = state.connections.find(c => c.to === conn.to);
+          if(parentConn){
+            const parentNode = state.nodes.find(n => n.id === parentConn.from && n.type === 'shot_group');
+            if(parentNode && parentNode.refreshGridPreview){
+              parentNode.refreshGridPreview();
+            }
+          }
         }
       }
     }
@@ -3542,8 +3550,10 @@
           if(imgUrl){
             const item = document.createElement('div');
             item.className = 'reference-image-item';
+            const index = refConns.indexOf(conn) + 2;
             item.innerHTML = `
               <img src="${imgUrl}" alt="${imgLabel}" title="${imgLabel}" />
+              <span class="reference-image-label">图${index}</span>
               <button class="reference-image-remove" data-conn-id="${conn.id}">×</button>
             `;
             
@@ -5631,6 +5641,72 @@
       return id;
     }
 
+    // ============ 宫格预览辅助函数 ============
+
+    function calculateGridSize(shotCount) {
+      if(shotCount <= 4) return 4;
+      if(shotCount <= 9) return 9;
+      if(shotCount <= 16) return 16;
+      if(shotCount <= 25) return 25;
+      return null;
+    }
+
+    function getConnectedShotFrameNodes(shotGroupNodeId) {
+      const conns = state.connections.filter(c => c.from === shotGroupNodeId);
+      return conns
+        .map(conn => state.nodes.find(n => n.id === conn.to && n.type === 'shot_frame'))
+        .filter(Boolean);
+    }
+
+    function updateGridPreviewUI(nodeEl, shotGroupNode) {
+      const container = nodeEl.querySelector('.shot-grid-preview-container');
+      const labelEl = nodeEl.querySelector('.shot-grid-preview-label');
+      if(!container) return;
+
+      const shotFrameNodes = getConnectedShotFrameNodes(shotGroupNode.id);
+      const shotCount = shotFrameNodes.length;
+
+      if(shotCount === 0) {
+        container.innerHTML = '<div style="padding: 16px; text-align: center; color: #666; font-size: 11px; grid-column: 1/-1;">暂无分镜节点</div>';
+        if(labelEl) labelEl.textContent = '分镜预览（0个分镜）';
+        return;
+      }
+
+      const gridSize = calculateGridSize(shotCount);
+      if(!gridSize) {
+        container.innerHTML = '<div style="padding: 16px; text-align: center; color: #f59e0b; font-size: 11px; grid-column: 1/-1;">分镜数量超过25，不支持宫格预览</div>';
+        return;
+      }
+
+      const n = Math.sqrt(gridSize);
+      container.className = `shot-grid-preview-container grid-${n}x${n}`;
+
+      if(labelEl) labelEl.textContent = `分镜预览（${shotCount}个分镜 → ${gridSize}宫格）`;
+
+      // 更新节点数据
+      shotGroupNode.data.gridPreview = shotGroupNode.data.gridPreview || {};
+      shotGroupNode.data.gridPreview.currentGridSize = gridSize;
+      shotGroupNode.data.gridPreview.shotFrameNodeIds = shotFrameNodes.map(n => n.id);
+
+      let cellsHtml = '';
+      for(let i = 0; i < gridSize; i++) {
+        if(i < shotCount) {
+          const sfNode = shotFrameNodes[i];
+          const imgUrl = sfNode.data.previewImageUrl || sfNode.data.imageUrl || '';
+          if(imgUrl) {
+            cellsHtml += `<div class="grid-cell" data-index="${i}"><img src="${proxyImageUrl(imgUrl)}" /><span class="grid-cell-label">${i+1}</span></div>`;
+          } else {
+            cellsHtml += `<div class="grid-cell grid-cell-empty" data-index="${i}"><span class="grid-cell-label">${i+1}</span></div>`;
+          }
+        } else {
+          cellsHtml += `<div class="grid-cell grid-cell-empty" data-index="${i}"><span class="grid-cell-label" style="color:#555;">${i+1}</span></div>`;
+        }
+      }
+      container.innerHTML = cellsHtml;
+    }
+
+    // ============ 宫格预览辅助函数结束 ============
+
     // 分镜组节点
     function createShotGroupNode(opts){
       const id = state.nextNodeId++;
@@ -5657,6 +5733,7 @@
           videoModel: shotGroupData.videoModel || 'wan22',
           videoDuration: shotGroupData.videoDuration || 5,
           videoDrawCount: shotGroupData.videoDrawCount || 1,
+          gridPreview: shotGroupData.gridPreview || {},
         }
       };
       state.nodes.push(node);
@@ -5694,6 +5771,13 @@
           </div>
           <div class="field field-always-visible" style="max-height: 200px; overflow-y: auto;">
             ${shotsHtml}
+          </div>
+          <div class="field field-always-visible">
+            <div class="shot-grid-preview-label" style="font-size: 11px; color: #666; margin-bottom: 4px;">分镜预览（0个分镜）</div>
+            <div class="shot-grid-preview-container grid-2x2">
+              <div style="padding: 16px; text-align: center; color: #666; font-size: 11px; grid-column: 1/-1;">暂无分镜节点</div>
+            </div>
+            <div class="grid-merge-status"></div>
           </div>
           <div class="field field-collapsible">
             <div class="label">分镜模型</div>
@@ -6023,10 +6107,19 @@
         generateShotGroupVideo(id, node);
       });
 
+      // 宫格预览刷新方法（挂到node对象上，供外部调用）
+      node.refreshGridPreview = function() {
+        updateGridPreviewUI(el, node);
+      };
+
       // 添加调试按钮
       addDebugButtonToNode(el, node);
       
       canvasEl.appendChild(el);
+
+      // 初始化宫格预览（延迟执行，确保连接已建立）
+      setTimeout(() => { updateGridPreviewUI(el, node); }, 100);
+
       setSelected(id);
       return id;
     }
@@ -7282,6 +7375,7 @@
               previewImageEl.style.display = 'block';
               imageMenu.classList.remove('show');
               thumbTooltip.style.display = 'none';
+              refreshParentShotGroupPreview();
               
               // 更新首帧连接：删除旧连接，创建新连接
               state.firstFrameConnections = state.firstFrameConnections.filter(c => c.to !== id);
@@ -7298,6 +7392,17 @@
         } else {
           // 没有图片节点，隐藏选择按钮
           imageSelectorContainer.style.display = 'none';
+        }
+      }
+
+      // 刷新父分镜组节点的宫格预览
+      function refreshParentShotGroupPreview(){
+        const parentConn = state.connections.find(c => c.to === id);
+        if(parentConn){
+          const parentNode = state.nodes.find(n => n.id === parentConn.from && n.type === 'shot_group');
+          if(parentNode && parentNode.refreshGridPreview){
+            parentNode.refreshGridPreview();
+          }
         }
       }
 
@@ -7328,6 +7433,8 @@
         
         // 更新图片选择菜单
         updateImageSelectionMenu();
+        // 刷新父分镜组宫格预览
+        refreshParentShotGroupPreview();
       }
 
       // 图片选择按钮事件
@@ -7359,6 +7466,7 @@
             previewImageEl.src = proxyImageUrl(fromNode.data.url);
             previewImageEl.style.display = 'block';
             previewFieldEl.style.display = 'block';
+            refreshParentShotGroupPreview();
             
             renderFirstFrameConnections();
             try{ autoSaveWorkflow(); } catch(e){}
@@ -8011,18 +8119,101 @@
           return;
         }
         
-        // 获取第一个分镜节点的首帧图片
-        const firstShotFrame = shotFrameNodes[0];
-        if(!firstShotFrame.data.previewImageUrl) {
-          showToast('第一个分镜节点没有首帧图片，请先生成分镜图', 'warning');
+        // 检查所有分镜节点是否都有首帧图片
+        const nodesWithImage = shotFrameNodes.filter(n => n.data.previewImageUrl || n.data.imageUrl);
+        if(nodesWithImage.length === 0) {
+          showToast('分镜节点没有首帧图片，请先生成分镜图', 'warning');
           return;
         }
         
         const generateBtn = document.querySelector(`.node[data-node-id="${shotGroupNodeId}"] .shot-group-generate-video-btn`);
+        const mergeStatusEl = document.querySelector(`.node[data-node-id="${shotGroupNodeId}"] .grid-merge-status`);
         if(!generateBtn) return;
         
         generateBtn.disabled = true;
         generateBtn.textContent = '生成中...';
+        
+        const firstShotFrame = shotFrameNodes[0];
+        const duration = shotGroupNode.data.videoDuration || 5;
+        const count = shotGroupNode.data.videoDrawCount || 1;
+        const videoModel = shotGroupNode.data.videoModel || 'wan22';
+        const userId = localStorage.getItem('user_id') || '1';
+        const authToken = localStorage.getItem('auth_token') || '';
+        
+        // ===== 宫格合并模式：多分镜时先合并为宫格图 =====
+        let imageUrl;
+        
+        if(shotFrameNodes.length > 1) {
+          // 多分镜：合并为宫格图
+          if(mergeStatusEl) {
+            mergeStatusEl.style.color = '#3b82f6';
+            mergeStatusEl.textContent = '正在合并宫格图片...';
+          }
+          generateBtn.textContent = '合并宫格...';
+          
+          const gridSize = calculateGridSize(shotFrameNodes.length);
+          if(!gridSize) {
+            throw new Error('分镜数量超过25，不支持宫格合并');
+          }
+          
+          // 收集图片URL和黑色位置
+          const imageUrls = [];
+          const blackIndices = [];
+          for(let i = 0; i < gridSize; i++) {
+            if(i < shotFrameNodes.length) {
+              const imgUrl = shotFrameNodes[i].data.previewImageUrl || shotFrameNodes[i].data.imageUrl || '';
+              if(imgUrl) {
+                imageUrls.push(imgUrl);
+              } else {
+                imageUrls.push('');
+                blackIndices.push(i);
+              }
+            } else {
+              imageUrls.push('');
+              blackIndices.push(i);
+            }
+          }
+          
+          console.log(`[分镜组视频] 合并宫格: ${shotFrameNodes.length}个分镜 → ${gridSize}宫格, 黑色位置:`, blackIndices);
+          
+          // 调用合并API
+          const mergeRes = await fetch('/api/images/merge-grid', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-User-Id': userId,
+              'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+              image_urls: imageUrls,
+              black_indices: blackIndices,
+              grid_size: gridSize
+            })
+          });
+          
+          const mergeData = await mergeRes.json();
+          if(mergeData.code !== 0 || !mergeData.data || !mergeData.data.image_url) {
+            throw new Error(mergeData.message || '宫格图片合并失败');
+          }
+          
+          imageUrl = mergeData.data.image_url;
+          console.log(`[分镜组视频] 宫格合并成功:`, imageUrl);
+          
+          // 保存合并结果到节点数据
+          shotGroupNode.data.gridPreview = shotGroupNode.data.gridPreview || {};
+          shotGroupNode.data.gridPreview.mergedImageUrl = imageUrl;
+          
+          if(mergeStatusEl) {
+            mergeStatusEl.style.color = '#22c55e';
+            mergeStatusEl.textContent = '宫格合并完成，正在生成视频...';
+          }
+        } else {
+          // 单分镜：直接使用首帧图
+          imageUrl = firstShotFrame.data.previewImageUrl || firstShotFrame.data.imageUrl;
+          if(!imageUrl) {
+            throw new Error('分镜节点没有首帧图片');
+          }
+        }
         
         // 拼接所有分镜的视频提示词，每个镜头标明时间范围
         let cumulativeTime = 0;
@@ -8058,16 +8249,10 @@
           finalVideoPrompt = getVideoPromptWithSuffix(combinedVideoPrompt);
         }
         
-        const imageUrl = firstShotFrame.data.previewImageUrl;
-        const duration = shotGroupNode.data.videoDuration || 5;
-        const count = shotGroupNode.data.videoDrawCount || 1;
-        const videoModel = shotGroupNode.data.videoModel || 'wan22';
-        
+        generateBtn.textContent = '提交视频...';
         showToast(`正在生成 ${count} 个视频...`, 'info');
         
         // 调用图生视频API
-        const userId = localStorage.getItem('user_id') || '1';
-        const authToken = localStorage.getItem('auth_token') || '';
         const form = new FormData();
         
         form.append('image_urls', imageUrl);
@@ -8230,6 +8415,11 @@
         if(generateBtn){
           generateBtn.textContent = '生成视频';
           generateBtn.disabled = false;
+        }
+        const mergeStatusEl = document.querySelector(`.node[data-node-id="${shotGroupNodeId}"] .grid-merge-status`);
+        if(mergeStatusEl){
+          mergeStatusEl.style.color = '#ef4444';
+          mergeStatusEl.textContent = `失败: ${error.message}`;
         }
       }
     }
