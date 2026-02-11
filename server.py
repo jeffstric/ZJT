@@ -1809,6 +1809,129 @@ async def get_computing_power(auth_token: str = Header(None, alias="Authorizatio
         )
 
 
+@app.get('/api/user/computing_power_logs')
+async def get_computing_power_logs(
+    auth_token: str = Header(None, alias="Authorization"),
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量"),
+    behavior: str = Query(None, description="行为类型筛选")
+):
+    """
+    分页查询算力日志
+    """
+    try:
+        if not auth_token:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    'success': False,
+                    'message': '未提供认证信息'
+                }
+            )
+        
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+        
+        headers = {'Authorization': f'Bearer {auth_token}'}
+        
+        offset = (page - 1) * page_size
+        payload = {
+            'limit': page_size,
+            'offset': offset
+        }
+        
+        if behavior:
+            payload['behavior'] = behavior
+        logger.info(f"查询算力日志 参数: {payload}")
+        success, message, response_data = make_perseids_request(
+            endpoint='user/computing_power_logs',
+            method='POST',
+            headers=headers,
+            data=payload
+        )
+        
+        if success:
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '查询成功',
+                    'data': response_data
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message or '查询算力日志失败'
+                }
+            )
+    except Exception as e:
+        logger.error(f'查询算力日志失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
+@app.get('/api/user/invitation_info')
+async def get_invitation_info(auth_token: str = Header(None, alias="Authorization")):
+    """
+    查询用户邀请人所获得的算力以及邀请人数量
+    """
+    try:
+        if not auth_token:
+            return JSONResponse(
+                status_code=401,
+                content={
+                    'success': False,
+                    'message': '未提供认证信息'
+                }
+            )
+        
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+        
+        headers = {'Authorization': f'Bearer {auth_token}'}
+        logger.info(f"查询用户邀请信息")
+        success, message, response_data = make_perseids_request(
+            endpoint='user/invitation_reward_stats',
+            method='GET',
+            headers=headers
+        )
+        
+        if success:
+            return JSONResponse(
+                content={
+                    'success': True,
+                    'message': '查询成功',
+                    'data': response_data
+                }
+            )
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'message': message or '查询邀请信息失败'
+                }
+            )
+    except Exception as e:
+        logger.error(f'查询邀请信息失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'message': '服务器错误'
+            }
+        )
+
+
 class SendVerifyCodeRequest(BaseModel):
     phone: str
     type: str

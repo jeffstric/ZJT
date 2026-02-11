@@ -35,7 +35,7 @@
           <button class="btn secondary" v-if="route.name!=='list'" @click="goHome">返回</button>
           <template v-if="isLoggedIn">
             <div class="user-info-wrapper">
-              <span class="user-phone clickable" @click="showInviteModal = true" title="点击查看邀请码">{{ maskedPhone }}</span>
+              <span class="user-phone clickable" @click="openInviteModal" title="点击查看邀请码">{{ maskedPhone }}</span>
               <div class="computing-power-display">
                 <span>
                   算力: <span class="computing-power-value">{{ computingPower !== null ? computingPower : '加载中...' }}</span>
@@ -217,11 +217,26 @@
             <div class="invite-code-label">邀请码</div>
             <div class="invite-code-value">{{ inviteCode || '加载中...' }}</div>
           </div>
+          
+          <!-- 邀请统计信息 -->
+          <div class="invite-stats" v-if="invitationStats">
+            <div class="stats-row">
+              <div class="stat-item">
+                <div class="stat-label">已邀请人数</div>
+                <div class="stat-value">{{ invitationStats.count || 0 }} 人</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">获得算力</div>
+                <div class="stat-value">{{ invitationStats.total_power || 0 }} 点</div>
+              </div>
+            </div>
+          </div>
+          
           <div class="invite-description">
             <div class="invite-icon">🎁</div>
             <div class="invite-text">
               <strong>邀请好友，赚取算力！</strong>
-              <p>每成功邀请一个用户注册并登录，您将获得 <span class="highlight">25 算力</span> 奖励</p>
+              <p>每成功邀请一个用户注册并登录，您将获得 <span class="highlight">75 算力</span> 奖励</p>
             </div>
           </div>
           <div style="margin-top: 20px;">
@@ -5313,6 +5328,7 @@
       userPhone: '',
       inviteCode: '',
       computingPower: null,
+      invitationStats: null,
       showLoginModal: false,
       showInviteModal: false,
       showRechargePowerModal: false,
@@ -5878,6 +5894,29 @@
         }
       },
       
+      async fetchInvitationInfo() {
+        if (!this.authToken) {
+          return;
+        }
+        
+        try {
+          const response = await axios.get('/api/user/invitation_info', {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.success) {
+            this.invitationStats = response.data.data;
+          } else {
+            console.error('Failed to fetch invitation info:', response.data.message);
+            this.invitationStats = null;
+          }
+        } catch (error) {
+          console.error('Fetch invitation info error:', error);
+          this.invitationStats = null;
+        }
+      },
+      
       async sendResetCode() {
         this.resetError = '';
         
@@ -5999,6 +6038,11 @@
           console.error('Failed to load terms:', error);
           this.termsContent = '<p>加载使用条款失败，请稍后重试。</p>';
         }
+      },
+      
+      openInviteModal() {
+        this.showInviteModal = true;
+        this.fetchInvitationInfo();
       },
       
       copyInviteCode() {
