@@ -68,7 +68,7 @@
           <option value="16:9" selected>16:9</option>
         </select>
         <div class="computing-power-chip" id="computingPowerChip" title="剩余算力">
-          <span>算力: <span class="computing-power-value" id="computingPowerValue">--</span></span>
+          <span style="cursor: pointer;" onclick="openComputingPowerLogs()" title="点击查看算力日志">算力: <span class="computing-power-value" id="computingPowerValue">--</span></span>
           <button class="mini-btn computing-power-refresh" id="computingPowerRefreshBtn" type="button" title="刷新算力">↻</button>
         </div>
       </div>
@@ -874,6 +874,37 @@
       </div>
     </div>
   </div>
+
+  <!-- 算力日志弹窗 -->
+  <div class="modal-overlay" id="computingPowerLogsModal" aria-hidden="true" onclick="if(event.target === this){ this.classList.remove('active'); }">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 700px; height: 85vh; overflow: hidden; display: flex; flex-direction: column; position: relative;">
+      <button type="button" class="modal-close" aria-label="关闭" onclick="document.getElementById('computingPowerLogsModal').classList.remove('active')" style="position: absolute; top: 12px; right: 12px; z-index: 10;">×</button>
+      <div style="flex: 1; overflow: hidden; min-height: 0;">
+        <iframe id="computingPowerLogsIframe" style="width: 100%; height: 100%; border: none; border-radius: 12px;"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 打开算力日志弹窗
+    function openComputingPowerLogs() {
+      const authToken = localStorage.getItem('auth_token');
+      if (!authToken) {
+        alert('请先登录');
+        return;
+      }
+      
+      const modal = document.getElementById('computingPowerLogsModal');
+      const iframe = document.getElementById('computingPowerLogsIframe');
+      
+      // 设置 iframe 的 src
+      iframe.src = `/computing_power_logs.html?auth_token=${authToken}`;
+      
+      // 显示弹窗
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+  </script>
 
   <script src="/js/image_coloring_editor.js"></script>
   <script src="/js/nodes.js"></script>
