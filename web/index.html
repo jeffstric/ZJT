@@ -35,9 +35,9 @@
           <button class="btn secondary" v-if="route.name!=='list'" @click="goHome">返回</button>
           <template v-if="isLoggedIn">
             <div class="user-info-wrapper">
-              <span class="user-phone clickable" @click="showInviteModal = true" title="点击查看邀请码">{{ maskedPhone }}</span>
+              <span class="user-phone clickable" @click="openInviteModal" title="点击查看邀请码">{{ maskedPhone }}</span>
               <div class="computing-power-display">
-                <span>
+                <span class="clickable" @click="openComputingPowerLogs" title="点击查看算力日志">
                   算力: <span class="computing-power-value">{{ computingPower !== null ? computingPower : '加载中...' }}</span>
                 </span>
                 <button class="refresh-btn" @click="fetchComputingPower" title="刷新算力">
@@ -217,16 +217,45 @@
             <div class="invite-code-label">邀请码</div>
             <div class="invite-code-value">{{ inviteCode || '加载中...' }}</div>
           </div>
+          
+          <!-- 邀请统计信息 -->
+          <div class="invite-stats" v-if="invitationStats">
+            <div class="stats-row">
+              <div class="stat-item">
+                <div class="stat-label">已邀请人数</div>
+                <div class="stat-value">{{ invitationStats.count || 0 }} 人</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-label">获得算力</div>
+                <div class="stat-value">{{ invitationStats.total_power || 0 }} 点</div>
+              </div>
+            </div>
+          </div>
+          
           <div class="invite-description">
             <div class="invite-icon">🎁</div>
             <div class="invite-text">
               <strong>邀请好友，赚取算力！</strong>
-              <p>每成功邀请一个用户注册并登录，您将获得 <span class="highlight">25 算力</span> 奖励</p>
+              <p>每成功邀请一个用户注册并登录，您将获得 <span class="highlight">75 算力</span> 奖励</p>
             </div>
           </div>
           <div style="margin-top: 20px;">
             <button class="btn" style="width: 100%;" @click="copyInviteCode">复制邀请码</button>
           </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Computing Power Logs Modal -->
+    <div class="modal-overlay" v-if="showComputingPowerLogsModal" @click.self="showComputingPowerLogsModal = false">
+      <div class="modal" style="position: relative; max-width: 700px; height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
+        <button class="modal-close" @click="showComputingPowerLogsModal = false">×</button>
+        <div class="modal-title">算力日志</div>
+        <div style="flex: 1; overflow: hidden; min-height: 0;">
+          <iframe 
+            :src="`/computing_power_logs.html?auth_token=${authToken}`" 
+            style="width: 100%; height: 100%; border: none; border-radius: 0 0 12px 12px;">
+          </iframe>
         </div>
       </div>
     </div>
@@ -5313,8 +5342,10 @@
       userPhone: '',
       inviteCode: '',
       computingPower: null,
+      invitationStats: null,
       showLoginModal: false,
       showInviteModal: false,
+      showComputingPowerLogsModal: false,
       showRechargePowerModal: false,
       showFeedbackModal: false,
       authMode: 'login', // 'login' or 'register'
@@ -5878,6 +5909,29 @@
         }
       },
       
+      async fetchInvitationInfo() {
+        if (!this.authToken) {
+          return;
+        }
+        
+        try {
+          const response = await axios.get('/api/user/invitation_info', {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.success) {
+            this.invitationStats = response.data.data;
+          } else {
+            console.error('Failed to fetch invitation info:', response.data.message);
+            this.invitationStats = null;
+          }
+        } catch (error) {
+          console.error('Fetch invitation info error:', error);
+          this.invitationStats = null;
+        }
+      },
+      
       async sendResetCode() {
         this.resetError = '';
         
@@ -5999,6 +6053,21 @@
           console.error('Failed to load terms:', error);
           this.termsContent = '<p>加载使用条款失败，请稍后重试。</p>';
         }
+      },
+      
+      openInviteModal() {
+        this.showInviteModal = true;
+        this.fetchInvitationInfo();
+      },
+      
+      openComputingPowerLogs() {
+        if (!this.authToken) {
+          alert('请先登录');
+          return;
+        }
+        
+        // 打开算力日志模态框
+        this.showComputingPowerLogsModal = true;
       },
       
       copyInviteCode() {

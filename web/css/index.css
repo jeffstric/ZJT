@@ -464,6 +464,38 @@ header {
   font-size: 16px;
 }
 
+/* Invite Stats */
+.invite-stats {
+  margin: 20px 0;
+  padding: 16px;
+  background: rgba(34, 197, 94, 0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.stats-row {
+  display: flex;
+  gap: 20px;
+  justify-content: space-around;
+}
+
+.stat-item {
+  flex: 1;
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
 /* Invite Tip in Register Form */
 .invite-tip {
   display: flex;
