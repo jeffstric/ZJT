@@ -1523,11 +1523,17 @@
                       }
                     }
 
+                    delete node.data._splitPending;
                     try { await autoSaveWorkflow(); } catch(e){}
+                  } else {
+                    delete node.data._splitPending;
                   }
+                } else {
+                  delete node.data._splitPending;
                 }
               } catch(e){
                 console.error('[轮询] 拆分宫格图片失败:', e);
+                delete node.data._splitPending;
               }
             })();
             return;

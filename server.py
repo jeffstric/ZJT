@@ -4202,8 +4202,10 @@ async def poll_workflow_node_status(
             project_id = node_data.get('project_id')
             url = node_data.get('url', '')
 
-            # 只处理有 project_id 但 url 为空的节点
-            if project_id and not url:
+            # 处理有 project_id 但 url 为空的节点，
+            # 或者有 gridIndex 但 isSplit 为 false 的宫格图节点（url 已被设为原始宫格图但拆分未完成）
+            is_unsplit_grid = node_data.get('gridIndex') and not node_data.get('isSplit')
+            if project_id and (not url or is_unsplit_grid):
                 # 查询 ai_tools 表获取状态
                 try:
                     ai_tool = AIToolsModel.get_by_id(project_id)
@@ -4403,21 +4405,28 @@ async def get_grid_split_image(
                 logger.info(f"Downloading grid image from: {result_url}")
                 try:
                     import httpx
+                    import tempfile
                     async with httpx.AsyncClient(timeout=60.0) as client:
                         response = await client.get(result_url)
                         if response.status_code == 200:
-                            with open(cached_image_path, 'wb') as f:
-                                f.write(response.content)
-                            logger.info(f"Grid image downloaded to: {cached_image_path}")
-
-                            # 验证下载的图片完整性
+                            # 先写临时文件，再原子重命名，防止并发请求写坏同一文件
+                            tmp_fd, tmp_path = tempfile.mkstemp(dir=cache_dir, suffix='.tmp')
                             try:
+                                with os.fdopen(tmp_fd, 'wb') as f:
+                                    f.write(response.content)
+                                
+                                # 验证下载的图片完整性（load 会解码全部像素，比 verify 更严格）
                                 from PIL import Image
-                                with Image.open(cached_image_path) as img:
-                                    img.verify()  # 验证图片完整性
+                                with Image.open(tmp_path) as img:
+                                    img.load()
+                                
+                                os.replace(tmp_path, cached_image_path)  # 原子操作
+                                logger.info(f"Grid image downloaded to: {cached_image_path}")
                             except Exception as e:
+                                # 清理临时文件
+                                if os.path.exists(tmp_path):
+                                    os.unlink(tmp_path)
                                 logger.error(f"Downloaded image is corrupted: {str(e)}")
-                                os.remove(cached_image_path)  # 删除损坏的文件
                                 return JSONResponse(
                                     status_code=500,
                                     content={"code": -1, "message": f"下载的图片文件损坏: {str(e)}"}
