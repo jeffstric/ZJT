@@ -279,6 +279,12 @@
           <div class="log-behavior" :class="log.behavior">
             {{ log.behavior === 'increase' ? '➕ 增加' : '➖ 扣除' }}
           </div>
+          <div v-if="log.from !== null && log.to !== null" class="log-change" style="font-size: 13px; color: var(--text); margin-bottom: 6px; padding: 4px 8px; background: rgba(34, 197, 94, 0.1); border-radius: 4px; display: inline-block; font-weight: 500;">
+            <span style="color: var(--muted); font-size: 12px;">算力变化：</span>
+            <span style="color: var(--muted);">{{ log.from }}</span> 
+            <span style="color: var(--primary); margin: 0 4px;">→</span> 
+            <span style="color: var(--primary); font-weight: 600;">{{ log.to }}</span>
+          </div>
           <div class="log-description">{{ log.note || log.message || '无描述' }}</div>
         </div>
         <div class="log-meta">
