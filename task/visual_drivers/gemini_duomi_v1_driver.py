@@ -149,8 +149,12 @@ class GeminiDuomiV1Driver(BaseVideoDriver):
         try:
             self.logger.info(f"Submitting Gemini task: prompt='{ai_tool.prompt[:50]}...', ratio={ai_tool.ratio}, size={ai_tool.image_size}")
             
-            # 准备图片URL列表
-            image_urls = [ai_tool.image_path] if ai_tool.image_path else None
+            # 准备图片URL列表 - 支持逗号分隔的多个URL
+            if ai_tool.image_path:
+                # 如果是逗号分隔的URL字符串，拆分为数组
+                image_urls = ai_tool.image_path.split(',') if ',' in ai_tool.image_path else [ai_tool.image_path]
+            else:
+                image_urls = None
             
             # 调用外部 API
             try:
