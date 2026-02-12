@@ -136,6 +136,7 @@
   "grid_aspect_ratio": "16:9",
   "global_watermark": "",
   "style_guidance": "High-quality storyboard grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.",
+  "art_style": "赛博朋克风格",
   "shots": [
     {"shot_number": "Shot 1", "prompt_text": "清晨的城市街道，阳光洒在建筑物上"},
     {"shot_number": "Shot 2", "prompt_text": "咖啡店内部，温暖的灯光"},
@@ -152,6 +153,7 @@
   "grid_aspect_ratio": "16:9",
   "global_watermark": "",
   "style_guidance": "High-quality storyboard grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.",
+  "art_style": "水墨画风格",
   "shots": [
     {"shot_number": "Shot 1", "prompt_text": "..."},
     {"shot_number": "Shot 2", "prompt_text": "..."},
@@ -295,6 +297,7 @@ GET /api/ai-tools/{ai_tools_id}/status?user_id={user_id}
 4. **并行生成**: 多张宫格图片会并行生成，提高效率
 5. **自动同步**: 复用现有轮询机制，每10秒检查一次，无需手动刷新
 6. **4K输出**: 加强版模型自动使用4K分辨率，确保图片质量
+7. **画风传递**: 如果用户设置了画风（`state.style.name`），所有生图入口（分镜节点、分镜组节点、剧本节点）都会自动将画风信息传递到提示词中。分镜节点通过 `图片风格：xxx` 追加到 prompt 末尾，多宫格生图通过 JSON 中的 `art_style` 字段传递
 
 ## 分镜节点顺序
 
@@ -309,6 +312,14 @@ GET /api/ai-tools/{ai_tools_id}/status?user_id={user_id}
 ---
 
 ## 故障排查
+
+### 问题：宫格图已生成但 isSplit 仍为 false（未被拆分）
+
+**根本原因**：
+`poll-status` 后端接口仅处理 `project_id` 存在且 `url` 为空的节点。当宫格图 AI 工具完成后，前端先将 `node.data.url` 设为原始宫格图 URL，然后异步调用拆分接口。但 `autoSaveWorkflow` 可能在拆分完成**之前**执行，将 `url = 原始宫格图URL, isSplit = false` 保存到数据库。之后 `poll-status` 看到 `url` 不为空就永久跳过该节点，导致拆分再也不会被触发。
+
+**已修复（2026-02-12）**：
+- **后端** (`server.py`): `poll-status` 接口过滤条件从 `project_id && !url` 扩展为也包含 `gridIndex 存在且 isSplit 为 false` 的节点。这样即使节点已有原始宫格图 URL，后端仍会将其返回到 `updated_nodes`，前端现有的 `updateNodePreview` 逻辑会自动触发拆分
 
 ### 问题：分镜图节点一直显示"等待生成..."
 
@@ -339,9 +350,11 @@ GET /api/ai-tools/{ai_tools_id}/status?user_id={user_id}
 **根本原因**：
 PIL（Pillow）的 `Image.open()` 使用惰性加载，只读取文件头而不加载像素数据。当 `crop()` 时才触发实际像素读取，如果此时出现 IO 问题（并发访问、文件句柄等），像素数据可能不完整，导致切分后的图片只有一半或出现黑色/灰色区域。
 
-**系统处理**（已修复）：
+**系统处理**（已修复 2026-02-12）：
 1. **强制加载**：在 `Image.open()` 后立即调用 `img.load()` 强制加载全部像素数据到内存，确保 `crop()` 时数据完整
-2. **下载验证**：下载原图后使用 `Image.verify()` 验证图片完整性，损坏则自动删除缓存
+2. **下载验证**：下载原图后使用 `img.load()` 解码全部像素数据进行完整性校验（比 `img.verify()` 更严格，能检测 PNG 像素数据截断）
+3. **原子写入**：下载图片时先写入临时文件，校验通过后再通过 `os.replace()` 原子重命名为目标文件，防止并发请求写坏同一缓存文件
+4. **损坏清理**：校验失败时自动清理临时文件，不会留下损坏的缓存
 
 **手动解决方法**：
 1. 删除损坏的切分缓存：`rm -rf upload/workflow/{user_id}/grid_split/{ai_tools_id}/`

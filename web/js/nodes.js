@@ -4914,13 +4914,18 @@
                   });
                 }
                 
-                const gridPrompt = JSON.stringify({
+                const gridPromptObj = {
                   grid_layout: gridLayout,
                   grid_aspect_ratio: state.ratio || '16:9',
                   global_watermark: '',
                   style_guidance: "High-quality storyboard grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.",
                   shots: shots
-                });
+                };
+                // 添加画风文字描述
+                if(state.style && state.style.name){
+                  gridPromptObj.art_style = state.style.name;
+                }
+                const gridPrompt = JSON.stringify(gridPromptObj);
                 
                 gridTasks.push({
                   batchNodes,
@@ -5386,13 +5391,18 @@
               });
             }
             
-            const gridPrompt = JSON.stringify({
+            const gridPromptObj = {
               grid_layout: gridLayout,
               grid_aspect_ratio: state.ratio || '16:9',
               global_watermark: '',
               style_guidance: "High-quality storyboard grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.",
               shots: shots
-            });
+            };
+            // 添加画风文字描述
+            if(state.style && state.style.name){
+              gridPromptObj.art_style = state.style.name;
+            }
+            const gridPrompt = JSON.stringify(gridPromptObj);
             
             gridTasks.push({
               batchNodes,
@@ -6273,13 +6283,18 @@
             });
           }
           
-          const gridPrompt = JSON.stringify({
+          const gridPromptObj = {
             grid_layout: gridLayout,
             grid_aspect_ratio: state.ratio || '16:9',
             global_watermark: '',
             style_guidance: "High-quality storyboard grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.",
             shots: shots
-          });
+          };
+          // 添加画风文字描述
+          if(state.style && state.style.name){
+            gridPromptObj.art_style = state.style.name;
+          }
+          const gridPrompt = JSON.stringify(gridPromptObj);
           
           gridTasks.push({
             batchNodes,
@@ -6337,7 +6352,7 @@
           
           if(!res.ok) {
             const errorMsg = typeof data.detail === 'string' ? data.detail :
-                           typeof data.message === 'string' ? data.message :
+                             typeof data.message === 'string' ? data.message :
                            JSON.stringify(data.detail || data.message || '提交任务失败');
             throw new Error(errorMsg);
           }
