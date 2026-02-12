@@ -50,6 +50,15 @@ class TestGeminiProDuomiWithDB(BaseVideoDriverTest):
         
         result = self.driver.submit_task(tool)
         
+        # 验证调用参数，确保使用正确的模型名称
+        mock_api.assert_called_once_with(
+            model="gemini-3-pro-image-preview",
+            prompt='测试 Gemini Pro 提交成功',
+            ratio='16:9',
+            image_urls=['https://example.com/test.jpg'],
+            image_size='1K'
+        )
+        
         self.assertTrue(result['success'])
         self.assertEqual(result['project_id'], 'gemini_pro_task_123')
         
