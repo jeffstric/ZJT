@@ -4402,7 +4402,7 @@
               <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
               <span>拆分多人对话镜头</span>
             </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将多人对话镜头拆分为单人对话镜头，并注意画面不越轴</div>
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将多人对话镜头拆分为单人对话镜头</div>
           </div>
           <div class="field field-collapsible">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
