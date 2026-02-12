@@ -187,8 +187,24 @@ def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16
         "Authorization": token
     }
     
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json()
+    # 记录请求日志
+    logger.info(f"[Duomi NanoBanana API] Request URL: {url}")
+    logger.info(f"[Duomi NanoBanana API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[Duomi NanoBanana API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi NanoBanana API] Error creating AI image task: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"[Duomi NanoBanana API] Response Status Code: {e.response.status_code}")
+            logger.error(f"[Duomi NanoBanana API] Response Body: {e.response.text}")
+        raise
 
 def create_text_to_image(model="gemini-3-pro-image-preview", prompt="", aspect_ratio="auto", image_size=None):
     """
@@ -238,8 +254,24 @@ def create_text_to_image(model="gemini-3-pro-image-preview", prompt="", aspect_r
         "Authorization": token
     }
     
-    response = requests.post(url, json=payload, headers=headers)
-    return response.json()
+    # 记录请求日志
+
+    logger.info(f"[Duomi NanoBanana API] Request URL: {url} Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[Duomi NanoBanana API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi NanoBanana API] Error creating text to image task: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"[Duomi NanoBanana API] Response Status Code: {e.response.status_code}")
+            logger.error(f"[Duomi NanoBanana API] Response Body: {e.response.text}")
+        raise
 
 def create_video_remix(video_id, prompt, aspect_ratio="16:9", duration=15):
     """
@@ -315,17 +347,23 @@ def create_character(timestamps, url=None, from_task=None, callback_url=None):
         "Authorization": token
     }
     
-    response = requests.post(api_url, json=payload, headers=headers)
-    
-    # Log response for debugging
-    print(f"Create character API response status: {response.status_code}")
-    print(f"Create character API response text: {response.text[:1000] if response.text else 'EMPTY'}")
+    logger.info(f"[Duomi Character API] Request URL: {api_url}")
+    logger.info(f"[Duomi Character API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
-        return response.json()
-    except Exception as e:
-        print(f"Failed to parse create character response: {e}")
-        return {"error": str(e), "raw_text": response.text[:500] if response.text else None}
+        response = requests.post(api_url, json=payload, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[Duomi Character API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi Character API] Error creating character task: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"[Duomi Character API] Response Status Code: {e.response.status_code}")
+            logger.error(f"[Duomi Character API] Response Body: {e.response.text}")
+        return {"error": str(e), "raw_text": e.response.text[:500] if hasattr(e, 'response') and e.response is not None else None}
 
 
 def get_character_task_result(task_id):
@@ -354,16 +392,18 @@ def get_character_task_result(task_id):
         "Authorization": token
     }
     
-    response = requests.get(api_url, headers=headers)
-    
-    # Log response for debugging
-    print(f"Character status API response status: {response.status_code}")
-    print(f"Character status API response text: {response.text[:500] if response.text else 'EMPTY'}")
+    logger.info(f"[Duomi Character API] Status Check URL: {api_url}")
     
     try:
-        return response.json()
-    except Exception as e:
-        print(f"Failed to parse character status response: {e}")
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        
+        # 记录响应日志
+        logger.info(f"[Duomi Character API] Status Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
+        return result
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[Duomi Character API] Error getting character task status: {e}")
         return {
             "state": "processing",
             "message": "任务处理中..."
