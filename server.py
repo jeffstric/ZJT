@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Header
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Header, Path
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -4409,6 +4409,19 @@ async def get_grid_split_image(
                             with open(cached_image_path, 'wb') as f:
                                 f.write(response.content)
                             logger.info(f"Grid image downloaded to: {cached_image_path}")
+
+                            # 验证下载的图片完整性
+                            try:
+                                from PIL import Image
+                                with Image.open(cached_image_path) as img:
+                                    img.verify()  # 验证图片完整性
+                            except Exception as e:
+                                logger.error(f"Downloaded image is corrupted: {str(e)}")
+                                os.remove(cached_image_path)  # 删除损坏的文件
+                                return JSONResponse(
+                                    status_code=500,
+                                    content={"code": -1, "message": f"下载的图片文件损坏: {str(e)}"}
+                                )
                         else:
                             logger.error(f"Failed to download grid image, status: {response.status_code}")
                             return JSONResponse(

@@ -42,9 +42,10 @@ class ImageGridSplitter:
         # 创建输出目录
         os.makedirs(output_dir, exist_ok=True)
         
-        # 打开图像
+        # 打开图像并强制加载全部像素数据（避免惰性加载导致crop不完整）
         try:
             img = Image.open(grid_image_path)
+            img.load()
         except Exception as e:
             raise ValueError(f"无法打开图像文件: {e}")
         
@@ -130,6 +131,7 @@ class ImageGridSplitter:
             raise ValueError("output_names 必须包含9个元素")
         
         img = Image.open(grid_image_path)
+        img.load()  # 强制加载全部像素数据，避免惰性加载导致crop不完整
         width, height = img.size
         
         cell_width = width // 3
