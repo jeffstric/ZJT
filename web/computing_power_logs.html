@@ -285,7 +285,7 @@
             <span style="color: var(--primary); margin: 0 4px;">→</span> 
             <span style="color: var(--primary); font-weight: 600;">{{ log.to }}</span>
           </div>
-          <div class="log-description">{{ log.note || log.message || '无描述' }}</div>
+          <div class="log-description">{{ log.note || '无描述' }}</div>
         </div>
         <div class="log-meta">
           <div class="log-amount" :class="log.behavior">

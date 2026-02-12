@@ -1842,7 +1842,6 @@ async def get_computing_power_logs(
         
         if behavior:
             payload['behavior'] = behavior
-        logger.info(f"查询算力日志 参数: {payload}")
         success, message, response_data = make_perseids_request(
             endpoint='user/computing_power_logs',
             method='POST',
@@ -1853,13 +1852,32 @@ async def get_computing_power_logs(
         if success:
             # 处理返回数据
             if 'logs' in response_data and isinstance(response_data['logs'], list):
+                # 收集所有 transaction_id 用于批量查询
+                transaction_ids = []
+                for log in response_data['logs']:
+                    transaction_id = log.get('transaction_id')
+                    if transaction_id:
+                        transaction_ids.append(transaction_id)
+                
+                # 批量查询 ai_tools 记录
+                tools_map = {}
+                if transaction_ids:
+                    from model.ai_tools import AIToolsModel
+                    try:
+                        tools_map = AIToolsModel.get_by_transaction_ids(transaction_ids)
+                    except Exception as e:
+                        logger.error(f'批量查询 ai_tools 失败: {e}')
+                
                 processed_logs = []
                 for log in response_data['logs']:
-                    # 删除敏感字段
+                    from datetime import datetime
+                    import re
+                    from config.constant import TASK_TYPE_NAME_MAP
+                    
+                    # 获取基础字段
                     processed_log = {
                         'id': log.get('id'),
                         'behavior': log.get('behavior'),
-                        'message': log.get('message'),
                         'note': log.get('note'),
                         'computing_power': log.get('computing_power'),
                         'from': log.get('from'),
@@ -1867,12 +1885,25 @@ async def get_computing_power_logs(
                         'created_at': log.get('created_at')
                     }
                     
+                    # 如果 message 有值，将其放到 note
+                    message = log.get('message')
+                    if message:
+                        processed_log['note'] = message
+                    
+                    # 根据 transaction_id 查询任务类型
+                    transaction_id = log.get('transaction_id')
+                    if transaction_id and transaction_id in tools_map:
+                        tool = tools_map[transaction_id]
+                        if tool.type and tool.type in TASK_TYPE_NAME_MAP:
+                            task_type_name = TASK_TYPE_NAME_MAP[tool.type]
+                            if processed_log['note']:
+                                processed_log['note'] = f"{task_type_name} - {processed_log['note']}"
+                            else:
+                                processed_log['note'] = task_type_name
+                    
                     # 格式化时间为年月日时分秒
                     if processed_log['created_at']:
                         try:
-                            from datetime import datetime
-                            import re
-                            # 解析ISO格式时间
                             dt = datetime.fromisoformat(processed_log['created_at'].replace('Z', '+00:00'))
                             processed_log['created_at'] = dt.strftime('%Y-%m-%d %H:%M:%S')
                         except Exception as e:
@@ -1880,7 +1911,6 @@ async def get_computing_power_logs(
                     
                     # 清理note中的邀请人ID信息
                     if processed_log['note']:
-                        import re
                         # 移除 "，被邀请人ID: 数字" 或 ",被邀请人ID: 数字" 模式
                         processed_log['note'] = re.sub(r'[，,]\s*被邀请人ID:\s*\d+', '', processed_log['note'])
                         # 如果整个note就是 "被邀请人ID: 数字"，则清空

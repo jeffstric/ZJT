@@ -394,3 +394,33 @@ class AIToolsModel:
         except Exception as e:
             logger.error(f"Failed to delete AI tool records for user {user_id}: {e}")
             raise
+    
+    @staticmethod
+    def get_by_transaction_ids(transaction_ids: List[str]) -> Dict[str, AITool]:
+        """
+        Batch get AI tool records by transaction IDs
+        
+        Args:
+            transaction_ids: List of transaction IDs
+        
+        Returns:
+            Dictionary mapping transaction_id to AITool object
+        """
+        if not transaction_ids:
+            return {}
+        
+        placeholders = ','.join(['%s'] * len(transaction_ids))
+        sql = f"SELECT * FROM ai_tools WHERE transaction_id IN ({placeholders})"
+        
+        try:
+            results = execute_query(sql, tuple(transaction_ids), fetch_all=True)
+            tools_map = {}
+            if results:
+                for row in results:
+                    tool = AITool(**row)
+                    if tool.transaction_id:
+                        tools_map[tool.transaction_id] = tool
+            return tools_map
+        except Exception as e:
+            logger.error(f"Failed to get AI tool records by transaction_ids: {e}")
+            raise
