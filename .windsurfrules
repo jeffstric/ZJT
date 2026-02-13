@@ -3,3 +3,4 @@
 2. 功能相关的改动后，请你同步 docs 目录下的文档
 3. video_workflow.html 中，需要将css以及js等相关代码，尽量独立成文件，降低token消耗。
 4. 涉及到video_workflow.html 工作流相关改动时，注意工作流有重新加载功能，新建的节点需要考虑重新加载后复原。
+5. 后端代码中所有的常量都位于 config/constant.py 中，请你注意参考，必要时新增。

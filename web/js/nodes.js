@@ -4914,16 +4914,20 @@
                   });
                 }
                 
+                const artStyleName = (state.style && state.style.name) ? state.style.name : '';
+                const baseGuidance = "High-quality image grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.";
+                const styleGuidance = artStyleName
+                  ? `${baseGuidance} IMPORTANT: You MUST strictly follow this art style for ALL shots: "${artStyleName}". Every shot must consistently use this exact art style throughout the entire grid.`
+                  : baseGuidance;
                 const gridPromptObj = {
                   grid_layout: gridLayout,
                   grid_aspect_ratio: state.ratio || '16:9',
                   global_watermark: '',
-                  style_guidance: "High-quality storyboard grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.",
+                  style_guidance: styleGuidance,
                   shots: shots
                 };
-                // 添加画风文字描述
-                if(state.style && state.style.name){
-                  gridPromptObj.art_style = state.style.name;
+                if(artStyleName){
+                  gridPromptObj.art_style = artStyleName;
                 }
                 const gridPrompt = JSON.stringify(gridPromptObj);
                 
@@ -5349,16 +5353,20 @@
               });
             }
             
+            const artStyleName = (state.style && state.style.name) ? state.style.name : '';
+            const baseGuidance = "High-quality image grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.";
+            const styleGuidance = artStyleName
+              ? `${baseGuidance} IMPORTANT: You MUST strictly follow this art style for ALL shots: "${artStyleName}". Every shot must consistently use this exact art style throughout the entire grid.`
+              : baseGuidance;
             const gridPromptObj = {
               grid_layout: gridLayout,
               grid_aspect_ratio: state.ratio || '16:9',
               global_watermark: '',
-              style_guidance: "High-quality storyboard grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.",
+              style_guidance: styleGuidance,
               shots: shots
             };
-            // 添加画风文字描述
-            if(state.style && state.style.name){
-              gridPromptObj.art_style = state.style.name;
+            if(artStyleName){
+              gridPromptObj.art_style = artStyleName;
             }
             const gridPrompt = JSON.stringify(gridPromptObj);
             
@@ -6198,16 +6206,20 @@
             });
           }
           
+          const artStyleName = (state.style && state.style.name) ? state.style.name : '';
+          const baseGuidance = "High-quality image grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.";
+          const styleGuidance = artStyleName
+            ? `${baseGuidance} IMPORTANT: You MUST strictly follow this art style for ALL shots: "${artStyleName}". Every shot must consistently use this exact art style throughout the entire grid.`
+            : baseGuidance;
           const gridPromptObj = {
             grid_layout: gridLayout,
             grid_aspect_ratio: state.ratio || '16:9',
             global_watermark: '',
-            style_guidance: "High-quality storyboard grid. Strictly NO TEXT, NO NUMBERS, NO SHOT INDICES in the top-left corner. Clean visual composition only. No watermarks.",
+            style_guidance: styleGuidance,
             shots: shots
           };
-          // 添加画风文字描述
-          if(state.style && state.style.name){
-            gridPromptObj.art_style = state.style.name;
+          if(artStyleName){
+            gridPromptObj.art_style = artStyleName;
           }
           const gridPrompt = JSON.stringify(gridPromptObj);
           
