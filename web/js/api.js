@@ -158,6 +158,7 @@
         const taskDetails = tasks.map(task => {
           const results = extractResultsArray(task);
           return {
+            project_id: task.project_id,
             status: task.status || 'RUNNING',
             result: results.length > 0 ? results[0] : null,
             error: task.reason || task.error || null

@@ -5024,7 +5024,7 @@
                     gridImageNode.data.gridIndex = gridIndex;
                     gridImageNode.data.gridSize = gridSize;
                     gridImageNode.data.shotFrameNodeId = shotFrameNode.id;
-                    gridImageNode.data.isSplit = false;
+                    gridImageNode.data.isSplit = true;
                     gridImageNode.data.status = 'pending';
                     gridImageNode.title = gridImageNode.data.name;
                     
@@ -5070,62 +5070,17 @@
                       if(!taskData) continue;
                       
                       if(taskInfo.status === 'SUCCESS') {
-                        console.log(`[宫格生图] AI工具 ${aiToolsId} 生成成功，开始拆分图片`);
+                        console.log(`[宫格生图] AI工具 ${aiToolsId} 生成成功，标记节点等待拆分`);
                         
                         for(let idx = 0; idx < taskData.batchNodes.length; idx++) {
                           const gridIndex = idx + 1;
-                          
-                          try {
-                            const splitResponse = await fetch(
-                              `/api/ai-tools/${aiToolsId}/grid-split?grid_index=${gridIndex}&user_id=${getUserId()}&grid_size=${gridSize}`,
-                              {
-                                headers: {
-                                  'Authorization': getAuthToken(),
-                                  'X-User-Id': getUserId()
-                                }
-                              }
-                            );
-                            
-                            if(splitResponse.ok) {
-                              const splitData = await splitResponse.json();
-                              if(splitData.code === 0 && splitData.data && splitData.data.image_url) {
-                                const gridNode = state.nodes.find(n => 
-                                  n.type === 'image' && 
-                                  String(n.data.aiToolsId) === aiToolsId && 
-                                  n.data.gridIndex === gridIndex
-                                );
-                                
-                                if(gridNode) {
-                                  const normalizedUrl = normalizeImageUrl(splitData.data.image_url);
-                                  gridNode.data.url = normalizedUrl;
-                                  gridNode.data.preview = normalizedUrl;
-                                  gridNode.data.isSplit = true;
-                                  gridNode.data.status = 'completed';
-                                  
-                                  const nodeEl = document.querySelector(`.node[data-node-id="${gridNode.id}"]`);
-                                  if(nodeEl) {
-                                    const previewImg = nodeEl.querySelector('.image-preview');
-                                    const previewRow = nodeEl.querySelector('.image-preview-row');
-                                    if(previewImg && previewRow) {
-                                      previewImg.src = proxyImageUrl(splitData.data.image_url);
-                                      previewRow.style.display = 'flex';
-                                    }
-                                  }
-                                  
-                                  // 触发连接的分镜节点更新视频首帧预览
-                                  const connectedShotFrameNode = state.connections
-                                    .filter(c => c.from === gridNode.id)
-                                    .map(c => state.nodes.find(n => n.id === c.to && n.type === 'shot_frame'))
-                                    .find(Boolean);
-                                  
-                                  if(connectedShotFrameNode && connectedShotFrameNode.updatePreview) {
-                                    connectedShotFrameNode.updatePreview();
-                                  }
-                                }
-                              }
-                            }
-                          } catch(error) {
-                            console.error(`[宫格生图] 拆分图片失败 (${aiToolsId}, ${gridIndex}):`, error);
+                          const gridNode = state.nodes.find(n => 
+                            n.type === 'image' && 
+                            String(n.data.aiToolsId) === aiToolsId && 
+                            n.data.gridIndex === gridIndex
+                          );
+                          if(gridNode) {
+                            gridNode.data.status = 'splitting';
                           }
                         }
                       } else if(taskInfo.status === 'FAILED') {
@@ -5147,8 +5102,11 @@
                   }
                   
                   gridStatusEl.style.color = '#16a34a';
-                  gridStatusEl.textContent = '宫格图片生成完成';
-                  showToast('宫格图片生成完成', 'success');
+                  gridStatusEl.textContent = '宫格图片生成完成，正在拆分...';
+                  showToast('宫格图片生成完成，正在拆分', 'success');
+                  
+                  // 立即触发一次拆分（不等 60 秒轮询周期）
+                  pollWorkflowNodeStatus();
                 },
                 (errorMsg) => {
                   gridStatusEl.style.color = '#dc2626';
@@ -5506,7 +5464,7 @@
                 gridImageNode.data.gridIndex = gridIndex;
                 gridImageNode.data.gridSize = gridSize;
                 gridImageNode.data.shotFrameNodeId = shotFrameNode.id;
-                gridImageNode.data.isSplit = false;
+                gridImageNode.data.isSplit = true;
                 gridImageNode.data.status = 'pending';
                 gridImageNode.title = gridImageNode.data.name;
                 
@@ -5556,63 +5514,17 @@
                   if(!taskData) continue;
                   
                   if(taskInfo.status === 'SUCCESS') {
-                    // 成功：拆分图片并更新节点
-                    console.log(`[宫格生图] AI工具 ${aiToolsId} 生成成功，开始拆分图片`);
+                    console.log(`[宫格生图] AI工具 ${aiToolsId} 生成成功，标记节点等待拆分`);
                     
                     for(let idx = 0; idx < taskData.batchNodes.length; idx++) {
                       const gridIndex = idx + 1;
-                      
-                      try {
-                        // 调用拆分接口
-                        const splitResponse = await fetch(
-                          `/api/ai-tools/${aiToolsId}/grid-split?grid_index=${gridIndex}&user_id=${getUserId()}&grid_size=${gridSize}`,
-                          {
-                            headers: {
-                              'Authorization': getAuthToken(),
-                              'X-User-Id': getUserId()
-                            }
-                          }
-                        );
-                        
-                        if(splitResponse.ok) {
-                          const splitData = await splitResponse.json();
-                          if(splitData.code === 0 && splitData.data && splitData.data.image_url) {
-                            const gridNode = state.nodes.find(n => 
-                              n.type === 'image' && 
-                              String(n.data.aiToolsId) === aiToolsId && 
-                              n.data.gridIndex === gridIndex
-                            );
-                            
-                            if(gridNode) {
-                              const normalizedUrl = normalizeImageUrl(splitData.data.image_url);
-                              gridNode.data.url = normalizedUrl;
-                              gridNode.data.preview = normalizedUrl;
-                              gridNode.data.isSplit = true;
-                              gridNode.data.status = 'completed';
-                              
-                              const nodeEl = document.querySelector(`.node[data-node-id="${gridNode.id}"]`);
-                              if(nodeEl) {
-                                const previewImg = nodeEl.querySelector('.image-preview');
-                                const previewRow = nodeEl.querySelector('.image-preview-row');
-                                if(previewImg && previewRow) {
-                                  previewImg.src = proxyImageUrl(splitData.data.image_url);
-                                  previewRow.style.display = 'flex';
-                                }
-                              }
-                              
-                              // 触发连接的分镜节点更新视频首帧预览
-                              if(gridNode.data.shotFrameNodeId) {
-                                const shotFrameNode = state.nodes.find(n => n.id === gridNode.data.shotFrameNodeId);
-                                if(shotFrameNode && shotFrameNode.updatePreview) {
-                                  shotFrameNode.updatePreview();
-                                  console.log(`[宫格生图] 分镜节点 ${shotFrameNode.id} 更新后 previewImageUrl:`, shotFrameNode.data.previewImageUrl);
-                                }
-                              }
-                            }
-                          }
-                        }
-                      } catch(error) {
-                        console.error(`[宫格生图] 拆分图片失败 (${aiToolsId}, ${gridIndex}):`, error);
+                      const gridNode = state.nodes.find(n => 
+                        n.type === 'image' && 
+                        String(n.data.aiToolsId) === aiToolsId && 
+                        n.data.gridIndex === gridIndex
+                      );
+                      if(gridNode) {
+                        gridNode.data.status = 'splitting';
                       }
                     }
                   } else if(taskInfo.status === 'FAILED') {
@@ -5635,8 +5547,11 @@
               }
               
               gridStatusEl.style.color = '#16a34a';
-              gridStatusEl.textContent = '宫格图片生成完成';
-              showToast('宫格图片生成完成', 'success');
+              gridStatusEl.textContent = '宫格图片生成完成，正在拆分...';
+              showToast('宫格图片生成完成，正在拆分', 'success');
+              
+              // 立即触发一次拆分（不等 60 秒轮询周期）
+              pollWorkflowNodeStatus();
             },
             (errorMsg) => {
               gridStatusEl.style.color = '#dc2626';
@@ -6393,7 +6308,7 @@
               gridImageNode.data.gridIndex = gridIndex;
               gridImageNode.data.gridSize = gridSize;
               gridImageNode.data.shotFrameNodeId = shotFrameNode.id;
-              gridImageNode.data.isSplit = false;
+              gridImageNode.data.isSplit = true;
               gridImageNode.data.status = 'pending';
               gridImageNode.title = gridImageNode.data.name;
               

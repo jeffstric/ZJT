@@ -1340,15 +1340,23 @@
     // ============ 节点状态轮询功能 ============
     
     let pollStatusTimer = null;
+    let _pollStatusRunning = false;
     
     // 轮询工作流节点状态
     async function pollWorkflowNodeStatus(){
-      // 从 URL 参数中获取 workflowId
-      const urlParams = new URLSearchParams(window.location.search);
-      const workflowId = urlParams.get('id');
-      if(!workflowId) return;
+      // 防止重叠执行（定时器 + 手动触发可能并发）
+      if(_pollStatusRunning){
+        console.log('[轮询] 上一次 pollWorkflowNodeStatus 尚未完成，跳过');
+        return;
+      }
+      _pollStatusRunning = true;
       
       try {
+        // 从 URL 参数中获取 workflowId
+        const urlParams = new URLSearchParams(window.location.search);
+        const workflowId = urlParams.get('id');
+        if(!workflowId) return;
+        
         const userId = localStorage.getItem('user_id');
         const authToken = localStorage.getItem('auth_token');
         
@@ -1403,9 +1411,100 @@
               console.error('[轮询] 自动保存失败:', e);
             }
           }
+          
+          // 处理需要拆分的宫格节点（isSplit=true 且 url 为空，排除已失败的）
+          const GRID_SPLIT_MAX_RETRIES = 20;
+          const unsplitGridNodes = state.nodes.filter(n =>
+            n.type === 'image' &&
+            n.data.isSplit === true &&
+            n.data.gridIndex &&
+            !n.data.url &&
+            n.data.status !== 'failed'
+          );
+          
+          if(unsplitGridNodes.length > 0){
+            console.log(`[轮询] 发现 ${unsplitGridNodes.length} 个待拆分宫格节点`);
+            let splitUpdated = false;
+            
+            // 顺序处理（避免并发轰炸后端）
+            for(const gridNode of unsplitGridNodes){
+              const aiToolsId = gridNode.data.aiToolsId || gridNode.data.project_id;
+              if(!aiToolsId) continue;
+              
+              try {
+                const splitResp = await fetch(
+                  `/api/ai-tools/${aiToolsId}/grid-split?grid_index=${gridNode.data.gridIndex}&user_id=${getUserId()}&grid_size=${gridNode.data.gridSize}`,
+                  {
+                    headers: {
+                      'Authorization': getAuthToken(),
+                      'X-User-Id': getUserId()
+                    }
+                  }
+                );
+                const splitData = await splitResp.json();
+                
+                if(splitData.code === 0 && splitData.data && splitData.data.image_url){
+                  // 拆分成功，更新节点
+                  const normalizedUrl = normalizeImageUrl(splitData.data.image_url);
+                  gridNode.data.url = normalizedUrl;
+                  gridNode.data.preview = normalizedUrl;
+                  gridNode.data.status = 'completed';
+                  delete gridNode.data._splitFailCount;
+                  splitUpdated = true;
+                  
+                  // 更新 DOM 预览
+                  updateNodePreview(gridNode, normalizedUrl);
+                  
+                  // 触发关联分镜节点更新首帧
+                  if(gridNode.data.shotFrameNodeId){
+                    const sfNode = state.nodes.find(n => n.id === gridNode.data.shotFrameNodeId);
+                    if(sfNode && sfNode.updatePreview){
+                      sfNode.updatePreview();
+                    }
+                  }
+                  
+                  console.log(`[轮询] 宫格拆分成功: ${gridNode.id} -> ${splitData.data.image_url}`);
+                } else if(splitData.code === 1){
+                  // 后端正在下载/拆分，下次轮询重试（不计入失败次数）
+                  console.log(`[轮询] 宫格拆分处理中: ${gridNode.id}`);
+                } else {
+                  // code === -1 等错误：累计失败次数
+                  gridNode.data._splitFailCount = (gridNode.data._splitFailCount || 0) + 1;
+                  console.warn(`[轮询] 宫格拆分失败 (${gridNode.data._splitFailCount}/${GRID_SPLIT_MAX_RETRIES}): ${gridNode.id}`, splitData.message);
+                  if(gridNode.data._splitFailCount >= GRID_SPLIT_MAX_RETRIES){
+                    gridNode.data.status = 'failed';
+                    gridNode.data.error = splitData.message || '拆分失败（原图可能已过期）';
+                    updateNodeErrorDisplay(gridNode, gridNode.data.error);
+                    splitUpdated = true;
+                    console.error(`[轮询] 宫格拆分达到最大重试次数，标记为失败: ${gridNode.id}`);
+                  }
+                }
+              } catch(e){
+                // 网络错误也计入失败次数
+                gridNode.data._splitFailCount = (gridNode.data._splitFailCount || 0) + 1;
+                console.error(`[轮询] 宫格拆分请求失败 (${gridNode.data._splitFailCount}/${GRID_SPLIT_MAX_RETRIES}): ${gridNode.id}`, e);
+                if(gridNode.data._splitFailCount >= GRID_SPLIT_MAX_RETRIES){
+                  gridNode.data.status = 'failed';
+                  gridNode.data.error = '拆分请求失败（网络异常）';
+                  updateNodeErrorDisplay(gridNode, gridNode.data.error);
+                  splitUpdated = true;
+                }
+              }
+            }
+            
+            if(splitUpdated){
+              try {
+                await autoSaveWorkflow();
+              } catch(e){
+                console.error('[轮询] 拆分后自动保存失败:', e);
+              }
+            }
+          }
         }
       } catch(error){
         console.error('[轮询] 查询节点状态失败:', error);
+      } finally {
+        _pollStatusRunning = false;
       }
     }
     
@@ -1475,70 +1574,8 @@
           previewField.style.display = 'block';
         }
       } else if(node.type === 'image'){
-        // 检查是否为宫格分镜图节点（有gridIndex但未拆分）
-        if(node.data.gridIndex && node.data.gridSize && !node.data.isSplit){
-          // 需要调用拆分接口获取单张图片
-          const aiToolsId = node.data.aiToolsId || node.data.project_id;
-          const gridIndex = node.data.gridIndex;
-          
-          if(aiToolsId){
-            (async () => {
-              try {
-                console.log(`[轮询] 调用拆分接口: aiToolsId=${aiToolsId}, gridIndex=${gridIndex}`);
-                const splitResponse = await fetch(
-                  `/api/ai-tools/${aiToolsId}/grid-split?grid_index=${gridIndex}&user_id=${getUserId()}&grid_size=${node.data.gridSize}`,
-                  {
-                    headers: {
-                      'Authorization': getAuthToken(),
-                      'X-User-Id': getUserId()
-                    }
-                  }
-                );
-                
-                if(splitResponse.ok){
-                  const splitData = await splitResponse.json();
-                  if(splitData.code === 0 && splitData.data && splitData.data.image_url){
-                    const normalizedUrl = normalizeImageUrl(splitData.data.image_url);
-                    node.data.url = normalizedUrl;
-                    node.data.preview = normalizedUrl;
-                    node.data.isSplit = true;
-                    node.data.status = 'completed';
-                    
-                    console.log(`[轮询] 拆分成功: ${node.id} -> ${splitData.data.image_url}`);
-                    
-                    const previewImg = nodeEl.querySelector('.image-preview');
-                    const previewRow = nodeEl.querySelector('.image-preview-row');
-                    
-                    if(previewImg && previewRow){
-                      previewImg.src = proxyImageUrl(splitData.data.image_url);
-                      previewRow.style.display = 'flex';
-                    }
-                    
-                    // 触发连接的分镜节点更新视频首帧预览
-                    if(node.data.shotFrameNodeId) {
-                      const shotFrameNode = state.nodes.find(n => n.id === node.data.shotFrameNodeId);
-                      if(shotFrameNode && shotFrameNode.updatePreview) {
-                        shotFrameNode.updatePreview();
-                        console.log(`[轮询] 分镜节点 ${shotFrameNode.id} 更新后 previewImageUrl:`, shotFrameNode.data.previewImageUrl);
-                      }
-                    }
-
-                    delete node.data._splitPending;
-                    try { await autoSaveWorkflow(); } catch(e){}
-                  } else {
-                    delete node.data._splitPending;
-                  }
-                } else {
-                  delete node.data._splitPending;
-                }
-              } catch(e){
-                console.error('[轮询] 拆分宫格图片失败:', e);
-                delete node.data._splitPending;
-              }
-            })();
-            return;
-          }
-        }
+        // 宫格拆分节点的拆分逻辑已移至 pollWorkflowNodeStatus 统一驱动
+        // 这里只处理已有 url 的图片节点预览更新
         
         // 更新图片节点预览
         node.data.preview = url;

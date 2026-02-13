@@ -128,6 +128,14 @@ AI_AUDIO_STATUS_PROCESSING = 1  # 处理中
 AI_AUDIO_STATUS_FAILED = -1     # 处理失败
 AI_AUDIO_STATUS_COMPLETED = 2   # 处理完成
 
+# 宫格拆分相关常量
+GRID_SIZE_2X2 = 4                          # 2x2 宫格（标准版）
+GRID_SIZE_3X3 = 9                          # 3x3 宫格（加强版）
+GRID_VALID_SIZES = (4, 9)                  # 允许的宫格大小
+GRID_DEFAULT_SIZE_BY_TYPE = {1: 4, 7: 9}   # AI工具类型 → 默认宫格大小
+GRID_LOCK_TIMEOUT_SECONDS = 120            # 文件锁超时（秒）
+GRID_IMAGE_DOWNLOAD_TIMEOUT = 60.0         # 下载原图超时（秒）
+
 AUTHENTICATION_ID = 'aa63d4090d59401b9862223087c25b98'
 
 RECHARGE_PACKAGES = [
