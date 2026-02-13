@@ -246,6 +246,25 @@
       }
     }
 
+    function startNodePlacing(nodeId){
+      // 先隐藏节点，等鼠标移动时再在鼠标位置显示
+      const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+      if(el) el.style.visibility = 'hidden';
+      // 延迟启动，避免当前菜单点击事件触发放置
+      setTimeout(() => {
+        state.placing = { nodeId: nodeId, visible: false };
+        canvasContainer.classList.add('placing');
+      }, 0);
+    }
+
+    function finalizeNodePlacing(){
+      if(!state.placing) return;
+      state.placing = null;
+      canvasContainer.classList.remove('placing');
+      renderMinimap();
+      captureHistorySnapshot();
+    }
+
     function getViewportNodePosition(){
       const containerRect = canvasContainer.getBoundingClientRect();
       const viewportWidth = containerRect.width / state.zoom;

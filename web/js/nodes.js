@@ -3337,6 +3337,7 @@
       
       canvasEl.appendChild(el);
       setSelected(id);
+      return id;
     }
 
     function createImageNode(opts){

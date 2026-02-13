@@ -21,6 +21,7 @@
       selectedVideoConnId: null,
       selectedReferenceConnId: null,
       drag: null,
+      placing: null,
       connecting: null,
       panning: null,
       panX: 0,

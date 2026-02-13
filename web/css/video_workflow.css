@@ -707,6 +707,12 @@ select{
 .canvas-container.panning{
   cursor: grabbing;
 }
+.canvas-container.placing{
+  cursor: crosshair;
+}
+.canvas-container.placing .node{
+  pointer-events: none;
+}
 .canvas-world{
   position: absolute;
   top: 0;

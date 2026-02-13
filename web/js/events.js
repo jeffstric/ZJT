@@ -140,27 +140,31 @@
     });
 
     document.getElementById('menuAddVideo').addEventListener('click', () => {
-      createImageToVideoNode();
+      const nodeId = createImageToVideoNode();
       renderMinimap();
       addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
     });
 
     document.getElementById('menuAddVideoNode').addEventListener('click', () => {
-      createVideoNode();
+      const nodeId = createVideoNode();
       renderMinimap();
       addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
     });
 
     document.getElementById('menuAddImage').addEventListener('click', () => {
-      createImageNode();
+      const nodeId = createImageNode();
       renderMinimap();
       addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
     });
 
     document.getElementById('menuAddScript').addEventListener('click', () => {
-      createScriptNode();
+      const nodeId = createScriptNode();
       renderMinimap();
       addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
     });
 
     document.getElementById('menuAddCharacter').addEventListener('click', () => {
@@ -184,27 +188,31 @@
         group_name: '新分镜组',
         shots: []
       };
-      createShotGroupNode(shotGroupData, null);
+      const nodeId = createShotGroupNode(shotGroupData, null);
       renderMinimap();
       addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
     });
 
     document.getElementById('menuAddTextToSpeech').addEventListener('click', () => {
-      createTextToSpeechNode();
+      const nodeId = createTextToSpeechNode();
       renderMinimap();
       addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
     });
 
     document.getElementById('menuAddDialogueGroup').addEventListener('click', () => {
-      createDialogueGroupNode();
+      const nodeId = createDialogueGroupNode();
       renderMinimap();
       addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
     });
 
     document.getElementById('menuAddText').addEventListener('click', () => {
-      createTextNode();
+      const nodeId = createTextNode();
       renderMinimap();
       addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
     });
 
     // 点击其他地方关闭菜单
@@ -422,7 +430,46 @@
       }
     }, { passive: false });
 
+    // 放置模式：点击画布放下节点（capture阶段优先处理）
+    window.addEventListener('mousedown', (e) => {
+      if(!state.placing) return;
+      // 点击添加菜单区域不处理
+      if(e.target.closest('#addBtnContainer')) return;
+      finalizeNodePlacing();
+      e.stopPropagation();
+      e.preventDefault();
+    }, true);
+
     window.addEventListener('mousemove', (e) => {
+      // 放置新节点跟随鼠标
+      if(state.placing){
+        const containerRect = canvasContainer.getBoundingClientRect();
+        const canvasX = (e.clientX - containerRect.left - state.panX) / state.zoom;
+        const canvasY = (e.clientY - containerRect.top - state.panY) / state.zoom;
+        const n = state.nodes.find(x => x.id === state.placing.nodeId);
+        if(n){
+          const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
+          const halfW = el ? el.offsetWidth / 2 : 150;
+          const halfH = 20;
+          n.x = Math.max(20, canvasX - halfW);
+          n.y = Math.max(20, canvasY - halfH);
+          if(el){
+            el.style.left = n.x + 'px';
+            el.style.top = n.y + 'px';
+            // 首次移动时显示节点
+            if(!state.placing.visible){
+              el.style.visibility = '';
+              state.placing.visible = true;
+            }
+          }
+        }
+        renderConnections();
+        renderImageConnections();
+        renderFirstFrameConnections();
+        renderVideoConnections();
+        renderReferenceConnections();
+        return;
+      }
       // 绘制选择框
       if(state.selecting){
         const containerRect = canvasContainer.getBoundingClientRect();
@@ -1355,9 +1402,10 @@
               const characterId = item.dataset.characterId;
               const character = result.data.data.find(c => c.id == characterId);
               if (character) {
-                createCharacterNode(character);
+                const nodeId = createCharacterNode(character);
                 document.getElementById('characterModal').classList.remove('show');
                 renderMinimap();
+                startNodePlacing(nodeId);
               }
             });
             
@@ -1444,9 +1492,10 @@
                   }
                 } else {
                   // 没有上下文，创建场景节点
-                  createLocationNode(location);
+                  const nodeId = createLocationNode(location);
                   document.getElementById('locationModal').classList.remove('show');
                   renderMinimap();
+                  startNodePlacing(nodeId);
                 }
               }
             });
@@ -1534,9 +1583,10 @@
                   }
                 } else {
                   // 没有上下文，创建道具节点
-                  createPropsNode(props);
+                  const nodeId = createPropsNode(props);
                   document.getElementById('propsModal').classList.remove('show');
                   renderMinimap();
+                  startNodePlacing(nodeId);
                 }
               }
             });
@@ -1872,6 +1922,7 @@
       setSelected(id);
       showToast('角色已添加', 'success');
       try { autoSaveWorkflow(); } catch(e) {}
+      return id;
     }
     
     // 带数据创建场景节点（用于恢复工作流）
@@ -2108,6 +2159,7 @@
       setSelected(id);
       showToast('场景已添加', 'success');
       try { autoSaveWorkflow(); } catch(e) {}
+      return id;
     }
     
     function getPropsNodeBodyHtml(props) {
@@ -2235,6 +2287,7 @@
       setSelected(id);
       showToast('道具已添加', 'success');
       try { autoSaveWorkflow(); } catch(e) {}
+      return id;
     }
     
     // 带数据创建道具节点（用于恢复工作流）
