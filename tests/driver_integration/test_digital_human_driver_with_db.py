@@ -28,8 +28,80 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         self.assertEqual(self.driver.driver_name, 'digital_human_runninghub_v1')
         self.assertEqual(self.driver.driver_type, DIGITAL_HUMAN_VIDEO_TYPE)
     
-    @patch('task.visual_drivers.digital_human_runninghub_v1_driver.create_digital_human')
-    def test_submit_task_success(self, mock_api):
+    def test_build_create_request(self):
+        """测试构建创建任务请求参数"""
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
+            prompt='测试数字人讲话内容',
+            image_path='https://example.com/test.jpg',
+            ratio='9:16',
+            message='https://example.com/test_audio.mp3',
+            status=AI_TOOL_STATUS_PENDING
+        )
+        
+        tool = self.get_ai_tool_from_db(task_id)
+        req = self.driver.build_create_request(tool)
+        
+        # 验证 url
+        self.assertIn('/openapi/v2/run/ai-app/', req['url'])
+        self.assertIn('2017494689997398017', req['url'])  # webapp_id
+        
+        # 验证 method
+        self.assertEqual(req['method'], 'POST')
+        
+        # 验证 json 结构
+        self.assertIn('nodeInfoList', req['json'])
+        self.assertEqual(req['json']['instanceType'], 'plus')
+        self.assertEqual(req['json']['usePersonalQueue'], 'false')
+        
+        # 验证 nodeInfoList 中的关键节点
+        node_info_list = req['json']['nodeInfoList']
+        self.assertIsInstance(node_info_list, list)
+        
+        # 查找 image 节点
+        image_node = next((n for n in node_info_list if n['fieldName'] == 'image'), None)
+        self.assertIsNotNone(image_node)
+        self.assertEqual(image_node['fieldValue'], 'https://example.com/test.jpg')
+        
+        # 查找 text 节点
+        text_node = next((n for n in node_info_list if n['fieldName'] == 'text'), None)
+        self.assertIsNotNone(text_node)
+        self.assertEqual(text_node['fieldValue'], '测试数字人讲话内容')
+        
+        # 查找 audio 节点
+        audio_node = next((n for n in node_info_list if n['fieldName'] == 'audio'), None)
+        self.assertIsNotNone(audio_node)
+        self.assertEqual(audio_node['fieldValue'], 'https://example.com/test_audio.mp3')
+        
+        # 查找 aspect_ratio 节点
+        ratio_node = next((n for n in node_info_list if n['fieldName'] == 'aspect_ratio'), None)
+        self.assertIsNotNone(ratio_node)
+        self.assertEqual(ratio_node['fieldValue'], '9:16')
+        
+        # 验证 headers
+        self.assertIn('Authorization', req['headers'])
+        self.assertEqual(req['headers']['Content-Type'], 'application/json')
+    
+    def test_build_check_query(self):
+        """测试构建查询状态请求参数"""
+        project_id = 'dh_test_task_123'
+        req = self.driver.build_check_query(project_id)
+        
+        # 验证 url
+        self.assertIn('/task/openapi/status', req['url'])
+        
+        # 验证 method
+        self.assertEqual(req['method'], 'POST')
+        
+        # 验证 json
+        self.assertIn('apiKey', req['json'])
+        self.assertEqual(req['json']['taskId'], project_id)
+        
+        # 验证 headers
+        self.assertEqual(req['headers']['Content-Type'], 'application/json')
+    
+    def test_submit_task_success(self):
+        """测试提交任务成功 - mock _request"""
         task_id = self.create_test_ai_tool(
             ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
             prompt='测试 Digital Human 提交成功',
@@ -40,33 +112,51 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         )
         
         tool = self.get_ai_tool_from_db(task_id)
-        mock_api.return_value = {"taskId": "digital_human_task_123", "status": "QUEUED"}
-        result = self.driver.submit_task(tool)
         
-        # 验证调用参数
-        mock_api.assert_called_once()
-        call_args = mock_api.call_args
+        # Mock _request 返回原始 API 响应
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.return_value = {
+                "taskId": "digital_human_task_123",
+                "status": "RUNNING",
+                "errorCode": "",
+                "errorMessage": ""
+            }
+            
+            result = self.driver.submit_task(tool)
+            
+            # 验证 _request 被调用一次
+            mock_req.assert_called_once()
+            call_args = mock_req.call_args
+            
+            # 验证 url
+            self.assertIn('/openapi/v2/run/ai-app/', call_args.kwargs['url'])
+            
+            # 验证 method
+            self.assertEqual(call_args.kwargs['method'], 'POST')
+            
+            # 验证 json 参数
+            node_info_list = call_args.kwargs['json']['nodeInfoList']
+            
+            # 验证 image 节点
+            image_node = next((n for n in node_info_list if n['fieldName'] == 'image'), None)
+            self.assertEqual(image_node['fieldValue'], 'https://example.com/test.jpg')
+            
+            # 验证 text 节点
+            text_node = next((n for n in node_info_list if n['fieldName'] == 'text'), None)
+            self.assertEqual(text_node['fieldValue'], '测试 Digital Human 提交成功')
+            
+            # 验证 audio 节点
+            audio_node = next((n for n in node_info_list if n['fieldName'] == 'audio'), None)
+            self.assertEqual(audio_node['fieldValue'], 'https://example.com/test_audio.mp3')
+            
+            # 验证 headers
+            self.assertIn('Authorization', call_args.kwargs['headers'])
+            
+            # 验证返回结果
+            self.assertTrue(result['success'])
+            self.assertEqual(result['project_id'], 'digital_human_task_123')
         
-        # 验证 image_url 是字符串
-        self.assertIsInstance(call_args.kwargs['image_url'], str)
-        self.assertEqual(call_args.kwargs['image_url'], 'https://example.com/test.jpg')
-        
-        # 验证 text 是字符串（讲话内容）
-        self.assertIsInstance(call_args.kwargs['text'], str)
-        self.assertEqual(call_args.kwargs['text'], '测试 Digital Human 提交成功')
-        
-        # 验证 audio_url 是字符串（可以为空）
-        self.assertIsInstance(call_args.kwargs['audio_url'], str)
-        self.assertEqual(call_args.kwargs['audio_url'], 'https://example.com/test_audio.mp3')
-        
-        # 验证 aspect_ratio 是有效值
-        self.assertIn(call_args.kwargs['aspect_ratio'], ['9:16', '16:9', '1:1', '3:2', '4:3', '2:3', '3:4'])
-        self.assertEqual(call_args.kwargs['aspect_ratio'], '9:16')
-        
-        self.assertTrue(result['success'])
-        self.assertEqual(result['project_id'], 'digital_human_task_123')
-        
-        # 模拟业务层更新数据库：将 project_id 写入数据库
+        # 模拟业务层更新数据库
         self.update_ai_tool_status(
             task_id,
             status=AI_TOOL_STATUS_PROCESSING,
@@ -77,8 +167,8 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         self.assertEqual(tool.project_id, 'digital_human_task_123')
     
-    @patch('task.visual_drivers.digital_human_runninghub_v1_driver.create_digital_human')
-    def test_submit_task_invalid_response(self, mock_api):
+    def test_submit_task_invalid_response(self):
+        """测试提交任务响应格式错误 - mock _request"""
         task_id = self.create_test_ai_tool(
             ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
             prompt='测试响应格式错误',
@@ -89,13 +179,16 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         )
         
         tool = self.get_ai_tool_from_db(task_id)
-        mock_api.return_value = {"errorCode": "INVALID"}
-        result = self.driver.submit_task(tool)
         
-        self.assertFalse(result['success'])
+        with patch.object(self.driver, '_request') as mock_req:
+            # 返回缺少必要字段的响应
+            mock_req.return_value = {"errorCode": "INVALID"}
+            result = self.driver.submit_task(tool)
+            
+            self.assertFalse(result['success'])
     
-    @patch('task.visual_drivers.digital_human_runninghub_v1_driver.create_digital_human')
-    def test_submit_task_network_error(self, mock_api):
+    def test_submit_task_network_error(self):
+        """测试提交任务网络错误 - mock _request"""
         task_id = self.create_test_ai_tool(
             ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
             prompt='测试网络错误',
@@ -106,15 +199,16 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         )
         
         tool = self.get_ai_tool_from_db(task_id)
-        mock_api.side_effect = ConnectionError('Network timeout')
-        result = self.driver.submit_task(tool)
         
-        self.assertFalse(result['success'])
-        self.assertTrue(result['retry'])
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.side_effect = ConnectionError('Network timeout')
+            result = self.driver.submit_task(tool)
+            
+            self.assertFalse(result['success'])
+            self.assertTrue(result['retry'])
     
-    @patch('task.visual_drivers.digital_human_runninghub_v1_driver.check_ltx2_task_status')
-    def test_check_status_success(self, mock_api):
-        """测试检查状态 - 成功，并更新数据库"""
+    def test_check_status_success(self):
+        """测试检查状态 - 成功，并更新数据库 - mock _request"""
         # 创建处理中的任务
         task_id = self.create_test_ai_tool(
             ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
@@ -123,23 +217,39 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
             ratio='9:16',
             message='https://example.com/test_audio.mp3',
             status=AI_TOOL_STATUS_PROCESSING,
-            project_id='dh_task_456'
+            project_id='digital_human_task_456'
         )
         
-        # Mock API返回成功状态
-        class MockResult:
-            file_url = "https://example.com/result.mp4"
-        
-        mock_api.return_value = {"status": "SUCCESS", "results": [MockResult()]}
-        result = self.driver.check_status('digital_human_task_456')
-        
-        # 验证调用参数
-        mock_api.assert_called_once_with(task_id='digital_human_task_456')
-        
-        self.assertEqual(result['status'], 'SUCCESS')
+        # Mock _request 返回原始 API 响应（需要两次调用）
+        with patch.object(self.driver, '_request') as mock_req:
+            # 第一次调用：查询状态
+            # 第二次调用：获取输出
+            mock_req.side_effect = [
+                {"code": 0, "msg": "success", "data": "SUCCESS"},
+                {"code": 0, "msg": "success", "data": [{"fileType": "mp4", "fileUrl": "https://example.com/result.mp4"}]}
+            ]
+            
+            result = self.driver.check_status('digital_human_task_456')
+            
+            # 验证 _request 被调用两次
+            self.assertEqual(mock_req.call_count, 2)
+            
+            # 验证第一次调用（查询状态）
+            first_call = mock_req.call_args_list[0]
+            self.assertIn('/task/openapi/status', first_call.kwargs['url'])
+            self.assertEqual(first_call.kwargs['method'], 'POST')
+            self.assertEqual(first_call.kwargs['json']['taskId'], 'digital_human_task_456')
+            
+            # 验证第二次调用（获取输出）
+            second_call = mock_req.call_args_list[1]
+            self.assertIn('/task/openapi/outputs', second_call.kwargs['url'])
+            self.assertEqual(second_call.kwargs['method'], 'POST')
+            
+            # 验证返回结果
+            self.assertEqual(result['status'], 'SUCCESS')
+            self.assertEqual(result['result_url'], 'https://example.com/result.mp4')
         
         # 模拟业务层更新数据库
-        from config.constant import AI_TOOL_STATUS_COMPLETED
         self.update_ai_tool_status(
             task_id,
             status=AI_TOOL_STATUS_COMPLETED,
@@ -150,9 +260,8 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         self.assertEqual(tool.status, AI_TOOL_STATUS_COMPLETED)
     
-    @patch('task.visual_drivers.digital_human_runninghub_v1_driver.check_ltx2_task_status')
-    def test_check_status_failed(self, mock_api):
-        """测试检查状态 - 失败，并更新数据库"""
+    def test_check_status_failed(self):
+        """测试检查状态 - 失败，并更新数据库 - mock _request"""
         # 创建处理中的任务
         task_id = self.create_test_ai_tool(
             ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
@@ -161,20 +270,28 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
             ratio='9:16',
             message='https://example.com/test_audio.mp3',
             status=AI_TOOL_STATUS_PROCESSING,
-            project_id='dh_task_789'
+            project_id='digital_human_task_789'
         )
         
-        # Mock API返回失败状态
-        mock_api.return_value = {"status": "FAILED"}
-        result = self.driver.check_status('digital_human_task_789')
-        
-        # 验证调用参数
-        mock_api.assert_called_once_with(task_id='digital_human_task_789')
-        
-        self.assertEqual(result['status'], 'FAILED')
+        # Mock _request 返回原始 API 响应
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.return_value = {"code": 0, "msg": "success", "data": "FAILED"}
+            
+            result = self.driver.check_status('digital_human_task_789')
+            
+            # 验证 _request 被调用一次
+            mock_req.assert_called_once()
+            call_args = mock_req.call_args
+            
+            # 验证调用参数
+            self.assertIn('/task/openapi/status', call_args.kwargs['url'])
+            self.assertEqual(call_args.kwargs['method'], 'POST')
+            self.assertEqual(call_args.kwargs['json']['taskId'], 'digital_human_task_789')
+            
+            # 验证返回结果
+            self.assertEqual(result['status'], 'FAILED')
         
         # 模拟业务层更新数据库
-        from config.constant import AI_TOOL_STATUS_FAILED
         self.update_ai_tool_status(
             task_id,
             status=AI_TOOL_STATUS_FAILED,
@@ -185,9 +302,8 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         self.assertEqual(tool.status, AI_TOOL_STATUS_FAILED)
     
-    @patch('task.visual_drivers.digital_human_runninghub_v1_driver.check_ltx2_task_status')
-    def test_check_status_processing(self, mock_api):
-        """测试检查状态 - 处理中，数据库状态保持不变"""
+    def test_check_status_processing(self):
+        """测试检查状态 - 处理中，数据库状态保持不变 - mock _request"""
         # 创建处理中的任务
         task_id = self.create_test_ai_tool(
             ai_tool_type=DIGITAL_HUMAN_VIDEO_TYPE,
@@ -196,23 +312,32 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
             ratio='9:16',
             message='https://example.com/test_audio.mp3',
             status=AI_TOOL_STATUS_PROCESSING,
-            project_id='dh_task_999'
+            project_id='digital_human_task_999'
         )
         
-        # Mock API返回处理中状态
-        mock_api.return_value = {"status": "RUNNING"}
-        result = self.driver.check_status('digital_human_task_999')
-        
-        # 验证调用参数
-        mock_api.assert_called_once_with(task_id='digital_human_task_999')
-        
-        self.assertEqual(result['status'], 'RUNNING')
+        # Mock _request 返回原始 API 响应
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.return_value = {"code": 0, "msg": "success", "data": "RUNNING"}
+            
+            result = self.driver.check_status('digital_human_task_999')
+            
+            # 验证 _request 被调用一次
+            mock_req.assert_called_once()
+            call_args = mock_req.call_args
+            
+            # 验证调用参数
+            self.assertIn('/task/openapi/status', call_args.kwargs['url'])
+            self.assertEqual(call_args.kwargs['method'], 'POST')
+            self.assertEqual(call_args.kwargs['json']['taskId'], 'digital_human_task_999')
+            
+            # 验证返回结果
+            self.assertEqual(result['status'], 'RUNNING')
         
         # 处理中状态，数据库不更新（保持 PROCESSING 状态）
         # 验证数据库状态未改变
         tool = self.get_ai_tool_from_db(task_id)
         self.assertEqual(tool.status, AI_TOOL_STATUS_PROCESSING)
-        self.assertIsNone(tool.result_url)  # 仍然没有结果
+        self.assertIsNone(tool.result_url)
 
 
 if __name__ == '__main__':

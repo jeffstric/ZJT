@@ -28,8 +28,56 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
         self.assertEqual(self.driver.driver_name, 'veo3_duomi_v1')
         self.assertEqual(self.driver.driver_type, VEO3_IMAGE_TO_VIDEO_TYPE)
     
-    @patch('task.visual_drivers.veo3_duomi_v1_driver.create_image_to_video_veo')
-    def test_submit_task_success(self, mock_api):
+    def test_build_create_request(self):
+        """测试构建创建任务请求参数"""
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试提示词',
+            image_path='https://example.com/test.jpg',
+            ratio='9:16',
+            status=AI_TOOL_STATUS_PENDING
+        )
+        
+        tool = self.get_ai_tool_from_db(task_id)
+        req = self.driver.build_create_request(tool)
+        
+        # 验证 url
+        self.assertIn('/v1/videos/generations', req['url'])
+        
+        # 验证 method
+        self.assertEqual(req['method'], 'POST')
+        
+        # 验证 json 结构
+        self.assertEqual(req['json']['model'], 'veo3.1-fast')
+        self.assertEqual(req['json']['prompt'], '测试提示词')
+        self.assertEqual(req['json']['aspect_ratio'], '9:16')
+        self.assertEqual(req['json']['duration'], 8)  # VEO3 固定8秒
+        self.assertEqual(req['json']['image_urls'], ['https://example.com/test.jpg'])
+        self.assertEqual(req['json']['generation_type'], 'FIRST&LAST')
+        
+        # 验证 headers
+        self.assertIn('Authorization', req['headers'])
+        self.assertEqual(req['headers']['Content-Type'], 'application/json')
+    
+    def test_build_check_query(self):
+        """测试构建查询状态请求参数"""
+        project_id = 'veo3_test_task_123'
+        req = self.driver.build_check_query(project_id)
+        
+        # 验证 url
+        self.assertIn(f'/v1/videos/tasks/{project_id}', req['url'])
+        
+        # 验证 method
+        self.assertEqual(req['method'], 'GET')
+        
+        # 验证 json 为 None（GET请求）
+        self.assertIsNone(req['json'])
+        
+        # 验证 headers
+        self.assertIn('Authorization', req['headers'])
+    
+    def test_submit_task_success(self):
+        """测试提交任务成功 - mock _request"""
         task_id = self.create_test_ai_tool(
             ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
             prompt='测试 VEO3 提交成功',
@@ -39,32 +87,42 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
         )
         
         tool = self.get_ai_tool_from_db(task_id)
-        mock_api.return_value = {"id": "veo3_task_123"}
-        result = self.driver.submit_task(tool)
         
-        # 验证调用参数
-        mock_api.assert_called_once()
-        call_args = mock_api.call_args
+        # Mock _request 返回原始 API 响应
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.return_value = {
+                "id": "veo3_task_123",
+                "state": "processing",
+                "message": "Task created successfully"
+            }
+            
+            result = self.driver.submit_task(tool)
+            
+            # 验证 _request 被调用一次
+            mock_req.assert_called_once()
+            call_args = mock_req.call_args
+            
+            # 验证 url
+            self.assertIn('/v1/videos/generations', call_args.kwargs['url'])
+            
+            # 验证 method
+            self.assertEqual(call_args.kwargs['method'], 'POST')
+            
+            # 验证 json 参数
+            self.assertEqual(call_args.kwargs['json']['model'], 'veo3.1-fast')
+            self.assertEqual(call_args.kwargs['json']['prompt'], '测试 VEO3 提交成功')
+            self.assertEqual(call_args.kwargs['json']['aspect_ratio'], '9:16')
+            self.assertEqual(call_args.kwargs['json']['duration'], 8)
+            self.assertEqual(call_args.kwargs['json']['image_urls'], ['https://example.com/test.jpg'])
+            
+            # 验证 headers
+            self.assertIn('Authorization', call_args.kwargs['headers'])
+            
+            # 验证返回结果
+            self.assertTrue(result['success'])
+            self.assertEqual(result['project_id'], 'veo3_task_123')
         
-        # 验证 prompt 是字符串
-        self.assertIsInstance(call_args.kwargs['prompt'], str)
-        self.assertEqual(call_args.kwargs['prompt'], '测试 VEO3 提交成功')
-        
-        # 验证 ratio 是 9:16 或 16:9
-        self.assertIn(call_args.kwargs['ratio'], ['9:16', '16:9'])
-        self.assertEqual(call_args.kwargs['ratio'], '9:16')
-        
-        # 验证 img_url 是字符串
-        self.assertIsInstance(call_args.kwargs['img_url'], str)
-        self.assertEqual(call_args.kwargs['img_url'], 'https://example.com/test.jpg')
-        
-        # 验证 duration 固定为 8
-        self.assertEqual(call_args.kwargs['duration'], 8)
-        
-        self.assertTrue(result['success'])
-        self.assertEqual(result['project_id'], 'veo3_task_123')
-        
-        # 模拟业务层更新数据库：将 project_id 写入数据库
+        # 模拟业务层更新数据库
         self.update_ai_tool_status(
             task_id,
             status=AI_TOOL_STATUS_PROCESSING,
@@ -75,8 +133,8 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         self.assertEqual(tool.project_id, 'veo3_task_123')
     
-    @patch('task.visual_drivers.veo3_duomi_v1_driver.create_image_to_video_veo')
-    def test_submit_task_invalid_response(self, mock_api):
+    def test_submit_task_invalid_response(self):
+        """测试提交任务响应格式错误 - mock _request"""
         task_id = self.create_test_ai_tool(
             ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
             prompt='测试响应格式错误',
@@ -86,14 +144,17 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
         )
         
         tool = self.get_ai_tool_from_db(task_id)
-        mock_api.return_value = {"error": "invalid"}
-        result = self.driver.submit_task(tool)
         
-        self.assertFalse(result['success'])
-        self.assertEqual(result['error_type'], 'SYSTEM')
+        with patch.object(self.driver, '_request') as mock_req:
+            # 返回缺少必要字段的响应
+            mock_req.return_value = {"error": "invalid"}
+            result = self.driver.submit_task(tool)
+            
+            self.assertFalse(result['success'])
+            self.assertEqual(result['error_type'], 'SYSTEM')
     
-    @patch('task.visual_drivers.veo3_duomi_v1_driver.create_image_to_video_veo')
-    def test_submit_task_network_error(self, mock_api):
+    def test_submit_task_network_error(self):
+        """测试提交任务网络错误 - mock _request"""
         task_id = self.create_test_ai_tool(
             ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
             prompt='测试网络错误',
@@ -103,15 +164,16 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
         )
         
         tool = self.get_ai_tool_from_db(task_id)
-        mock_api.side_effect = ConnectionError('Network timeout')
-        result = self.driver.submit_task(tool)
         
-        self.assertFalse(result['success'])
-        self.assertTrue(result['retry'])
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.side_effect = ConnectionError('Network timeout')
+            result = self.driver.submit_task(tool)
+            
+            self.assertFalse(result['success'])
+            self.assertTrue(result['retry'])
     
-    @patch('task.visual_drivers.veo3_duomi_v1_driver.get_ai_task_result')
-    def test_check_status_success(self, mock_api):
-        """测试检查状态 - 成功，并更新数据库"""
+    def test_check_status_success(self):
+        """测试检查状态 - 成功，并更新数据库 - mock _request"""
         # 创建处理中的任务
         task_id = self.create_test_ai_tool(
             ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
@@ -122,22 +184,31 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
             project_id='veo3_task_456'
         )
         
-        # Mock API返回成功状态
-        mock_api.return_value = {
-            "code": 0,
-            "msg": "success",
-            "data": {"status": 1, "mediaUrl": "https://example.com/result.mp4"}
-        }
-        
-        result = self.driver.check_status('veo3_task_456')
-        
-        # 验证调用参数
-        mock_api.assert_called_once_with(project_id='veo3_task_456', is_video=True)
-        
-        self.assertEqual(result['status'], 'SUCCESS')
+        # Mock _request 返回原始 API 响应
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.return_value = {
+                "id": "veo3_task_456",
+                "state": "succeeded",
+                "data": {
+                    "videos": [{"url": "https://example.com/result.mp4"}]
+                }
+            }
+            
+            result = self.driver.check_status('veo3_task_456')
+            
+            # 验证 _request 被调用一次
+            mock_req.assert_called_once()
+            call_args = mock_req.call_args
+            
+            # 验证调用参数
+            self.assertIn('/v1/videos/tasks/veo3_task_456', call_args.kwargs['url'])
+            self.assertEqual(call_args.kwargs['method'], 'GET')
+            
+            # 验证返回结果
+            self.assertEqual(result['status'], 'SUCCESS')
+            self.assertEqual(result['result_url'], 'https://example.com/result.mp4')
         
         # 模拟业务层更新数据库
-        from config.constant import AI_TOOL_STATUS_COMPLETED
         self.update_ai_tool_status(
             task_id,
             status=AI_TOOL_STATUS_COMPLETED,
@@ -148,9 +219,8 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         self.assertEqual(tool.status, AI_TOOL_STATUS_COMPLETED)
     
-    @patch('task.visual_drivers.veo3_duomi_v1_driver.get_ai_task_result')
-    def test_check_status_failed(self, mock_api):
-        """测试检查状态 - 失败，并更新数据库"""
+    def test_check_status_failed(self):
+        """测试检查状态 - 失败，并更新数据库 - mock _request"""
         # 创建处理中的任务
         task_id = self.create_test_ai_tool(
             ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
@@ -161,22 +231,30 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
             project_id='veo3_task_789'
         )
         
-        # Mock API返回成功状态
-        mock_api.return_value = {
-            "code": 0,
-            "msg": "success",
-            "data": {"status": 2, "reason": "内容违规"}
-        }
-        
-        result = self.driver.check_status('veo3_task_789')
-        
-        # 验证调用参数
-        mock_api.assert_called_once_with(project_id='veo3_task_789', is_video=True)
-        
-        self.assertEqual(result['status'], 'FAILED')
+        # Mock _request 返回原始 API 响应
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.return_value = {
+                "id": "veo3_task_789",
+                "state": "error",
+                "message": "内容违规"
+            }
+            
+            result = self.driver.check_status('veo3_task_789')
+            
+            # 验证 _request 被调用一次
+            mock_req.assert_called_once()
+            call_args = mock_req.call_args
+            
+            # 验证调用参数
+            self.assertIn('/v1/videos/tasks/veo3_task_789', call_args.kwargs['url'])
+            self.assertEqual(call_args.kwargs['method'], 'GET')
+            
+            # 验证返回结果
+            self.assertEqual(result['status'], 'FAILED')
+            # 注意：驱动在 state="error" 时会设置 code=1，返回带前缀的错误消息
+            self.assertEqual(result['error'], '查询任务状态失败: 内容违规')
         
         # 模拟业务层更新数据库
-        from config.constant import AI_TOOL_STATUS_FAILED
         self.update_ai_tool_status(
             task_id,
             status=AI_TOOL_STATUS_FAILED,
@@ -187,9 +265,8 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         self.assertEqual(tool.status, AI_TOOL_STATUS_FAILED)
     
-    @patch('task.visual_drivers.veo3_duomi_v1_driver.get_ai_task_result')
-    def test_check_status_processing(self, mock_api):
-        """测试检查状态 - 处理中，数据库状态保持不变"""
+    def test_check_status_processing(self):
+        """测试检查状态 - 处理中，数据库状态保持不变 - mock _request"""
         # 创建处理中的任务
         task_id = self.create_test_ai_tool(
             ai_tool_type=VEO3_IMAGE_TO_VIDEO_TYPE,
@@ -200,25 +277,32 @@ class TestVeo3DuomiWithDB(BaseVideoDriverTest):
             project_id='veo3_task_999'
         )
         
-        # Mock API返回成功状态
-        mock_api.return_value = {
-            "code": 0,
-            "msg": "success",
-            "data": {"status": 0}
-        }
-        
-        result = self.driver.check_status('veo3_task_999')
-        
-        # 验证调用参数
-        mock_api.assert_called_once_with(project_id='veo3_task_999', is_video=True)
-        
-        self.assertEqual(result['status'], 'RUNNING')
+        # Mock _request 返回原始 API 响应
+        with patch.object(self.driver, '_request') as mock_req:
+            mock_req.return_value = {
+                "id": "veo3_task_999",
+                "state": "processing",
+                "message": "Task is being processed"
+            }
+            
+            result = self.driver.check_status('veo3_task_999')
+            
+            # 验证 _request 被调用一次
+            mock_req.assert_called_once()
+            call_args = mock_req.call_args
+            
+            # 验证调用参数
+            self.assertIn('/v1/videos/tasks/veo3_task_999', call_args.kwargs['url'])
+            self.assertEqual(call_args.kwargs['method'], 'GET')
+            
+            # 验证返回结果
+            self.assertEqual(result['status'], 'RUNNING')
         
         # 处理中状态，数据库不更新（保持 PROCESSING 状态）
         # 验证数据库状态未改变
         tool = self.get_ai_tool_from_db(task_id)
         self.assertEqual(tool.status, AI_TOOL_STATUS_PROCESSING)
-        self.assertIsNone(tool.result_url)  # 仍然没有结果
+        self.assertIsNone(tool.result_url)
 
 
 if __name__ == '__main__':
