@@ -3416,6 +3416,10 @@
       document.getElementById('editCharacterOtherInfoInput').value = character.other_info || '';
       document.getElementById('editCharacterSoraCharacterInput').value = character.sora_character || '';
       
+      // 重置文件输入框，防止上一个角色的文件名残留
+      document.getElementById('editCharacterImageInput').value = '';
+      document.getElementById('editCharacterVoiceInput').value = '';
+      
       const imagePreview = document.getElementById('editCharacterImagePreview');
       const imagePreviewImg = document.getElementById('editCharacterImagePreviewImg');
       if (character.reference_image) {
