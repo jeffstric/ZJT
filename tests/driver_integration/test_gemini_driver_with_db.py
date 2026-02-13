@@ -86,6 +86,43 @@ class TestGeminiDuomiWithDB(BaseVideoDriverTest):
         self.assertEqual(tool.project_id, 'gemini_task_123')
     
     @patch('task.visual_drivers.gemini_duomi_v1_driver.create_ai_image')
+    def test_submit_task_with_multiple_images(self, mock_api):
+        """测试提交任务 - 多张图片（逗号分隔字符串）"""
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=GEMINI_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试多张图片',
+            image_path='https://example.com/img1.jpg,https://example.com/img2.jpg,https://example.com/img3.jpg',
+            ratio='16:9',
+            status=AI_TOOL_STATUS_PROCESSING
+        )
+        
+        tool = self.get_ai_tool_from_db(task_id)
+        
+        mock_api.return_value = {
+            "code": 200,
+            "msg": "success",
+            "data": {"task_id": "gemini_task_multi_456"}
+        }
+        
+        result = self.driver.submit_task(tool)
+        
+        # 验证调用参数
+        mock_api.assert_called_once()
+        call_args = mock_api.call_args
+        
+        # 验证 image_urls 是数组，且包含所有图片
+        self.assertIsInstance(call_args.kwargs['image_urls'], list)
+        self.assertEqual(len(call_args.kwargs['image_urls']), 3)
+        self.assertEqual(call_args.kwargs['image_urls'], [
+            'https://example.com/img1.jpg',
+            'https://example.com/img2.jpg',
+            'https://example.com/img3.jpg'
+        ])
+        
+        self.assertTrue(result['success'])
+        self.assertEqual(result['project_id'], 'gemini_task_multi_456')
+    
+    @patch('task.visual_drivers.gemini_duomi_v1_driver.create_ai_image')
     def test_submit_task_user_error(self, mock_api):
         """测试提交任务 - 用户错误"""
         task_id = self.create_test_ai_tool(

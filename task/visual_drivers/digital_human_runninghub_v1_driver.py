@@ -3,8 +3,10 @@ Digital Human RunningHub v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
+import os
+import yaml
 from .base_video_driver import BaseVideoDriver
-from runninghub_request import create_digital_human, check_ltx2_task_status
+from config_util import get_config_path
 from utils.sentry_util import SentryUtil, AlertLevel
 
 
@@ -16,6 +18,19 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
     
     def __init__(self):
         super().__init__(driver_name="digital_human_runninghub_v1", driver_type=13)
+        
+        # 加载配置
+        config_path = get_config_path()
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        
+        self._api_key = config["runninghub"]["api_key"]
+        self._host = config["runninghub"]["host"]
+        self._webapp_id = "2017494689997398017"  # Digital Human webapp ID
+        self._timeout = config["timeout"]["request_timeout"]
     
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """
@@ -118,6 +133,111 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
         
         return True, None
     
+    def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        """
+        构建创建 Digital Human 任务的完整请求参数
+        
+        Args:
+            ai_tool: AITool 对象
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        # 从 extra_config 中获取 audio_url
+        audio_url = ai_tool.message or ""
+        
+        # Map aspect_ratio to value
+        ratio_map = {
+            "original": "original",
+            "custom": "custom",
+            "1:1": "1:1",
+            "3:2": "3:2",
+            "4:3": "4:3",
+            "16:9": "16:9",
+            "2:3": "2:3",
+            "3:4": "3:4",
+            "9:16": "9:16"
+        }
+        ratio_value = ratio_map.get(ai_tool.ratio or "9:16", "9:16")
+        
+        # Build node info list for digital human
+        node_info_list = [
+            {
+                "nodeId": "126",
+                "fieldName": "image",
+                "fieldValue": ai_tool.image_path,
+                "description": "上传图像"
+            },
+            {
+                "nodeId": "127",
+                "fieldName": "aspect_ratio",
+                "fieldData": "[[\"original\", \"custom\", \"1:1\", \"3:2\", \"4:3\", \"16:9\", \"2:3\", \"3:4\", \"9:16\"]]",
+                "fieldValue": ratio_value,
+                "description": "设置输出比例"
+            },
+            {
+                "nodeId": "184",
+                "fieldName": "text",
+                "fieldValue": ai_tool.prompt,
+                "description": "输入一段讲话内容（文本不要超过1000个字）"
+            },
+            {
+                "nodeId": "185",
+                "fieldName": "audio",
+                "fieldValue": audio_url,
+                "description": "audio"
+            },
+            {
+                "nodeId": "217",
+                "fieldName": "select",
+                "fieldValue": "11",
+                "description": "select"
+            },
+            {
+                "nodeId": "249",
+                "fieldName": "prompt",
+                "fieldValue": "",
+                "description": "prompt"
+            }
+        ]
+        
+        return {
+            "url": f"{self._host}/openapi/v2/run/ai-app/{self._webapp_id}",
+            "method": "POST",
+            "json": {
+                "nodeInfoList": node_info_list,
+                "instanceType": "plus",
+                "usePersonalQueue": "false"
+            },
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}"
+            }
+        }
+    
+    def build_check_query(self, project_id: str) -> Dict[str, Any]:
+        """
+        构建查询 Digital Human 任务状态的完整请求参数
+        
+        Args:
+            project_id: 任务ID
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        return {
+            "url": f"{self._host}/task/openapi/status",
+            "method": "POST",
+            "json": {
+                "apiKey": self._api_key,
+                "taskId": project_id
+            },
+            "headers": {
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+        }
+    
     def submit_task(self, ai_tool) -> Dict[str, Any]:
         """
         提交 Digital Human 视频生成任务
@@ -135,17 +255,12 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
         try:
             self.logger.info(f"Submitting Digital Human task: text='{ai_tool.prompt[:50]}...', ratio={ai_tool.ratio}")
             
-            # 从 extra_config 中获取 audio_url
-            audio_url = ai_tool.message or ""
+            # 构建请求参数
+            request_params = self.build_create_request(ai_tool)
             
-            # 调用外部 API
+            # 调用统一请求方法
             try:
-                result = create_digital_human(
-                    image_url=ai_tool.image_path,
-                    text=ai_tool.prompt,
-                    audio_url=audio_url,
-                    aspect_ratio=ai_tool.ratio or "9:16"
-                )
+                result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Digital Human task submission: {str(network_error)}")
@@ -242,9 +357,11 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
         try:
             self.logger.info(f"Checking Digital Human task status: project_id={project_id}")
             
-            # 调用外部 API
+            # 第一次调用：查询状态
+            status_params = self.build_check_query(project_id)
+            
             try:
-                result = check_ltx2_task_status(task_id=project_id)
+                status_result = self._request(**status_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Digital Human status check: {str(network_error)}")
@@ -253,16 +370,14 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
                     "message": "网络连接异常，稍后将重试"
                 }
             
-            self.logger.info(f"Digital Human status API response: {result}")
-            
-            # check_ltx2_task_status 返回格式: {"status": "SUCCESS/RUNNING/FAILED", "task_id": "...", "results": [...]}
-            if not isinstance(result, dict) or "status" not in result:
+            # 验证状态响应格式: {"code": 0, "data": "SUCCESS/RUNNING/FAILED"}
+            if not isinstance(status_result, dict) or "code" not in status_result:
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message="Digital Human check_ltx2_task_status 响应格式异常",
+                    message="Digital Human status API 响应格式异常",
                     context={
-                        "api": "check_ltx2_task_status",
-                        "response": result,
+                        "api": "check_status",
+                        "response": status_result,
                         "project_id": project_id
                     }
                 )
@@ -273,21 +388,54 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
                     "error_detail": "RunningHub 响应格式错误"
                 }
             
-            task_status = result.get("status", "")
+            if status_result.get("code") != 0:
+                error_msg = status_result.get("msg", "查询状态失败")
+                return {
+                    "status": "FAILED",
+                    "error": error_msg,
+                    "error_type": "USER"
+                }
+            
+            task_status = status_result.get("data", "")
             
             # 映射 RunningHub 状态到统一状态
             if task_status == "SUCCESS":
-                # 从 results 中提取视频 URL
-                results = result.get("results", [])
+                # 第二次调用：获取输出结果
+                outputs_params = {
+                    "url": f"{self._host}/task/openapi/outputs",
+                    "method": "POST",
+                    "json": {
+                        "apiKey": self._api_key,
+                        "taskId": project_id
+                    },
+                    "headers": {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    }
+                }
+                
+                try:
+                    outputs_result = self._request(**outputs_params)
+                except Exception as e:
+                    self.logger.error(f"Failed to get outputs: {str(e)}")
+                    return {
+                        "status": "FAILED",
+                        "error": "获取结果失败",
+                        "error_type": "SYSTEM",
+                        "error_detail": f"获取输出失败: {str(e)}"
+                    }
+                
+                # 从 outputs 中提取视频 URL（筛选 mp4 文件）
                 result_url = None
-                if results:
-                    for item in results:
-                        if hasattr(item, 'file_url'):
-                            result_url = item.file_url
-                            break
-                        elif isinstance(item, dict):
-                            result_url = item.get("file_url") or item.get("fileUrl")
-                            if result_url:
+                if outputs_result.get("code") == 0:
+                    outputs_data = outputs_result.get("data", [])
+                    self.logger.info(f"Outputs data: {outputs_data}")
+                    if outputs_data:
+                        for item in outputs_data:
+                            file_type = item.get("fileType")
+                            file_url = item.get("fileUrl")
+                            if file_type == "mp4" and file_url:
+                                result_url = file_url
                                 break
                 
                 return {
@@ -295,10 +443,9 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
                     "result_url": result_url
                 }
             elif task_status == "FAILED":
-                error_msg = result.get("error") or result.get("message") or "任务失败"
                 return {
                     "status": "FAILED",
-                    "error": error_msg,
+                    "error": "任务失败",
                     "error_type": "USER"
                 }
             else:

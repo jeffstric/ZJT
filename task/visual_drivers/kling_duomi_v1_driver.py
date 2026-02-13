@@ -3,8 +3,10 @@ Kling 多米供应商 v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
+import os
+import yaml
 from .base_video_driver import BaseVideoDriver
-from duomi_api_requset import create_kling_image_to_video, get_kling_task_status
+from config_util import get_config_path
 from utils.sentry_util import SentryUtil, AlertLevel
 
 
@@ -13,14 +15,26 @@ class KlingDuomiV1Driver(BaseVideoDriver):
     Kling 多米供应商 v1 版本驱动
     支持图生视频
     """
-    
+
     def __init__(self):
         super().__init__(driver_name="kling_duomi_v1", driver_type=12)
-    
+
+        # 加载配置
+        config_path = get_config_path()
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+
+        self._token = config["duomi"]["token"]
+        self._base_url = "https://duomiapi.com"
+        self._timeout = config["timeout"]["request_timeout"]
+
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """
         发送报警信息
-        
+
         Args:
             alert_type: 报警类型，如 "INVALID_RESPONSE_FORMAT", "UNEXPECTED_EXCEPTION"
             message: 报警消息
@@ -32,17 +46,17 @@ class KlingDuomiV1Driver(BaseVideoDriver):
             level=AlertLevel.ERROR,
             context=context
         )
-    
+
     def _validate_submit_response(self, result: Any) -> tuple[bool, Optional[str]]:
         """
         验证 submit_task API 响应格式
-        
+
         Args:
             result: API 响应结果
-        
+
         Returns:
             tuple[bool, Optional[str]]: (是否有效, 错误信息)
-        
+
         期望的正确响应格式:
         {
             "code": 0,
@@ -54,38 +68,38 @@ class KlingDuomiV1Driver(BaseVideoDriver):
         """
         if not isinstance(result, dict):
             return False, f"响应不是字典类型，实际类型: {type(result)}"
-        
+
         if "code" not in result:
             return False, f"响应缺少 'code' 字段，实际字段: {list(result.keys())}"
-        
+
         if result.get("code") != 0:
             return True, None  # code != 0 表示业务错误，格式仍然有效
-        
+
         if "data" not in result:
             return False, f"响应缺少 'data' 字段，实际字段: {list(result.keys())}"
-        
+
         data = result.get("data")
         if not isinstance(data, dict):
             return False, f"'data' 字段类型错误，期望 dict，实际: {type(data)}"
-        
+
         if "task_id" not in data:
             return False, f"'data' 缺少 'task_id' 字段，实际字段: {list(data.keys())}"
-        
+
         if not isinstance(data.get("task_id"), str):
             return False, f"'task_id' 字段类型错误，期望 str，实际: {type(data.get('task_id'))}"
-        
+
         return True, None
-    
+
     def _validate_status_response(self, result: Any) -> tuple[bool, Optional[str]]:
         """
         验证 check_status API 响应格式
-        
+
         Args:
             result: API 响应结果
-        
+
         Returns:
             tuple[bool, Optional[str]]: (是否有效, 错误信息)
-        
+
         期望的正确响应格式:
         {
             "code": 0,
@@ -107,71 +121,117 @@ class KlingDuomiV1Driver(BaseVideoDriver):
         """
         if not isinstance(result, dict):
             return False, f"响应不是字典类型，实际类型: {type(result)}"
-        
+
         if "code" not in result:
             return False, f"响应缺少 'code' 字段，实际字段: {list(result.keys())}"
-        
+
         if result.get("code") != 0:
             return True, None  # code != 0 表示业务错误，格式仍然有效
-        
+
         if "data" not in result:
             return False, f"响应缺少 'data' 字段，实际字段: {list(result.keys())}"
-        
+
         data = result.get("data")
         if not isinstance(data, dict):
             return False, f"'data' 字段类型错误，期望 dict，实际: {type(data)}"
-        
+
         if "task_status" not in data:
             return False, f"'data' 缺少 'task_status' 字段，实际字段: {list(data.keys())}"
-        
+
         task_status = data.get("task_status")
         if task_status == "succeed":
             if "task_result" not in data:
                 return False, "任务成功但缺少 'task_result' 字段"
-            
+
             task_result = data.get("task_result")
             if not isinstance(task_result, dict):
                 return False, f"'task_result' 字段类型错误，期望 dict，实际: {type(task_result)}"
-            
+
             if "videos" not in task_result:
                 return False, "任务成功但 'task_result' 缺少 'videos' 字段"
-            
+
             videos = task_result.get("videos")
             if not isinstance(videos, list) or len(videos) == 0:
                 return False, "任务成功但 'videos' 为空或类型错误"
-            
+
             if "url" not in videos[0]:
                 return False, "视频对象缺少 'url' 字段"
-        
+
         return True, None
-    
+
+    def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        """
+        构建创建 Kling 任务的完整请求参数
+
+        Args:
+            ai_tool: AITool 对象
+
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        # 根据时长确定模式
+        mode = "std" if ai_tool.duration == 5 else "pro"
+
+        payload = {
+            "model_name": "kling-v2-5-turbo",
+            "image": ai_tool.image_path,
+            "prompt": ai_tool.prompt,
+            "mode": mode,
+            "duration": ai_tool.duration or 5,
+            "cfg_scale": 0.5
+        }
+
+        return {
+            "url": f"{self._base_url}/api/video/kling/v1/videos/image2video",
+            "method": "POST",
+            "json": payload,
+            "headers": {
+                "Authorization": self._token,
+                "Content-Type": "application/json"
+            }
+        }
+
+    def build_check_query(self, project_id: str) -> Dict[str, Any]:
+        """
+        构建查询 Kling 任务状态的完整请求参数
+
+        Args:
+            project_id: 任务ID
+
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        return {
+            "url": f"{self._base_url}/api/video/kling/v1/videos/image2video/{project_id}",
+            "method": "GET",
+            "json": None,
+            "headers": {
+                "Authorization": self._token
+            }
+        }
+
     def submit_task(self, ai_tool) -> Dict[str, Any]:
         """
         提交 Kling 视频生成任务
-        
+
         Args:
             ai_tool: AITool 对象
                 - prompt: 提示词
                 - image_path: 图片路径
                 - duration: 视频时长 (5, 10)
-        
+
         Returns:
             Dict[str, Any]: 提交结果
         """
         try:
             self.logger.info(f"Submitting Kling task: prompt='{ai_tool.prompt[:50]}...', duration={ai_tool.duration}")
-            
-            # 根据时长确定模式
-            mode = "std" if ai_tool.duration == 5 else "pro"
-            
-            # 调用外部 API
+
+            # 构建请求参数
+            request_params = self.build_create_request(ai_tool)
+
+            # 调用统一请求方法
             try:
-                result = create_kling_image_to_video(
-                    image_url=ai_tool.image_path,
-                    prompt=ai_tool.prompt,
-                    mode=mode,
-                    duration=ai_tool.duration
-                )
+                result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Kling task submission: {str(network_error)}")
@@ -181,9 +241,9 @@ class KlingDuomiV1Driver(BaseVideoDriver):
                     "error_type": "USER",
                     "retry": True
                 }
-            
+
             self.logger.info(f"Kling API response: {result}")
-            
+
             # 验证响应格式
             is_valid, validation_error = self._validate_submit_response(result)
             if not is_valid:
@@ -204,7 +264,7 @@ class KlingDuomiV1Driver(BaseVideoDriver):
                     "error_detail": f"API响应格式错误: {validation_error}",
                     "retry": False
                 }
-            
+
             # 检查业务错误
             if result.get("code") != 0:
                 error_msg = result.get("message", "未知错误")
@@ -215,7 +275,7 @@ class KlingDuomiV1Driver(BaseVideoDriver):
                     "error_type": "USER",
                     "retry": False
                 }
-            
+
             task_id = result.get("data", {}).get("task_id")
             if not task_id:
                 return {
@@ -225,17 +285,17 @@ class KlingDuomiV1Driver(BaseVideoDriver):
                     "error_detail": "Kling API未返回任务ID",
                     "retry": False
                 }
-            
+
             return {
                 "success": True,
                 "project_id": task_id
             }
-            
+
         except Exception as e:
             # 非网络异常，发送报警，不重试
             self.logger.error(f"Unexpected exception in Kling submit_task: {str(e)}")
             self.logger.error(traceback.format_exc())
-            
+
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",
                 message=f"Kling submit_task 发生未预期异常: {str(e)}",
@@ -245,7 +305,7 @@ class KlingDuomiV1Driver(BaseVideoDriver):
                     "ai_tool_id": ai_tool.id
                 }
             )
-            
+
             return {
                 "success": False,
                 "error": "服务异常，请联系技术支持",
@@ -253,23 +313,25 @@ class KlingDuomiV1Driver(BaseVideoDriver):
                 "error_detail": f"未预期异常: {str(e)}",
                 "retry": False
             }
-    
+
     def check_status(self, project_id: str) -> Dict[str, Any]:
         """
         检查 Kling 任务状态
-        
+
         Args:
             project_id: 任务ID
-        
+
         Returns:
             Dict[str, Any]: 状态检查结果
         """
         try:
             self.logger.info(f"Checking Kling task status: project_id={project_id}")
-            
-            # 调用外部 API
+
+            # 构建请求参数并调用统一请求方法
+            request_params = self.build_check_query(project_id)
+
             try:
-                result = get_kling_task_status(task_id=project_id)
+                result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Kling status check: {str(network_error)}")
@@ -277,6 +339,7 @@ class KlingDuomiV1Driver(BaseVideoDriver):
                     "status": "RUNNING",
                     "message": "网络连接异常，稍后将重试"
                 }
+
             
             self.logger.info(f"Kling status API response: {result}")
             

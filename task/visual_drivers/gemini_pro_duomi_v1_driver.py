@@ -3,8 +3,10 @@ Gemini Pro 多米供应商 v1 版本驱动实现（加强版）
 """
 from typing import Dict, Any, Optional
 import traceback
+import os
+import yaml
 from .base_video_driver import BaseVideoDriver
-from duomi_api_requset import create_ai_image, get_ai_task_result
+from config_util import get_config_path
 from utils.sentry_util import SentryUtil, AlertLevel
 
 
@@ -16,7 +18,19 @@ class GeminiProDuomiV1Driver(BaseVideoDriver):
     
     def __init__(self):
         super().__init__(driver_name="gemini_pro_duomi_v1", driver_type=7)
-    
+        
+        # 加载配置
+        config_path = get_config_path()
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        
+        self._token = config["duomi"]["token"]
+        self._base_url = "https://duomiapi.com"
+        self._timeout = config["timeout"]["request_timeout"]
+
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """
         发送报警信息
@@ -132,6 +146,59 @@ class GeminiProDuomiV1Driver(BaseVideoDriver):
         
         return True, None
     
+    def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        """
+        构建创建 Gemini Pro 任务的完整请求参数
+        
+        Args:
+            ai_tool: AITool 对象
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        # 准备图片URL列表 - 支持逗号分隔的多个URL
+        if ai_tool.image_path:
+            image_urls = ai_tool.image_path.split(',') if ',' in ai_tool.image_path else [ai_tool.image_path]
+        else:
+            image_urls = None
+        
+        payload = {
+            "model": "gemini-3-pro-image-preview",
+            "prompt": ai_tool.prompt,
+            "aspect_ratio": ai_tool.ratio or "9:16",
+            "image_urls": image_urls,
+            "image_size": ai_tool.image_size or "1K"
+        }
+        
+        return {
+            "url": f"{self._base_url}/api/gemini/nano-banana-edit",
+            "method": "POST",
+            "json": payload,
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": self._token
+            }
+        }
+    
+    def build_check_query(self, project_id: str) -> Dict[str, Any]:
+        """
+        构建查询 Gemini Pro 任务状态的完整请求参数
+        
+        Args:
+            project_id: 任务ID
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        return {
+            "url": f"{self._base_url}/api/gemini/nano-banana/{project_id}",
+            "method": "GET",
+            "json": None,
+            "headers": {
+                "Authorization": self._token
+            }
+        }
+    
     def submit_task(self, ai_tool) -> Dict[str, Any]:
         """
         提交 Gemini Pro 图片编辑任务
@@ -149,22 +216,12 @@ class GeminiProDuomiV1Driver(BaseVideoDriver):
         try:
             self.logger.info(f"Submitting Gemini Pro task: prompt='{ai_tool.prompt[:50]}...', ratio={ai_tool.ratio}, size={ai_tool.image_size}")
             
-            # 准备图片URL列表 - 支持逗号分隔的多个URL
-            if ai_tool.image_path:
-                # 如果是逗号分隔的URL字符串，拆分为数组
-                image_urls = ai_tool.image_path.split(',') if ',' in ai_tool.image_path else [ai_tool.image_path]
-            else:
-                image_urls = None
-
-            # 调用外部 API，使用 nano-banana-pro 模型
+            # 构建请求参数
+            request_params = self.build_create_request(ai_tool)
+            
+            # 调用统一请求方法
             try:
-                result = create_ai_image(
-                    model="gemini-3-pro-image-preview",
-                    prompt=ai_tool.prompt,
-                    ratio=ai_tool.ratio,
-                    image_urls=image_urls,
-                    image_size=ai_tool.image_size or "1K"
-                )
+                result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Gemini Pro task submission: {str(network_error)}")
@@ -261,9 +318,11 @@ class GeminiProDuomiV1Driver(BaseVideoDriver):
         try:
             self.logger.info(f"Checking Gemini Pro task status: project_id={project_id}")
             
-            # 调用外部 API
+            # 构建请求参数并调用统一请求方法
+            request_params = self.build_check_query(project_id)
+            
             try:
-                result = get_ai_task_result(project_id=project_id, is_video=False)
+                raw_result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Gemini Pro status check: {str(network_error)}")
@@ -271,6 +330,57 @@ class GeminiProDuomiV1Driver(BaseVideoDriver):
                     "status": "RUNNING",
                     "message": "网络连接异常，稍后将重试"
                 }
+            
+            # 规范化响应格式（从原始API响应转换为统一格式）
+            # Image format: {"code": 200, "data": {"state": "succeeded/failed/processing", "data": {"images": [...]}, ...}}
+            if raw_result.get("code") != 200:
+                result = {
+                    "code": raw_result.get("code", -1),
+                    "msg": raw_result.get("msg", "Unknown error"),
+                    "data": {}
+                }
+            else:
+                data = raw_result.get("data", {})
+                state = data.get("state", "")
+                msg = data.get("msg", "")
+                
+                if state == "succeeded":
+                    status = 1
+                    media_url = None
+                    images = data.get("data", {}).get("images", [])
+                    if images and len(images) > 0:
+                        media_url = images[0].get("url")
+                    
+                    result = {
+                        "code": 0,
+                        "msg": "success",
+                        "data": {
+                            "status": status,
+                            "mediaUrl": media_url,
+                            "reason": None
+                        }
+                    }
+                elif state == "error":
+                    result = {
+                        "code": 0,
+                        "msg": "success",
+                        "data": {
+                            "status": 2,
+                            "mediaUrl": None,
+                            "reason": msg or "任务失败"
+                        }
+                    }
+                else:
+                    # processing 或其他状态
+                    result = {
+                        "code": 0,
+                        "msg": "success",
+                        "data": {
+                            "status": 0,
+                            "mediaUrl": None,
+                            "reason": None
+                        }
+                    }
             
             self.logger.info(f"Gemini Pro status API response: {result}")
             

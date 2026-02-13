@@ -5,6 +5,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,103 @@ class BaseVideoDriver(ABC):
                 "error": "服务异常，请联系技术支持",
                 "error_type": "SYSTEM",
                 "error_detail": "API响应格式错误: 缺少data字段"
+            }
+        """
+        pass
+    
+    def _request(self, url: str, method: str = "POST", json: dict = None, headers: dict = None) -> dict:
+        """
+        统一 HTTP 请求方法。所有外部 API 调用都通过此方法。
+        
+        Args:
+            url: 请求URL
+            method: HTTP方法，默认POST
+            json: 请求体（JSON格式）
+            headers: 请求头
+        
+        Returns:
+            dict: API响应的JSON数据
+        
+        Raises:
+            requests.RequestException: 请求失败时抛出
+        """
+        self.logger.info(f"[{self.driver_name}] {method} {url}")
+        self.logger.info(f"[{self.driver_name}] Payload: {json}")
+        
+        response = requests.request(method, url, json=json, headers=headers)
+        response.raise_for_status()
+        result = response.json()
+        
+        self.logger.info(f"[{self.driver_name}] Response: {result}")
+        return result
+    
+    @abstractmethod
+    def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        """
+        构建创建任务的完整请求参数
+        
+        Args:
+            ai_tool: AITool 对象
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+                - url: 请求URL
+                - method: HTTP方法（通常为POST）
+                - json: 请求体（JSON格式）
+                - headers: 请求头
+        
+        Example:
+            {
+                "url": "https://api.example.com/v1/videos/generations",
+                "method": "POST",
+                "json": {
+                    "model": "sora-2-temporary",
+                    "prompt": "测试提示词",
+                    "aspect_ratio": "9:16"
+                },
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer xxx"
+                }
+            }
+        """
+        pass
+    
+    @abstractmethod
+    def build_check_query(self, project_id: str) -> Dict[str, Any]:
+        """
+        构建查询任务状态的完整请求参数
+        
+        Args:
+            project_id: 外部API返回的任务ID
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+                - url: 请求URL
+                - method: HTTP方法（GET或POST）
+                - json: 请求体（可选，仅POST时需要）
+                - headers: 请求头
+        
+        Example (GET):
+            {
+                "url": "https://api.example.com/v1/videos/tasks/task_123",
+                "method": "GET",
+                "headers": {
+                    "Authorization": "Bearer xxx"
+                }
+            }
+        
+        Example (POST):
+            {
+                "url": "https://api.example.com/task/status",
+                "method": "POST",
+                "json": {
+                    "apiKey": "xxx",
+                    "taskId": "task_123"
+                },
+                "headers": {
+                    "Content-Type": "application/json"
+                }
             }
         """
         pass

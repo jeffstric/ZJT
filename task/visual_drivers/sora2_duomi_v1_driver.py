@@ -3,8 +3,10 @@ Sora2 多米供应商 v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
+import os
+import yaml
 from .base_video_driver import BaseVideoDriver
-from duomi_api_requset import create_image_to_video, get_ai_task_result
+from config_util import get_config_path
 from utils.sentry_util import SentryUtil, AlertLevel
 
 
@@ -16,6 +18,18 @@ class Sora2DuomiV1Driver(BaseVideoDriver):
     
     def __init__(self):
         super().__init__(driver_name="sora2_duomi_v1", driver_type=3)
+        
+        # 加载配置
+        config_path = get_config_path()
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        
+        self._token = config["duomi"]["token"]
+        self._base_url = "https://duomiapi.com"
+        self._timeout = config["timeout"]["request_timeout"]
     
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """
@@ -116,6 +130,53 @@ class Sora2DuomiV1Driver(BaseVideoDriver):
         
         return True, None
     
+    def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        """
+        构建创建 Sora2 任务的完整请求参数
+        
+        Args:
+            ai_tool: AITool 对象
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        payload = {
+            "model": "sora-2-temporary",
+            "prompt": ai_tool.prompt,
+            "aspect_ratio": ai_tool.ratio or "9:16",
+            "duration": ai_tool.duration or 15,
+            "image_urls": [ai_tool.image_path]
+        }
+        
+        return {
+            "url": f"{self._base_url}/v1/videos/generations",
+            "method": "POST",
+            "json": payload,
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": self._token
+            }
+        }
+    
+    def build_check_query(self, project_id: str) -> Dict[str, Any]:
+        """
+        构建查询 Sora2 任务状态的完整请求参数
+        
+        Args:
+            project_id: 任务ID
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        return {
+            "url": f"{self._base_url}/v1/videos/tasks/{project_id}",
+            "method": "GET",
+            "json": None,
+            "headers": {
+                "Authorization": self._token
+            }
+        }
+    
     def submit_task(self, ai_tool) -> Dict[str, Any]:
         """
         提交 Sora2 视频生成任务
@@ -133,14 +194,12 @@ class Sora2DuomiV1Driver(BaseVideoDriver):
         try:
             self.logger.info(f"Submitting Sora2 task: prompt='{ai_tool.prompt[:50]}...', ratio={ai_tool.ratio}, duration={ai_tool.duration}")
             
-            # 调用外部 API
+            # 构建请求参数
+            request_params = self.build_create_request(ai_tool)
+            
+            # 调用统一请求方法
             try:
-                result = create_image_to_video(
-                    prompt=ai_tool.prompt,
-                    ratio=ai_tool.ratio,
-                    img_url=ai_tool.image_path,
-                    duration=ai_tool.duration
-                )
+                result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Sora2 task submission: {str(network_error)}")
@@ -223,14 +282,58 @@ class Sora2DuomiV1Driver(BaseVideoDriver):
             Dict[str, Any]: 任务状态
         """
         try:
-            # 调用外部 API
+            # 构建请求参数并调用统一请求方法
+            request_params = self.build_check_query(project_id)
+            
             try:
-                result = get_ai_task_result(project_id, is_video=True)
+                raw_result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，返回 RUNNING 状态，允许重试
                 self.logger.warning(f"Network error during Sora2 status check: {str(network_error)}")
                 return {
                     "status": "RUNNING"
+                }
+            
+            # 规范化响应格式（从原始API响应转换为统一格式）
+            state = raw_result.get("state", "")
+            message = raw_result.get("message", "")
+            
+            if state == "succeeded":
+                status = 1
+                media_url = None
+                videos = raw_result.get("data", {}).get("videos", [])
+                if videos and len(videos) > 0:
+                    media_url = videos[0].get("url")
+                
+                result = {
+                    "code": 0,
+                    "msg": "success",
+                    "data": {
+                        "status": status,
+                        "mediaUrl": media_url,
+                        "reason": None
+                    }
+                }
+            elif state == "error":
+                result = {
+                    "code": 1,
+                    "msg": message or "任务失败",
+                    "data": {
+                        "status": 2,
+                        "mediaUrl": None,
+                        "reason": message
+                    }
+                }
+            else:
+                # processing 或其他状态
+                result = {
+                    "code": 0,
+                    "msg": "processing",
+                    "data": {
+                        "status": 0,
+                        "mediaUrl": None,
+                        "reason": None
+                    }
                 }
             
             # 验证响应格式

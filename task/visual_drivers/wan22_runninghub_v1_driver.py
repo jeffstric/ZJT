@@ -3,8 +3,10 @@ Wan22 RunningHub v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
+import os
+import yaml
 from .base_video_driver import BaseVideoDriver
-from runninghub_request import create_wan22_image_to_video, check_ltx2_task_status
+from config_util import get_config_path
 from utils.sentry_util import SentryUtil, AlertLevel
 
 
@@ -16,6 +18,19 @@ class Wan22RunninghubV1Driver(BaseVideoDriver):
     
     def __init__(self):
         super().__init__(driver_name="wan22_runninghub_v1", driver_type=11)
+        
+        # 加载配置
+        config_path = get_config_path()
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
+        with open(config_path, 'r', encoding='utf-8') as file:
+            config = yaml.safe_load(file)
+        
+        self._api_key = config["runninghub"]["api_key"]
+        self._host = config["runninghub"]["host"]
+        self._webapp_id = "1950219582398185474"  # Wan2.2 webapp ID
+        self._timeout = config["timeout"]["request_timeout"]
     
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """
@@ -118,6 +133,112 @@ class Wan22RunninghubV1Driver(BaseVideoDriver):
         
         return True, None
     
+    def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        """
+        构建创建 Wan22 任务的完整请求参数
+        
+        Args:
+            ai_tool: AITool 对象
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        # Map ratio to Wan2.2 ratio value
+        ratio_map = {
+            "16:9": "5",  # 横屏
+            "9:16": "4",  # 竖屏
+            "4:3": "3",   # 4:3
+            "3:4": "2",   # 3:4
+            "1:1": "1"    # 1:1
+        }
+        ratio_value = ratio_map.get(ai_tool.ratio or "9:16", "4")
+        
+        # Map quality to quality value: 1=高清版, 2=极速版
+        quality_value = "1"  # 默认高清版
+        
+        # Build node info list for Wan2.2 v2
+        node_info_list = [
+            {
+                "nodeId": "135",
+                "fieldName": "image",
+                "fieldValue": ai_tool.image_path,
+                "description": "上传图像"
+            },
+            {
+                "nodeId": "107",
+                "fieldName": "value",
+                "fieldValue": str(ai_tool.duration or 5),
+                "description": "设置时长（秒）"
+            },
+            {
+                "nodeId": "153",
+                "fieldName": "select",
+                "fieldValue": quality_value,
+                "description": "高清版/极速版切换"
+            },
+            {
+                "nodeId": "113",
+                "fieldName": "select",
+                "fieldValue": "2",
+                "description": "设置比例方式"
+            },
+            {
+                "nodeId": "247",
+                "fieldName": "select",
+                "fieldValue": ratio_value,
+                "description": "设置比例【 9:16=宽:高】"
+            },
+            {
+                "nodeId": "272",
+                "fieldName": "index",
+                "fieldValue": "2",
+                "description": "文本输入方式"
+            },
+            {
+                "nodeId": "116",
+                "fieldName": "text",
+                "fieldValue": ai_tool.prompt,
+                "description": "手写/润色 文本输入框"
+            }
+        ]
+        
+        return {
+            "url": f"{self._host}/openapi/v2/run/ai-app/{self._webapp_id}",
+            "method": "POST",
+            "json": {
+                "nodeInfoList": node_info_list,
+                "instanceType": "plus",
+                "usePersonalQueue": "false"
+            },
+            "headers": {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}"
+            }
+        }
+    
+    def build_check_query(self, project_id: str) -> Dict[str, Any]:
+        """
+        构建查询 Wan22 任务状态的完整请求参数
+        
+        Args:
+            project_id: 任务ID
+        
+        Returns:
+            Dict[str, Any]: 请求参数字典
+        """
+        return {
+            "url": f"{self._host}/task/openapi/status",
+            "method": "POST",
+            "json": {
+                "apiKey": self._api_key,
+                "taskId": project_id
+            },
+            "headers": {
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+        }
+    
     def submit_task(self, ai_tool) -> Dict[str, Any]:
         """
         提交 Wan22 视频生成任务
@@ -135,15 +256,12 @@ class Wan22RunninghubV1Driver(BaseVideoDriver):
         try:
             self.logger.info(f"Submitting Wan22 task: prompt='{ai_tool.prompt[:50]}...', ratio={ai_tool.ratio}, duration={ai_tool.duration}")
             
-            # 调用外部 API
+            # 构建请求参数
+            request_params = self.build_create_request(ai_tool)
+            
+            # 调用统一请求方法
             try:
-                result = create_wan22_image_to_video(
-                    image_url=ai_tool.image_path,
-                    prompt=ai_tool.prompt,
-                    duration=ai_tool.duration or 5,
-                    ratio=ai_tool.ratio or "9:16",
-                    quality="hd"
-                )
+                result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Wan22 task submission: {str(network_error)}")
@@ -153,8 +271,6 @@ class Wan22RunninghubV1Driver(BaseVideoDriver):
                     "error_type": "USER",
                     "retry": True
                 }
-            
-            self.logger.info(f"Wan22 API response: {result}")
             
             # 验证响应格式
             is_valid, validation_error = self._validate_submit_response(result)
@@ -240,9 +356,11 @@ class Wan22RunninghubV1Driver(BaseVideoDriver):
         try:
             self.logger.info(f"Checking Wan22 task status: project_id={project_id}")
             
-            # 调用外部 API
+            # 第一次调用：查询状态
+            status_params = self.build_check_query(project_id)
+            
             try:
-                result = check_ltx2_task_status(task_id=project_id)
+                status_result = self._request(**status_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
                 self.logger.warning(f"Network error during Wan22 status check: {str(network_error)}")
@@ -251,16 +369,14 @@ class Wan22RunninghubV1Driver(BaseVideoDriver):
                     "message": "网络连接异常，稍后将重试"
                 }
             
-            self.logger.info(f"Wan22 status API response: {result}")
-            
-            # check_ltx2_task_status 返回格式: {"status": "SUCCESS/RUNNING/FAILED", "task_id": "...", "results": [...]}
-            if not isinstance(result, dict) or "status" not in result:
+            # 验证状态响应格式: {"code": 0, "data": "SUCCESS/RUNNING/FAILED"}
+            if not isinstance(status_result, dict) or "code" not in status_result:
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message="Wan22 check_ltx2_task_status 响应格式异常",
+                    message="Wan22 status API 响应格式异常",
                     context={
-                        "api": "check_ltx2_task_status",
-                        "response": result,
+                        "api": "check_status",
+                        "response": status_result,
                         "project_id": project_id
                     }
                 )
@@ -271,21 +387,52 @@ class Wan22RunninghubV1Driver(BaseVideoDriver):
                     "error_detail": "RunningHub 响应格式错误"
                 }
             
-            task_status = result.get("status", "")
+            if status_result.get("code") != 0:
+                error_msg = status_result.get("msg", "查询状态失败")
+                return {
+                    "status": "FAILED",
+                    "error": error_msg,
+                    "error_type": "USER"
+                }
+            
+            task_status = status_result.get("data", "")
             
             # 映射 RunningHub 状态到统一状态
             if task_status == "SUCCESS":
-                # 从 results 中提取视频 URL
-                results = result.get("results", [])
+                # 第二次调用：获取输出结果
+                outputs_params = {
+                    "url": f"{self._host}/task/openapi/outputs",
+                    "method": "POST",
+                    "json": {
+                        "apiKey": self._api_key,
+                        "taskId": project_id
+                    },
+                    "headers": {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json"
+                    }
+                }
+                
+                try:
+                    outputs_result = self._request(**outputs_params)
+                except Exception as e:
+                    self.logger.error(f"Failed to get outputs: {str(e)}")
+                    return {
+                        "status": "FAILED",
+                        "error": "获取结果失败",
+                        "error_type": "SYSTEM",
+                        "error_detail": f"获取输出失败: {str(e)}"
+                    }
+                
+                # 从 outputs 中提取视频 URL
                 result_url = None
-                if results:
-                    for item in results:
-                        if hasattr(item, 'file_url'):
-                            result_url = item.file_url
-                            break
-                        elif isinstance(item, dict):
-                            result_url = item.get("file_url") or item.get("fileUrl")
-                            if result_url:
+                if outputs_result.get("code") == 0:
+                    outputs_data = outputs_result.get("data", [])
+                    if outputs_data:
+                        for item in outputs_data:
+                            file_url = item.get("fileUrl")
+                            if file_url:
+                                result_url = file_url
                                 break
                 
                 return {
@@ -293,10 +440,9 @@ class Wan22RunninghubV1Driver(BaseVideoDriver):
                     "result_url": result_url
                 }
             elif task_status == "FAILED":
-                error_msg = result.get("error") or result.get("message") or "任务失败"
                 return {
                     "status": "FAILED",
-                    "error": error_msg,
+                    "error": "任务失败",
                     "error_type": "USER"
                 }
             else:
