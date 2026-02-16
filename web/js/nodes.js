@@ -2476,27 +2476,23 @@
         </div>
         <div class="node-body">
           <div class="field field-always-visible">
-            <div class="preview-row start-preview-row" style="display:none;">
-              <img class="preview start-preview" />
-            </div>
-          </div>
-          <div class="field field-always-visible">
-            <div class="preview-row end-preview-row" style="display:none;">
-              <img class="preview end-preview" />
-            </div>
-          </div>
-          <div class="field field-always-visible">
             <div class="gen-meta prompt-preview" style="font-size: 12px; color: #666;"></div>
           </div>
           <div class="field field-collapsible">
             <div class="label">首帧画面<span class="req">*</span></div>
             <input class="start-file" type="file" accept="image/*" />
             <button class="mini-btn start-clear" type="button" style="margin-top: 4px;">清除</button>
+            <div class="preview-row start-preview-row" style="display:none; margin-top: 8px;">
+              <img class="preview start-preview" />
+            </div>
           </div>
           <div class="field field-collapsible">
             <div class="label">尾帧画面（可选）</div>
             <input class="end-file" type="file" accept="image/*" />
             <button class="mini-btn end-clear" type="button" style="margin-top: 4px;">清除</button>
+            <div class="preview-row end-preview-row" style="display:none; margin-top: 8px;">
+              <img class="preview end-preview" />
+            </div>
           </div>
           <div class="field field-collapsible">
             <div class="label">视频长度</div>
@@ -7943,7 +7939,7 @@
           const dialogueGroupId = createDialogueGroupNode({
             x: dialogueGroupX,
             y: dialogueGroupY,
-            dialogueData: node.data.shotJson.dialogue,
+            dialogueData: JSON.parse(JSON.stringify(node.data.shotJson.dialogue)),
             shotNumber: node.data.shotJson.shot_number
           });
           

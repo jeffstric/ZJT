@@ -1551,6 +1551,8 @@
         // 更新视频节点预览
         const previewField = nodeEl.querySelector('.video-preview-field');
         const thumbVideo = nodeEl.querySelector('.video-thumb');
+        const previewActionsField = nodeEl.querySelector('.video-preview-actions-field');
+        const nameEl = nodeEl.querySelector('.video-name');
         
         if(previewField && thumbVideo){
           thumbVideo.src = proxyDownloadUrl(url);
@@ -1572,6 +1574,10 @@
           };
           try{ thumbVideo.load(); } catch(e){}
           previewField.style.display = 'block';
+          // 同时显示加入时间轴按钮区域
+          if(previewActionsField){
+            previewActionsField.style.display = 'block';
+          }
         }
       } else if(node.type === 'image'){
         // 宫格拆分节点的拆分逻辑已移至 pollWorkflowNodeStatus 统一驱动
