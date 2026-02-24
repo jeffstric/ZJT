@@ -138,6 +138,50 @@ GRID_IMAGE_DOWNLOAD_TIMEOUT = 60.0         # 下载原图超时（秒）
 
 AUTHENTICATION_ID = 'aa63d4090d59401b9862223087c25b98'
 
+class FilePathConstants:
+    """文件路径相关常量 - 兼容Windows的跨平台路径配置"""
+    
+    # 路径常量（相对路径）
+    _TTS_AUDIO_SUBDIR = "files/tmp/tts/tmp_ref_audio"
+    _JIANYING_EXPORT_SUBDIR = "files/tmp/jianying_export"
+    
+    @staticmethod
+    def get_tts_audio_dir(app_dir: str) -> str:
+        """
+        获取TTS音频目录的完整路径（自动按当前日期分组，自动创建目录）
+        
+        Args:
+            app_dir: 应用根目录路径
+            
+        Returns:
+            完整的TTS音频目录路径，格式：files/tmp/tts/tmp_ref_audio/2026-02-24/
+        """
+        import os
+        from datetime import datetime
+        date_folder = datetime.now().strftime('%Y-%m-%d')
+        path = os.path.join(app_dir, FilePathConstants._TTS_AUDIO_SUBDIR, date_folder)
+        os.makedirs(path, exist_ok=True)
+        return path
+    
+    @staticmethod
+    def get_jianying_export_dir(app_dir: str, draft_name: str) -> str:
+        """
+        获取剪映导出目录的完整路径（自动按当前日期分组，自动创建目录）
+        
+        Args:
+            app_dir: 应用根目录路径
+            draft_name: 草稿名称
+            
+        Returns:
+            完整的剪映导出目录路径，格式：files/tmp/jianying_export/2026-02-24/草稿名/
+        """
+        import os
+        from datetime import datetime
+        date_folder = datetime.now().strftime('%Y-%m-%d')
+        path = os.path.join(app_dir, FilePathConstants._JIANYING_EXPORT_SUBDIR, date_folder, draft_name)
+        os.makedirs(path, exist_ok=True)
+        return path
+
 RECHARGE_PACKAGES = [
     {
         "package_id": 1,

@@ -55,7 +55,7 @@ from config.constant import (
     TASK_STATUS_PROCESSING,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
-IMAGE_TO_VIDEO_TYPES,
+    IMAGE_TO_VIDEO_TYPES,
     IMAGE_EDIT_TYPES,
     TASK_TYPE_NAME_MAP,
     GRID_SIZE_2X2,
@@ -63,7 +63,8 @@ IMAGE_TO_VIDEO_TYPES,
     GRID_VALID_SIZES,
     GRID_DEFAULT_SIZE_BY_TYPE,
     GRID_LOCK_TIMEOUT_SECONDS,
-    GRID_IMAGE_DOWNLOAD_TIMEOUT
+    GRID_IMAGE_DOWNLOAD_TIMEOUT,
+    FilePathConstants
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.image_grid_splitter import ImageGridSplitter
@@ -429,11 +430,10 @@ def _get_local_upload_file(asset_url: Optional[str], origin: Optional[str]) -> O
 
 def _save_uploaded_audio(upload_file: UploadFile) -> str:
     """
-    Save uploaded audio to /nas/comfyui_upload/tts/tmp_ref_audio directory and return the file path
+    Save uploaded audio to files/tmp/tts/tmp_ref_audio directory and return the file path
     """
-    # Ensure audio upload directory exists
-    audio_dir = "/nas/comfyui_upload/tts/tmp_ref_audio"
-    os.makedirs(audio_dir, exist_ok=True)
+    # Get audio directory (auto-creates if not exists)
+    audio_dir = FilePathConstants.get_tts_audio_dir(APP_DIR)
     
     # Generate unique filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -624,8 +624,7 @@ async def _download_and_extract_audio_from_video(video_url: str) -> str:
             logger.warning(f"Error checking video duration: {e}")
         
         # Extract audio using ffmpeg (async subprocess)
-        audio_dir = "/nas/comfyui_upload/tts/tmp_ref_audio"
-        os.makedirs(audio_dir, exist_ok=True)
+        audio_dir = FilePathConstants.get_tts_audio_dir(APP_DIR)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
@@ -6279,9 +6278,9 @@ async def export_timeline_draft(
         safe_workflow_name = safe_workflow_name.replace(' ', '_') or 'workflow'
         draft_name = f"{safe_workflow_name}_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # 创建临时目录（使用/tmp目录，按日期分组）
+        # 创建临时目录（使用 files/tmp/jianying_export 目录，按日期分组）
         date_folder = datetime.now().strftime('%Y-%m-%d')
-        base_temp_dir = os.path.join('/tmp', 'jianying_export', date_folder, draft_name)
+        base_temp_dir = FilePathConstants.get_jianying_export_dir(APP_DIR, draft_name)
         temp_download_dir = os.path.join(base_temp_dir, 'downloads')
         local_draft_parent = os.path.join(base_temp_dir, 'draft_output')
         os.makedirs(temp_download_dir, exist_ok=True)
