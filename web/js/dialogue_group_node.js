@@ -204,7 +204,8 @@
               
               const shotJson = fromNode.data.shotJson;
               if(shotJson && shotJson.dialogue){
-                node.data.dialogues = shotJson.dialogue;
+                // 使用深拷贝避免引用共享，防止修改对话组数据时影响分镜节点
+                node.data.dialogues = JSON.parse(JSON.stringify(shotJson.dialogue));
                 updateDialogueList();
               }
               
