@@ -35,6 +35,7 @@ from duomi_api_requset import create_video_remix, create_character as create_cha
 from PIL import Image
 from llm import call_ernie_vl_api
 from task.scheduler import init_scheduler
+from model.migration import run_migrations, get_alembic_config
 from config.constant import (
     TASK_COMPUTING_POWER, 
     TASK_TYPE_GENERATE_VIDEO, 
@@ -189,6 +190,15 @@ SentryUtil.init_from_env()
 from task.visual_drivers import register_all_drivers
 register_all_drivers()
 logger.info("Video drivers registered successfully")
+
+# Run database migrations on startup if enabled
+alembic_config = get_alembic_config()
+if alembic_config.get('auto_migrate', False):
+    try:
+        run_migrations()
+    except Exception as e:
+        logger.error(f"Database migration failed on startup: {e}")
+        # 不阻止应用启动，只记录错误
 
 # Allow CORS for local dev if needed
 app.add_middleware(

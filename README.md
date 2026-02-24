@@ -3,13 +3,6 @@
 一个最小可用的前后端示例：
 - 前端：`web/index.html`（Vue 3 + Vue Router + Axios，CDN 版）
 - 后端：`server.py`（FastAPI）
-- 工作流模板：`qwen_image_edit_api.json`
-
-前端首页为工具列表，第一项是“图片AI编辑功能”。进入后可上传图片、填写提示词，后端会据此修改模板中：
-- `"78".inputs.image`（`LoadImage` 节点）
-- `"108".inputs.prompt`（`TextEncodeQwenImageEdit` 节点）
-
-随后由后端调用 ComfyUI 的 `/upload/image` 与 `/prompt` 接口，并轮询 `/history/{prompt_id}` 拿到结果图片 URL。
 
 ## 运行环境
 - Python 3.9+（建议 3.10/3.11）
@@ -77,9 +70,91 @@ comfyui_server/
 ├─ server.py                  # FastAPI 后端
 ├─ requirements.txt           # Python 依赖
 ├─ README.md                  # 使用说明
-├─ qwen_image_edit_api.json   # 工作流模板（会被动态替换 78.image 与 108.prompt）
+├─ alembic.ini                # Alembic 数据库迁移配置
+├─ alembic/                   # Alembic 迁移脚本目录
+│  ├─ env.py                  # 迁移环境配置
+│  ├─ script.py.mako          # 迁移脚本模板
+│  └─ versions/               # 迁移版本目录
 └─ web/
    └─ index.html              # 前端（Vue + Router + Axios）
+```
+
+## 数据库迁移
+
+本项目使用 Alembic 进行数据库迁移管理。
+
+### 常用命令
+
+```bash
+# 查看迁移历史
+alembic history
+
+# 查看当前版本
+alembic current
+
+# 生成 SQL 脚本（线下预览）
+alembic upgrade head --sql > migration.sql
+
+# 执行迁移（线上执行）
+alembic upgrade head
+
+# 回滚一个版本
+alembic downgrade -1
+```
+
+### 如何新建迁移文件
+
+1. 使用 alembic 命令创建迁移脚本：
+```bash
+alembic revision -m "迁移描述"
+```
+
+2. 在生成的脚本中编写 SQL：
+```python
+# alembic/versions/xxxx_xxx_xxx.py
+
+def upgrade() -> None:
+    """升级数据库"""
+    op.execute("ALTER TABLE xxx ADD COLUMN yyy VARCHAR(255)")
+
+def downgrade() -> None:
+    """回滚数据库"""
+    op.execute("ALTER TABLE xxx DROP COLUMN yyy")
+```
+
+3. 执行迁移：
+```bash
+alembic upgrade head
+```
+
+### 线下迁移（生成 SQL 脚本）
+
+线下迁移用于预览即将执行的 SQL，或生成脚本供 DBA 审核：
+
+```bash
+# 生成 SQL 文件
+alembic upgrade head --sql > migration.sql
+
+# 查看 SQL（不保存文件）
+alembic upgrade head --sql
+```
+
+### 线上迁移注意事项
+
+1. **备份数据库**：执行迁移前务必备份生产数据库
+2. **权限检查**：确保数据库用户有 CREATE/ALTER/DROP 权限
+3. **低峰期执行**：避免在业务高峰期执行迁移
+4. **测试环境验证**：先在测试环境验证迁移脚本
+5. **回滚准备**：确认 downgrade 脚本正确，便于紧急回滚
+
+### 初始化新数据库
+
+对于全新的数据库：
+
+1. 先执行 `model/sql/baseline.sql` 创建基础表结构
+2. 然后标记为最新版本：
+```bash
+alembic stamp head
 ```
 
 ## 自动化测试
