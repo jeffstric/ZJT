@@ -28,9 +28,24 @@ class ComputingPowerService:
         power = ComputingPowerModel.get_by_user_id(user_id)
         
         if not power:
+            # 用户算力数据不存在时，自动创建初始记录（算力为0）
+            try:
+                ComputingPowerModel.create_or_update(user_id, 0, None)
+                power = ComputingPowerModel.get_by_user_id(user_id)
+            except Exception as e:
+                logger.error(f"自动创建用户算力记录失败: {e}")
+        
+        if not power:
+            # 创建失败时返回默认值
             return {
-                "success": False,
-                "message": "用户算力数据不存在",
+                "success": True,
+                "message": "查询成功",
+                "data": {
+                    "exists": False,
+                    "computing_power": 0,
+                    "expiration_time": None,
+                    "user_id": user_id,
+                }
             }
         
         return {

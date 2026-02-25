@@ -51,7 +51,7 @@ class ComputingPowerModel:
     
     @staticmethod
     def create(user_id: int, computing_power: int = 0, expiration_time: Optional[datetime] = None) -> int:
-        """创建新的算力记录"""
+        """创建新的算力记录（如果已存在会抛出异常）"""
         sql = """
             INSERT INTO computing_power (user_id, computing_power, expiration_time)
             VALUES (%s, %s, %s)
@@ -62,6 +62,25 @@ class ComputingPowerModel:
             return record_id
         except Exception as e:
             logger.error(f"Failed to create computing power record: {e}")
+            raise
+
+    @staticmethod
+    def create_or_update(user_id: int, computing_power: int = 0, expiration_time: Optional[datetime] = None) -> int:
+        """创建或更新算力记录（使用 INSERT ON DUPLICATE KEY UPDATE 避免重复插入）"""
+        sql = """
+            INSERT INTO computing_power (user_id, computing_power, expiration_time)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                computing_power = VALUES(computing_power),
+                expiration_time = VALUES(expiration_time),
+                updated_at = NOW()
+        """
+        try:
+            record_id = execute_insert(sql, (user_id, computing_power, expiration_time))
+            logger.info(f"Created or updated computing power record for user {user_id}")
+            return record_id
+        except Exception as e:
+            logger.error(f"Failed to create or update computing power record: {e}")
             raise
     
     @staticmethod
@@ -111,9 +130,9 @@ class ComputingPowerModel:
     
     @staticmethod
     def ensure_exists(user_id: int) -> ComputingPower:
-        """确保用户有算力记录，没有则创建"""
+        """确保用户有算力记录，没有则创建（使用 create_or_update 避免并发问题）"""
         power = ComputingPowerModel.get_by_user_id(user_id)
         if not power:
-            ComputingPowerModel.create(user_id, 0, None)
+            ComputingPowerModel.create_or_update(user_id, 0, None)
             power = ComputingPowerModel.get_by_user_id(user_id)
         return power
