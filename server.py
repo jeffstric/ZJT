@@ -192,15 +192,6 @@ from task.visual_drivers import register_all_drivers
 register_all_drivers()
 logger.info("Video drivers registered successfully")
 
-# Run database migrations on startup if enabled
-alembic_config = get_alembic_config()
-if alembic_config.get('auto_migrate', False):
-    try:
-        run_migrations()
-    except Exception as e:
-        logger.error(f"Database migration failed on startup: {e}")
-        # 不阻止应用启动，只记录错误
-
 # Allow CORS for local dev if needed
 app.add_middleware(
     CORSMiddleware,
@@ -6860,7 +6851,15 @@ if __name__ == "__main__":
     else:
         # For HTTP, use port or default
         port = config["server"].get("port")
-    
+
+    # Run database migrations on startup if enabled (只在主进程执行一次，避免 uvicorn 重新导入时再次执行)
+    alembic_config = get_alembic_config()
+    if alembic_config.get('auto_migrate', False):
+        try:
+            run_migrations()
+        except Exception as e:
+            logger.error(f"Database migration failed on startup: {e}")
+
     if https_config.get("enabled", False):
         # HTTPS configuration
         ssl_keyfile = os.path.join(APP_DIR, https_config["keyfile"])
@@ -6878,9 +6877,9 @@ if __name__ == "__main__":
         
         init_scheduler(app)
         uvicorn.run(
-            "server:app", 
-            host="0.0.0.0", 
-            port=port, 
+            "server:app",
+            host="0.0.0.0",
+            port=port,
             reload=False,
             ssl_keyfile=ssl_keyfile,
             ssl_certfile=ssl_certfile
