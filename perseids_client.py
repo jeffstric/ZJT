@@ -112,8 +112,7 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
         
         elif endpoint == 'get_auth_token_by_user_id':
             result = AuthService.get_auth_token_by_user_id(
-                user_id=payload.get('user_id'),
-                authentication_id=payload.get('authentication_id', '')
+                user_id=payload.get('user_id')
             )
             return result.get('success', False), result.get('message', ''), result.get('data', {})
         

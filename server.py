@@ -41,7 +41,6 @@ from config.constant import (
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
     RECHARGE_PACKAGES, 
-    AUTHENTICATION_ID, 
     VIDEO_MODEL_DURATION_OPTIONS,
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_PROCESSING,
@@ -3990,13 +3989,12 @@ async def wechat_payment_callback(request: Request):
             
             user_id = order.user_id
             # TODO: 增加用户算力
-            logger.info(f"Refunding {user_id} , {AUTHENTICATION_ID}")
+            logger.info(f"Processing payment for user {user_id}")
             success, message, response_data = await async_make_perseids_request(
                 endpoint='get_auth_token_by_user_id',
                 method='POST',
                 data={
-                    "user_id": user_id,
-                    "authentication_id": AUTHENTICATION_ID
+                    "user_id": user_id
                 }
             )
 

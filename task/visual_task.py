@@ -32,7 +32,6 @@ from vidu_api_requset import (
 from model import TasksModel, AIToolsModel, RunningHubSlotsModel
 from config.constant import (
     TASK_TYPE_GENERATE_VIDEO,
-    AUTHENTICATION_ID,
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_PROCESSING,
     AI_TOOL_STATUS_COMPLETED,
@@ -360,13 +359,12 @@ def _handle_task_failure(project_id, task_id, ai_tool_type, reason, user_id):
         
         if computing_power:
             transaction_id = str(uuid.uuid4())
-            logger.info(f"Refunding {user_id} , {AUTHENTICATION_ID}")
+            logger.info(f"Refunding computing power for user {user_id}")
             success, message, response_data = make_perseids_request(
                 endpoint='get_auth_token_by_user_id',
                 method='POST',
                 data={
-                    "user_id": user_id,
-                    "authentication_id": AUTHENTICATION_ID
+                    "user_id": user_id
                 }
             )
 
@@ -533,8 +531,7 @@ def process_task_with_retry(task_type, process_func):
                                     endpoint='get_auth_token_by_user_id',
                                     method='POST',
                                     data={
-                                        "user_id": ai_tool.user_id,
-                                        "authentication_id": AUTHENTICATION_ID
+                                        "user_id": ai_tool.user_id
                                     }
                                 )
                                 if success:

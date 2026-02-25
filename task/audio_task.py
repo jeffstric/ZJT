@@ -15,7 +15,6 @@ from duomi_api_requset import (
 from model import TasksModel, AIAudioModel
 from config.constant import (
     TASK_TYPE_GENERATE_AUDIO,
-    AUTHENTICATION_ID,
     AI_AUDIO_STATUS_PENDING,
     AI_AUDIO_STATUS_PROCESSING,
     AI_AUDIO_STATUS_COMPLETED,
