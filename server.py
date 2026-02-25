@@ -3666,23 +3666,6 @@ async def _has_completed_first_recharge(auth_token: str) -> bool:
     return first_recharge == 1
 
 
-def _append_redirect_url(h5_url: Optional[str], redirect_url: str) -> Optional[str]:
-    """
-    在H5支付链接中追加 redirect_url 参数（若已存在则覆盖）
-    """
-    if not h5_url:
-        return h5_url
-    try:
-        parsed = urlparse(h5_url)
-        query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
-        query_params["redirect_url"] = redirect_url
-        new_query = urlencode(query_params, doseq=True)
-        return urlunparse(parsed._replace(query=new_query))
-    except Exception as e:
-        logger.error(f"Failed to append redirect_url to h5_url: {e}")
-        return h5_url
-
-
 async def _update_first_recharge_status(auth_token: str) -> None:
     """
     调用认证服务接口，更新用户首充状态
@@ -3856,7 +3839,7 @@ async def create_wechat_payment(request: WechatPayRequest):
                 order_id=order_id,
                 total_fee=total_fee,
                 body=body,
-                redirect_url=_append_redirect_url(request.redirect_url, notify_url),
+                notify_url=notify_url,
                 payer_client_ip=request.payment_ip or "127.0.0.1"
             )
         
