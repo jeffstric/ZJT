@@ -393,25 +393,17 @@ class AuthService:
             return {"success": False, "message": "更新首充状态失败"}
     
     @staticmethod
-    def get_auth_token_by_user_id(user_id: int, authentication_id: str) -> Dict[str, Any]:
+    def get_auth_token_by_user_id(user_id: int) -> Dict[str, Any]:
         """
         根据用户ID获取认证token
         对应Go的GetAuthTokenByUserID
         
         Args:
             user_id: 用户ID
-            authentication_id: 认证ID（用于验证内部调用）
             
         Returns:
             token信息
         """
-        from config.constant import AUTHENTICATION_ID
-        
-        # 验证authentication_id
-        if authentication_id != AUTHENTICATION_ID:
-            logger.warning("GetAuthTokenByUserID - 认证ID不正确")
-            return {"success": False, "message": "认证ID不正确"}
-        
         try:
             token = UserTokensModel.get_token_by_user_id(user_id)
             if not token:
