@@ -5,6 +5,7 @@ runninghub:
 # Server configuration
 server:
   host: "http://ssh.perseids.cn:12000"
+  is_local: true  # 是否为本地环境，如果是本地环境，进行图片生成以及视频生成时，将参考图片上传到图床中。
   https_host: "https://ssh.perseids.cn:12443"
   port: 9003                # 如需自定义端口可保留
   https_port: 5174
@@ -134,3 +135,10 @@ alembic:
   auto_migrate: true  # 应用启动时是否自动执行迁移
   script_location: "alembic"  # 迁移脚本目录
 
+file_storage:
+  # Qiniu cloud storage configuration
+  qiniu:
+    access_key: "IAM-xxxxxxxxxxxxxxxx"  # 七牛云 Access Key
+    secret_key: "xxxxxxxxxxxxxxxxxxxx"  # 七牛云 Secret Key
+    bucket_name: "jeffstric"  # 存储空间名称
+    cdn_domain: "cdn.perseids.cn"  # CDN 加速域名
