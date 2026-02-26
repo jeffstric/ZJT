@@ -8,6 +8,7 @@ import yaml
 from .base_video_driver import BaseVideoDriver
 from config_util import get_config_path
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
 
 class KlingDuomiV1Driver(BaseVideoDriver):
@@ -30,6 +31,10 @@ class KlingDuomiV1Driver(BaseVideoDriver):
         self._token = config["duomi"]["token"]
         self._base_url = "https://duomiapi.com"
         self._timeout = config["timeout"]["request_timeout"]
+
+        # 是否为本地环境
+        self._is_local = config.get("server", {}).get("is_local", False)
+        self._config = config
 
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """
@@ -172,9 +177,18 @@ class KlingDuomiV1Driver(BaseVideoDriver):
         # 根据时长确定模式
         mode = "std" if ai_tool.duration == 5 else "pro"
 
+        # 处理图片路径 - 如果是本地环境，上传到图床
+        image_path = ai_tool.image_path
+        if self._is_local and image_path:
+            self.logger.info(f"本地环境检测到图片路径，准备上传到图床: {image_path}")
+            cdn_urls = upload_local_images_to_cdn_sync([image_path], self._config)
+            self.logger.info(f"图片上传完成，CDN链接: {cdn_urls}")
+            if cdn_urls and cdn_urls[0]:
+                image_path = cdn_urls[0]
+
         payload = {
             "model_name": "kling-v2-5-turbo",
-            "image": ai_tool.image_path,
+            "image": image_path,
             "prompt": ai_tool.prompt,
             "mode": mode,
             "duration": ai_tool.duration or 5,
