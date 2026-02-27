@@ -34,10 +34,11 @@ def get_config(config_path: str = None) -> Dict[str, Any]:
     # 检查缓存
     if file_path in _config_cache:
         return _config_cache[file_path]
-    
-    # 构建完整路径
-    app_dir = os.path.dirname(os.path.abspath(__file__))
-    full_path = os.path.join(app_dir, file_path)
+
+    # __file__ 在 config/config_util.py，配置文件在项目根目录
+    config_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(config_dir)  # 回到项目根目录
+    full_path = os.path.join(project_root, file_path)
     
     if not os.path.exists(full_path):
         raise FileNotFoundError(f"Configuration file not found: {full_path}")
