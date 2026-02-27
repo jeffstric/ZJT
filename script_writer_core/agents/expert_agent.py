@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from .base_agent import BaseAgent
 from .history_manager import ExpertHistoryManager
-from .gemini_client import get_gemini_client
+from llm.gemini_client import get_gemini_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 

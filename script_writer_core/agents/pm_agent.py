@@ -5,7 +5,7 @@ from .base_agent import BaseAgent
 from .expert_agent import ExpertAgent
 from .summarizer import ConversationSummarizer
 from .task_manager import TaskManager, AgentTask
-from .gemini_client import get_gemini_client
+from llm.gemini_client import get_gemini_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 import json
