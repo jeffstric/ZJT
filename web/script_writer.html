@@ -2272,6 +2272,11 @@
                     closeNewWorldModal();
                     await loadUserWorlds();
                     updateStatus('世界创建完成');
+                    
+                    // 自动选中新创建的世界
+                    if (data.data && data.data.id) {
+                        switchWorld(data.data.id);
+                    }
                 } else {
                     showError('创建世界失败: ' + (data.message || '未知错误'));
                     updateStatus('创建失败');
