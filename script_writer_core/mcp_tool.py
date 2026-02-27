@@ -398,6 +398,36 @@ def create_script_json(user_id: str, world_id: str, auth_token: str, title: str,
         # 使用FileManager统一路径管理
         file_manager = get_file_manager()
         
+        # 如果提供了 episode_number，检查是否存在冲突
+        if episode_number is not None:
+            scripts_dir = file_manager.get_content_dir_path(user_id, world_id, "scripts")
+            import os
+            import glob
+            
+            if os.path.exists(scripts_dir):
+                # 遍历所有剧本文件，检查 episode_number 是否冲突
+                script_files = glob.glob(os.path.join(scripts_dir, "script_*.json"))
+                for script_file in script_files:
+                    try:
+                        with open(script_file, 'r', encoding='utf-8') as f:
+                            existing_script = json.load(f)
+                            existing_episode = existing_script.get('episode_number')
+                            
+                            # 检查 episode_number 是否冲突
+                            if existing_episode == episode_number:
+                                existing_title = existing_script.get('title', '未知')
+                                return {
+                                    'success': False,
+                                    'error': f'集数冲突：第 {episode_number} 集已存在（标题："{existing_title}"）。同一世界下不允许创建相同集数的剧本。',
+                                    'existing_file': script_file,
+                                    'existing_title': existing_title,
+                                    'conflicting_episode_number': episode_number
+                                }
+                    except Exception as e:
+                        # 如果读取某个文件失败，记录日志但继续检查其他文件
+                        logging.warning(f"读取剧本文件 {script_file} 失败: {str(e)}")
+                        continue
+        
         # 检查文件是否已存在
         file_path = file_manager.get_content_file_path(user_id, world_id, "scripts", filename)
         import os
