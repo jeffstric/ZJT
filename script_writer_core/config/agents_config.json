@@ -1,0 +1,153 @@
+{
+  "pm_agent": {
+    "skills": ["script-orchestrator"],
+    "model": "gemini/gemini-3-flash-preview",
+    "allowed_tools": [
+      "call_agent",
+      "list_character_jsons",
+      "list_location_jsons",
+      "list_prop_jsons",
+      "list_script_jsons",
+      "read_character_json",
+      "read_location_json",
+      "read_prop_json",
+      "read_script_json",
+      "get_script_problem",
+      "get_long_user_input"
+    ],
+    "max_consecutive_failures": 3,
+    "max_total_failures": 7
+  },
+  "expert_agents": {
+    "story-writer": {
+      "skills": ["story-writer"],
+      "model": "gemini/gemini-3-flash-preview",
+      "allowed_tools": [
+        "create_script_json",
+        "update_script_json",
+        "update_character_json",
+        "update_location_json",
+        "update_prop_json",
+        "list_character_jsons",
+        "list_location_jsons",
+        "list_prop_jsons",
+        "list_script_jsons",
+        "read_character_json",
+        "read_location_json",
+        "read_prop_json",
+        "read_script_json",
+        "get_script_problem",
+        "get_long_user_input"
+      ],
+      "summary_only": true
+    },
+    "character-creator": {
+      "skills": ["character-creator", "character-consistency-checker"],
+      "model": "gemini/gemini-3-flash-preview",
+      "allowed_tools": [
+        "create_character_json",
+        "update_character_json",
+        "list_character_jsons",
+        "read_character_json"
+      ],
+      "summary_only": true
+    },
+    "location-creator": {
+      "skills": ["location-creator"],
+      "model": "gemini/gemini-3-flash-preview",
+      "allowed_tools": [
+        "create_location_json",
+        "update_location_json",
+        "list_location_jsons",
+        "read_location_json",
+        "list_prop_jsons",
+        "read_prop_json",
+        "update_prop_json",
+        "create_prop_json"
+      ],
+      "summary_only": true
+    },
+    "plot-analyzer": {
+      "skills": ["plot-analyzer"],
+      "model": "gemini/gemini-3-flash-preview",
+      "allowed_tools": [
+        "read_world",
+        "update_world",
+        "read_script_json",
+        "list_script_jsons",
+        "read_character_json",
+        "list_character_jsons",
+        "read_location_json",
+        "list_location_jsons",
+        "read_prop_json",
+        "list_prop_jsons",
+        "get_long_user_input"
+      ],
+      "summary_only": true
+    },
+    "content-compliance-checker": {
+      "skills": ["content-compliance-checker"],
+      "model": "gemini/gemini-3-flash-preview",
+      "allowed_tools": [
+        "read_world",
+        "read_script_json",
+        "list_script_jsons",
+        "read_character_json",
+        "list_character_jsons",
+        "read_location_json",
+        "list_location_jsons",
+        "read_prop_json",
+        "list_prop_jsons",
+        "get_script_problem",
+        "set_script_problem"
+      ],
+      "summary_only": true
+    },
+    "novel-episode-splitter": {
+      "skills": ["novel-episode-splitter"],
+      "model": "gemini/gemini-3-flash-preview",
+      "allowed_tools": [
+        "create_script_json",
+        "read_script_json",
+        "list_script_jsons",
+        "read_character_json",
+        "list_character_jsons",
+        "read_location_json",
+        "list_location_jsons",
+        "read_prop_json",
+        "list_prop_jsons",
+        "get_long_user_input"
+      ],
+      "summary_only": true
+    },
+    "character-image-designer": {
+      "skills": ["character-image-designer"],
+      "model": "gemini/gemini-3-flash-preview",
+      "allowed_tools": [
+        "list_character_jsons",
+        "read_character_json",
+        "generate_text_to_image",
+        "generate_4grid_character_images",
+        "get_task_status",
+        "read_world"
+      ],
+      "summary_only": true
+    },
+    "location-prop-image-designer": {
+      "skills": ["location-prop-image-designer"],
+      "model": "gemini/gemini-3-flash-preview",
+      "allowed_tools": [
+        "read_world",
+        "list_location_jsons",
+        "list_prop_jsons",
+        "read_location_json",
+        "read_prop_json",
+        "generate_text_to_image",
+        "generate_4grid_location_images",
+        "generate_4grid_prop_images",
+        "get_task_status"
+      ],
+      "summary_only": true
+    }
+  }
+}

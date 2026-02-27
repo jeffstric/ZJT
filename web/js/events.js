@@ -4192,7 +4192,7 @@
     // 一键生成素材按钮点击事件
     const agentBtnMaterial = document.getElementById('agentBtnMaterial');
     if (agentBtnMaterial) {
-      agentBtnMaterial.addEventListener('click', async () => {
+      agentBtnMaterial.addEventListener('click', () => {
         const authToken = localStorage.getItem('auth_token') || '';
         const userId = localStorage.getItem('user_id') || '';
         
@@ -4201,31 +4201,13 @@
           return;
         }
         
-        try {
-          const response = await fetch('/api/script-writer-url', {
-            headers: {
-              'Authorization': authToken,
-              'X-User-Id': userId
-            }
-          });
-          const result = await response.json();
-          
-          if (result.code === 0 && result.data && result.data.url) {
-            const baseUrl = result.data.url;
-            let url = `${baseUrl}?auth_token=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
-            
-            // 如果已选择世界，添加 world_id 参数
-            if (state.defaultWorldId) {
-              url += `&world_id=${encodeURIComponent(state.defaultWorldId)}`;
-            }
-            
-            window.open(url, '_blank');
-          } else {
-            showToast(result.message || '获取服务地址失败', 'error');
-          }
-        } catch (error) {
-          console.error('Failed to get script writer url:', error);
-          showToast('网络错误', 'error');
+        let url = `/script-writer?auth_token=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
+        
+        // 如果已选择世界，添加 world_id 参数
+        if (state.defaultWorldId) {
+          url += `&world_id=${encodeURIComponent(state.defaultWorldId)}`;
         }
+        
+        window.location.href = url;
       });
     }

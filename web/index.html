@@ -530,7 +530,7 @@
       handleVideoWorkflowClick() {
         window.location.href = '/video-workflow-list';
       },
-      async handleScriptWriterClick() {
+      handleScriptWriterClick() {
         const authToken = localStorage.getItem('auth_token');
         const userId = localStorage.getItem('user_id');
         
@@ -539,25 +539,8 @@
           return;
         }
         
-        try {
-          const response = await axios.get('/api/script-writer-url', {
-            headers: {
-              'Authorization': authToken,
-              'X-User-Id': userId
-            }
-          });
-          
-          if (response.data.code === 0 && response.data.data && response.data.data.url) {
-            const baseUrl = response.data.data.url;
-            const url = `${baseUrl}?auth_token=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
-            window.open(url, '_blank');
-          } else {
-            alert(response.data.message || '获取服务地址失败');
-          }
-        } catch (error) {
-          console.error('Failed to get script writer url:', error);
-          alert('网络错误');
-        }
+        const url = `/script-writer?auth_token=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
+        window.location.href = url;
       }
     }
   };

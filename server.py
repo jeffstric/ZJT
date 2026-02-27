@@ -159,8 +159,6 @@ else:
     SERVER_HOST = config["server"]["host"]
 API_KEY = config["runninghub"]["api_key"]
 
-SCRIPT_WRITER_URL = config["script_writer"]["url"]
-
 # 上传文件大小限制配置（单位：MB）
 MAX_IMAGE_SIZE_MB = config.get("upload", {}).get("max_image_size_mb", 10)
 MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
@@ -178,6 +176,10 @@ wechat_pay_util = WechatPayUtil(
 DEFAULT_COMFYUI_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188/")
 
 app = FastAPI(title="ComfyUI Qwen Image Edit Proxy")
+
+# 导入并注册 script_writer API 路由
+from script_writer_api import router as script_writer_router
+app.include_router(script_writer_router)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -2412,32 +2414,6 @@ async def get_task_type_config():
             status_code=500,
             content={
                 'success': False,
-                'message': '服务器错误'
-            }
-        )
-
-
-@app.get('/api/script-writer-url')
-async def get_script_writer_url():
-    """
-    获取短剧智能体服务地址
-    """
-    try:
-        return JSONResponse(
-            content={
-                'code': 0,
-                'message': '获取成功',
-                'data': {
-                    'url': SCRIPT_WRITER_URL
-                }
-            }
-        )
-    except Exception as e:
-        logger.error(f'获取短剧智能体服务地址失败: {str(e)}')
-        return JSONResponse(
-            status_code=500,
-            content={
-                'code': -1,
                 'message': '服务器错误'
             }
         )
@@ -6744,6 +6720,13 @@ async def serve_image_style_guide():
     if os.path.isfile(file_path):
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="Image style guide page not found")
+
+@app.get("/script-writer")
+async def serve_script_writer():
+    file_path = os.path.join(static_dir, "script_writer.html")
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Script writer page not found")
 
 @app.get(f"{MP_VERIFY_ROUTE}")
 async def get_mp_verify_file():

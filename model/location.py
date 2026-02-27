@@ -115,6 +115,29 @@ class LocationModel:
             raise
     
     @staticmethod
+    def get_by_name(world_id: int, name: str) -> Optional[Location]:
+        """
+        Get location record by world ID and name
+        
+        Args:
+            world_id: World ID
+            name: Location name
+        
+        Returns:
+            Location object or None
+        """
+        sql = "SELECT * FROM location WHERE world_id = %s AND name = %s LIMIT 1"
+        
+        try:
+            result = execute_query(sql, (world_id, name), fetch_one=True)
+            if result:
+                return Location(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get location by name '{name}' for world {world_id}: {e}")
+            raise
+    
+    @staticmethod
     def list_by_world(
         world_id: int,
         page: int = 1,

@@ -252,6 +252,32 @@ class ScriptModel:
             raise
     
     @staticmethod
+    def get_by_title_and_world(
+        title: str,
+        world_id: int
+    ) -> Optional[Script]:
+        """
+        Get script by title and world ID
+        
+        Args:
+            title: Script title
+            world_id: World ID
+        
+        Returns:
+            Script object or None
+        """
+        sql = "SELECT * FROM script WHERE title = %s AND world_id = %s LIMIT 1"
+        
+        try:
+            result = execute_query(sql, (title, world_id), fetch_one=True)
+            if result:
+                return Script(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get script by title '{title}' for world {world_id}: {e}")
+            raise
+    
+    @staticmethod
     def update(
         record_id: int,
         **kwargs

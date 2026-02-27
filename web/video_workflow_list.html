@@ -1119,29 +1119,16 @@
       if (!ensureLoggedIn()) return;
       
       try {
-        const response = await fetch('/api/script-writer-url', {
-          headers: {
-            'Authorization': getAuthToken(),
-            'X-User-Id': getUserId()
-          }
-        });
-        const result = await response.json();
+        const authToken = getAuthToken();
+        const userId = getUserId();
         
-        if (result.code === 0 && result.data && result.data.url) {
-          const baseUrl = result.data.url;
-          const authToken = getAuthToken();
-          const userId = getUserId();
-          
-          // 拼接参数
-          const url = `${baseUrl}?auth_token=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
-          
-          // 打开新窗口
-          window.open(url, '_blank');
-        } else {
-          showToast(result.message || '获取服务地址失败', 'error');
-        }
+        // 直接跳转到内部路由
+        const url = `/script-writer?auth_token=${encodeURIComponent(authToken)}&user_id=${encodeURIComponent(userId)}`;
+        
+        // 打开新窗口
+        window.open(url, '_blank');
       } catch (error) {
-        console.error('Failed to get script writer url:', error);
+        console.error('Failed to open script writer:', error);
         showToast('网络错误', 'error');
       }
     }

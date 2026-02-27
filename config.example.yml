@@ -13,6 +13,7 @@ server:
     enabled: false
     certfile: "secret/ssh.perseids.cn_bundle.pem"
     keyfile: "secret/ssh.perseids.cn.key"
+  comfyui_base_url_inner: http://localhost:9003
 # Default timeout settings
 timeout:
   request_timeout: 10000
@@ -113,8 +114,11 @@ jiekou:
   api_key: "sk_xxxx"
   base_url: "https://api.jiekou.ai"
 
-script_writer:
-  url: "http://localhost:5000/"
+# Anthropic Claude API configuration (script_writer 智能体使用)
+anthropic:
+  api_key: "sk-ant-api03-your-actual-key-here"
+  base_url: "https://api.aicodemirror.com/api/claudecode"
+  auth_token: "sk-ant-api03-your-actual-key-here"
 
 # Task queue management
 task_queue:
@@ -149,3 +153,12 @@ file_storage:
     secret_key: "xxxxxxxxxxxxxxxxxxxx"  # 七牛云 Secret Key
     bucket_name: "jeffstric"  # 存储空间名称
     cdn_domain: "cdn.perseids.cn"  # CDN 加速域名  绑定CDN加速域名图文教程文档，您可以参考：https://developer.qiniu.com/fusion/manual/4939/the-domain-name-to-access 需要注意您要绑定工信部备案的域名。
+
+image:
+  enable_download: true
+
+# Sentry 配置
+sentry:
+  dsn: "https://xxxxx6"
+  environment: "test"  # 可选，默认 "production"
+

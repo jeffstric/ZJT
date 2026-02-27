@@ -154,6 +154,29 @@ class CharacterModel:
             raise
     
     @staticmethod
+    def get_by_name(world_id: int, name: str) -> Optional[Character]:
+        """
+        Get character record by world ID and name
+        
+        Args:
+            world_id: World ID
+            name: Character name
+        
+        Returns:
+            Character object or None
+        """
+        sql = "SELECT * FROM `character` WHERE world_id = %s AND name = %s LIMIT 1"
+        
+        try:
+            result = execute_query(sql, (world_id, name), fetch_one=True)
+            if result:
+                return Character(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get character by name '{name}' for world {world_id}: {e}")
+            raise
+    
+    @staticmethod
     def list_by_world(
         world_id: int,
         page: int = 1,

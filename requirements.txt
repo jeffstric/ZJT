@@ -24,3 +24,7 @@ alembic>=1.13.0
 sqlalchemy>=2.0.0
 pymysql>=1.1.2
 qiniu>=7.17.0
+# 智能体系统
+anthropic>=0.40.0
+litellm>=1.35.0
+mcp>=1.0.0
