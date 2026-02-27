@@ -18,17 +18,7 @@ from apscheduler.jobstores.memory import MemoryJobStore
 from PIL import Image
 from io import BytesIO
 from script_writer_core.image_grid_splitter import ImageGridSplitter
-from config_util import get_config_path
-import yaml
-
-config_path = get_config_path()
-
-# Load config to get host
-if not os.path.exists(config_path):
-    raise FileNotFoundError(f"Configuration file not found: {config_path}")
-    
-with open(config_path, 'r', encoding='utf-8') as file:
-    config = yaml.safe_load(file)
+from config.config_util import get_config
     
 class TaskManager:
     """任务管理器，使用APScheduler处理后台任务"""
@@ -420,7 +410,7 @@ class TaskManager:
         with open(local_file_path, 'wb') as f:
             f.write(img_response.content)
 
-        config_comfyui_base_url= config["server"]["host"]
+        config_comfyui_base_url = get_config()["server"]["host"]
         local_image_url = f"{config_comfyui_base_url.rstrip('/')}/{local_url_path}/{filename}"
         
         return local_image_url, local_file_path
@@ -438,7 +428,7 @@ class TaskManager:
                 raise Exception('图片生成完成但未返回文件URL')
                       
             # 默认关闭图片下载功能
-            enable_image_download = config["image"]["enable_download"]
+            enable_image_download = get_config().get("image", {}).get("enable_download", False)
             
             if enable_image_download:
                 # 启用图片下载和本地存储
@@ -492,7 +482,7 @@ class TaskManager:
                         )
                         
                         # 构建拆分后图片的URL
-                        config_comfyui_base_url = config["server"]["host"]
+                        config_comfyui_base_url = get_config()["server"]["host"]
                         
                         for split_path in split_paths:
                             # 获取相对路径

@@ -16,17 +16,7 @@ from datetime import datetime
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
-import yaml
-from config_util import get_config_path
-
-config_path = get_config_path()
-
-# Load config to get host
-if not os.path.exists(config_path):
-    raise FileNotFoundError(f"Configuration file not found: {config_path}")
-    
-with open(config_path, 'r', encoding='utf-8') as file:
-    config = yaml.safe_load(file)
+from config.config_util import get_config
 
 # 设置技能调用日志
 def setup_skill_logger():
@@ -2561,7 +2551,7 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                     }
     
         # 需要读取内网，避免ssh.perseids.cn 内网无法访问的问题
-        comfyui_base_url = config["server"]["comfyui_base_url_inner"]
+        comfyui_base_url = get_config().get("server", {}).get("comfyui_base_url_inner", "")
         
         if not comfyui_base_url:
             return {
