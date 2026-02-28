@@ -71,6 +71,7 @@ from utils.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
 from utils import file_lock
+from perseids_server.utils.permission import require_permission, admin_required
 
 def _get_user_id_from_header(user_id: Optional[int]) -> int:
     if user_id is None:
@@ -254,7 +255,8 @@ def _normalize_server(server: str) -> str:
 
 
 @app.get("/api/config/upload")
-async def get_upload_config():
+@require_permission("config:view_upload")
+async def get_upload_config(request: Request):
     """
     获取上传文件配置
     """
@@ -268,7 +270,8 @@ async def get_upload_config():
 
 
 @app.get("/api/config/debug-password")
-async def get_debug_password():
+@require_permission("config:view_debug_password")
+async def get_debug_password(request: Request):
     """
     获取前端 Debug 模式密码
     """
@@ -280,7 +283,9 @@ async def get_debug_password():
 
 
 @app.get("/api/download")
+@require_permission("file:download")
 async def download_image(
+    request: Request,
     url: str = Query(..., description="Media URL to download"),
     filename: str = Query(None, description="Custom filename")
 ):
@@ -335,7 +340,8 @@ async def download_image(
 
 
 @app.get("/api/proxy-image")
-async def proxy_image(url: str = Query(..., description="Image URL to proxy")):
+@require_permission("file:proxy_image")
+async def proxy_image(request: Request, url: str = Query(..., description="Image URL to proxy")):
     """
     Proxy image requests to avoid CORS issues in Electron
     """
@@ -828,7 +834,9 @@ def _concatenate_images(upload_files: List[UploadFile]) -> str:
 
 
 @app.post("/api/image-edit")
+@require_permission("image:edit")
 async def image_edit(
+    request: Request,
     image: List[UploadFile] = File(default=None),
     prompt: str = Form(...),
     ratio: str = Form("9:16", description="Model type: 9:16, 16:9, 1:1 ,3:4, 4:3"),
@@ -971,7 +979,9 @@ async def image_edit(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/text-to-image")
+@require_permission("image:text_to_image")
 async def text_to_image(
+    request: Request,
     prompt: str = Form(...),
     model: str = Form("gemini-2.5-pro-image-preview", description="Model type: gemini-3-pro-image-preview, gemini-2.5-pro-image-preview"),
     aspect_ratio: str = Form("9:16", description="Aspect ratio: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9"),
@@ -1082,7 +1092,9 @@ async def text_to_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/runninghub-status/{project_id}")
+@require_permission("image:view_status")
 async def runninghub_status(
+    request: Request,
     project_id: str,
     auth_token: Optional[str] = Query(None, description="Auth token for computing power refund")
 ):
@@ -1178,7 +1190,9 @@ async def runninghub_status(
 
 
 @app.get("/api/get-status/{ai_tool_id}")
+@require_permission("video:view_status")
 async def get_status(
+    request: Request,
     ai_tool_id: str,
     auth_token: Optional[str] = Query(None, description="Auth token for computing power refund")
 ):
@@ -1255,7 +1269,9 @@ async def get_status(
 
 
 @app.post("/api/ai-app-run")
+@require_permission("image:ai_app_run")
 async def ai_app_run(
+    request: Request,
     prompt: str = Form(..., description="Text prompt for the AI app"),
     ratio: str = Form("9:16", description="Model type: 9:16, 16:9"),
     duration_seconds: int = Form(15, description="Duration in seconds"),
@@ -1362,7 +1378,9 @@ async def ai_app_run(
         raise HTTPException(status_code=500, detail=f"Failed to submit AI app task: {str(e)}")
 
 @app.post("/api/ai-app-run-image")
+@require_permission("image:ai_app_run")
 async def ai_app_run_image(
+    request: Request,
     prompt: str = Form(..., description="Text prompt for the AI app"),
     images: List[UploadFile] = File(None, description="Image files for the AI app (1-5 images)"),
     image_urls: str = Form(None, description="Comma-separated image URLs (alternative to uploading files)"),
@@ -1611,7 +1629,8 @@ async def ai_app_run_image(
 
 
 @app.get('/api/user/computing_power')
-async def get_computing_power(auth_token: str = Header(None, alias="Authorization")):
+@require_permission("computing:view_balance")
+async def get_computing_power(request: Request, auth_token: str = Header(None, alias="Authorization")):
     """
     查询用户算力
     """
@@ -1670,7 +1689,9 @@ async def get_computing_power(auth_token: str = Header(None, alias="Authorizatio
 
 
 @app.get('/api/user/computing_power_logs')
+@require_permission("computing:view_logs")
 async def get_computing_power_logs(
+    request: Request,
     auth_token: str = Header(None, alias="Authorization"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页数量"),
@@ -1809,7 +1830,8 @@ async def get_computing_power_logs(
 
 
 @app.get('/api/user/invitation_info')
-async def get_invitation_info(auth_token: str = Header(None, alias="Authorization")):
+@require_permission("user:view_invite_stats")
+async def get_invitation_info(request: Request, auth_token: str = Header(None, alias="Authorization")):
     """
     查询用户邀请人所获得的算力以及邀请人数量
     """
@@ -2115,12 +2137,13 @@ class LogoutRequest(BaseModel):
     auth_token: str
 
 @app.post('/api/auth/logout')
-async def logout(request: LogoutRequest):
+@require_permission("user:logout")
+async def logout(request: Request, logout_request: LogoutRequest):
     """
     用户登出接口
     """
     try:
-        auth_token = request.auth_token
+        auth_token = logout_request.auth_token
 
         if not auth_token:
             return JSONResponse(
@@ -2171,14 +2194,15 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 @app.post('/api/auth/reset_password')
-async def reset_password(request: ResetPasswordRequest):
+@require_permission("user:reset_password")
+async def reset_password(request: Request, reset_request: ResetPasswordRequest):
     """
     重置密码
     """
     try:
-        phone = request.phone
-        code = request.code
-        new_password = request.new_password
+        phone = reset_request.phone
+        code = reset_request.code
+        new_password = reset_request.new_password
 
         if not all([phone, code, new_password]):
             return JSONResponse(
@@ -2230,7 +2254,9 @@ async def reset_password(request: ResetPasswordRequest):
 
 
 @app.get('/api/ai-tools/history')
+@require_permission("ai_tools:view_history")
 async def get_ai_tools_history(
+    request: Request,
     user_id: int = Query(..., description="User ID"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
@@ -2406,7 +2432,8 @@ async def get_ai_tools_history(
 
 
 @app.get('/api/computing-power-config')
-async def get_computing_power_config():
+@require_permission("computing:manage_config")
+async def get_computing_power_config(request: Request):
     """
     获取算力配置
     返回各个任务类型的算力消耗配置和视频模型时长选项
@@ -2434,7 +2461,8 @@ async def get_computing_power_config():
 
 
 @app.get('/api/task-type-config')
-async def get_task_type_config():
+@require_permission("computing:view_task_config")
+async def get_task_type_config(request: Request):
     """
     获取任务类型配置
     返回图生视频、图片编辑等任务类型列表和类型名称映射
@@ -2463,7 +2491,9 @@ async def get_task_type_config():
 
 
 @app.get('/api/ai-tools/detail/{record_id}')
+@require_permission("ai_tools:view_history")
 async def get_ai_tool_detail(
+    request: Request,
     record_id: int,
     user_id: int = Header(None, alias="X-User-Id"),
     auth_token: str = Header(None, alias="Authorization")
@@ -2502,7 +2532,9 @@ async def get_ai_tool_detail(
 
 
 @app.post("/api/ai-script-generate")
+@require_permission("video:ai_script_gen")
 async def ai_script_generate(
+    request: Request,
     image1: UploadFile = File(..., description="第一张图片（必传）"),
     image2: UploadFile = File(None, description="第二张图片（可选）"),
     image3: UploadFile = File(None, description="第三张图片（可选）"),
@@ -2594,7 +2626,9 @@ async def ai_script_generate(
 
 
 @app.post("/api/image-upscale")
+@require_permission("image:upscale")
 async def image_upscale(
+    request: Request,
     project_id: str = Form(..., description="Project ID of the image to upscale"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
@@ -2727,7 +2761,9 @@ async def image_upscale(
         raise HTTPException(status_code=500, detail=f"图片高清放大失败: {str(e)}")
         
 @app.post("/api/video-enhance")
+@require_permission("video:enhance")
 async def video_enhance(
+    request: Request,
     video: UploadFile = File(None, description="需要修复的视频文件"),
     video_url: str = Form(None, description="视频URL（如果提供则不需要上传文件）"),
     user_id: int = Form(None, description="User ID"),
@@ -2890,7 +2926,9 @@ async def video_enhance(
 
 
 @app.post("/api/video-remix")
+@require_permission("video:remix")
 async def video_remix(
+    request: Request,
     video_id: str = Form(..., description="视频ID"),
     prompt: str = Form(..., description="重新编辑的提示词"),
     aspect_ratio: str = Form("16:9", description="视频比例: 16:9, 9:16, 1:1"),
@@ -3058,7 +3096,9 @@ async def video_remix(
 
 
 @app.post("/api/create-character")
+@require_permission("character:create_card")
 async def api_create_character(
+    request: Request,
     timestamps: str = Form(..., description="Time range (format: 'start,end', 1-3 seconds)"),
     url: Optional[str] = Form(None, description="Video URL (not for real people)"),
     from_task: Optional[str] = Form(None, description="Task ID or database record ID (supports real people)"),
@@ -3217,7 +3257,9 @@ async def api_create_character(
 
 
 @app.post("/api/digital-human")
+@require_permission("digital_human:create")
 async def digital_human_generate(
+    request: Request,
     image: UploadFile = File(..., description="Input image for digital human"),
     text: str = Form(..., description="Text content for digital human to speak (max 1000 characters)"),
     audio: UploadFile = File(..., description="Reference audio file"),
@@ -3338,7 +3380,9 @@ async def digital_human_generate(
 
 
 @app.post("/api/audio-generate")
+@require_permission("audio:generate")
 async def audio_generate(
+    request: Request,
     text: str = Form(..., description="Text to generate audio from"),
     ref_audio: Optional[UploadFile] = File(None, description="Reference audio file for voice cloning"),
     emo_ref_audio: Optional[UploadFile] = File(None, description="Emotion reference audio file"),
@@ -3424,7 +3468,8 @@ async def audio_generate(
 
 
 @app.get("/api/audio-status/{audio_id}")
-async def audio_status(audio_id: int):
+@require_permission("audio:view_status")
+async def audio_status(request: Request, audio_id: int):
     """
     查询音频生成任务状态。
     
@@ -3476,7 +3521,9 @@ async def audio_status(audio_id: int):
 
 
 @app.get("/api/character-status/{task_id}")
+@require_permission("character:view_status")
 async def api_character_status(
+    request: Request,
     task_id: str,
     auth_token: Optional[str] = Query(None, description="Auth token for computing power refund")
 ):
@@ -3710,7 +3757,8 @@ async def _update_first_recharge_status(auth_token: str) -> None:
 
 
 @app.get("/api/recharge/packages")
-async def get_recharge_packages(auth_token: str):
+@require_permission("computing:view_packages")
+async def get_recharge_packages(request: Request, auth_token: str):
     """
     获取算力充值套餐列表
     
@@ -3746,12 +3794,13 @@ async def get_recharge_packages(auth_token: str):
 
 
 @app.post("/api/recharge/wechat-pay")
-async def create_wechat_payment(request: WechatPayRequest):
+@require_permission("order:create")
+async def create_wechat_payment(request: Request, payment_request: WechatPayRequest):
     """
     创建微信支付订单
     
     Args:
-        request: 包含套餐ID、用户ID、认证token和浏览器类型的请求
+        payment_request: 包含套餐ID、用户ID、认证token和浏览器类型的请求
     
     Returns:
         微信支付二维码URL/JSAPI支付参数和订单信息
@@ -3767,7 +3816,7 @@ async def create_wechat_payment(request: WechatPayRequest):
     """
     try:
         # 验证用户token
-        if not request.auth_token:
+        if not payment_request.auth_token:
             raise HTTPException(
                 status_code=400,
                 detail="Authentication token is required"
@@ -3778,11 +3827,11 @@ async def create_wechat_payment(request: WechatPayRequest):
             success, message, response_data = await async_make_perseids_request(
                 endpoint='user/check_computing_power',
                 method='GET',
-                headers={'Authorization': f'Bearer {request.auth_token}'}
+                headers={'Authorization': f'Bearer {payment_request.auth_token}'}
             )
             
             if not success:
-                logger.warning(f"User {request.user_id} authentication failed or expired")
+                logger.warning(f"User {payment_request.user_id} authentication failed or expired")
                 raise HTTPException(
                     status_code=401,
                     detail="登录已过期，请重新登录"
@@ -3799,7 +3848,7 @@ async def create_wechat_payment(request: WechatPayRequest):
         # 验证套餐ID
         package_info = None
         for package in RECHARGE_PACKAGES:
-            if package["package_id"] == request.package_id:
+            if package["package_id"] == payment_request.package_id:
                 package_info = package
                 break
         
@@ -3810,10 +3859,10 @@ async def create_wechat_payment(request: WechatPayRequest):
             )
 
         # 首充套餐校验：如果package_id为1且用户已首充，禁止再次购买
-        if request.package_id == 1:
-            has_completed_first_recharge = await _has_completed_first_recharge(request.auth_token)
+        if payment_request.package_id == 1:
+            has_completed_first_recharge = await _has_completed_first_recharge(payment_request.auth_token)
             if has_completed_first_recharge:
-                logger.warning(f"User {request.user_id} attempted to purchase first-charge package again")
+                logger.warning(f"User {payment_request.user_id} attempted to purchase first-charge package again")
                 raise HTTPException(
                     status_code=400,
                     detail="首充福利仅限首次充值，您已领取过该套餐"
@@ -3833,12 +3882,12 @@ async def create_wechat_payment(request: WechatPayRequest):
         payment_result = {}
         payment_type = ""
         
-        if request.is_wechat_browser:
+        if payment_request.is_wechat_browser:
             # 微信内浏览器使用JSAPI支付
             payment_type = "JSAPI"
             
             # 获取用户的openid
-            if not request.openid:
+            if not payment_request.openid:
                 raise HTTPException(
                     status_code=400,
                     detail="微信支付需要用户openid，请先进行微信授权"
@@ -3870,26 +3919,26 @@ async def create_wechat_payment(request: WechatPayRequest):
         try:
             record_id = PaymentOrdersModel.create(
                 order_id=order_id,
-                user_id=request.user_id,
-                package_id=request.package_id,
+                user_id=payment_request.user_id,
+                package_id=payment_request.package_id,
                 computing_power=package_info["computing_power"],
                 price=package_info["price"],
                 payment_type=payment_type,
                 status=0,  # 0-待支付
-                payment_ip=request.payment_ip
+                payment_ip=payment_request.payment_ip
             )
             logger.info(f"Saved payment order {record_id} to database")
         except Exception as e:
             logger.error(f"Failed to save payment order to database: {e}")
             # 继续执行，不影响支付流程
         
-        logger.info(f"Created {payment_type} payment order {record_id} for user {request.user_id}, package {request.package_id}")
+        logger.info(f"Created {payment_type} payment order {record_id} for user {payment_request.user_id}, package {payment_request.package_id}")
               
         # 返回支付信息
         response_data = {
             "success": True,
             "order_id": record_id,
-            "package_id": request.package_id,
+            "package_id": payment_request.package_id,
             "computing_power": package_info["computing_power"],
             "price": package_info["price"],
             "payment_type": payment_type
@@ -4102,7 +4151,9 @@ class VideoWorkflowUpdateRequest(BaseModel):
 
 
 @app.get('/api/video-workflow/list')
+@require_permission("video_workflow:list")
 async def get_video_workflow_list(
+    request: Request,
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(10, ge=1, le=100, description="每页数量"),
     status: Optional[int] = Query(None, description="状态筛选: 0-禁用, 1-启用, 2-草稿"),
@@ -4143,7 +4194,9 @@ async def get_video_workflow_list(
 
 
 @app.get('/api/video-workflow/{workflow_id}')
+@require_permission("video_workflow:view")
 async def get_video_workflow(
+    request: Request,
     workflow_id: int,
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
@@ -4182,7 +4235,9 @@ async def get_video_workflow(
 
 
 @app.get('/api/video-workflow/{workflow_id}/poll-status')
+@require_permission("video_workflow:poll_status")
 async def poll_workflow_node_status(
+    request: Request,
     workflow_id: int,
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
@@ -4313,6 +4368,7 @@ async def poll_workflow_node_status(
 
 
 @app.post('/api/video-workflow/upload')
+@require_permission("video_workflow:upload")
 async def upload_workflow_asset(
     request: Request,
     file: UploadFile = File(..., description="要上传的图片、视频或音频文件"),
@@ -4353,7 +4409,9 @@ async def upload_workflow_asset(
 
 
 @app.get('/api/ai-tools/{ai_tools_id}/grid-split')
+@require_permission("image:grid_split")
 async def get_grid_split_image(
+    request: Request,
     ai_tools_id: int,
     grid_index: int = Query(..., ge=1, le=9, description="宫格位置，1-4或1-9"),
     user_id: int = Query(...),
@@ -4580,6 +4638,7 @@ class MergeGridRequest(BaseModel):
 
 
 @app.post('/api/images/merge-grid')
+@require_permission("image:merge_grid")
 async def merge_grid_images(
     request: MergeGridRequest,
     x_user_id: Optional[int] = Header(None, alias="X-User-Id"),
@@ -4837,8 +4896,10 @@ async def reduce_violation(
 
 
 @app.post('/api/video-workflow/create')
+@require_permission("video_workflow:create")
 async def create_video_workflow(
-    request: VideoWorkflowCreateRequest,
+    request: Request,
+    workflow_request: VideoWorkflowCreateRequest,
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
@@ -4849,15 +4910,15 @@ async def create_video_workflow(
         user_id = _get_user_id_from_header(user_id)
         
         workflow_id = VideoWorkflowModel.create(
-            name=request.name,
+            name=workflow_request.name,
             user_id=user_id,
-            description=request.description,
-            cover_image=request.cover_image,
-            status=request.status,
-            workflow_data=request.workflow_data,
-            style=request.style,
-            style_reference_image=request.style_reference_image,
-            default_world_id=request.default_world_id
+            description=workflow_request.description,
+            cover_image=workflow_request.cover_image,
+            status=workflow_request.status,
+            workflow_data=workflow_request.workflow_data,
+            style=workflow_request.style,
+            style_reference_image=workflow_request.style_reference_image,
+            default_world_id=workflow_request.default_world_id
         )
         
         return JSONResponse({
@@ -4875,9 +4936,11 @@ async def create_video_workflow(
 
 
 @app.put('/api/video-workflow/{workflow_id}')
+@require_permission("video_workflow:update")
 async def update_video_workflow(
+    request: Request,
     workflow_id: int,
-    request: VideoWorkflowUpdateRequest,
+    update_request: VideoWorkflowUpdateRequest,
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
@@ -4903,22 +4966,22 @@ async def update_video_workflow(
         
         # 构建更新字段
         update_fields = {}
-        if request.name is not None:
-            update_fields['name'] = request.name
-        if request.description is not None:
-            update_fields['description'] = request.description
-        if request.cover_image is not None:
-            update_fields['cover_image'] = request.cover_image
-        if request.status is not None:
-            update_fields['status'] = request.status
-        if request.workflow_data is not None:
-            update_fields['workflow_data'] = request.workflow_data
-        if request.style is not None:
-            update_fields['style'] = request.style
-        if request.style_reference_image is not None:
-            update_fields['style_reference_image'] = request.style_reference_image
-        if request.default_world_id is not None:
-            update_fields['default_world_id'] = request.default_world_id
+        if update_request.name is not None:
+            update_fields['name'] = update_request.name
+        if update_request.description is not None:
+            update_fields['description'] = update_request.description
+        if update_request.cover_image is not None:
+            update_fields['cover_image'] = update_request.cover_image
+        if update_request.status is not None:
+            update_fields['status'] = update_request.status
+        if update_request.workflow_data is not None:
+            update_fields['workflow_data'] = update_request.workflow_data
+        if update_request.style is not None:
+            update_fields['style'] = update_request.style
+        if update_request.style_reference_image is not None:
+            update_fields['style_reference_image'] = update_request.style_reference_image
+        if update_request.default_world_id is not None:
+            update_fields['default_world_id'] = update_request.default_world_id
         
         if update_fields:
             VideoWorkflowModel.update(workflow_id, **update_fields)
@@ -4937,7 +5000,9 @@ async def update_video_workflow(
 
 
 @app.delete('/api/video-workflow/{workflow_id}')
+@require_permission("video_workflow:delete")
 async def delete_video_workflow(
+    request: Request,
     workflow_id: int,
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")

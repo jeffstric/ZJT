@@ -15,6 +15,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request, Query as QueryParam, Header
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from perseids_server.utils.permission import require_permission
 
 # ==================== 加载 API 配置 ====================
 def _load_api_config():
@@ -653,16 +654,17 @@ class VerificationSubmitRequest(BaseModel):
 # ==================== 会话管理 API ====================
 
 @router.post('/session/create')
-async def create_session(request: SessionCreateRequest):
+@require_permission("script_session:create")
+async def create_session(request: Request, session_request: SessionCreateRequest):
     """创建新会话"""
     try:
         # 验证 auth_token
-        is_valid, error_response = await verify_auth_token(request.user_id, request.auth_token)
+        is_valid, error_response = await verify_auth_token(session_request.user_id, session_request.auth_token)
         if not is_valid:
             return JSONResponse(error_response, status_code=401)
         
         # 从数据库同步数据到文件系统（不强制覆盖，有差异时跳过）
-        sync_result = sync_database_to_files(request.user_id, request.world_id, request.auth_token, force_overwrite=False)
+        sync_result = sync_database_to_files(session_request.user_id, session_request.world_id, session_request.auth_token, force_overwrite=False)
         if sync_result['skipped_files']:
             logger.info(f"create_session: 以下文件存在差异，已跳过: {sync_result['skipped_files']}")
         
@@ -677,25 +679,25 @@ async def create_session(request: SessionCreateRequest):
             tool_executor=tool_executor,
             agents_config=agents_config,
             system_prompt=None,  # 使用 PMAgent 的默认构建逻辑
-            user_id=request.user_id,
-            world_id=request.world_id,
-            auth_token=request.auth_token,
-            model=request.model,
-            model_id=request.model_id
+            user_id=session_request.user_id,
+            world_id=session_request.world_id,
+            auth_token=session_request.auth_token,
+            model=session_request.model,
+            model_id=session_request.model_id
         )
         
         # 存储会话
         with sessions_lock:
             sessions_storage[session_id] = session
         
-        logger.info(f'会话创建成功 - session_id: {session_id}, user_id: {request.user_id}, world_id: {request.world_id}')
+        logger.info(f'会话创建成功 - session_id: {session_id}, user_id: {session_request.user_id}, world_id: {session_request.world_id}')
         
         return JSONResponse({
             'success': True,
             'message': '会话创建成功（多智能体模式）',
             'session_id': session_id,
-            'user_id': request.user_id,
-            'world_id': request.world_id,
+            'user_id': session_request.user_id,
+            'world_id': session_request.world_id,
             'skipped_files': sync_result.get('skipped_files', []),
             'local_only_files': sync_result.get('local_only_files', [])
         })
@@ -707,7 +709,8 @@ async def create_session(request: SessionCreateRequest):
         }, status_code=500)
 
 @router.get('/session/{session_id}/history')
-async def get_session_history(session_id: str):
+@require_permission("script_session:view")
+async def get_session_history(request: Request, session_id: str):
     """获取会话历史"""
     try:
         with sessions_lock:
@@ -732,7 +735,8 @@ async def get_session_history(session_id: str):
         }, status_code=500)
 
 @router.post('/session/{session_id}/clear')
-async def clear_session_history(session_id: str):
+@require_permission("script_session:clear_history")
+async def clear_session_history(request: Request, session_id: str):
     """清空会话历史"""
     try:
         with sessions_lock:
@@ -766,7 +770,8 @@ async def clear_user_directory(request: SyncFilesRequest):
     })
 
 @router.post('/session/{session_id}/model')
-async def set_session_model(session_id: str, request: ModelChangeRequest):
+@require_permission("script_session:change_model")
+async def set_session_model(request: Request, session_id: str, model_request: ModelChangeRequest):
     """切换会话模型"""
     try:
         with sessions_lock:
@@ -779,8 +784,8 @@ async def set_session_model(session_id: str, request: ModelChangeRequest):
             session = sessions_storage[session_id]
         
         # 验证模型是否有效
-        if request.auth_token:
-            is_valid, valid_models, error_msg = await validate_model(request.model, request.auth_token)
+        if model_request.auth_token:
+            is_valid, valid_models, error_msg = await validate_model(model_request.model, model_request.auth_token)
             if not is_valid:
                 return JSONResponse({
                     'success': False,
@@ -790,23 +795,23 @@ async def set_session_model(session_id: str, request: ModelChangeRequest):
         
         # 更新模型 - 使用 ChatSession 的 set_model 方法
         model_id = None
-        if request.model_id is not None:
+        if model_request.model_id is not None:
             try:
-                model_id = int(request.model_id)
+                model_id = int(model_request.model_id)
             except (TypeError, ValueError):
                 return JSONResponse({
                     'success': False,
                     'error': 'model_id 必须为数字'
                 }, status_code=400)
         
-        session.set_model(request.model, model_id)
+        session.set_model(model_request.model, model_id)
         
-        logger.info(f'模型切换成功 - session_id: {session_id}, model: {request.model}')
+        logger.info(f'模型切换成功 - session_id: {session_id}, model: {model_request.model}')
         
         return JSONResponse({
             'success': True,
             'message': '模型切换成功',
-            'model': request.model
+            'model': model_request.model
         })
     except Exception as e:
         logger.error(f'切换模型失败: {str(e)}')
@@ -1236,7 +1241,9 @@ async def submit_to_database(request: SubmitDatabaseRequest):
 # 注意: 世界管理接口 /worlds 已在 server.py 中实现，此处不再重复
 
 @router.get('/world-files')
+@require_permission("world:view_files")
 async def get_world_files(
+    request: Request,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
     auth_token: Optional[str] = QueryParam(None)
@@ -1266,7 +1273,9 @@ async def get_world_files(
         }, status_code=500)
 
 @router.get('/world-files/{filename}')
+@require_permission("world:view_files")
 async def get_world_file(
+    request: Request,
     filename: str,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
@@ -1328,9 +1337,10 @@ async def get_world_file(
         }, status_code=500)
 
 @router.post('/world-files/{filename}')
+@require_permission("world:save_files")
 async def save_world_file(
-    filename: str,
     request: Request,
+    filename: str,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
     auth_token: Optional[str] = QueryParam(None)
@@ -1379,7 +1389,8 @@ async def save_world_file(
 # ==================== 智能体任务 API ====================
 
 @router.post('/session/{session_id}/task')
-async def create_agent_task(session_id: str, request: TaskCreateRequest):
+@require_permission("agent_task:create")
+async def create_agent_task(request: Request, session_id: str, task_request: TaskCreateRequest):
     """创建智能体任务"""
     try:
         # 检查会话是否存在
@@ -1393,7 +1404,7 @@ async def create_agent_task(session_id: str, request: TaskCreateRequest):
             session = sessions_storage[session_id]
             user_id = session.user_id
             world_id = session.world_id
-            auth_token = request.auth_token or session.auth_token
+            auth_token = task_request.auth_token or session.auth_token
         
         # 验证 auth_token
         is_valid, error_response = await verify_auth_token(user_id, auth_token)
@@ -1401,7 +1412,7 @@ async def create_agent_task(session_id: str, request: TaskCreateRequest):
             return JSONResponse(error_response, status_code=401)
         
         # 检查 model_id - 优先使用会话中保存的 model_id，如果没有则使用请求中的 model_id
-        model_id = session.model_id if hasattr(session, 'model_id') and session.model_id is not None else request.model_id
+        model_id = session.model_id if hasattr(session, 'model_id') and session.model_id is not None else task_request.model_id
         if not model_id:
             return JSONResponse({
                 'success': False,
@@ -1495,7 +1506,8 @@ async def create_agent_task(session_id: str, request: TaskCreateRequest):
         }, status_code=500)
 
 @router.get('/task/{task_id}/stream')
-async def stream_task_messages(task_id: str):
+@require_permission("agent_task:stream")
+async def stream_task_messages(request: Request, task_id: str):
     """SSE流式获取任务消息"""
     # 检查任务是否存在
     task = task_manager.get_task(task_id)
@@ -1562,7 +1574,8 @@ async def stream_task_messages(task_id: str):
     )
 
 @router.get('/task/{task_id}/status')
-async def get_task_status(task_id: str):
+@require_permission("agent_task:view")
+async def get_task_status(request: Request, task_id: str):
     """获取任务状态"""
     try:
         task = task_manager.get_task(task_id)
@@ -1586,13 +1599,14 @@ async def get_task_status(task_id: str):
         }, status_code=500)
 
 @router.post('/verification/{verification_id}')
-async def submit_verification(verification_id: str, request: VerificationSubmitRequest):
+@require_permission("agent_task:verify")
+async def submit_verification(request: Request, verification_id: str, verify_request: VerificationSubmitRequest):
     """提交人工验证结果"""
     try:
         success = task_manager.submit_verification(
             verification_id=verification_id,
-            approved=request.approved,
-            user_input=request.user_input
+            approved=verify_request.approved,
+            user_input=verify_request.user_input
         )
         
         if not success:
@@ -1643,7 +1657,9 @@ class FileContentRequest(BaseModel):
 # 角色卡管理接口
 
 @router.get('/characters-files')
+@require_permission("character:list")
 async def list_characters(
+    request: Request,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...)
 ):
@@ -1664,7 +1680,9 @@ async def list_characters(
         }, status_code=500)
 
 @router.get('/characters-files/{character_name}')
+@require_permission("character:view")
 async def get_character(
+    request: Request,
     character_name: str,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
@@ -1712,10 +1730,11 @@ async def get_character(
         }, status_code=500)
 
 @router.post('/characters-files/{character_name}')
-async def save_character(character_name: str, request: FileContentRequest):
+@require_permission("character:create")
+async def save_character(request: Request, character_name: str, file_request: FileContentRequest):
     """保存角色卡"""
     try:
-        content = request.content.strip()
+        content = file_request.content.strip()
         
         if not content:
             return JSONResponse({
@@ -1723,7 +1742,7 @@ async def save_character(character_name: str, request: FileContentRequest):
                 'error': '角色卡内容不能为空'
             }, status_code=400)
         
-        success = file_manager.save_character(character_name, content, request.user_id, request.world_id)
+        success = file_manager.save_character(character_name, content, file_request.user_id, file_request.world_id)
         
         return JSONResponse({
             'success': success,
@@ -1739,7 +1758,9 @@ async def save_character(character_name: str, request: FileContentRequest):
 # 剧本管理接口
 
 @router.get('/scripts-files')
+@require_permission("script:list")
 async def list_scripts(
+    request: Request,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...)
 ):
@@ -1761,7 +1782,9 @@ async def list_scripts(
         }, status_code=500)
 
 @router.get('/scripts-files/{script_name}')
+@require_permission("script:view")
 async def get_script(
+    request: Request,
     script_name: str,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
@@ -1806,10 +1829,11 @@ async def get_script(
         }, status_code=500)
 
 @router.post('/scripts-files/{script_name}')
-async def save_script(script_name: str, request: FileContentRequest):
+@require_permission("script:create")
+async def save_script(request: Request, script_name: str, file_request: FileContentRequest):
     """保存剧本"""
     try:
-        content = request.content.strip()
+        content = file_request.content.strip()
         
         if not content:
             return JSONResponse({
@@ -1817,7 +1841,7 @@ async def save_script(script_name: str, request: FileContentRequest):
                 'error': '剧本内容不能为空'
             }, status_code=400)
         
-        success = file_manager.save_script(script_name, content, request.user_id, request.world_id)
+        success = file_manager.save_script(script_name, content, file_request.user_id, file_request.world_id)
         
         return JSONResponse({
             'success': success,
@@ -1833,7 +1857,9 @@ async def save_script(script_name: str, request: FileContentRequest):
 # 场景管理接口
 
 @router.get('/locations-files')
+@require_permission("location:list")
 async def list_locations(
+    request: Request,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...)
 ):
@@ -1854,7 +1880,9 @@ async def list_locations(
         }, status_code=500)
 
 @router.get('/locations-files/{location_name}')
+@require_permission("location:view")
 async def get_location(
+    request: Request,
     location_name: str,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
@@ -1900,10 +1928,11 @@ async def get_location(
         }, status_code=500)
 
 @router.post('/locations-files/{location_name}')
-async def save_location(location_name: str, request: FileContentRequest):
+@require_permission("location:create")
+async def save_location(request: Request, location_name: str, file_request: FileContentRequest):
     """保存场景"""
     try:
-        content = request.content
+        content = file_request.content
         
         if not content:
             return JSONResponse({
@@ -1911,7 +1940,7 @@ async def save_location(location_name: str, request: FileContentRequest):
                 'error': '场景内容不能为空'
             }, status_code=400)
         
-        success = file_manager.save_location(location_name, content, request.user_id, request.world_id)
+        success = file_manager.save_location(location_name, content, file_request.user_id, file_request.world_id)
         
         if not success:
             return JSONResponse({
@@ -1933,7 +1962,9 @@ async def save_location(location_name: str, request: FileContentRequest):
 # 道具管理接口
 
 @router.get('/props-files')
+@require_permission("prop:list")
 async def list_props(
+    request: Request,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...)
 ):
@@ -1954,7 +1985,9 @@ async def list_props(
         }, status_code=500)
 
 @router.get('/props-files/{prop_name}')
+@require_permission("prop:view")
 async def get_prop(
+    request: Request,
     prop_name: str,
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
@@ -2000,10 +2033,11 @@ async def get_prop(
         }, status_code=500)
 
 @router.post('/props-files/{prop_name}')
-async def save_prop(prop_name: str, request: FileContentRequest):
+@require_permission("prop:create")
+async def save_prop(request: Request, prop_name: str, file_request: FileContentRequest):
     """保存道具"""
     try:
-        content = request.content
+        content = file_request.content
         
         if not content:
             return JSONResponse({
@@ -2011,7 +2045,7 @@ async def save_prop(prop_name: str, request: FileContentRequest):
                 'error': '道具内容不能为空'
             }, status_code=400)
         
-        success = file_manager.save_prop(prop_name, content, request.user_id, request.world_id)
+        success = file_manager.save_prop(prop_name, content, file_request.user_id, file_request.world_id)
         
         if not success:
             return JSONResponse({
@@ -2033,9 +2067,10 @@ async def save_prop(prop_name: str, request: FileContentRequest):
 # ==================== 健康检查 API ====================
 
 @router.get('/health')
-async def health_check():
+@require_permission("system:health_check")
+async def health_check(request: Request):
     """健康检查"""
     return JSONResponse({
         'status': 'ok',
-        'message': 'Script Writer API is running'
+        'service': 'script-writer-api'
     })
