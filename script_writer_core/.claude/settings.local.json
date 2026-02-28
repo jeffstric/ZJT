@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Skill(character-creator)"
-    ],
-    "deny": [],
-    "ask": []
-  }
-}
