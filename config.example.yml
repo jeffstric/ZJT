@@ -23,16 +23,26 @@ timeout:
 authentication:
   url: "http://192.168.10.212:8082/api/v1"
 
-# SMS configuration (阿里云短信服务)
+# SMS configuration (短信服务配置)
 sms:
+  # 全局驱动选择（可选，如果设置则覆盖各agent的driver配置）
+  # 取消注释下面这行可以全局切换驱动
+  active_driver: "perseids"  # 可选值: "legacy", "perseids"
   agents:
+    # 默认代理：使用阿里云SDK
     default:
+      driver: "legacy"
       access_key_id: "LTAI5txxxxxxxx"
       access_key_secret: "eKRGvkHCxxxxxxxx"
       sign_name: "公司名称"
       template_code: "SMS_29225xxxx"
       broadcast_template_code: "SMS_48972xxxx"
       region_id: "cn-hangzhou"
+    # API代理示例：使用HTTP API发送短信
+    api_agent:
+      driver: "perseids" 
+      api_url: "http://192.168.10.212:8082/api/v1/live/send_verify_code_simple"  # 短信API接口地址
+      method: "POST"  # 请求方法，默认POST
 
 # Database configuration
 database:

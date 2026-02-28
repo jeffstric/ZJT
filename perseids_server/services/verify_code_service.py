@@ -9,7 +9,7 @@ import logging
 from model.verify_codes import VerifyCodesModel
 
 from ..utils.validator import validate_phone
-from ..utils.sms import send_sms_code
+from ..utils.sms_drivers import SmsDriverFactory
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,6 @@ class VerifyCodeService:
     def create_verify_code(
         phone: str,
         code_type: str = "register",
-        agent: str = "default",
         send_sms: bool = True
     ) -> Dict[str, Any]:
         """
@@ -40,7 +39,6 @@ class VerifyCodeService:
         Args:
             phone: 手机号
             code_type: 验证码类型（register/reset/login）
-            agent: 短信代理名称
             send_sms: 是否发送短信（测试时可设为False）
             
         Returns:
@@ -63,7 +61,7 @@ class VerifyCodeService:
         
         # 发送短信
         if send_sms:
-            sms_result = send_sms_code(phone, code, agent)
+            sms_result = SmsDriverFactory.send_code(phone, code)
             if not sms_result.get('success'):
                 logger.warning(f"短信发送失败: {sms_result.get('message')}")
                 # 短信发送失败不影响验证码创建，但返回提示

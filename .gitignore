@@ -10,3 +10,4 @@ scheduler.lock
 data/mysql
 *.exe
 *.dll
+script_writer_core/logs

@@ -1627,26 +1627,6 @@ async def submit_verification(request: Request, verification_id: str, verify_req
             'error': str(e)
         }, status_code=500)
 
-# ==================== 技能管理 API ====================
-
-@router.get('/skills')
-async def list_skills():
-    """列出所有可用技能"""
-    # TODO: 实现技能列表逻辑
-    return JSONResponse({
-        'success': True,
-        'skills': []
-    })
-
-@router.get('/skills/{skill_name}')
-async def get_skill_detail(skill_name: str):
-    """获取技能详情"""
-    # TODO: 实现获取技能详情逻辑
-    return JSONResponse({
-        'success': True,
-        'skill': {}
-    })
-
 # ==================== 文件操作 API ====================
 
 class FileContentRequest(BaseModel):
@@ -2063,14 +2043,3 @@ async def save_prop(request: Request, prop_name: str, file_request: FileContentR
             'success': False,
             'error': str(e)
         }, status_code=500)
-
-# ==================== 健康检查 API ====================
-
-@router.get('/health')
-@require_permission("system:health_check")
-async def health_check(request: Request):
-    """健康检查"""
-    return JSONResponse({
-        'status': 'ok',
-        'service': 'script-writer-api'
-    })
