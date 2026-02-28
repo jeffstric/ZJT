@@ -10,6 +10,7 @@ import json
 import traceback
 from datetime import datetime
 import requests
+from .exceptions import DriverConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +330,26 @@ class BaseVideoDriver(ABC):
             }
         """
         pass
+    
+    def _validate_required(self, configs: Dict[str, str]) -> None:
+        """
+        验证必要配置是否存在
+        
+        Args:
+            configs: 配置字典，格式为 {"配置名称": 配置值}
+        
+        Raises:
+            DriverConfigError: 当有配置缺失时抛出
+        
+        Example:
+            self._validate_required({
+                "Duomi API Token": self._token,
+                "RunningHub API Key": self._api_key,
+            })
+        """
+        missing = [name for name, value in configs.items() if not value]
+        if missing:
+            raise DriverConfigError(self.driver_name, missing)
     
     def validate_parameters(self, ai_tool) -> tuple[bool, Optional[str]]:
         """

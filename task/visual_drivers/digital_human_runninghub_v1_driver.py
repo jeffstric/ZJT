@@ -36,6 +36,11 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
             config=self._config,
             logger=self.logger
         )
+        
+        self._validate_required({
+            "RunningHub API Key": self._api_key,
+            "RunningHub Host": self._host,
+        })
 
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """

@@ -26,6 +26,10 @@ class ViduDefaultDriver(BaseVideoDriver):
         # 是否为本地环境
         self._is_local = get_config_value("server", "is_local", default=False)
         self._config = get_config()
+        
+        self._validate_required({
+            "Vidu API Token": self._api_key,
+        })
 
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
         """

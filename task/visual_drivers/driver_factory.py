@@ -5,6 +5,7 @@
 from typing import Optional
 import logging
 from .base_video_driver import BaseVideoDriver
+from .exceptions import DriverConfigError
 from config.constant import VIDEO_DRIVER_MAPPING, DRIVER_IMPLEMENTATION_MAPPING
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,10 @@ class VideoDriverFactory:
         try:
             logger.info(f"Creating driver: type={driver_type} -> business={business_driver_name} -> implementation={implementation_driver_name}")
             return driver_class()
+        except DriverConfigError as e:
+            logger.warning(f"Driver {implementation_driver_name} 配置不完整: {e.message}")
+            logger.info(f"缺少配置: {', '.join(e.missing_configs)}")
+            return None
         except Exception as e:
             logger.error(f"Failed to create driver instance for {implementation_driver_name}: {str(e)}")
             return None
