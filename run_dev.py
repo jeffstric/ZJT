@@ -51,6 +51,17 @@ def main():
     
     cwd = os.path.dirname(os.path.abspath(__file__))
     
+    # 在启动服务之前先执行数据库迁移
+    from model.migration import get_alembic_config, run_migrations
+    alembic_config = get_alembic_config()
+    if alembic_config.get('auto_migrate', False):
+        print("[Manager] Running database migrations...")
+        try:
+            run_migrations()
+            print("[Manager] Database migrations completed.")
+        except Exception as e:
+            print(f"[Manager] Database migration failed: {e}")
+    
     # 优先使用环境变量 PORT，否则从配置文件读取
     port = os.environ.get("PORT")
     if port is None:
