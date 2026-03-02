@@ -818,3 +818,55 @@ body {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* Warning 按钮样式 */
+.action-btn.warning {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.action-btn.warning:hover {
+    background: var(--admin-warning);
+    color: #fff;
+}
+
+/* ==================== 快速配置样式 ==================== */
+
+/* 配置组 */
+.config-group {
+    background: #f8fafc;
+    border: 1px solid var(--admin-border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.config-group:last-child {
+    margin-bottom: 0;
+}
+
+.config-group-header {
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--admin-border);
+}
+
+.config-group-header h4 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--admin-text);
+    margin-bottom: 4px;
+}
+
+.config-group-desc {
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+.config-group .form-group {
+    margin-bottom: 12px;
+}
+
+.config-group .form-group:last-child {
+    margin-bottom: 0;
+}

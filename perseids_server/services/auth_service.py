@@ -180,12 +180,16 @@ class AuthService:
         # 生成密钥
         secret_key = generate_secret_key()
         
+        # 判断是否是第一个用户，如果是则设为管理员
+        is_first_user = UsersModel.get_total_count() == 0
+        user_role = "admin" if is_first_user else "Package_free"
+        
         # 创建用户
         from model.database import execute_insert
         user_id = execute_insert(
             """INSERT INTO users (phone, password_hash, status, role, secret_key, invite_code, inviter_id) 
                VALUES (%s, %s, 1, %s, %s, %s, %s)""",
-            (phone, password_hash, "Package_free", secret_key, user_invite_code, inviter_id)
+            (phone, password_hash, user_role, secret_key, user_invite_code, inviter_id)
         )
         
         # 删除验证码
@@ -211,6 +215,8 @@ class AuthService:
                 "user_id": user_id,
                 "phone": phone,
                 "status": 1,
+                "role": user_role,
+                "is_first_admin": is_first_user,
             }
         }
     

@@ -3,8 +3,9 @@
 """
 from fastapi import APIRouter, HTTPException, Header, Query, Path
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import logging
+import httpx
 
 from model.users import UsersModel, User
 from model.user_tokens import UserTokensModel
@@ -346,6 +347,28 @@ async def admin_get_config_raw_value(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/config/quick-configs")
+async def admin_get_quick_configs(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取快速配置项列表
+    返回需要在快速配置弹窗中显示的配置项
+    """
+    await require_admin(auth_token)
+    
+    from config.default_configs import get_quick_configs
+    configs = get_quick_configs()
+    
+    return {
+        "code": 0,
+        "message": "获取成功",
+        "data": {
+            "configs": configs
+        }
+    }
+
+
 @router.get("/config/{config_key:path}")
 async def admin_get_config(
     config_key: str = Path(...),
@@ -381,6 +404,81 @@ async def admin_get_config(
     except Exception as e:
         logger.error(f"Failed to get config {config_key}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class BatchConfigItem(BaseModel):
+    key: str
+    value: str
+
+
+class BatchConfigRequest(BaseModel):
+    configs: List[BatchConfigItem]
+
+
+@router.put("/config/batch")
+async def admin_batch_update_configs(
+    request: BatchConfigRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    批量更新配置值
+    用于快速配置功能，一次性更新多个配置项
+    """
+    admin = await require_admin(auth_token)
+    env = get_current_env()
+    
+    if not request.configs:
+        raise HTTPException(status_code=400, detail="配置列表不能为空")
+    
+    results = []
+    errors = []
+    
+    for item in request.configs:
+        try:
+            config = SystemConfigModel.get_by_key(env, item.key)
+            if not config:
+                errors.append(f"{item.key}: 配置不存在")
+                continue
+            
+            if not config.editable:
+                errors.append(f"{item.key}: 该配置不允许修改")
+                continue
+            
+            old_value = config.config_value
+            new_value = item.value
+            
+            # 跳过未修改的配置
+            if old_value == new_value:
+                results.append({
+                    "key": item.key,
+                    "status": "unchanged"
+                })
+                continue
+            
+            # 更新配置
+            SystemConfigModel.update_value(
+                env=env,
+                config_key=item.key,
+                new_value=new_value,
+                updated_by=admin.id
+            )
+            
+            results.append({
+                "key": item.key,
+                "status": "updated"
+            })
+        except Exception as e:
+            logger.error(f"Failed to update config {item.key}: {e}")
+            errors.append(f"{item.key}: {str(e)}")
+    
+    return {
+        "code": 0,
+        "message": f"批量更新完成，成功更新 {len([r for r in results if r['status'] == 'updated'])} 条配置",
+        "data": {
+            "results": results,
+            "errors": errors
+        }
+    }
 
 
 class UpdateConfigRequest(BaseModel):
@@ -523,3 +621,107 @@ async def admin_list_config_history(
     except Exception as e:
         logger.error(f"Failed to list config history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class TestGoogleRequest(BaseModel):
+    api_key: str
+    base_url: Optional[str] = None
+
+
+@router.post("/config/test-google")
+async def admin_test_google_connection(
+    request: TestGoogleRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    测试 Google/Gemini API 连接
+    通过发送一个简单的请求验证 API Key 有效性
+    支持第三方代理服务（如 jiekou.ai）
+    """
+    admin = await require_admin(auth_token)
+    
+    if not request.api_key:
+        raise HTTPException(status_code=400, detail="API Key 不能为空")
+    
+    # 构建请求 URL（适配第三方代理格式）
+    base_url = request.base_url or "https://api.jiekou.ai"
+    base_url = base_url.rstrip("/")
+    
+    # 移除 /openai 后缀（如果有）
+    if base_url.endswith('/openai'):
+        base_url = base_url[:-7]
+    
+    # 使用简单的 generateContent 请求测试连接
+    test_model = "gemini-3-flash-preview"
+    url = f"{base_url}/gemini/v1/models/{test_model}:generateContent"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {request.api_key}"
+    }
+    
+    # 构建最简单的测试请求
+    test_payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": "Hi"}]
+            }
+        ],
+        "generationConfig": {
+            "maxOutputTokens": 10,
+            "temperature": 0.1
+        }
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(url, headers=headers, json=test_payload)
+            
+            if response.status_code == 200:
+                return {
+                    "code": 0,
+                    "message": "连接成功",
+                    "data": {
+                        "success": True,
+                        "model": test_model
+                    }
+                }
+            elif response.status_code == 401:
+                return {
+                    "code": 1,
+                    "message": "API Key 无效或未授权",
+                    "data": {"success": False, "error": "Unauthorized"}
+                }
+            elif response.status_code == 403:
+                return {
+                    "code": 1,
+                    "message": "API Key 权限不足或已被禁用",
+                    "data": {"success": False, "error": "Forbidden"}
+                }
+            elif response.status_code == 404:
+                return {
+                    "code": 1,
+                    "message": "API 端点不存在，请检查 Base URL 是否正确",
+                    "data": {"success": False, "error": f"404 - URL: {url}"}
+                }
+            else:
+                return {
+                    "code": 1,
+                    "message": f"连接失败: HTTP {response.status_code}",
+                    "data": {"success": False, "error": response.text[:200]}
+                }
+                
+    except httpx.TimeoutException:
+        return {
+            "code": 1,
+            "message": "连接超时，请检查网络或 Base URL",
+            "data": {"success": False, "error": "Timeout"}
+        }
+    except Exception as e:
+        logger.error(f"Failed to test Google connection: {e}")
+        return {
+            "code": 1,
+            "message": f"连接失败: {str(e)}",
+            "data": {"success": False, "error": str(e)}
+        }

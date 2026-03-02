@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 
 # 默认配置列表
 # 每个配置包含：key, value_type, description, editable, is_sensitive
+# 可选字段：quick_config - 标记是否为快速配置项（在快速配置弹窗中显示）
 DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     # ==================== 任务队列配置 ====================
     {
@@ -130,7 +131,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'value_type': 'string',
         'description': 'RunningHub API Key',
         'editable': True,
-        'is_sensitive': True
+        'is_sensitive': True,
+        'quick_config': True
     },
     {
         'key': 'runninghub.max_concurrent_slots',
@@ -144,9 +146,10 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'duomi.token',
         'value_type': 'string',
-        'description': '多媒 API Token',
+        'description': '多米 API Token',
         'editable': True,
-        'is_sensitive': True
+        'is_sensitive': True,
+        'quick_config': True
     },
     
     # ==================== Vidu 配置 ====================
@@ -155,7 +158,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'value_type': 'string',
         'description': 'Vidu API Token',
         'editable': True,
-        'is_sensitive': True
+        'is_sensitive': True,
+        'quick_config': True
     },
     
     # ==================== 微信支付配置 ====================
@@ -197,18 +201,20 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     
     # ==================== Google/Gemini 配置 ====================
     {
-        'key': 'google.api_key',
+        'key': 'llm.google.api_key',
         'value_type': 'string',
-        'description': 'Google API Key',
+        'description': 'Google Gemini API Key',
         'editable': True,
-        'is_sensitive': True
+        'is_sensitive': True,
+        'quick_config': True
     },
     {
-        'key': 'google.gemini_base_url',
+        'key': 'llm.google.gemini_base_url',
         'value_type': 'string',
         'description': 'Gemini API 基础URL',
         'editable': True,
-        'is_sensitive': False
+        'is_sensitive': False,
+        'quick_config': True
     },
     
     # ==================== 七牛云存储配置 ====================
@@ -280,6 +286,24 @@ def get_all_config_keys() -> List[str]:
     获取所有默认配置的 key 列表
     """
     return [config['key'] for config in DEFAULT_CONFIGS]
+
+
+def get_quick_configs() -> List[Dict[str, Any]]:
+    """
+    获取快速配置项列表（用于快速配置弹窗）
+    
+    Returns:
+        快速配置项列表，每项包含 key, description, is_sensitive
+    """
+    return [
+        {
+            'key': config['key'],
+            'description': config['description'],
+            'is_sensitive': config.get('is_sensitive', False)
+        }
+        for config in DEFAULT_CONFIGS
+        if config.get('quick_config', False)
+    ]
 
 
 def init_default_configs(env: str, updated_by: int = None) -> int:

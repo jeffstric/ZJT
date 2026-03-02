@@ -1,3 +1,11 @@
+# =============================================================================
+# 配置文件说明
+# 修改本文件后，请检查是否需要同步修改 config/default_configs.py
+# 如果涉及配置 key 的变更（新增/删除/重命名），需要同时:
+#   1. 更新 config/default_configs.py 中的 DEFAULT_CONFIGS 列表
+#   2. 创建 alembic migration 脚本更新数据库中已有的配置 key
+# =============================================================================
+
 runninghub:
   host: "https://www.runninghub.cn"
   api_key: "9549532f3c3d435eXXXX"
@@ -93,6 +101,9 @@ llm:
     api_key: "sk-f3694dd0XXXX"
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     model: "qwen-plus"
+  google:
+    api_key: "sk_xxxxx"
+    gemini_base_url: "https://api.aicodemirror.com"
 
 # TTS (Text-to-Speech) configuration
 tts:
@@ -108,16 +119,6 @@ test_mode:
   mock_images:
     image_edit: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 图片编辑的测试图片URL
     text_to_image: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 文生图的测试图片URL
-
-# Google Gemini API configuration
-google:
-  api_key: "sk_xxxxx"
-  gemini_base_url: "https://api.jiekou.ai"
-
-# JIEKOU API configuration
-jiekou:
-  api_key: "sk_xxxx"
-  base_url: "https://api.jiekou.ai"
 
 # Anthropic Claude API configuration (script_writer 智能体使用)
 anthropic:

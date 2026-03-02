@@ -5785,6 +5785,13 @@
           });
           
           if (response.data.success) {
+            // 检查是否是首个管理员
+            const isFirstAdmin = response.data.data && response.data.data.is_first_admin;
+            if (isFirstAdmin) {
+              // 保存标记，登录后跳转到快速配置
+              localStorage.setItem('redirect_after_login', '/admin?quick_config=1');
+            }
+            
             // 注册成功后自动登录
             this.showLoginModal = true;
             this.authMode = 'login';

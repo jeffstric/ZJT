@@ -189,6 +189,9 @@
                     <div class="table-header">
                         <h3>配置列表</h3>
                         <div class="table-actions">
+                            <button class="action-btn warning" @click="openQuickConfigModal" style="font-weight: bold;">
+                                🚀 快速配置
+                            </button>
                             <button class="action-btn primary" @click="initConfigs" :disabled="config.initLoading">
                                 {{ config.initLoading ? '初始化中...' : '初始化配置' }}
                             </button>
@@ -474,6 +477,118 @@
                 </div>
                 <div class="modal-footer">
                     <button class="modal-btn cancel" @click="closeSensitiveValueModal">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 快速配置弹窗 -->
+        <div class="modal-overlay" v-if="quickConfigModal.show" @click.self="closeQuickConfigModal">
+            <div class="modal modal-wide">
+                <div class="modal-header">
+                    <h3>🚀 快速配置</h3>
+                    <button class="modal-close" @click="closeQuickConfigModal">&times;</button>
+                </div>
+                <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                    <!-- Duomi 配置组 -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>多米 (Duomi) 配置</h4>
+                            <span class="config-group-desc">📋 影响服务：Nano Banana图片编辑、Sora2/Kling/Veo3视频生成</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Token <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.duomi.token" placeholder="请输入 Duomi API Token">
+                            <p class="form-hint">📖 获取方式：<a href="https://duomiapi.com/user/register?cps=U4GgW1Fx" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                        </div>
+                    </div>
+
+                    <!-- Google 配置组 -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>Google/Gemini 配置</h4>
+                            <span class="config-group-desc">📋 影响服务：剧本创作、AI对话</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.google.apiKey" placeholder="请输入 Google API Key">
+                            <p class="form-hint">📖 获取方式：<a href="https://jiekou.ai/user/register?invited_code=119T5V" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                        </div>
+                        <div class="form-group">
+                            <label>Base URL (可选)</label>
+                            <input type="text" v-model="quickConfigModal.google.baseUrl" placeholder="https://api.jiekou.ai">
+                            <p class="form-hint">📖 可使用第三方代理服务，留空使用默认值</p>
+                        </div>
+                        <div class="form-group">
+                            <button 
+                                class="action-btn primary" 
+                                @click="testGoogleConnection" 
+                                :disabled="quickConfigModal.testLoading || !quickConfigModal.google.apiKey"
+                            >
+                                {{ quickConfigModal.testLoading ? '测试中...' : '🔗 测试连接' }}
+                            </button>
+                            <span v-if="quickConfigModal.testResult" :style="{ color: quickConfigModal.testResult.success ? '#22c55e' : '#ef4444', marginLeft: '10px' }">
+                                {{ quickConfigModal.testResult.message }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- RunningHub 配置组 -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>RunningHub 配置</h4>
+                            <span class="config-group-desc">📋 影响服务：LTX2.0视频、Wan2.2视频、数字人合成</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.runninghub.apiKey" placeholder="请输入 RunningHub API Key">
+                            <p class="form-hint">📖 获取方式：<a href="https://www.runninghub.cn/?inviteCode=quacwnzc" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                        </div>
+                    </div>
+
+                    <!-- Vidu 配置组 (可选) -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>Vidu 配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
+                            <span class="config-group-desc">📋 影响服务：Vidu视频生成</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Token</label>
+                            <input type="text" v-model="quickConfigModal.vidu.token" placeholder="请输入 Vidu API Token">
+                            <p class="form-hint">📖 获取方式：<a href="https://platform.vidu.cn/api-keys" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeQuickConfigModal">取消</button>
+                    <button class="modal-btn confirm" @click="submitQuickConfig" :disabled="quickConfigModal.loading">
+                        {{ quickConfigModal.loading ? '保存中...' : '💾 批量保存' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 使用手册引导弹窗 -->
+        <div class="modal-overlay" v-if="guideModal.show" @click.self="guideModal.show = false">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>🎉 配置完成</h3>
+                    <button class="modal-close" @click="guideModal.show = false">&times;</button>
+                </div>
+                <div class="modal-body" style="text-align: center; padding: 30px;">
+                    <div style="font-size: 48px; margin-bottom: 20px;">📚</div>
+                    <h4 style="margin-bottom: 15px;">恭喜您完成系统配置！</h4>
+                    <p style="color: #64748b; margin-bottom: 20px;">
+                        接下来，建议您查看使用手册，快速了解系统功能和操作方法。
+                    </p>
+                    <a :href="userManualUrl" target="_blank" class="modal-btn confirm" style="display: inline-block; text-decoration: none;">
+                        📖 查看使用手册
+                    </a>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="guideModal.show = false">稍后查看</button>
+                    <button class="modal-btn confirm" @click="guideModal.show = false; window.location.href = '/';">
+                        进入主页
+                    </button>
                 </div>
             </div>
         </div>

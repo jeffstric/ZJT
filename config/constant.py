@@ -527,3 +527,9 @@ class SystemConfigConstants:
 
 # 向后兼容别名
 CONFIG_KEY_MAX_LENGTH = SystemConfigConstants.CONFIG_KEY_MAX_LENGTH
+
+
+# 外部链接常量
+class ExternalLinks:
+    """外部链接常量"""
+    USER_MANUAL_URL = 'https://bq3mlz1jiae.feishu.cn/wiki/W1h2wCK3mi1CgDk36LEcVqggnLe'  # 使用手册

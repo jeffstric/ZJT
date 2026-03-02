@@ -89,6 +89,35 @@ const AdminApp = {
                 value: ''
             },
             
+            // 快速配置弹窗
+            quickConfigModal: {
+                show: false,
+                loading: false,
+                testLoading: false,
+                testResult: null,
+                duomi: {
+                    token: ''
+                },
+                google: {
+                    apiKey: '',
+                    baseUrl: ''
+                },
+                runninghub: {
+                    apiKey: ''
+                },
+                vidu: {
+                    token: ''
+                }
+            },
+            
+            // 使用手册引导弹窗
+            guideModal: {
+                show: false
+            },
+            
+            // 使用手册链接
+            userManualUrl: 'https://bq3mlz1jiae.feishu.cn/wiki/W1h2wCK3mi1CgDk36LEcVqggnLe',
+            
             // Toast消息
             toast: {
                 show: false,
@@ -155,6 +184,9 @@ const AdminApp = {
                     
                     // 默认加载用户列表
                     this.loadUsers();
+                    
+                    // 检查 URL 参数，是否需要自动打开快速配置
+                    this.checkQuickConfigParam();
                 }
             } catch (error) {
                 console.error('Admin verification failed:', error);
@@ -172,6 +204,23 @@ const AdminApp = {
                 } else {
                     this.showToast('加载失败: ' + detail, 'error');
                 }
+            }
+        },
+        
+        // 检查 URL 参数是否需要打开快速配置
+        checkQuickConfigParam() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('quick_config') === '1') {
+                // 切换到系统配置页面
+                this.switchPage('config');
+                // 延迟打开快速配置弹窗（等待配置列表加载）
+                setTimeout(() => {
+                    this.openQuickConfigModal();
+                    // 显示欢迎提示
+                    this.showToast('🎉 欢迎！您是系统首位管理员，请先完成快速配置', 'success');
+                }, 500);
+                // 清除 URL 参数
+                window.history.replaceState({}, document.title, '/admin');
             }
         },
         
@@ -683,6 +732,168 @@ const AdminApp = {
                 input.select();
                 document.execCommand('copy');
                 this.showToast('已复制到剪贴板', 'success');
+            }
+        },
+        
+        // ==================== 快速配置方法 ====================
+        
+        // 打开快速配置弹窗
+        async openQuickConfigModal() {
+            this.quickConfigModal.show = true;
+            this.quickConfigModal.testResult = null;
+            
+            // 从后端获取快速配置项列表并加载现有配置值
+            try {
+                // 获取快速配置项列表
+                const quickConfigsResp = await axios.get('/api/admin/config/quick-configs', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                
+                if (quickConfigsResp.data.code === 0) {
+                    const configs = quickConfigsResp.data.data.configs || [];
+                    
+                    // 根据配置项列表加载现有值
+                    for (const config of configs) {
+                        try {
+                            const response = await axios.get('/api/admin/config/raw', {
+                                headers: { 'Authorization': `Bearer ${this.authToken}` },
+                                params: { key: config.key }
+                            });
+                            
+                            if (response.data.code === 0) {
+                                const value = response.data.data.config_value || '';
+                                // 根据 key 映射到对应的表单字段
+                                if (config.key === 'duomi.token') {
+                                    this.quickConfigModal.duomi.token = value;
+                                } else if (config.key === 'llm.google.api_key') {
+                                    this.quickConfigModal.google.apiKey = value;
+                                } else if (config.key === 'llm.google.gemini_base_url') {
+                                    this.quickConfigModal.google.baseUrl = value;
+                                } else if (config.key === 'runninghub.api_key') {
+                                    this.quickConfigModal.runninghub.apiKey = value;
+                                } else if (config.key === 'vidu.token') {
+                                    this.quickConfigModal.vidu.token = value;
+                                }
+                            }
+                        } catch (e) {
+                            // 配置可能不存在，忽略错误
+                            console.log(`Config ${config.key} not found, will create on save`);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load quick config values:', error);
+            }
+        },
+        
+        // 关闭快速配置弹窗
+        closeQuickConfigModal() {
+            this.quickConfigModal.show = false;
+            this.quickConfigModal.loading = false;
+            this.quickConfigModal.testLoading = false;
+            this.quickConfigModal.testResult = null;
+            this.quickConfigModal.duomi.token = '';
+            this.quickConfigModal.google.apiKey = '';
+            this.quickConfigModal.google.baseUrl = '';
+            this.quickConfigModal.runninghub.apiKey = '';
+            this.quickConfigModal.vidu.token = '';
+        },
+        
+        // 测试 Google 连接
+        async testGoogleConnection() {
+            this.quickConfigModal.testLoading = true;
+            this.quickConfigModal.testResult = null;
+            
+            try {
+                const response = await axios.post('/api/admin/config/test-google', {
+                    api_key: this.quickConfigModal.google.apiKey,
+                    base_url: this.quickConfigModal.google.baseUrl || null
+                }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                
+                if (response.data.code === 0) {
+                    this.quickConfigModal.testResult = {
+                        success: true,
+                        message: `✅ ${response.data.message}`
+                    };
+                } else {
+                    this.quickConfigModal.testResult = {
+                        success: false,
+                        message: `❌ ${response.data.message}`
+                    };
+                }
+            } catch (error) {
+                console.error('Test Google connection failed:', error);
+                const detail = error?.response?.data?.detail || '测试失败';
+                this.quickConfigModal.testResult = {
+                    success: false,
+                    message: `❌ ${detail}`
+                };
+            } finally {
+                this.quickConfigModal.testLoading = false;
+            }
+        },
+        
+        // 提交快速配置
+        async submitQuickConfig() {
+            // 构建配置列表
+            const configs = [];
+            
+            if (this.quickConfigModal.duomi.token) {
+                configs.push({ key: 'duomi.token', value: this.quickConfigModal.duomi.token });
+            }
+            if (this.quickConfigModal.google.apiKey) {
+                configs.push({ key: 'llm.google.api_key', value: this.quickConfigModal.google.apiKey });
+            }
+            if (this.quickConfigModal.google.baseUrl) {
+                configs.push({ key: 'llm.google.gemini_base_url', value: this.quickConfigModal.google.baseUrl });
+            }
+            if (this.quickConfigModal.runninghub.apiKey) {
+                configs.push({ key: 'runninghub.api_key', value: this.quickConfigModal.runninghub.apiKey });
+            }
+            if (this.quickConfigModal.vidu.token) {
+                configs.push({ key: 'vidu.token', value: this.quickConfigModal.vidu.token });
+            }
+            
+            if (configs.length === 0) {
+                this.showToast('请至少填写一项配置', 'error');
+                return;
+            }
+            
+            this.quickConfigModal.loading = true;
+            
+            try {
+                const response = await axios.put('/api/admin/config/batch', 
+                    { configs },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                
+                if (response.data.code === 0) {
+                    const data = response.data.data;
+                    const updatedCount = data.results.filter(r => r.status === 'updated').length;
+                    const errors = data.errors || [];
+                    
+                    if (errors.length > 0) {
+                        this.showToast(`部分配置更新失败: ${errors.join(', ')}`, 'error');
+                    } else if (updatedCount > 0) {
+                        this.showToast(`成功更新 ${updatedCount} 条配置`, 'success');
+                    } else {
+                        this.showToast('配置未发生变化', 'success');
+                    }
+                    
+                    this.closeQuickConfigModal();
+                    this.loadConfigs();
+                    
+                    // 显示使用手册引导弹窗
+                    this.guideModal.show = true;
+                }
+            } catch (error) {
+                console.error('Submit quick config failed:', error);
+                const detail = error?.response?.data?.detail || '保存失败';
+                this.showToast(detail, 'error');
+            } finally {
+                this.quickConfigModal.loading = false;
             }
         }
     }

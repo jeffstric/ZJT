@@ -76,6 +76,7 @@ from utils.sentry_util import SentryUtil
 from utils import file_lock
 from perseids_server.utils.permission import require_permission, admin_required
 from api.admin import router as admin_router
+from api.system import router as system_router
 
 def _get_user_id_from_header(user_id: Optional[int]) -> int:
     if user_id is None:
@@ -231,6 +232,9 @@ app.include_router(script_writer_router)
 
 # 注册管理员 API 路由
 app.include_router(admin_router)
+
+# 注册系统状态 API 路由
+app.include_router(system_router)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

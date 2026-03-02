@@ -68,9 +68,9 @@ def setup_llm_logger():
 logger = logging.getLogger(__name__)
 llm_logger = setup_llm_logger()
 
-# 优先使用 jiekou 配置，如果没有则使用 google 配置
-API_KEY = get_config_value('jiekou', 'api_key') or get_config_value('google', 'api_key', default='')
-BASE_URL = get_config_value('jiekou', 'base_url') or get_config_value('google', 'gemini_base_url', default='')
+# 使用 llm.google 配置
+API_KEY = get_config_value('llm', 'google', 'api_key', default='')
+BASE_URL = get_config_value('llm', 'google', 'gemini_base_url', default='')
 
 
 class GeminiClient:
