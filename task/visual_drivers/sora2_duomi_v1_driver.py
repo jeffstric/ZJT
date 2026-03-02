@@ -4,7 +4,7 @@ Sora2 多米供应商 v1 版本驱动实现
 from typing import Dict, Any, Optional
 import traceback
 from .base_video_driver import BaseVideoDriver
-from config.config_util import get_config, get_config_value
+from config.config_util import get_config, get_config_value, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
@@ -19,7 +19,7 @@ class Sora2DuomiV1Driver(BaseVideoDriver):
         super().__init__(driver_name="sora2_duomi_v1", driver_type=3)
         
         # 加载配置
-        self._token = get_config_value("duomi", "token", default="")
+        self._token = get_dynamic_config_value("duomi", "token", default="")
         self._base_url = "https://duomiapi.com"
         self._timeout = get_config_value("timeout", "request_timeout", default=30)
 

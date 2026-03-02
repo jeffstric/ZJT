@@ -80,8 +80,8 @@ vidu:
 每个 driver 在 `__init__` 方法末尾调用 `_validate_required()` 验证配置：
 
 ```python
-# 示例：Duomi 驱动
-self._token = get_config_value("duomi", "token", default="")
+# 示例：Duomi 驱动（使用动态配置，数据库优先 + YAML 兜底）
+self._token = get_dynamic_config_value("duomi", "token", default="")
 self._validate_required({
     "Duomi API Token": self._token,
 })
