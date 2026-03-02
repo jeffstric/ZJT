@@ -6,11 +6,25 @@ import httpx
 import traceback
 import os
 from typing import Optional, List
+import yaml
+from config.config_util import get_config_path
 
 logger = logging.getLogger(__name__)
 
-# TTS API configuration - should be set via environment or config
-TTS_API_URL = "http://192.168.10.243:6007"  # Default, should be configured
+def get_tts_api_url() -> str:
+    """
+    从配置文件获取 TTS API URL
+    Returns:
+        str: TTS API URL
+    """
+    try:
+        config_file = get_config_path()
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        return config.get("tts", {}).get("api_url", "http://47.98.190.124")
+    except Exception as e:
+        logger.warning(f"Failed to read TTS API URL from config: {e}, using default")
+        return "http://47.98.190.124"
 
 async def generate_audio(
     text: str,
@@ -49,11 +63,14 @@ async def generate_audio(
             - audio_path_or_error: Audio file path on success, error message on failure
     """
     try:
+        # Get TTS API URL from config
+        tts_api_url = get_tts_api_url()
+        
         # Step 1: Upload reference audio to TTS server if it's a local file path
         uploaded_spk_audio_path = spk_audio_path
         if spk_audio_path and os.path.isfile(spk_audio_path):
             logger.info(f"Uploading reference audio to TTS server: {spk_audio_path}")
-            upload_url = f"{TTS_API_URL}/upload_reference"
+            upload_url = f"{tts_api_url}/upload_reference"
             
             async with httpx.AsyncClient() as client:
                 with open(spk_audio_path, 'rb') as audio_file:
@@ -82,7 +99,7 @@ async def generate_audio(
         uploaded_emo_ref_path = emo_ref_path
         if emo_ref_path and os.path.isfile(emo_ref_path):
             logger.info(f"Uploading emotion reference audio to TTS server: {emo_ref_path}")
-            upload_url = f"{TTS_API_URL}/upload_reference"
+            upload_url = f"{tts_api_url}/upload_reference"
             
             async with httpx.AsyncClient() as client:
                 with open(emo_ref_path, 'rb') as audio_file:
@@ -124,7 +141,7 @@ async def generate_audio(
         }
         
         # Step 4: Make POST request to TTS API
-        url = f"{TTS_API_URL}/tts_url"
+        url = f"{tts_api_url}/tts_url"
         logger.info(f"Calling TTS API: {url}")
         logger.debug(f"Request data: {data}")
         
@@ -169,7 +186,7 @@ async def generate_audio(
         return False, error_msg
     
     except httpx.ConnectError:
-        error_msg = f"Failed to connect to TTS API at {TTS_API_URL}"
+        error_msg = f"Failed to connect to TTS API at {tts_api_url}"
         logger.error(error_msg)
         return False, error_msg
     

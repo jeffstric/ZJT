@@ -103,6 +103,10 @@ llm:
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     model: "qwen-plus"
 
+# TTS (Text-to-Speech) configuration
+tts:
+  api_url: "http://47.98.190.124"  # TTS API 服务地址
+
 
 # Test mode configuration
 test_mode:
