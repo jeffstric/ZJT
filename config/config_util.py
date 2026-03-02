@@ -59,6 +59,15 @@ def get_config_value(*keys, default: Any = None) -> Any:
     """
     获取配置文件中的指定值（支持多层级键）
     
+    ⚠️ 推荐使用 get_dynamic_config_value() 替代本函数！
+    get_dynamic_config_value() 会优先从数据库读取配置，支持后台动态修改，
+    如果数据库中不存在则自动降级到 YAML 配置文件。
+    
+    本函数仅从 YAML 配置文件读取，不支持动态修改。
+    仅在以下场景使用本函数：
+    - 数据库连接配置（数据库初始化前无法查询数据库）
+    - 不需要动态修改的固定配置
+    
     Args:
         *keys: 配置键路径，如 'database', 'host' 表示 config['database']['host']
         default: 键不存在时的默认值

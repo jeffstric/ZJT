@@ -140,6 +140,10 @@ upload:
 frontend:
   debug_password: "123"  # 前端 Debug 模式密码
 
+# Workflow configuration
+workflow:
+  poll_status_interval: 30  # 工作流节点状态轮询间隔（秒），默认60秒
+
 # Alembic 数据库迁移配置
 alembic:
   auto_migrate: true  # 应用启动时是否自动执行迁移

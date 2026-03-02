@@ -134,6 +134,7 @@ invalidate_dynamic_cache()
 | 任务队列 | `task_queue.max_retry_count` | 否 |
 | 上传限制 | `upload.max_image_size_mb` | 否 |
 | 前端调试 | `frontend.debug_password` | 是 |
+| 工作流 | `workflow.poll_status_interval`（秒） | 否 |
 | 测试模式 | `test_mode.enabled` | 否 |
 | 超时设置 | `timeout.request_timeout` | 否 |
 | 图片下载 | `image.enable_download` | 否 |

@@ -294,6 +294,50 @@ async def get_debug_password(request: Request):
     })
 
 
+@app.get("/api/config/value")
+@require_permission("config:view")
+async def get_config_by_key(
+    request: Request,
+    key: str = Query(..., description="配置键，如 workflow.poll_status_interval")
+):
+    """
+    通用配置获取接口
+    根据 config/default_configs.py 中定义的 key 获取配置值
+    """
+    from config.default_configs import get_default_config_by_key
+    
+    # 检查是否是已定义的配置项
+    config_def = get_default_config_by_key(key)
+    if not config_def:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": f"未定义的配置项: {key}"}
+        )
+    
+    # 敏感配置不允许通过此接口获取
+    if config_def.get('is_sensitive'):
+        return JSONResponse(
+            status_code=403,
+            content={"code": -1, "message": "敏感配置不允许通过此接口获取"}
+        )
+    
+    # 从数据库读取动态配置（优先数据库，降级到 YAML）
+    from config.config_util import get_dynamic_config_value
+    keys = key.split('.')
+    value = get_dynamic_config_value(*keys, default=None)
+    
+    return JSONResponse({
+        "code": 0,
+        "message": "success",
+        "data": {
+            "key": key,
+            "value": value,
+            "value_type": config_def.get('value_type', 'string'),
+            "description": config_def.get('description')
+        }
+    })
+
+
 @app.get("/api/download")
 @require_permission("file:download")
 async def download_image(

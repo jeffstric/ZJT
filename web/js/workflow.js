@@ -90,6 +90,29 @@
     let videoModelDurationOptions = {};
     // 驱动可用状态（用于禁用未配置的功能）
     let driverStatusConfig = {};
+    // 工作流配置（轮询间隔等，单位：毫秒）
+    let workflowConfig = {
+      poll_status_interval: 60000  // 默认60秒
+    };
+    
+    async function fetchWorkflowConfig(){
+      try {
+        const token = getAuthToken();
+        const response = await fetch('/api/config/value?key=workflow.poll_status_interval', {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+        });
+        if(response.ok){
+          const data = await response.json();
+          if(data.code === 0 && data.data && data.data.value != null){
+            // 后端配置单位为秒，前端转换为毫秒
+            workflowConfig.poll_status_interval = data.data.value * 1000;
+            console.log('[工作流配置] 轮询间隔:', data.data.value, '秒');
+          }
+        }
+      } catch(e){
+        console.warn('[工作流配置] 获取失败，使用默认值:', e);
+      }
+    }
     
     // 模型值 -> 任务类型映射
     const MODEL_TASK_TYPE_MAP = {
@@ -1666,8 +1689,10 @@
         clearInterval(pollStatusTimer);
       }
       
-      // 每分钟执行一次 (60000 毫秒)
-      pollStatusTimer = setInterval(pollWorkflowNodeStatus, 60000);
+      // 使用后台配置的轮询间隔
+      const interval = workflowConfig.poll_status_interval || 60000;
+      pollStatusTimer = setInterval(pollWorkflowNodeStatus, interval);
+      console.log('[轮询] 已启动，间隔:', interval, 'ms');
     }
     
     // 停止轮询定时器
@@ -1680,11 +1705,16 @@
     
     // 页面加载完成后启动轮询
     if(typeof window !== 'undefined'){
-      // 等待页面完全加载后启动
-      if(document.readyState === 'complete'){
+      // 等待页面完全加载后，先获取配置再启动轮询
+      async function initPolling(){
+        await fetchWorkflowConfig();
         startPolling();
+      }
+      
+      if(document.readyState === 'complete'){
+        initPolling();
       } else {
-        window.addEventListener('load', startPolling);
+        window.addEventListener('load', initPolling);
       }
       
       // 页面卸载时停止轮询

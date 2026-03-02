@@ -3,7 +3,7 @@
 """
 from fastapi import APIRouter, HTTPException, Header, Query, Path
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Union
 import logging
 import httpx
 
@@ -482,7 +482,7 @@ async def admin_batch_update_configs(
 
 
 class UpdateConfigRequest(BaseModel):
-    value: str
+    value: Union[str, int, float, bool]
     value_type: Optional[str] = None
 
 
@@ -508,7 +508,8 @@ async def admin_update_config(
             raise HTTPException(status_code=403, detail="该配置不允许修改")
         
         old_value = config.config_value
-        new_value = request.value
+        # 将值转换为字符串存储
+        new_value = str(request.value) if request.value is not None else ''
         value_type = request.value_type or config.value_type
         
         # 更新配置

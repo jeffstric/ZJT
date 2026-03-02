@@ -49,6 +49,15 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': True
     },
     
+    # ==================== 工作流配置 ====================
+    {
+        'key': 'workflow.poll_status_interval',
+        'value_type': 'int',
+        'description': '工作流节点状态轮询间隔（秒），默认60秒',
+        'editable': True,
+        'is_sensitive': False
+    },
+    
     # ==================== 超时配置 ====================
     {
         'key': 'timeout.request_timeout',
