@@ -1,23 +1,19 @@
-# ComfyUI Qwen Image Edit Demo
+# 智剧通 AI短剧制作平台
 
-一个最小可用的前后端示例：
-- 前端：`web/index.html`（Vue 3 + Vue Router + Axios，CDN 版）
-- 后端：`server.py`（FastAPI）
 
 ## 运行环境
-- Python 3.9+（建议 3.10/3.11）
-- 需有可访问的 ComfyUI 实例（默认 `http://127.0.0.1:8188/`），并启用上传与历史接口：
-  - `POST /upload/image`
-  - `POST /prompt`
-  - `GET  /history/{prompt_id}`
-  - `GET  /view?filename=...`
+- Python 3.9+（建议 3.10.12）
+
+## 数据库
+
+mysql 8.0.45+
 
 ## 安装依赖
 在项目根目录（与 `requirements.txt` 同级）执行：
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+conda create --name zjt python=3.10
+conda activate zjt
 pip install -r requirements.txt
 ```
 
