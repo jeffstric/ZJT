@@ -6,10 +6,7 @@
 - 父进程退出时自动清理所有子进程
 - Windows 系统使用 uvicorn，Linux/macOS 使用 gunicorn
 """
-# Windows 系统下确保使用 UTF-8 编码（必须在其他 import 之前设置）
 import os
-os.environ.setdefault('PYTHONUTF8', '1')
-
 import subprocess
 import signal
 import sys

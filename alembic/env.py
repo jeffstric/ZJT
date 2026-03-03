@@ -22,7 +22,10 @@ config = context.config
 
 # 设置日志
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    import configparser
+    file_config = configparser.ConfigParser()
+    file_config.read(config.config_file_name, encoding='utf-8')
+    fileConfig(file_config, disable_existing_loggers=False)
 
 # 构建数据库连接字符串
 def get_database_url():
