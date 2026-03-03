@@ -107,6 +107,12 @@ def _write_and_validate_image(content: bytes, save_path: str):
         raise
 
 
+def _sync_write_file(file_path: str, content: bytes):
+    """同步写入文件（需在线程池中调用）"""
+    with open(file_path, 'wb') as f:
+        f.write(content)
+
+
 async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> tuple[bool, str]:
     """
     验证上传图片文件大小
@@ -2945,23 +2951,55 @@ async def video_enhance(
                 )
         
         # Determine video URL - either from upload or from parameter
+        # 用于存入数据库的本地 URL
+        local_video_url = None
+        
         if video_url:
             # Use provided video URL directly
             final_video_url = video_url
+            local_video_url = video_url  # URL 情况下直接使用 URL
             logger.info(f"Using provided video URL: {video_url}")
         elif video:
-            # Save uploaded video and get URL
+            # 读取视频文件
             file_bytes = await video.read()
             
-            # Save video to upload directory
-            os.makedirs(UPLOAD_DIR, exist_ok=True)
-            video_filename = f"{uuid.uuid4()}_{video.filename}"
+            # 1. 先保存到本地
+            filename = video.filename or "video.mp4"
+            ext = os.path.splitext(filename)[1].lower()
+            video_filename = f"{uuid.uuid4()}{ext}"
             local_video_path = os.path.join(UPLOAD_DIR, video_filename)
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            
             await asyncio.to_thread(_sync_write_file, local_video_path, file_bytes)
             
             # Create accessible URL for frontend
-            final_video_url = f"{SERVER_HOST}/upload/{video_filename}"
-            logger.info(f"Uploaded video saved to: {final_video_url}")
+            local_video_url = f"{SERVER_HOST}/upload/{video_filename}"
+            logger.info(f"Video saved to local: {local_video_url}")
+            
+            # 2. 上传到 RunningHub 获取 fileName
+            from utils.file_storage import RunningHubFileStorage
+            from config.config_util import get_config, get_dynamic_config_value
+            
+            rh_host = get_dynamic_config_value("runninghub", "host", default="")
+            rh_api_key = get_dynamic_config_value("runninghub", "api_key", default="")
+            storage = RunningHubFileStorage(
+                host=rh_host,
+                api_key=rh_api_key,
+                config=get_config(),
+                logger=logger
+            )
+            
+            # 上传本地文件到 RunningHub
+            upload_result = await storage.upload_file("", local_video_path)
+            if not upload_result.success:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"视频上传失败: {upload_result.error}"
+                )
+            
+            # 使用 fileName 作为 comfyUI 节点的引用
+            final_video_url = upload_result.key
+            logger.info(f"Video uploaded to RunningHub, fileName: {final_video_url}")
         else:
             raise HTTPException(
                 status_code=400,
@@ -3029,7 +3067,7 @@ async def video_enhance(
                     prompt="视频高清修复",
                     user_id=user_id,
                     type=enhance_type,  # Use provided enhance_type
-                    image_path=final_video_url,
+                    image_path=local_video_url,  # 使用本地 URL 存入数据库
                     project_id=project_id,
                     transaction_id=transaction_id,
                     status=AI_TOOL_STATUS_PROCESSING

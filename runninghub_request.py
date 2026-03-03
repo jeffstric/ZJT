@@ -382,11 +382,12 @@ def run_ai_app_task(
     logger.info(f"[RunningHub API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
     
     try:
+        timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
         response = requests.post(
             url,
             json=payload,
             headers=headers,
-            timeout=config["timeout"]["request_timeout"]
+            timeout=timeout
         )
         response.raise_for_status()
         
