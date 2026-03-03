@@ -4,7 +4,7 @@ Gemini Pro 多米供应商 v1 版本驱动实现（加强版）
 from typing import Dict, Any, Optional
 import traceback
 from .base_video_driver import BaseVideoDriver
-from config.config_util import get_config, get_config_value, get_dynamic_config_value
+from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
@@ -21,10 +21,10 @@ class GeminiProDuomiV1Driver(BaseVideoDriver):
         # 加载配置
         self._token = get_dynamic_config_value("duomi", "token", default="")
         self._base_url = "https://duomiapi.com"
-        self._timeout = get_config_value("timeout", "request_timeout", default=30)
+        self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         # 是否为本地环境
-        self._is_local = get_config_value("server", "is_local", default=False)
+        self._is_local = get_dynamic_config_value("server", "is_local", default=False)
         self._config = get_config()
         
         self._validate_required({

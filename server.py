@@ -196,7 +196,7 @@ MP_VERIFY_ROUTE = "/MP_verify_lXQewBFqjUipl3B8.txt"
 
 
 # Load server configuration
-from config.config_util import get_config, get_config_value
+from config.config_util import get_config, get_config_value, get_dynamic_config_value
 
 
 # Choose appropriate host based on HTTPS configuration
@@ -205,21 +205,33 @@ if https_enabled:
     SERVER_HOST = get_config_value("server", "https_host", default="")
 if not https_enabled or not SERVER_HOST:
     SERVER_HOST = get_config_value("server", "host", default="0.0.0.0")
-API_KEY = get_config_value("runninghub", "api_key", default="")
+API_KEY = get_dynamic_config_value("runninghub", "api_key", default="")
 
 SCRIPT_WRITER_URL = get_config_value("script_writer", "url", default="")
 
-# 上传文件大小限制配置（单位：MB）
-MAX_IMAGE_SIZE_MB = get_config_value("upload", "max_image_size_mb", default=10)
+def _get_max_image_size_mb():
+    """动态获取上传图片最大大小配置（MB）"""
+    return get_dynamic_config_value("upload", "max_image_size_mb", default=10)
+
+def _get_max_image_size_bytes():
+    """动态获取上传图片最大大小（字节）"""
+    return _get_max_image_size_mb() * 1024 * 1024
+
+# 兼容旧代码，默认值用于静态引用
+MAX_IMAGE_SIZE_MB = 10
 MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024
 
-# 初始化微信支付工具
-wechat_pay_util = WechatPayUtil(
-    app_id=get_config_value("pay", "wxpay", "appId", default=""),
-    mch_id=get_config_value("pay", "wxpay", "mchId", default=""),
-    api_key=get_config_value("pay", "wxpay", "api_key", default=""),
-    APIv3_key=get_config_value("pay", "wxpay", "APIv3_key", default="")
-)
+def _get_wechat_pay_util():
+    """动态获取微信支付工具实例"""
+    return WechatPayUtil(
+        app_id=get_dynamic_config_value("pay", "wxpay", "appId", default=""),
+        mch_id=get_dynamic_config_value("pay", "wxpay", "mchId", default=""),
+        api_key=get_dynamic_config_value("pay", "wxpay", "api_key", default=""),
+        APIv3_key=get_dynamic_config_value("pay", "wxpay", "APIv3_key", default="")
+    )
+
+# 兼容旧代码，初始化时创建一个实例
+wechat_pay_util = _get_wechat_pay_util()
 
 # Default ComfyUI server address; can be overridden by request field
 DEFAULT_COMFYUI_SERVER = os.environ.get("COMFYUI_SERVER", "http://127.0.0.1:8188/")
@@ -287,7 +299,7 @@ async def get_debug_password(request: Request):
     """
     获取前端 Debug 模式密码
     """
-    debug_password = get_config_value('frontend', 'debug_password', default='debug123')
+    debug_password = get_dynamic_config_value('frontend', 'debug_password', default='debug123')
     return JSONResponse({
         "success": True,
         "password": debug_password
@@ -3785,9 +3797,9 @@ async def get_wechat_openid(code: str):
         包含openid的响应
     """
     try:
-        # 从配置文件读取微信配置
-        app_id = get_config_value("pay", "wxpay", "appId", default="")
-        app_secret = get_config_value("pay", "wxpay", "appSecret", default="")
+        # 从动态配置读取微信配置
+        app_id = get_dynamic_config_value("pay", "wxpay", "appId", default="")
+        app_secret = get_dynamic_config_value("pay", "wxpay", "appSecret", default="")
         
         if not app_id or not app_secret:
             raise HTTPException(status_code=500, detail="微信配置不完整")

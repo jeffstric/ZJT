@@ -4,7 +4,7 @@ Vidu 默认驱动实现
 from typing import Dict, Any, Optional, List
 import traceback
 from .base_video_driver import BaseVideoDriver
-from config.config_util import get_config, get_config_value
+from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
@@ -19,12 +19,12 @@ class ViduDefaultDriver(BaseVideoDriver):
         super().__init__(driver_name="vidu_default", driver_type=14)
 
         # 加载配置
-        self._api_key = get_config_value("vidu", "token", default="")
+        self._api_key = get_dynamic_config_value("vidu", "token", default="")
         self._base_url = "https://api.vidu.cn"
-        self._timeout = get_config_value("timeout", "request_timeout", default=30)
+        self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         # 是否为本地环境
-        self._is_local = get_config_value("server", "is_local", default=False)
+        self._is_local = get_dynamic_config_value("server", "is_local", default=False)
         self._config = get_config()
         
         self._validate_required({

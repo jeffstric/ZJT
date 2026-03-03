@@ -1,5 +1,5 @@
 import requests
-from config.config_util import get_config_value
+from config.config_util import get_dynamic_config_value
 import uuid
 import time
 import json
@@ -7,12 +7,25 @@ from logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
-token = get_config_value("duomi", "token", default="")
 
-# Test mode configuration
-TEST_MODE_ENABLED = get_config_value("test_mode", "enabled", default=False)
-MOCK_VIDEOS = get_config_value("test_mode", "mock_videos", default={})
-MOCK_IMAGES = get_config_value("test_mode", "mock_images", default={})
+def _get_token():
+    """动态获取 Duomi API Token"""
+    return get_dynamic_config_value("duomi", "token", default="")
+
+
+def _is_test_mode_enabled():
+    """动态获取测试模式状态"""
+    return get_dynamic_config_value("test_mode", "enabled", default=False)
+
+
+def _get_mock_videos():
+    """动态获取测试视频配置"""
+    return get_dynamic_config_value("test_mode", "mock_videos", default={})
+
+
+def _get_mock_images():
+    """动态获取测试图片配置"""
+    return get_dynamic_config_value("test_mode", "mock_images", default={})
 
 
 def _generate_mock_task_id():
@@ -34,7 +47,7 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
         Response from the API
     """
     # 测试模式：返回mock task_id
-    if TEST_MODE_ENABLED:
+    if _is_test_mode_enabled():
         mock_task_id = _generate_mock_task_id()
         print(f"[TEST MODE] create_image_to_video - Generated mock task_id: {mock_task_id}")
         return {
@@ -57,7 +70,7 @@ def create_image_to_video(prompt, ratio="9:16", img_url=None, duration=15):
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     logger.info(f"[Duomi Sora API] Request URL: {url}")
@@ -89,7 +102,7 @@ def create_image_to_video_veo(prompt, ratio="9:16", img_url=None, duration=8):
     Returns:
         Response from the API
     """
-    if TEST_MODE_ENABLED:
+    if _is_test_mode_enabled():
         mock_task_id = _generate_mock_task_id()
         print(f"[TEST MODE] create_image_to_video_veo - Generated mock task_id: {mock_task_id}")
         return {
@@ -113,7 +126,7 @@ def create_image_to_video_veo(prompt, ratio="9:16", img_url=None, duration=8):
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     logger.info(f"[Duomi Veo API] Request URL: {url}")
@@ -147,7 +160,7 @@ def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16
         Response from the API
     """
     # 测试模式：返回mock task_id
-    if TEST_MODE_ENABLED:
+    if _is_test_mode_enabled():
         mock_task_id = _generate_mock_task_id()
         print(f"[TEST MODE] create_ai_image - Generated mock task_id: {mock_task_id}")
         return {
@@ -172,7 +185,7 @@ def create_ai_image(model="gemini-2.5-pro-image-preview", prompt="", ratio="9:16
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     # 记录请求日志
@@ -213,7 +226,7 @@ def create_text_to_image(model="gemini-3-pro-image-preview", prompt="", aspect_r
         Response from the API
     """
     # 测试模式：返回mock task_id
-    if TEST_MODE_ENABLED:
+    if _is_test_mode_enabled():
         mock_task_id = _generate_mock_task_id()
         print(f"[TEST MODE] create_text_to_image - Generated mock task_id: {mock_task_id}")
         return {
@@ -239,7 +252,7 @@ def create_text_to_image(model="gemini-3-pro-image-preview", prompt="", aspect_r
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     # 记录请求日志
@@ -285,7 +298,7 @@ def create_video_remix(video_id, prompt, aspect_ratio="16:9", duration=15):
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     logger.info(f"[Duomi Sora API] Request URL: {url}")
@@ -332,7 +345,7 @@ def create_character(timestamps, url=None, from_task=None, callback_url=None):
     
     headers = {
         "Content-Type": "application/json",
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     logger.info(f"[Duomi Character API] Request URL: {api_url}")
@@ -377,7 +390,7 @@ def get_character_task_result(task_id):
     api_url = f"https://duomiapi.com/v1/videos/tasks/{task_id}"
     
     headers = {
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     logger.info(f"[Duomi Character API] Status Check URL: {api_url}")
@@ -419,17 +432,17 @@ def get_ai_task_result(project_id, is_video):
         }
     """
     # 测试模式：检测mock task_id并返回配置的测试资源
-    if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
+    if _is_test_mode_enabled() and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         print(f"[TEST MODE] get_ai_task_result - Detected mock task_id: {project_id}")
         
         # 根据任务类型返回对应的mock资源
         if is_video:
             # 视频任务：返回配置的测试视频URL
-            mock_video_url = MOCK_VIDEOS.get("image_to_video", "http://example.com/test_video.mp4")
+            mock_video_url = _get_mock_videos().get("image_to_video", "http://example.com/test_video.mp4")
             print(f"[TEST MODE] Returning mock video URL: {mock_video_url}")
         else:
             # 图片任务：返回配置的测试图片URL
-            mock_image_url = MOCK_IMAGES.get("image_edit", "http://example.com/test_image.png")
+            mock_image_url = _get_mock_images().get("image_edit", "http://example.com/test_image.png")
             print(f"[TEST MODE] Returning mock image URL: {mock_image_url}")
         
         return {
@@ -448,7 +461,7 @@ def get_ai_task_result(project_id, is_video):
         url = f"https://duomiapi.com/api/gemini/nano-banana/{project_id}"
     
     headers = {
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     response = requests.get(url, headers=headers)
@@ -576,7 +589,7 @@ def create_kling_image_to_video(
         Response from the API with task_id
     """
     # 测试模式：返回mock task_id
-    if TEST_MODE_ENABLED:
+    if _is_test_mode_enabled():
         mock_task_id = _generate_mock_task_id()
         print(f"[TEST MODE] create_kling_image_to_video - Generated mock task_id: {mock_task_id}")
         return {
@@ -590,7 +603,7 @@ def create_kling_image_to_video(
     url = "https://duomiapi.com/api/video/kling/v1/videos/image2video"
     
     headers = {
-        "Authorization": token,
+        "Authorization": _get_token(),
         "Content-Type": "application/json"
     }
     
@@ -642,8 +655,8 @@ def get_kling_task_status(task_id: str):
         Response from the API with task status and result
     """
     # 测试模式：返回mock结果
-    if TEST_MODE_ENABLED:
-        mock_video_url = MOCK_VIDEOS.get("image_to_video", "http://localhost:5178/upload/test_video.mp4")
+    if _is_test_mode_enabled():
+        mock_video_url = _get_mock_videos().get("image_to_video", "http://localhost:5178/upload/test_video.mp4")
         print(f"[TEST MODE] get_kling_task_status - task_id: {task_id}, returning mock video: {mock_video_url}")
         return {
             "code": 0,
@@ -666,7 +679,7 @@ def get_kling_task_status(task_id: str):
     url = f"https://duomiapi.com/api/video/kling/v1/videos/image2video/{task_id}"
     
     headers = {
-        "Authorization": token
+        "Authorization": _get_token()
     }
     
     # 记录请求日志

@@ -6,7 +6,7 @@ import os
 import logging
 from typing import Dict, Any, Optional
 from enum import Enum
-from config.config_util import get_config_value
+from config.config_util import get_dynamic_config_value
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,8 @@ class SentryUtil:
             sentry.dsn: Sentry DSN URL（必需）
             sentry.environment: 环境名称，默认 "production"
         """
-        sentry_dsn = get_config_value('sentry', 'dsn', default=None)
-        environment = get_config_value('sentry', 'environment', default='production')
+        sentry_dsn = get_dynamic_config_value('sentry', 'dsn', default=None)
+        environment = get_dynamic_config_value('sentry', 'environment', default='production')
         
         # 初始化
         cls.init(

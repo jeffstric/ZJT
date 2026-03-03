@@ -6,12 +6,13 @@ from typing import Optional
 from datetime import datetime
 from .database import execute_query, execute_update, execute_insert
 import logging
-from config.config_util import get_config_value
+from config.config_util import get_dynamic_config_value
 
 logger = logging.getLogger(__name__)
 
-# 从配置文件读取最大槽位数量，默认为3
-MAX_CONCURRENT_SLOTS = get_config_value("runninghub", "max_concurrent_slots", default=3)
+def _get_max_concurrent_slots():
+    """动态获取最大槽位数量"""
+    return get_dynamic_config_value("runninghub", "max_concurrent_slots", default=3)
 
 
 class RunningHubSlot:
@@ -87,7 +88,7 @@ class RunningHubSlotsModel:
         try:
             # 如果未指定 max_slots，使用配置文件中的值
             if max_slots is None:
-                max_slots = MAX_CONCURRENT_SLOTS
+                max_slots = _get_max_concurrent_slots()
             
             # 检查当前槽位数量
             current_count = RunningHubSlotsModel.count_active_slots()

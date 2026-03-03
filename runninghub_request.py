@@ -4,7 +4,7 @@ import json
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
-from config.config_util import get_config, get_config_value
+from config.config_util import get_config, get_dynamic_config_value
 from logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -48,9 +48,9 @@ class RunningHubClient:
             api_key: Optional API key to override the one in config file
         """
         self.config = get_config()
-        self.host = get_config_value("runninghub", "host", default="")
-        self.api_key = api_key if api_key is not None else get_config_value("runninghub", "api_key", default="")
-        self.request_timeout = get_config_value("timeout", "request_timeout", default=30)
+        self.host = get_dynamic_config_value("runninghub", "host", default="")
+        self.api_key = api_key if api_key is not None else get_dynamic_config_value("runninghub", "api_key", default="")
+        self.request_timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
     
     def _make_request(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -361,7 +361,7 @@ def run_ai_app_task(
         ValueError: If response format is invalid
     """
     # Load config to get host
-    host = get_config_value("runninghub", "host", default="")
+    host = get_dynamic_config_value("runninghub", "host", default="")
     endpoint = "/task/openapi/ai-app/run"
     url = f"{host}{endpoint}"
     

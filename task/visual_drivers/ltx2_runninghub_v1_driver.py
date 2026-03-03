@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 import traceback
 import asyncio
 from .base_video_driver import BaseVideoDriver
-from config.config_util import get_config, get_config_value
+from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
 
@@ -20,13 +20,13 @@ class Ltx2RunninghubV1Driver(BaseVideoDriver):
         super().__init__(driver_name="ltx2_runninghub_v1", driver_type=10)
 
         # 加载配置
-        self._api_key = get_config_value("runninghub", "api_key", default="")
-        self._host = get_config_value("runninghub", "host", default="")
+        self._api_key = get_dynamic_config_value("runninghub", "api_key", default="")
+        self._host = get_dynamic_config_value("runninghub", "host", default="")
         self._webapp_id = "2011014079896358914"  # LTX2.0 webapp ID
-        self._timeout = get_config_value("timeout", "request_timeout", default=30)
+        self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         # 是否为本地环境
-        self._is_local = get_config_value("server", "is_local", default=False)
+        self._is_local = get_dynamic_config_value("server", "is_local", default=False)
         self._config = get_config()
 
         # 初始化 RunningHub 文件存储

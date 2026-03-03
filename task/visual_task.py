@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import uuid
 from perseids_client import make_perseids_request
 from config.constant import TASK_COMPUTING_POWER
-from config.config_util import get_config_value
+from config.config_util import get_dynamic_config_value
 
 from duomi_api_requset import (
     create_ai_image,
@@ -45,15 +45,23 @@ from config.constant import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load test mode configuration
-TEST_MODE_ENABLED = get_config_value("test_mode", "enabled", default=False)
+def _is_test_mode_enabled():
+    """动态获取测试模式状态"""
+    return get_dynamic_config_value("test_mode", "enabled", default=False)
 
-# Load task queue configuration
-MAX_RETRY_COUNT = get_config_value("task_queue", "max_retry_count", default=30)
-TASK_EXPIRE_DAYS = get_config_value("task_queue", "task_expire_days", default=7)
-ENABLE_EXPIRE_CHECK = get_config_value("task_queue", "enable_expire_check", default=True)
+def _get_max_retry_count():
+    """动态获取最大重试次数"""
+    return get_dynamic_config_value("task_queue", "max_retry_count", default=30)
 
-if TEST_MODE_ENABLED:
+def _get_task_expire_days():
+    """动态获取任务过期天数"""
+    return get_dynamic_config_value("task_queue", "task_expire_days", default=7)
+
+def _is_expire_check_enabled():
+    """动态获取是否启用过期检查"""
+    return get_dynamic_config_value("task_queue", "enable_expire_check", default=True)
+
+if _is_test_mode_enabled():
     logger.info("=" * 60)
     logger.info("TEST MODE ENABLED - Using mock API responses")
     logger.info("=" * 60)
@@ -93,7 +101,7 @@ def _submit_new_task(ai_tool):
     ai_tool_type = ai_tool.type
     task_id = ai_tool.id
     
-    if TEST_MODE_ENABLED:
+    if _is_test_mode_enabled():
         logger.info(f"[TEST MODE] [DRIVER] Submitting task {task_id} (type: {ai_tool_type})")
     
     try:
@@ -202,7 +210,7 @@ def _check_task_status(ai_tool):
         logger.error(f"AI tool {task_id} has no project_id while status=AI_TOOL_STATUS_PROCESSING")
         return False
     
-    if TEST_MODE_ENABLED and isinstance(project_id, str) and project_id.startswith("mock_task_"):
+    if _is_test_mode_enabled() and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] [DRIVER] Checking status for mock task {project_id}")
     
     try:
@@ -427,14 +435,14 @@ def _check_task_expiration(task):
     Returns:
         bool: True表示任务已过期
     """
-    if not ENABLE_EXPIRE_CHECK:
+    if not _is_expire_check_enabled():
         return False
     
     if not task.created_at:
         return False
     
     task_age = datetime.now() - task.created_at
-    if task_age.days >= TASK_EXPIRE_DAYS:
+    if task_age.days >= _get_task_expire_days():
         logger.warning(f"Task {task.task_id} expired (created {task_age.days} days ago)")
         return True
     
@@ -451,8 +459,8 @@ def _check_max_retry_exceeded(task):
     Returns:
         bool: True表示超过最大重试次数
     """
-    if task.try_count and task.try_count >= MAX_RETRY_COUNT:
-        logger.warning(f"Task {task.task_id} exceeded max retry count ({task.try_count}/{MAX_RETRY_COUNT})")
+    if task.try_count and task.try_count >= _get_max_retry_count():
+        logger.warning(f"Task {task.task_id} exceeded max retry count ({task.try_count}/{_get_max_retry_count()})")
         return True
     
     return False
@@ -511,7 +519,7 @@ def process_task_with_retry(task_type, process_func):
                 if _check_max_retry_exceeded(task):
                     # 标记任务为失败
                     TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_FAILED)
-                    AIToolsModel.update(task.task_id, status=AI_TOOL_STATUS_FAILED, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
+                    AIToolsModel.update(task.task_id, status=AI_TOOL_STATUS_FAILED, message=f"超过最大重试次数({_get_max_retry_count()})")
                     
                     # 获取 AI 工具详情用于退还算力和释放槽位
                     ai_tool = AIToolsModel.get_by_id(task.task_id)

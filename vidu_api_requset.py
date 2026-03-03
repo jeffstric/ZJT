@@ -1,5 +1,5 @@
 import requests
-from config.config_util import get_config_value
+from config.config_util import get_dynamic_config_value
 import uuid
 import time
 import json
@@ -7,8 +7,12 @@ from logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
-api_key = get_config_value("vidu", "token", default="")
-base_url = "https://api.vidu.cn"
+BASE_URL = "https://api.vidu.cn"
+
+
+def _get_api_key():
+    """动态获取 Vidu API Key"""
+    return get_dynamic_config_value("vidu", "token", default="")
 
 
 def create_vidu_image_to_video(
@@ -42,8 +46,8 @@ def create_vidu_image_to_video(
         Response from the API with task_id
         Format: {"id": "task_id", "status": "processing", ...}
     """
-    url = f"{base_url}/ent/v2/img2video"
-    
+    url = f"{BASE_URL}/ent/v2/img2video"
+    api_key = _get_api_key()
     headers = {
         "Authorization": f"Token {api_key}",
         "Content-Type": "application/json"
@@ -113,8 +117,8 @@ def create_vidu_text_to_video(
         Response from the API with task_id
         Format: {"id": "task_id", "status": "processing", ...}
     """
-    url = f"{base_url}/ent/v2/text2video"
-    
+    url = f"{BASE_URL}/ent/v2/text2video"
+    api_key = _get_api_key()
     headers = {
         "Authorization": f"Token {api_key}",
         "Content-Type": "application/json"
@@ -182,7 +186,8 @@ def create_vidu_start_end_to_video(
         Response from the API with task_id
         Format: {"id": "task_id", "status": "processing", ...}
     """
-    url = f"{base_url}/ent/v2/start-end2video"
+    url = f"{BASE_URL}/ent/v2/start-end2video"
+    api_key = _get_api_key()
     logger.info(f"[Vidu API] API_KEY: {api_key}")
     headers = {
         "Authorization": f"Token {api_key}",
@@ -234,8 +239,8 @@ def get_vidu_task_status(task_id: str):
             ...
         }
     """
-    url = f"{base_url}/ent/v2/tasks/{task_id}/creations"
-    
+    url = f"{BASE_URL}/ent/v2/tasks/{task_id}/creations"
+    api_key = _get_api_key()
     headers = {
         "Authorization": f"Token {api_key}",
         "Content-Type": "application/json"

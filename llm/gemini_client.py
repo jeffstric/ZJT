@@ -10,7 +10,7 @@ import requests
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from perseids_client import make_perseids_request
-from config.config_util import get_config_value
+from config.config_util import get_dynamic_config_value
 
 # 导入日志函数
 try:
@@ -68,9 +68,6 @@ def setup_llm_logger():
 logger = logging.getLogger(__name__)
 llm_logger = setup_llm_logger()
 
-# 使用 llm.google 配置
-API_KEY = get_config_value('llm', 'google', 'api_key', default='')
-BASE_URL = get_config_value('llm', 'google', 'gemini_base_url', default='')
 
 
 class GeminiClient:
@@ -78,13 +75,19 @@ class GeminiClient:
     
     def __init__(self):
         """初始化 Gemini 客户端"""
-        self.api_key = API_KEY
-        self.base_url = BASE_URL
-        
+        # 初始化时加载配置
+        self._refresh_config()
+
+    def _refresh_config(self):
+        """刷新配置（从数据库动态读取）"""
+        # 使用动态配置，优先从数据库读取，支持后台动态修改
+        self.api_key = get_dynamic_config_value('llm', 'google', 'api_key', default='')
+        self.base_url = get_dynamic_config_value('llm', 'google', 'gemini_base_url', default='')
+
         if not self.api_key or not self.base_url:
             logger.warning("Gemini API Key 或 Base URL 未配置")
         else:
-            logger.info(f"GeminiClient initialized: base_url={self.base_url}")
+            logger.info(f"GeminiClient config loaded: base_url={self.base_url}")
 
     def _convert_to_gemini_format(self, messages, tools=None):
         """将OpenAI格式的消息转换为Gemini原生格式"""

@@ -26,15 +26,22 @@ from config.constant import (
 )
 from utils.index_tts_util import generate_audio, validate_emotion_vector
 import os
-from config.config_util import get_config_value
+from config.config_util import get_dynamic_config_value
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load task queue configuration
-MAX_RETRY_COUNT = get_config_value("task_queue", "max_retry_count", default=30)
-TASK_EXPIRE_DAYS = get_config_value("task_queue", "task_expire_days", default=7)
-ENABLE_EXPIRE_CHECK = get_config_value("task_queue", "enable_expire_check", default=True)
+def _get_max_retry_count():
+    """动态获取最大重试次数"""
+    return get_dynamic_config_value("task_queue", "max_retry_count", default=30)
+
+def _get_task_expire_days():
+    """动态获取任务过期天数"""
+    return get_dynamic_config_value("task_queue", "task_expire_days", default=7)
+
+def _is_expire_check_enabled():
+    """动态获取是否启用过期检查"""
+    return get_dynamic_config_value("task_queue", "enable_expire_check", default=True)
 
 # Get upload directory path
 UPLOAD_DIR = "/nas/comfyui_upload/tts/result_audio/"
@@ -172,14 +179,14 @@ def _check_task_expiration(task):
     Returns:
         bool: True表示任务已过期
     """
-    if not ENABLE_EXPIRE_CHECK:
+    if not _is_expire_check_enabled():
         return False
     
     if not task.created_at:
         return False
     
     task_age = datetime.now() - task.created_at
-    if task_age.days >= TASK_EXPIRE_DAYS:
+    if task_age.days >= _get_task_expire_days():
         logger.warning(f"Task {task.task_id} expired (created {task_age.days} days ago)")
         return True
     
@@ -196,8 +203,8 @@ def _check_max_retry_exceeded(task):
     Returns:
         bool: True表示超过最大重试次数
     """
-    if task.try_count and task.try_count >= MAX_RETRY_COUNT:
-        logger.warning(f"Task {task.task_id} exceeded max retry count ({task.try_count}/{MAX_RETRY_COUNT})")
+    if task.try_count and task.try_count >= _get_max_retry_count():
+        logger.warning(f"Task {task.task_id} exceeded max retry count ({task.try_count}/{_get_max_retry_count()})")
         return True
     
     return False
@@ -268,7 +275,7 @@ async def process_task_with_retry(task_type, process_func):
                 # 检查是否超过最大重试次数
                 if _check_max_retry_exceeded(task):
                     TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_FAILED)
-                    AIAudioModel.update(task.task_id, status=AI_AUDIO_STATUS_FAILED, message=f"超过最大重试次数({MAX_RETRY_COUNT})")
+                    AIAudioModel.update(task.task_id, status=AI_AUDIO_STATUS_FAILED, message=f"超过最大重试次数({_get_max_retry_count()})")
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as failed due to max retry exceeded")
                     continue

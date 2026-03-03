@@ -1900,31 +1900,34 @@
       this.clearStatusCheck();
     },
     template: `
-      <div class="page">
-        <div class="field">
-          <label class="label">上传视频</label>
-          <input type="file" @change="onFile" accept="video/*" class="input" :disabled="loading">
-        </div>
-        
-        <div class="field">
-          <div class="row">
-            <button class="btn" :disabled="!canSubmit" @click="submit">
-              {{ loading ? '处理中...' : '开始修复' }}
-            </button>
-            <button class="btn secondary" @click="showHistory = true; fetchHistory()" :disabled="historyLoading">
-              {{ historyLoading ? '加载中...' : '历史记录' }}
-            </button>
+      <div>
+        <div class="form">
+          <div class="field">
+            <label class="label">上传视频</label>
+            <input type="file" @change="onFile" accept="video/*" class="input" :disabled="loading">
+          </div>
+
+          <div class="field">
+            <div class="row">
+              <button class="btn" :disabled="!canSubmit" @click="submit">
+                {{ loading ? '处理中...' : '开始修复' }}
+              </button>
+              <button class="btn secondary" @click="showHistory = true; fetchHistory()" :disabled="historyLoading">
+                {{ historyLoading ? '加载中...' : '历史记录' }}
+              </button>
+            </div>
           </div>
         </div>
-        
+
         <div class="status" v-if="statusText">{{ statusText }}</div>
         <div class="status danger" v-if="error">{{ error }}</div>
-        
-        <div v-if="results.length" class="results">
-          <h3 class="results-title">修复结果</h3>
-          <div class="result-item" v-for="(result, idx) in results" :key="idx">
+
+        <div class="preview" v-if="results.length">
+          <div class="imgbox" v-for="(result, idx) in results" :key="idx">
             <video :src="result.file_url" controls style="max-width: 100%; border-radius: 8px;"></video>
-            <button class="btn secondary" @click="downloadVideo(result.file_url, idx)">下载视频</button>
+            <div style="padding: 8px; text-align: center;">
+              <button class="btn secondary" @click="downloadVideo(result.file_url, idx)">下载视频</button>
+            </div>
           </div>
         </div>
         

@@ -16,14 +16,14 @@ from fastapi import APIRouter, HTTPException, Request, Query as QueryParam, Head
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
-from config.config_util import get_config_value
+from config.config_util import get_dynamic_config_value
 
 # ==================== 加载 API 配置 ====================
 def _load_api_config():
     """从统一配置加载 API 配置到环境变量"""
     # 设置 Google Gemini API
-    google_api_key = get_config_value('google', 'api_key', default=None)
-    google_base_url = get_config_value('google', 'gemini_base_url', default=None)
+    google_api_key = get_dynamic_config_value('llm', 'google', 'api_key', default=None)
+    google_base_url = get_dynamic_config_value('llm', 'google', 'gemini_base_url', default=None)
     
     if google_api_key:
         os.environ.setdefault('GOOGLE_API_KEY', google_api_key)
