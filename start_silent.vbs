@@ -15,8 +15,15 @@ If Not objFSO.FileExists(strBatFile) Then
     WScript.Quit 1
 End If
 
-MsgBox "ComfyUI Server is starting..." & vbCrLf & vbCrLf & _
-       "The service will run in background.", vbInformation, "ComfyUI Server"
+' 使用 ChrW 函数显示中文，避免编码问题
+' 智剧通 = ChrW(26234) & ChrW(21095) & ChrW(36890)
+Dim strTitle, strMsg
+strTitle = ChrW(26234) & ChrW(21095) & ChrW(36890)
+strMsg = strTitle & " " & ChrW(27491) & ChrW(22312) & ChrW(21551) & ChrW(21160) & ChrW(65292) & _
+         ChrW(31245) & ChrW(21518) & ChrW(20250) & ChrW(33258) & ChrW(21160) & ChrW(25171) & ChrW(24320) & _
+         ChrW(27983) & ChrW(35272) & ChrW(22120) & ChrW(36827) & ChrW(20837) & vbCrLf & vbCrLf & _
+         "http://localhost:9003"
+MsgBox strMsg, vbInformation, strTitle
 
 intReturn = objShell.Run("""" & strBatFile & """", 0, False)
 
