@@ -91,6 +91,9 @@ CREATE TABLE `alembic_version` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
+-- 插入 alembic 基线版本号（初始迁移版本，后续迁移会自动执行）
+INSERT INTO `alembic_version` (`version_num`) VALUES ('69f38f419eb6');
+
 --
 -- Table structure for table `character`
 --
