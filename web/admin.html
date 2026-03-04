@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - 智剧通</title>
+    <link rel="stylesheet" href="/css/admin.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+</head>
+<body>
+    <div id="app" class="admin-layout">
+        <!-- 侧边栏 -->
+        <aside class="admin-sidebar">
+            <div class="admin-logo">
+                <h1>智剧通</h1>
+                <span>管理后台</span>
+            </div>
+            <ul class="admin-nav">
+                <li>
+                    <a href="/">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                        </svg>
+                        <span>返回主页</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'dashboard' }" @click.prevent="switchPage('dashboard')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                        </svg>
+                        <span>仪表盘</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'users' }" @click.prevent="switchPage('users')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                        </svg>
+                        <span>用户管理</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'config' }" @click.prevent="switchPage('config')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>系统配置</span>
+                    </a>
+                </li>
+            </ul>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="admin-main">
+            <!-- 顶部栏 -->
+            <header class="admin-header">
+                <h2 v-if="currentPage === 'dashboard'">仪表盘</h2>
+                <h2 v-else-if="currentPage === 'users'">用户管理</h2>
+                <h2 v-else-if="currentPage === 'config'">系统配置</h2>
+                
+                <div class="admin-user">
+                    <span class="admin-user-name">{{ maskedPhone }}</span>
+                    <button class="admin-logout" @click="logout">退出</button>
+                </div>
+            </header>
+
+            <!-- 仪表盘页面 -->
+            <section v-if="currentPage === 'dashboard'">
+                <div v-if="dashboard.loading" class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>加载中...</p>
+                </div>
+                <div v-else class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-card-label">用户总数</div>
+                        <div class="stat-card-value primary">{{ dashboard.totalUsers }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">3天活跃工作流</div>
+                        <div class="stat-card-value success">{{ dashboard.activeWorkflows3d }}</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 用户管理页面 -->
+            <section v-if="currentPage === 'users'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>用户列表</h3>
+                    </div>
+                    
+                    <!-- 搜索筛选 -->
+                    <div class="table-filters">
+                        <input 
+                            type="text" 
+                            class="filter-input" 
+                            placeholder="搜索手机号..." 
+                            v-model="users.keyword"
+                            @keyup.enter="searchUsers"
+                        >
+                        <select class="filter-select" v-model="users.statusFilter" @change="searchUsers">
+                            <option value="">全部状态</option>
+                            <option value="1">正常</option>
+                            <option value="0">禁用</option>
+                        </select>
+                        <select class="filter-select" v-model="users.roleFilter" @change="searchUsers">
+                            <option value="">全部角色</option>
+                            <option value="user">普通用户</option>
+                            <option value="admin">管理员</option>
+                        </select>
+                        <button class="filter-btn" @click="searchUsers">搜索</button>
+                    </div>
+                    
+                    <!-- 表格 -->
+                    <div v-if="users.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>加载中...</p>
+                    </div>
+                    <table v-else class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>手机号</th>
+                                <th>角色</th>
+                                <th>算力</th>
+                                <th>状态</th>
+                                <th>注册时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="users.list.length === 0">
+                                <td colspan="7" style="text-align: center; color: #64748b;">暂无数据</td>
+                            </tr>
+                            <tr v-for="user in users.list" :key="user.user_id">
+                                <td>{{ user.user_id }}</td>
+                                <td>{{ formatPhone(user.phone) }}</td>
+                                <td>
+                                    <span class="status-badge" :class="{ admin: user.role === 'admin' }">
+                                        {{ user.role === 'admin' ? '管理员' : '用户' }}
+                                    </span>
+                                </td>
+                                <td>{{ user.computing_power || 0 }}</td>
+                                <td>
+                                    <span class="status-badge" :class="{ active: user.status === 1, inactive: user.status === 0 }">
+                                        {{ user.status === 1 ? '正常' : '禁用' }}
+                                    </span>
+                                </td>
+                                <td>{{ formatDate(user.created_at) }}</td>
+                                <td>
+                                    <button class="action-btn primary" @click="viewUserDetail(user.user_id)">详情</button>
+                                    <button class="action-btn success" @click="openPowerModal(user)">调整算力</button>
+                                    <button 
+                                        class="action-btn" 
+                                        :class="user.status === 1 ? 'danger' : 'success'"
+                                        @click="updateUserStatus(user.user_id, user.status)"
+                                    >
+                                        {{ user.status === 1 ? '禁用' : '启用' }}
+                                    </button>
+                                    <button 
+                                        class="action-btn primary" 
+                                        @click="updateUserRole(user.user_id, user.role)"
+                                        v-if="user.role !== 'admin'"
+                                    >
+                                        设为管理员
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    
+                    <!-- 分页 -->
+                    <div class="pagination" v-if="users.total > 0">
+                        <button class="page-btn" @click="goToPage(1)" :disabled="users.page === 1">首页</button>
+                        <button class="page-btn" @click="goToPage(users.page - 1)" :disabled="users.page === 1">上一页</button>
+                        <span class="page-info">第 {{ users.page }} / {{ totalPages }} 页，共 {{ users.total }} 条</span>
+                        <button class="page-btn" @click="goToPage(users.page + 1)" :disabled="users.page >= totalPages">下一页</button>
+                        <button class="page-btn" @click="goToPage(totalPages)" :disabled="users.page >= totalPages">末页</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 系统配置页面 -->
+            <section v-if="currentPage === 'config'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>配置列表</h3>
+                        <div class="table-actions">
+                            <button class="action-btn warning" @click="openQuickConfigModal" style="font-weight: bold;">
+                                🚀 快速配置
+                            </button>
+                            <button class="action-btn primary" @click="initConfigs" :disabled="config.initLoading">
+                                {{ config.initLoading ? '初始化中...' : '初始化配置' }}
+                            </button>
+                            <button class="action-btn success" @click="reloadConfigs" :disabled="config.reloadLoading">
+                                {{ config.reloadLoading ? '刷新中...' : '刷新缓存' }}
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- 搜索筛选 -->
+                    <div class="table-filters">
+                        <input 
+                            type="text" 
+                            class="filter-input" 
+                            placeholder="搜索配置键..." 
+                            v-model="config.keyword"
+                            @keyup.enter="searchConfigs"
+                            style="width: 300px;"
+                        >
+                        <button class="filter-btn" @click="searchConfigs">搜索</button>
+                    </div>
+                    
+                    <!-- 表格 -->
+                    <div v-if="config.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>加载中...</p>
+                    </div>
+                    <table v-else class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>配置键</th>
+                                <th>当前值</th>
+                                <th>类型</th>
+                                <th>描述</th>
+                                <th>敏感</th>
+                                <th>更新时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="config.list.length === 0">
+                                <td colspan="7" style="text-align: center; color: #64748b;">暂无配置，请点击「初始化配置」按钮</td>
+                            </tr>
+                            <tr v-for="item in config.list" :key="item.id">
+                                <td><code>{{ item.config_key }}</code></td>
+                                <td class="config-value">
+                                    <template v-if="item.is_sensitive == 1 || item.is_sensitive === true">
+                                        {{ maskSensitiveValue(item.config_value) }}
+                                        <button class="action-btn" style="margin-left: 8px; padding: 4px 8px;" @click="showSensitiveValue(item)">
+                                            👁️ 查看
+                                        </button>
+                                    </template>
+                                    <span v-else>{{ formatConfigValue(item.config_value) }}</span>
+                                </td>
+                                <td>
+                                    <span class="type-badge" :class="item.value_type">{{ item.value_type }}</span>
+                                </td>
+                                <td>{{ item.description || '-' }}</td>
+                                <td>
+                                    <span class="status-badge" :class="{ sensitive: item.is_sensitive }">
+                                        {{ item.is_sensitive ? '是' : '否' }}
+                                    </span>
+                                </td>
+                                <td>{{ formatDate(item.updated_at) }}</td>
+                                <td>
+                                    <button class="action-btn primary" @click="openConfigEditModal(item)" :disabled="!item.editable">
+                                        编辑
+                                    </button>
+                                    <button class="action-btn" @click="viewConfigHistory(item)">
+                                        历史
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    
+                    <!-- 分页 -->
+                    <div class="pagination" v-if="config.total > 0">
+                        <button class="page-btn" @click="goToConfigPage(1)" :disabled="config.page === 1">首页</button>
+                        <button class="page-btn" @click="goToConfigPage(config.page - 1)" :disabled="config.page === 1">上一页</button>
+                        <span class="page-info">第 {{ config.page }} / {{ configTotalPages }} 页，共 {{ config.total }} 条</span>
+                        <button class="page-btn" @click="goToConfigPage(config.page + 1)" :disabled="config.page >= configTotalPages">下一页</button>
+                        <button class="page-btn" @click="goToConfigPage(configTotalPages)" :disabled="config.page >= configTotalPages">末页</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 算力调整弹窗 -->
+        <div class="modal-overlay" v-if="powerModal.show" @click.self="closePowerModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>调整算力</h3>
+                    <button class="modal-close" @click="closePowerModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>用户</label>
+                        <input type="text" :value="powerModal.userName" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>当前算力</label>
+                        <input type="text" :value="powerModal.currentPower" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>调整数量 <span style="color: red;">*</span></label>
+                        <input type="number" v-model.number="powerModal.amount" placeholder="正数增加，负数扣减">
+                        <p class="form-hint">调整后算力: {{ Math.max(0, powerModal.currentPower + (powerModal.amount || 0)) }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>调整原因 <span style="color: red;">*</span></label>
+                        <textarea v-model="powerModal.reason" rows="3" placeholder="请输入调整原因"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closePowerModal">取消</button>
+                    <button class="modal-btn confirm" @click="submitPowerAdjust" :disabled="powerModal.loading">
+                        {{ powerModal.loading ? '提交中...' : '确认调整' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 用户详情弹窗 -->
+        <div class="modal-overlay" v-if="userDetailModal.show" @click.self="closeUserDetailModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>用户详情</h3>
+                    <button class="modal-close" @click="closeUserDetailModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div v-if="userDetailModal.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                    </div>
+                    <div v-else-if="userDetailModal.user">
+                        <div class="form-group">
+                            <label>用户ID</label>
+                            <input type="text" :value="userDetailModal.user.user_id" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>手机号</label>
+                            <input type="text" :value="userDetailModal.user.phone" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>角色</label>
+                            <input type="text" :value="userDetailModal.user.role === 'admin' ? '管理员' : '普通用户'" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>状态</label>
+                            <input type="text" :value="userDetailModal.user.status === 1 ? '正常' : '禁用'" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>算力</label>
+                            <input type="text" :value="userDetailModal.user.computing_power || 0" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>邀请码</label>
+                            <input type="text" :value="userDetailModal.user.invite_code || '-'" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label>注册时间</label>
+                            <input type="text" :value="formatDate(userDetailModal.user.created_at)" disabled>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeUserDetailModal">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 配置编辑弹窗 -->
+        <div class="modal-overlay" v-if="configEditModal.show" @click.self="closeConfigEditModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>编辑配置</h3>
+                    <button class="modal-close" @click="closeConfigEditModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>配置键</label>
+                        <input type="text" :value="configEditModal.configKey" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>类型</label>
+                        <input type="text" :value="configEditModal.valueType" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>描述</label>
+                        <input type="text" :value="configEditModal.description" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>当前值 <span style="color: red;">*</span></label>
+                        <!-- 布尔类型使用开关 -->
+                        <div v-if="configEditModal.valueType === 'bool'" class="switch-container">
+                            <label class="switch">
+                                <input type="checkbox" v-model="configEditModal.boolValue">
+                                <span class="slider"></span>
+                            </label>
+                            <span>{{ configEditModal.boolValue ? '启用' : '禁用' }}</span>
+                        </div>
+                        <!-- 数字类型使用数字输入 -->
+                        <input v-else-if="configEditModal.valueType === 'int' || configEditModal.valueType === 'float'" 
+                               type="number" 
+                               v-model="configEditModal.value" 
+                               :step="configEditModal.valueType === 'float' ? '0.01' : '1'">
+                        <!-- JSON类型使用文本域 -->
+                        <textarea v-else-if="configEditModal.valueType === 'json'" 
+                                  v-model="configEditModal.value" 
+                                  rows="5"
+                                  placeholder="请输入有效的JSON"></textarea>
+                        <!-- 字符串类型 -->
+                        <input v-else type="text" v-model="configEditModal.value">
+                        <p class="form-hint" v-if="configEditModal.isSensitive" style="color: #f59e0b;">
+                            注意：敏感配置修改后历史记录将脱敏显示
+                        </p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeConfigEditModal">取消</button>
+                    <button class="modal-btn confirm" @click="submitConfigEdit" :disabled="configEditModal.loading">
+                        {{ configEditModal.loading ? '保存中...' : '保存' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 配置历史弹窗 -->
+        <div class="modal-overlay" v-if="configHistoryModal.show" @click.self="closeConfigHistoryModal">
+            <div class="modal modal-wide">
+                <div class="modal-header">
+                    <h3>修改历史 - {{ configHistoryModal.configKey }}</h3>
+                    <button class="modal-close" @click="closeConfigHistoryModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div v-if="configHistoryModal.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                    </div>
+                    <div v-else-if="configHistoryModal.list.length === 0" style="text-align: center; color: #64748b; padding: 20px;">
+                        暂无修改历史
+                    </div>
+                    <div v-else class="history-timeline">
+                        <div class="history-item" v-for="item in configHistoryModal.list" :key="item.id">
+                            <div class="history-time">{{ formatDate(item.updated_at) }}</div>
+                            <div class="history-content">
+                                <div class="history-change">
+                                    <span class="old-value">{{ item.old_value || '(空)' }}</span>
+                                    <span class="arrow">→</span>
+                                    <span class="new-value">{{ item.new_value || '(空)' }}</span>
+                                </div>
+                                <div class="history-user" v-if="item.is_sensitive">
+                                    <span class="sensitive-tag">敏感配置已脱敏</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeConfigHistoryModal">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 敏感配置值查看弹窗 -->
+        <div class="modal-overlay" v-if="sensitiveValueModal.show" @click.self="closeSensitiveValueModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>查看配置值</h3>
+                    <button class="modal-close" @click="closeSensitiveValueModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>配置键</label>
+                        <input type="text" :value="sensitiveValueModal.configKey" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>完整值</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" :value="sensitiveValueModal.value" readonly id="sensitiveValueInput" style="flex: 1;">
+                            <button class="action-btn primary" @click="copySensitiveValue">复制</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeSensitiveValueModal">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 快速配置弹窗 -->
+        <div class="modal-overlay" v-if="quickConfigModal.show" @click.self="closeQuickConfigModal">
+            <div class="modal modal-wide">
+                <div class="modal-header">
+                    <h3>🚀 快速配置</h3>
+                    <button class="modal-close" @click="closeQuickConfigModal">&times;</button>
+                </div>
+                <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                    <!-- Duomi 配置组 -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>多米 (Duomi) 配置</h4>
+                            <span class="config-group-desc">📋 影响服务：Nano Banana图片编辑、Sora2/Kling/Veo3视频生成</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Token <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.duomi.token" placeholder="请输入 Duomi API Token">
+                            <p class="form-hint">📖 获取方式：<a href="https://duomiapi.com/user/register?cps=U4GgW1Fx" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                        </div>
+                    </div>
+
+                    <!-- Google 配置组 -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>Google/Gemini 配置</h4>
+                            <span class="config-group-desc">📋 影响服务：剧本创作、AI对话</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.google.apiKey" placeholder="请输入 Google API Key">
+                            <p class="form-hint">📖 获取方式：<a href="https://jiekou.ai/user/register?invited_code=119T5V" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                        </div>
+                        <div class="form-group">
+                            <label>Base URL (可选)</label>
+                            <input type="text" v-model="quickConfigModal.google.baseUrl" placeholder="https://api.jiekou.ai">
+                            <p class="form-hint">📖 可使用第三方代理服务，留空使用默认值</p>
+                        </div>
+                        <div class="form-group">
+                            <button 
+                                class="action-btn primary" 
+                                @click="testGoogleConnection" 
+                                :disabled="quickConfigModal.testLoading || !quickConfigModal.google.apiKey"
+                            >
+                                {{ quickConfigModal.testLoading ? '测试中...' : '🔗 测试连接' }}
+                            </button>
+                            <span v-if="quickConfigModal.testResult" :style="{ color: quickConfigModal.testResult.success ? '#22c55e' : '#ef4444', marginLeft: '10px' }">
+                                {{ quickConfigModal.testResult.message }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- RunningHub 配置组 -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>RunningHub 配置</h4>
+                            <span class="config-group-desc">📋 影响服务：LTX2.0视频、Wan2.2视频、数字人合成</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.runninghub.apiKey" placeholder="请输入 RunningHub API Key">
+                            <p class="form-hint">📖 获取方式：<a href="https://www.runninghub.cn/?inviteCode=quacwnzc" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                        </div>
+                    </div>
+
+                    <!-- Vidu 配置组 (可选) -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>Vidu 配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
+                            <span class="config-group-desc">📋 影响服务：Vidu视频生成</span>
+                        </div>
+                        <div class="form-group">
+                            <label>Token</label>
+                            <input type="text" v-model="quickConfigModal.vidu.token" placeholder="请输入 Vidu API Token">
+                            <p class="form-hint">📖 获取方式：<a href="https://platform.vidu.cn/api-keys" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeQuickConfigModal">取消</button>
+                    <button class="modal-btn confirm" @click="submitQuickConfig" :disabled="quickConfigModal.loading">
+                        {{ quickConfigModal.loading ? '保存中...' : '💾 批量保存' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 使用手册引导弹窗 -->
+        <div class="modal-overlay" v-if="guideModal.show" @click.self="guideModal.show = false">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>🎉 配置完成</h3>
+                    <button class="modal-close" @click="guideModal.show = false">&times;</button>
+                </div>
+                <div class="modal-body" style="text-align: center; padding: 30px;">
+                    <div style="font-size: 48px; margin-bottom: 20px;">📚</div>
+                    <h4 style="margin-bottom: 15px;">恭喜您完成系统配置！</h4>
+                    <p style="color: #64748b; margin-bottom: 20px;">
+                        接下来，建议您查看使用手册，快速了解系统功能和操作方法。
+                    </p>
+                    <a :href="userManualUrl" target="_blank" class="modal-btn confirm" style="display: inline-block; text-decoration: none;">
+                        📖 查看使用手册
+                    </a>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="guideModal.show = false">稍后查看</button>
+                    <button class="modal-btn confirm" @click="guideModal.show = false; window.location.href = '/';">
+                        进入主页
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast消息 -->
+        <div class="toast" :class="toast.type" v-if="toast.show">
+            {{ toast.message }}
+        </div>
+    </div>
+
+    <script src="/js/admin.js"></script>
+</body>
+</html>

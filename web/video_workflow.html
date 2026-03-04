@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>视频工作流</title>
+  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <link rel="stylesheet" href="/css/video_workflow.css" />
+</head>
+<body>
+  <div class="shell">
+    <div class="canvas-container" id="canvasContainer">
+      <div class="brand-floating">
+        <a class="brand" href="/video-workflow-list" title="返回列表">
+          <img src="/files/logo.svg" alt="logo" />
+          <div class="brand-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
+              <rect x="3" y="6" width="18" height="12" rx="2"/>
+              <path d="M6 9H18M6 12H14M6 15H12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            视频工作流
+          </div>
+        </a>
+        <div class="world-selector">
+          <select id="defaultWorldSelect" title="选择默认世界">
+            <option value="">选择世界...</option>
+          </select>
+          <div class="world-selector-actions">
+            <button class="mini-btn" id="createWorldBtn" type="button" title="新建世界">+</button>
+            <button class="mini-btn secondary" id="editWorldBtn" type="button" title="编辑当前世界">✎</button>
+            <button class="mini-btn btn-danger" id="deleteWorldBtn" type="button" title="删除当前世界">−</button>
+          </div>
+          <span id="editionBadge" style="display: none; margin-left: 8px; padding: 2px 8px; background: #22c55e; color: white; border-radius: 4px; font-size: 12px; font-weight: 500;">公共空间</span>
+        </div>
+        <div style="display: flex; gap: 4px; align-items: center;">
+          <a href="https://bq3mlz1jiae.feishu.cn/wiki/W1h2wCK3mi1CgDk36LEcVqggnLe#share-GmxAdPw7goD3DRxQHv8c3BMcnPb" target="_blank" class="mini-btn secondary" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center;" title="查看工作流教程">工作流教程</a>
+        </div>
+      </div>
+      <div class="ratio-floating">
+        <button class="btn save-btn" id="saveBtn" title="保存工作流">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          <span id="saveBtnText">保存</span>
+        </button>
+        <button class="btn secondary save-btn" id="styleBtn" title="画风设置">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+            <polyline points="21 15 16 10 5 21"></polyline>
+          </svg>
+          <span>画风</span>
+        </button>
+        <button class="btn secondary save-btn" id="videoPromptSuffixBtn" type="button" title="视频提示词后缀">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 20h9"></path>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+          </svg>
+          <span>后缀</span>
+        </button>
+        <div class="ratio-label">视频比例</div>
+        <select id="ratioSelect">
+          <option value="9:16">9:16</option>
+          <option value="3:4">3:4</option>
+          <option value="1:1">1:1</option>
+          <option value="4:3">4:3</option>
+          <option value="16:9" selected>16:9</option>
+        </select>
+        <div class="computing-power-chip" id="computingPowerChip" title="剩余算力">
+          <span style="cursor: pointer;" onclick="openComputingPowerLogs()" title="点击查看算力日志">算力: <span class="computing-power-value" id="computingPowerValue">--</span></span>
+          <button class="mini-btn computing-power-refresh" id="computingPowerRefreshBtn" type="button" title="刷新算力">↻</button>
+        </div>
+      </div>
+      <div class="add-btn-container" id="addBtnContainer">
+        <button class="add-btn" id="addBtn" title="添加">+</button>
+        <div class="add-menu" id="addMenu">
+          <div class="add-menu-group">
+            <div class="add-menu-label">添加节点</div>
+            <div class="add-menu-item" id="menuAddVideo">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="3" y="6" width="14" height="12" rx="2" stroke="currentColor" stroke-width="2" />
+                <path d="M17 10L21 8V16L17 14V10Z" fill="currentColor" />
+              </svg>
+              <span class="add-menu-text">图生视频</span>
+            </div>
+            <div class="add-menu-item" id="menuAddVideoNode">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="4" y="6" width="16" height="12" rx="2" stroke="currentColor" stroke-width="2" />
+                <path d="M10 9.5V14.5L14.5 12L10 9.5Z" fill="currentColor" />
+              </svg>
+              <span class="add-menu-text">视频</span>
+            </div>
+            <div class="add-menu-item" id="menuAddImage">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="14" rx="2" stroke="currentColor" stroke-width="2" />
+                <path d="M7 15L10 12L13 15L16 11L20 17H4L7 15Z" fill="currentColor" opacity="0.35" />
+              </svg>
+              <span class="add-menu-text">图片</span>
+            </div>
+            <div class="add-menu-item" id="menuAddScript">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M9 5H7C5.89543 5 5 5.89543 5 7V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V7C19 5.89543 18.1046 5 17 5H15" stroke="currentColor" stroke-width="2"/>
+                <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              <span class="add-menu-text">剧本</span>
+            </div>
+            <div class="add-menu-item" id="menuAddShotGroup">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="2" />
+                <path d="M6 9H18M6 12H14M6 15H12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">分镜组</span>
+            </div>
+            <div class="add-menu-item" id="menuAddTextToSpeech">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M12 2C13.1046 2 14 2.89543 14 4V12C14 13.1046 13.1046 14 12 14C10.8954 14 10 13.1046 10 12V4C10 2.89543 10.8954 2 12 2Z" stroke="currentColor" stroke-width="2"/>
+                <path d="M17 10V12C17 14.7614 14.7614 17 12 17C9.23858 17 7 14.7614 7 12V10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M12 17V21M12 21H8M12 21H16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">文字转语音</span>
+            </div>
+            <div class="add-menu-item" id="menuAddDialogueGroup">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M8 12H8.01M12 12H12.01M16 12H16.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M3 7C3 5.89543 3.89543 5 5 5H19C20.1046 5 21 5.89543 21 7V15C21 16.1046 20.1046 17 19 17H13L9 21V17H5C3.89543 17 3 16.1046 3 15V7Z" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              <span class="add-menu-text">对话组</span>
+            </div>
+            <div class="add-menu-item" id="menuAddText">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M4 6H20M4 12H20M4 18H14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">文本</span>
+            </div>
+          </div>
+          <div class="add-menu-group">
+            <div class="add-menu-label">添加素材 <a href="javascript:void(0)" id="agentBtnMaterial" style="color: #3b82f6; text-decoration: none; font-size: 12px; font-weight: 600; margin-left: 8px; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="AI生成剧本，人物，场景，道具">一键生成素材</a></div>
+            <div class="add-menu-item" id="menuAddCharacter">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <circle cx="12" cy="8" r="3" stroke="currentColor" stroke-width="2"/>
+                <path d="M6 21C6 17.6863 8.68629 15 12 15C15.3137 15 18 17.6863 18 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">角色</span>
+            </div>
+            <div class="add-menu-item" id="menuAddLocation">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M12 2C8.13 2 5 5.13 5 9C5 14.25 12 22 12 22C12 22 19 14.25 19 9C19 5.13 15.87 2 12 2Z" stroke="currentColor" stroke-width="2"/>
+                <circle cx="12" cy="9" r="2.5" stroke="currentColor" stroke-width="2"/>
+              </svg>
+              <span class="add-menu-text">场景</span>
+            </div>
+            <div class="add-menu-item" id="menuAddProps">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+                <path d="M9 9L15 15M15 9L9 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              <span class="add-menu-text">道具</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="canvas-world" id="canvasWorld">
+        <svg class="connections" id="connectionsSvg"></svg>
+        <div class="canvas" id="canvas"></div>
+      </div>
+      <button class="conn-delete-btn" id="connDeleteBtn" title="删除连接线">×</button>
+      <div class="zoom-controls">
+        <button class="zoom-btn" id="autoArrangeBtn" title="自动排列节点">排</button>
+        <button class="zoom-btn" id="zoomInBtn" title="放大">+</button>
+        <div class="zoom-level" id="zoomLevel">100%</div>
+        <button class="zoom-btn" id="zoomOutBtn" title="缩小">−</button>
+      </div>
+      <div class="minimap" id="minimap">
+        <div class="minimap-content" id="minimapContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <div class="lock-mask" id="tourLockMask" aria-hidden="true"></div>
+
+  <div class="modal" id="videoModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div class="modal-title">视频预览</div>
+        <button class="modal-close" id="videoModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <video id="videoModalPlayer" controls></video>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="imageModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <div class="modal-title" id="imageModalTitle">图片预览</div>
+        <button class="modal-close" id="imageModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <img id="imageModalImg" alt="" />
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="shotGroupModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 1200px; width: 90%;">
+      <div class="modal-header">
+        <div class="modal-title" id="shotGroupModalTitle">分镜组详情</div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button class="mini-btn" id="shotGroupModalEditBtn" type="button">新建分镜/ 编辑分镜</button>
+          <button class="modal-close" id="shotGroupModalClose" type="button" aria-label="关闭">×</button>
+        </div>
+      </div>
+      <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+        <div id="shotGroupModalContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="shotDetailModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 800px;">
+      <div class="modal-header">
+        <div class="modal-title" id="shotDetailModalTitle">分镜详情</div>
+        <button class="modal-close" id="shotDetailModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+        <div id="shotDetailModalContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="shotGroupEditModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 1200px; width: 90%;">
+      <div class="modal-header">
+        <div class="modal-title">编辑分镜组</div>
+        <button class="modal-close" id="shotGroupEditModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+        <div id="shotGroupEditModalContent"></div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="shotGroupEditCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="shotGroupEditSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="styleModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">画风设置</div>
+        <button class="modal-close" id="styleModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">
+              画风名称
+              <a href="/image-style-guide" target="_blank" style="margin-left: 8px; font-size: 12px; color: #3b82f6; text-decoration: none; font-weight: normal; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="查看画风说明">查看画风说明</a>
+            </label>
+            <input type="text" id="styleNameInput" list="stylePresets" placeholder="选择或输入画风" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            <datalist id="stylePresets">
+              <option value="漫画风格">
+              <option value="写实风格">
+              <option value="日漫:新海诚风">
+              <option value="美漫:漫威风">
+              <option value="皮克斯风">
+              <option value="日漫:宫崎骏风">
+              <option value="迪士尼风格">
+              <option value="国漫:3D动画风">
+              <option value="日漫:今敏风">
+              <option value="国漫:2D手绘风">
+              <option value="日漫:细田守风">
+              <option value="赛博朋克风">
+              <option value="美漫:DC风">
+            </datalist>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="styleImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <div id="styleImagePreview" style="margin-top: 12px; display: none;">
+              <img id="styleImagePreviewImg" style="max-width: 100%; max-height: 200px; border-radius: 8px; border: 1px solid #e5e7eb; object-fit: contain;" />
+              <button type="button" id="styleImageRemoveBtn" style="margin-top: 8px; padding: 6px 12px; background: #f3f4f6; color: #111827; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; cursor: pointer;">移除图片</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="styleCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="styleSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 角色选择模态框 -->
+  <div class="modal" id="characterModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">选择角色</div>
+        <button class="modal-close" id="characterModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">选择世界</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <select id="characterWorldSelect" style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+                <option value="">请先选择世界...</option>
+              </select>
+              <a id="characterCreateWorldBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #22c55e; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#22c55e'" onmouseout="this.style.borderColor='transparent'">创建世界</a>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" for="characterSearchInput" style="color: #0f172a;">搜索角色</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="characterSearchInput" placeholder="输入角色名称搜索..." style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+              <button type="button" id="createCharacterBtn" style="padding: 10px 16px; background: transparent; color: #3b82f6; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border: none; border-bottom: 1px solid transparent; transition: border-color 0.2s; cursor: pointer;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'">创建角色</button>
+            </div>
+          </div>
+          <div id="characterList" style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
+            <div style="text-align: center; color: #9ca3af; padding: 40px 20px;">
+              请先选择世界
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 场景选择模态框 -->
+  <div class="modal" id="locationModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">选择场景</div>
+        <button class="modal-close" id="locationModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">选择世界</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <select id="locationWorldSelect" style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+                <option value="">请先选择世界...</option>
+              </select>
+              <a id="locationCreateWorldBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #22c55e; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#22c55e'" onmouseout="this.style.borderColor='transparent'">创建世界</a>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">搜索场景</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="locationSearchInput" placeholder="输入场景名称搜索..." style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+              <a id="createLocationBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #3b82f6; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'">创建场景</a>
+            </div>
+          </div>
+          <div id="locationList" style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
+            <div style="text-align: center; color: #9ca3af; padding: 40px 20px;">
+              请先选择世界
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建角色模态框 -->
+  <div class="modal" id="createCharacterModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">创建角色</div>
+        <button class="modal-close" id="createCharacterModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">角色名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createCharacterNameInput" placeholder="请输入角色名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label class="label" style="color: #0f172a;">年龄</label>
+              <input type="text" id="createCharacterAgeInput" placeholder="请输入年龄..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            </div>
+            <div class="field">
+              <label class="label" style="color: #0f172a;">身份/职业</label>
+              <input type="text" id="createCharacterIdentityInput" placeholder="请输入身份或职业..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">性格</label>
+            <textarea id="createCharacterPersonalityInput" placeholder="请输入性格描述..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">行为习惯</label>
+            <textarea id="createCharacterBehaviorInput" placeholder="请输入行为习惯..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">其他信息</label>
+            <textarea id="createCharacterOtherInfoInput" class="compact-textarea" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field-row media-field-row">
+            <div class="field">
+              <label class="label" style="color: #0f172a;">参考图</label>
+              <input type="file" id="createCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            </div>
+            <div class="field">
+              <label class="label" style="color: #0f172a;">
+                参考音频
+                <a href="javascript:void(0)" id="createCharacterVoiceGuideLink" style="margin-left: 8px; font-size: 12px; color: #3b82f6; text-decoration: none; font-weight: normal; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="查看如何获取参考音频">如何获取参考音频?</a>
+              </label>
+              <input type="file" id="createCharacterVoiceInput" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <div id="createCharacterVoicePreview" style="margin-top: 8px; display: none;">
+                <audio id="createCharacterVoicePreviewAudio" controls style="width: 100%; max-height: 40px;"></audio>
+              </div>
+              <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createCharacterCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="createCharacterSaveBtn" type="button">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建场景模态框 -->
+  <div class="modal" id="createLocationModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">创建场景</div>
+        <button class="modal-close" id="createLocationModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">场景名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createLocationNameInput" placeholder="请输入场景名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">父场景</label>
+            <select id="createLocationParentSelect" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+              <option value="">无（顶层场景）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">场景描述 <span style="color: #6b7280; font-size: 12px; font-weight: normal;">(最多100字)</span></label>
+            <textarea id="createLocationDescInput" placeholder="请输入场景描述..." rows="4" maxlength="100" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+            <div style="text-align: right; font-size: 12px; color: #6b7280; margin-top: 4px;">
+              <span id="createLocationDescCount">0</span>/100
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="createLocationImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createLocationCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="createLocationSaveBtn" type="button">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑场景模态框 -->
+  <div class="modal" id="editLocationModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">编辑场景</div>
+        <button class="modal-close" id="editLocationModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <input type="hidden" id="editLocationId" />
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">场景名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="editLocationNameInput" placeholder="请输入场景名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">父场景</label>
+            <select id="editLocationParentSelect" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+              <option value="">无（顶层场景）</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">场景描述 <span style="color: #6b7280; font-size: 12px; font-weight: normal;">(最多100字)</span></label>
+            <textarea id="editLocationDescInput" placeholder="请输入场景描述..." rows="4" maxlength="100" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+            <div style="text-align: right; font-size: 12px; color: #6b7280; margin-top: 4px;">
+              <span id="editLocationDescCount">0</span>/100
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="editLocationImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="editLocationCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="editLocationSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 道具选择模态框 -->
+  <div class="modal" id="propsModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">选择道具</div>
+        <button class="modal-close" id="propsModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">选择世界</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <select id="propsWorldSelect" style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+                <option value="">请先选择世界...</option>
+              </select>
+              <a id="propsCreateWorldBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #22c55e; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#22c55e'" onmouseout="this.style.borderColor='transparent'">创建世界</a>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">搜索道具</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="propsSearchInput" placeholder="输入道具名称搜索..." style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+              <a id="createPropsBtn" href="javascript:void(0)" style="padding: 10px 16px; color: #3b82f6; text-decoration: none; font-size: 14px; font-weight: 600; white-space: nowrap; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'">创建道具</a>
+            </div>
+          </div>
+          <div id="propsList" style="max-height: 400px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
+            <div style="text-align: center; color: #9ca3af; padding: 40px 20px;">
+              请先选择世界
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建道具模态框 -->
+  <div class="modal" id="createPropsModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">创建道具</div>
+        <button class="modal-close" id="createPropsModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">道具名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createPropsNameInput" placeholder="请输入道具名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">道具描述</label>
+            <textarea id="createPropsContentInput" placeholder="请输入道具描述（包括外观、材质、用途等）..." rows="4" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">其他信息</label>
+            <textarea id="createPropsOtherInfoInput" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="createPropsImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createPropsCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="createPropsSaveBtn" type="button">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑道具模态框 -->
+  <div class="modal" id="editPropsModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">编辑道具</div>
+        <button class="modal-close" id="editPropsModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <input type="hidden" id="editPropsId" />
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">道具名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="editPropsNameInput" placeholder="请输入道具名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">道具描述 <span style="color: #6b7280; font-size: 12px; font-weight: normal;">(最多200字)</span></label>
+            <textarea id="editPropsContentInput" placeholder="请输入道具描述..." rows="4" maxlength="200" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+            <div style="text-align: right; font-size: 12px; color: #6b7280; margin-top: 4px;">
+              <span id="editPropsContentCount">0</span>/200
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">其他信息</label>
+            <textarea id="editPropsOtherInfoInput" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">参考图</label>
+            <input type="file" id="editPropsImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+            <div id="editPropsImagePreview" style="margin-top: 8px; display: none;">
+              <img id="editPropsImagePreviewImg" style="max-width: 100%; height: auto; border-radius: 8px;" />
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="editPropsCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="editPropsSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 创建世界模态框 -->
+  <div class="modal" id="createWorldModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 500px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">创建世界</div>
+        <button class="modal-close" id="createWorldModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">世界名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createWorldNameInput" placeholder="请输入世界名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">世界描述</label>
+            <textarea id="createWorldDescInput" placeholder="请输入世界描述..." rows="4" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createWorldCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="createWorldSaveBtn" type="button">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑世界模态框 -->
+  <div class="modal" id="editWorldModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 500px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">编辑世界</div>
+        <button class="modal-close" id="editWorldModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">世界名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="editWorldNameInput" placeholder="请输入世界名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">世界描述</label>
+            <textarea id="editWorldDescInput" placeholder="请输入世界描述..." rows="4" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="editWorldCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="editWorldSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑角色模态框 -->
+  <div class="modal" id="editCharacterModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 800px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">编辑角色</div>
+        <button class="modal-close" id="editCharacterModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px; max-height: 65vh; overflow-y: auto;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">角色名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="editCharacterNameInput" placeholder="请输入角色名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label class="label" style="color: #0f172a;">年龄</label>
+              <input type="text" id="editCharacterAgeInput" placeholder="请输入年龄..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            </div>
+            <div class="field">
+              <label class="label" style="color: #0f172a;">身份/职业</label>
+              <input type="text" id="editCharacterIdentityInput" placeholder="请输入身份或职业..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">性格</label>
+            <textarea id="editCharacterPersonalityInput" placeholder="请输入性格描述..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">行为习惯</label>
+            <textarea id="editCharacterBehaviorInput" placeholder="请输入行为习惯..." rows="3" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">其他信息</label>
+            <textarea id="editCharacterOtherInfoInput" class="compact-textarea" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+          </div>
+          <div class="field-row media-field-row">
+            <div class="field">
+              <label class="label" style="color: #0f172a;">参考图</label>
+              <input type="file" id="editCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <div id="editCharacterImagePreview" style="margin-top: 8px; display: none;">
+                <img id="editCharacterImagePreviewImg" style="max-width: 100%; height: auto; border-radius: 8px;" />
+              </div>
+            </div>
+            <div class="field">
+              <label class="label" style="color: #0f172a;">
+                参考音频
+                <a href="javascript:void(0)" id="editCharacterVoiceGuideLink" style="margin-left: 8px; font-size: 12px; color: #3b82f6; text-decoration: none; font-weight: normal; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="查看如何获取参考音频">如何获取参考音频?</a>
+              </label>
+              <input type="file" id="editCharacterVoiceInput" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+              <div id="editCharacterVoicePreview" style="margin-top: 8px; display: none;">
+                <audio id="editCharacterVoicePreviewAudio" controls style="width: 100%;"></audio>
+              </div>
+              <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
+            </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">Sora角色卡ID</label>
+            <input type="text" id="editCharacterSoraCharacterInput" placeholder="自动生成或手动输入..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">点击"创建sora角色卡"按钮自动创建，或手动输入已有的角色卡ID</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="editCharacterCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="editCharacterSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 视频提示词后缀模态框 -->
+  <div class="modal" id="videoPromptSuffixModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 600px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">视频提示词后缀</div>
+        <button class="modal-close" id="videoPromptSuffixModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="field">
+            <label class="label" style="color: #0f172a;">提示词后缀</label>
+            <textarea id="videoPromptSuffixInput" placeholder="输入视频提示词后缀，生成视频时会自动添加到提示词末尾..." rows="6" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+            <div style="margin-top: 8px; font-size: 12px; color: #6b7280;">
+              此后缀将在通过镜头节点生成视频时自动添加到提示词末尾
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="videoPromptSuffixCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="videoPromptSuffixSaveBtn" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 涂色编辑模态框 -->
+  <div class="modal" id="coloringEditorModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">图片涂色编辑</div>
+        <button class="modal-close" id="coloringEditorModalClose" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div class="coloring-canvas-container">
+            <canvas id="coloringCanvas"></canvas>
+          </div>
+          <div class="coloring-tools">
+            <div class="field" style="flex: 1;">
+              <label class="label" style="color: #0f172a;">画笔大小</label>
+              <input type="range" id="coloringBrushSize" min="5" max="50" value="20" style="width: 100%;" />
+              <div style="text-align: center; font-size: 12px; color: #6b7280; margin-top: 4px;">
+                <span id="coloringBrushSizeValue">20</span>px
+              </div>
+            </div>
+            <div class="field" style="flex: 1;">
+              <label class="label" style="color: #0f172a;">颜色</label>
+              <input type="color" id="coloringColor" value="#ff0000" style="width: 100%; height: 40px; border: 1px solid #d1d5db; border-radius: 8px; cursor: pointer;" />
+            </div>
+            <div class="field" style="flex: 1;">
+              <label class="label" style="color: #0f172a;">透明度</label>
+              <input type="range" id="coloringOpacity" min="0" max="100" value="50" style="width: 100%;" />
+              <div style="text-align: center; font-size: 12px; color: #6b7280; margin-top: 4px;">
+                <span id="coloringOpacityValue">50</span>%
+              </div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; justify-content: center;">
+            <button class="mini-btn secondary" id="coloringUndoBtn" type="button">撤销</button>
+            <button class="mini-btn secondary" id="coloringClearBtn" type="button">清空</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="coloringCancelBtn" type="button">取消</button>
+        <button class="mini-btn" id="coloringConfirmBtn" type="button">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 时间轴面板 -->
+  <div class="timeline-container" id="timelineContainer" style="display:none;">
+    <div class="timeline-header">
+      <div class="timeline-header-left">
+        <span class="timeline-title">时间轴</span>
+        <span class="timeline-total-duration" id="timelineTotalDuration">总时长: 0:00</span>
+        <span style="color:var(--muted);font-size:11px;margin-left:8px;">提示: 拖拽调整顺序 | 按住Shift拖拽可替换</span>
+      </div>
+      <div class="timeline-header-right">
+        <button class="mini-btn btn-success" id="timelineExportDraftBtn">导出剪影草稿</button>
+        <button class="mini-btn btn-danger" id="timelineClearBtn">清空</button>
+        <button class="mini-btn" id="timelineToggleBtn">收起</button>
+      </div>
+    </div>
+    <div class="timeline-ruler" id="timelineRuler"></div>
+    <div class="timeline-tracks" id="timelineTracks">
+      <div class="timeline-track-container timeline-track-container-video">
+        <div class="timeline-track-label">视频</div>
+        <div class="timeline-track" id="videoTrack">
+          <!-- 视频片段将动态添加到这里 -->
+        </div>
+      </div>
+      <div class="timeline-track-container timeline-track-container-audio">
+        <div class="timeline-track-label">音频</div>
+        <div class="timeline-track" id="audioTrack">
+          <!-- 音频片段将动态添加到这里 -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 时间轴展开按钮（收起时显示） -->
+  <button class="timeline-expand-btn" id="timelineExpandBtn" style="display:none;">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="18" height="18" rx="2"/>
+      <line x1="3" y1="15" x2="21" y2="15"/>
+    </svg>
+    时间轴
+  </button>
+
+  <div id="workflowTourPortal" aria-hidden="true"></div>
+
+  <script src="/js/state.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/world.js"></script>
+  <script src="/js/timeline.js"></script>
+  <script src="/js/workflow.js"></script>
+  <script src="/js/canvas.js"></script>
+  <!-- 意见反馈按钮 -->
+  <div class="feedback-btn-wrapper" id="feedbackBtnWrapper">
+    <button class="feedback-btn" id="feedbackBtn" type="button" onclick="handleFeedbackBtnClick(event)">意见反馈</button>
+    <button class="feedback-btn-delete" id="feedbackMinimizeBtn" type="button" onclick="minimizeFeedbackBtn(); event.stopPropagation(); event.preventDefault();" title="最小化">×</button>
+  </div>
+
+  <!-- 意见反馈弹窗 -->
+  <div class="modal-overlay" id="feedbackModal" aria-hidden="true" onclick="if(event.target === this){ this.classList.remove('active'); }">
+    <div class="feedback-modal-card" role="dialog" aria-modal="true" aria-labelledby="feedbackModalTitle">
+      <button type="button" class="feedback-modal-close" aria-label="关闭" onclick="document.getElementById('feedbackModal').classList.remove('active')">×</button>
+      <h2 class="modal-title" id="feedbackModalTitle">意见反馈</h2>
+      <div class="feedback-modal-content">
+        <p style="color: var(--muted); margin-bottom: 16px;">扫描二维码添加微信，提交您的宝贵意见</p>
+        <img src="/files/二维码.jpg" alt="微信二维码" class="feedback-qr-code">
+        <p class="feedback-tip">我们会认真听取每一条反馈，持续改进产品体验</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn" onclick="document.getElementById('feedbackModal').classList.remove('active')">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 算力日志弹窗 -->
+  <div class="modal-overlay" id="computingPowerLogsModal" aria-hidden="true" onclick="if(event.target === this){ this.classList.remove('active'); }">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 700px; height: 85vh; overflow: hidden; display: flex; flex-direction: column; position: relative;">
+      <button type="button" class="modal-close" aria-label="关闭" onclick="document.getElementById('computingPowerLogsModal').classList.remove('active')" style="position: absolute; top: 12px; right: 12px; z-index: 10;">×</button>
+      <div style="flex: 1; overflow: hidden; min-height: 0;">
+        <iframe id="computingPowerLogsIframe" style="width: 100%; height: 100%; border: none; border-radius: 12px;"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 打开算力日志弹窗
+    function openComputingPowerLogs() {
+      const authToken = localStorage.getItem('auth_token');
+      if (!authToken) {
+        alert('请先登录');
+        return;
+      }
+      
+      const modal = document.getElementById('computingPowerLogsModal');
+      const iframe = document.getElementById('computingPowerLogsIframe');
+      
+      // 设置 iframe 的 src
+      iframe.src = `/computing_power_logs.html?auth_token=${authToken}`;
+      
+      // 显示弹窗
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+  </script>
+
+  <script src="/js/image_coloring_editor.js"></script>
+  <script src="/js/nodes.js"></script>
+  <script src="/js/text_node.js"></script>
+  <script src="/js/text_to_speech_node.js"></script>
+  <script src="/js/dialogue_group_node.js"></script>
+  <script src="/js/camera_3d_preview.js"></script>
+  <script src="/js/shot_frame_generator.js"></script>
+  <script src="/js/video_prompt_suffix.js"></script>
+  <script src="/js/shot_frame_video_generator.js"></script>
+  <script src="/js/events.js"></script>
+  <script src="/js/workflow_layout.js"></script>
+</body>
+</html>

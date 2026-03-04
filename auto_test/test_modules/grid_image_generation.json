@@ -1,0 +1,521 @@
+{
+  "module_name": "grid_image_generation",
+  "description": "测试宫格图片生成功能",
+  "tests": [
+    {
+      "test_name": "test_4_grid_generation",
+      "description": "测试4宫格图片生成（2-5个分镜）",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开视频工作流页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载"
+        },
+        {
+          "action": "click",
+          "selector": "#menuAddScript",
+          "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
+          "action": "type",
+          "selector": ".script-textarea",
+          "text": "清晨，阳光洒在城市街道上。\n小明走进咖啡店，点了一杯拿铁。\n他坐在窗边，看着窗外的行人。\n咖啡的香气弥漫在空气中。",
+          "description": "输入测试剧本（4个场景）"
+        },
+        {
+          "action": "select",
+          "selector": ".script-grid-model",
+          "value": "gemini-2.5-pro-image-preview",
+          "description": "选择标准版模型"
+        },
+        {
+          "action": "click",
+          "selector": ".script-split-grid-btn",
+          "description": "点击宫格生图按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 5000,
+          "description": "等待剧本解析"
+        },
+        {
+          "action": "dialog_accept",
+          "description": "确认生成对话框"
+        },
+        {
+          "action": "wait",
+          "selector": ".shot-frame-grid-status",
+          "timeout": 10000,
+          "description": "等待分镜图节点创建"
+        },
+        {
+          "action": "assert",
+          "selector": ".node[data-node-id]",
+          "count": ">= 5",
+          "description": "验证节点已创建（剧本+分镜组+分镜+分镜图）"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-frame-grid-status",
+          "text_contains": "等待生成",
+          "description": "验证分镜图节点状态"
+        }
+      ]
+    },
+    {
+      "test_name": "test_9_grid_generation",
+      "description": "测试9宫格图片生成（>5个分镜）",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开视频工作流页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载"
+        },
+        {
+          "action": "click",
+          "selector": "#menuAddScript",
+          "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
+          "action": "type",
+          "selector": ".script-textarea",
+          "text": "场景1：清晨的城市。\n场景2：咖啡店内部。\n场景3：主角点咖啡。\n场景4：坐在窗边。\n场景5：看着窗外。\n场景6：喝咖啡。\n场景7：思考人生。",
+          "description": "输入测试剧本（7个场景）"
+        },
+        {
+          "action": "select",
+          "selector": ".script-grid-model",
+          "value": "gemini-3-pro-image-preview",
+          "description": "选择加强版模型"
+        },
+        {
+          "action": "click",
+          "selector": ".script-split-grid-btn",
+          "description": "点击宫格生图按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 5000,
+          "description": "等待剧本解析"
+        },
+        {
+          "action": "dialog_accept",
+          "description": "确认生成对话框"
+        },
+        {
+          "action": "wait",
+          "selector": ".shot-frame-grid-status",
+          "timeout": 10000,
+          "description": "等待分镜图节点创建"
+        },
+        {
+          "action": "assert",
+          "selector": ".node[data-node-id]",
+          "count": ">= 8",
+          "description": "验证节点已创建"
+        }
+      ]
+    },
+    {
+      "test_name": "test_auto_model_switch",
+      "description": "测试自动切换到加强版（分镜数>5但选择了标准版）",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开视频工作流页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载"
+        },
+        {
+          "action": "click",
+          "selector": "#menuAddScript",
+          "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
+          "action": "type",
+          "selector": ".script-textarea",
+          "text": "场景1。\n场景2。\n场景3。\n场景4。\n场景5。\n场景6。",
+          "description": "输入测试剧本（6个场景）"
+        },
+        {
+          "action": "select",
+          "selector": ".script-grid-model",
+          "value": "gemini-2.5-pro-image-preview",
+          "description": "选择标准版模型"
+        },
+        {
+          "action": "click",
+          "selector": ".script-split-grid-btn",
+          "description": "点击宫格生图按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 5000,
+          "description": "等待剧本解析"
+        },
+        {
+          "action": "assert",
+          "selector": ".script-grid-model",
+          "value": "gemini-3-pro-image-preview",
+          "description": "验证已自动切换到加强版"
+        }
+      ]
+    },
+    {
+      "test_name": "test_single_shot_warning",
+      "description": "测试只有1个分镜时的提示",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开视频工作流页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载"
+        },
+        {
+          "action": "click",
+          "selector": "#menuAddScript",
+          "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
+          "action": "type",
+          "selector": ".script-textarea",
+          "text": "只有一个场景的剧本。",
+          "description": "输入单场景剧本"
+        },
+        {
+          "action": "click",
+          "selector": ".script-split-grid-btn",
+          "description": "点击宫格生图按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 5000,
+          "description": "等待剧本解析"
+        },
+        {
+          "action": "assert",
+          "selector": ".script-grid-status",
+          "text_contains": "只有1个分镜",
+          "description": "验证显示警告信息"
+        }
+      ]
+    },
+    {
+      "test_name": "test_reference_images_collection",
+      "description": "测试宫格生图时收集参考图片（角色、场景、道具）",
+      "preconditions": ["需要已创建世界和角色"],
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开视频工作流页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载"
+        },
+        {
+          "action": "select",
+          "selector": "#defaultWorldSelect",
+          "value_not_empty": true,
+          "description": "选择一个已有的世界"
+        },
+        {
+          "action": "click",
+          "selector": "#menuAddScript",
+          "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
+          "action": "type",
+          "selector": ".script-textarea",
+          "text": "场景1：【【小明】】走进咖啡店。\n场景2：【【小红】】在窗边等待。\n场景3：【【小明】】和【【小红】】相遇。",
+          "description": "输入包含角色的剧本"
+        },
+        {
+          "action": "click",
+          "selector": ".script-split-grid-btn",
+          "description": "点击宫格生图按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 5000,
+          "description": "等待剧本解析和参考图片收集"
+        },
+        {
+          "action": "assert",
+          "selector": ".script-grid-status",
+          "text_contains": "收集参考图片",
+          "description": "验证正在收集参考图片"
+        },
+        {
+          "action": "wait",
+          "timeout": 10000,
+          "description": "等待确认对话框"
+        },
+        {
+          "action": "dialog_text_contains",
+          "text": "参考图片",
+          "description": "验证确认对话框显示参考图片信息"
+        },
+        {
+          "action": "dialog_accept",
+          "description": "确认生成对话框"
+        }
+      ]
+    },
+    {
+      "test_name": "test_force_enhanced_model_by_ref_images",
+      "description": "测试参考图片超过5张时强制升级到增强版模型",
+      "preconditions": ["需要已创建世界和6个以上有参考图的角色"],
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开视频工作流页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载"
+        },
+        {
+          "action": "select",
+          "selector": "#defaultWorldSelect",
+          "value_not_empty": true,
+          "description": "选择一个已有的世界"
+        },
+        {
+          "action": "click",
+          "selector": "#menuAddScript",
+          "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
+          "action": "type",
+          "selector": ".script-textarea",
+          "text": "场景1：【【角色A】】出场。\n场景2：【【角色B】】出场。\n场景3：【【角色C】】出场。\n场景4：【【角色D】】出场。\n场景5：【【角色E】】出场。\n场景6：【【角色F】】出场。",
+          "description": "输入包含6个角色的剧本（参考图片将超过5张）"
+        },
+        {
+          "action": "select",
+          "selector": ".script-grid-model",
+          "value": "gemini-2.5-pro-image-preview",
+          "description": "选择标准版模型"
+        },
+        {
+          "action": "click",
+          "selector": ".script-split-grid-btn",
+          "description": "点击宫格生图按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 10000,
+          "description": "等待剧本解析和参考图片收集"
+        },
+        {
+          "action": "dialog_text_contains",
+          "text": "加强版",
+          "description": "验证确认对话框显示已自动升级到加强版"
+        },
+        {
+          "action": "dialog_accept",
+          "description": "确认生成对话框"
+        },
+        {
+          "action": "console_log_contains",
+          "text": "强制使用增强版模型",
+          "description": "验证控制台日志显示强制升级"
+        }
+      ]
+    },
+    {
+      "test_name": "test_grid_split_api",
+      "description": "测试宫格拆分API接口",
+      "api_test": true,
+      "steps": [
+        {
+          "action": "api_call",
+          "method": "GET",
+          "url": "/api/ai-tools/1/grid-split",
+          "params": {
+            "grid_index": 1,
+            "user_id": 1
+          },
+          "description": "调用宫格拆分接口"
+        },
+        {
+          "action": "assert_response",
+          "status_code": 200,
+          "description": "验证响应状态码"
+        },
+        {
+          "action": "assert_json",
+          "path": "code",
+          "value": 0,
+          "description": "验证响应code"
+        },
+        {
+          "action": "assert_json",
+          "path": "data.grid_index",
+          "value": 1,
+          "description": "验证grid_index"
+        }
+      ]
+    },
+    {
+      "test_name": "test_ai_tools_status_api",
+      "description": "测试AI工具状态查询API",
+      "api_test": true,
+      "steps": [
+        {
+          "action": "api_call",
+          "method": "GET",
+          "url": "/api/ai-tools/1/status",
+          "params": {
+            "user_id": 1
+          },
+          "description": "调用状态查询接口"
+        },
+        {
+          "action": "assert_response",
+          "status_code": 200,
+          "description": "验证响应状态码"
+        },
+        {
+          "action": "assert_json",
+          "path": "code",
+          "value": 0,
+          "description": "验证响应code"
+        },
+        {
+          "action": "assert_json",
+          "path": "data.status",
+          "exists": true,
+          "description": "验证status字段存在"
+        }
+      ]
+    },
+    {
+      "test_name": "test_insufficient_shots_fill",
+      "description": "测试分镜数量不足填满宫格时的填充逻辑（5个分镜使用4宫格）",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开视频工作流页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载"
+        },
+        {
+          "action": "click",
+          "selector": "#menuAddScript",
+          "description": "点击添加剧本节点"
+        },
+        {
+          "action": "click",
+          "selector": ".node .node-header",
+          "description": "点击剧本节点标题栏展开编辑区"
+        },
+        {
+          "action": "type",
+          "selector": ".script-textarea",
+          "text": "场景1：清晨的街道。\n场景2：咖啡店内部。\n场景3：主角点咖啡。\n场景4：坐在窗边。\n场景5：思考人生。",
+          "description": "输入测试剧本（5个场景，将生成2张4宫格图片）"
+        },
+        {
+          "action": "select",
+          "selector": ".script-grid-model",
+          "value": "gemini-2.5-pro-image-preview",
+          "description": "选择标准版模型（4宫格）"
+        },
+        {
+          "action": "click",
+          "selector": ".script-split-grid-btn",
+          "description": "点击宫格生图按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 5000,
+          "description": "等待剧本解析"
+        },
+        {
+          "action": "dialog_text_contains",
+          "text": "2张",
+          "description": "验证确认对话框显示将生成2张宫格图片"
+        },
+        {
+          "action": "dialog_accept",
+          "description": "确认生成对话框"
+        },
+        {
+          "action": "wait",
+          "selector": ".shot-frame-grid-status",
+          "timeout": 10000,
+          "description": "等待分镜图节点创建"
+        },
+        {
+          "action": "assert",
+          "selector": ".node[data-node-id*='shot_frame_grid']",
+          "count": "5",
+          "description": "验证创建了5个分镜图节点（第1张图4个+第2张图1个）"
+        },
+        {
+          "action": "console_log_contains",
+          "text": "如果分镜数量不足填满宫格",
+          "description": "验证控制台日志显示填充逻辑"
+        }
+      ]
+    }
+  ]
+}

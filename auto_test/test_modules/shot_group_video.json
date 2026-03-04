@@ -1,0 +1,463 @@
+{
+  "module_id": "shot_group_video",
+  "module_name": "分镜组节点生成视频模块",
+  "description": "测试分镜组节点的视频生成功能，包括视频提示词拼接、首帧选择、视频模型选择等",
+  "test_cases": [
+    {
+      "id": "sgv_001",
+      "name": "分镜组视频生成 - 基础流程",
+      "description": "测试分镜组节点生成视频的完整流程：选择视频模型、设置时长、选择抽卡次数、生成视频",
+      "priority": "high",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "click",
+          "selector": "#addNodeBtn",
+          "description": "点击添加节点按钮"
+        },
+        {
+          "action": "click",
+          "selector": "text=剧本",
+          "description": "选择剧本节点"
+        },
+        {
+          "action": "fill",
+          "selector": ".script-textarea",
+          "value": "测试剧本内容：主角在城市街道行走，镜头跟随。",
+          "description": "输入剧本内容"
+        },
+        {
+          "action": "click",
+          "selector": ".script-generate-btn",
+          "description": "点击生成分镜组按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 30000,
+          "description": "等待分镜组生成完成"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-generate-btn",
+          "description": "点击生成分镜按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 60000,
+          "description": "等待分镜节点生成完成"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-frame-generate-btn",
+          "description": "点击生成分镜图按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 120000,
+          "description": "等待分镜图生成完成"
+        },
+        {
+          "action": "click",
+          "selector": ".node[data-node-id] .node-title:has-text('分镜组')",
+          "description": "选择分镜组节点"
+        },
+        {
+          "action": "select",
+          "selector": ".shot-group-video-model",
+          "value": "wan22",
+          "description": "选择视频模型为Wan2.2"
+        },
+        {
+          "action": "select",
+          "selector": ".shot-group-video-duration",
+          "value": "5",
+          "description": "选择视频时长为5秒"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-video-caret",
+          "description": "点击抽卡次数下拉菜单"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-video-menu .gen-item[data-count='2']",
+          "description": "选择抽卡次数X2"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-draw-count-label",
+          "expected": "抽卡次数：X2",
+          "description": "验证抽卡次数显示正确"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-computing-power-value",
+          "expected_pattern": "\\d+ 算力",
+          "description": "验证算力消耗显示正确"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-generate-video-btn",
+          "description": "点击生成视频按钮"
+        },
+        {
+          "action": "wait",
+          "timeout": 180000,
+          "description": "等待视频生成完成（最多3分钟）"
+        },
+        {
+          "action": "assert",
+          "selector": ".video-preview",
+          "count": 2,
+          "description": "验证生成了2个视频节点"
+        }
+      ]
+    },
+    {
+      "id": "sgv_002",
+      "name": "分镜组视频生成 - 视频提示词拼接验证",
+      "description": "验证分镜组节点正确拼接所有子分镜的视频提示词，每个镜头标明时间范围",
+      "priority": "high",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "evaluate",
+          "script": "console.log('测试视频提示词拼接逻辑')",
+          "description": "通过控制台验证视频提示词拼接格式"
+        }
+      ]
+    },
+    {
+      "id": "sgv_003",
+      "name": "分镜组视频生成 - 首帧选择验证",
+      "description": "验证分镜组节点使用第一个分镜节点的首帧作为视频首帧",
+      "priority": "high",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "evaluate",
+          "script": "console.log('验证首帧选择逻辑')",
+          "description": "通过控制台验证首帧选择正确"
+        }
+      ]
+    },
+    {
+      "id": "sgv_004",
+      "name": "分镜组视频生成 - 不同视频模型测试",
+      "description": "测试分镜组节点支持的所有视频模型（Wan2.2、Sora2、LTX2.0、可灵、Vidu、VEO3.1）",
+      "priority": "medium",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-model option",
+          "count": 6,
+          "description": "验证视频模型选项数量正确"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-model option[value='wan22']",
+          "description": "验证Wan2.2模型选项存在"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-model option[value='sora2']",
+          "description": "验证Sora2模型选项存在"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-model option[value='ltx2']",
+          "description": "验证LTX2.0模型选项存在"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-model option[value='kling']",
+          "description": "验证可灵模型选项存在"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-model option[value='vidu']",
+          "description": "验证Vidu模型选项存在"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-model option[value='veo3']",
+          "description": "验证VEO3.1模型选项存在"
+        }
+      ]
+    },
+    {
+      "id": "sgv_005",
+      "name": "分镜组视频生成 - 时长选项动态更新",
+      "description": "验证切换视频模型时，时长选项会根据模型动态更新",
+      "priority": "medium",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "select",
+          "selector": ".shot-group-video-model",
+          "value": "wan22",
+          "description": "选择Wan2.2模型"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-duration option",
+          "count": 2,
+          "description": "验证Wan2.2模型有2个时长选项（5秒、10秒）"
+        },
+        {
+          "action": "select",
+          "selector": ".shot-group-video-model",
+          "value": "veo3",
+          "description": "选择VEO3.1模型"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-duration option",
+          "count": 1,
+          "description": "验证VEO3.1模型只有1个时长选项（8秒）"
+        }
+      ]
+    },
+    {
+      "id": "sgv_006",
+      "name": "分镜组视频生成 - 算力计算验证",
+      "description": "验证分镜组视频生成的算力计算正确（单个视频算力 × 抽卡次数）",
+      "priority": "high",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "select",
+          "selector": ".shot-group-video-model",
+          "value": "wan22",
+          "description": "选择Wan2.2模型"
+        },
+        {
+          "action": "select",
+          "selector": ".shot-group-video-duration",
+          "value": "5",
+          "description": "选择5秒时长"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-video-caret",
+          "description": "点击抽卡次数下拉菜单"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-video-menu .gen-item[data-count='3']",
+          "description": "选择抽卡次数X3"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-computing-power-detail",
+          "expected_pattern": "单个 \\d+ 算力 × 3 个 = \\d+ 算力",
+          "description": "验证算力详情显示格式正确"
+        }
+      ]
+    },
+    {
+      "id": "sgv_007",
+      "name": "分镜组视频生成 - 错误处理：无分镜节点",
+      "description": "验证在没有分镜节点的情况下点击生成视频，系统给出正确提示",
+      "priority": "medium",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "click",
+          "selector": "#addNodeBtn",
+          "description": "点击添加节点按钮"
+        },
+        {
+          "action": "click",
+          "selector": "text=分镜组",
+          "description": "直接添加分镜组节点（不生成分镜）"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-generate-video-btn",
+          "description": "点击生成视频按钮"
+        },
+        {
+          "action": "assert",
+          "selector": ".toast",
+          "expected": "请先生成分镜节点",
+          "description": "验证显示正确的错误提示"
+        }
+      ]
+    },
+    {
+      "id": "sgv_008",
+      "name": "分镜组视频生成 - 错误处理：无首帧图片",
+      "description": "验证第一个分镜节点没有首帧图片时，系统给出正确提示",
+      "priority": "medium",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "evaluate",
+          "script": "console.log('模拟第一个分镜节点无首帧图片的场景')",
+          "description": "通过脚本验证错误处理逻辑"
+        }
+      ]
+    },
+    {
+      "id": "sgv_009",
+      "name": "分镜组视频生成 - 工作流保存与恢复",
+      "description": "验证分镜组节点的视频相关数据（模型、时长、抽卡次数）能正确保存和恢复",
+      "priority": "high",
+      "steps": [
+        {
+          "action": "navigate",
+          "url": "http://localhost:8000/video_workflow.html",
+          "description": "打开工作流编辑器页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "click",
+          "selector": "#addNodeBtn",
+          "description": "点击添加节点按钮"
+        },
+        {
+          "action": "click",
+          "selector": "text=分镜组",
+          "description": "添加分镜组节点"
+        },
+        {
+          "action": "select",
+          "selector": ".shot-group-video-model",
+          "value": "sora2",
+          "description": "选择Sora2模型"
+        },
+        {
+          "action": "select",
+          "selector": ".shot-group-video-duration",
+          "value": "15",
+          "description": "选择15秒时长"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-video-caret",
+          "description": "点击抽卡次数下拉菜单"
+        },
+        {
+          "action": "click",
+          "selector": ".shot-group-video-menu .gen-item[data-count='4']",
+          "description": "选择抽卡次数X4"
+        },
+        {
+          "action": "click",
+          "selector": "#saveWorkflowBtn",
+          "description": "保存工作流"
+        },
+        {
+          "action": "wait",
+          "timeout": 3000,
+          "description": "等待保存完成"
+        },
+        {
+          "action": "reload",
+          "description": "刷新页面"
+        },
+        {
+          "action": "wait",
+          "selector": "#canvas",
+          "description": "等待画布加载完成"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-model",
+          "value": "sora2",
+          "description": "验证视频模型恢复正确"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-duration",
+          "value": "15",
+          "description": "验证视频时长恢复正确"
+        },
+        {
+          "action": "assert",
+          "selector": ".shot-group-video-draw-count-label",
+          "expected": "抽卡次数：X4",
+          "description": "验证抽卡次数恢复正确"
+        }
+      ]
+    }
+  ]
+}

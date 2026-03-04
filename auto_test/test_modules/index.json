@@ -1,0 +1,82 @@
+{
+  "modules": [
+    {
+      "id": "auth",
+      "name": "用户认证模块",
+      "description": "用户登录、登出功能的测试",
+      "file": "auth.json"
+    },
+    {
+      "id": "workflow_list",
+      "name": "工作流列表页模块",
+      "description": "工作流列表页面的展示、搜索、筛选、分页、CRUD 操作",
+      "file": "workflow_list.json"
+    },
+    {
+      "id": "world_management",
+      "name": "世界管理模块",
+      "description": "工作流编辑器中的世界创建、选择、节点添加功能测试",
+      "file": "world_management.json"
+    },
+    {
+      "id": "location_management",
+      "name": "场景管理模块",
+      "description": "工作流编辑器中的场景创建、编辑、节点添加功能测试",
+      "file": "location_management.json"
+    },
+    {
+      "id": "character_management",
+      "name": "角色管理模块",
+      "description": "工作流编辑器中的角色创建、编辑、节点添加、音频试听功能测试",
+      "file": "character_management.json"
+    },
+    {
+      "id": "workflow_editor",
+      "name": "工作流编辑器模块",
+      "description": "工作流画布编辑器的核心功能测试，包括画布操作、节点管理、连接线等",
+      "file": "workflow_editor.json"
+    },
+    {
+      "id": "node_operations",
+      "name": "节点操作模块",
+      "description": "各类节点的具体操作功能测试，包括图片上传、参数设置、视频生成等",
+      "file": "node_operations.json"
+    },
+    {
+      "id": "timeline",
+      "name": "视频时间轴模块",
+      "description": "视频时间轴功能的测试，包括添加视频、拖拽排序、拖拽替换、删除片段等操作",
+      "file": "timeline.json"
+    },
+    {
+      "id": "shot_frame_video",
+      "name": "镜头节点生成视频模块",
+      "description": "分镜节点生成视频功能的端到端测试，包括视频生成、提示词处理、比例计算等",
+      "file": "shot_frame_video.json"
+    },
+    {
+      "id": "error_handling",
+      "name": "错误处理与边界场景",
+      "description": "验证系统对各种错误情况和边界场景的处理能力",
+      "file": "error_handling.json"
+    },
+    {
+      "id": "grid_image_generation",
+      "name": "宫格图片生成模块",
+      "description": "测试剧本节点的4宫格和9宫格图片生成功能，包括自动拆分、状态同步等",
+      "file": "grid_image_generation.json"
+    },
+    {
+      "id": "shot_group_video",
+      "name": "分镜组节点生成视频模块",
+      "description": "测试分镜组节点的视频生成功能，包括视频提示词拼接、首帧选择、视频模型选择等",
+      "file": "shot_group_video.json"
+    },
+    {
+      "id": "camera_control",
+      "name": "相机控制模块",
+      "description": "测试图片节点上的相机控制功能，包括UI交互、参数同步、3D预览和重置功能",
+      "file": "camera_control.json"
+    }
+  ]
+}

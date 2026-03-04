@@ -1,0 +1,176 @@
+# =============================================================================
+# 配置文件说明
+# 修改本文件后，请检查是否需要同步修改 config/default_configs.py
+# 如果涉及配置 key 的变更（新增/删除/重命名），需要同时:
+#   1. 更新 config/default_configs.py 中的 DEFAULT_CONFIGS 列表
+#   2. 创建 alembic migration 脚本更新数据库中已有的配置 key
+# =============================================================================
+
+runninghub:
+  host: "https://www.runninghub.cn"
+  api_key: "9549532f3c3d435eXXXX"
+  max_concurrent_slots: 3  # RunningHub 最大并发槽位数量
+# Server configuration
+server:
+  host: "http://localhost:9003"
+  is_local: true  # 是否为本地环境，如果是本地环境，进行图片生成以及视频生成时，将参考图片上传到图床中。
+  https_host: "https://localhost:12443"
+  port: 9003                # 如需自定义端口可保留
+  https_port: 5174
+  https:
+    enabled: false
+    certfile: "secret/xxx.pem"
+    keyfile: "secret/xxx.key"
+# Default timeout settings
+timeout:
+  request_timeout: 10000
+  status_check_timeout: 900
+  status_check_interval: 10
+
+# SMS configuration (短信服务配置)
+sms:
+  # 全局驱动选择（可选，如果设置则覆盖各agent的driver配置）
+  # 取消注释下面这行可以全局切换驱动
+  active_driver: "perseids"  # 可选值: "legacy", "perseids"
+  agents:
+    # 默认代理：使用阿里云SDK
+    default:
+      driver: "legacy"
+      access_key_id: "LTAI5txxxxxxxx"
+      access_key_secret: "eKRGvkHCxxxxxxxx"
+      sign_name: "公司名称"
+      template_code: "SMS_29225xxxx"
+      region_id: "cn-hangzhou"
+    # API代理示例：使用HTTP API发送短信
+    api_agent:
+      driver: "perseids" 
+      api_url: "https://ailive.perseids.cn:11443/api/v1/live/send_verify_code_simple"  # 短信API接口地址
+      method: "POST"  # 请求方法，默认POST
+
+# Database configuration
+database:
+  host: "localhost"
+  port: 3306
+  user: "root"
+  password: "3bTgThWP2xeX"
+  database: "zjt"
+  charset: "utf8mb4"
+
+
+duomi:
+  token: "5q26ybqAXXXXX"
+
+vidu:
+  token: "vda_xxxx"
+
+pay:
+  wxpay:
+      #公众账号ID
+      appId: wxfcxxxx
+      #商户号
+      mchId: 16xxxxxx
+      #商户API证书序列号
+      api_key: 3C57FXXXX
+      #APIv3_key
+      APIv3_key: 76a3bXXXX
+      appSecret: 3469XXXX
+
+bin:
+  # FFmpeg 可执行文件路径配置
+  # 支持三种格式：
+  # 1. 绝对路径（向后兼容）: "/usr/bin/ffmpeg"
+  # 2. 相对路径（基于项目根目录）: "bin/ffmpeg/ffmpeg.exe"
+  # 3. 使用系统 PATH 查找: "ffmpeg"
+  ffmpeg: "bin/ffmpeg/ffmpeg"
+  ffprobe: "bin/ffmpeg/ffprobe"
+
+llm:
+  baidu:
+    api_key: "bce-v3/ALTAK-RW7XXXX"
+    api_url: "https://qianfan.baidubce.com/v2/chat/completions"
+    model: "ernie-4.5-turbo-vl-latest"
+  qwen:
+    api_key: "sk-f3694dd0XXXX"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-plus"
+  google:
+    api_key: "sk_xxxxx"
+    gemini_base_url: "https://api.jiekou.ai"
+
+# TTS (Text-to-Speech) configuration
+tts:
+  api_url: "http://47.98.190.124"  # TTS API 服务地址
+  upload_url: "http://ailive.perseids.cn:11442/upload/tts/result_audio/"
+
+
+# Test mode configuration
+test_mode:
+  enabled: false  # 是否启用测试模式
+  mock_videos:
+    image_to_video: "https://cdn3.dmiapi.com/attachments/sora/20260107/968e1cf718e6e115fdb0a5874d39c470.mp4?e=1768198067&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:LWFb2h3-ecBwr-YBQWToVPcEkJw="  # 图生视频的测试视频URL
+    text_to_video: "https://cdn3.dmiapi.com/attachments/sora/20260107/968e1cf718e6e115fdb0a5874d39c470.mp4?e=1768198067&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:LWFb2h3-ecBwr-YBQWToVPcEkJw="  # 文生视频的测试视频URL
+  mock_images:
+    image_edit: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 图片编辑的测试图片URL
+    text_to_image: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 文生图的测试图片URL
+
+# Anthropic Claude API configuration (script_writer 智能体使用)
+# Google Gemini API configuration
+google:
+  api_key: "sk_xxxxxxxxxxx"
+  gemini_base_url: "https://api.jiekou.ai"
+
+# JIEKOU API configuration
+jiekou:
+  api_key: "sk_xxxxxxxxxx"
+  base_url: "https://api.jiekou.ai"
+
+# Task queue management
+task_queue:
+  max_retry_count: 30  # 最大重试次数，超过后任务将被标记为失败
+  task_expire_days: 7  # 任务过期天数，创建后超过此天数的任务将被自动失败
+  enable_expire_check: true  # 是否启用任务过期检查
+
+# Upload file size limits (in MB)
+upload:
+  max_image_size_mb: 10  # 角色、场景、道具的参考图片最大大小限制（MB）
+
+# Frontend debug mode
+frontend:
+  debug_password: "123"  # 前端 Debug 模式密码
+
+# Workflow configuration
+workflow:
+  poll_status_interval: 30  # 工作流节点状态轮询间隔（秒），默认60秒
+
+# Alembic 数据库迁移配置
+alembic:
+  auto_migrate: true  # 应用启动时是否自动执行迁移
+  script_location: "alembic"  # 迁移脚本目录
+
+# Edition configuration
+edition:
+  mode: "community"  # community (开源版/社区版) | enterprise (商业版)
+
+file_storage:
+  # Qiniu cloud storage configuration
+  # 标准存储每月免费额度具体包括：
+  # 存储空间：10GB/月
+  # CDN回源流量：10GB/月
+  # 请求次数：
+  # PUT/DELETE 请求：10万次/月
+  # GET 请求：100万次/月
+  # 具体参考 https://developer.qiniu.com/kodo/6379/metering-and-billing?ref=support.qiniu.com
+  qiniu:
+    access_key: "IAM-0fZBG5O0nEj9Xy-d_vjtowNp4viwWmjaDx8tNjCY"  # 七牛云 Access Key
+    secret_key: "HD3mwsOHnr5uSjPRTyvIWDrmwCEfOUlwQiT5HhNft9TB"  # 七牛云 Secret Key
+    bucket_name: "jeffstric"  # 存储空间名称
+    cdn_domain: "cdn.perseids.cn"  # CDN 加速域名  绑定CDN加速域名图文教程文档，您可以参考：https://developer.qiniu.com/fusion/manual/4939/the-domain-name-to-access 需要注意您要绑定工信部备案的域名。
+
+image:
+  enable_download: true
+
+# Sentry 配置
+sentry:
+  dsn: "https://xxxxx6"
+  environment: "test"  # 可选，默认 "production"
+

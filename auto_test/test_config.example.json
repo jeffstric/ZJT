@@ -1,0 +1,25 @@
+{
+  "base_url": "http://localhost:8000",
+  "test_mode": true,
+  "test_mode_param": "&test=1",
+  "credentials": {
+    "primary": {
+      "phone": "13800138000",
+      "password": "your_password_here"
+    },
+    "secondary": {
+      "phone": "13900139000",
+      "password": "your_secondary_password_here"
+    }
+  },
+  "test_assets": {
+    "test_image": "g:/code/comfyui_server/auto_test/test_assets/test_image.jpg",
+    "test_video" : "g:/code/comfyui_server/auto_test/test_assets/test.mp4",
+    "test_voice" : "g:/code/comfyui_server/auto_test/test_assets/test.wav"
+  },
+  "timeouts": {
+    "page_load": 10,
+    "api_response": 5,
+    "file_upload": 15
+  }
+}

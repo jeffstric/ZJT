@@ -1,0 +1,1531 @@
+{
+  "id": "node_operations",
+  "name": "节点操作模块",
+  "description": "各类节点的具体操作功能测试，包括图片上传、参数设置、视频生成等",
+  "features": [
+    {
+      "id": "node_001",
+      "name": "图生视频节点-上传首帧图片",
+      "description": "验证用户可以在图生视频节点上传首帧图片，图片上传到服务器后显示预览",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/video-workflow/upload",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "获取节点快照找到文件输入",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "图生视频节点中包含首帧画面文件输入区域",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 1.5,
+          "action": "点击图生视频节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击首帧画面文件输入触发文件选择",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "首帧画面文件输入",
+            "ref": "<文件输入ref>"
+          },
+          "expected_result": "触发文件选择器",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "上传测试图片文件",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": [
+              "${config.test_assets.test_image}"
+            ]
+          },
+          "expected_result": "文件开始上传",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "等待上传完成",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "首帧图片上传成功",
+            "time": 10
+          },
+          "expected_result": "Toast提示出现",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "获取快照验证预览",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "首帧预览区域可见，显示图片缩略图和「清除」按钮",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "检查上传API请求",
+          "mcp_tool": "mcp1_browser_network_requests",
+          "mcp_params": {},
+          "verify": "存在 POST /api/video-workflow/upload 请求且返回成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_002",
+      "name": "图生视频节点-清除首帧图片",
+      "description": "验证用户可以清除已上传的首帧图片",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_001"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击清除按钮",
+          "operation": "click",
+          "selector": ".start-clear",
+          "expected_result": "图片被清除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证预览隐藏",
+          "operation": "verify",
+          "expected_result": "预览区域隐藏，首帧端口恢复可连接状态",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_003",
+      "name": "图生视频节点-上传尾帧图片",
+      "description": "验证用户可以上传可选的尾帧图片",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/video-workflow/upload",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击添加按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加按钮",
+            "ref": "<添加按钮ref>"
+          },
+          "expected_result": "弹出添加菜单",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击图生视频选项",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "图生视频菜单项",
+            "ref": "<图生视频选项ref>"
+          },
+          "expected_result": "在画布上创建图生视频节点",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "等待节点创建完成",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "图生视频",
+            "time": 3
+          },
+          "expected_result": "图生视频节点标题出现",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击尾帧画面文件输入",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "尾帧文件输入",
+            "ref": "<尾帧文件输入ref>"
+          },
+          "expected_result": "打开文件选择器",
+          "pass": false,
+          "remark": "注意：需要先创建图生视频节点，然后才能找到 .end-file 选择器",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "上传尾帧图片文件",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": ["auto_test/test_assets/test_end_image.jpg"]
+          },
+          "expected_result": "文件上传成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "验证预览显示",
+          "mcp_tool": "mcp1_browser_snapshot",
+          "mcp_params": {},
+          "verify": "尾帧预览区域显示，图片可见，包含 .end-preview-row 元素",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_004",
+      "name": "图生视频节点-设置视频长度",
+      "description": "验证用户可以选择视频长度（10秒或15秒）",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "检查视频长度默认值",
+          "operation": "verify",
+          "selector": ".duration-select",
+          "expected_result": "默认选中 10秒",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "选择15秒",
+          "operation": "select",
+          "selector": ".duration-select",
+          "value": "15",
+          "expected_result": "下拉框更新为 15秒",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_005",
+      "name": "图生视频节点-选择模型",
+      "description": "验证用户可以选择视频生成模型（sora/kling）",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "检查模型默认值",
+          "operation": "verify",
+          "selector": ".model-select",
+          "expected_result": "默认选中 sora",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "检查kling选项状态",
+          "operation": "verify",
+          "expected_result": "kling 选项显示为禁用状态（暂未实现）",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_006",
+      "name": "图生视频节点-输入提示词",
+      "description": "验证用户可以在提示词文本框中输入视频生成提示词",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "在提示词文本框输入内容",
+          "operation": "type",
+          "selector": ".prompt",
+          "test_data": "一只可爱的猫咪在草地上奔跑",
+          "expected_result": "文本正确显示在输入框中",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证数据保存",
+          "operation": "verify",
+          "expected_result": "提示词数据保存到节点状态中",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_007",
+      "name": "图生视频节点-选择抽卡次数",
+      "description": "验证用户可以通过下拉菜单选择抽卡次数（X1-X4）",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击抽卡次数下拉按钮",
+          "operation": "click",
+          "selector": ".gen-btn-caret",
+          "expected_result": "弹出抽卡次数菜单",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证菜单选项",
+          "operation": "verify",
+          "selector": ".gen-menu",
+          "expected_result": "菜单包含 X1、X2、X3、X4 四个选项",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "选择X2",
+          "operation": "click",
+          "selector": ".gen-item[data-count='2']",
+          "expected_result": "菜单关闭，抽卡次数标签更新为「抽卡次数：X2」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_008",
+      "name": "图生视频节点-生成视频",
+      "description": "验证用户点击生成视频按钮后，系统调用API生成视频，并自动创建视频节点接收结果",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/ai-app-run-image",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_001"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "确保首帧图片已上传",
+          "operation": "verify",
+          "selector": ".start-preview",
+          "expected_result": "首帧预览图片可见",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击生成视频按钮",
+          "operation": "click",
+          "selector": ".gen-btn-main",
+          "expected_result": "按钮变为「生成中...」状态，禁用",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证API请求",
+          "operation": "verify",
+          "expected_result": "发起 POST /api/ai-app-run-image 请求，包含 image_urls、prompt、ratio、duration_seconds、count 参数",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "验证状态显示",
+          "operation": "verify",
+          "selector": ".gen-status",
+          "expected_result": "显示「正在提交任务...」状态文字",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证视频节点自动创建",
+          "operation": "verify",
+          "expected_result": "根据抽卡次数自动创建对应数量的视频节点，并连接到图生视频节点",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "等待生成完成状态",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "生成完成",
+            "time": 120
+          },
+          "expected_result": "状态区域出现「生成完成」文字",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "验证视频预览区域可见",
+          "operation": "verify",
+          "selector": ".video-preview-field",
+          "expected_result": "至少一个视频节点的预览区域显示（display != none）",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 8,
+          "action": "验证视频缩略预览 src 已写入",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const els = Array.from(document.querySelectorAll('.video-thumb')); return els.map(v => v.getAttribute('src') || v.src || '').filter(Boolean); }"
+          },
+          "verify": "返回数组长度 >= 1，且每个元素为 http(s) URL 或包含 .mp4",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_009",
+      "name": "图生视频节点-生成失败提示",
+      "description": "验证当首帧图片未上传时点击生成，显示错误提示",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "确保首帧图片未上传",
+          "operation": "verify",
+          "expected_result": "首帧预览区域隐藏",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击生成视频按钮",
+          "operation": "click",
+          "selector": ".gen-btn-main",
+          "expected_result": "不发起API请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证错误提示",
+          "operation": "verify",
+          "selector": ".gen-status",
+          "expected_result": "显示红色错误文字「请先上传首帧图片」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_009_1",
+      "name": "图生视频节点-多次抽卡独立状态显示",
+      "description": "验证多次抽卡时，每个视频节点独立显示生成状态，成功和失败的视频节点互不干扰（端到端测试，使用真实API）",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/ai-app-run-image, GET /api/get-status/{projectIds}",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "上传首帧图片并选择抽卡次数X2",
+          "operation": "upload_and_select",
+          "expected_result": "首帧图片上传成功，抽卡次数显示为X2",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击生成视频按钮",
+          "operation": "click",
+          "selector": ".gen-btn-main",
+          "expected_result": "自动创建2个视频节点并连接，显示生成中状态",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "等待视频生成完成（最多等待6分钟）",
+          "operation": "wait_for_completion",
+          "timeout": 180000,
+          "expected_result": "所有视频任务完成（成功或失败）",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "验证每个视频节点状态独立显示",
+          "operation": "verify",
+          "expected_result": "每个视频节点下方显示各自的状态：成功显示绿色✓和视频预览，失败显示红色✗和具体错误原因",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证图生视频节点总体状态正确",
+          "operation": "verify",
+          "selector": ".gen-status",
+          "expected_result": "根据实际结果显示：全部成功显示绿色，全部失败显示红色，部分成功显示橙色并注明数量",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "验证失败视频节点的错误信息未被覆盖",
+          "operation": "verify",
+          "expected_result": "失败的视频节点保持显示详细错误原因，不会被替换为汇总信息",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_009_2",
+      "name": "图生视频节点-图片连接线不消失",
+      "description": "验证点击生成视频按钮时，图片节点到图生视频节点的连接线不会消失",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/ai-app-run-image",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建图片节点并上传图片",
+          "operation": "create_and_upload",
+          "expected_result": "图片节点创建成功，图片上传完成",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "创建图生视频节点",
+          "operation": "create_node",
+          "node_type": "image_to_video",
+          "expected_result": "图生视频节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "连接图片节点到图生视频节点的首帧端口",
+          "operation": "connect_nodes",
+          "expected_result": "连接线显示正常",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击生成视频按钮",
+          "operation": "click",
+          "selector": ".gen-btn-main",
+          "expected_result": "开始生成视频，创建视频节点",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证图片连接线仍然存在",
+          "operation": "verify",
+          "selector": ".image-conn-group",
+          "expected_result": "图片节点到图生视频节点的连接线仍然显示，未消失",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "验证视频连接线正常显示",
+          "operation": "verify",
+          "expected_result": "图生视频节点到视频节点的连接线正常显示",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_009_3",
+      "name": "图生视频节点-sora模型比例限制",
+      "description": "验证sora模型只支持16:9和9:16两种比例",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "无",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建图生视频节点",
+          "operation": "create_node",
+          "node_type": "image_to_video",
+          "expected_result": "图生视频节点创建成功，默认模型为sora",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证比例选项只有16:9和9:16",
+          "operation": "verify",
+          "selector": ".ratio-select option",
+          "expected_result": "比例下拉框只显示9:16和16:9两个选项",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "选择比例为16:9",
+          "operation": "select",
+          "selector": ".ratio-select",
+          "value": "16:9",
+          "expected_result": "比例成功设置为16:9",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "保存并重新加载工作流",
+          "operation": "save_and_reload",
+          "expected_result": "工作流保存成功并重新加载",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证加载后比例仍为16:9",
+          "operation": "verify",
+          "selector": ".ratio-select",
+          "expected_result": "比例选项仍然只有9:16和16:9，当前值为16:9",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_009_4",
+      "name": "图生视频节点-比例字段持久化",
+      "description": "验证图生视频节点的比例字段能正确保存和恢复",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "PUT /api/video-workflow/{id}",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建图生视频节点并设置比例为9:16",
+          "operation": "create_and_set",
+          "expected_result": "节点创建成功，比例设置为9:16",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "保存工作流",
+          "operation": "click",
+          "selector": "#saveBtn",
+          "expected_result": "工作流保存成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "刷新页面重新加载工作流",
+          "operation": "reload",
+          "expected_result": "页面刷新，工作流重新加载",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "验证比例恢复为9:16",
+          "operation": "verify",
+          "selector": ".ratio-select",
+          "expected_result": "比例选择框的值为9:16",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "修改比例为16:9并再次保存",
+          "operation": "change_and_save",
+          "expected_result": "比例修改为16:9并保存成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "再次刷新页面验证比例持久化",
+          "operation": "reload_and_verify",
+          "expected_result": "比例恢复为16:9，确认持久化成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_010",
+      "name": "视频节点-上传本地视频",
+      "description": "验证用户可以在视频节点上传本地视频文件",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击视频文件输入",
+          "operation": "click",
+          "selector": ".video-file",
+          "expected_result": "打开文件选择器",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 1.5,
+          "action": "点击视频节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "选择视频文件",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": [
+              "${config.test_assets.test_video}"
+            ]
+          },
+          "expected_result": "视频加载成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证预览显示",
+          "operation": "verify",
+          "selector": ".video-preview-field",
+          "expected_result": "视频预览区域显示，包含播放按钮、放大按钮、下载按钮、清除按钮",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_011",
+      "name": "视频节点-播放控制",
+      "description": "验证用户可以在视频节点内播放/暂停视频",
+      "priority": "P2",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_010"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击播放按钮",
+          "operation": "click",
+          "selector": ".vp-play",
+          "expected_result": "视频开始播放，按钮图标变为暂停图标",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击暂停按钮",
+          "operation": "click",
+          "selector": ".vp-play",
+          "expected_result": "视频暂停，按钮图标恢复为播放图标",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_012",
+      "name": "视频节点-下载视频",
+      "description": "验证用户可以下载视频节点中的视频文件",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "api_endpoint": "GET /api/download",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_010"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击下载按钮",
+          "operation": "click",
+          "selector": ".video-download",
+          "expected_result": "触发下载请求",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证下载",
+          "operation": "verify",
+          "expected_result": "打开 /api/download?url=xxx&filename=xxx 下载链接，显示「开始下载」Toast",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_013",
+      "name": "视频节点-清除视频",
+      "description": "验证用户可以清除视频节点中的视频",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_010"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击清除按钮",
+          "operation": "click",
+          "selector": ".video-clear",
+          "expected_result": "视频被清除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证预览隐藏",
+          "operation": "verify",
+          "expected_result": "视频预览区域隐藏，恢复到初始状态",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_014",
+      "name": "图片节点-上传图片",
+      "description": "验证用户可以在图片节点上传图片文件",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击图片文件输入",
+          "operation": "click",
+          "selector": ".image-file",
+          "expected_result": "打开文件选择器",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 1.5,
+          "action": "点击图片节点标题栏展开编辑区",
+          "operation": "click",
+          "selector": ".node .node-header",
+          "expected_result": "节点进入选中状态，编辑区展开",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "选择图片文件",
+          "operation": "upload",
+          "selector": ".image-file",
+          "test_file": "test_image.png",
+          "expected_result": "图片上传成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证预览显示",
+          "operation": "verify",
+          "selector": ".image-preview-row",
+          "expected_result": "图片预览区域显示，包含缩略图和清除按钮",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击保存按钮",
+          "operation": "click",
+          "selector": "#saveBtn",
+          "expected_result": "触发保存工作流",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "等待保存成功提示",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "保存成功",
+            "time": 10
+          },
+          "expected_result": "出现保存成功 toast",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "刷新页面（模拟下次加载）",
+          "mcp_tool": "mcp1_browser_reload",
+          "mcp_params": {},
+          "expected_result": "页面刷新并重新加载工作流",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "验证图片预览仍然存在",
+          "operation": "verify",
+          "selector": ".image-preview-row",
+          "expected_result": "刷新后图片预览区域仍显示，不应空白",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 8,
+          "action": "验证图片预览 src 非空",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const img = document.querySelector('.image-preview'); return img ? (img.getAttribute('src') || img.src || '') : ''; }"
+          },
+          "verify": "返回值非空，且以 http(s) 或 data:image 开头",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_015",
+      "name": "图片预览放大功能",
+      "description": "验证用户点击图片预览可以打开图片模态框查看大图",
+      "priority": "P2",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_001"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击首帧预览图片",
+          "operation": "click",
+          "selector": ".start-preview",
+          "expected_result": "打开图片模态框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证模态框显示",
+          "operation": "verify",
+          "selector": "#imageModal",
+          "expected_result": "模态框可见，标题显示「首帧预览」，图片以大尺寸显示",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击关闭按钮",
+          "operation": "click",
+          "selector": "#imageModalClose",
+          "expected_result": "模态框关闭",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_016",
+      "name": "视频预览放大功能",
+      "description": "验证用户点击视频放大按钮可以打开视频模态框全屏播放",
+      "priority": "P2",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_010"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "点击视频放大按钮",
+          "operation": "click",
+          "selector": ".vp-zoom",
+          "expected_result": "打开视频模态框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "验证模态框显示",
+          "operation": "verify",
+          "selector": "#videoModal",
+          "expected_result": "模态框可见，视频自动开始播放",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击关闭按钮",
+          "operation": "click",
+          "selector": "#videoModalClose",
+          "expected_result": "模态框关闭，视频暂停",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_020",
+      "name": "图片节点-图片编辑功能与抽卡",
+      "description": "验证用户可以在图片节点中上传图片、输入编辑提示词、选择模型/比例/抽卡次数后执行编辑，生成结果创建新的图片节点并显示预览",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "api_endpoint": "POST /api/image-edit",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "打开添加节点菜单",
+          "operation": "click",
+          "selector": "#addBtn",
+          "expected_result": "弹出添加节点菜单",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "点击图片节点",
+          "operation": "click",
+          "selector": "#menuAddImage",
+          "expected_result": "画布上创建图片节点",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "上传图片到图片节点",
+          "operation": "upload",
+          "selector": ".image-file",
+          "test_file": "test_image.png",
+          "expected_result": "显示图片预览",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "输入编辑提示词",
+          "operation": "input",
+          "selector": ".image-prompt",
+          "value": "把这张图改成赛博朋克风格",
+          "expected_result": "提示词输入框有内容",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "选择抽卡次数为X2",
+          "operation": "click",
+          "selector": ".gen-btn-caret",
+          "expected_result": "显示抽卡次数下拉菜单",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "点击X2选项",
+          "operation": "click",
+          "selector": ".gen-item[data-count='2']",
+          "expected_result": "抽卡次数设置为X2",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "点击编辑图片按钮",
+          "operation": "click",
+          "selector": ".image-edit-btn",
+          "expected_result": "触发图片编辑任务提交",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 8,
+          "action": "等待生成完成",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "生成完成",
+            "time": 180
+          },
+          "expected_result": "图片节点显示生成完成状态",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 9,
+          "action": "验证新创建的图片节点数量",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const s = window.state; if(!s || !Array.isArray(s.nodes)) return { count: 0 }; return { count: s.nodes.filter(n => n.type === 'image').length }; }"
+          },
+          "verify": "count >= 2 (原始节点 + 至少1个新节点)",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 10,
+          "action": "验证新图片节点的预览图片",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const imgs = Array.from(document.querySelectorAll('.image-preview')); const srcs = imgs.map(i => i.getAttribute('src') || i.src || '').filter(Boolean); return { count: srcs.length, srcs: srcs.slice(0, 3) }; }"
+          },
+          "verify": "count >= 2，且 srcs 数组元素以 http(s) 或 /api/proxy-image 开头",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 11,
+          "action": "验证抽卡次数标签显示",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { const label = document.querySelector('.image-draw-count-label'); return { text: label ? label.textContent : '', exists: !!label }; }"
+          },
+          "verify": "exists 为 true 且 text 包含 'X2'",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_017",
+      "name": "删除时间轴中的视频节点确认",
+      "description": "验证删除已添加到时间轴的视频节点时，会弹出确认对话框，确认后同步删除时间轴中的片段",
+      "priority": "P0",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_010"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建视频节点",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "视频节点按钮",
+            "selector": ".node-btn[data-type='video']"
+          },
+          "expected_result": "视频节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "上传测试视频文件",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": [
+              "${config.test_assets.test_video}"
+            ]
+          },
+          "expected_result": "视频上传成功，显示预览",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "添加视频到时间轴",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "添加到时间轴按钮",
+            "selector": ".add-to-timeline"
+          },
+          "expected_result": "视频片段出现在时间轴中",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击视频节点删除按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "视频节点删除按钮",
+            "selector": ".node-delete"
+          },
+          "expected_result": "弹出确认对话框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证确认对话框出现",
+          "mcp_tool": "mcp1_browser_wait_for",
+          "mcp_params": {
+            "text": "删除节点将同时删除这些片段",
+            "time": 5
+          },
+          "expected_result": "确认对话框显示删除警告信息",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "确认删除操作",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "确认删除按钮",
+            "selector": ".confirm-delete"
+          },
+          "expected_result": "节点和时间轴片段都被删除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "验证删除结果",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
+          },
+          "verify": "时间轴片段数量为 0",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_018",
+      "name": "删除重复添加到时间轴的视频节点",
+      "description": "验证删除重复添加到时间轴的视频节点时，确认对话框显示正确的片段数量，确认后删除所有相关片段",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建视频节点",
+          "operation": "创建视频节点并上传视频",
+          "expected_result": "视频节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "多次添加到时间轴",
+          "operation": "点击3次「添加到时间轴」按钮",
+          "expected_result": "时间轴显示3个相同的片段",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "验证时间轴片段数量",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
+          },
+          "verify": "返回值为 3",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击视频节点删除按钮",
+          "operation": "点击删除按钮",
+          "expected_result": "弹出确认对话框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证确认对话框显示片段数量",
+          "operation": "检查对话框文本",
+          "expected_result": "对话框提示「该视频节点在时间轴中有 3 个片段，删除节点将同时删除这些片段。确定要删除吗？」",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 6,
+          "action": "确认删除",
+          "operation": "点击确定按钮",
+          "expected_result": "节点被删除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 7,
+          "action": "验证所有片段都被删除",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return { clipCount: document.querySelectorAll('.timeline-clip').length, timelineVisible: document.getElementById('timelineContainer').style.display !== 'none' }; }"
+          },
+          "verify": "时间轴片段数量为 0，时间轴容器隐藏",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    },
+    {
+      "id": "node_019",
+      "name": "取消删除时间轴中的视频节点",
+      "description": "验证删除已添加到时间轴的视频节点时，点击取消按钮可以取消删除操作",
+      "priority": "P1",
+      "page_url": "/video-workflow",
+      "pass": false,
+      "remark": "",
+      "prerequisites": [
+        "node_010"
+      ],
+      "test_steps": [
+        {
+          "step": 1,
+          "action": "创建视频节点并上传视频",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "视频节点按钮",
+            "selector": ".node-btn[data-type='video']"
+          },
+          "expected_result": "视频节点创建成功",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 2,
+          "action": "上传测试视频并添加到时间轴",
+          "mcp_tool": "mcp1_browser_file_upload",
+          "mcp_params": {
+            "paths": [
+              "${config.test_assets.test_video}"
+            ]
+          },
+          "expected_result": "视频上传成功并添加到时间轴",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 3,
+          "action": "点击视频节点删除按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "视频节点删除按钮",
+            "selector": ".node-delete"
+          },
+          "expected_result": "弹出确认对话框",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 4,
+          "action": "点击取消按钮",
+          "mcp_tool": "mcp1_browser_click",
+          "mcp_params": {
+            "element": "取消删除按钮",
+            "selector": ".cancel-delete"
+          },
+          "expected_result": "对话框关闭，节点未被删除",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        },
+        {
+          "step": 5,
+          "action": "验证节点和时间轴片段仍存在",
+          "mcp_tool": "mcp1_browser_evaluate",
+          "mcp_params": {
+            "function": "() => { return document.querySelectorAll('.timeline-clip').length; }"
+          },
+          "verify": "时间轴片段数量仍为 1",
+          "pass": false,
+          "remark": "",
+          "is_processed": false
+        }
+      ],
+      "is_processed": false
+    }
+  ],
+  "remark": ""
+}

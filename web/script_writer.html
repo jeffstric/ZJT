@@ -1,0 +1,2459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>剧本智能创作系统</title>
+    <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+    <link rel="stylesheet" href="css/script_writer.css">
+    <!-- Markdown渲染支持 -->
+    <script src="js/marked.min.js"></script>
+    <link rel="stylesheet" href="css/github.min.css">
+    <!-- Vue.js 和 Axios -->
+    <script src="js/vue.global.prod.js"></script>
+    <script src="js/axios.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- 世界选择侧边栏 -->
+        <aside class="world-sidebar" id="world-sidebar">
+            <div class="world-sidebar-header">
+                <h3 class="world-sidebar-title">🌍 选择世界</h3>
+                <div class="world-header-actions">
+                    <button class="world-add-btn" onclick="showNewWorldModal()" title="新建世界">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                    </button>
+                    <button class="world-close-btn" onclick="toggleWorldSidebar()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="world-list" id="world-list">
+                <div class="world-empty">加载中...</div>
+            </div>
+        </aside>
+
+        <!-- 顶部导航栏 -->
+        <header class="top-header">
+            <div class="header-left">
+                <button class="hamburger-btn" onclick="toggleWorldSidebar()" title="选择世界">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12h18M3 6h18M3 18h18"/>
+                    </svg>
+                </button>
+                <a href="/video-workflow-list" class="logo-link">
+                    <img src="/files/logo.svg" alt="Logo" class="app-logo">
+                </a>
+                <nav class="breadcrumb-nav">
+                    <a href="/video-workflow-list" class="breadcrumb-link">工作流列表</a>
+                    <span class="breadcrumb-separator">/</span>
+                    <span class="breadcrumb-current">剧本智能创作系统</span>
+                </nav>
+                <span class="world-name-display" id="world-name-display">加载中...</span>
+            </div>
+            <div class="header-right">
+                <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型">
+                    <option value="">加载中...</option>
+                </select>
+                <div class="computing-power-display" id="computing-power-display" title="当前算力余额（点击查看日志）" onclick="openComputingPowerLogsModal()" style="cursor: pointer;">
+                    <span class="power-icon">⚡</span>
+                    <span class="power-value" id="power-value">--</span>
+                </div>
+                <button class="header-action-btn" onclick="newSession()">
+                    <span class="btn-icon">🗑️</span>
+                    <span class="btn-text">删除暂存，重置会话</span>
+                </button>
+                <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交到数据库">
+                    <span class="btn-icon">💾</span>
+                    <span class="btn-text">提交数据库</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- 主内容区域 -->
+        <main class="main-layout">
+            <!-- 聊天区域 -->
+            <div class="chat-area">
+                <button class="chat-refresh-btn" onclick="refreshPage()" title="新建会话（刷新页面，清空对话历史）">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                    </svg>
+                </button>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="welcome-card">
+                        <div class="welcome-icon">🎬</div>
+                        <h2 class="welcome-title">欢迎使用剧本智能创作系统</h2>
+                        <p class="welcome-desc">我是剧本架构师，可以调度所有智能体完成从大纲到合规的全流程创作。</p>
+
+                        <div class="agent-carousel" id="agent-carousel">
+                            <div class="carousel-track">
+                                <div class="carousel-slide active" data-slide="0">
+                                    <p class="slide-tag">总领全局</p>
+                                    <h3>剧本架构师 Script-Orchestrator</h3>
+                                    <ul>
+                                        <li>实时展示创作进度与关键节点</li>
+                                        <li>按需分流：新建、续写、拆分流程</li>
+                                        <li>协调所有智能体，打包输出完整成果</li>
+                                    </ul>
+                                </div>
+                                <div class="carousel-slide" data-slide="1">
+                                    <p class="slide-tag">故事骨架</p>
+                                    <h3>Plot-Analyzer</h3>
+                                    <ul>
+                                        <li>读取 / 创建世界观与故事大纲</li>
+                                        <li>规划反转、悬念与伏笔时间线</li>
+                                        <li>同步画风、时代环境与色彩策略</li>
+                                    </ul>
+                                </div>
+                                <div class="carousel-slide" data-slide="2">
+                                    <p class="slide-tag">剧集创作</p>
+                                    <h3>Story-Writer</h3>
+                                    <ul>
+                                        <li>采集本集目标、情绪与关键场景</li>
+                                        <li>分场景写作，自动留下吸睛钩子</li>
+                                        <li>自动保存剧本并提示缺失资源</li>
+                                    </ul>
+                                </div>
+                                <div class="carousel-slide" data-slide="3">
+                                    <p class="slide-tag">内容审核</p>
+                                    <h3>Content-Compliance-Checker</h3>
+                                    <ul>
+                                        <li>扫描真实地名、黄赌毒、暴力等违规点</li>
+                                        <li>校验角色 / 大纲一致性并量化评分</li>
+                                        <li>评测集末钩子吸引力并给出整改建议</li>
+                                    </ul>
+                                </div>
+                                <div class="carousel-slide" data-slide="4">
+                                    <p class="slide-tag">剧本拆分</p>
+                                    <h3>Novel-Episode-Splitter</h3>
+                                    <ul>
+                                        <li>按场景时长智能分集，保持文本原貌</li>
+                                        <li>检测已有集数差异并征求处理策略</li>
+                                        <li>批量写入剧本 ，附带拆分统计</li>
+                                    </ul>
+                                </div>
+                                <div class="carousel-slide" data-slide="5">
+                                    <p class="slide-tag">角色设定</p>
+                                    <h3>Character-Creator</h3>
+                                    <ul>
+                                        <li>识别新角色并通过问答收集完整设定</li>
+                                        <li>整理性格、习惯、背景与关系网络</li>
+                                        <li>生成标准  角色卡，保证一致性</li>
+                                    </ul>
+                                </div>
+                                <div class="carousel-slide" data-slide="6">
+                                    <p class="slide-tag">角色形象</p>
+                                    <h3>Character-Image-Designer</h3>
+                                    <ul>
+                                        <li>继承世界画风，锁定缺图角色</li>
+                                        <li>输出含三视图、动作和表情的参考图</li>
+                                        <li>避免任务冲突，批量管理生成状态</li>
+                                    </ul>
+                                </div>
+                                <div class="carousel-slide" data-slide="7">
+                                    <p class="slide-tag">场景 & 道具</p>
+                                    <h3>Location-Creator</h3>
+                                    <ul>
+                                        <li>按剧情梳理新场景与道具清单</li>
+                                        <li>提炼环境、氛围、功能及象征意义</li>
+                                        <li>产出结构化 JSON，服务后续创作</li>
+                                    </ul>
+                                </div>
+                                <div class="carousel-slide" data-slide="8">
+                                    <p class="slide-tag">视觉呈现</p>
+                                    <h3>Location/Prop Image Designer</h3>
+                                    <ul>
+                                        <li>同步画风，为缺图场景 / 道具生成视觉稿</li>
+                                        <li>场景提供全景 + 多角度，道具提供三视图</li>
+                                        <li>严格控制任务状态，防止重复提交</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="carousel-controls">
+                                <button class="carousel-btn prev" id="carousel-prev" aria-label="上一页">
+                                    <span>←</span>
+                                </button>
+                                <button class="carousel-btn next" id="carousel-next" aria-label="下一页">
+                                    <span>→</span>
+                                </button>
+                            </div>
+                            <div class="carousel-indicators" id="carousel-indicators">
+                                <button class="indicator active" data-target="0" aria-label="第 1 页"></button>
+                                <button class="indicator" data-target="1" aria-label="第 2 页"></button>
+                                <button class="indicator" data-target="2" aria-label="第 3 页"></button>
+                                <button class="indicator" data-target="3" aria-label="第 4 页"></button>
+                                <button class="indicator" data-target="4" aria-label="第 5 页"></button>
+                                <button class="indicator" data-target="5" aria-label="第 6 页"></button>
+                                <button class="indicator" data-target="6" aria-label="第 7 页"></button>
+                                <button class="indicator" data-target="7" aria-label="第 8 页"></button>
+                                <button class="indicator" data-target="8" aria-label="第 9 页"></button>
+                            </div>
+                        </div>
+
+                        <p class="welcome-hint">选择世界后，告诉我你的目标或直接粘贴剧本，我们就能一起开工！</p>
+                    </div>
+                </div>
+
+                <!-- 输入区域 -->
+                <div class="input-section">
+                    <div class="input-container">
+                        <textarea 
+                            id="message-input" 
+                            class="message-input"
+                            placeholder="输入消息... (Shift+Enter 换行，Enter 发送)"
+                            rows="1"
+                        ></textarea>
+                        <button id="send-btn" class="send-btn">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="status-info">
+                        <span class="status-item">
+                            <span class="status-dot"></span>
+                            <span id="status-text">就绪</span>
+                        </span>
+                        <span class="status-item">会话: <span id="session-id">未创建</span></span>
+                        <span class="token-stats">
+                            本次: <span id="current-tokens">0</span> tokens | 
+                            累计: <span id="total-tokens">0</span> tokens
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 文件管理面板 -->
+            <aside class="file-sidebar">
+                <div class="sidebar-header">
+                    <h3 class="sidebar-title">📁 暂存文件管理</h3>
+                    <button class="refresh-icon-btn" onclick="refreshFiles()" title="刷新文件列表">
+                        🔄
+                    </button>
+                </div>
+                <div class="file-tabs">
+                    <button class="tab-btn active" onclick="switchFileTab('worlds')">
+                        <span class="tab-icon">🌍</span>
+                        <span>世界</span>
+                    </button>
+                    <button class="tab-btn" onclick="switchFileTab('characters')">
+                        <span class="tab-icon">👥</span>
+                        <span>角色卡</span>
+                    </button>
+                    <button class="tab-btn" onclick="switchFileTab('scripts')">
+                        <span class="tab-icon">📜</span>
+                        <span>剧本</span>
+                    </button>
+                    <button class="tab-btn" onclick="switchFileTab('locations')">
+                        <span class="tab-icon">🏛️</span>
+                        <span>场景</span>
+                    </button>
+                    <button class="tab-btn" onclick="switchFileTab('props')">
+                        <span class="tab-icon">🎁</span>
+                        <span>道具</span>
+                    </button>
+                </div>
+                <div class="file-list-container" id="file-list">
+                    <div class="file-empty">加载中...</div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- 查看文件弹窗 -->
+    <div id="view-modal" class="modal">
+        <div class="modal-overlay" onclick="closeViewModal()"></div>
+        <div class="modal-dialog large">
+            <div class="modal-header">
+                <h3 class="modal-title" id="view-modal-title">📄 查看文件</h3>
+                <button class="modal-close-btn" onclick="closeViewModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- 角色预览 -->
+                <div id="character-view-form" class="view-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">角色名称</label>
+                            <div class="view-field" id="view-char-name"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">年龄</label>
+                            <div class="view-field" id="view-char-age"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">身份</label>
+                            <div class="view-field" id="view-char-identity"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">外貌</label>
+                            <div class="view-field" id="view-char-appearance"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">性格</label>
+                            <div class="view-field" id="view-char-personality"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">行为习惯</label>
+                            <div class="view-field" id="view-char-behavior"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">其他信息</label>
+                            <div class="view-field" id="view-char-other"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">参考图片</label>
+                            <div class="view-image-container" id="view-char-image-container"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 场景预览 -->
+                <div id="location-view-form" class="view-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">场景名称</label>
+                            <div class="view-field" id="view-loc-name"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">父级场景</label>
+                            <div class="view-field" id="view-loc-parent"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">场景描述</label>
+                            <div class="view-field" id="view-loc-description"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">参考图片</label>
+                            <div class="view-image-container" id="view-loc-image-container"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 道具预览 -->
+                <div id="prop-view-form" class="view-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">道具名称</label>
+                            <div class="view-field" id="view-prop-name"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">道具类型</label>
+                            <div class="view-field" id="view-prop-type"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">道具描述</label>
+                            <div class="view-field" id="view-prop-description"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">参考图片</label>
+                            <div class="view-image-container" id="view-prop-image-container"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 世界预览 -->
+                <div id="world-view-form" class="view-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">世界名称</label>
+                            <div class="view-field" id="view-world-name"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">用户ID</label>
+                            <div class="view-field" id="view-world-user-id"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">世界描述</label>
+                            <div class="view-field" id="view-world-description"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">故事大纲</label>
+                            <div class="view-field" id="view-world-story-outline"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">画面风格</label>
+                            <div class="view-field" id="view-world-visual-style"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">时代环境</label>
+                            <div class="view-field" id="view-world-era-environment"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">色彩语言</label>
+                            <div class="view-field" id="view-world-color-language"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">构图倾向</label>
+                            <div class="view-field" id="view-world-composition-preference"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">创建时间</label>
+                            <div class="view-field" id="view-world-created"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">更新时间</label>
+                            <div class="view-field" id="view-world-updated"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 剧本预览 -->
+                <div id="script-view-form" class="view-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">剧本标题</label>
+                            <div class="view-field" id="view-script-title"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">集数</label>
+                            <div class="view-field" id="view-script-episode"></div>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">剧本内容</label>
+                            <div class="view-field script-content" id="view-script-content"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">创建时间</label>
+                            <div class="view-field" id="view-script-created"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">更新时间</label>
+                            <div class="view-field" id="view-script-updated"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 原始文本预览（备用） -->
+                <div id="text-view-form" class="view-form" style="display: none;">
+                    <pre id="view-modal-content" class="file-content"></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeViewModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 浮动反馈按钮 -->
+    <div class="feedback-fab-container" id="feedback-fab-container">
+        <button class="feedback-fab" onclick="openFeedbackModal()" title="意见反馈">
+            💡
+        </button>
+        <button class="feedback-close-btn" onclick="closeFeedbackFab()" title="关闭反馈按钮">
+            ✕
+        </button>
+    </div>
+
+    <!-- 反馈二维码弹窗 -->
+    <div id="feedback-modal" class="modal">
+        <div class="modal-overlay" onclick="closeFeedbackModal()"></div>
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title">📣 联系我们</h3>
+                <button class="modal-close-btn" onclick="closeFeedbackModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body feedback-body">
+                <p class="feedback-desc">扫码加入微信反馈群，第一时间获取支持与更新动态。</p>
+                <div class="qr-wrapper">
+                    <img src="/assert/wx.png" alt="意见反馈二维码" class="qr-image">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeFeedbackModal()">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑文件弹窗 -->
+    <div id="edit-modal" class="modal">
+        <div class="modal-overlay" onclick="closeEditModal()"></div>
+        <div class="modal-dialog large">
+            <div class="modal-header">
+                <h3 class="modal-title" id="edit-modal-title">✏️ 编辑文件</h3>
+                <button class="modal-close-btn" onclick="closeEditModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- 角色编辑表格 -->
+                <div id="character-edit-form" class="edit-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">角色名称</label>
+                            <input type="text" id="char-name" class="form-input" placeholder="输入角色名称">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">年龄</label>
+                            <input type="text" id="char-age" class="form-input" placeholder="输入年龄">
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">身份</label>
+                            <input type="text" id="char-identity" class="form-input" placeholder="输入身份">
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">外貌</label>
+                            <textarea id="char-appearance" class="form-textarea" rows="3" placeholder="描述角色外貌特征"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">性格</label>
+                            <textarea id="char-personality" class="form-textarea" rows="3" placeholder="描述角色性格特点"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">行为习惯</label>
+                            <textarea id="char-behavior" class="form-textarea" rows="3" placeholder="描述角色行为习惯"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">其他信息</label>
+                            <textarea id="char-other" class="form-textarea" rows="3" placeholder="其他相关信息"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">参考图片</label>
+                            <input type="text" id="char-image" class="form-input" placeholder="图片URL或描述">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 场景编辑表格 -->
+                <div id="location-edit-form" class="edit-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">场景名称</label>
+                            <input type="text" id="loc-name" class="form-input" placeholder="输入场景名称">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">父级场景</label>
+                            <input type="text" id="loc-parent" class="form-input" placeholder="输入父级场景ID（可选）">
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">场景描述</label>
+                            <textarea id="loc-description" class="form-textarea" rows="5" placeholder="详细描述场景环境、氛围、特色等"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">参考图片</label>
+                            <input type="text" id="loc-image" class="form-input" placeholder="图片URL或描述">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 道具编辑表格 -->
+                <div id="prop-edit-form" class="edit-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">道具名称</label>
+                            <input type="text" id="prop-name" class="form-input" placeholder="输入道具名称">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">道具类型</label>
+                            <input type="text" id="prop-type" class="form-input" placeholder="输入道具类型">
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">道具描述</label>
+                            <textarea id="prop-description" class="form-textarea" rows="5" placeholder="详细描述道具外观、功能、用途等"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">参考图片</label>
+                            <input type="text" id="prop-image" class="form-input" placeholder="图片URL或描述">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 剧本编辑表格 -->
+                <div id="script-edit-form" class="edit-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">剧本标题</label>
+                            <input type="text" id="script-title" class="form-input" placeholder="输入剧本标题">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">集数</label>
+                            <input type="number" id="script-episode" class="form-input" placeholder="输入集数">
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">剧本内容</label>
+                            <textarea id="script-content" class="form-textarea" rows="10" placeholder="输入剧本内容"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">创建时间</label>
+                            <input type="text" id="script-created" class="form-input" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">更新时间</label>
+                            <input type="text" id="script-updated" class="form-input" readonly>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 世界编辑表格 -->
+                <div id="world-edit-form" class="edit-form" style="display: none;">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">世界名称</label>
+                            <input type="text" id="world-name" class="form-input" placeholder="输入世界名称">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">用户ID</label>
+                            <input type="text" id="world-user-id" class="form-input" readonly>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">世界描述</label>
+                            <textarea id="world-description" class="form-textarea" rows="4" placeholder="描述这个世界的背景、设定等"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">故事大纲</label>
+                            <textarea id="world-story-outline" class="form-textarea" rows="5" placeholder="描述世界的主要故事线和情节大纲"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">画面风格</label>
+                            <textarea id="world-visual-style" class="form-textarea" rows="3" placeholder="描述世界的视觉风格和艺术风格"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">时代环境</label>
+                            <textarea id="world-era-environment" class="form-textarea" rows="3" placeholder="描述世界的时代背景和环境设定"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">色彩语言</label>
+                            <textarea id="world-color-language" class="form-textarea" rows="3" placeholder="描述世界的主色调和色彩风格"></textarea>
+                        </div>
+                        <div class="form-group full-width">
+                            <label class="form-label">构图倾向</label>
+                            <textarea id="world-composition-preference" class="form-textarea" rows="3" placeholder="描述世界的构图风格和镜头语言"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">创建时间</label>
+                            <input type="text" id="world-created" class="form-input" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">更新时间</label>
+                            <input type="text" id="world-updated" class="form-input" readonly>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 原始文本编辑器（备用） -->
+                <div id="text-edit-form" class="edit-form" style="display: none;">
+                    <textarea id="edit-modal-content" class="form-textarea" rows="15"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEditModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveEditedFile()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建世界弹窗 -->
+    <div id="new-world-modal" class="modal">
+        <div class="modal-overlay" onclick="closeNewWorldModal()"></div>
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title">🌍 新建世界</h3>
+                <button class="modal-close-btn" onclick="closeNewWorldModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label class="form-label">世界名称 *</label>
+                        <input type="text" id="new-world-name" class="form-input" placeholder="输入世界名称" maxlength="100">
+                    </div>
+                    <div class="form-group full-width">
+                        <label class="form-label">世界描述</label>
+                        <textarea id="new-world-description" class="form-textarea" rows="4" placeholder="描述这个世界的背景、设定等（可选）" maxlength="500"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeNewWorldModal()">取消</button>
+                <button class="btn btn-primary" onclick="createNewWorld()">创建世界</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑世界弹窗 -->
+    <div id="edit-world-modal" class="modal">
+        <div class="modal-overlay" onclick="closeEditWorldModal()"></div>
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title">✏️ 编辑世界</h3>
+                <button class="modal-close-btn" onclick="closeEditWorldModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group full-width">
+                        <label class="form-label">世界名称 *</label>
+                        <input type="text" id="edit-world-name" class="form-input" placeholder="输入世界名称" maxlength="100">
+                    </div>
+                    <div class="form-group full-width">
+                        <label class="form-label">世界描述</label>
+                        <textarea id="edit-world-description" class="form-textarea" rows="4" placeholder="描述这个世界的背景、设定等（可选）" maxlength="500"></textarea>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEditWorldModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveEditedWorld()">保存更改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 算力日志弹窗 -->
+    <div id="computing-power-logs-modal" class="modal">
+        <div class="modal-overlay" onclick="closeComputingPowerLogsModal()"></div>
+        <div class="modal-dialog large" style="width: 90%; max-width: 1200px; height: 85vh;">
+            <div class="modal-header">
+                <h3 class="modal-title">⚡ 算力日志</h3>
+                <button class="modal-close-btn" onclick="closeComputingPowerLogsModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" style="padding: 0; height: calc(100% - 60px); overflow: hidden;">
+                <iframe id="computing-power-logs-iframe" style="width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        let isProcessing = false;
+        const urlParams = new URLSearchParams(window.location.search);
+        
+        // 全局参数：从URL获取并存储，供所有接口使用
+        const USER_ID = urlParams.get('user_id');
+        const WORLD_ID = urlParams.get('world_id');
+        // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
+        const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
+        
+        const LOGIN_URL = window.location.origin + '/?login=1&redirect_url=video-workflow-list';
+        let currentFileType = 'worlds';
+        let currentEditFile = { fileType: '', fileName: '' };
+        let currentEditWorld = { id: '', name: '', description: '' };
+
+        function handleTokenExpired() {
+            alert('⚠️ 登录已过期\n\n您的登录信息已过期，请重新登录。');
+            window.location.href = LOGIN_URL;
+        }
+
+        function checkTokenExpired(data, response) {
+            if (data && (data.token_expired || data.error_code === 'TOKEN_EXPIRED')) {
+                handleTokenExpired();
+                return true;
+            }
+            if (response && response.status === 401) {
+                handleTokenExpired();
+                return true;
+            }
+            return false;
+        }
+
+        const carouselState = {
+            currentIndex: 0,
+            slides: [],
+            indicators: [],
+            track: null,
+            autoplayInterval: 3000,
+            autoplayTimer: null
+        };
+
+        function initCarousel() {
+            const carousel = document.getElementById('agent-carousel');
+            if (!carousel) return;
+
+            stopCarouselAutoplay();
+            carouselState.currentIndex = 0;
+
+            carouselState.track = carousel.querySelector('.carousel-track');
+            carouselState.slides = Array.from(carousel.querySelectorAll('.carousel-slide'));
+            carouselState.indicators = Array.from(carousel.querySelectorAll('.indicator')); 
+
+            const prevBtn = document.getElementById('carousel-prev');
+            const nextBtn = document.getElementById('carousel-next');
+
+            prevBtn?.addEventListener('click', () => moveSlide(-1));
+            nextBtn?.addEventListener('click', () => moveSlide(1));
+
+            carouselState.indicators.forEach((indicator, idx) => {
+                indicator.addEventListener('click', () => goToSlide(idx));
+            });
+
+            updateCarousel();
+            startCarouselAutoplay();
+        }
+
+        function moveSlide(direction, isAuto = false) {
+            const total = carouselState.slides.length;
+            carouselState.currentIndex = (carouselState.currentIndex + direction + total) % total;
+            updateCarousel();
+            if (!isAuto) {
+                resetCarouselAutoplay();
+            }
+        }
+
+        function goToSlide(index) {
+            carouselState.currentIndex = index;
+            updateCarousel();
+            resetCarouselAutoplay();
+        }
+
+        function updateCarousel() {
+            const offset = -carouselState.currentIndex * 100;
+            if (carouselState.track) {
+                carouselState.track.style.transform = `translateX(${offset}%)`;
+            }
+
+            carouselState.slides.forEach((slide, idx) => {
+                slide.classList.toggle('active', idx === carouselState.currentIndex);
+            });
+
+            carouselState.indicators.forEach((indicator, idx) => {
+                indicator.classList.toggle('active', idx === carouselState.currentIndex);
+            });
+        }
+
+        function startCarouselAutoplay() {
+            if (carouselState.autoplayTimer || carouselState.slides.length <= 1) return;
+            carouselState.autoplayTimer = setInterval(() => moveSlide(1, true), carouselState.autoplayInterval);
+        }
+
+        function stopCarouselAutoplay() {
+            if (carouselState.autoplayTimer) {
+                clearInterval(carouselState.autoplayTimer);
+                carouselState.autoplayTimer = null;
+            }
+        }
+
+        function resetCarouselAutoplay() {
+            stopCarouselAutoplay();
+            startCarouselAutoplay();
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            // 检查是否缺少 user_id 参数
+            if (!USER_ID || USER_ID === 'null' || USER_ID === '') {
+                alert('⚠️ 缺少关键参数\n\n请回到工作流列表后，再进入。');
+                const baseUrl = window.location.origin;
+                const redirectUrl = baseUrl + '/video-workflow-list';
+                window.location.href = redirectUrl;
+                return;
+            }
+
+            configureMarked();
+            await loadAvailableModels();
+            await loadComputingPower();
+            await loadUserWorlds();
+
+            initCarousel();
+            
+            // 设置发送按钮事件监听器
+            const sendButton = document.getElementById('send-btn');
+            if (sendButton) {
+                sendButton.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Send button clicked, disabled:', this.disabled);
+                    if (!this.disabled) {
+                        sendMessage();
+                    }
+                });
+            }
+            
+            // 设置输入框事件监听器
+            const messageInput = document.getElementById('message-input');
+            if (messageInput) {
+                messageInput.addEventListener('input', function() {
+                    this.style.height = 'auto';
+                    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+                });
+
+                messageInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        sendMessage();
+                    }
+                });
+            }
+            
+            // 检查是否缺少world_id
+            if (!WORLD_ID || WORLD_ID === 'null' || WORLD_ID === '') {
+                // 缺少world_id，自动弹出世界选择侧边栏
+                showWorldSelectionPrompt();
+                return; // 不继续初始化其他功能
+            }
+            
+            await loadCurrentWorldName();
+            await createSession();
+            await loadFiles('worlds');
+            if (messageInput) messageInput.focus();
+        });
+
+        async function createSession(systemPrompt = null) {
+            try {
+                // 使用全局变量 AUTH_TOKEN
+                const selector = document.getElementById('model-selector');
+                const selectedModel = selector ? selector.value : null;
+                
+                const response = await fetch('/api/session/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        system_prompt: systemPrompt,
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                if (data.success) {
+                    sessionId = data.session_id;
+                    const sessionIdElement = document.getElementById('session-id');
+                    if (sessionIdElement) {
+                        sessionIdElement.textContent = sessionId.substring(0, 8) + '...';
+                    }
+
+                    // 显示差异文件警告
+                    const hasSkippedFiles = data.skipped_files && data.skipped_files.length > 0;
+                    const hasLocalOnlyFiles = data.local_only_files && data.local_only_files.length > 0;
+                    
+                    if (hasSkippedFiles || hasLocalOnlyFiles) {
+                        let warningMsg = '⚠️ 检测到本地文件与数据库存在差异：\n\n';
+                        
+                        if (hasSkippedFiles) {
+                            const fileList = data.skipped_files.join('\n  • ');
+                            warningMsg += `📝 内容差异文件（本地修改已保留）：\n  • ${fileList}\n\n`;
+                        }
+                        
+                        if (hasLocalOnlyFiles) {
+                            const localOnlyList = data.local_only_files.join('\n  • ');
+                            warningMsg += `📁 本地独有文件（数据库中不存在）：\n  • ${localOnlyList}\n\n`;
+                        }
+                        
+                        warningMsg += '💡 提示：这些文件的本地内容已保留，不会被数据库覆盖。如需同步，请使用"提交数据库"功能。';
+                        
+                        alert(warningMsg);
+                        updateStatus('剧本编排系统已就绪（检测到未提交的本地修改）');
+                    } else {
+                        updateStatus('剧本编排系统已就绪');
+                    }
+                } else {
+                    showError('创建会话失败: ' + data.error);
+                }
+            } catch (error) {
+                showError('创建会话失败: ' + error.message);
+            }
+        }
+
+        async function newSession() {
+            const confirmMessage = '⚠️ 确定要删除暂存并重置会话吗？\n\n这将会：\n1. 删除本地所有未提交到数据库的文件\n2. 从数据库同步最新数据到本地\n3. 清空当前对话历史\n\n⚠️ 请确保已将重要内容提交到数据库！\n\n是否继续？';
+            
+            if (confirm(confirmMessage)) {
+                try {
+                    updateStatus('正在从数据库同步文件...');
+                    const response = await fetch('/api/sync-files', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: USER_ID, world_id: WORLD_ID })
+                    });
+                    
+                    const data = await response.json();
+                    if (!data.success) {
+                        showError('同步失败: ' + (data.error || '未知错误'));
+                        updateStatus('就绪');
+                        return;
+                    }
+                    
+                    document.getElementById('chat-messages').innerHTML = `
+                        <div class="welcome-card">
+                            <div class="welcome-icon">🎬</div>
+                            <h2 class="welcome-title">欢迎使用剧本智能创作系统</h2>
+                            <p class="welcome-desc">我是剧本架构师，可以调度所有智能体完成从大纲到合规的全流程创作。</p>
+                            <div class="agent-carousel" id="agent-carousel">
+                                <div class="carousel-track">
+                                    ${Array.from(document.querySelectorAll('.carousel-slide')).map(slide => slide.outerHTML).join('')}
+                                </div>
+                                <div class="carousel-controls">
+                                    <button class="carousel-btn prev" id="carousel-prev" aria-label="上一页"><span>←</span></button>
+                                    <button class="carousel-btn next" id="carousel-next" aria-label="下一页"><span>→</span></button>
+                                </div>
+                                <div class="carousel-indicators" id="carousel-indicators">
+                                    ${Array.from(document.querySelectorAll('.indicator')).map((indicator, idx) => `<button class="indicator${idx === 0 ? ' active' : ''}" data-target="${idx}" aria-label="第 ${idx + 1} 页"></button>`).join('')}
+                                </div>
+                            </div>
+                            <p class="welcome-hint">选择世界后，告诉我你的目标或直接粘贴剧本，我们就能一起开工！</p>
+                        </div>
+                    `;
+                    
+                    document.getElementById('current-tokens').textContent = '0';
+                    document.getElementById('total-tokens').textContent = '0';
+                    
+                    await createSession();
+                    initCarousel();
+                    await loadFiles(currentFileType);
+                    updateStatus('已从数据库同步文件，会话已重置');
+                } catch (error) {
+                    showError('操作失败: ' + error.message);
+                    updateStatus('就绪');
+                }
+            }
+        }
+
+        async function refreshFiles() {
+            try {
+                updateStatus('正在刷新文件...');
+                await loadFiles(currentFileType);
+                updateStatus('文件已刷新');
+            } catch (error) {
+                showError('刷新文件失败: ' + error.message);
+            }
+        }
+
+        function refreshPage() {
+            if (confirm('⚠️ 确定要新建会话吗？\n\n这将会刷新页面并清空当前对话历史。\n\n本地文件不会被删除，但对话上下文会丢失。\n\n是否继续？')) {
+                window.location.reload();
+            }
+        }
+
+        async function submitToDatabase() {
+            try {
+                    updateStatus('正在提交到数据库...');
+                    const response = await fetch('/api/submit-to-database', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: USER_ID, world_id: WORLD_ID })
+                    });
+
+                    const data = await response.json();
+                    if (data.success) {
+                        showSuccess(`✓ 提交成功！共保存 ${data.total} 个文件到数据库`);
+                        updateStatus('数据已提交到数据库');
+                    } else {
+                        showError('提交失败: ' + (data.error || '未知错误'));
+                        updateStatus('提交失败');
+                    }
+                } catch (error) {
+                    showError('提交失败: ' + error.message);
+                    updateStatus('提交失败');
+                }
+            
+        }
+
+        async function sendMessage(customMessage = null, isSystemMessage = false) {
+            console.log('sendMessage called, isProcessing:', isProcessing);
+            
+            // Disable send button immediately to prevent multiple clicks
+            const sendBtn = document.getElementById('send-btn');
+            if (sendBtn) {
+                sendBtn.disabled = true;
+                sendBtn.classList.add('sending');
+                console.log('Button disabled and sending class added');
+            }
+
+            if (!sessionId) {
+                console.log('No sessionId, re-enabling button');
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                }
+                return;
+            }
+
+            if (isProcessing) {
+                console.log('Already processing, re-enabling button');
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                }
+                return;
+            }
+
+            // 立即设置 isProcessing 为 true，防止重复调用
+            isProcessing = true;
+            console.log('isProcessing set to true');
+
+            let message;
+            if (customMessage) {
+                message = customMessage;
+            } else {
+                const input = document.getElementById('message-input');
+                message = input.value.trim();
+                if (!message) {
+                    // Re-enable button if no message
+                    isProcessing = false;
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                    return;
+                }
+                input.value = '';
+                input.style.height = 'auto';
+            }
+
+            if (isSystemMessage) {
+                addMessage('user', `🔄 ${message}`);
+            } else {
+                addMessage('user', message);
+            }
+
+            showTypingIndicator();
+            updateStatus('AI 思考中...');
+
+            let timeoutId;
+            let hasStartedReceiving = false;
+            
+            try {
+                const controller = new AbortController();
+                timeoutId = setTimeout(() => {
+                    if (!hasStartedReceiving) {
+                        controller.abort();
+                        hideTypingIndicator();
+                        showError('请求超时，请稍后重试。');
+                    }
+                }, 300000);
+                
+                // 使用全局变量 AUTH_TOKEN
+                const selector = document.getElementById('model-selector');
+                const selectedOption = selector?.options[selector.selectedIndex];
+                const modelId = selectedOption?.dataset?.modelId;
+
+                if (!modelId) {
+                    hideTypingIndicator();
+                    showError('当前模型不可用，请重新加载模型列表');
+                    isProcessing = false;
+                    const sendBtn = document.getElementById('send-btn');
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                    return;
+                }
+
+                const taskResponse = await fetch(`/api/session/${sessionId}/task`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message,
+                        auth_token: AUTH_TOKEN,
+                        model_id: modelId
+                    }),
+                    signal: controller.signal
+                });
+
+                const taskData = await taskResponse.json();
+                
+                if (!taskResponse.ok || !taskData.success) {
+                    // 检查 token 是否过期
+                    if (checkTokenExpired(taskData, taskResponse)) {
+                        hideTypingIndicator();
+                        isProcessing = false;
+                        const sendBtn = document.getElementById('send-btn');
+                        sendBtn.disabled = false;
+                        sendBtn.classList.remove('sending');
+                        return;
+                    }
+                    // 检查是否是算力不足错误
+                    if (taskData.error === '算力不足' || taskData.message?.includes('算力不足')) {
+                        alert('⚠️ 算力不足\n\n您的算力不足，请充值后继续使用。');
+                        hideTypingIndicator();
+                        isProcessing = false;
+                        return;
+                    }
+                    // 其他错误
+                    throw new Error(taskData.message || taskData.error || `HTTP ${taskResponse.status}: ${taskResponse.statusText}`);
+                }
+                const taskId = taskData.task_id;
+                
+                const eventSource = new EventSource(`/api/task/${taskId}/stream`);
+                hideTypingIndicator();
+                const messageDiv = addMessage('assistant', '');
+                const contentDiv = messageDiv.querySelector('.message-content');
+
+                let fullText = '';
+                let startTime = Date.now();
+
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (!hasStartedReceiving) {
+                            hasStartedReceiving = true;
+                            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                            updateStatus(`AI 正在回复... (等待了 ${elapsed}s)`);
+                            clearTimeout(timeoutId);
+                        }
+                        
+                        if (data.type === 'message') {
+                            if (data.content) {
+                                fullText += data.content + '\n\n';
+                                contentDiv.innerHTML = renderMarkdown(fullText);
+                                scrollToBottom();
+                            }
+                        } else if (data.type === 'progress') {
+                            updateStatus(`执行中: ${data.step || ''}`);
+                        } else if (data.type === 'done') {
+                            eventSource.close();
+                            updateStatus('完成');
+                            isProcessing = false;
+                            const sendBtn = document.getElementById('send-btn');
+                            sendBtn.disabled = false;
+                            sendBtn.classList.remove('sending');
+                            // 刷新算力显示
+                            loadComputingPower();
+                            // 自动刷新暂存文件列表
+                            try {
+                                refreshFiles().catch(err => console.error('刷新文件列表失败:', err));
+                            } catch (err) {
+                                console.error('调用refreshFiles失败:', err);
+                            }
+                        } else if (data.type === 'error') {
+                            eventSource.close();
+                            showError('任务执行错误: ' + data.error);
+                            isProcessing = false;
+                            const sendBtn = document.getElementById('send-btn');
+                            sendBtn.disabled = false;
+                            sendBtn.classList.remove('sending');
+                        } else if (data.type === 'status') {
+                            if (data.status) updateStatus(data.status);
+                        }
+                    } catch (e) {
+                        console.error('[SSE-CLIENT] 解析失败:', e);
+                    }
+                };
+                
+                eventSource.onerror = (error) => {
+                    eventSource.close();
+                    if (!hasStartedReceiving) {
+                        showError('连接失败，请重试');
+                    }
+                    isProcessing = false;
+                    const sendBtn = document.getElementById('send-btn');
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                };
+
+                updateStatus('就绪');
+            } catch (error) {
+                hideTypingIndicator();
+                clearTimeout(timeoutId);
+                if (error.name === 'AbortError') {
+                    showError('请求超时。剧本编排系统需要较长时间处理，请稍后重试。');
+                } else {
+                    showError('发送消息失败: ' + error.message);
+                }
+                // 只在 catch 中重置状态，不用 finally（因为 EventSource 是异步的）
+                isProcessing = false;
+                const sendBtn = document.getElementById('send-btn');
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('sending');
+            }
+        }
+
+        function configureMarked() {
+            if (typeof marked !== 'undefined') {
+                const renderer = new marked.Renderer();
+                renderer.link = function(href, title, text) {
+                    return `<a href="${href.href}" target="_blank" rel="noopener noreferrer"${title ? ` title="${title}"` : ''}>${href.text}</a>`;
+                };
+
+                marked.setOptions({
+                    renderer: renderer,
+                    highlight: function(code, lang) {
+                        if (typeof hljs !== 'undefined' && lang && hljs.getLanguage(lang)) {
+                            try {
+                                return hljs.highlight(code, { language: lang }).value;
+                            } catch (err) {}
+                        }
+                        return code;
+                    },
+                    breaks: true,
+                    gfm: true
+                });
+            }
+        }
+
+        function renderMarkdown(content) {
+            if (typeof marked !== 'undefined') {
+                try {
+                    return marked.parse(content);
+                } catch (error) {
+                    return escapeHtml(content);
+                }
+            }
+            return escapeHtml(content);
+        }
+
+        function addMessage(role, content) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const welcome = messagesDiv.querySelector('.welcome-card');
+            if (welcome) {
+                stopCarouselAutoplay();
+                welcome.remove();
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}-message`;
+            
+            let renderedContent;
+            if (role === 'assistant') {
+                renderedContent = renderMarkdown(content);
+            } else {
+                renderedContent = escapeHtml(content);
+            }
+            
+            messageDiv.innerHTML = `<div class="message-content">${renderedContent}</div>`;
+            messagesDiv.appendChild(messageDiv);
+            scrollToBottom();
+            return messageDiv;
+        }
+
+        function showTypingIndicator() {
+            const messagesDiv = document.getElementById('chat-messages');
+            const indicator = document.createElement('div');
+            indicator.className = 'typing-indicator';
+            indicator.id = 'typing-indicator';
+            indicator.innerHTML = `
+                <div class="typing-dots">
+                    <span></span><span></span><span></span>
+                </div>
+                <span class="typing-text">剧本编排中...</span>
+            `;
+            messagesDiv.appendChild(indicator);
+            scrollToBottom();
+        }
+
+        function hideTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.remove();
+        }
+
+        function scrollToBottom() {
+            const messagesDiv = document.getElementById('chat-messages');
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function updateStatus(text) {
+            const statusElement = document.getElementById('status-text');
+            if (statusElement) {
+                statusElement.textContent = text;
+            }
+        }
+
+        function openFeedbackModal() {
+            const modal = document.getElementById('feedback-modal');
+            modal?.classList.add('show');
+        }
+
+        function closeFeedbackModal() {
+            const modal = document.getElementById('feedback-modal');
+            modal?.classList.remove('show');
+        }
+
+        function closeFeedbackFab() {
+            const fabContainer = document.getElementById('feedback-fab-container');
+            if (fabContainer) {
+                fabContainer.style.display = 'none';
+            }
+        }
+
+        function showError(message) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-toast';
+            errorDiv.textContent = message;
+            messagesDiv.appendChild(errorDiv);
+            scrollToBottom();
+            setTimeout(() => errorDiv.remove(), 5000);
+        }
+
+        function showSuccess(message) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success-toast';
+            successDiv.textContent = message;
+            messagesDiv.appendChild(successDiv);
+            scrollToBottom();
+            setTimeout(() => successDiv.remove(), 3000);
+        }
+
+        async function loadComputingPower() {
+            try {
+                const response = await fetch('/api/user/computing_power', {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                const powerValue = document.getElementById('power-value');
+                if (data.success && powerValue) {
+                    const power = data.data?.computing_power || 0;
+                    powerValue.textContent = power.toLocaleString();
+                    
+                    // 根据算力值设置颜色
+                    const powerDisplay = document.getElementById('computing-power-display');
+                    if (power < 100) {
+                        powerDisplay.classList.add('low-power');
+                        powerDisplay.classList.remove('medium-power', 'high-power');
+                    } else if (power < 1000) {
+                        powerDisplay.classList.add('medium-power');
+                        powerDisplay.classList.remove('low-power', 'high-power');
+                    } else {
+                        powerDisplay.classList.add('high-power');
+                        powerDisplay.classList.remove('low-power', 'medium-power');
+                    }
+                } else if (powerValue) {
+                    powerValue.textContent = '--';
+                }
+            } catch (error) {
+                console.error('加载算力失败:', error);
+                const powerValue = document.getElementById('power-value');
+                if (powerValue) {
+                    powerValue.textContent = '--';
+                }
+            }
+        }
+
+        async function loadAvailableModels() {
+            try {
+                const response = await fetch('/api/models', {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                const selector = document.getElementById('model-selector');
+                selector.innerHTML = '';
+
+                if (!data.success) {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = '模型加载失败';
+                    selector.appendChild(option);
+                    showError(data.error || '获取模型列表失败');
+                    return;
+                }
+
+                if (!data.models || data.models.length === 0) {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = '暂无可用模型';
+                    selector.appendChild(option);
+                    return;
+                }
+
+                data.models.forEach(model => {
+                    const option = document.createElement('option');
+                    // 兼容后端返回的 model_name 或 name 字段
+                    const modelName = model.model_name || model.name || '';
+                    const modelDesc = model.note || model.description || '';
+                    option.value = modelName;
+                    option.textContent = modelDesc
+                        ? `${modelName} - ${modelDesc}`
+                        : modelName;
+                    const modelId = model.id ?? model.model_id ?? '';
+                    if (modelId) {
+                        option.dataset.modelId = modelId;
+                    }
+                    option.dataset.recommended = model.recommended ? 'true' : 'false';
+                    if (model.recommended) option.selected = true;
+                    selector.appendChild(option);
+                });
+                
+                updateModelTooltip();
+            } catch (error) {
+                console.error('加载模型列表失败:', error);
+                showError('加载模型列表失败，请稍后重试');
+            }
+        }
+
+        function updateModelTooltip() {
+            const selector = document.getElementById('model-selector');
+            if (!selector) return;
+            
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) return;
+            
+            const isRecommended = selectedOption.dataset.recommended === 'true';
+            
+            if (!isRecommended) {
+                selector.style.color = '#ff6b6b';
+            } else {
+                selector.style.color = '';
+            }
+        }
+
+        async function changeModel() {
+            if (!sessionId) {
+                showError('请先创建会话');
+                return;
+            }
+            const selector = document.getElementById('model-selector');
+            const selectedOption = selector.options[selector.selectedIndex];
+            const model = selector.value;
+            const modelId = selectedOption?.dataset?.modelId;
+            
+            // 检查是否是推荐模型
+            const isRecommended = selectedOption?.dataset.recommended === 'true';
+            
+            if (!isRecommended) {
+                const confirmed = confirm(
+                    '⚠️ 模型算力提醒\n\n' +
+                    '您选择的是 gemini-3-pro-preview 模型。\n\n' +
+                    '该模型的算力消耗是 gemini-3-flash-preview 的 7 倍左右，消耗较高。\n\n' +
+                    '推荐使用 gemini-3-flash-preview 以节省算力。\n\n' +
+                    '是否继续使用当前选择的模型？'
+                );
+                
+                if (!confirmed) {
+                    // 用户取消，恢复到推荐模型
+                    for (let i = 0; i < selector.options.length; i++) {
+                        if (selector.options[i].dataset.recommended === 'true') {
+                            selector.selectedIndex = i;
+                            break;
+                        }
+                    }
+                    updateModelTooltip();
+                    return;
+                }
+            }
+            
+            updateModelTooltip();
+            
+            if (!AUTH_TOKEN) {
+                showError('缺少认证信息，请重新登录');
+                return;
+            }
+            
+
+            try {
+                const response = await fetch(`/api/session/${sessionId}/model`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        model: model,
+                        model_id: modelId,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showSuccess(`已切换到 ${selector.options[selector.selectedIndex].text}`);
+                } else {
+                    // 如果返回了有效模型列表，显示更详细的错误信息
+                    if (data.valid_models && data.valid_models.length > 0) {
+                        showError(`切换模型失败: ${data.error}\n可用模型: ${data.valid_models.join(', ')}`);
+                    } else {
+                        showError('切换模型失败: ' + data.error);
+                    }
+                }
+            } catch (error) {
+                showError('切换模型失败: ' + error.message);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/\n/g, '<br>');
+        }
+
+
+        function switchFileTab(fileType) {
+            currentFileType = fileType;
+            document.querySelectorAll('.tab-btn').forEach(tab => tab.classList.remove('active'));
+            event.target.closest('.tab-btn').classList.add('active');
+            loadFiles(fileType);
+        }
+
+        async function loadFiles(fileType) {
+            const fileList = document.getElementById('file-list');
+            fileList.innerHTML = '<div class="file-empty">加载中...</div>';
+            
+            try {
+                const apiMap = {
+                    'worlds': '/api/world-files',
+                    'characters': '/api/characters-files',
+                    'scripts': '/api/scripts-files',
+                    'locations': '/api/locations-files',
+                    'props': '/api/props-files'
+                };
+                
+                const response = await fetch(`${apiMap[fileType]}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                // 兼容两种返回格式: {success, xxx:[]} 和 {code:0, data:{data:[]}}
+                const isSuccess = data.success || data.code === 0;
+                if (isSuccess) {
+                    // 优先从 data.data.data 获取（server.py格式），否则从对应字段获取（script_writer_api格式）
+                    let files = data.data?.data || data.worlds || data.characters || data.scripts || data.locations || data.props || [];
+                    
+                    // 对于世界文件，只显示当前世界的文件
+                    if (fileType === 'worlds') {
+                        files = files.filter(file => file.name === `world_${WORLD_ID}.json`);
+                        // 如果没有世界文件，创建一个虚拟的世界文件条目
+                        if (files.length === 0) {
+                            files = [{ name: `world_${WORLD_ID}.json`, exists: false }];
+                        }
+                    }
+                    if (fileType === 'scripts') {
+                        files = files.sort((a, b) => {
+                            const episodeA = parseInt(a.episode_number) || 0;
+                            const episodeB = parseInt(b.episode_number) || 0;
+                            return episodeA - episodeB;
+                        });
+                    }
+                    
+                    if (files.length === 0) {
+                        fileList.innerHTML = '<div class="file-empty">暂无文件</div>';
+                        return;
+                    }
+                    
+                    fileList.innerHTML = '';
+                    files.forEach(file => {
+                        const fileItem = document.createElement('div');
+                        fileItem.className = 'file-item';
+                        fileItem.innerHTML = `
+                            <div class="file-name">${file.name}</div>
+                            <div class="file-actions">
+                                <button class="file-btn view-btn" onclick="viewFile('${fileType}', '${file.name}')" title="查看">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                                        <circle cx="12" cy="12" r="3"/>
+                                    </svg>
+                                </button>
+                                <button class="file-btn edit-btn" onclick="editFile('${fileType}', '${file.name}')" title="编辑">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        `;
+                        fileList.appendChild(fileItem);
+                    });
+                } else {
+                    fileList.innerHTML = '<div class="file-empty">加载失败</div>';
+                }
+            } catch (error) {
+                fileList.innerHTML = '<div class="file-empty">加载失败</div>';
+            }
+        }
+
+        async function viewFile(fileType, fileName) {
+            try {
+                const apiMap = {
+                    'worlds': '/api/world-files',
+                    'characters': '/api/characters-files',
+                    'scripts': '/api/scripts-files',
+                    'locations': '/api/locations-files',
+                    'props': '/api/props-files'
+                };
+                
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                if (data.success) {
+                    document.querySelectorAll('.view-form').forEach(form => form.style.display = 'none');
+                    
+                    let jsonData = data.world?.json_data || data.character?.json_data || data.location?.json_data || data.prop?.json_data || data.script?.json_data || {};
+                    
+                    if (!jsonData || Object.keys(jsonData).length === 0) {
+                        const content = data.world?.content || data.character?.content || data.script?.content || data.location?.content || data.prop?.content || data.content || '';
+                        try {
+                            if (content.trim()) {
+                                jsonData = JSON.parse(content);
+                            } else {
+                                jsonData = {};
+                            }
+                        } catch (e) {
+                            showTextViewer(fileName, content);
+                            document.getElementById('view-modal').classList.add('show');
+                            return;
+                        }
+                    }
+                    
+                    if (fileType === 'worlds') {
+                        showWorldViewer(fileName, jsonData);
+                    } else if (fileType === 'characters') {
+                        showCharacterViewer(fileName, jsonData);
+                    } else if (fileType === 'locations') {
+                        showLocationViewer(fileName, jsonData);
+                    } else if (fileType === 'props') {
+                        showPropViewer(fileName, jsonData);
+                    } else if (fileType === 'scripts') {
+                        showScriptViewer(fileName, jsonData);
+                    } else {
+                        const content = data.character?.content || data.script?.content || data.content || '';
+                        showTextViewer(fileName, content);
+                    }
+                    
+                    document.getElementById('view-modal').classList.add('show');
+                } else {
+                    showError('查看文件失败: ' + (data.error || '未知错误'));
+                }
+            } catch (error) {
+                showError('查看文件失败: ' + error.message);
+            }
+        }
+
+        function showWorldViewer(fileName, data) {
+            document.getElementById('view-modal-title').textContent = `🌍 查看世界 - ${fileName}`;
+            document.getElementById('world-view-form').style.display = 'block';
+            document.getElementById('view-world-name').textContent = data.name || '未设置';
+            document.getElementById('view-world-user-id').textContent = data.user_id || '未设置';
+            document.getElementById('view-world-description').textContent = data.description || '未设置';
+            document.getElementById('view-world-story-outline').textContent = data.story_outline || '未设置';
+            document.getElementById('view-world-visual-style').textContent = data.visual_style || '未设置';
+            document.getElementById('view-world-era-environment').textContent = data.era_environment || '未设置';
+            document.getElementById('view-world-color-language').textContent = data.color_language || '未设置';
+            document.getElementById('view-world-composition-preference').textContent = data.composition_preference || '未设置';
+            document.getElementById('view-world-created').textContent = data.create_time || '未设置';
+            document.getElementById('view-world-updated').textContent = data.update_time || '未设置';
+        }
+
+        function showCharacterViewer(fileName, data) {
+            document.getElementById('view-modal-title').textContent = `👤 查看角色 - ${fileName}`;
+            document.getElementById('character-view-form').style.display = 'block';
+            document.getElementById('view-char-name').textContent = data.name || '未设置';
+            document.getElementById('view-char-age').textContent = data.age || '未设置';
+            document.getElementById('view-char-identity').textContent = data.identity || '未设置';
+            document.getElementById('view-char-appearance').textContent = data.appearance || '未设置';
+            document.getElementById('view-char-personality').textContent = data.personality || '未设置';
+            document.getElementById('view-char-behavior').textContent = data.behavior || '未设置';
+            document.getElementById('view-char-other').textContent = data.other_info || '未设置';
+            
+            const imageContainer = document.getElementById('view-char-image-container');
+            displayImage(imageContainer, data.reference_image);
+        }
+
+        function showLocationViewer(fileName, data) {
+            document.getElementById('view-modal-title').textContent = `🏛️ 查看场景 - ${fileName}`;
+            document.getElementById('location-view-form').style.display = 'block';
+            document.getElementById('view-loc-name').textContent = data.name || '未设置';
+            document.getElementById('view-loc-parent').textContent = data.parent_id || '无';
+            document.getElementById('view-loc-description').textContent = data.description || '未设置';
+            
+            const imageContainer = document.getElementById('view-loc-image-container');
+            displayImage(imageContainer, data.reference_image);
+        }
+
+        function showPropViewer(fileName, data) {
+            document.getElementById('view-modal-title').textContent = `🎁 查看道具 - ${fileName}`;
+            document.getElementById('prop-view-form').style.display = 'block';
+            document.getElementById('view-prop-name').textContent = data.name || '未设置';
+            document.getElementById('view-prop-type').textContent = data.type || '未设置';
+            document.getElementById('view-prop-description').textContent = data.description || '未设置';
+            
+            const imageContainer = document.getElementById('view-prop-image-container');
+            displayImage(imageContainer, data.reference_image);
+        }
+
+        function showScriptViewer(fileName, data) {
+            document.getElementById('view-modal-title').textContent = `📜 查看剧本 - ${fileName}`;
+            document.getElementById('script-view-form').style.display = 'block';
+            document.getElementById('view-script-title').textContent = data.title || '未设置';
+            document.getElementById('view-script-episode').textContent = data.episode_number || '未设置';
+            document.getElementById('view-script-content').textContent = data.content || '未设置';
+            document.getElementById('view-script-created').textContent = data.create_time || '未设置';
+            document.getElementById('view-script-updated').textContent = data.update_time || '未设置';
+        }
+
+        function showTextViewer(fileName, content) {
+            document.getElementById('view-modal-title').textContent = `📄 ${fileName}`;
+            document.getElementById('text-view-form').style.display = 'block';
+            document.getElementById('view-modal-content').textContent = content;
+        }
+
+        function displayImage(container, imageUrl) {
+            container.innerHTML = '';
+            
+            if (!imageUrl || imageUrl.trim() === '') {
+                container.innerHTML = '<div class="view-field">未设置</div>';
+                return;
+            }
+            
+            if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://') || imageUrl.startsWith('/')) {
+                const img = document.createElement('img');
+                img.src = imageUrl;
+                img.className = 'preview-image';
+                img.alt = '参考图片';
+                img.onerror = function() {
+                    container.innerHTML = `<div class="view-field">图片加载失败<br><small>${escapeHtml(imageUrl)}</small></div>`;
+                };
+                container.appendChild(img);
+            } else {
+                container.innerHTML = `<div class="view-field">${escapeHtml(imageUrl)}</div>`;
+            }
+        }
+
+        function closeViewModal() {
+            document.getElementById('view-modal').classList.remove('show');
+        }
+
+        async function editFile(fileType, fileName) {
+            try {
+                const apiMap = {
+                    'worlds': '/api/world-files',
+                    'characters': '/api/characters-files',
+                    'scripts': '/api/scripts-files',
+                    'locations': '/api/locations-files',
+                    'props': '/api/props-files'
+                };
+                
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                if (data.success) {
+                    currentEditFile.fileType = fileType;
+                    currentEditFile.fileName = fileName;
+                    
+                    document.querySelectorAll('.edit-form').forEach(form => form.style.display = 'none');
+                    
+                    let jsonData = data.world?.json_data || data.character?.json_data || data.location?.json_data || data.prop?.json_data || data.script?.json_data || {};
+                    
+                    if (!jsonData || Object.keys(jsonData).length === 0) {
+                        const content = data.world?.content || data.character?.content || data.script?.content || data.location?.content || data.prop?.content || data.content || '';
+                        try {
+                            if (content.trim()) {
+                                jsonData = JSON.parse(content);
+                            } else {
+                                jsonData = {};
+                            }
+                        } catch (e) {
+                            showTextEditor(fileName, content);
+                            document.getElementById('edit-modal').classList.add('show');
+                            return;
+                        }
+                    }
+                    
+                    if (fileType === 'worlds') {
+                        showWorldEditor(fileName, jsonData);
+                    } else if (fileType === 'characters') {
+                        showCharacterEditor(fileName, jsonData);
+                    } else if (fileType === 'locations') {
+                        showLocationEditor(fileName, jsonData);
+                    } else if (fileType === 'props') {
+                        showPropEditor(fileName, jsonData);
+                    } else if (fileType === 'scripts') {
+                        showScriptEditor(fileName, jsonData);
+                    } else {
+                        showTextEditor(fileName, content);
+                    }
+                    
+                    document.getElementById('edit-modal').classList.add('show');
+                } else {
+                    showError('读取文件失败: ' + (data.error || '未知错误'));
+                }
+            } catch (error) {
+                showError('编辑文件失败: ' + error.message);
+            }
+        }
+
+        function showCharacterEditor(fileName, data) {
+            document.getElementById('edit-modal-title').textContent = `✏️ 编辑角色 - ${fileName}`;
+            document.getElementById('character-edit-form').style.display = 'block';
+            document.getElementById('char-name').value = data.name || '';
+            document.getElementById('char-age').value = data.age || '';
+            document.getElementById('char-identity').value = data.identity || '';
+            document.getElementById('char-appearance').value = data.appearance || '';
+            document.getElementById('char-personality').value = data.personality || '';
+            document.getElementById('char-behavior').value = data.behavior || '';
+            document.getElementById('char-other').value = data.other_info || '';
+            document.getElementById('char-image').value = data.reference_image || '';
+        }
+
+        function showLocationEditor(fileName, data) {
+            document.getElementById('edit-modal-title').textContent = `✏️ 编辑场景 - ${fileName}`;
+            document.getElementById('location-edit-form').style.display = 'block';
+            document.getElementById('loc-name').value = data.name || '';
+            document.getElementById('loc-parent').value = data.parent_id || '';
+            document.getElementById('loc-description').value = data.description || '';
+            document.getElementById('loc-image').value = data.reference_image || '';
+        }
+
+        function showPropEditor(fileName, data) {
+            document.getElementById('edit-modal-title').textContent = `✏️ 编辑道具 - ${fileName}`;
+            document.getElementById('prop-edit-form').style.display = 'block';
+            document.getElementById('prop-name').value = data.name || '';
+            document.getElementById('prop-type').value = data.type || '';
+            document.getElementById('prop-description').value = data.description || '';
+            document.getElementById('prop-image').value = data.reference_image || '';
+        }
+
+        function showScriptEditor(fileName, data) {
+            document.getElementById('edit-modal-title').textContent = `✏️ 编辑剧本 - ${fileName}`;
+            document.getElementById('script-edit-form').style.display = 'block';
+            document.getElementById('script-title').value = data.title || '';
+            document.getElementById('script-episode').value = data.episode_number || '';
+            document.getElementById('script-content').value = data.content || '';
+            document.getElementById('script-created').value = data.create_time || '';
+            document.getElementById('script-updated').value = data.update_time || '';
+        }
+
+        function showTextEditor(fileName, content) {
+            document.getElementById('edit-modal-title').textContent = `✏️ 编辑 ${fileName}`;
+            document.getElementById('text-edit-form').style.display = 'block';
+            document.getElementById('edit-modal-content').value = content;
+        }
+
+        function closeEditModal() {
+            document.getElementById('edit-modal').classList.remove('show');
+            currentEditFile = { fileType: '', fileName: '' };
+        }
+
+        async function saveEditedFile() {
+            let newContent = '';
+            
+            if (document.getElementById('world-edit-form').style.display !== 'none') {
+                newContent = collectWorldData();
+            } else if (document.getElementById('character-edit-form').style.display !== 'none') {
+                newContent = collectCharacterData();
+            } else if (document.getElementById('location-edit-form').style.display !== 'none') {
+                newContent = collectLocationData();
+            } else if (document.getElementById('prop-edit-form').style.display !== 'none') {
+                newContent = collectPropData();
+            } else if (document.getElementById('script-edit-form').style.display !== 'none') {
+                newContent = collectScriptData();
+            } else if (document.getElementById('text-edit-form').style.display !== 'none') {
+                newContent = document.getElementById('edit-modal-content').value;
+            }
+            
+            if (!newContent.trim()) {
+                showError('文件内容不能为空');
+                return;
+            }
+            
+            try {
+                const apiMap = {
+                    'worlds': '/api/world-files',
+                    'characters': '/api/characters-files',
+                    'scripts': '/api/scripts-files',
+                    'locations': '/api/locations-files',
+                    'props': '/api/props-files'
+                };
+                
+                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: newContent,
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    const fileType = currentEditFile.fileType;
+                    const fileName = currentEditFile.fileName;
+                    showSuccess(`✓ 文件已更新: ${fileName}`);
+                    closeEditModal();
+                    await loadFiles(fileType);
+                    
+                    if (sessionId) {
+                        try {
+                            const refreshResponse = await fetch(`/api/session/${sessionId}/refresh`, { method: 'POST' });
+                            const refreshData = await refreshResponse.json();
+                            if (refreshData.success) {
+                                const fileTypeMap = {
+                                    'characters': '角色卡',
+                                    'locations': '场景',
+                                    'props': '道具',
+                                    'scripts': '剧本'
+                                };
+                                const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
+                                await sendMessage(notificationMessage, true);
+                            }
+                        } catch (error) {
+                            console.error('自动刷新文件上下文失败:', error);
+                        }
+                    }
+                } else {
+                    showError('保存失败: ' + (data.error || '未知错误'));
+                }
+            } catch (error) {
+                showError('保存文件失败: ' + error.message);
+            }
+        }
+
+        function collectCharacterData() {
+            const data = {
+                name: document.getElementById('char-name').value.trim(),
+                age: document.getElementById('char-age').value.trim(),
+                identity: document.getElementById('char-identity').value.trim(),
+                appearance: document.getElementById('char-appearance').value.trim(),
+                personality: document.getElementById('char-personality').value.trim(),
+                behavior: document.getElementById('char-behavior').value.trim(),
+                other_info: document.getElementById('char-other').value.trim(),
+                reference_image: document.getElementById('char-image').value.trim()
+            };
+            return JSON.stringify(data, null, 2);
+        }
+
+        function collectLocationData() {
+            const parentId = document.getElementById('loc-parent').value.trim();
+            const data = {
+                name: document.getElementById('loc-name').value.trim(),
+                parent_id: parentId === '' ? null : parentId,
+                description: document.getElementById('loc-description').value.trim(),
+                reference_image: document.getElementById('loc-image').value.trim()
+            };
+            return JSON.stringify(data, null, 2);
+        }
+
+        function collectPropData() {
+            const data = {
+                name: document.getElementById('prop-name').value.trim(),
+                type: document.getElementById('prop-type').value.trim(),
+                description: document.getElementById('prop-description').value.trim(),
+                reference_image: document.getElementById('prop-image').value.trim()
+            };
+            return JSON.stringify(data, null, 2);
+        }
+
+        function collectScriptData() {
+            const now = new Date().toISOString();
+            const data = {
+                title: document.getElementById('script-title').value.trim(),
+                episode_number: parseInt(document.getElementById('script-episode').value) || null,
+                content: document.getElementById('script-content').value.trim(),
+                create_time: document.getElementById('script-created').value || now,
+                update_time: now
+            };
+            return JSON.stringify(data, null, 2);
+        }
+
+        function showWorldEditor(fileName, data) {
+            console.log('showWorldEditor called with data:', data); // 调试日志
+            document.getElementById('edit-modal-title').textContent = `✏️ 编辑世界 - ${fileName}`;
+            document.getElementById('world-edit-form').style.display = 'block';
+            
+            // 确保所有字段都有值，使用空字符串作为默认值
+            document.getElementById('world-name').value = data.name || '';
+            document.getElementById('world-user-id').value = data.user_id || USER_ID;
+            document.getElementById('world-description').value = data.description || '';
+            document.getElementById('world-story-outline').value = data.story_outline || '';
+            document.getElementById('world-visual-style').value = data.visual_style || '';
+            document.getElementById('world-era-environment').value = data.era_environment || '';
+            document.getElementById('world-color-language').value = data.color_language || '';
+            document.getElementById('world-composition-preference').value = data.composition_preference || '';
+            document.getElementById('world-created').value = data.create_time || '';
+            document.getElementById('world-updated').value = data.update_time || '';
+        }
+
+        function collectWorldData() {
+            const now = new Date().toISOString();
+            const data = {
+                id: parseInt(WORLD_ID),
+                name: document.getElementById('world-name').value.trim(),
+                user_id: parseInt(document.getElementById('world-user-id').value) || parseInt(USER_ID),
+                description: document.getElementById('world-description').value.trim(),
+                story_outline: document.getElementById('world-story-outline').value.trim(),
+                visual_style: document.getElementById('world-visual-style').value.trim(),
+                era_environment: document.getElementById('world-era-environment').value.trim(),
+                color_language: document.getElementById('world-color-language').value.trim(),
+                composition_preference: document.getElementById('world-composition-preference').value.trim(),
+                create_time: document.getElementById('world-created').value || now,
+                update_time: now
+            };
+            return JSON.stringify(data, null, 2);
+        }
+
+        async function loadUserWorlds() {
+            try {
+                const response = await fetch('/api/worlds?page=1&page_size=100', {
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                
+                // 兼容后端返回格式: {code: 0, data: {data: [...]}}
+                const worlds = data.data?.data || data.worlds || [];
+                if (data.code === 0 || data.success) {
+                    const worldList = document.getElementById('world-list');
+                    
+                    if (worlds.length === 0) {
+                        worldList.innerHTML = '<div class="world-empty">暂无世界</div>';
+                        return;
+                    }
+                    
+                    worldList.innerHTML = '';
+                    worlds.forEach(world => {
+                        const worldItem = document.createElement('div');
+                        worldItem.className = 'world-item' + (world.id == WORLD_ID ? ' active' : '');
+                        
+                        const worldInfo = document.createElement('div');
+                        worldInfo.className = 'world-info';
+                        worldInfo.onclick = () => switchWorld(world.id);
+                        
+                        const worldName = document.createElement('div');
+                        worldName.className = 'world-name';
+                        worldName.textContent = world.name;
+                        worldInfo.appendChild(worldName);
+                        
+                        if (world.description) {
+                            const worldDesc = document.createElement('div');
+                            worldDesc.className = 'world-desc';
+                            worldDesc.textContent = world.description;
+                            worldInfo.appendChild(worldDesc);
+                        }
+                        
+                        const worldActions = document.createElement('div');
+                        worldActions.className = 'world-actions';
+                        
+                        const editBtn = document.createElement('button');
+                        editBtn.className = 'world-edit-btn';
+                        editBtn.title = '编辑世界';
+                        editBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            showEditWorldModal(world.id, world.name, world.description || '');
+                        };
+                        editBtn.innerHTML = `
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                        `;
+                        
+                        worldActions.appendChild(editBtn);
+                        worldItem.appendChild(worldInfo);
+                        worldItem.appendChild(worldActions);
+                        worldList.appendChild(worldItem);
+                    });
+                } else {
+                    document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
+                }
+            } catch (error) {
+                console.error('加载世界列表失败:', error);
+                document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
+            }
+        }
+
+        function toggleWorldSidebar() {
+            const sidebar = document.getElementById('world-sidebar');
+            sidebar.classList.toggle('open');
+        }
+
+        function switchWorld(worldId) {
+            if (worldId == WORLD_ID) {
+                toggleWorldSidebar();
+                return;
+            }
+            
+            // auth_token 已在 localStorage 中，无需通过 URL 传递
+            const newUrl = `${window.location.pathname}?user_id=${USER_ID}&world_id=${worldId}`;
+            window.location.href = newUrl;
+        }
+
+        async function loadCurrentWorldName() {
+            try {
+                const response = await fetch('/api/worlds?page=1&page_size=100', {
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                
+                // 兼容后端返回格式: {code: 0, data: {data: [...]}}
+                const worlds = data.data?.data || data.worlds || [];
+                if (data.code === 0 || data.success) {
+                    const currentWorld = worlds.find(w => w.id == WORLD_ID);
+                    const worldNameDisplay = document.getElementById('world-name-display');
+                    
+                    if (currentWorld && worldNameDisplay) {
+                        worldNameDisplay.textContent = currentWorld.name;
+                    } else if (worldNameDisplay) {
+                        worldNameDisplay.textContent = '';
+                    }
+                }
+            } catch (error) {
+                console.error('加载世界名称失败:', error);
+                const worldNameDisplay = document.getElementById('world-name-display');
+                if (worldNameDisplay) {
+                    worldNameDisplay.textContent = '';
+                }
+            }
+        }
+
+        // 新建世界相关函数
+        function showNewWorldModal() {
+            document.getElementById('new-world-name').value = '';
+            document.getElementById('new-world-description').value = '';
+            document.getElementById('new-world-modal').classList.add('show');
+            document.getElementById('new-world-name').focus();
+        }
+
+        function closeNewWorldModal() {
+            document.getElementById('new-world-modal').classList.remove('show');
+        }
+
+        async function createNewWorld() {
+            const name = document.getElementById('new-world-name').value.trim();
+            const description = document.getElementById('new-world-description').value.trim();
+            
+            if (!name) {
+                showError('请输入世界名称');
+                return;
+            }
+            
+            try {
+                updateStatus('正在创建世界...');
+                const response = await fetch('/api/worlds', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${AUTH_TOKEN}`,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        description: description
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.code === 0) {
+                    showSuccess(`✓ 世界 "${name}" 创建成功！`);
+                    closeNewWorldModal();
+                    await loadUserWorlds();
+                    updateStatus('世界创建完成');
+                    
+                    // 自动选中新创建的世界
+                    if (data.data && data.data.id) {
+                        switchWorld(data.data.id);
+                    }
+                } else {
+                    showError('创建世界失败: ' + (data.message || '未知错误'));
+                    updateStatus('创建失败');
+                }
+            } catch (error) {
+                showError('创建世界失败: ' + error.message);
+                updateStatus('创建失败');
+            }
+        }
+
+        // 编辑世界相关函数
+        function showEditWorldModal(worldId, worldName, worldDescription = '') {
+            currentEditWorld.id = worldId;
+            currentEditWorld.name = worldName;
+            currentEditWorld.description = worldDescription;
+            
+            document.getElementById('edit-world-name').value = worldName;
+            document.getElementById('edit-world-description').value = worldDescription;
+            document.getElementById('edit-world-modal').classList.add('show');
+            document.getElementById('edit-world-name').focus();
+        }
+
+        function closeEditWorldModal() {
+            document.getElementById('edit-world-modal').classList.remove('show');
+            currentEditWorld = { id: '', name: '', description: '' };
+        }
+
+        function openComputingPowerLogsModal() {
+            if (!AUTH_TOKEN) {
+                updateStatus('缺少认证信息', 'error');
+                return;
+            }
+            
+            const modal = document.getElementById('computing-power-logs-modal');
+            const iframe = document.getElementById('computing-power-logs-iframe');
+            
+            // iframe 与父页面同源，共享 localStorage，无需通过 URL 传递 auth_token
+            iframe.src = `/computing_power_logs.html`;
+            
+            modal.classList.add('show');
+        }
+
+        function closeComputingPowerLogsModal() {
+            const modal = document.getElementById('computing-power-logs-modal');
+            const iframe = document.getElementById('computing-power-logs-iframe');
+            
+            // 关闭时清空 iframe src
+            iframe.src = '';
+            
+            modal.classList.remove('show');
+        }
+
+        async function saveEditedWorld() {
+            const name = document.getElementById('edit-world-name').value.trim();
+            const description = document.getElementById('edit-world-description').value.trim();
+            
+            if (!name) {
+                showError('请输入世界名称');
+                return;
+            }
+            
+            if (!currentEditWorld.id) {
+                showError('无效的世界ID');
+                return;
+            }
+            
+            try {
+                updateStatus('正在保存世界信息...');
+                const response = await fetch(`/api/worlds/${currentEditWorld.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name,
+                        description: description,
+                        user_id: USER_ID,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    showSuccess(`✓ 世界 "${name}" 更新成功！`);
+                    closeEditWorldModal();
+                    await loadUserWorlds();
+                    await loadCurrentWorldName();
+                    updateStatus('世界信息已更新');
+                } else {
+                    showError('更新世界失败: ' + (data.error || '未知错误'));
+                    updateStatus('更新失败');
+                }
+            } catch (error) {
+                showError('更新世界失败: ' + error.message);
+                updateStatus('更新失败');
+            }
+        }
+
+        // 键盘事件处理
+        document.addEventListener('keydown', function(e) {
+            // 新建世界弹窗中按 Enter 键创建世界
+            if (e.key === 'Enter' && document.getElementById('new-world-modal').classList.contains('show')) {
+                if (e.target.id === 'new-world-name' || e.target.id === 'new-world-description') {
+                    e.preventDefault();
+                    createNewWorld();
+                }
+            }
+            
+            // 编辑世界弹窗中按 Enter 键保存
+            if (e.key === 'Enter' && document.getElementById('edit-world-modal').classList.contains('show')) {
+                if (e.target.id === 'edit-world-name' || e.target.id === 'edit-world-description') {
+                    e.preventDefault();
+                    saveEditedWorld();
+                }
+            }
+            
+            // 按 Escape 键关闭弹窗
+            if (e.key === 'Escape') {
+                if (document.getElementById('new-world-modal').classList.contains('show')) {
+                    closeNewWorldModal();
+                }
+                if (document.getElementById('edit-world-modal').classList.contains('show')) {
+                    closeEditWorldModal();
+                }
+            }
+        });
+
+        // 显示世界选择提示
+        function showWorldSelectionPrompt() {
+            // 自动打开世界选择侧边栏
+            const sidebar = document.getElementById('world-sidebar');
+            sidebar.classList.add('open');
+            
+            // 更新欢迎卡片内容，显示世界选择提示
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.innerHTML = `
+                <div class="welcome-card world-selection-prompt">
+                    <div class="welcome-icon">🌍</div>
+                    <h2 class="welcome-title">请选择一个世界开始创作</h2>
+                    <p class="welcome-desc">您需要先选择一个世界才能开始使用剧本智能创作系统</p>
+                    <div class="world-selection-actions">
+                        <div class="selection-step">
+                            <span class="step-icon">←</span>
+                            <span class="step-text">左侧侧边栏中选择一个现有世界</span>
+                        </div>
+                        <div class="selection-divider">或</div>
+                        <div class="selection-step">
+                            <button class="btn btn-primary" onclick="showNewWorldModal()">
+                                <span class="btn-icon">➕</span>
+                                <span class="btn-text">创建新世界</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="selection-note">
+                        <span class="note-icon">ℹ️</span>
+                        <span>世界是您的创作空间，包含角色、场景、道具和剧本等内容</span>
+                    </div>
+                </div>
+            `;
+            
+            // 禁用输入区域
+            const messageInput = document.getElementById('message-input');
+            const sendBtn = document.getElementById('send-btn');
+            if (messageInput) {
+                messageInput.disabled = true;
+                messageInput.placeholder = '请先选择一个世界...';
+            }
+            if (sendBtn) {
+                sendBtn.disabled = true;
+            }
+            
+            // 更新状态显示
+            updateStatus('请选择一个世界开始创作');
+            
+            // 更新世界名称显示
+            const worldNameDisplay = document.getElementById('world-name-display');
+            if (worldNameDisplay) {
+                worldNameDisplay.textContent = '未选择世界';
+                worldNameDisplay.style.color = 'var(--warning-color)';
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>画风说明</title>
+  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 1000px;
+      width: 100%;
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    
+    .header p {
+      font-size: 16px;
+      opacity: 0.95;
+    }
+    
+    .content {
+      padding: 40px;
+    }
+    
+    .guide-image {
+      width: 100%;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      border: 1px solid #e5e7eb;
+    }
+    
+    .note {
+      background: #dbeafe;
+      border-left: 4px solid #3b82f6;
+      padding: 16px;
+      border-radius: 8px;
+      margin-top: 20px;
+      color: #1e40af;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    
+    .note strong {
+      color: #1e3a8a;
+      display: block;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>画风说明</h1>
+      <p>查看各种画风对应的视觉效果</p>
+    </div>
+    
+    <div class="content">
+      <img src="http://ailive.perseids.cn/upload/assert/image_style.png" alt="画风说明图" class="guide-image" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+      <div class="note" style="display: none;">
+        <strong>提示：</strong>
+        画风说明图片加载失败，请检查网络连接或稍后再试。
+      </div>
+      
+      <div class="note">
+        <strong>说明：</strong>
+        上图展示了不同画风的视觉效果对比，您可以根据需要选择合适的画风。在创建或编辑工作流时，可以在画风设置中选择对应的画风名称。
+      </div>
+    </div>
+  </div>
+</body>
+</html>

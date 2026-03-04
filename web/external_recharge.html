@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>算力充值支付</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+      background: #f6f7fb;
+      margin: 0;
+      padding: 0;
+      color: #1f2933;
+    }
+    .page {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 32px 20px 48px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 15px 45px rgba(15, 23, 42, 0.08);
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      color: #0f172a;
+    }
+    p.sub {
+      margin: 0;
+      color: #64748b;
+      font-size: 14px;
+    }
+    .package-summary {
+      margin: 24px 0;
+      padding: 18px;
+      border-radius: 14px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+    }
+    .package-summary div {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 15px;
+    }
+    .package-summary div:last-child {
+      margin-bottom: 0;
+    }
+    .package-summary span.label {
+      color: #475569;
+    }
+    .package-summary span.value {
+      font-weight: 600;
+      color: #0f172a;
+    }
+    .actions {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin-top: 26px;
+    }
+    button.primary {
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 18px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+    button.primary:disabled {
+      opacity: 0.65;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background: transparent;
+      border: 1px solid #cbd5f5;
+      color: #2563eb;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .status {
+      margin-top: 20px;
+      padding: 14px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .status.info {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+    }
+    .status.error {
+      background: #fef2f2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+    }
+    .spinner {
+      width: 22px;
+      height: 22px;
+      border: 3px solid #dbeafe;
+      border-top-color: #1d4ed8;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin-right: 10px;
+    }
+    .loading-row {
+      display: flex;
+      align-items: center;
+      color: #475569;
+      font-weight: 600;
+      font-size: 15px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <h1>算力充值</h1>
+      <p class="sub">请确认套餐信息并完成支付</p>
+
+      <div class="package-summary" id="packageSummary" aria-live="polite"></div>
+
+      <div class="status info" id="infoBox">
+        正在准备支付链接，请稍候...
+      </div>
+      <div class="status error hidden" id="errorBox"></div>
+
+      <div class="actions">
+        <button class="primary" id="payBtn" disabled>正在拉起支付...</button>
+        <button class="secondary" id="backBtn">返回上一页</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      params: new URLSearchParams(window.location.search),
+      payBtn: document.getElementById('payBtn'),
+      infoBox: document.getElementById('infoBox'),
+      errorBox: document.getElementById('errorBox'),
+      summary: document.getElementById('packageSummary'),
+      redirectUrl: '',
+    };
+
+    function showError(message) {
+      state.errorBox.textContent = message || '支付失败，请返回重试';
+      state.errorBox.classList.remove('hidden');
+      state.infoBox.classList.add('hidden');
+      state.payBtn.disabled = false;
+      state.payBtn.textContent = '重新拉起支付';
+    }
+
+    function setLoading(text) {
+      state.infoBox.textContent = text;
+      state.infoBox.classList.remove('hidden');
+      state.errorBox.classList.add('hidden');
+      state.payBtn.disabled = true;
+      state.payBtn.textContent = '正在拉起支付...';
+    }
+
+    function renderSummary() {
+      const pkgName = decodeURIComponent(state.params.get('package_name') || '算力套餐');
+      const price = Number(state.params.get('price') || 0).toFixed(2);
+      const computing = state.params.get('computing_power') || '--';
+      state.summary.innerHTML = `
+        <div><span class="label">套餐</span><span class="value">${pkgName}</span></div>
+        <div><span class="label">价格</span><span class="value">¥ ${price}</span></div>
+        <div><span class="label">算力</span><span class="value">${computing}</span></div>
+      `;
+    }
+
+    async function ensureIp() {
+      let ip = state.params.get('payment_ip') || '';
+      if (ip && ip !== '0.0.0.0') return ip;
+      try {
+        const res = await fetch('https://api.ipify.org?format=json');
+        const data = await res.json();
+        return data.ip || '0.0.0.0';
+      } catch (err) {
+        console.warn('Failed to fetch IP, fallback to 0.0.0.0');
+        return '0.0.0.0';
+      }
+    }
+
+    async function createOrder() {
+      const apiBase = state.params.get('api_base') || window.location.origin;
+      const packageId = state.params.get('package_id');
+      const userId = state.params.get('user_id');
+      const authToken = decodeURIComponent(state.params.get('auth_token') || '');
+      state.redirectUrl = decodeURIComponent(state.params.get('redirect_url') || '') || window.location.origin;
+
+      if (!packageId || !userId || !authToken) {
+        showError('参数缺失，请返回重新选择套餐');
+        return;
+      }
+
+      renderSummary();
+      setLoading('正在创建支付订单...');
+
+      try {
+        const paymentIp = await ensureIp();
+        const payload = {
+          package_id: Number(packageId),
+          user_id: Number(userId),
+          auth_token: authToken,
+          is_wechat_browser: false,
+          payment_ip: paymentIp
+        };
+
+        const resp = await fetch(`${apiBase}/api/recharge/wechat-pay`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await resp.json();
+        if (!resp.ok || !data.success) {
+          throw new Error(data.message || '创建支付订单失败');
+        }
+
+        const h5Url = data.h5_url;
+        if (!h5Url) {
+          throw new Error('未获取到支付链接，请稍后重试');
+        }
+
+        state.infoBox.textContent = '已获取支付链接，即将跳转微信支付...';
+        state.payBtn.disabled = false;
+        state.payBtn.textContent = '立即前往支付';
+        state.payBtn.onclick = () => {
+          window.location.href = h5Url;
+        };
+
+        // 自动跳转
+        window.location.href = h5Url;
+      } catch (error) {
+        console.error('External payment error:', error);
+        showError(error.message);
+      }
+    }
+
+    document.getElementById('backBtn').onclick = () => {
+      if (state.redirectUrl) {
+        window.location.href = state.redirectUrl;
+      } else {
+        window.history.back();
+      }
+    };
+
+    state.payBtn.onclick = () => {
+      setLoading('正在重新拉起支付...');
+      createOrder();
+    };
+
+    renderSummary();
+    createOrder();
+  </script>
+</body>
+</html>

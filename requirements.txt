@@ -1,0 +1,31 @@
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+requests==2.32.3
+python-multipart==0.0.9
+pyyaml==6.0.1
+openai>=1.0.0
+httpx>=0.24.0
+# 草稿导出
+pyJianYingDraft>=0.2.5
+apscheduler==3.10.4
+cryptography==41.0.3
+# 认证系统
+bcrypt>=4.0.0
+pymysql>=1.1.0
+# 阿里云短信SDK
+alibabacloud_dysmsapi20170525>=3.0.0
+alibabacloud_tea_openapi>=0.3.0
+alibabacloud_tea_util>=0.3.0
+# 错误监控
+sentry-sdk>=2.0.0
+Pillow>=10.0.0
+pystray>=0.19.0
+# 数据库迁移
+alembic>=1.13.0
+sqlalchemy>=2.0.0
+pymysql>=1.1.2
+qiniu>=7.17.0
+# 智能体系统
+anthropic>=0.40.0
+litellm>=1.35.0
+mcp>=1.0.0

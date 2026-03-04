@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>如何导入到剪影</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+            line-height: 1.6;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #10b981;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        .step {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: #f9fafb;
+            border-radius: 8px;
+            border-left: 4px solid #10b981;
+        }
+        .step-title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #10b981;
+            margin-bottom: 15px;
+        }
+        .step-content {
+            color: #555;
+            margin-bottom: 15px;
+        }
+        .step img {
+            max-width: 100%;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+            margin-top: 10px;
+        }
+        .note {
+            background: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .note strong {
+            color: #f59e0b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📦 如何将草稿导入到剪影</h1>
+        
+        <div class="note">
+            <strong>提示：</strong>请按照以下步骤操作，即可在剪影中使用导出的草稿项目。
+        </div>
+        
+        <div class="step">
+            <div class="step-title">STEP 1：获取剪影草稿目录</div>
+            <div class="step-content">
+                打开剪影或者CAPCUT，点击右上角的设置按钮，在"全局设置"中找到"草稿箱和素材"选项，查看草稿保存路径。
+            </div>
+            <img src="http://ailive.perseids.cn/upload/assert/how_to_get_jianying_draft_path.jpg" alt="获取剪影草稿路径">
+        </div>
+        
+        <div class="step">
+            <div class="step-title">STEP 2：打开草稿位置</div>
+            <div class="step-content">
+                点击"打开"按钮，系统会自动打开草稿文件夹所在的位置。记住这个路径，通常是：<br>
+                <code>C:\Users\你的用户名\AppData\Local\JianyingPro\User Data\Projects\com.lveditor.draft</code>
+            </div>
+            <img src="http://ailive.perseids.cn/upload/assert/where_is_jianying_draft_path.png" alt="草稿路径位置">
+        </div>
+        
+        <div class="step">
+            <div class="step-title">STEP 3：复制草稿到剪影目录</div>
+            <div class="step-content">
+                将下载并解压后的草稿文件夹（整个文件夹），复制到剪影的草稿目录中。<br>
+                注意：是复制整个文件夹，不是只复制里面的内容。
+            </div>
+            <img src="http://ailive.perseids.cn/upload/assert/copy_draft_folder_to_jianying_project_path.jpg" alt="复制草稿文件夹">
+        </div>
+        
+        <div class="step">
+            <div class="step-title">STEP 4：在剪影中找到你的项目</div>
+            <div class="step-content">
+                返回剪影或者CAPCUT，在草稿箱中即可看到刚刚导入的项目。点击打开即可开始编辑！
+            </div>
+            <img src="http://ailive.perseids.cn/upload/assert/find_your_draft.png" alt="找到你的草稿">
+        </div>
+
+        <div class="step">
+            <div class="step-title">STEP 5: 导入后的样例</div>
+            <div class="step-content">
+                你可以看到你导入的草稿项目了，点击打开即可开始编辑！
+            </div>
+            <img src="http://ailive.perseids.cn/upload/assert/draft_example.png" alt="导入后的草稿">
+        </div>
+        
+        <div class="note">
+            <strong>常见问题：</strong><br>
+            1. 如果没有看到项目，请尝试重启剪影<br>
+            2. 确保草稿文件夹名称没有被修改<br>
+            3. 确保所有素材文件都在 Resources/local 目录中
+        </div>
+    </div>
+</body>
+</html>

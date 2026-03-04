@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>算力日志</title>
+  <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --muted: #9ca3af;
+      --text: #e5e7eb;
+      --primary: #22c55e;
+      --primary-700: #15803d;
+      --border: #1f2937;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans,
+        Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: linear-gradient(180deg, #0b1020, #0f172a);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .tab {
+      padding: 10px 20px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .tab:hover {
+      background: rgba(34, 197, 94, 0.1);
+      border-color: var(--primary);
+    }
+
+    .tab.active {
+      background: var(--primary);
+      color: #051b0d;
+      border-color: var(--primary);
+    }
+
+    .stat-label {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .stat-value.danger {
+      color: var(--danger);
+    }
+
+    .logs-container {
+      background: rgba(17, 24, 39, 0.8);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .log-item {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background 0.2s;
+    }
+
+    .log-item:last-child {
+      border-bottom: none;
+    }
+
+    .log-item:hover {
+      background: rgba(34, 197, 94, 0.05);
+    }
+
+    .log-info {
+      flex: 1;
+    }
+
+    .log-behavior {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .log-behavior.increase {
+      color: var(--primary);
+    }
+
+    .log-behavior.deduct {
+      color: var(--danger);
+    }
+
+    .log-description {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .log-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+
+    .log-amount {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .log-amount.increase {
+      color: var(--primary);
+    }
+
+    .log-amount.deduct {
+      color: var(--danger);
+    }
+
+    .log-time {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      margin-top: 24px;
+      padding: 20px;
+    }
+
+    .pagination button {
+      padding: 8px 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-size: 14px;
+    }
+
+    .pagination button:hover:not(:disabled) {
+      background: rgba(34, 197, 94, 0.1);
+      border-color: var(--primary);
+    }
+
+    .pagination button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .pagination .page-info {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+    }
+
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .empty-text {
+      font-size: 16px;
+    }
+
+    .error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid var(--danger);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      color: var(--danger);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="container">
+    <div class="header">
+      <h1 class="title">算力日志</h1>
+    </div>
+
+    <!-- 筛选标签 -->
+    <div class="tabs">
+      <div class="tab" :class="{ active: currentBehavior === 'all' }" @click="changeBehavior('all')">
+        全部
+      </div>
+      <div class="tab" :class="{ active: currentBehavior === 'increase' }" @click="changeBehavior('increase')">
+        增加
+      </div>
+      <div class="tab" :class="{ active: currentBehavior === 'deduct' }" @click="changeBehavior('deduct')">
+        扣除
+      </div>
+    </div>
+
+    <!-- 日志列表 -->
+    <div v-if="loading" class="loading">
+      加载中...
+    </div>
+
+    <!-- 错误提示 -->
+    <div v-else-if="error" class="error">
+      {{ error }}
+    </div>
+
+    <div v-else-if="logs.length === 0" class="empty">
+      <div class="empty-icon">📋</div>
+      <div class="empty-text">暂无算力日志</div>
+    </div>
+
+    <div v-else class="logs-container">
+      <div v-for="log in logs" :key="log.id" class="log-item">
+        <div class="log-info">
+          <div class="log-behavior" :class="log.behavior">
+            {{ log.behavior === 'increase' ? '➕ 增加' : '➖ 扣除' }}
+          </div>
+          <div v-if="log.from !== null && log.to !== null" class="log-change" style="font-size: 13px; color: var(--text); margin-bottom: 6px; padding: 4px 8px; background: rgba(34, 197, 94, 0.1); border-radius: 4px; display: inline-block; font-weight: 500;">
+            <span style="color: var(--muted); font-size: 12px;">算力变化：</span>
+            <span style="color: var(--muted);">{{ log.from }}</span> 
+            <span style="color: var(--primary); margin: 0 4px;">→</span> 
+            <span style="color: var(--primary); font-weight: 600;">{{ log.to }}</span>
+          </div>
+          <div class="log-description">{{ log.note || '无描述' }}</div>
+        </div>
+        <div class="log-meta">
+          <div class="log-amount" :class="log.behavior">
+            {{ log.behavior === 'increase' ? '+' : '-' }}{{ Math.abs(log.computing_power) }}
+          </div>
+          <div class="log-time">{{ log.created_at }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 分页 -->
+    <div v-if="totalPages > 1" class="pagination">
+      <button @click="prevPage" :disabled="currentPage === 1">上一页</button>
+      <span class="page-info">第 {{ currentPage }} / {{ totalPages }} 页</span>
+      <button @click="nextPage" :disabled="currentPage === totalPages">下一页</button>
+    </div>
+  </div>
+
+  <script src="/js/vue.global.prod.js"></script>
+  <script src="/js/axios.min.js"></script>
+  <script>
+    const { createApp } = Vue;
+
+    createApp({
+      data() {
+        return {
+          authToken: '',
+          logs: [],
+          currentPage: 1,
+          pageSize: 20,
+          totalPages: 1,
+          totalCount: 0,
+          currentBehavior: 'all', // 'all', 'increase', 'deduct'
+          loading: false,
+          error: ''
+        };
+      },
+      mounted() {
+        // 从 localStorage 获取 auth_token（与父页面同源，共享 localStorage）
+        this.authToken = localStorage.getItem('auth_token') || '';
+
+        if (!this.authToken) {
+          this.error = '缺少认证信息，请从主页面打开';
+          return;
+        }
+
+        // 加载数据
+        this.fetchLogs();
+      },
+      methods: {
+        async fetchLogs() {
+          this.loading = true;
+          this.error = '';
+
+          try {
+            const params = {
+              page: this.currentPage,
+              page_size: this.pageSize
+            };
+
+            // 如果不是查看全部，添加 behavior 参数
+            if (this.currentBehavior !== 'all') {
+              params.behavior = this.currentBehavior;
+            }
+
+            const response = await axios.get('/api/user/computing_power_logs', {
+              headers: {
+                'Authorization': `Bearer ${this.authToken}`
+              },
+              params: params
+            });
+
+            if (response.data.success) {
+              const data = response.data.data;
+              this.logs = data.logs || [];
+              this.totalCount = data.total || 0;
+              this.totalPages = Math.ceil(this.totalCount / this.pageSize);
+            } else {
+              this.error = response.data.message || '获取日志失败';
+            }
+          } catch (error) {
+            console.error('获取算力日志失败:', error);
+            if (error.response && error.response.data) {
+              this.error = error.response.data.message || '获取日志失败';
+            } else {
+              this.error = '网络错误，请稍后重试';
+            }
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        changeBehavior(behavior) {
+          if (this.currentBehavior === behavior) return;
+          
+          this.currentBehavior = behavior;
+          this.currentPage = 1; // 重置到第一页
+          this.fetchLogs();
+        },
+
+        prevPage() {
+          if (this.currentPage > 1) {
+            this.currentPage--;
+            this.fetchLogs();
+          }
+        },
+
+        nextPage() {
+          if (this.currentPage < this.totalPages) {
+            this.currentPage++;
+            this.fetchLogs();
+          }
+        },
+
+        formatTime(timestamp) {
+          // 后端已经格式化好时间，直接返回
+          return timestamp || '';
+        }
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
