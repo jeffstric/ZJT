@@ -4,8 +4,8 @@
 
 1. 智剧通 may be utilized commercially, including as a backend service for other applications or as an application development platform for enterprises. Should the conditions below be met, a commercial license must be obtained from the producer:
 
-a. Multi-tenant service: Unless explicitly authorized by 智剧通 in writing, you may not use the 智剧通 source code to operate a multi-tenant environment.
-    - Tenant Definition: Within the context of 智剧通, one tenant corresponds to one workspace. The workspace provides a separated area for each tenant's data and configurations.
+a. Multi-workspace service: Unless explicitly authorized by 智剧通 in writing, you may not use the 智剧通 source code to operate a multi-workspace environment.
+    - Workspace Definition: Within the context of 智剧通, one workspace corresponds to one isolated user space. The workspace provides a separated area for each user's data and configurations.
 
 b. LOGO and copyright information: In the process of using 智剧通's frontend, you may not remove or modify the LOGO or copyright information in the 智剧通 console or applications. This restriction is inapplicable to uses of 智剧通 that do not involve its frontend.
     - Frontend Definition: For the purposes of this license, the "frontend" of 智剧通 includes all components located in the `static/` directory when running 智剧通 from the raw source code.
