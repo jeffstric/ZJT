@@ -921,64 +921,6 @@
               method: 'GET'
             });
             
-            const contentType = (res.headers.get('content-type') || '').toLowerCase();
-            const headerStatus = res.headers.get('x-audio-status');
-            
-            if(headerStatus === 'SUCCESS' || contentType.startsWith('audio/')){
-              const blob = await res.blob();
-              const blobUrl = URL.createObjectURL(blob);
-              
-              const audio = resultDiv.querySelector('audio');
-              if(audio) audio.src = blobUrl;
-              resultDiv.style.display = 'block';
-              
-              statusEl.style.color = '#16a34a';
-              statusEl.textContent = '正在上传音频...';
-              
-              try {
-                const dialogue = node.data.dialogues[index];
-                const characterName = dialogue.character_name || '角色';
-                const now = new Date();
-                const dateStr = now.getFullYear().toString() + 
-                               (now.getMonth() + 1).toString().padStart(2, '0') + 
-                               now.getDate().toString().padStart(2, '0');
-                const timeStr = now.getHours().toString().padStart(2, '0') + 
-                               now.getMinutes().toString().padStart(2, '0') + 
-                               now.getSeconds().toString().padStart(2, '0');
-                const filename = `${characterName}_${dateStr}_${timeStr}.wav`;
-                
-                const audioFile = new File([blob], filename, { type: blob.type || 'audio/wav' });
-                const permanentUrl = await uploadFile(audioFile);
-                
-                if(permanentUrl){
-                  if(!node.data.audioResults) node.data.audioResults = {};
-                  node.data.audioResults[index] = { audioUrl: permanentUrl };
-                  
-                  if(audio) audio.src = proxyDownloadUrl(permanentUrl);
-                  
-                  statusEl.textContent = '生成成功！';
-                  showToast('语音生成并上传成功', 'success');
-                  
-                  try{ autoSaveWorkflow(); } catch(e){}
-                } else {
-                  if(!node.data.audioResults) node.data.audioResults = {};
-                  node.data.audioResults[index] = { audioUrl: blobUrl };
-                  statusEl.textContent = '生成成功（上传失败，使用临时URL）';
-                  showToast('语音生成成功，但上传失败', 'warning');
-                }
-              } catch(uploadError){
-                console.error('音频上传失败:', uploadError);
-                if(!node.data.audioResults) node.data.audioResults = {};
-                node.data.audioResults[index] = { audioUrl: blobUrl };
-                statusEl.textContent = '生成成功（上传失败，使用临时URL）';
-                showToast('语音生成成功，但上传失败', 'warning');
-              }
-              
-              generateBtn.disabled = false;
-              generateBtn.textContent = '生成音频';
-              return;
-            }
-            
             const text = await res.text();
             const payload = text ? JSON.parse(text) : null;
             
@@ -991,65 +933,18 @@
             
             if(status === 'SUCCESS' || status === 2){
               if(payload.result_url){
-                statusEl.textContent = '正在上传音频...';
+                // 直接使用返回的 result_url
+                if(!node.data.audioResults) node.data.audioResults = {};
+                node.data.audioResults[index] = { audioUrl: payload.result_url };
                 
-                try {
-                  const audioUrl = proxyDownloadUrl(payload.result_url);
-                  const audioResponse = await fetch(audioUrl);
-                  if(!audioResponse.ok){
-                    throw new Error('获取音频失败');
-                  }
-                  const audioBlob = await audioResponse.blob();
-                  
-                  const dialogue = node.data.dialogues[index];
-                  const characterName = dialogue.character_name || '角色';
-                  const now = new Date();
-                  const dateStr = now.getFullYear().toString() + 
-                                 (now.getMonth() + 1).toString().padStart(2, '0') + 
-                                 now.getDate().toString().padStart(2, '0');
-                  const timeStr = now.getHours().toString().padStart(2, '0') + 
-                                 now.getMinutes().toString().padStart(2, '0') + 
-                                 now.getSeconds().toString().padStart(2, '0');
-                  const filename = `${characterName}_${dateStr}_${timeStr}.wav`;
-                  
-                  const audioFile = new File([audioBlob], filename, { type: audioBlob.type || 'audio/wav' });
-                  const permanentUrl = await uploadFile(audioFile);
-                  
-                  if(permanentUrl){
-                    if(!node.data.audioResults) node.data.audioResults = {};
-                    node.data.audioResults[index] = { audioUrl: permanentUrl };
-                    
-                    const audio = resultDiv.querySelector('audio');
-                    if(audio) audio.src = proxyDownloadUrl(permanentUrl);
-                    resultDiv.style.display = 'block';
-                    
-                    statusEl.textContent = '生成成功！';
-                    showToast('语音生成并上传成功', 'success');
-                    
-                    try{ autoSaveWorkflow(); } catch(e){}
-                  } else {
-                    if(!node.data.audioResults) node.data.audioResults = {};
-                    node.data.audioResults[index] = { audioUrl: payload.result_url };
-                    
-                    const audio = resultDiv.querySelector('audio');
-                    if(audio) audio.src = proxyDownloadUrl(payload.result_url);
-                    resultDiv.style.display = 'block';
-                    
-                    statusEl.textContent = '生成成功（上传失败，使用临时URL）';
-                    showToast('语音生成成功，但上传失败', 'warning');
-                  }
-                } catch(uploadError){
-                  console.error('音频上传失败:', uploadError);
-                  if(!node.data.audioResults) node.data.audioResults = {};
-                  node.data.audioResults[index] = { audioUrl: payload.result_url };
-                  
-                  const audio = resultDiv.querySelector('audio');
-                  if(audio) audio.src = proxyDownloadUrl(payload.result_url);
-                  resultDiv.style.display = 'block';
-                  
-                  statusEl.textContent = '生成成功（上传失败，使用临时URL）';
-                  showToast('语音生成成功，但上传失败', 'warning');
-                }
+                const audio = resultDiv.querySelector('audio');
+                if(audio) audio.src = payload.result_url;
+                resultDiv.style.display = 'block';
+                
+                statusEl.textContent = '生成成功！';
+                showToast('语音生成成功', 'success');
+                
+                try{ autoSaveWorkflow(); } catch(e){}
               }
               statusEl.style.color = '#16a34a';
               generateBtn.disabled = false;

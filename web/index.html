@@ -1068,25 +1068,10 @@
           const params = authToken ? { auth_token: authToken } : {};
           
           const res = await axios.get(`/api/audio-status/${this.audioId}`, {
-            params,
-            responseType: 'blob'
+            params
           });
           
-          const contentType = (res.headers['content-type'] || '').toLowerCase();
-          const headerStatus = res.headers['x-audio-status'];
-          
-          if (headerStatus === 'SUCCESS' || contentType.startsWith('audio/')) {
-            const blobUrl = URL.createObjectURL(res.data);
-            this.setResultAudioUrl(blobUrl);
-            this.result = { file_url: blobUrl, isBlob: true };
-            this.status = 'SUCCESS';
-            this.loading = false;
-            this.clearStatusCheck();
-            return;
-          }
-          
-          const text = await res.data.text();
-          const payload = text ? JSON.parse(text) : null;
+          const payload = res.data;
           
           if (!payload) {
             console.error('Invalid status response:', payload);
@@ -1097,6 +1082,9 @@
           
           if (status === 'SUCCESS' || status === 2) {
             this.result = payload.result_url ? { file_url: payload.result_url } : null;
+            if (payload.result_url) {
+              this.setResultAudioUrl(payload.result_url);
+            }
             this.status = 'SUCCESS';
             this.loading = false;
             this.clearStatusCheck();

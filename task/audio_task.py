@@ -4,14 +4,6 @@ Video generation task processing
 import logging
 from datetime import datetime, timedelta
 import uuid
-from perseids_client import make_perseids_request
-from config.constant import TASK_COMPUTING_POWER
-
-from duomi_api_requset import (
-    create_ai_image,
-    create_image_to_video,
-    get_ai_task_result,
-)
 from model import TasksModel, AIAudioModel
 from config.constant import (
     TASK_TYPE_GENERATE_AUDIO,
@@ -44,7 +36,7 @@ def _is_expire_check_enabled():
     return get_dynamic_config_value("task_queue", "enable_expire_check", default=True)
 
 # Get upload directory path
-UPLOAD_DIR = "/nas/comfyui_upload/tts/result_audio/"
+UPLOAD_DIR = "/home/appuser/comfyui_upload/tts/result_audio/"
 
 
 async def _submit_new_task(ai_audio):
@@ -138,9 +130,10 @@ async def _submit_new_task(ai_audio):
         audio_file_path = audio_path_or_error or result_path
         
         logger.info(f"Task {task_id}: Audio saved to {audio_file_path}")
-        
+        upload_url = get_dynamic_config_value("tts", "upload_url")
+        result_url = f"{upload_url}{audio_filename}"
         # Update database with result
-        AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED, result_url=result_path, message="音频生成成功")
+        AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED, result_url=result_url, message="音频生成成功")
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
         
         logger.info(f"Task {task_id}: Audio generation completed successfully")

@@ -100,6 +100,7 @@ llm:
 # TTS (Text-to-Speech) configuration
 tts:
   api_url: "http://47.98.190.124"  # TTS API 服务地址
+  upload_url: "http://ailive.perseids.cn:11442/upload/tts/result_audio/"
 
 
 # Test mode configuration

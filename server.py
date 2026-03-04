@@ -3651,22 +3651,12 @@ async def audio_status(request: Request, audio_id: int):
             raise HTTPException(status_code=404, detail=f"未找到音频任务 {audio_id}")
         
         if record.status == AI_AUDIO_STATUS_COMPLETED and record.result_url:
-            file_path = record.result_url
-            if not os.path.isfile(file_path):
-                logger.error(f"Audio file not found for task {audio_id}: {file_path}")
-                raise HTTPException(status_code=500, detail="音频文件不存在，请稍后重试")
-            
-            filename = os.path.basename(file_path)
-            media_type, _ = mimetypes.guess_type(file_path)
-            headers = {
-                "X-Audio-Status": "SUCCESS"
-            }
-            return FileResponse(
-                path=file_path,
-                filename=filename,
-                media_type=media_type or "audio/wav",
-                headers=headers
-            )
+            # 直接返回 result_url 给前端
+            return JSONResponse({
+                "audio_id": record.id,
+                "status": "SUCCESS",
+                "result_url": record.result_url
+            })
         elif record.status == AI_AUDIO_STATUS_FAILED:
             return JSONResponse({
                 "audio_id": record.id,

@@ -293,23 +293,6 @@
               method: 'GET'
             });
             
-            const contentType = (res.headers.get('content-type') || '').toLowerCase();
-            const headerStatus = res.headers.get('x-audio-status');
-            
-            if(headerStatus === 'SUCCESS' || contentType.startsWith('audio/')){
-              const blob = await res.blob();
-              const blobUrl = URL.createObjectURL(blob);
-              node.data.audioUrl = blobUrl;
-              resultAudio.src = blobUrl;
-              resultField.style.display = 'block';
-              statusEl.style.color = '#16a34a';
-              statusEl.textContent = '生成成功！';
-              generateBtn.disabled = false;
-              generateBtn.textContent = '生成语音';
-              showToast('语音生成成功', 'success');
-              return;
-            }
-            
             const text = await res.text();
             const payload = text ? JSON.parse(text) : null;
             
@@ -322,8 +305,9 @@
             
             if(status === 'SUCCESS' || status === 2){
               if(payload.result_url){
+                // 直接使用返回的 result_url
                 node.data.audioUrl = payload.result_url;
-                resultAudio.src = proxyDownloadUrl(payload.result_url);
+                resultAudio.src = payload.result_url;
                 resultField.style.display = 'block';
               }
               statusEl.style.color = '#16a34a';
