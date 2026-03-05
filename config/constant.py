@@ -34,6 +34,9 @@ class TaskTypeId:
     
     # 数字人
     DIGITAL_HUMAN = 13                  # 数字人生成
+    
+    # 文生图
+    SEEDREAM_TEXT_TO_IMAGE = 16         # Seedream 5.0 文生图
 
 
 class TaskCategory:
@@ -41,6 +44,7 @@ class TaskCategory:
     IMAGE_EDIT = 'image_edit'           # 图片编辑
     TEXT_TO_VIDEO = 'text_to_video'     # 文生视频
     IMAGE_TO_VIDEO = 'image_to_video'   # 图生视频
+    TEXT_TO_IMAGE = 'text_to_image'     # 文生图
     VISUAL_ENHANCE = 'visual_enhance'   # 视觉增强
     AUDIO = 'audio'                     # 音频
     DIGITAL_HUMAN = 'digital_human'     # 数字人
@@ -52,6 +56,7 @@ class TaskProvider:
     DUOMI = 'duomi'           # 多米供应商
     RUNNINGHUB = 'runninghub' # RunningHub 供应商
     VIDU = 'vidu'             # Vidu 官方
+    VOLCENGINE = 'volcengine' # 火山引擎
     LOCAL = 'local'           # 本地处理
 
 
@@ -82,6 +87,9 @@ class DriverKey:
     
     # 数字人
     DIGITAL_HUMAN = 'digital_human'                   # 数字人生成
+    
+    # 文生图
+    SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image' # Seedream 5.0 文生图
 
 
 class DriverImplementation:
@@ -110,6 +118,9 @@ class DriverImplementation:
     
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
+    
+    # Seedream 5.0
+    SEEDREAM5_VOLCENGINE_V1 = 'seedream5_volcengine_v1'
 
 
 @dataclass
@@ -241,10 +252,15 @@ TaskTypeRegistry.register(TaskTypeConfig(
     provider=TaskProvider.LOCAL, driver_name=None, computing_power=5
 ))
 
+# 文生图
+TaskTypeRegistry.register(TaskTypeConfig(
+    id=TaskTypeId.SEEDREAM_TEXT_TO_IMAGE, name='文生图 (Seedream 5.0)', category=TaskCategory.TEXT_TO_IMAGE,
+    provider=TaskProvider.VOLCENGINE, driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE, computing_power=6
+))
+
 
 class Action:
     """资源操作类型常量"""
-    
     VIEW = "view"      # 查看权限
     EDIT = "edit"      # 编辑权限
     DELETE = "delete"  # 删除权限
@@ -327,6 +343,9 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     
     # Vidu 相关驱动
     DriverKey.VIDU_IMAGE_TO_VIDEO: DriverImplementation.VIDU_DEFAULT,         # 使用 Vidu 官方 API
+    
+    # Seedream 相关驱动
+    DriverKey.SEEDREAM_TEXT_TO_IMAGE: DriverImplementation.SEEDREAM5_VOLCENGINE_V1,  # 使用火山引擎 Seedream 5.0 v1 版本
 }
 
 # 视频模型时长选项配置

@@ -557,6 +557,19 @@
                             <p class="form-hint">📖 获取方式：<a href="https://platform.vidu.cn/api-keys" target="_blank" style="color: #3b82f6;">快速注册</a></p>
                         </div>
                     </div>
+
+                    <!-- 火山引擎配置组 (可选) -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>火山引擎配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
+                            <span class="config-group-desc">📋 影响服务：Seedream 5.0 文生图</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key</label>
+                            <input type="text" v-model="quickConfigModal.volcengine.apiKey" placeholder="请输入火山引擎 API Key">
+                            <p class="form-hint">📖 获取方式：<a href="https://console.volcengine.com/ark" target="_blank" style="color: #3b82f6;">火山引擎控制台</a></p>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="modal-btn cancel" @click="closeQuickConfigModal">取消</button>

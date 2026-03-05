@@ -82,7 +82,7 @@ def init_scheduler(app):
     初始化定时任务调度器
     """
     global scheduler
-    
+
     # 尝试获取文件锁
     if not _acquire_scheduler_lock():
         logger.info("Scheduler not started due to lock conflict.")

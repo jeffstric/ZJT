@@ -170,7 +170,17 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': True,
         'quick_config': True
     },
-    
+
+    # ==================== 火山引擎配置 ====================
+    {
+        'key': 'volcengine.api_key',
+        'value_type': 'string',
+        'description': '火山引擎 API Key（Seedream 5.0 文生图）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+
     # ==================== 微信支付配置 ====================
     {
         'key': 'pay.wxpay.appId',

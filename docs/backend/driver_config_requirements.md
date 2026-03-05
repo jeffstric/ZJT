@@ -59,6 +59,21 @@ vidu:
   token: "your_vidu_api_token"
 ```
 
+### 火山引擎驱动
+
+**必需配置**: `volcengine.api_key`
+
+适用驱动：
+- `seedream5_volcengine_v1` - Seedream 5.0 文生图（任务类型 16）
+
+配置示例：
+```yaml
+volcengine:
+  api_key: "your_volcengine_api_key"
+```
+
+**注意**: Seedream 5.0 是同步 API，一次请求直接返回图片 URL，无需轮询。支持的图片尺寸：2K、3K。
+
 ## 配置检查
 
 ### 启动时检查

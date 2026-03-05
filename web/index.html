@@ -2005,7 +2005,8 @@
         upscaleProjectIds: {},
         upscaleResults: {},
         upscaleStatusIntervals: {},
-        driverStatus: {}  // 驱动可用状态
+        driverStatus: {},  // 驱动可用状态
+        taskTypeConfig: null  // 从后端获取的任务类型配置
       }
     },
     mounted() {
@@ -2013,6 +2014,8 @@
       this.authToken = localStorage.getItem('auth_token') || '';
       // 获取驱动状态
       this.fetchDriverStatus();
+      // 获取任务类型配置
+      this.fetchTaskTypeConfig();
     },
     computed: {
       canSubmit() { return this.files.length > 0 && this.files.length <= 5 && !!this.prompt && !this.loading },
@@ -2036,7 +2039,8 @@
       modelOptions() {
         const allOptions = [
           { value: 'gemini-2.5-pro-image-preview', label: '标准版 (2算力)', taskType: 1 },
-          { value: 'gemini-3-pro-image-preview', label: '加强版 (6算力)', taskType: 7 }
+          { value: 'gemini-3-pro-image-preview', label: '加强版 (6算力)', taskType: 7 },
+          { value: 'seedream-5.0', label: 'Seedream 5.0 (6算力)', taskType: 16 }
         ];
         return allOptions.map(opt => {
           const isAvailable = !this.driverStatus || !this.driverStatus[opt.taskType] || this.driverStatus[opt.taskType].available !== false;
@@ -2076,6 +2080,20 @@
           console.error('获取驱动状态异常:', error);
         }
       },
+
+      async fetchTaskTypeConfig() {
+        try {
+          const response = await axios.get('/api/task-type-config');
+          if (response.data.success) {
+            this.taskTypeConfig = response.data.data;
+          } else {
+            console.error('获取任务类型配置失败:', response.data.message);
+          }
+        } catch (err) {
+          console.error('获取任务类型配置失败:', err);
+        }
+      },
+
       onFile(e){ 
         const selectedFiles = Array.from(e.target.files || []);
         const remainingSlots = 5 - this.files.length;
@@ -2269,16 +2287,24 @@
         this.historyLoading = true;
         try {
           const authToken = localStorage.getItem('auth_token');
+          // 如果没有获取到任务类型配置，先获取
+          if (!this.taskTypeConfig) {
+            await this.fetchTaskTypeConfig();
+          }
+          // 图片编辑界面只查询图片编辑类型
+          const imageEditTypes = this.taskTypeConfig?.image_edit_types || [1, 7];
+          const typesStr = imageEditTypes.join(',');
+
           const response = await axios.get('/api/ai-tools/history', {
             params: {
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              type: 1,  // 1-图片编辑
+              types: typesStr,
               auth_token: authToken || undefined
             }
           });
-          
+
           if (response.data.success) {
             const newData = response.data.data.data || [];
             if (append) {
@@ -2507,6 +2533,15 @@
             </select>
           </div>
 
+          <div class="field" v-if="model === 'seedream-5.0'">
+            <label class="label">分辨率</label>
+            <select class="input" v-model="imageSize">
+              <option value="2K">2K</option>
+              <option value="3K">3K</option>
+            </select>
+            <div class="muted" style="margin-top: 4px;">Seedream 5.0 支持 2K/3K 分辨率</div>
+          </div>
+
           <div class="field">
             <label class="label">生成数量</label>
             <select class="input" v-model.number="count">
@@ -2635,20 +2670,24 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
-        driverStatus: {}  // 驱动可用状态
+        driverStatus: {},  // 驱动可用状态
+        taskTypeConfig: null  // 从后端获取的任务类型配置
       }
     },
     mounted() {
       this.authToken = localStorage.getItem('auth_token') || '';
       // 获取驱动状态
       this.fetchDriverStatus();
+      // 获取任务类型配置
+      this.fetchTaskTypeConfig();
     },
     computed: {
       canSubmit() { return !!this.prompt.trim() && !this.loading },
       modelOptions() {
         const allOptions = [
           { value: 'gemini-3-pro-image-preview', label: 'nano-banana-pro 加强版 (6算力)', taskType: 7 },
-          { value: 'gemini-2.5-pro-image-preview', label: 'nano-banana 标准版 (2算力)', taskType: 1 }
+          { value: 'gemini-2.5-pro-image-preview', label: 'nano-banana 标准版 (2算力)', taskType: 1 },
+          { value: 'seedream-5.0', label: 'Seedream 5.0 文生图 (6算力)', taskType: 16 }
         ];
         return allOptions.map(opt => {
           const isAvailable = !this.driverStatus || !this.driverStatus[opt.taskType] || this.driverStatus[opt.taskType].available !== false;
@@ -2660,7 +2699,7 @@
         });
       },
       aspectRatioOptions() {
-        return [
+        const allOptions = [
           { value: '1:1', label: '1:1' },
           { value: '2:3', label: '2:3' },
           { value: '3:2', label: '3:2' },
@@ -2672,6 +2711,12 @@
           { value: '16:9', label: '16:9 (横屏)' },
           { value: '21:9', label: '21:9' }
         ];
+        // Seedream 5.0 支持的宽高比
+        if (this.model === 'seedream-5.0') {
+          const seedreamSupported = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'];
+          return allOptions.filter(opt => seedreamSupported.includes(opt.value));
+        }
+        return allOptions;
       },
       imageSizeOptions() {
         return [
@@ -2735,7 +2780,7 @@
           form.append('count', this.count);
           form.append('user_id', userId);
           
-          if (this.model === 'gemini-3-pro-image-preview' && this.imageSize) {
+          if (this.imageSize) {
             form.append('image_size', this.imageSize);
           }
           
@@ -2868,12 +2913,20 @@
         this.historyLoading = true;
         try {
           const authToken = localStorage.getItem('auth_token');
+          // 如果没有获取到任务类型配置，先获取
+          if (!this.taskTypeConfig) {
+            await this.fetchTaskTypeConfig();
+          }
+          // 文生图界面只查询文生图类型
+          const textToImageTypes = this.taskTypeConfig?.text_to_image_types || [16];
+          const typesStr = textToImageTypes.join(',');
+
           const response = await axios.get('/api/ai-tools/history', {
             params: {
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              type: 1,
+              types: typesStr,
               auth_token: authToken || undefined
             }
           });
@@ -2943,6 +2996,19 @@
       getAspectRatioLabel(value) {
         const option = this.aspectRatioOptions.find(opt => opt.value === value);
         return option ? option.label : value || '未知';
+      },
+
+      async fetchTaskTypeConfig() {
+        try {
+          const response = await axios.get('/api/task-type-config');
+          if (response.data.success) {
+            this.taskTypeConfig = response.data.data;
+          } else {
+            console.error('获取任务类型配置失败:', response.data.message);
+          }
+        } catch (err) {
+          console.error('获取任务类型配置失败:', err);
+        }
       }
     },
     
@@ -2977,6 +3043,15 @@
               <option v-for="opt in imageSizeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
             <div class="muted" style="margin-top: 4px;">nano-banana-pro 支持 1K/2K/4K 分辨率</div>
+          </div>
+
+          <div class="field" v-if="model === 'seedream-5.0'">
+            <label class="label">分辨率</label>
+            <select class="input" v-model="imageSize">
+              <option value="2K">2K</option>
+              <option value="3K">3K</option>
+            </select>
+            <div class="muted" style="margin-top: 4px;">Seedream 5.0 支持 2K/3K 分辨率</div>
           </div>
 
           <div class="field">

@@ -942,6 +942,8 @@ async def image_edit(
             image_edit_type = TaskTypeId.GEMINI_2_5_FLASH_IMAGE
         elif model == "gemini-3-pro-image-preview":
             image_edit_type = TaskTypeId.GEMINI_3_PRO_IMAGE
+        elif model == "seedream-5.0":
+            image_edit_type = TaskTypeId.SEEDREAM_TEXT_TO_IMAGE
         
         # 从注册表获取算力配置
         task_config = TaskTypeRegistry.get(image_edit_type)
@@ -1081,6 +1083,8 @@ async def text_to_image(
         text_to_image_type = TaskTypeId.GEMINI_2_5_FLASH_IMAGE  # gemini-2.5-pro-image-preview: 2算力
         if model == "gemini-3-pro-image-preview":
             text_to_image_type = TaskTypeId.GEMINI_3_PRO_IMAGE  # gemini-3-pro-image-preview: 6算力
+        elif model == "seedream-5.0":
+            text_to_image_type = TaskTypeId.SEEDREAM_TEXT_TO_IMAGE  # seedream-5.0: 6算力
         
         # 从注册表获取算力配置
         task_config = TaskTypeRegistry.get(text_to_image_type)
@@ -2605,6 +2609,7 @@ async def get_task_type_config(request: Request):
                 'data': {
                     'image_to_video_types': TaskTypeRegistry.get_by_category(TaskCategory.IMAGE_TO_VIDEO),
                     'image_edit_types': TaskTypeRegistry.get_by_category(TaskCategory.IMAGE_EDIT),
+                    'text_to_image_types': TaskTypeRegistry.get_by_category(TaskCategory.TEXT_TO_IMAGE),
                     'task_type_name_map': TaskTypeRegistry.get_name_map()
                 }
             }

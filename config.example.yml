@@ -63,6 +63,9 @@ duomi:
 vidu:
   token: "vda_xxxx"
 
+volcengine:
+  api_key: "your_volcengine_api_key"  # 火山引擎 API Key（用于 Seedream 5.0 文生图）
+
 pay:
   wxpay:
       #公众账号ID

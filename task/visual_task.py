@@ -83,16 +83,84 @@ def calculate_next_retry_delay(try_count):
     return min(delay_seconds, max_delay)
 
 
+def _refund_computing_power(ai_tool, reason: str):
+    """
+    退还算力
+
+    Args:
+        ai_tool: AITool 对象
+        reason: 退还原因
+    """
+    try:
+        user_id = ai_tool.user_id
+        ai_tool_type = ai_tool.type
+        task_id = ai_tool.id
+
+        if not user_id:
+            logger.warning(f"Task {task_id} has no user_id, skipping refund")
+            return
+
+        computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
+
+        # Handle dict-based computing power (e.g., Wan2.2, Kling, Vidu)
+        if isinstance(computing_power_config, dict):
+            duration = getattr(ai_tool, 'duration', 5) or 5
+            computing_power = computing_power_config.get(duration)
+            if not computing_power:
+                computing_power = list(computing_power_config.values())[0]
+        else:
+            computing_power = computing_power_config
+
+        if not computing_power:
+            logger.warning(f"Task {task_id} type {ai_tool_type} has no computing power config")
+            return
+
+        transaction_id = str(uuid.uuid4())
+        logger.info(f"Refunding {computing_power} computing power for user {user_id}, reason: {reason}")
+
+        success, message, response_data = make_perseids_request(
+            endpoint='get_auth_token_by_user_id',
+            method='POST',
+            data={"user_id": user_id}
+        )
+
+        if not success:
+            logger.error(f"Failed to get auth token for user {user_id}: {message}")
+            return
+
+        auth_token = response_data['token']
+        headers = {'Authorization': f'Bearer {auth_token}'}
+
+        success, message, response_data = make_perseids_request(
+            endpoint='user/calculate_computing_power',
+            method='POST',
+            headers=headers,
+            data={
+                "computing_power": computing_power,
+                "behavior": "increase",
+                "transaction_id": transaction_id
+            }
+        )
+
+        if success:
+            logger.info(f"Task {task_id} refund ({computing_power}) processed successfully")
+        else:
+            logger.error(f"Task {task_id} refund ({computing_power}) failed: {message}")
+
+    except Exception as e:
+        logger.error(f"Failed to process refund for task {ai_tool.id}: {e}")
+
+
 def _submit_new_task(ai_tool):
     """
     使用驱动架构提交新任务 (status == AI_TOOL_STATUS_PENDING)
-    
+
     这是新的实现方法，使用统一的驱动架构替代原有的 if-elif 分支逻辑。
     测试通过后将替换 _submit_new_task 方法。
-    
+
     Args:
         ai_tool: AITool 对象
-    
+
     Returns:
         bool: True 表示成功，False 表示失败
     """
@@ -113,6 +181,8 @@ def _submit_new_task(ai_tool):
             # 更新任务状态为失败
             AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=f"不支持的任务类型: {ai_tool_type}")
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
+            # 退还算力
+            _refund_computing_power(ai_tool, f"不支持的任务类型: {ai_tool_type}")
             return False
         
         logger.info(f"Using driver: {driver.driver_name} for task {task_id}")
@@ -149,9 +219,18 @@ def _submit_new_task(ai_tool):
             # 返回 True 表示任务已处理完成（虽然失败了），不需要重试
             return True
         
-        # 4. 提交成功，更新数据库
+        # 4. 提交成功，检查是否同步模式
+        if result.get("sync_mode"):
+            # 同步 API 直接返回结果，无需轮询
+            result_url = result.get("result_url")
+            AIToolsModel.update(task_id, result_url=result_url, status=AI_TOOL_STATUS_COMPLETED)
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
+            logger.info(f"Sync task {task_id} completed with result: {result_url}")
+            return True
+
+        # 5. 异步模式，更新数据库
         project_id = result.get("project_id")
-        
+
         if not project_id:
             logger.error(f"Task {task_id} submitted but no project_id returned")
             AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，未返回任务ID")
@@ -405,13 +484,13 @@ def process_generate_video(task):
         logger.info(f"Processing video generation task: {task.task_id}")
         ai_tool = AIToolsModel.get_by_id(task.task_id)
         logger.info(f"AI tool {task.task_id} is {ai_tool}")
-        
+
         if not ai_tool:
             logger.error(f"Failed to get AI tool record by ID {task.task_id}")
             return False
-        
+
         status = ai_tool.status
-        
+
         if status == AI_TOOL_STATUS_PENDING:
             return _submit_new_task(ai_tool)
         elif status == AI_TOOL_STATUS_PROCESSING:

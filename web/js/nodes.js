@@ -1284,6 +1284,7 @@
             <select class="shot-group-model">
               <option value="gemini-2.5-pro-image-preview" ${node.data.model === 'gemini-2.5-pro-image-preview' ? 'selected' : ''}>标准版</option>
               <option value="gemini-3-pro-image-preview" ${node.data.model === 'gemini-3-pro-image-preview' ? 'selected' : ''}>加强版</option>
+              <option value="seedream-5.0" ${node.data.model === 'seedream-5.0' ? 'selected' : ''}>Seedream 5.0</option>
             </select>
           </div>
           <div class="field field-collapsible btn-row">
@@ -3504,6 +3505,7 @@
             <select class="image-model">
               <option value="gemini-2.5-pro-image-preview">标准版 (2算力)</option>
               <option value="gemini-3-pro-image-preview">加强版 (6算力)</option>
+              <option value="seedream-5.0">Seedream 5.0 (6算力)</option>
             </select>
           </div>
           <div class="field field-collapsible">
@@ -4515,6 +4517,7 @@
               <option value="gemini-2.5-pro-image-preview">标准版 (4宫格, 2算力/张)</option>
               <option value="gemini-3-pro-4grid">加强版 (4宫格, 6算力/张)</option>
               <option value="gemini-3-pro-image-preview">加强版 (9宫格, 6算力/张)</option>
+              <option value="seedream-5.0">Seedream 5.0 (6算力/张)</option>
             </select>
           </div>
           <div class="field field-collapsible">
@@ -6084,6 +6087,7 @@
             <select class="shot-group-model">
               <option value="gemini-2.5-pro-image-preview">标准版</option>
               <option value="gemini-3-pro-image-preview">加强版</option>
+              <option value="seedream-5.0">Seedream 5.0</option>
             </select>
           </div>
           <div class="field field-collapsible btn-row">
@@ -6098,6 +6102,7 @@
               <option value="gemini-2.5-pro-image-preview">标准版 (4宫格, 2算力/张)</option>
               <option value="gemini-3-pro-4grid">加强版 (4宫格, 6算力/张)</option>
               <option value="gemini-3-pro-image-preview">加强版 (9宫格, 6算力/张)</option>
+              <option value="seedream-5.0">Seedream 5.0 (6算力/张)</option>
             </select>
           </div>
           <div class="field field-collapsible btn-row">
@@ -7063,6 +7068,7 @@
             <select class="shot-frame-model">
               <option value="gemini-2.5-pro-image-preview">标准版 (2算力)</option>
               <option value="gemini-3-pro-image-preview">加强版 (6算力)</option>
+              <option value="seedream-5.0">Seedream 5.0 (6算力)</option>
             </select>
           </div>
           <div class="field field-collapsible">

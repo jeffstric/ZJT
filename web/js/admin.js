@@ -107,6 +107,9 @@ const AdminApp = {
                 },
                 vidu: {
                     token: ''
+                },
+                volcengine: {
+                    apiKey: ''
                 }
             },
             
@@ -773,6 +776,8 @@ const AdminApp = {
                                     this.quickConfigModal.runninghub.apiKey = value;
                                 } else if (config.key === 'vidu.token') {
                                     this.quickConfigModal.vidu.token = value;
+                                } else if (config.key === 'volcengine.api_key') {
+                                    this.quickConfigModal.volcengine.apiKey = value;
                                 }
                             }
                         } catch (e) {
@@ -797,6 +802,7 @@ const AdminApp = {
             this.quickConfigModal.google.baseUrl = '';
             this.quickConfigModal.runninghub.apiKey = '';
             this.quickConfigModal.vidu.token = '';
+            this.quickConfigModal.volcengine.apiKey = '';
         },
         
         // 测试 Google 连接
@@ -855,7 +861,10 @@ const AdminApp = {
             if (this.quickConfigModal.vidu.token) {
                 configs.push({ key: 'vidu.token', value: this.quickConfigModal.vidu.token });
             }
-            
+            if (this.quickConfigModal.volcengine.apiKey) {
+                configs.push({ key: 'volcengine.api_key', value: this.quickConfigModal.volcengine.apiKey });
+            }
+
             if (configs.length === 0) {
                 this.showToast('请至少填写一项配置', 'error');
                 return;

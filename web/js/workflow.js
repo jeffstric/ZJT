@@ -126,7 +126,8 @@
       // 图片模型
       'gemini-2.5-pro-image-preview': 1,
       'gemini-3-pro-image-preview': 7,
-      'gemini-3-pro-4grid': 7  // 4宫格也用加强版
+      'gemini-3-pro-4grid': 7,  // 4宫格也用加强版
+      'seedream-5.0': 16  // Seedream 5.0 文生图
     };
     
     async function fetchComputingPowerConfig(){

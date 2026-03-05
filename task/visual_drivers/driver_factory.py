@@ -270,5 +270,12 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.VIDU_DEFAULT, ViduDefaultDriver)
     except ImportError as e:
         logger.warning(f"Failed to import ViduDefaultDriver: {e}")
-    
+
+    try:
+        from .seedream_volcengine_v1_driver import Seedream5VolcengineV1Driver
+        # 注册 Seedream 5.0 火山引擎 v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDREAM5_VOLCENGINE_V1, Seedream5VolcengineV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Seedream5VolcengineV1Driver: {e}")
+
     logger.info(f"Registered {len(VideoDriverFactory.get_supported_drivers())} video drivers")
