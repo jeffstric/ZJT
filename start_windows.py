@@ -653,11 +653,11 @@ def start_app_service():
         if not os.path.exists(run_script):
             return False, f"启动脚本不存在: {run_script}"
 
-        uv_path = shutil.which("uv")
-        if uv_path is None:
-            uv_path = os.path.join(os.path.expanduser("~"), ".local", "bin", "uv.exe")
-            if not os.path.exists(uv_path):
-                return False, "找不到 uv 可执行文件，请确保已安装 uv"
+        uv_path = os.path.join(current_dir, "bin", "uv", "uv.exe")
+        if not os.path.exists(uv_path):
+            uv_path = shutil.which("uv")
+            if uv_path is None:
+                return False, "找不到 uv 可执行文件，请确保 bin\\uv\\uv.exe 存在或已安装 uv"
 
         logger.info(f"使用 uv 启动: {run_script}")
         requirements_file = os.path.join(current_dir, "requirements.txt")
