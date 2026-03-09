@@ -397,7 +397,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
     UnifiedTaskConfig(
         id=TaskTypeId.GEMINI_2_5_FLASH_IMAGE,
         key='gemini_image_edit',
-        name='图片编辑',
+        name='nano-banana',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -413,7 +413,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
     UnifiedTaskConfig(
         id=TaskTypeId.GEMINI_3_PRO_IMAGE,
         key='gemini_image_edit_pro',
-        name='图片编辑 (Pro)',
+        name='nano-banana(Pro)',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
@@ -429,7 +429,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_TEXT_TO_IMAGE,
         key='seedream_text_to_image',
-        name='文生图 (Seedream 5.0)',
+        name='Seedream 5.0',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -462,6 +462,21 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
     
     # ==================== 图生视频 ====================
     UnifiedTaskConfig(
+        id=TaskTypeId.WAN22_IMAGE_TO_VIDEO,
+        key='wan22_image_to_video',
+        name='图片生成视频 (Wan2.2)',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.WAN22_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.WAN22_RUNNINGHUB_V1,
+        computing_power={5: 6, 10: 12},
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 10],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=30,
+    ),
+    UnifiedTaskConfig(
         id=TaskTypeId.SORA2_IMAGE_TO_VIDEO,
         key='sora2_image_to_video',
         name='图片生成视频 (Sora2)',
@@ -474,7 +489,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_durations=[10, 15],
         default_ratio='9:16',
         default_duration=10,
-        sort_order=30,
+        sort_order=31,
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.LTX2_IMAGE_TO_VIDEO,
@@ -487,21 +502,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         computing_power=6,
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 8, 10],
-        default_ratio='9:16',
-        default_duration=5,
-        sort_order=31,
-    ),
-    UnifiedTaskConfig(
-        id=TaskTypeId.WAN22_IMAGE_TO_VIDEO,
-        key='wan22_image_to_video',
-        name='图片生成视频 (Wan2.2)',
-        category=TaskCategory.IMAGE_TO_VIDEO,
-        provider=TaskProvider.RUNNINGHUB,
-        driver_name=DriverKey.WAN22_IMAGE_TO_VIDEO,
-        implementation=DriverImplementation.WAN22_RUNNINGHUB_V1,
-        computing_power={5: 6, 10: 12},
-        supported_ratios=['9:16', '16:9'],
-        supported_durations=[5, 10],
         default_ratio='9:16',
         default_duration=5,
         sort_order=32,

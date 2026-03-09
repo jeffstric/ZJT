@@ -1291,9 +1291,11 @@
 
         // 动态填充分镜模型选项
         const shotGroupModelEl = nodeBody.querySelector('.shot-group-model');
+        let firstModelValue = 'gemini';
         if(shotGroupModelEl) {
           if(window.TaskConfig && window.TaskConfig.isLoaded()) {
             const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
+            if(options.length > 0) firstModelValue = options[0].value;
             options.forEach(opt => {
               const optEl = document.createElement('option');
               optEl.value = opt.value;
@@ -1307,6 +1309,11 @@
               <option value="gemini_pro" ${node.data.model === 'gemini_pro' ? 'selected' : ''}>加强版</option>
               <option value="seedream" ${node.data.model === 'seedream' ? 'selected' : ''}>Seedream 5.0</option>
             `;
+          }
+          // 如果没有设置默认值，使用后端配置的第一个选项
+          if(!node.data.model) {
+            node.data.model = firstModelValue;
+            shotGroupModelEl.value = firstModelValue;
           }
         }
 
@@ -2494,6 +2501,14 @@
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
       const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      
+      // 从后端配置获取第一个视频模型作为默认值
+      let defaultVideoModel = 'wan22';
+      if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+        const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+        if(options.length > 0) defaultVideoModel = options[0].value;
+      }
+      
       const node = {
         id,
         type: 'image_to_video',
@@ -2504,7 +2519,7 @@
           prompt: '',
           duration: 5,
           ratio: state.ratio || '16:9',
-          videoModel: 'wan22',
+          videoModel: defaultVideoModel,
           drawCount: 1,
           motionEnabled: false,
           motion: '',
@@ -2627,10 +2642,12 @@
       });
 
       // 动态填充视频模型选项（从 TaskConfig 获取）
+      let firstVideoModelValue = 'wan22';
       function populateVideoModelOptions() {
         videoModelSelect.innerHTML = '';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+          if(options.length > 0) firstVideoModelValue = options[0].value;
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
@@ -2657,9 +2674,9 @@
       }
       populateVideoModelOptions();
 
-      // 初始化videoModel
+      // 初始化videoModel（使用后端配置的第一个选项作为默认值）
       if(!node.data.videoModel){
-        node.data.videoModel = 'wan22';
+        node.data.videoModel = firstVideoModelValue;
       }
       
       // 计算算力消耗
@@ -3478,6 +3495,14 @@
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
       const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
       const defaultRatio = state.ratio || ratioSelectEl.value || '9:16';
+      
+      // 从后端配置获取第一个图片模型作为默认值
+      let defaultImageModel = 'gemini';
+      if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+        const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
+        if(options.length > 0) defaultImageModel = options[0].value;
+      }
+      
       const node = {
         id,
         type: 'image',
@@ -3491,7 +3516,7 @@
           preview: '',
           prompt: '',
           ratio: defaultRatio,
-          model: 'gemini-2.5-pro-image-preview',
+          model: defaultImageModel,
           drawCount: 1,
           project_id: null,
           camera: {
@@ -3854,11 +3879,13 @@
       const confirmShotBtn = el.querySelector('.image-confirm-shot-btn');
 
       // 动态填充图片模型选项（从 TaskConfig 获取）
+      let firstImageModelValue = 'gemini';
       function populateImageModelOptions() {
         if(!modelEl) return;
         modelEl.innerHTML = '';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
+          if(options.length > 0) firstImageModelValue = options[0].value;
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
@@ -3879,6 +3906,11 @@
             modelEl.appendChild(optEl);
           });
         }
+        // 设置默认值为第一个选项
+        if(!node.data.model) {
+          node.data.model = firstImageModelValue;
+        }
+        if(modelEl) modelEl.value = node.data.model;
       }
       populateImageModelOptions();
 
@@ -6149,6 +6181,16 @@
       const shotGroupData = opts && opts.shotGroupData ? opts.shotGroupData : {};
       const scriptData = opts && opts.scriptData ? opts.scriptData : {};
       
+      // 从后端配置获取默认模型
+      let defaultImageModel = 'gemini';
+      let defaultVideoModel = 'wan22';
+      if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+        const imageOptions = window.TaskConfig.getModelOptionsForCategory('image_edit');
+        if(imageOptions.length > 0) defaultImageModel = imageOptions[0].value;
+        const videoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+        if(videoOptions.length > 0) defaultVideoModel = videoOptions[0].value;
+      }
+      
       const groupName = shotGroupData.groupName || shotGroupData.group_name || shotGroupData.group_id || '分镜组';
       const node = {
         id,
@@ -6162,8 +6204,8 @@
           groupName: groupName,
           shots: shotGroupData.shots || [],
           scriptData: scriptData,
-          model: shotGroupData.model || 'gemini-2.5-pro-image-preview',
-          videoModel: shotGroupData.videoModel || 'wan22',
+          model: shotGroupData.model || defaultImageModel,
+          videoModel: shotGroupData.videoModel || defaultVideoModel,
           videoDuration: shotGroupData.videoDuration || 5,
           videoDrawCount: shotGroupData.videoDrawCount || 1,
           gridPreview: shotGroupData.gridPreview || {},
@@ -6357,9 +6399,11 @@
       
       // 动态填充分镜模型选项
       const shotGroupModelEl = el.querySelector('.shot-group-model');
+      let firstShotGroupModelValue = 'gemini';
       if(shotGroupModelEl) {
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
+          if(options.length > 0) firstShotGroupModelValue = options[0].value;
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
@@ -6374,7 +6418,8 @@
             <option value="seedream">Seedream 5.0</option>
           `;
         }
-        shotGroupModelEl.value = node.data.model || 'gemini';
+        if(!node.data.model) node.data.model = firstShotGroupModelValue;
+        shotGroupModelEl.value = node.data.model;
         applyDriverStatusToSelect(shotGroupModelEl);
       }
 
@@ -6428,10 +6473,12 @@
       const computingPowerDetail = el.querySelector('.shot-group-computing-power-detail');
 
       // 动态填充视频模型选项
+      let firstShotGroupVideoModelValue = 'wan22';
       if(videoModelEl) {
         videoModelEl.innerHTML = '';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+          if(options.length > 0) firstShotGroupVideoModelValue = options[0].value;
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
@@ -6451,7 +6498,8 @@
         }
       }
 
-      // 初始化视频模型和时长
+      // 初始化视频模型和时长（使用后端配置的第一个选项作为默认值）
+      if(!node.data.videoModel) node.data.videoModel = firstShotGroupVideoModelValue;
       if(videoModelEl) videoModelEl.value = node.data.videoModel;
       if(videoDurationEl) videoDurationEl.value = node.data.videoDuration;
       
@@ -7112,7 +7160,18 @@
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
       const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
       const shotData = opts && opts.shotData ? opts.shotData : {};
-      const inheritedModel = opts && opts.model ? opts.model : 'gemini-2.5-pro-image-preview';
+      
+      // 从后端配置获取默认模型
+      let defaultImageModel = 'gemini';
+      let defaultVideoModel = 'wan22';
+      if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+        const imageOptions = window.TaskConfig.getModelOptionsForCategory('image_edit');
+        if(imageOptions.length > 0) defaultImageModel = imageOptions[0].value;
+        const videoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+        if(videoOptions.length > 0) defaultVideoModel = videoOptions[0].value;
+      }
+      
+      const inheritedModel = opts && opts.model ? opts.model : defaultImageModel;
       
       const shotTitle = shotData.shot_id || shotData.shot_number ? `镜头${shotData.shot_number || ''}` : '分镜图';
       
@@ -7176,7 +7235,7 @@
           previewImageUrl: '',
           videoDrawCount: 1,
           videoDuration: 5,
-          videoModel: 'wan22',
+          videoModel: defaultVideoModel,
         }
       };
       state.nodes.push(node);
@@ -7339,8 +7398,10 @@
       // 动态填充分镜模型选项
       if(modelEl) {
         modelEl.innerHTML = '';
+        let firstImageModelValue = 'gemini';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
+          if(options.length > 0) firstImageModelValue = options[0].value;
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
@@ -7355,15 +7416,17 @@
             <option value="seedream">Seedream 5.0 (6算力)</option>
           `;
         }
-        modelEl.value = node.data.model || 'gemini';
+        modelEl.value = node.data.model || firstImageModelValue;
         applyDriverStatusToSelect(modelEl);
       }
 
       // 动态填充视频模型选项
       if(videoModelEl) {
         videoModelEl.innerHTML = '';
+        let firstVideoModelValue = 'wan22';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+          if(options.length > 0) firstVideoModelValue = options[0].value;
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
@@ -7381,7 +7444,7 @@
             <option value="veo3">VEO3.1</option>
           `;
         }
-        videoModelEl.value = node.data.videoModel || 'wan22';
+        videoModelEl.value = node.data.videoModel || firstVideoModelValue;
         applyDriverStatusToSelect(videoModelEl);
       }
 
