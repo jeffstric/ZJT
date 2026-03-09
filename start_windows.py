@@ -484,51 +484,73 @@ def init_database(config):
         retry_count = 0
         max_retries = 3
 
+        # 先尝试使用配置密码连接，如果失败再尝试空密码（首次初始化场景）
         while retry_count < max_retries:
             try:
                 logger.info(f"尝试使用密码连接MySQL... (第{retry_count + 1}次)")
                 conn = mysql.connector.connect(
-                    host="localhost",
+                    host="127.0.0.1",
                     user="root",
                     password=target_password,
-                    port=mysql_port
+                    port=mysql_port,
+                    connect_timeout=5,
+                    use_pure=True
                 )
                 current_password = target_password
-                logger.info("使用目标密码连接成功")
+                logger.info("使用配置密码连接成功")
                 break
             except MysqlError as e:
-                logger.warning(f"使用目标密码连接失败: {e}")
-                if retry_count >= max_retries - 1:
+                logger.warning(f"使用配置密码连接失败: {e}")
+                retry_count += 1
+                # 最后一次重试失败时，尝试空密码（首次初始化场景）
+                if retry_count >= max_retries:
+                    logger.info("尝试使用空密码连接（首次初始化场景）...")
                     try:
-                        logger.info("尝试使用空密码连接（首次初始化场景）...")
                         conn = mysql.connector.connect(
-                            host="localhost",
+                            host="127.0.0.1",
                             user="root",
                             password="",
-                            port=mysql_port
+                            port=mysql_port,
+                            connect_timeout=5,
+                            use_pure=True
                         )
                         current_password = ""
                         logger.info("使用空密码连接成功，需要设置新密码")
 
+                        # 设置新密码
                         cursor = conn.cursor()
                         cursor.execute(f"ALTER USER 'root'@'localhost' IDENTIFIED BY '{target_password}'")
                         conn.commit()
                         cursor.close()
                         logger.info("MySQL root密码设置成功")
 
+                        # 重新用新密码连接
                         conn.close()
                         conn = mysql.connector.connect(
-                            host="localhost",
+                            host="127.0.0.1",
                             user="root",
                             password=target_password,
-                            port=mysql_port
+                            port=mysql_port,
+                            connect_timeout=5,
+                            use_pure=True
                         )
                         current_password = target_password
-                        break
+                        logger.info("使用新密码重新连接成功")
                     except MysqlError as empty_pass_error:
+                        logger.error(f"空密码连接也失败: {empty_pass_error}")
                         return False, f"无法连接MySQL: {empty_pass_error}"
-                retry_count += 1
-                time.sleep(1)
+                    except Exception as e:
+                        logger.error(f"空密码连接时发生未知异常: {type(e).__name__}: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        return False, f"连接MySQL时发生未知异常: {e}"
+                else:
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(f"连接MySQL时发生未知异常: {type(e).__name__}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return False, f"连接MySQL时发生未知异常: {e}"
 
         if conn is None:
             return False, "无法连接到MySQL服务"
@@ -653,11 +675,11 @@ def start_app_service():
         if not os.path.exists(run_script):
             return False, f"启动脚本不存在: {run_script}"
 
-        uv_path = shutil.which("uv")
-        if uv_path is None:
-            uv_path = os.path.join(os.path.expanduser("~"), ".local", "bin", "uv.exe")
-            if not os.path.exists(uv_path):
-                return False, "找不到 uv 可执行文件，请确保已安装 uv"
+        uv_path = os.path.join(current_dir, "bin", "uv", "uv.exe")
+        if not os.path.exists(uv_path):
+            uv_path = shutil.which("uv")
+            if uv_path is None:
+                return False, "找不到 uv 可执行文件，请确保 bin\\uv\\uv.exe 存在或已安装 uv"
 
         logger.info(f"使用 uv 启动: {run_script}")
         requirements_file = os.path.join(current_dir, "requirements.txt")
@@ -884,13 +906,14 @@ def main():
         logger.error("MySQL服务启动失败，退出")
         sys.exit(1)
 
-    if is_first_init:
-        logger.info("检测到首次初始化，正在初始化数据库...")
-        success, message = init_database(config)
-        logger.info(message)
-        if not success:
-            logger.error("数据库初始化失败，退出")
-            sys.exit(1)
+    # 每次启动都检查数据库连接和密码配置
+    # 确保密码设置正确，数据库存在
+    logger.info("正在检查数据库连接和初始化...")
+    success, message = init_database(config)
+    logger.info(message)
+    if not success:
+        logger.error("数据库初始化失败，退出")
+        sys.exit(1)
 
     logger.info("正在启动应用服务...")
     success, message = start_app_service()

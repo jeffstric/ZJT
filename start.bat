@@ -22,41 +22,29 @@ echo.
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
-echo [1/5] Checking Python...
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo [ERROR] Python not found. Please install Python 3.10+
-    echo Download: https://www.python.org/downloads/
-    echo.
-    pause
-    exit /b 1
-)
+echo [1/4] Checking uv package manager...
+set "UV_CMD=%SCRIPT_DIR%bin\uv\uv.exe"
+if not exist "!UV_CMD!" (
+    echo [INFO] Downloading uv...
+    if not exist "bin\uv" mkdir "bin\uv"
+    powershell -ExecutionPolicy ByPass -c "Invoke-WebRequest -Uri 'https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip' -OutFile 'bin\uv\uv.zip'"
 
-for /f "tokens=*" %%i in ('python --version') do set PYTHON_VERSION=%%i
-echo [OK] %PYTHON_VERSION%
-echo.
-
-echo [2/5] Checking uv package manager...
-where uv >nul 2>&1
-if errorlevel 1 (
-    echo [INFO] Installing uv...
-    
-    python -m pip install uv
-    
     if errorlevel 1 (
-        echo [ERROR] Failed to install uv
+        echo [ERROR] Failed to download uv
         echo.
         pause
         exit /b 1
     )
-    
-    echo [OK] uv installed
+
+    powershell -ExecutionPolicy ByPass -c "Expand-Archive -Path 'bin\uv\uv.zip' -DestinationPath 'bin\uv' -Force"
+    del "bin\uv\uv.zip" >nul 2>&1
+    echo [OK] uv downloaded
 ) else (
     echo [OK] uv found
 )
 echo.
 
-echo [3/5] Checking config file...
+echo [2/4] Checking config file...
 if not exist "config_%comfyui_env%.yml" (
     echo [INFO] Config file not found, will be auto-created from config.example.yml
 ) else (
@@ -64,7 +52,7 @@ if not exist "config_%comfyui_env%.yml" (
 )
 echo.
 
-echo [4/5] Checking MySQL...
+echo [3/4] Checking MySQL...
 if not exist "bin\mysql" (
     echo [ERROR] MySQL directory not found: bin\mysql
     echo Please deploy MySQL to bin\mysql directory
@@ -75,11 +63,11 @@ if not exist "bin\mysql" (
 echo [OK] MySQL directory found
 echo.
 
-echo [5/5] Starting services...
+echo [4/4] Starting services...
 echo ========================================
 echo.
 
-uv run --with-requirements requirements.txt start_windows.py
+!UV_CMD! run --python cpython-3.12-windows-x86_64-none --with-requirements requirements.txt start_windows.py
 
 if errorlevel 1 (
     echo.
