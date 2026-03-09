@@ -483,6 +483,59 @@ body {
     border: 1px solid rgba(99, 102, 241, 0.15);
 }
 
+/* Requirement Selector Styles */
+.requirement-selector {
+    margin: 24px 0;
+    padding: 20px;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.05) 0%, rgba(99, 102, 241, 0.05) 100%);
+    border: 1px solid rgba(139, 92, 246, 0.15);
+    border-radius: var(--radius-lg);
+}
+
+.requirement-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.requirement-buttons {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+}
+
+.requirement-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 12px;
+    background: white;
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.requirement-btn:hover {
+    border-color: var(--primary-color);
+    background: rgba(139, 92, 246, 0.05);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(139, 92, 246, 0.2);
+}
+
+.req-icon {
+    font-size: 28px;
+}
+
+.req-text {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
 /* Messages */
 .message {
     margin-bottom: 16px;

@@ -89,6 +89,29 @@
                         <h2 class="welcome-title">欢迎使用剧本智能创作系统</h2>
                         <p class="welcome-desc">我是剧本架构师，可以调度所有智能体完成从大纲到合规的全流程创作。</p>
 
+                        <!-- 需求选择区域（有世界时显示） -->
+                        <div class="requirement-selector" id="requirement-selector" style="display: none;">
+                            <p class="requirement-title">请选择您的创作需求</p>
+                            <div class="requirement-buttons">
+                                <button class="requirement-btn" onclick="handleRequirementSelect(1)">
+                                    <span class="req-icon">📥</span>
+                                    <span class="req-text">导入已有剧本</span>
+                                </button>
+                                <button class="requirement-btn" onclick="handleRequirementSelect(2)">
+                                    <span class="req-icon">✍️</span>
+                                    <span class="req-text">剧本续写</span>
+                                </button>
+                                <button class="requirement-btn" onclick="handleRequirementSelect(3)">
+                                    <span class="req-icon">📝</span>
+                                    <span class="req-text">剧本新建</span>
+                                </button>
+                                <button class="requirement-btn" onclick="handleRequirementSelect(4)">
+                                    <span class="req-icon">💡</span>
+                                    <span class="req-text">其他</span>
+                                </button>
+                            </div>
+                        </div>
+
                         <div class="agent-carousel" id="agent-carousel">
                             <div class="carousel-track">
                                 <div class="carousel-slide active" data-slide="0">
@@ -905,6 +928,17 @@
             await loadCurrentWorldName();
             await createSession();
             await loadFiles('worlds');
+
+            // 有世界时显示需求选择界面
+            const requirementSelector = document.getElementById('requirement-selector');
+            if (requirementSelector) {
+                requirementSelector.style.display = 'block';
+            }
+            // 更新欢迎提示文字
+            const welcomeHint = document.querySelector('.welcome-hint');
+            if (welcomeHint) {
+                welcomeHint.textContent = '选择下方需求或直接输入，开始您的创作之旅！';
+            }
             if (messageInput) messageInput.focus();
         });
 
@@ -2399,6 +2433,45 @@
                 }
             }
         });
+
+        // 处理需求选择
+        function handleRequirementSelect(option) {
+            const messageInput = document.getElementById('message-input');
+            if (!messageInput) return;
+
+            // 隐藏需求选择区域
+            const requirementSelector = document.getElementById('requirement-selector');
+            if (requirementSelector) {
+                requirementSelector.style.display = 'none';
+            }
+
+            let promptText = '';
+            switch(option) {
+                case 1:
+                    promptText = '请帮我导入已有的剧本内容，我将直接粘贴剧本文本，请帮我分析并适配到当前世界';
+                    break;
+                case 2:
+                    promptText = '我想进行剧本续写，请继续之前的剧情发展';
+                    break;
+                case 3:
+                    promptText = '我想新建一个剧本';
+                    break;
+                case 4:
+                    promptText = '';
+                    // 其他选项不自动填充，让用户自己输入
+                    break;
+                default:
+                    return;
+            }
+
+            if (promptText) {
+                messageInput.value = promptText;
+            }
+
+            // 将光标移到末尾
+            messageInput.focus();
+            messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
+        }
 
         // 显示世界选择提示
         function showWorldSelectionPrompt() {
