@@ -9,7 +9,7 @@
 runninghub:
   host: "https://www.runninghub.cn"
   api_key: "9549532f3c3d435eXXXX"
-  max_concurrent_slots: 3  # RunningHub 最大并发槽位数量
+  max_concurrent_slots: 3  # RunningHub 最大并发槽位数量 根据您的 RunningHub 套餐设置
 # Server configuration
 server:
   host: "http://localhost:9003"
