@@ -1012,7 +1012,14 @@
       form.append('prompt', prompt || '');
       form.append('ratio', ratio || '9:16');
       form.append('count', count || 1);
-      form.append('model', model || 'gemini-2.5-pro-image-preview');
+      
+      // 根据 model 获取 task_id
+      const taskId = TaskConfig.getTaskIdByKey(model || 'gemini-2.5-pro-image-preview', 'image_edit');
+      if(!taskId){
+        throw new Error(`未找到模型 ${model} 对应的任务配置`);
+      }
+      form.append('task_id', taskId);
+      
       if(userId){
         form.append('user_id', userId);
       }

@@ -80,15 +80,21 @@
       const userId = localStorage.getItem('user_id');
       const authToken = getAuthToken();
       
+      // 根据 videoModel 获取 task_id
+      const taskId = TaskConfig.getTaskIdByKey(videoModel || 'wan22', 'image_to_video');
+      if(!taskId){
+        throw new Error(`未找到视频模型 ${videoModel} 对应的任务配置`);
+      }
+      
       const form = new FormData();
       
       // 直接使用image_urls，不需要重新上传
       form.append('image_urls', imageUrl);
       form.append('prompt', prompt || '');
       form.append('ratio', ratio || '9:16');
-      form.append('duration_seconds', duration || 10);
+      form.append('duration_seconds', duration || 5);
       form.append('count', count || 1);
-      form.append('video_model', videoModel || 'sora2');
+      form.append('task_id', taskId);
       
       if(userId){
         form.append('user_id', userId);

@@ -3714,6 +3714,13 @@
         
         const userId = localStorage.getItem('user_id') || '1';
         const authToken = localStorage.getItem('auth_token') || '';
+        
+        // 获取 Sora2 图生视频的 task_id
+        const taskId = TaskConfig.getTaskIdByKey('sora2', 'image_to_video');
+        if (!taskId) {
+          throw new Error('未找到 sora2 视频模型对应的任务配置');
+        }
+        
         const form = new FormData();
         
         form.append('image_urls', imageUrl);
@@ -3721,6 +3728,7 @@
         form.append('duration_seconds', duration);
         form.append('count', 1);
         form.append('ratio', ratio);
+        form.append('task_id', taskId);
         
         if (userId) {
           form.append('user_id', userId);

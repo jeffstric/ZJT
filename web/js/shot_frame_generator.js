@@ -248,9 +248,16 @@ async function generateShotFrameImage(nodeId, node){
       
       const form = new FormData();
       form.append('prompt', finalPrompt);
-      form.append('model', node.data.model || 'gemini-2.5-pro-image-preview');
       form.append('aspect_ratio', ratio);
       form.append('count', node.data.drawCount || 1);
+      
+      // 根据 model 获取 task_id
+      const modelKey = node.data.model || 'gemini-2.5-pro-image-preview';
+      const taskId = TaskConfig.getTaskIdByKey(modelKey, 'text_to_image');
+      if(!taskId){
+        throw new Error(`未找到模型 ${modelKey} 对应的任务配置`);
+      }
+      form.append('task_id', taskId);
       
       if(userId){
         form.append('user_id', userId);
@@ -285,7 +292,14 @@ async function generateShotFrameImage(nodeId, node){
       form.append('prompt', finalPrompt);
       form.append('ratio', ratio);
       form.append('count', node.data.drawCount || 1);
-      form.append('model', node.data.model || 'gemini-2.5-pro-image-preview');
+      
+      // 根据 model 获取 task_id
+      const modelKey2 = node.data.model || 'gemini-2.5-pro-image-preview';
+      const taskId2 = TaskConfig.getTaskIdByKey(modelKey2, 'image_edit');
+      if(!taskId2){
+        throw new Error(`未找到模型 ${modelKey2} 对应的任务配置`);
+      }
+      form.append('task_id', taskId2);
       
       if(userId){
         form.append('user_id', userId);

@@ -36,6 +36,7 @@ from PIL import Image
 from llm import call_ernie_vl_api
 from task.scheduler import init_scheduler
 from model.migration import run_migrations, get_alembic_config
+from config.unified_config import UnifiedConfigRegistry
 from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
@@ -934,11 +935,11 @@ async def image_edit(
     request: Request,
     image: List[UploadFile] = File(default=None),
     prompt: str = Form(...),
-    ratio: str = Form("9:16", description="Model type: 9:16, 16:9, 1:1 ,3:4, 4:3"),
+    task_id: int = Form(..., description="Task type ID from task-configs API"),
+    ratio: str = Form("9:16", description="Aspect ratio: 9:16, 16:9, 1:1, 3:4, 4:3"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
-    model: str = Form("gemini-2.5-pro-image-preview", description="Model type: gemini-2.5-pro-image-preview, gemini-3-pro-image-preview"),
     image_size: str = Form("1K", description="Image resolution: 1K, 2K, 4K"),
     ref_image_urls: str = Form(None, description="Reference image URLs, comma separated")
 ):
@@ -951,17 +952,15 @@ async def image_edit(
     2. URL list (ref_image_urls parameter, comma separated)
     """
     try:
-        #用uuid生成交易id
-        image_edit_type = TaskTypeId.GEMINI_2_5_FLASH_IMAGE
-        if model == "gemini-2.5-pro-image-preview":
-            image_edit_type = TaskTypeId.GEMINI_2_5_FLASH_IMAGE
-        elif model == "gemini-3-pro-image-preview":
-            image_edit_type = TaskTypeId.GEMINI_3_PRO_IMAGE
-        elif model == "seedream-5.0":
-            image_edit_type = TaskTypeId.SEEDREAM_TEXT_TO_IMAGE
+        # 通过 task_id 获取任务配置
+        task_config = UnifiedConfigRegistry.get_by_id(task_id)
+        if not task_config:
+            raise HTTPException(status_code=400, detail=f"无效的 task_id: {task_id}")
+        # 验证任务分类是否正确
+        if task_config.category != TaskCategory.IMAGE_EDIT and TaskCategory.IMAGE_EDIT not in task_config.categories:
+            raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图片编辑任务")
         
-        # 从注册表获取算力配置
-        task_config = TaskTypeRegistry.get(image_edit_type)
+        image_edit_type = task_id
         computing_power = task_config.computing_power if task_config else 0
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -1077,26 +1076,26 @@ async def image_edit(
 async def text_to_image(
     request: Request,
     prompt: str = Form(...),
-    model: str = Form("gemini-2.5-pro-image-preview", description="Model type: gemini-3-pro-image-preview, gemini-2.5-pro-image-preview"),
+    task_id: int = Form(..., description="Task type ID from task-configs API"),
     aspect_ratio: str = Form("9:16", description="Aspect ratio: 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9"),
-    image_size: str = Form(None, description="Image resolution: 1K, 2K, 4K (only for gemini-3-pro-image-preview)"),
+    image_size: str = Form(None, description="Image resolution: 1K, 2K, 4K"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
-    Submit text-to-image task to Duomi API (Gemini nano-banana)
+    Submit text-to-image task
     """
     try:
-        # Determine computing power based on model
-        text_to_image_type = TaskTypeId.GEMINI_2_5_FLASH_IMAGE  # gemini-2.5-pro-image-preview: 2算力
-        if model == "gemini-3-pro-image-preview":
-            text_to_image_type = TaskTypeId.GEMINI_3_PRO_IMAGE  # gemini-3-pro-image-preview: 6算力
-        elif model == "seedream-5.0":
-            text_to_image_type = TaskTypeId.SEEDREAM_TEXT_TO_IMAGE  # seedream-5.0: 6算力
+        # 通过 task_id 获取任务配置
+        task_config = UnifiedConfigRegistry.get_by_id(task_id)
+        if not task_config:
+            raise HTTPException(status_code=400, detail=f"无效的 task_id: {task_id}")
+        # 验证任务分类是否正确
+        if task_config.category != TaskCategory.TEXT_TO_IMAGE and TaskCategory.TEXT_TO_IMAGE not in task_config.categories:
+            raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生图任务")
         
-        # 从注册表获取算力配置
-        task_config = TaskTypeRegistry.get(text_to_image_type)
+        text_to_image_type = task_id
         computing_power = task_config.computing_power if task_config else 0
         
         if CHECK_AUTH_TOKEN:
@@ -1366,18 +1365,26 @@ async def get_status(
 async def ai_app_run(
     request: Request,
     prompt: str = Form(..., description="Text prompt for the AI app"),
-    ratio: str = Form("9:16", description="Model type: 9:16, 16:9"),
+    task_id: int = Form(TaskTypeId.SORA2_TEXT_TO_VIDEO, description="Task type ID, defaults to SORA2_TEXT_TO_VIDEO"),
+    ratio: str = Form("9:16", description="Aspect ratio: 9:16, 16:9"),
     duration_seconds: int = Form(15, description="Duration in seconds"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
-    Submit task to RunningHub AI-app/run endpoint and wait for completion.
-    Automatically polls task status and returns final video/image URLs.
+    Submit text-to-video task.
     """
     try:
-        task_config = TaskTypeRegistry.get(TaskTypeId.SORA2_TEXT_TO_VIDEO)
+        # 通过 task_id 获取任务配置
+        task_config = UnifiedConfigRegistry.get_by_id(task_id)
+        if not task_config:
+            raise HTTPException(status_code=400, detail=f"无效的 task_id: {task_id}")
+        # 验证任务分类是否正确
+        if task_config.category != TaskCategory.TEXT_TO_VIDEO:
+            raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生视频任务")
+        
+        text_to_video_type = task_id
         computing_power = task_config.computing_power if task_config else 0
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -1439,7 +1446,7 @@ async def ai_app_run(
                     id = AIToolsModel.create(
                         prompt=prompt,
                         user_id=user_id,
-                        type=2,  # 2-AI视频生成
+                        type=text_to_video_type,
                         ratio=ratio,
                         transaction_id=transaction_id,
                         duration=duration_seconds,
@@ -1471,45 +1478,40 @@ async def ai_app_run(
 async def ai_app_run_image(
     request: Request,
     prompt: str = Form(..., description="Text prompt for the AI app"),
+    task_id: int = Form(..., description="Task type ID from task-configs API"),
     images: List[UploadFile] = File(None, description="Image files for the AI app (1-5 images)"),
     image_urls: str = Form(None, description="Comma-separated image URLs (alternative to uploading files)"),
-    video_model: str = Form("sora2", description="Video model: sora2, ltx2, wan22, kling, vidu, veo3"),
-    ratio: str = Form("9:16", description="Ratio type: 9:16, 16:9 (sora2/kling/veo3); 9:16, 16:9, 3:4, 1:1, 4:3 (wan22); 16:9, 9:16, 1:1 (vidu)"),
-    duration_seconds: int = Form(15, description="Duration in seconds (sora2: 10/15, ltx2: 5/8/10, wan22: 5/10, kling: 5/10, vidu: 5/8, veo3: 8)"),
+    ratio: str = Form("9:16", description="Aspect ratio: 9:16, 16:9, 3:4, 1:1, 4:3"),
+    duration_seconds: int = Form(5, description="Duration in seconds"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
     Submit image to video task.
-    Supports five video models:
-    1. sora2: Uses Sora2 model with ratio and duration parameters
-       - Ratio: 9:16, 16:9
-       - Duration: 10秒, 15秒
-    2. ltx2: Uses LTX2.0 model with duration parameter
-       - Fixed 24fps, auto-calculate frame count
-       - Duration: 5秒, 8秒, 10秒 (121帧, 201帧, 241帧)
-       - Ratio: matches input image
-    3. wan22: Uses Wan2.2 model with ratio and duration parameters
-       - Ratio: 9:16, 16:9, 3:4, 1:1, 4:3
-       - Duration: 5秒, 10秒
-    4. kling: Uses Kling model with ratio and duration parameters
-       - Ratio: 9:16, 16:9
-       - Duration: 5秒, 10秒
-    5. vidu: Uses Vidu model with ratio and duration parameters
-       - Ratio: 16:9, 9:16, 1:1
-       - Duration: 5秒, 8秒
-    6. veo3: Uses VEO3.1-fast model with ratio and duration parameters
-       - Ratio: 9:16, 16:9
-       - Duration: 8秒
     
     Supports two image input modes:
     1. Upload images: Provide 1-5 images via 'images' parameter (will be concatenated horizontally)
     2. Use image URLs: Provide comma-separated URLs via 'image_urls' parameter
     """
     try:
+        # 通过 task_id 获取任务配置
+        task_config = UnifiedConfigRegistry.get_by_id(task_id)
+        if not task_config:
+            raise HTTPException(status_code=400, detail=f"无效的 task_id: {task_id}")
+        # 验证任务分类是否正确
+        if task_config.category != TaskCategory.IMAGE_TO_VIDEO:
+            raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图生视频任务")
+        
+        image_to_video_type = task_id
+        # 根据时长获取算力
+        if isinstance(task_config.computing_power, dict):
+            computing_power = task_config.computing_power.get(duration_seconds, list(task_config.computing_power.values())[0])
+        else:
+            computing_power = task_config.computing_power if task_config else 0
+        
         # 记录输入的图片信息
-        logger.info(f"AI app run image request - prompt: {prompt}, video_model: {video_model}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}")
+        logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}")
         
         if image_urls:
             url_list = [url.strip() for url in image_urls.split(',') if url.strip()]
@@ -1542,9 +1544,9 @@ async def ai_app_run_image(
                 image_url = url_list[0]
             else:
                 # For multiple URLs, we use the first one for now
-                # TODO: Consider downloading and concatenating multiple URLs if needed
                 image_url = url_list[0]
-            if video_model == "vidu":
+            # Vidu 需要多个 URL
+            if task_id == TaskTypeId.VIDU_IMAGE_TO_VIDEO:
                 image_url = image_urls
         elif images and len(images) > 0:
             # Mode 2: Upload images
@@ -1566,44 +1568,6 @@ async def ai_app_run_image(
 
         # 记录最终使用的图片URL
         logger.info(f"Final image URL for processing: {image_url}")
-
-        # Determine task type and computing power based on video_model
-        if video_model == "ltx2":
-            task_type = TaskTypeId.LTX2_IMAGE_TO_VIDEO  # LTX2.0 图生视频
-            task_config = TaskTypeRegistry.get(task_type)
-            computing_power = task_config.computing_power if task_config else 0
-        elif video_model == "wan22":
-            task_type = TaskTypeId.WAN22_IMAGE_TO_VIDEO  # Wan2.2 图生视频
-            # Wan2.2根据时长区分算力
-            task_config = TaskTypeRegistry.get(task_type)
-            if task_config and isinstance(task_config.computing_power, dict):
-                computing_power = task_config.computing_power.get(duration_seconds, 6)
-            else:
-                computing_power = 0
-        elif video_model == "kling":
-            task_type = TaskTypeId.KLING_IMAGE_TO_VIDEO  # 可灵图生视频
-            # 可灵根据时长区分算力
-            task_config = TaskTypeRegistry.get(task_type)
-            if task_config and isinstance(task_config.computing_power, dict):
-                computing_power = task_config.computing_power.get(duration_seconds, 38)
-            else:
-                computing_power = 0
-        elif video_model == "vidu":
-            task_type = TaskTypeId.VIDU_IMAGE_TO_VIDEO  # Vidu 图生视频
-            # Vidu根据时长区分算力
-            task_config = TaskTypeRegistry.get(task_type)
-            if task_config and isinstance(task_config.computing_power, dict):
-                computing_power = task_config.computing_power.get(duration_seconds, 16)
-            else:
-                computing_power = 0
-        elif video_model == "veo3":
-            task_type = TaskTypeId.VEO3_IMAGE_TO_VIDEO  # VEO3 图生视频
-            task_config = TaskTypeRegistry.get(task_type)
-            computing_power = task_config.computing_power if task_config else 0
-        else:
-            task_type = TaskTypeId.SORA2_IMAGE_TO_VIDEO   # Sora2 图生视频
-            task_config = TaskTypeRegistry.get(task_type)
-            computing_power = task_config.computing_power if task_config else 0
         
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -1661,36 +1625,13 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
-                        # Determine type and ratio based on video_model
-                        if video_model == "ltx2":
-                            # LTX2.0 图生视频
-                            # 现在 LTX2.0 也支持比例选择（横屏/竖屏）
-                            task_type = TaskTypeId.LTX2_IMAGE_TO_VIDEO
-                        elif video_model == "wan22":
-                            # Wan2.2 图生视频
-                            task_type = TaskTypeId.WAN22_IMAGE_TO_VIDEO
-                        elif video_model == "kling":
-                            # 可灵图生视频
-                            task_type = TaskTypeId.KLING_IMAGE_TO_VIDEO
-                        elif video_model == "vidu":
-                            # Vidu 图生视频
-                            task_type = TaskTypeId.VIDU_IMAGE_TO_VIDEO
-                        elif video_model == "veo3":
-                            # VEO3 图生视频
-                            task_type = TaskTypeId.VEO3_IMAGE_TO_VIDEO
-                        else:
-                            # Sora2 图生视频
-                            task_type = TaskTypeId.SORA2_IMAGE_TO_VIDEO
-                        ratio_value = ratio
-                        duration_value = duration_seconds
-                        
                         id = AIToolsModel.create(
                             prompt=prompt,
                             user_id=user_id,
-                            type=task_type,
+                            type=image_to_video_type,
                             image_path=image_url,
-                            ratio=ratio_value,
-                            duration=duration_value,
+                            ratio=ratio,
+                            duration=duration_seconds,
                             transaction_id=transaction_id,
                             status=AI_TOOL_STATUS_PENDING
                         )

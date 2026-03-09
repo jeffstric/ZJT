@@ -2165,6 +2165,14 @@
           await TaskConfig.load();
           this.modelConfigs = TaskConfig.getModelConfigs();
           this.configLoaded = true;  // 标记配置已加载
+          
+          // 检查当前 model 是否在可用选项中，如果不在则选择第一个
+          const allOptions = TaskConfig.getModelOptionsForCategory('image_edit');
+          const validValues = allOptions.map(opt => opt.value);
+          if (!validValues.includes(this.model) && allOptions.length > 0) {
+            this.model = allOptions[0].value;
+          }
+          
           // 设置初始默认值
           const config = this.modelConfigs[this.model];
           if (config) {
@@ -2218,8 +2226,14 @@
           form.append('prompt', this.prompt);
           form.append('ratio', this.ratio);
           form.append('count', this.count);
-          form.append('model', this.model);
           form.append('image_size', this.imageSize);
+          
+          // 根据 model 获取 task_id
+          const taskId = TaskConfig.getTaskIdByKey(this.model, 'image_edit');
+          if (!taskId) {
+            throw new Error(`未找到模型 ${this.model} 对应的任务配置`);
+          }
+          form.append('task_id', taskId);
           
           // Add user_id from localStorage
           const userId = localStorage.getItem('user_id');
@@ -2872,6 +2886,14 @@
           await TaskConfig.load();
           this.modelConfigs = TaskConfig.getModelConfigs();
           this.configLoaded = true;  // 标记配置已加载
+          
+          // 检查当前 model 是否在可用选项中，如果不在则选择第一个
+          const allOptions = TaskConfig.getModelOptionsForCategory('text_to_image');
+          const validValues = allOptions.map(opt => opt.value);
+          if (!validValues.includes(this.model) && allOptions.length > 0) {
+            this.model = allOptions[0].value;
+          }
+          
           // 设置初始默认值
           const config = this.modelConfigs[this.model];
           if (config) {
@@ -2903,10 +2925,16 @@
         try {
           const form = new FormData();
           form.append('prompt', this.prompt);
-          form.append('model', this.model);
           form.append('aspect_ratio', this.aspectRatio);
           form.append('count', this.count);
           form.append('user_id', userId);
+          
+          // 根据 model 获取 task_id
+          const taskId = TaskConfig.getTaskIdByKey(this.model, 'text_to_image');
+          if (!taskId) {
+            throw new Error(`未找到模型 ${this.model} 对应的任务配置`);
+          }
+          form.append('task_id', taskId);
           
           if (this.imageSize) {
             form.append('image_size', this.imageSize);
@@ -3586,10 +3614,16 @@
             form.append('images', file);
           });
           form.append('prompt', this.prompt);
-          form.append('video_model', this.videoModel);
           form.append('ratio', this.model);
           form.append('duration_seconds', this.durationSeconds);
           form.append('count', this.count);
+          
+          // 根据 videoModel 获取 task_id
+          const taskId = TaskConfig.getTaskIdByKey(this.videoModel, 'image_to_video');
+          if (!taskId) {
+            throw new Error(`未找到视频模型 ${this.videoModel} 对应的任务配置`);
+          }
+          form.append('task_id', taskId);
           
           // Add user_id from localStorage
           const userId = localStorage.getItem('user_id');

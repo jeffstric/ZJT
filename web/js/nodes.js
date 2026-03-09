@@ -5192,7 +5192,6 @@
                 
                 form.append('prompt', finalGridPrompt);
                 form.append('count', '1');
-                form.append('model', finalModel);
                 form.append('user_id', getUserId());
                 form.append('auth_token', getAuthToken());
                 
@@ -5203,11 +5202,17 @@
                 let apiUrl, res;
                 if(referenceImageUrls.length > 0) {
                   // 有参考图片URL，使用图片编辑API，直接传URL
+                  const taskId1 = TaskConfig.getTaskIdByKey(finalModel, 'image_edit');
+                  if(!taskId1) throw new Error(`未找到模型 ${finalModel} 对应的任务配置`);
+                  form.append('task_id', taskId1);
                   form.append('ref_image_urls', referenceImageUrls.join(','));
                   form.append('ratio', state.ratio || '16:9');
                   apiUrl = '/api/image-edit';
                 } else {
                   // 无参考图片，使用文生图API
+                  const taskId2 = TaskConfig.getTaskIdByKey(finalModel, 'text_to_image');
+                  if(!taskId2) throw new Error(`未找到模型 ${finalModel} 对应的任务配置`);
+                  form.append('task_id', taskId2);
                   form.append('aspect_ratio', state.ratio || '16:9');
                   apiUrl = '/api/text-to-image';
                 }
@@ -5604,7 +5609,6 @@
             
             form.append('prompt', finalGridPrompt);
             form.append('count', '1');
-            form.append('model', finalModel);
             form.append('user_id', getUserId());
             form.append('auth_token', getAuthToken());
             
@@ -5616,11 +5620,17 @@
             let apiUrl, res;
             if(referenceImageUrls.length > 0) {
               // 有参考图片URL，使用图片编辑API，直接传URL
+              const taskId3 = TaskConfig.getTaskIdByKey(finalModel, 'image_edit');
+              if(!taskId3) throw new Error(`未找到模型 ${finalModel} 对应的任务配置`);
+              form.append('task_id', taskId3);
               form.append('ref_image_urls', referenceImageUrls.join(','));
               form.append('ratio', state.ratio || '16:9');
               apiUrl = '/api/image-edit';
             } else {
               // 无参考图片，使用文生图API
+              const taskId4 = TaskConfig.getTaskIdByKey(finalModel, 'text_to_image');
+              if(!taskId4) throw new Error(`未找到模型 ${finalModel} 对应的任务配置`);
+              form.append('task_id', taskId4);
               form.append('aspect_ratio', state.ratio || '16:9');
               apiUrl = '/api/text-to-image';
             }
@@ -5932,7 +5942,6 @@
             
             form.append('prompt', finalGridPrompt);
             form.append('count', '1');
-            form.append('model', finalModel);
             form.append('user_id', getUserId());
             form.append('auth_token', getAuthToken());
             
@@ -5942,10 +5951,16 @@
             
             let apiUrl, res;
             if(referenceImageUrls.length > 0) {
+              const taskId5 = TaskConfig.getTaskIdByKey(finalModel, 'image_edit');
+              if(!taskId5) throw new Error(`未找到模型 ${finalModel} 对应的任务配置`);
+              form.append('task_id', taskId5);
               form.append('ref_image_urls', referenceImageUrls.join(','));
               form.append('ratio', state.ratio || '16:9');
               apiUrl = '/api/image-edit';
             } else {
+              const taskId6 = TaskConfig.getTaskIdByKey(finalModel, 'text_to_image');
+              if(!taskId6) throw new Error(`未找到模型 ${finalModel} 对应的任务配置`);
+              form.append('task_id', taskId6);
               form.append('aspect_ratio', state.ratio || '16:9');
               apiUrl = '/api/text-to-image';
             }
@@ -6815,7 +6830,6 @@
           
           form.append('prompt', finalGridPrompt);
           form.append('count', '1');
-          form.append('model', finalModel);
           form.append('user_id', getUserId());
           form.append('auth_token', getAuthToken());
           
@@ -6826,11 +6840,17 @@
           let apiUrl, res;
           if(referenceImageUrls.length > 0) {
             // 有参考图片URL，使用图片编辑API，直接传URL
+            const taskId7 = TaskConfig.getTaskIdByKey(finalModel, 'image_edit');
+            if(!taskId7) throw new Error(`未找到模型 ${finalModel} 对应的任务配置`);
+            form.append('task_id', taskId7);
             form.append('ref_image_urls', referenceImageUrls.join(','));
             form.append('ratio', state.ratio || '16:9');
             apiUrl = '/api/image-edit';
           } else {
             // 无参考图片，使用文生图API
+            const taskId8 = TaskConfig.getTaskIdByKey(finalModel, 'text_to_image');
+            if(!taskId8) throw new Error(`未找到模型 ${finalModel} 对应的任务配置`);
+            form.append('task_id', taskId8);
             form.append('aspect_ratio', state.ratio || '16:9');
             apiUrl = '/api/text-to-image';
           }
@@ -8833,6 +8853,12 @@
         showToast(`正在生成 ${count} 个视频...`, 'info');
         
         // 调用图生视频API
+        // 根据 videoModel 获取 task_id
+        const taskId9 = TaskConfig.getTaskIdByKey(videoModel || 'wan22', 'image_to_video');
+        if(!taskId9){
+          throw new Error(`未找到视频模型 ${videoModel} 对应的任务配置`);
+        }
+        
         const form = new FormData();
         
         form.append('image_urls', imageUrl);
@@ -8840,7 +8866,7 @@
         form.append('duration_seconds', duration);
         form.append('count', count);
         form.append('ratio', state.ratio || '9:16');
-        form.append('video_model', videoModel);
+        form.append('task_id', taskId9);
         
         if(userId){
           form.append('user_id', userId);

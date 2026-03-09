@@ -104,6 +104,12 @@ async function generateShotFrameVideo(nodeId, node){
     // 调用图生视频API
     const userId = localStorage.getItem('user_id') || '1';
     const authToken = localStorage.getItem('auth_token') || '';
+    // 根据 videoModel 获取 task_id
+    const taskId = TaskConfig.getTaskIdByKey(videoModel || 'wan22', 'image_to_video');
+    if(!taskId){
+      throw new Error(`未找到视频模型 ${videoModel} 对应的任务配置`);
+    }
+    
     const form = new FormData();
     
     form.append('image_urls', imageUrl);
@@ -111,7 +117,7 @@ async function generateShotFrameVideo(nodeId, node){
     form.append('duration_seconds', duration);
     form.append('count', count);
     form.append('ratio', state.ratio || '9:16');
-    form.append('video_model', videoModel);
+    form.append('task_id', taskId);
     
     if(userId){
       form.append('user_id', userId);

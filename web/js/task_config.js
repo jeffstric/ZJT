@@ -96,6 +96,27 @@
   }
 
   /**
+   * 根据模型key获取任务类型ID
+   * @param {string} modelKey 模型标识符
+   * @param {string} category 可选，指定分类以精确匹配
+   * @returns {number|null} 任务类型ID
+   */
+  function getTaskIdByKey(modelKey, category) {
+    const tasks = getAllTasks();
+    let task;
+    if (category) {
+      // 如果指定了分类，在该分类中查找
+      task = tasks.find(t => 
+        (t.key === modelKey || t.key.startsWith(modelKey + '_')) &&
+        (t.category === category || (t.categories && t.categories.includes(category)))
+      );
+    } else {
+      task = tasks.find(t => t.key === modelKey || t.key.startsWith(modelKey + '_'));
+    }
+    return task ? task.id : null;
+  }
+
+  /**
    * 获取指定分类的所有任务（支持多分类）
    * @param {string} category 分类名称
    * @returns {Array} 任务配置列表
@@ -354,6 +375,7 @@
     getAllTasks,
     getTaskById,
     getTaskByKey,
+    getTaskIdByKey,
     getTasksByCategory,
     
     // 获取选项
