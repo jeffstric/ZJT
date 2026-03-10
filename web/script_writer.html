@@ -67,10 +67,18 @@
                     <span class="btn-icon">🗑️</span>
                     <span class="btn-text">删除暂存，重置会话</span>
                 </button>
-                <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交到数据库">
+                <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交数据">
                     <span class="btn-icon">💾</span>
-                    <span class="btn-text">提交数据库</span>
+                    <span class="btn-text">提交数据</span>
                 </button>
+                <div class="auto-submit-container">
+                    <label class="auto-submit-toggle" title="开启后每分钟自动提交">
+                        <input type="checkbox" id="auto-submit-switch" onchange="toggleAutoSubmit()">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">🔄 自动提交</span>
+                    </label>
+                    <span id="auto-submit-countdown" class="auto-submit-countdown" style="display: none;"></span>
+                </div>
             </div>
         </header>
 
@@ -955,7 +963,7 @@
                             warningMsg += `📁 本地独有文件（数据库中不存在）：\n  • ${localOnlyList}\n\n`;
                         }
                         
-                        warningMsg += '💡 提示：这些文件的本地内容已保留，不会被数据库覆盖。如需同步，请使用"提交数据库"功能。';
+                        warningMsg += '💡 提示：这些文件的本地内容已保留，不会被数据库覆盖。如需同步，请使用"提交数据"按钮。';
                         
                         alert(warningMsg);
                         updateStatus('剧本编排系统已就绪（检测到未提交的本地修改）');
@@ -1041,8 +1049,13 @@
         }
 
         async function submitToDatabase() {
+            // 检查是否选择了世界
+            if (!WORLD_ID) {
+                showError('请先选择世界');
+                return;
+            }
             try {
-                    updateStatus('正在提交到数据库...');
+                    updateStatus('正在提交数据...');
                     const response = await fetch('/api/submit-to-database', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1063,6 +1076,142 @@
                 }
             
         }
+
+        // ========== 自动提交功能 ==========
+        let autoSubmitTimer = null;
+        let countdownInterval = null;
+        let nextSubmitTime = null;
+
+        function toggleAutoSubmit() {
+            const switchEl = document.getElementById('auto-submit-switch');
+            if (switchEl.checked) {
+                startAutoSubmit();
+            } else {
+                stopAutoSubmit();
+            }
+            saveAutoSubmitSettings();
+        }
+
+        function startAutoSubmit() {
+            scheduleNextSubmit();
+        }
+
+        function stopAutoSubmit() {
+            if (autoSubmitTimer) {
+                clearTimeout(autoSubmitTimer);
+                autoSubmitTimer = null;
+            }
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+            nextSubmitTime = null;
+            updateCountdownDisplay();
+        }
+
+        function scheduleNextSubmit() {
+            // 先清除已有的定时器，避免重复
+            if (autoSubmitTimer) {
+                clearTimeout(autoSubmitTimer);
+                autoSubmitTimer = null;
+            }
+
+            const baseInterval = 60 * 1000; // 固定1分钟
+            const randomDelay = Math.floor(Math.random() * 30000); // 0-30秒随机延迟
+
+            const totalDelay = baseInterval + randomDelay;
+            nextSubmitTime = Date.now() + totalDelay;
+
+            console.log(`[自动提交] 已调度，${Math.round(totalDelay/1000)}秒后执行`);
+
+            autoSubmitTimer = setTimeout(async () => {
+                const switchEl = document.getElementById('auto-submit-switch');
+                try {
+                    console.log('[自动提交] 开始执行提交...');
+                    await submitToDatabase();
+                    console.log('[自动提交] 提交完成');
+                } catch (error) {
+                    console.error('[自动提交] 提交出错:', error);
+                } finally {
+                    // 无论成功失败，只要开关仍然开启，继续调度下一次
+                    if (switchEl && switchEl.checked) {
+                        scheduleNextSubmit();
+                    }
+                }
+            }, totalDelay);
+
+            updateCountdownDisplay();
+            startCountdownUpdater();
+        }
+
+        function startCountdownUpdater() {
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+            }
+            countdownInterval = setInterval(updateCountdownDisplay, 1000);
+        }
+
+        function updateCountdownDisplay() {
+            const countdownEl = document.getElementById('auto-submit-countdown');
+            const switchEl = document.getElementById('auto-submit-switch');
+            
+            if (!switchEl || !switchEl.checked || !nextSubmitTime) {
+                countdownEl.style.display = 'none';
+                return;
+            }
+
+            const remaining = Math.max(0, nextSubmitTime - Date.now());
+            if (remaining <= 0) {
+                countdownEl.style.display = 'none';
+                return;
+            }
+
+            const minutes = Math.floor(remaining / 60000);
+            const seconds = Math.floor((remaining % 60000) / 1000);
+            countdownEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            countdownEl.style.display = 'inline';
+        }
+
+        function saveAutoSubmitSettings() {
+            const switchEl = document.getElementById('auto-submit-switch');
+            const enabled = switchEl.checked;
+            
+            // 使用cookie保存，设置1年有效期
+            const expires = new Date();
+            expires.setFullYear(expires.getFullYear() + 1);
+            document.cookie = `autoSubmitEnabled=${enabled}; expires=${expires.toUTCString()}; path=/`;
+            
+            console.log(`[自动提交] 设置已保存: ${enabled}`);
+        }
+
+        function loadAutoSubmitSettings() {
+            // 从cookie读取设置
+            const cookies = document.cookie.split(';');
+            let enabled = null;
+            
+            for (const cookie of cookies) {
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'autoSubmitEnabled') {
+                    enabled = value === 'true';
+                    break;
+                }
+            }
+            
+            // 如果有保存的设置，恢复状态
+            if (enabled !== null) {
+                const switchEl = document.getElementById('auto-submit-switch');
+                switchEl.checked = enabled;
+                if (enabled) {
+                    startAutoSubmit();
+                }
+                console.log(`[自动提交] 已恢复设置: ${enabled}`);
+            }
+        }
+
+        // 页面加载完成后恢复设置
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(loadAutoSubmitSettings, 500);
+        });
 
         async function sendMessage(customMessage = null, isSystemMessage = false) {
             console.log('sendMessage called, isProcessing:', isProcessing);
