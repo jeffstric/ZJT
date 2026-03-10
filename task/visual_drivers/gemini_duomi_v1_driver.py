@@ -1,19 +1,30 @@
 """
-Gemini 多米供应商 v1 版本驱动实现（标准版）
+Gemini 多米供应商 v1 版本驱动实现
+支持多个 Gemini 模型：标准版(2.5)、3.1 Flash
 """
 from typing import Dict, Any, Optional
 import traceback
 from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
+from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
 
 class GeminiDuomiV1Driver(BaseVideoDriver):
     """
-    Gemini 多米供应商 v1 版本驱动（标准版）
-    支持图片编辑
+    Gemini 多米供应商 v1 版本驱动
+    支持图片编辑，根据 task_id 选择不同模型
     """
+    
+    # 模型映射：task_id -> 模型名称
+    MODEL_MAPPING = {
+        TaskTypeId.GEMINI_2_5_FLASH_IMAGE: "gemini-2.5-pro-image-preview",
+        TaskTypeId.GEMINI_3_1_FLASH_IMAGE: "gemini-3.1-flash-image-preview",
+    }
+    
+    # 默认模型
+    DEFAULT_MODEL = "gemini-2.5-pro-image-preview"
     
     def __init__(self):
         super().__init__(driver_name="gemini_duomi_v1", driver_type=1)
@@ -168,8 +179,13 @@ class GeminiDuomiV1Driver(BaseVideoDriver):
             image_urls = upload_local_images_to_cdn_sync(image_urls, self._config)
             self.logger.info(f"图片上传完成，CDN链接: {image_urls}")
 
+        # 根据 task_id 选择模型
+        task_type = getattr(ai_tool, 'type', None)
+        model_name = self.MODEL_MAPPING.get(task_type, self.DEFAULT_MODEL)
+        self.logger.info(f"使用模型: {model_name}, task_type: {task_type}")
+        
         payload = {
-            "model": "gemini-2.5-pro-image-preview",
+            "model": model_name,
             "prompt": ai_tool.prompt,
             "aspect_ratio": ai_tool.ratio or "9:16",
             "image_urls": image_urls,

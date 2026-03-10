@@ -10,6 +10,7 @@ import traceback
 from datetime import datetime
 import requests
 from .exceptions import DriverConfigError
+from logger_config import DailyFileHandler
 
 logger = logging.getLogger(__name__)
 
@@ -18,15 +19,8 @@ def _setup_api_logger():
     """设置 API 请求日志记录器"""
     api_logger = logging.getLogger("api_requests")
     if not api_logger.handlers:
-        # 确保 logs 目录存在
-        log_dir = os.path.join(os.getcwd(), "logs")
-        os.makedirs(log_dir, exist_ok=True)
-
-        # 创建文件处理器
-        file_handler = logging.FileHandler(
-            os.path.join(log_dir, "api_requests.log"),
-            encoding="utf-8"
-        )
+        # 创建按日期命名的文件处理器
+        file_handler = DailyFileHandler('api_requests', encoding='utf-8')
         file_handler.setLevel(logging.INFO)
 
         # 设置日志格式

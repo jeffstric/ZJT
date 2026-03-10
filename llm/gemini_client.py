@@ -24,7 +24,9 @@ from script_writer_core.log_utils import should_log_debug, should_log_info, trun
 
 # 配置 LLM 日志记录器
 def setup_llm_logger():
-    """设置 LLM 日志记录器，输出到 logs/llm.log"""
+    """设置 LLM 日志记录器，输出到 logs/llm.{date}.log"""
+    from logger_config import DailyFileHandler
+    
     llm_logger = logging.getLogger('llm')
     llm_logger.setLevel(logging.DEBUG)
     
@@ -32,35 +34,26 @@ def setup_llm_logger():
     if llm_logger.handlers:
         return llm_logger
     
-    # 创建 logs 目录 - 使用绝对路径
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(current_dir)
-    log_dir = Path(project_root) / 'logs'
-    
-    # 打印日志路径以便调试
-    print(f"LLM Logger initialized. Log file: {log_dir / 'llm.log'}")
-    
-    log_dir.mkdir(exist_ok=True)
-    
-    # 设置为无缓冲模式 - 每次写入立即刷新到磁盘
-    class FlushingHandler(logging.FileHandler):
+    # 创建按日期命名的文件处理器（带自动刷新）
+    class FlushingDailyHandler(DailyFileHandler):
+        """带自动刷新的按日期文件处理器"""
         def emit(self, record):
             super().emit(record)
-            self.flush()
+            if self.stream:
+                self.stream.flush()
     
-    # 创建无缓冲的文件 handler
-    flushing_handler = FlushingHandler(log_dir / 'llm.log', encoding='utf-8')
-    flushing_handler.setLevel(logging.DEBUG)
+    file_handler = FlushingDailyHandler('llm', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
     
     # 创建格式化器
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    flushing_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
     
     # 添加 handler
-    llm_logger.addHandler(flushing_handler)
+    llm_logger.addHandler(file_handler)
     
     return llm_logger
 

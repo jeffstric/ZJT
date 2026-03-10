@@ -303,7 +303,6 @@ class DriverImplementation:
     # Gemini
     GEMINI_DUOMI_V1 = 'gemini_duomi_v1'
     GEMINI_PRO_DUOMI_V1 = 'gemini_pro_duomi_v1'
-    GEMINI_3_1_FLASH_DUOMI_V1 = 'gemini_3_1_flash_duomi_v1'
     
     # VEO3
     VEO3_DUOMI_V1 = 'veo3_duomi_v1'
@@ -337,7 +336,6 @@ class DriverKey:
     # Gemini 相关
     GEMINI_IMAGE_EDIT = 'gemini_image_edit'
     GEMINI_IMAGE_EDIT_PRO = 'gemini_image_edit_pro'
-    GEMINI_3_1_FLASH_IMAGE_EDIT = 'gemini_3_1_flash_image_edit'
     
     # VEO3 相关
     VEO3_IMAGE_TO_VIDEO = 'veo3_image_to_video'
@@ -365,7 +363,8 @@ class TaskTypeId:
     GEMINI_2_5_FLASH_IMAGE = 1          # Gemini 2.5 Flash 图片编辑（标准版）
     GEMINI_3_PRO_IMAGE = 7              # Gemini 3 Pro 图片编辑（加强版）
     GEMINI_3_1_FLASH_IMAGE = 17         # Gemini 3.1 Flash 图片编辑
-    SEEDREAM_TEXT_TO_IMAGE = 16         # Seedream 5.0 文生图
+    SEEDREAM_TEXT_TO_IMAGE = 16         # Seedream 5.0 文生图/图片编辑
+    SEEDREAM_4_5_IMAGE = 18             # Seedream 4.5 图片编辑
     
     # 文生视频
     SORA2_TEXT_TO_VIDEO = 2             # Sora2 文生视频
@@ -434,8 +433,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
-        driver_name=DriverKey.GEMINI_3_1_FLASH_IMAGE_EDIT,
-        implementation=DriverImplementation.GEMINI_3_1_FLASH_DUOMI_V1,
+        driver_name=DriverKey.GEMINI_IMAGE_EDIT,
+        implementation=DriverImplementation.GEMINI_DUOMI_V1,
         computing_power=3,
         supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3'],
         supported_sizes=['1K'],
@@ -455,9 +454,25 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         computing_power=6,
         supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
         supported_sizes=['2K', '3K'],
-        default_ratio='1:1',
+        default_ratio='9:16',
         default_size='2K',
         sort_order=13,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDREAM_4_5_IMAGE,
+        key='seedream-4.5',
+        name='Seedream 4.5',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
+        implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+        computing_power=8,
+        supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
+        supported_sizes=['2K', '4K'],
+        default_ratio='9:16',
+        default_size='2K',
+        sort_order=14,
     ),
     
     # ==================== 文生视频 ====================

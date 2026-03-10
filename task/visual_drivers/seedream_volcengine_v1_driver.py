@@ -1,23 +1,32 @@
 """
-Seedream 5.0 火山引擎供应商 v1 版本驱动实现
+Seedream 火山引擎供应商 v1 版本驱动实现
 同步 API - 一次请求直接返回图片 URL
+支持 Seedream 4.5 和 5.0 两个模型
 """
 from typing import Dict, Any, Optional
 import traceback
 from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
+from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
 
 class Seedream5VolcengineV1Driver(BaseVideoDriver):
     """
-    Seedream 5.0 火山引擎供应商 v1 版本驱动
-    同步 API - 支持文生图
+    Seedream 火山引擎供应商 v1 版本驱动
+    同步 API - 支持文生图/图片编辑
+    支持 Seedream 4.5 和 5.0 两个模型
     """
 
+    # 模型映射：task_id -> 模型名称
+    MODEL_MAPPING = {
+        TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "doubao-seedream-5-0-260128",
+        TaskTypeId.SEEDREAM_4_5_IMAGE: "doubao-seedream-4-5-251128",
+    }
+
     # 支持的图片尺寸
-    SUPPORTED_SIZES = ["2K", "3K"]
+    SUPPORTED_SIZES = ["2K", "3K", "4K"]
 
     # 尺寸映射表：基于 image_size 和 aspect_ratio 获取像素值
     SIZE_MAPPING = {
@@ -40,6 +49,16 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
             "2:3": "2496x3744",
             "3:2": "3744x2496",
             "21:9": "4704x2016",
+        },
+        "4K": {
+            "1:1": "4096x4096",
+            "4:3": "4704x3520",
+            "3:4": "3520x4704",
+            "16:9": "5504x3040",
+            "9:16": "3040x5504",
+            "2:3": "3328x4992",
+            "3:2": "4992x3328",
+            "21:9": "6240x2656",
         }
     }
 
@@ -164,13 +183,21 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
                 image_urls = upload_local_images_to_cdn_sync(image_urls, self._config)
                 self.logger.info(f"图片上传完成，CDN链接: {image_urls}")
 
+        # 根据 task_id 选择模型
+        task_type = getattr(ai_tool, 'type', None)
+        model_name = self.MODEL_MAPPING.get(task_type, self._model)
+        self.logger.info(f"使用模型: {model_name}, task_type: {task_type}")
+
         payload = {
-            "model": self._model,
+            "model": model_name,
             "prompt": ai_tool.prompt,
             "size": pixel_size,
-            "output_format": "png",
             "watermark": False
         }
+        
+        # Seedream 5.0 支持 output_format 参数，4.5 不支持
+        if task_type == TaskTypeId.SEEDREAM_TEXT_TO_IMAGE:
+            payload["output_format"] = "png"
 
         # 如果有图片路径，添加 image 参数（数组，支持多张图片）
         if image_urls:
