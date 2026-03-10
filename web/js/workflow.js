@@ -1101,6 +1101,12 @@
           const promptEl = el.querySelector('.prompt');
           if(promptEl) promptEl.value = node.data.prompt;
           
+          // 更新提示词字符计数
+          const promptCharCount = el.querySelector('.prompt-char-count');
+          if(promptCharCount && node.data.prompt) {
+            promptCharCount.textContent = `${node.data.prompt.length} 字符`;
+          }
+          
           // 先更新视频模型选择
           const videoModelSelect = el.querySelector('.video-model-select');
           if(videoModelSelect) videoModelSelect.value = node.data.videoModel;
