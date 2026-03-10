@@ -4566,6 +4566,126 @@ async def upload_workflow_asset(
         )
 
 
+@app.post('/api/video-workflow/extract-first-frame')
+@require_permission("video_workflow:upload")
+async def extract_video_first_frame(
+    request: Request,
+    file: UploadFile = File(..., description="视频文件"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    从视频中提取首帧图片
+
+    接收视频文件，使用FFmpeg提取第一帧，返回图片URL
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+
+        # 验证文件类型
+        content_type = file.content_type or ""
+        if not content_type.startswith("video/"):
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "仅支持视频文件"}
+            )
+
+        # 1. 保存上传的视频文件到临时目录
+        request_host = str(request.base_url).rstrip("/")
+        temp_dir = os.path.join(UPLOAD_DIR, "temp", datetime.now().strftime("%Y%m%d"))
+        os.makedirs(temp_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        ext = os.path.splitext(file.filename or "video.mp4")[1] or ".mp4"
+        video_filename = f"video_{timestamp}_{unique_id}{ext}"
+        video_path = os.path.join(temp_dir, video_filename)
+
+        # 保存视频文件
+        content = await file.read()
+        with open(video_path, "wb") as f:
+            f.write(content)
+
+        # 2. 使用FFmpeg提取首帧
+        ffmpeg_path = resolve_bin_path(get_config_value("bin", "ffmpeg", default="ffmpeg"), APP_DIR)
+        ffmpeg_timeout = get_config_value("bin", "ffmpeg_timeout", default=30)
+
+        # 输出图片文件名
+        image_filename = f"frame_{timestamp}_{unique_id}.jpg"
+        image_path = os.path.join(temp_dir, image_filename)
+
+        # FFmpeg命令: 提取第一帧
+        ffmpeg_cmd = [
+            ffmpeg_path,
+            "-i", video_path,
+            "-vframes", "1",      # 只提取1帧
+            "-q:v", "2",          # 高质量（2 = 很好）
+            "-y",                # 覆盖输出文件
+            image_path
+        ]
+
+        # 在线程池中执行FFmpeg命令
+        try:
+            process = await asyncio.to_thread(
+                lambda: subprocess.run(
+                    ffmpeg_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=ffmpeg_timeout
+                )
+            )
+
+            if process.returncode != 0:
+                error_msg = process.stderr or "未知错误"
+                logger.error(f"FFmpeg提取首帧失败: {error_msg}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"code": -1, "message": f"提取首帧失败: {error_msg}"}
+                )
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"FFmpeg提取首帧超时: {video_path}")
+            return JSONResponse(
+                status_code=500,
+                content={"code": -1, "message": "提取首帧超时，请尝试较小的视频文件"}
+            )
+        except FileNotFoundError:
+            logger.error(f"FFmpeg未找到: {ffmpeg_path}")
+            return JSONResponse(
+                status_code=500,
+                content={"code": -1, "message": "FFmpeg未配置或不可用"}
+            )
+
+        # 3. 验证生成的图片
+        if not os.path.exists(image_path) or os.path.getsize(image_path) == 0:
+            return JSONResponse(
+                status_code=500,
+                content={"code": -1, "message": "提取首帧失败，生成的图片无效"}
+            )
+
+        # 4. 返回图片URL
+        image_url = f"{request_host}/upload/temp/{datetime.now().strftime('%Y%m%d')}/{image_filename}"
+
+        logger.info(f"成功提取首帧: {video_filename} -> {image_filename}")
+
+        return JSONResponse({
+            "code": 0,
+            "message": "提取成功",
+            "data": {
+                "url": image_url,
+                "filename": image_filename
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to extract first frame: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": f"提取首帧失败: {str(e)}"}
+        )
+
+
 @app.get('/api/ai-tools/{ai_tools_id}/grid-split')
 @require_permission("image:grid_split")
 async def get_grid_split_image(

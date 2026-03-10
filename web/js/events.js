@@ -208,6 +208,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddExtractFrame').addEventListener('click', () => {
+      const nodeId = createExtractFrameNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddText').addEventListener('click', () => {
       const nodeId = createTextNode();
       renderMinimap();
