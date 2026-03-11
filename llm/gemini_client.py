@@ -392,7 +392,7 @@ class GeminiClient:
                 url,
                 headers=headers,
                 json=gemini_payload,
-                timeout=240
+                timeout=300
             )
             
             llm_logger.info(f"Gemini API response status: {response.status_code}")
