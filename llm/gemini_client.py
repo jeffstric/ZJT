@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from perseids_client import make_perseids_request
 from config.config_util import get_dynamic_config_value
+from config.constant import GEMINI_URL_FORMATS
 
 # 导入日志函数
 try:
@@ -66,6 +67,9 @@ llm_logger = setup_llm_logger()
 class GeminiClient:
     """Gemini 原生 API 客户端"""
     
+    # 类级别缓存: {base_url: "proxy" | "official"}
+    _url_format_cache: Dict[str, str] = {}
+    
     def __init__(self):
         """初始化 Gemini 客户端"""
         # 初始化时加载配置
@@ -73,6 +77,9 @@ class GeminiClient:
 
     def _refresh_config(self):
         """刷新配置（从数据库动态读取）"""
+        # 保存旧的 base_url 用于缓存清除
+        old_base_url = getattr(self, 'base_url', None)
+
         # 使用动态配置，优先从数据库读取，支持后台动态修改
         self.api_key = get_dynamic_config_value('llm', 'google', 'api_key', default='')
         self.base_url = get_dynamic_config_value('llm', 'google', 'gemini_base_url', default='')
@@ -81,6 +88,86 @@ class GeminiClient:
             logger.warning("Gemini API Key 或 Base URL 未配置")
         else:
             logger.info(f"GeminiClient config loaded: base_url={self.base_url}")
+
+        # base_url 变更时清除缓存
+        if old_base_url and old_base_url != self.base_url:
+            GeminiClient._url_format_cache.pop(old_base_url, None)
+            logger.info(f"GeminiClient base_url changed, cleared cache for {old_base_url}")
+
+    def _build_url(self, model: str) -> str:
+        """
+        构建 Gemini API URL，支持两种格式自动探测和缓存
+        
+        Returns:
+            完整的 API URL
+        """
+        base_url = self.base_url.rstrip('/')
+        if base_url.endswith('/openai'):
+            base_url = base_url[:-7]
+        
+        # 移除 model 中的 "gemini/" 前缀以避免重复路径
+        model_name = model.replace("gemini/", "", 1) if "/" in model else model
+        
+        # 1. 检查缓存
+        if base_url in GeminiClient._url_format_cache:
+            fmt = GeminiClient._url_format_cache[base_url]
+            url = f"{base_url}{GEMINI_URL_FORMATS[fmt].format(model=model_name)}"
+            llm_logger.debug(f"Gemini URL using cached format '{fmt}': {url}")
+            return url
+        
+        # 2. 探测格式
+        for fmt_name, fmt_path in GEMINI_URL_FORMATS.items():
+            url = f"{base_url}{fmt_path.format(model=model_name)}"
+            if self._probe_url_format(url):
+                GeminiClient._url_format_cache[base_url] = fmt_name
+                llm_logger.info(f"Gemini URL format detected: '{fmt_name}' for base_url: {base_url}")
+                return url
+        
+        # 3. 探测失败，使用默认格式并记录警告
+        default_fmt = "proxy"
+        url = f"{base_url}{GEMINI_URL_FORMATS[default_fmt].format(model=model_name)}"
+        llm_logger.warning(f"Gemini URL format probe failed, using default '{default_fmt}': {url}")
+        return url
+    
+    def _probe_url_format(self, url: str) -> bool:
+        """
+        轻量级探测 URL 格式是否有效
+        
+        Args:
+            url: 要探测的 URL
+            
+        Returns:
+            True 如果格式有效（URL 存在），False 如果格式无效（404）
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}"
+        }
+        
+        # 发送最小请求判断格式是否有效
+        test_payload = {
+            "contents": [{"role": "user", "parts": [{"text": "Hi"}]}],
+            "generationConfig": {"maxOutputTokens": 1}
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=test_payload, timeout=10)
+            
+            # 200/400/401/403 都说明 URL 格式正确（只是请求内容或认证问题）
+            # 404 说明 URL 格式错误
+            if response.status_code != 404:
+                llm_logger.debug(f"URL format probe success: {url} -> {response.status_code}")
+                return True
+            else:
+                llm_logger.debug(f"URL format probe failed (404): {url}")
+                return False
+                
+        except requests.exceptions.Timeout:
+            llm_logger.debug(f"URL format probe timeout: {url}")
+            return False
+        except Exception as e:
+            llm_logger.debug(f"URL format probe error: {url} -> {e}")
+            return False
 
     def _convert_to_gemini_format(self, messages, tools=None):
         """将OpenAI格式的消息转换为Gemini原生格式"""
@@ -247,17 +334,9 @@ class GeminiClient:
             "temperature": temperature
         }
         
-        # 构建 URL
-        base_url = self.base_url.rstrip('/')
-        if base_url.endswith('/openai'):
-            base_url = base_url[:-7]
-        
-        # 移除 model 中的 "gemini/" 前缀以避免重复路径
-        model_name = model.replace("gemini/", "", 1) if "/" in model else model
-        
-        url = f"{base_url}/gemini/v1/models/{model_name}:generateContent"
+        # 构建 URL（支持两种格式自动探测）
+        url = self._build_url(model)
         llm_logger.info(f"Gemini API URL: {url}")
-        llm_logger.info(f"Gemini API model: {model_name}")
         llm_logger.info(f"Gemini API contents count: {len(gemini_payload.get('contents', []))}")
         
         # 记录完整 payload 到文件
@@ -499,8 +578,11 @@ class GeminiClient:
 _gemini_client = None
 
 def get_gemini_client() -> GeminiClient:
-    """获取 Gemini 客户端单例"""
+    """获取 Gemini 客户端单例（每次调用时刷新配置）"""
     global _gemini_client
     if _gemini_client is None:
         _gemini_client = GeminiClient()
+    else:
+        # 每次获取时刷新配置，确保配置变更生效
+        _gemini_client._refresh_config()
     return _gemini_client

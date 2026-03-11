@@ -357,6 +357,13 @@ class SystemConfigConstants:
 CONFIG_KEY_MAX_LENGTH = SystemConfigConstants.CONFIG_KEY_MAX_LENGTH
 
 
+# Gemini API URL 格式常量
+GEMINI_URL_FORMATS = {
+    "proxy": "/gemini/v1/models/{model}:generateContent",      # 第三方代理格式（如 jiekou.ai）
+    "official": "/v1beta/models/{model}:generateContent"       # Google 官方格式
+}
+
+
 # 外部链接常量
 class ExternalLinks:
     """外部链接常量"""

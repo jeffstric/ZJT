@@ -15,6 +15,7 @@ from model.system_config import SystemConfigModel
 from model.system_config_history import SystemConfigHistoryModel
 from config.config_util import get_current_env, invalidate_dynamic_cache
 from config.default_configs import init_default_configs, get_default_config_by_key
+from config.constant import GEMINI_URL_FORMATS
 
 logger = logging.getLogger(__name__)
 
@@ -657,14 +658,14 @@ async def admin_test_google_connection(
     """
     测试 Google/Gemini API 连接
     通过发送一个简单的请求验证 API Key 有效性
-    支持第三方代理服务（如 jiekou.ai）
+    支持两种 URL 格式自动尝试（第三方代理格式和 Google 官方格式）
     """
     admin = await require_admin(auth_token)
     
     if not request.api_key:
         raise HTTPException(status_code=400, detail="API Key 不能为空")
     
-    # 构建请求 URL（适配第三方代理格式）
+    # 构建请求 URL
     base_url = request.base_url or "https://api.jiekou.ai"
     base_url = base_url.rstrip("/")
     
@@ -672,9 +673,8 @@ async def admin_test_google_connection(
     if base_url.endswith('/openai'):
         base_url = base_url[:-7]
     
-    # 使用简单的 generateContent 请求测试连接
+    # 测试模型
     test_model = "gemini-3-flash-preview"
-    url = f"{base_url}/gemini/v1/models/{test_model}:generateContent"
     
     headers = {
         "Content-Type": "application/json",
@@ -695,43 +695,70 @@ async def admin_test_google_connection(
         }
     }
     
+    # 记录最后一次错误信息
+    last_error = None
+    last_error_message = None
+    
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(url, headers=headers, json=test_payload)
+            # 依次尝试两种 URL 格式
+            for fmt_name, fmt_path in GEMINI_URL_FORMATS.items():
+                url = f"{base_url}{fmt_path.format(model=test_model)}"
+                
+                try:
+                    response = await client.post(url, headers=headers, json=test_payload)
+                    
+                    if response.status_code == 200:
+                        # 验证响应体有效性
+                        try:
+                            resp_json = response.json()
+                            # 检查是否有有效的 candidates 响应
+                            if "candidates" in resp_json and resp_json["candidates"]:
+                                return {
+                                    "code": 0,
+                                    "message": f"连接成功（格式: {fmt_name}）",
+                                    "data": {
+                                        "success": True,
+                                        "model": test_model,
+                                        "format": fmt_name
+                                    }
+                                }
+                            else:
+                                # 200 但无 candidates，可能是错误信息
+                                error_info = resp_json.get("error", {})
+                                error_msg = error_info.get("message", "响应无效")
+                                last_error = f"{fmt_name}: {error_msg}"
+                                last_error_message = f"API 返回错误: {error_msg}"
+                                continue  # 尝试下一种格式
+                        except Exception:
+                            last_error = f"{fmt_name}: 响应解析失败"
+                            continue
+                    
+                    elif response.status_code in [401, 403]:
+                        # 认证错误，说明格式对了但 key 错了
+                        error_type = "无效或未授权" if response.status_code == 401 else "权限不足或已被禁用"
+                        return {
+                            "code": 1,
+                            "message": f"API Key {error_type}（格式: {fmt_name}）",
+                            "data": {"success": False, "error": f"HTTP {response.status_code}", "format": fmt_name}
+                        }
+                    
+                    # 404 或其他错误，继续尝试下一种格式
+                    last_error = f"{fmt_name}: HTTP {response.status_code}"
+                    
+                except httpx.TimeoutException:
+                    last_error = f"{fmt_name}: 连接超时"
+                    continue
+                except Exception as e:
+                    last_error = f"{fmt_name}: {str(e)}"
+                    continue
             
-            if response.status_code == 200:
-                return {
-                    "code": 0,
-                    "message": "连接成功",
-                    "data": {
-                        "success": True,
-                        "model": test_model
-                    }
-                }
-            elif response.status_code == 401:
-                return {
-                    "code": 1,
-                    "message": "API Key 无效或未授权",
-                    "data": {"success": False, "error": "Unauthorized"}
-                }
-            elif response.status_code == 403:
-                return {
-                    "code": 1,
-                    "message": "API Key 权限不足或已被禁用",
-                    "data": {"success": False, "error": "Forbidden"}
-                }
-            elif response.status_code == 404:
-                return {
-                    "code": 1,
-                    "message": "API 端点不存在，请检查 Base URL 是否正确",
-                    "data": {"success": False, "error": f"404 - URL: {url}"}
-                }
-            else:
-                return {
-                    "code": 1,
-                    "message": f"连接失败: HTTP {response.status_code}",
-                    "data": {"success": False, "error": response.text[:200]}
-                }
+            # 所有格式都失败
+            return {
+                "code": 1,
+                "message": last_error_message or f"连接失败: {last_error}",
+                "data": {"success": False, "error": last_error}
+            }
                 
     except httpx.TimeoutException:
         return {

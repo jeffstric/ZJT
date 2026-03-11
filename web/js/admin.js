@@ -805,6 +805,14 @@ const AdminApp = {
             this.quickConfigModal.volcengine.apiKey = '';
         },
         
+        // 显示 jiekou 注册提示
+        showJiekouTip() {
+            const confirmed = confirm('💡 提示：\n\njiekou 注册需要 Google 或 GitHub 账号，但注册即送 $10 代金券！\n\n点击"确定"前往注册页面');
+            if (confirmed) {
+                window.open('https://jiekou.ai/user/register?invited_code=119T5V', '_blank');
+            }
+        },
+        
         // 测试 Google 连接
         async testGoogleConnection() {
             this.quickConfigModal.testLoading = true;

@@ -506,12 +506,16 @@
                     <div class="config-group">
                         <div class="config-group-header">
                             <h4>Google/Gemini 配置</h4>
-                            <span class="config-group-desc">📋 影响服务：剧本创作、AI对话</span>
+                            <span class="config-group-desc">📋 影响服务：剧本创作、AI对话、剧本拆分</span>
                         </div>
                         <div class="form-group">
                             <label>API Key <span style="color: red;">*</span></label>
                             <input type="text" v-model="quickConfigModal.google.apiKey" placeholder="请输入 Google API Key">
-                            <p class="form-hint">📖 获取方式：<a href="https://jiekou.ai/user/register?invited_code=119T5V" target="_blank" style="color: #3b82f6;">快速注册</a></p>
+                            <p class="form-hint">📖 获取方式：
+                                <a href="javascript:void(0)" @click="showJiekouTip" style="color: #3b82f6;">jiekou</a> | 
+                                <a href="https://ai.comfly.chat/register?aff=d3Mx98625" target="_blank" style="color: #3b82f6;">comfly</a> | 
+                                <a href="https://yunwu.ai/register?aff=hE0h" target="_blank" style="color: #3b82f6;">yunwu</a>
+                            </p>
                         </div>
                         <div class="form-group">
                             <label>Base URL (可选)</label>

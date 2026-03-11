@@ -1102,6 +1102,12 @@
           const promptEl = el.querySelector('.prompt');
           if(promptEl) promptEl.value = node.data.prompt;
           
+          // 更新提示词字符计数
+          const promptCharCount = el.querySelector('.prompt-char-count');
+          if(promptCharCount && node.data.prompt) {
+            promptCharCount.textContent = `${node.data.prompt.length} 字符`;
+          }
+          
           // 先更新视频模型选择
           const videoModelSelect = el.querySelector('.video-model-select');
           if(videoModelSelect) videoModelSelect.value = node.data.videoModel;
@@ -1921,34 +1927,34 @@
     // ============ Debug 模式功能 ============
     
     // 从 URL 参数中检查是否需要启用 Debug 模式
+    // 使用方式: ?debug=你的密码
     function initDebugMode(){
       const urlParams = new URLSearchParams(window.location.search);
       const debugParam = urlParams.get('debug');
       
-      if(debugParam === '1' && !state.debugMode){
-        // 开启 Debug 模式需要密码
-        const password = prompt('请输入 Debug 模式密码:');
-        if(!password){
-          return;
-        }
-        
-        // 验证密码
-        fetch('/api/config/debug-password')
-          .then(res => res.json())
-          .then(data => {
-            if(data.success && data.password === password){
-              state.debugMode = true;
-              updateDebugModeUI();
-              showToast('Debug 模式已开启', 'success');
-            } else {
-              showToast('密码错误', 'error');
-            }
-          })
-          .catch(err => {
-            console.error('验证密码失败:', err);
-            showToast('验证失败', 'error');
-          });
+      if(!debugParam || state.debugMode){
+        return;
       }
+      
+      // 将 debug 参数值作为密码验证
+      const password = debugParam;
+      
+      // 验证密码
+      fetch('/api/config/debug-password')
+        .then(res => res.json())
+        .then(data => {
+          if(data.success && data.password === password){
+            state.debugMode = true;
+            updateDebugModeUI();
+            showToast('Debug 模式已开启', 'success');
+          } else {
+            showToast('密码错误', 'error');
+          }
+        })
+        .catch(err => {
+          console.error('验证密码失败:', err);
+          showToast('验证失败', 'error');
+        });
     }
     
     // 更新 Debug 模式 UI

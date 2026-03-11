@@ -2595,8 +2595,12 @@
             <select class="video-model-select"></select>
           </div>
           <div class="field field-collapsible">
-            <div class="label">提示词</div>
-            <textarea class="prompt" placeholder="请输入提示词..." rows="3"></textarea>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <div class="label" style="margin: 0;">提示词</div>
+              <button class="mini-btn prompt-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="放大编辑">⤢</button>
+            </div>
+            <textarea class="prompt" placeholder="请输入提示词..." rows="3" style="resize: vertical; min-height: 60px;"></textarea>
+            <div class="prompt-char-count" style="text-align: right; font-size: 11px; color: var(--muted); margin-top: 4px;">0 字符</div>
           </div>
           <div class="field field-collapsible computing-power-field" style="padding: 6px; border-radius: 6px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -2629,6 +2633,8 @@
       const deleteBtn = el.querySelector('.icon-btn');
       const promptEl = el.querySelector('.prompt');
       const promptPreview = el.querySelector('.prompt-preview');
+      const promptExpandBtn = el.querySelector('.prompt-expand-btn');
+      const promptCharCount = el.querySelector('.prompt-char-count');
       const durationSelect = el.querySelector('.duration-select');
       const ratioSelect = el.querySelector('.ratio-select');
       const videoModelSelect = el.querySelector('.video-model-select');
@@ -3388,7 +3394,29 @@
           promptPreview.textContent = preview;
           promptPreview.style.display = preview ? 'block' : 'none';
         }
+        if(promptCharCount) {
+          promptCharCount.textContent = `${promptEl.value.length} 字符`;
+        }
       });
+
+      // 放大编辑按钮点击事件
+      if(promptExpandBtn) {
+        promptExpandBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showPromptExpandModal(promptEl, '提示词', (newValue) => {
+            node.data.prompt = newValue;
+            promptEl.value = newValue;
+            if(promptCharCount) {
+              promptCharCount.textContent = `${newValue.length} 字符`;
+            }
+            if(promptPreview) {
+              const preview = newValue ? (newValue.length > 50 ? newValue.substring(0, 50) + '...' : newValue) : '';
+              promptPreview.textContent = preview;
+              promptPreview.style.display = preview ? 'block' : 'none';
+            }
+          });
+        });
+      }
 
       const startFileEl = el.querySelector('.start-file');
       const endFileEl = el.querySelector('.end-file');
