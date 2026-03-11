@@ -94,6 +94,12 @@ class GeminiClient:
             GeminiClient._url_format_cache.pop(old_base_url, None)
             logger.info(f"GeminiClient base_url changed, cleared cache for {old_base_url}")
 
+    @classmethod
+    def clear_url_format_cache(cls):
+        """清除 URL 格式缓存（配置变更后调用）"""
+        cls._url_format_cache.clear()
+        logger.info("GeminiClient URL format cache cleared")
+
     def _build_url(self, model: str) -> str:
         """
         构建 Gemini API URL，支持两种格式自动探测和缓存
@@ -137,7 +143,7 @@ class GeminiClient:
             url: 要探测的 URL
             
         Returns:
-            True 如果格式有效（URL 存在），False 如果格式无效（404）
+            True 如果格式有效（URL 存在且响应有效），False 如果格式无效
         """
         headers = {
             "Content-Type": "application/json",
@@ -153,14 +159,36 @@ class GeminiClient:
         try:
             response = requests.post(url, headers=headers, json=test_payload, timeout=10)
             
-            # 200/400/401/403 都说明 URL 格式正确（只是请求内容或认证问题）
             # 404 说明 URL 格式错误
-            if response.status_code != 404:
-                llm_logger.debug(f"URL format probe success: {url} -> {response.status_code}")
-                return True
-            else:
+            if response.status_code == 404:
                 llm_logger.debug(f"URL format probe failed (404): {url}")
                 return False
+            
+            # 401/403 说明 URL 格式正确但认证失败，格式有效
+            if response.status_code in [401, 403]:
+                llm_logger.debug(f"URL format probe success (auth error): {url} -> {response.status_code}")
+                return True
+            
+            # 200 需要验证响应体是否包含有效内容
+            if response.status_code == 200:
+                try:
+                    resp_json = response.json()
+                    # 检查是否有 candidates 字段（有效响应）
+                    if "candidates" in resp_json and resp_json["candidates"]:
+                        llm_logger.debug(f"URL format probe success (valid response): {url}")
+                        return True
+                    else:
+                        # 200 但无 candidates，可能是代理返回的错误信息
+                        error_msg = resp_json.get("error", {}).get("message", "unknown")
+                        llm_logger.debug(f"URL format probe failed (invalid response): {url} -> {error_msg}")
+                        return False
+                except Exception:
+                    llm_logger.debug(f"URL format probe failed (parse error): {url}")
+                    return False
+            
+            # 其他状态码，可能是格式错误
+            llm_logger.debug(f"URL format probe failed: {url} -> {response.status_code}")
+            return False
                 
         except requests.exceptions.Timeout:
             llm_logger.debug(f"URL format probe timeout: {url}")
