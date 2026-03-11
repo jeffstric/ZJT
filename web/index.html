@@ -3314,7 +3314,10 @@
         taskTypeConfig: null,  // 从接口获取的任务类型配置
         driverStatus: {},  // 驱动可用状态
         modelConfigs: {},  // 从后端获取的模型配置
-        configLoaded: false  // 配置是否已加载
+        configLoaded: false,  // 配置是否已加载
+        // 图片模式相关
+        imageMode: 'first_last_frame',  // 图片模式: first_last_frame, multi_reference, first_last_with_ref
+        referenceFiles: []  // 参考图文件（仅 first_last_with_ref 模式使用）
       }
     },
     mounted() {
@@ -3341,10 +3344,70 @@
             this.durationSeconds = config.default_duration || config.durations[0] || 5;
           }
         }
+      },
+      imageMode(newMode, oldMode) {
+        // 切换图片模式时，检查当前模型是否支持新模式
+        const config = this.modelConfigs[this.videoModel];
+        const supportedModes = config?.supported_image_modes || ['first_last_frame'];
+        if (!supportedModes.includes(newMode)) {
+          // 当前模型不支持新模式，切换到支持该模式的第一个模型
+          const allOptions = TaskConfig.getModelOptionsForCategory('image_to_video');
+          for (const opt of allOptions) {
+            const optConfig = this.modelConfigs[opt.value];
+            const optModes = optConfig?.supported_image_modes || ['first_last_frame'];
+            const isAvailable = !this.driverStatus || !this.driverStatus[opt.taskType] || this.driverStatus[opt.taskType].available !== false;
+            if (optModes.includes(newMode) && isAvailable) {
+              this.videoModel = opt.value;
+              break;
+            }
+          }
+        }
+        // 模式切换时清空文件
+        this.files = [];
+        this.referenceFiles = [];
       }
     },
     computed: {
-      canSubmit() { return this.files.length > 0 && this.files.length <= 5 && !!this.prompt.trim() && !this.loading },
+      canSubmit() { 
+        // 根据模式验证图片数量
+        if (this.imageMode === 'first_last_frame') {
+          // 首尾帧模式：1-2张图片
+          return this.files.length >= 1 && this.files.length <= 2 && !!this.prompt.trim() && !this.loading;
+        } else if (this.imageMode === 'multi_reference') {
+          // 多参考图模式：1-5张图片
+          return this.files.length >= 1 && this.files.length <= 5 && !!this.prompt.trim() && !this.loading;
+        } else if (this.imageMode === 'first_last_with_ref') {
+          // 首尾帧+参考图模式：首尾帧1-2张，参考图0-3张
+          return this.files.length >= 1 && this.files.length <= 2 && this.referenceFiles.length <= 3 && !!this.prompt.trim() && !this.loading;
+        }
+        return false;
+      },
+      imageModeOptions() {
+        // 显示图片模式供用户选择
+        return [
+          { value: 'first_last_frame', label: '首尾帧模式', desc: '第一张为首帧，第二张为尾帧（可选）' },
+          { value: 'multi_reference', label: '多参考图模式', desc: '所有图片作为风格参考' }
+          // { value: 'first_last_with_ref', label: '首尾帧+参考图', desc: '首尾帧控制动作，参考图控制风格' }  // 暂无模型支持
+        ];
+      },
+      maxFilesForMode() {
+        if (this.imageMode === 'first_last_frame') return 2;
+        if (this.imageMode === 'multi_reference') return 5;
+        if (this.imageMode === 'first_last_with_ref') return 2;
+        return 5;
+      },
+      filesLabel() {
+        if (this.imageMode === 'first_last_frame') return '上传首尾帧图片 (1-2张)';
+        if (this.imageMode === 'multi_reference') return '上传参考图片 (1-5张)';
+        if (this.imageMode === 'first_last_with_ref') return '上传首尾帧图片 (1-2张)';
+        return '上传图片';
+      },
+      filesHint() {
+        if (this.imageMode === 'first_last_frame') return '第一张为首帧，第二张（可选）为尾帧';
+        if (this.imageMode === 'multi_reference') return '多张图片将作为风格参考';
+        if (this.imageMode === 'first_last_with_ref') return '第一张为首帧，第二张（可选）为尾帧';
+        return '';
+      },
       statusText() {
         if (this.status === 'completed') return '生成完成！';
         if (this.loading) return '正在生成视频，请稍候...';
@@ -3355,12 +3418,17 @@
         if (!this.configLoaded) return [];
         // 动态从配置获取图生视频模型列表
         const allOptions = TaskConfig.getModelOptionsForCategory('image_to_video');
+        // 根据当前选中的图片模式过滤支持该模式的模型
         return allOptions.map(opt => {
+          const config = this.modelConfigs[opt.value];
+          const supportedModes = config?.supported_image_modes || ['first_last_frame'];
+          const supportsCurrentMode = supportedModes.includes(this.imageMode);
           const isAvailable = !this.driverStatus || !this.driverStatus[opt.taskType] || this.driverStatus[opt.taskType].available !== false;
           return {
             value: opt.value,
             label: isAvailable ? opt.label : opt.label + ' (未配置)',
-            disabled: !isAvailable
+            disabled: !isAvailable || !supportsCurrentMode,
+            supportsMode: supportsCurrentMode
           };
         });
       },
@@ -3447,6 +3515,14 @@
         } else if (this.videoModel === 'veo3') {
           // type=15: VEO3固定算力
           power = this.taskComputingPower[15] || 0;
+        } else if (this.videoModel === 'vidu_q2') {
+          // type=19: Vidu Q2根据时长区分算力
+          const viduQ2Power = this.taskComputingPower[19];
+          if (typeof viduQ2Power === 'object') {
+            power = viduQ2Power[this.durationSeconds] || viduQ2Power[5] || 0;
+          } else {
+            power = viduQ2Power || 0;
+          }
         }
         return power;
       },
@@ -3572,11 +3648,12 @@
 
       onFile(e){ 
         const selectedFiles = Array.from(e.target.files || []);
-        const remainingSlots = 5 - this.files.length;
+        const maxFiles = this.maxFilesForMode;
+        const remainingSlots = maxFiles - this.files.length;
         
         if (remainingSlots <= 0) {
-          alert('已达到最大数量5张图片，请先删除一些图片');
-          e.target.value = ''; // 清空input
+          alert(`已达到最大数量${maxFiles}张图片，请先删除一些图片`);
+          e.target.value = '';
           return;
         }
         
@@ -3587,15 +3664,49 @@
           this.files = [...this.files, ...selectedFiles];
         }
         
-        e.target.value = ''; // 清空input，允许重复选择同一文件
+        e.target.value = '';
+      },
+      
+      onReferenceFile(e) {
+        const selectedFiles = Array.from(e.target.files || []);
+        const maxRefFiles = 3;
+        const remainingSlots = maxRefFiles - this.referenceFiles.length;
+        
+        if (remainingSlots <= 0) {
+          alert('参考图最多3张，请先删除一些图片');
+          e.target.value = '';
+          return;
+        }
+        
+        if (selectedFiles.length > remainingSlots) {
+          alert(`最多还能添加${remainingSlots}张参考图，已自动截取前${remainingSlots}张`);
+          this.referenceFiles = [...this.referenceFiles, ...selectedFiles.slice(0, remainingSlots)];
+        } else {
+          this.referenceFiles = [...this.referenceFiles, ...selectedFiles];
+        }
+        
+        e.target.value = '';
       },
       
       removeFile(index) {
         this.files.splice(index, 1);
       },
       
+      removeReferenceFile(index) {
+        this.referenceFiles.splice(index, 1);
+      },
+      
       clearAllFiles() {
         this.files = [];
+      },
+      
+      clearAllReferenceFiles() {
+        this.referenceFiles = [];
+      },
+      
+      onImageModeChange() {
+        this.files = [];
+        this.referenceFiles = [];
       },
       
       async submit(){
@@ -3609,14 +3720,23 @@
         
         try {
           const form = new FormData();
-          // Append all images
+          // Append all images (首尾帧图片)
           this.files.forEach(file => {
             form.append('images', file);
           });
+          
+          // 添加参考图（仅 first_last_with_ref 模式）
+          if (this.imageMode === 'first_last_with_ref' && this.referenceFiles.length > 0) {
+            this.referenceFiles.forEach(file => {
+              form.append('reference_images', file);
+            });
+          }
+          
           form.append('prompt', this.prompt);
           form.append('ratio', this.model);
           form.append('duration_seconds', this.durationSeconds);
           form.append('count', this.count);
+          form.append('image_mode', this.imageMode);
           
           // 根据 videoModel 获取 task_id
           const taskId = TaskConfig.getTaskIdByKey(this.videoModel, 'image_to_video');
@@ -3890,20 +4010,53 @@
     template: `
       <div>
         <div class="form">
+          <!-- 图片模式选择 -->
           <div class="field">
-            <label class="label">上传图片 (最多5张，可多次选择累加)</label>
+            <label class="label">图片模式</label>
+            <select class="input" v-model="imageMode" @change="onImageModeChange">
+              <option v-for="opt in imageModeOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <div class="muted" style="margin-top:6px; color: var(--muted);">
+              {{ imageModeOptions.find(o => o.value === imageMode)?.desc || '' }}
+            </div>
+          </div>
+
+          <!-- 首尾帧/主图片上传 -->
+          <div class="field">
+            <label class="label">{{ filesLabel }}</label>
             <input class="input" type="file" accept="image/*" multiple @change="onFile" />
             <div class="muted" v-if="videoModel === 'sora2'" style="margin-top:6px; color: #fca5a5;">⚠️ 注意：请勿上传真人图片</div>
-            <div class="muted" style="margin-top:6px; color: var(--muted);">多张图片将自动拼接成一张</div>
+            <div class="muted" style="margin-top:6px; color: var(--muted);">{{ filesHint }}</div>
             <div v-if="files.length > 0" style="margin-top: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <div style="font-size: 13px; color: var(--muted);">已选择 {{ files.length }}/5 张图片:</div>
+                <div style="font-size: 13px; color: var(--muted);">已选择 {{ files.length }}/{{ maxFilesForMode }} 张图片:</div>
                 <button @click="clearAllFiles" class="btn secondary" style="font-size: 12px; padding: 4px 10px;">清空全部</button>
               </div>
               <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                 <div v-for="(file, index) in files" :key="index" style="position: relative; display: inline-block; padding: 6px 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 6px; font-size: 12px;">
-                  <span>{{ file.name }}</span>
+                  <span>{{ imageMode === 'first_last_frame' ? (index === 0 ? '首帧: ' : (index === 1 ? '尾帧: ' : '')) : '' }}{{ file.name }}</span>
                   <button @click="removeFile(index)" style="margin-left: 8px; background: transparent; border: none; color: #ef4444; cursor: pointer; font-weight: bold;">×</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 参考图上传（仅 first_last_with_ref 模式显示） -->
+          <div class="field" v-if="imageMode === 'first_last_with_ref'">
+            <label class="label">上传参考图 (0-3张，用于风格参考)</label>
+            <input class="input" type="file" accept="image/*" multiple @change="onReferenceFile" />
+            <div class="muted" style="margin-top:6px; color: var(--muted);">参考图用于控制视频风格，可选</div>
+            <div v-if="referenceFiles.length > 0" style="margin-top: 10px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <div style="font-size: 13px; color: var(--muted);">已选择 {{ referenceFiles.length }}/3 张参考图:</div>
+                <button @click="clearAllReferenceFiles" class="btn secondary" style="font-size: 12px; padding: 4px 10px;">清空全部</button>
+              </div>
+              <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                <div v-for="(file, index) in referenceFiles" :key="'ref-'+index" style="position: relative; display: inline-block; padding: 6px 12px; background: #1a2530; border: 1px solid #3b82f6; border-radius: 6px; font-size: 12px;">
+                  <span style="color: #60a5fa;">参考{{ index + 1 }}: {{ file.name }}</span>
+                  <button @click="removeReferenceFile(index)" style="margin-left: 8px; background: transparent; border: none; color: #ef4444; cursor: pointer; font-weight: bold;">×</button>
                 </div>
               </div>
             </div>
@@ -3919,9 +4072,12 @@
             <label class="label">视频模型</label>
             <select class="input" v-model="videoModel">
               <option v-for="opt in videoModelOptions" :key="opt.value" :value="opt.value" :disabled="opt.disabled">
-                {{ opt.label }}
+                {{ opt.label }}{{ !opt.supportsMode ? ' (不支持当前模式)' : '' }}
               </option>
             </select>
+            <div class="muted" v-if="videoModelOptions.filter(o => o.supportsMode).length === 0" style="margin-top:6px; color: #fca5a5;">
+              ⚠️ 当前没有模型支持所选的图片模式
+            </div>
           </div>
 
           <div class="field" v-if="videoModel !== 'vidu'">

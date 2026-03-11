@@ -3,7 +3,7 @@ Kling 多米供应商 v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
-from .base_video_driver import BaseVideoDriver
+from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
@@ -162,6 +162,11 @@ class KlingDuomiV1Driver(BaseVideoDriver):
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         构建创建 Kling 任务的完整请求参数
+        
+        支持三种图片模式：
+        - first_last_frame: 首尾帧模式（使用首帧图片）
+        - multi_reference: 多参考图模式（暂不支持，使用第一张参考图）
+        - first_last_with_ref: 首尾帧+参考图模式（暂不支持，仅使用首帧）
 
         Args:
             ai_tool: AITool 对象
@@ -172,9 +177,39 @@ class KlingDuomiV1Driver(BaseVideoDriver):
         # 根据时长确定模式
         mode = "std" if ai_tool.duration == 5 else "pro"
 
+        # 解析图片模式
+        image_info = self.get_all_images_by_mode(ai_tool)
+        img_mode = image_info['mode']
+        first_frame = image_info['first_frame']
+        last_frame = image_info['last_frame']
+        reference_images = image_info['reference_images']
+        
+        self.logger.info(f"Kling 驱动图片模式: {img_mode}, 首帧: {first_frame}, 参考图: {len(reference_images)}张")
+        
+        # 根据模式获取图片
+        image_path = None
+        if img_mode == ImageMode.FIRST_LAST_FRAME:
+            # 首尾帧模式：仅使用首帧
+            image_path = first_frame
+            if last_frame:
+                self.logger.warning(f"Kling 不支持尾帧，已忽略尾帧")
+        elif img_mode == ImageMode.MULTI_REFERENCE:
+            # 多参考图模式：使用第一张参考图
+            if reference_images:
+                image_path = reference_images[0]
+                if len(reference_images) > 1:
+                    self.logger.warning(f"Kling 不支持多参考图模式，仅使用第一张参考图")
+        elif img_mode == ImageMode.FIRST_LAST_WITH_REF:
+            # 首尾帧+参考图模式：仅使用首帧，忽略尾帧和参考图
+            image_path = first_frame
+            if last_frame or reference_images:
+                self.logger.warning(f"Kling 不支持尾帧和参考图，仅使用首帧")
+        
+        if not image_path:
+            raise ValueError("Kling 任务需要至少1张图片")
+
         # 处理图片路径 - 如果是本地环境，上传到图床
-        image_path = ai_tool.image_path
-        if self._is_local and image_path:
+        if self._is_local:
             self.logger.info(f"本地环境检测到图片路径，准备上传到图床: {image_path}")
             cdn_urls = upload_local_images_to_cdn_sync([image_path], self._config)
             self.logger.info(f"图片上传完成，CDN链接: {cdn_urls}")

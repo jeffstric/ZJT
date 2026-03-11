@@ -3,9 +3,10 @@ VEO3 多米供应商 v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
-from .base_video_driver import BaseVideoDriver
+from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
 
 class Veo3DuomiV1Driver(BaseVideoDriver):
@@ -134,6 +135,11 @@ class Veo3DuomiV1Driver(BaseVideoDriver):
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         构建创建 VEO3 任务的完整请求参数
+        
+        支持三种图片模式：
+        - first_last_frame: 首尾帧模式，generation_type="FIRST&LAST"
+        - multi_reference: 多参考图模式，使用 REFERENCE 模式（最多3张，仅支持16:9）
+        - first_last_with_ref: 首尾帧+参考图模式，优先使用首尾帧
 
         Args:
             ai_tool: AITool 对象
@@ -141,13 +147,68 @@ class Veo3DuomiV1Driver(BaseVideoDriver):
         Returns:
             Dict[str, Any]: 请求参数字典
         """
+        # 解析图片模式
+        image_info = self.get_all_images_by_mode(ai_tool)
+        mode = image_info['mode']
+        first_frame = image_info['first_frame']
+        last_frame = image_info['last_frame']
+        reference_images = image_info['reference_images']
+        
+        self.logger.info(f"VEO3 驱动图片模式: {mode}, 首帧: {first_frame}, 尾帧: {last_frame}, 参考图: {len(reference_images)}张")
+        
+        # 根据模式构建图片列表和 generation_type
+        image_urls = []
+        generation_type = "FIRST&LAST"  # 默认首尾帧模式
+        
+        if mode == ImageMode.FIRST_LAST_FRAME:
+            # 首尾帧模式：FIRST&LAST，可传入1~2张图像
+            if first_frame:
+                image_urls.append(first_frame)
+            if last_frame:
+                image_urls.append(last_frame)
+            generation_type = "FIRST&LAST"
+        elif mode == ImageMode.MULTI_REFERENCE:
+            # 多参考图模式：使用 REFERENCE 模式，最多3张图像，仅支持16:9
+            if reference_images:
+                image_urls = reference_images[:3]  # 最多3张
+                if len(reference_images) > 3:
+                    self.logger.warning(f"VEO3 REFERENCE 模式最多支持3张参考图，已截取前3张")
+            generation_type = "REFERENCE"
+        elif mode == ImageMode.FIRST_LAST_WITH_REF:
+            # 首尾帧+参考图模式：VEO3 不支持同时使用，优先使用首尾帧
+            if first_frame or last_frame:
+                # 有首尾帧时，使用 FIRST&LAST 模式
+                if first_frame:
+                    image_urls.append(first_frame)
+                if last_frame:
+                    image_urls.append(last_frame)
+                if reference_images:
+                    self.logger.warning(f"VEO3 不支持同时使用首尾帧和参考图，已使用首尾帧模式，忽略 {len(reference_images)} 张参考图")
+                generation_type = "FIRST&LAST"
+            elif reference_images:
+                # 无首尾帧但有参考图时，使用 REFERENCE 模式
+                image_urls = reference_images[:3]
+                generation_type = "REFERENCE"
+        
+        # 如果没有图片，抛出错误
+        if not image_urls:
+            raise ValueError("VEO3 任务需要至少1张图片")
+        
+        # 如果是本地环境，将本地图片上传到图床
+        if self._is_local and image_urls:
+            self.logger.info(f"本地环境检测到图片路径，准备上传到图床: {image_urls}")
+            cdn_urls = upload_local_images_to_cdn_sync(image_urls, self._config)
+            self.logger.info(f"图片上传完成，CDN链接: {cdn_urls}")
+            if cdn_urls:
+                image_urls = cdn_urls
+        
         payload = {
             "model": "veo3.1-fast",
             "prompt": ai_tool.prompt,
             "aspect_ratio": ai_tool.ratio or "9:16",
             "duration": 8,  # VEO3 固定8秒
-            "image_urls": [ai_tool.image_path],
-            "generation_type": "FIRST&LAST"
+            "image_urls": image_urls,
+            "generation_type": generation_type
         }
 
         return {

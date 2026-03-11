@@ -275,6 +275,13 @@ def register_all_drivers():
         logger.warning(f"Failed to import ViduDefaultDriver: {e}")
 
     try:
+        from .vidu_q2_driver import ViduQ2Driver
+        # 注册 Vidu Q2 驱动
+        VideoDriverFactory.register_driver(DriverImplementation.VIDU_Q2, ViduQ2Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import ViduQ2Driver: {e}")
+
+    try:
         from .seedream_volcengine_v1_driver import Seedream5VolcengineV1Driver
         # 注册 Seedream 5.0 火山引擎 v1 版本
         VideoDriverFactory.register_driver(DriverImplementation.SEEDREAM5_VOLCENGINE_V1, Seedream5VolcengineV1Driver)

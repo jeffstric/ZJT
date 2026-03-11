@@ -34,6 +34,7 @@ class AITool:
         self.image_size = kwargs.get('image_size')
         self.completed_time = kwargs.get('completed_time')
         self.extra_config = kwargs.get('extra_config')
+        self.reference_images = kwargs.get('reference_images')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -54,7 +55,8 @@ class AITool:
             'message': self.message,
             'image_size': self.image_size,
             'completed_time': self.completed_time.isoformat() if self.completed_time else None,
-            'extra_config': self.extra_config
+            'extra_config': self.extra_config,
+            'reference_images': self.reference_images
         }
 
 
@@ -76,7 +78,8 @@ class AIToolsModel:
         message: Optional[str] = None,
         image_size: Optional[str] = None,
         completed_time: Optional[datetime] = None,
-        extra_config: Optional[str] = None
+        extra_config: Optional[str] = None,
+        reference_images: Optional[str] = None
     ) -> int:
         """
         Create a new AI tool record
@@ -85,7 +88,7 @@ class AIToolsModel:
             prompt: Prompt text
             user_id: User ID
             type: Type (1-图片编辑, 2-AI视频生成, 3-图片生成视频, 4-图片高清)
-            image_path: Image path (optional)
+            image_path: Image path for first/last frames (optional)
             duration: Video duration (optional)
             ratio: Video ratio (9:16, 16:9, 1:1, 3:4, 4:3)
             project_id: Project ID (optional)
@@ -95,17 +98,18 @@ class AIToolsModel:
             message: Error message (optional)
             image_size: Image size (1K, 2K, 4K) (optional)
             completed_time: Completion time (optional)
-            extra_config: Extra configuration in JSON format (optional)
+            extra_config: Extra configuration in JSON format, includes image_mode (optional)
+            reference_images: Reference images as JSON array string (optional)
         
         Returns:
             Inserted record ID
         """
         sql = """
             INSERT INTO ai_tools 
-            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config, reference_images)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config)
+        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config, reference_images)
         
         try:
             record_id = execute_insert(sql, params)
@@ -282,7 +286,7 @@ class AIToolsModel:
         # Build update fields
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config'
+            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images'
         ]
         
         update_fields = []
@@ -325,7 +329,7 @@ class AIToolsModel:
         """
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config'
+            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images'
         ]
         
         update_fields = []

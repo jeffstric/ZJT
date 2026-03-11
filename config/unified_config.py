@@ -35,6 +35,15 @@ class TaskCategory:
     OTHER = 'other'                     # 其他
 
 
+class ImageMode:
+    """图片输入模式常量（用于图生视频任务）"""
+    FIRST_LAST_FRAME = 'first_last_frame'     # 首尾帧模式
+    MULTI_REFERENCE = 'multi_reference'       # 多参考图模式
+    FIRST_LAST_WITH_REF = 'first_last_with_ref'  # 首尾帧+参考图模式
+    
+    ALL_MODES = [FIRST_LAST_FRAME, MULTI_REFERENCE, FIRST_LAST_WITH_REF]
+
+
 class TaskProvider:
     """任务供应商常量"""
     DUOMI = 'duomi'           # 多米供应商
@@ -85,6 +94,8 @@ class UnifiedTaskConfig:
     enabled: bool = True
     sort_order: int = 0
     categories: List[str] = field(default_factory=list)  # 额外分类列表
+    supported_image_modes: List[str] = field(default_factory=lambda: ['first_last_frame'])  # 支持的图片模式（图生视频任务）
+    default_image_mode: str = 'first_last_frame'  # 默认图片模式
     
     def get_computing_power(self, duration: Optional[int] = None) -> int:
         """
@@ -131,6 +142,11 @@ class UnifiedTaskConfig:
             result['default_duration'] = self.default_duration or (
                 self.supported_durations[0] if self.supported_durations else None
             )
+        
+        # 图生视频任务添加图片模式配置
+        if self.category == TaskCategory.IMAGE_TO_VIDEO:
+            result['supported_image_modes'] = self.supported_image_modes
+            result['default_image_mode'] = self.default_image_mode
             
         return result
 
@@ -317,6 +333,7 @@ class DriverImplementation:
     
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
+    VIDU_Q2 = 'vidu_q2'
     
     # Seedream 5.0
     SEEDREAM5_VOLCENGINE_V1 = 'seedream5_volcengine_v1'
@@ -347,6 +364,7 @@ class DriverKey:
     
     # Vidu 相关
     VIDU_IMAGE_TO_VIDEO = 'vidu_image_to_video'
+    VIDU_Q2_IMAGE_TO_VIDEO = 'vidu_q2_image_to_video'
     
     # 数字人
     DIGITAL_HUMAN = 'digital_human'
@@ -375,6 +393,7 @@ class TaskTypeId:
     KLING_IMAGE_TO_VIDEO = 12           # 可灵图生视频
     VIDU_IMAGE_TO_VIDEO = 14            # Vidu 图生视频
     VEO3_IMAGE_TO_VIDEO = 15            # VEO3.1 图生视频
+    VIDU_Q2_IMAGE_TO_VIDEO = 19         # Vidu Q2 图生视频
     
     # 图片/视频 增强
     IMAGE_ENHANCE = 4                   # 图片高清放大
@@ -506,6 +525,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=5,
         sort_order=30,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SORA2_IMAGE_TO_VIDEO,
@@ -521,6 +541,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=10,
         sort_order=31,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.LTX2_IMAGE_TO_VIDEO,
@@ -536,6 +557,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=5,
         sort_order=32,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.KLING_IMAGE_TO_VIDEO,
@@ -551,6 +573,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=5,
         sort_order=33,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VIDU_IMAGE_TO_VIDEO,
@@ -566,6 +589,23 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=5,
         sort_order=34,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧（1-2张图片）
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.VIDU_Q2_IMAGE_TO_VIDEO,
+        key='vidu_q2_image_to_video',
+        name='图片生成视频 (Vidu-Q2)',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.VIDU,
+        driver_name=DriverKey.VIDU_Q2_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.VIDU_Q2,
+        computing_power={5: 45, 8: 60},
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 8],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=36,
+        supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 仅支持参考图模式
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VEO3_IMAGE_TO_VIDEO,
@@ -581,6 +621,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=8,
         sort_order=35,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME,ImageMode.MULTI_REFERENCE],  # 支持首尾帧
     ),
     
     # ==================== 数字人 ====================

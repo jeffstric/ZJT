@@ -1,5 +1,6 @@
 """
-Vidu 默认驱动实现
+Vidu Q2 驱动实现
+使用 viduq2 模型
 """
 from typing import Dict, Any, Optional
 import traceback
@@ -9,14 +10,14 @@ from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
 
-class ViduDefaultDriver(BaseVideoDriver):
+class ViduQ2Driver(BaseVideoDriver):
     """
-    Vidu 默认驱动
-    支持图生视频
+    Vidu Q2 驱动
+    使用 viduq2 模型进行图生视频
     """
 
     def __init__(self):
-        super().__init__(driver_name="vidu_default", driver_type=14)
+        super().__init__(driver_name="vidu_q2", driver_type=14)
 
         # 加载配置
         self._api_key = get_dynamic_config_value("vidu", "token", default="")
@@ -61,7 +62,7 @@ class ViduDefaultDriver(BaseVideoDriver):
         {
             "task_id": "task_123456789",
             "state": "created",  # created, queueing, processing, success, failed
-            "model": "Vidu3.1-图生视频-720p",
+            "model": "viduq2",
             "credits": 4,
             ...
         }
@@ -135,12 +136,9 @@ class ViduDefaultDriver(BaseVideoDriver):
 
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
-        构建创建 Vidu 任务的完整请求参数
+        构建创建 Vidu Q2 任务的完整请求参数
         
-        支持三种图片模式：
-        - first_last_frame: 首尾帧模式（1-2张图片）
-        - multi_reference: 多参考图模式（暂不支持，回退到单图模式）
-        - first_last_with_ref: 首尾帧+参考图模式（暂不支持，仅使用首尾帧）
+        仅支持参考图生视频模式 (reference2video)
 
         Args:
             ai_tool: AITool 对象
@@ -148,36 +146,25 @@ class ViduDefaultDriver(BaseVideoDriver):
         Returns:
             Dict[str, Any]: 请求参数字典
         """
-        # 解析图片模式
+        # 解析图片模式，收集所有图片
         image_info = self.get_all_images_by_mode(ai_tool)
-        mode = image_info['mode']
         first_frame = image_info['first_frame']
         last_frame = image_info['last_frame']
         reference_images = image_info['reference_images']
         
-        self.logger.info(f"Vidu 驱动图片模式: {mode}, 首帧: {first_frame}, 尾帧: {last_frame}, 参考图: {len(reference_images)}张")
-        
-        # 根据模式构建图片列表
+        # 收集所有可用图片作为参考图
         image_urls = []
-        if mode == ImageMode.FIRST_LAST_FRAME:
-            # 首尾帧模式：使用 image_path 中的图片
-            if first_frame:
-                image_urls.append(first_frame)
-            if last_frame:
-                image_urls.append(last_frame)
-        elif mode == ImageMode.MULTI_REFERENCE:
-            # 多参考图模式：Vidu 暂不支持，使用第一张参考图作为单图
-            if reference_images:
-                image_urls = [reference_images[0]]
-                self.logger.warning(f"Vidu 不支持多参考图模式，仅使用第一张参考图")
-        elif mode == ImageMode.FIRST_LAST_WITH_REF:
-            # 首尾帧+参考图模式：Vidu 暂不支持参考图，仅使用首尾帧
-            if first_frame:
-                image_urls.append(first_frame)
-            if last_frame:
-                image_urls.append(last_frame)
-            if reference_images:
-                self.logger.warning(f"Vidu 不支持参考图，已忽略 {len(reference_images)} 张参考图")
+        if first_frame:
+            image_urls.append(first_frame)
+        if last_frame:
+            image_urls.append(last_frame)
+        if reference_images:
+            image_urls.extend(reference_images)
+        
+        self.logger.info(f"Vidu Q2 驱动参考图模式，图片数量: {len(image_urls)}")
+        
+        if not image_urls:
+            raise ValueError("Vidu Q2 任务需要至少1张参考图")
 
         # 如果是本地环境，将本地图片上传到图床
         if self._is_local and image_urls:
@@ -185,38 +172,31 @@ class ViduDefaultDriver(BaseVideoDriver):
             image_urls = upload_local_images_to_cdn_sync(image_urls, self._config)
             self.logger.info(f"图片上传完成，CDN链接: {image_urls}")
 
-        if len(image_urls) == 2:
-            # 两张图片：首尾图生视频
-            url = f"{self._base_url}/ent/v2/start-end2video"
-            payload = {
-                "model": "viduq2-pro-fast",
-                "images": [image_urls[0], image_urls[1]],
-                "prompt": ai_tool.prompt,
-                "duration": str(ai_tool.duration or 5),
-                "seed": "0",
-                "resolution": "720p",
-                "movement_amplitude": "auto"
+        # 构建 subjects 数组，所有图片作为一个 subject
+        subject_id = "subject1"
+        subjects = [
+            {
+                "id": subject_id,
+                "images": image_urls,
+                "voice_id": ""
             }
-        elif len(image_urls) == 1:
-            # 一张图片：单图生视频
-            url = f"{self._base_url}/ent/v2/img2video"
-            payload = {
-                "model": "viduq2-pro-fast",
-                "images": [image_urls[0]],
-                "prompt": ai_tool.prompt,
-                "audio": True,
-                "voice_id": "professional_host",
-                "duration": ai_tool.duration or 5,
-                "seed": 0,
-                "resolution": "720p",
-                "movement_amplitude": "auto",
-                "off_peak": False
-            }
-        else:
-            raise ValueError(f"图片数量错误，需要1张或2张图片，实际: {len(image_urls)}张")
+        ]
+        
+        # 在 prompt 前添加 subject 引用
+        prompt = ai_tool.prompt or ""
+        if not prompt.startswith(f"@{subject_id}"):
+            prompt = f"@{subject_id} {prompt}"
+
+        payload = {
+            "model": "viduq2",
+            "subjects": subjects,
+            "prompt": prompt,
+            "duration": ai_tool.duration or 8,
+            "audio": True
+        }
 
         return {
-            "url": url,
+            "url": f"{self._base_url}/ent/v2/reference2video",
             "method": "POST",
             "json": payload,
             "headers": {
@@ -227,7 +207,7 @@ class ViduDefaultDriver(BaseVideoDriver):
 
     def build_check_query(self, project_id: str) -> Dict[str, Any]:
         """
-        构建查询 Vidu 任务状态的完整请求参数
+        构建查询 Vidu Q2 任务状态的完整请求参数
 
         Args:
             project_id: 任务ID
@@ -247,21 +227,30 @@ class ViduDefaultDriver(BaseVideoDriver):
 
     def submit_task(self, ai_tool) -> Dict[str, Any]:
         """
-        提交 Vidu 视频生成任务
+        提交 Vidu Q2 视频生成任务
 
         Args:
             ai_tool: AITool 对象
                 - prompt: 提示词
-                - image_path: 图片路径（单张或两张图片，用逗号分隔）
+                - reference_images: 参考图路径
                 - duration: 视频时长 (5, 8)
 
         Returns:
             Dict[str, Any]: 提交结果
         """
         try:
-            # 解析图片路径进行验证
+            # 解析图片路径进行验证（优先使用 reference_images，其次使用 image_path）
             image_urls = []
-            if ai_tool.image_path:
+            
+            # 检查 reference_images 字段
+            if hasattr(ai_tool, 'reference_images') and ai_tool.reference_images:
+                if isinstance(ai_tool.reference_images, str):
+                    image_urls = [url.strip() for url in ai_tool.reference_images.split(',') if url.strip()]
+                else:
+                    image_urls = ai_tool.reference_images
+            
+            # 如果 reference_images 为空，尝试使用 image_path
+            if not image_urls and ai_tool.image_path:
                 if isinstance(ai_tool.image_path, str):
                     image_urls = [url.strip() for url in ai_tool.image_path.split(',') if url.strip()]
                 else:
@@ -270,12 +259,12 @@ class ViduDefaultDriver(BaseVideoDriver):
             if not image_urls:
                 return {
                     "success": False,
-                    "error": "缺少图片路径",
+                    "error": "缺少参考图片",
                     "error_type": "USER",
                     "retry": False
                 }
 
-            self.logger.info(f"Submitting Vidu task: prompt='{ai_tool.prompt[:50]}...', duration={ai_tool.duration}, images={len(image_urls)}")
+            self.logger.info(f"Submitting Vidu Q2 task: prompt='{ai_tool.prompt[:50]}...', duration={ai_tool.duration}, images={len(image_urls)}")
 
             # 构建请求参数
             try:
@@ -293,7 +282,7 @@ class ViduDefaultDriver(BaseVideoDriver):
                 result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
-                self.logger.warning(f"Network error during Vidu task submission: {str(network_error)}")
+                self.logger.warning(f"Network error during Vidu Q2 task submission: {str(network_error)}")
                 return {
                     "success": False,
                     "error": "网络连接异常，请稍后重试",
@@ -301,7 +290,7 @@ class ViduDefaultDriver(BaseVideoDriver):
                     "retry": True
                 }
 
-            self.logger.info(f"Vidu API response: {result}")
+            self.logger.info(f"Vidu Q2 API response: {result}")
 
             # 验证响应格式
             is_valid, validation_error = self._validate_submit_response(result)
@@ -309,9 +298,9 @@ class ViduDefaultDriver(BaseVideoDriver):
                 # 格式错误，发送报警，不重试
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message=f"Vidu submit_task 响应格式错误: {validation_error}",
+                    message=f"Vidu Q2 submit_task 响应格式错误: {validation_error}",
                     context={
-                        "api": "create_vidu_image_to_video",
+                        "api": "create_vidu_q2_image_to_video",
                         "response": result,
                         "ai_tool_id": ai_tool.id
                     }
@@ -327,7 +316,7 @@ class ViduDefaultDriver(BaseVideoDriver):
             # 检查业务错误
             if "error" in result:
                 error_msg = result.get("error", "未知错误")
-                self.logger.warning(f"Vidu API returned error: {error_msg}")
+                self.logger.warning(f"Vidu Q2 API returned error: {error_msg}")
                 return {
                     "success": False,
                     "error": f"任务提交失败: {error_msg}",
@@ -340,9 +329,9 @@ class ViduDefaultDriver(BaseVideoDriver):
                 # task_id 已在 _validate_submit_response 中验证，这里理论上不会发生
                 self._send_alert(
                     alert_type="MISSING_TASK_ID",
-                    message="Vidu submit_task 响应缺少 task_id",
+                    message="Vidu Q2 submit_task 响应缺少 task_id",
                     context={
-                        "api": "create_vidu_image_to_video",
+                        "api": "create_vidu_q2_image_to_video",
                         "response": result,
                         "ai_tool_id": ai_tool.id
                     }
@@ -351,7 +340,7 @@ class ViduDefaultDriver(BaseVideoDriver):
                     "success": False,
                     "error": "服务异常，请联系技术支持",
                     "error_type": "SYSTEM",
-                    "error_detail": "Vidu API未返回任务ID",
+                    "error_detail": "Vidu Q2 API未返回任务ID",
                     "retry": False
                 }
 
@@ -362,12 +351,12 @@ class ViduDefaultDriver(BaseVideoDriver):
 
         except Exception as e:
             # 非网络异常，发送报警，不重试
-            self.logger.error(f"Unexpected exception in Vidu submit_task: {str(e)}")
+            self.logger.error(f"Unexpected exception in Vidu Q2 submit_task: {str(e)}")
             self.logger.error(traceback.format_exc())
 
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",
-                message=f"Vidu submit_task 发生未预期异常: {str(e)}",
+                message=f"Vidu Q2 submit_task 发生未预期异常: {str(e)}",
                 context={
                     "exception": str(e),
                     "traceback": traceback.format_exc(),
@@ -385,7 +374,7 @@ class ViduDefaultDriver(BaseVideoDriver):
 
     def check_status(self, project_id: str) -> Dict[str, Any]:
         """
-        检查 Vidu 任务状态
+        检查 Vidu Q2 任务状态
 
         Args:
             project_id: 任务ID
@@ -394,7 +383,7 @@ class ViduDefaultDriver(BaseVideoDriver):
             Dict[str, Any]: 状态检查结果
         """
         try:
-            self.logger.info(f"Checking Vidu task status: project_id={project_id}")
+            self.logger.info(f"Checking Vidu Q2 task status: project_id={project_id}")
 
             # 构建请求参数并调用统一请求方法
             request_params = self.build_check_query(project_id)
@@ -403,14 +392,14 @@ class ViduDefaultDriver(BaseVideoDriver):
                 result = self._request(**request_params)
             except (ConnectionError, TimeoutError) as network_error:
                 # 网络异常，允许重试
-                self.logger.warning(f"Network error during Vidu status check: {str(network_error)}")
+                self.logger.warning(f"Network error during Vidu Q2 status check: {str(network_error)}")
                 return {
                     "status": "RUNNING",
                     "message": "网络连接异常，稍后将重试"
                 }
 
             
-            self.logger.info(f"Vidu status API response: {result}")
+            self.logger.info(f"Vidu Q2 status API response: {result}")
             
             # 验证响应格式
             is_valid, validation_error = self._validate_status_response(result)
@@ -418,9 +407,9 @@ class ViduDefaultDriver(BaseVideoDriver):
                 # 格式错误，发送报警
                 self._send_alert(
                     alert_type="INVALID_RESPONSE_FORMAT",
-                    message=f"Vidu check_status 响应格式错误: {validation_error}",
+                    message=f"Vidu Q2 check_status 响应格式错误: {validation_error}",
                     context={
-                        "api": "get_vidu_task_status",
+                        "api": "get_vidu_q2_task_status",
                         "response": result,
                         "project_id": project_id
                     }
@@ -435,7 +424,7 @@ class ViduDefaultDriver(BaseVideoDriver):
             # 检查业务错误
             if "error" in result:
                 error_msg = result.get("error", "未知错误")
-                self.logger.warning(f"Vidu status API returned error: {error_msg}")
+                self.logger.warning(f"Vidu Q2 status API returned error: {error_msg}")
                 return {
                     "status": "FAILED",
                     "error": f"查询任务状态失败: {error_msg}",
@@ -474,7 +463,7 @@ class ViduDefaultDriver(BaseVideoDriver):
                 }
             else:
                 # 未知状态
-                self.logger.warning(f"Unknown Vidu task state: {task_state}")
+                self.logger.warning(f"Unknown Vidu Q2 task state: {task_state}")
                 return {
                     "status": "RUNNING",
                     "message": f"任务状态: {task_state}"
@@ -482,12 +471,12 @@ class ViduDefaultDriver(BaseVideoDriver):
                 
         except Exception as e:
             # 非网络异常，发送报警
-            self.logger.error(f"Unexpected exception in Vidu check_status: {str(e)}")
+            self.logger.error(f"Unexpected exception in Vidu Q2 check_status: {str(e)}")
             self.logger.error(traceback.format_exc())
             
             self._send_alert(
                 alert_type="UNEXPECTED_EXCEPTION",
-                message=f"Vidu check_status 发生未预期异常: {str(e)}",
+                message=f"Vidu Q2 check_status 发生未预期异常: {str(e)}",
                 context={
                     "exception": str(e),
                     "traceback": traceback.format_exc(),

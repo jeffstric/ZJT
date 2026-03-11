@@ -249,7 +249,10 @@
         default_ratio: task.default_ratio,
         default_image_size: task.default_size,  // 兼容前端字段名
         default_size: task.default_size,
-        default_duration: task.default_duration
+        default_duration: task.default_duration,
+        // 图片模式配置（图生视频任务）
+        supported_image_modes: task.supported_image_modes || ['first_last_frame'],
+        default_image_mode: task.default_image_mode || 'first_last_frame'
       };
     });
     return result;

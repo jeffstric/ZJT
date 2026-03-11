@@ -3,7 +3,7 @@ Sora2 多米供应商 v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
-from .base_video_driver import BaseVideoDriver
+from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
@@ -134,27 +134,62 @@ class Sora2DuomiV1Driver(BaseVideoDriver):
         """
         构建创建 Sora2 任务的完整请求参数
         
+        支持三种图片模式：
+        - first_last_frame: 首尾帧模式（使用首帧图片）
+        - multi_reference: 多参考图模式（暂不支持，使用第一张参考图）
+        - first_last_with_ref: 首尾帧+参考图模式（暂不支持，仅使用首帧）
+        
         Args:
             ai_tool: AITool 对象
         
         Returns:
             Dict[str, Any]: 请求参数字典
         """
+        # 解析图片模式
+        image_info = self.get_all_images_by_mode(ai_tool)
+        img_mode = image_info['mode']
+        first_frame = image_info['first_frame']
+        last_frame = image_info['last_frame']
+        reference_images = image_info['reference_images']
+        
+        self.logger.info(f"Sora2 驱动图片模式: {img_mode}, 首帧: {first_frame}, 尾帧: {last_frame}, 参考图: {len(reference_images)}张")
+        
+        # 根据模式获取图片
+        image_urls = []
+        if img_mode == ImageMode.FIRST_LAST_FRAME:
+            # 首尾帧模式：Sora2 当前仅支持单图，使用首帧
+            if first_frame:
+                image_urls = [first_frame]
+            if last_frame:
+                self.logger.warning(f"Sora2 当前仅支持单图，已忽略尾帧")
+        elif img_mode == ImageMode.MULTI_REFERENCE:
+            # 多参考图模式：使用第一张参考图
+            if reference_images:
+                image_urls = [reference_images[0]]
+                if len(reference_images) > 1:
+                    self.logger.warning(f"Sora2 不支持多参考图模式，仅使用第一张参考图")
+        elif img_mode == ImageMode.FIRST_LAST_WITH_REF:
+            # 首尾帧+参考图模式：仅使用首帧
+            if first_frame:
+                image_urls = [first_frame]
+            if last_frame or reference_images:
+                self.logger.warning(f"Sora2 不支持首尾帧+参考图模式，仅使用首帧")
+
+        # 如果是本地环境，将本地图片上传到图床
+        if self._is_local and image_urls:
+            self.logger.info(f"本地环境检测到图片路径，准备上传到图床: {image_urls}")
+            cdn_urls = upload_local_images_to_cdn_sync(image_urls, self._config)
+            self.logger.info(f"图片上传完成，CDN链接: {cdn_urls}")
+            if cdn_urls:
+                image_urls = cdn_urls
+        
         payload = {
             "model": "sora-2-temporary",
             "prompt": ai_tool.prompt,
             "aspect_ratio": ai_tool.ratio or "9:16",
             "duration": ai_tool.duration or 15,
-            "image_urls": [ai_tool.image_path]
+            "image_urls": image_urls if image_urls else []
         }
-
-        # 如果是本地环境，将本地图片上传到图床
-        if self._is_local and ai_tool.image_path:
-            self.logger.info(f"本地环境检测到图片路径，准备上传到图床: {ai_tool.image_path}")
-            cdn_urls = upload_local_images_to_cdn_sync([ai_tool.image_path], self._config)
-            self.logger.info(f"图片上传完成，CDN链接: {cdn_urls}")
-            if cdn_urls and cdn_urls[0]:
-                payload["image_urls"] = [cdn_urls[0]]
         
         return {
             "url": f"{self._base_url}/v1/videos/generations",

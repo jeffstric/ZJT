@@ -1472,19 +1472,28 @@ async def ai_app_run_image(
     prompt: str = Form(..., description="Text prompt for the AI app"),
     task_id: int = Form(..., description="Task type ID from task-configs API"),
     images: List[UploadFile] = File(None, description="Image files for the AI app (1-5 images)"),
+    reference_images: List[UploadFile] = File(None, description="Reference image files (for first_last_with_ref mode, 0-3 images)"),
     image_urls: str = Form(None, description="Comma-separated image URLs (alternative to uploading files)"),
     ratio: str = Form("9:16", description="Aspect ratio: 9:16, 16:9, 3:4, 1:1, 4:3"),
     duration_seconds: int = Form(5, description="Duration in seconds"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
-    auth_token: str = Form(None, description="Authentication token")
+    auth_token: str = Form(None, description="Authentication token"),
+    image_mode: str = Form("first_last_frame", description="Image mode: first_last_frame, multi_reference, first_last_with_ref"),
+    reference_image_urls: str = Form(None, description="Comma-separated reference image URLs (for multi_reference or first_last_with_ref mode)")
 ):
     """
     Submit image to video task.
     
-    Supports two image input modes:
-    1. Upload images: Provide 1-5 images via 'images' parameter (will be concatenated horizontally)
-    2. Use image URLs: Provide comma-separated URLs via 'image_urls' parameter
+    Supports three image modes:
+    1. first_last_frame (default): First image is start frame, second (if any) is end frame
+    2. multi_reference: All images act as reference images
+    3. first_last_with_ref: First image is start frame, last is end frame, middle images are references
+    
+    Image input options:
+    - Upload images via 'images' parameter
+    - Provide comma-separated URLs via 'image_urls' parameter
+    - For reference images, use 'reference_image_urls' parameter
     """
     try:
         # 通过 task_id 获取任务配置
@@ -1502,8 +1511,13 @@ async def ai_app_run_image(
         else:
             computing_power = task_config.computing_power if task_config else 0
         
+        # 验证 image_mode 参数
+        valid_image_modes = ['first_last_frame', 'multi_reference', 'first_last_with_ref']
+        if image_mode not in valid_image_modes:
+            raise HTTPException(status_code=400, detail=f"无效的 image_mode: {image_mode}，合法值: {valid_image_modes}")
+        
         # 记录输入的图片信息
-        logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}")
+        logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}")
         
         if image_urls:
             url_list = [url.strip() for url in image_urls.split(',') if url.strip()]
@@ -1517,46 +1531,65 @@ async def ai_app_run_image(
             logger.warning("No image input provided")
         
         
-        # Determine which mode: uploaded images or image URLs
+        # 根据 image_mode 处理图片
+        image_path = None  # 首尾帧图片
+        reference_images_json = None  # 参考图 JSON
+        
+        # 获取主图片列表（上传或URL）
+        main_image_list = []
         if image_urls:
-            # Mode 1: Use provided image URLs
-            url_list = [url.strip() for url in image_urls.split(',') if url.strip()]
-            if not url_list:
-                raise HTTPException(
-                    status_code=400,
-                    detail="At least one valid image URL is required"
-                )
-            if len(url_list) > 5:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Maximum 5 image URLs allowed"
-                )
-            # Use the first URL directly (or concatenate if multiple URLs provided)
-            if len(url_list) == 1:
-                image_url = url_list[0]
-            else:
-                # For multiple URLs, we use the first one for now
-                image_url = url_list[0]
-            # Vidu 需要多个 URL
-            if task_id == TaskTypeId.VIDU_IMAGE_TO_VIDEO:
-                image_url = image_urls
+            main_image_list = [url.strip() for url in image_urls.split(',') if url.strip()]
         elif images and len(images) > 0:
-            # Mode 2: Upload images
             if len(images) > 5:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Maximum 5 images allowed"
-                )
-            # If single image, save it directly; if multiple, concatenate them
-            if len(images) == 1:
-                image_url = await asyncio.to_thread(_save_uploaded_image, images[0])
-            else:
-                image_url = await asyncio.to_thread(_concatenate_images, images)
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="Either 'images' (uploaded files) or 'image_urls' (comma-separated URLs) must be provided"
-            )
+                raise HTTPException(status_code=400, detail="最多允许5张图片")
+            for img in images:
+                saved_url = await asyncio.to_thread(_save_uploaded_image, img)
+                main_image_list.append(saved_url)
+        
+        # 获取参考图列表
+        ref_image_list = []
+        if reference_image_urls:
+            ref_image_list = [url.strip() for url in reference_image_urls.split(',') if url.strip()]
+        elif reference_images and len(reference_images) > 0:
+            # 处理上传的参考图文件
+            if len(reference_images) > 3:
+                raise HTTPException(status_code=400, detail="参考图最多允许3张")
+            for ref_img in reference_images:
+                saved_url = await asyncio.to_thread(_save_uploaded_image, ref_img)
+                ref_image_list.append(saved_url)
+        
+        # 根据模式处理图片
+        if image_mode == 'first_last_frame':
+            # 首尾帧模式：所有图片存入 image_path
+            if not main_image_list:
+                raise HTTPException(status_code=400, detail="首尾帧模式需要至少1张图片")
+            if len(main_image_list) > 2:
+                raise HTTPException(status_code=400, detail="首尾帧模式最多支持2张图片（首帧和尾帧）")
+            image_path = ','.join(main_image_list)
+            
+        elif image_mode == 'multi_reference':
+            # 多参考图模式：所有图片存入 reference_images
+            all_refs = main_image_list + ref_image_list
+            if not all_refs:
+                raise HTTPException(status_code=400, detail="多参考图模式需要至少1张参考图")
+            reference_images_json = json.dumps(all_refs)
+            
+        elif image_mode == 'first_last_with_ref':
+            # 首尾帧+参考图模式
+            if len(main_image_list) < 2:
+                raise HTTPException(status_code=400, detail="首尾帧+参考图模式需要至少2张图片（首帧和尾帧）")
+            # 第一张和最后一张作为首尾帧
+            first_frame = main_image_list[0]
+            last_frame = main_image_list[-1]
+            image_path = f"{first_frame},{last_frame}"
+            # 中间的图片 + 额外参考图作为参考图
+            middle_refs = main_image_list[1:-1] if len(main_image_list) > 2 else []
+            all_refs = middle_refs + ref_image_list
+            if all_refs:
+                reference_images_json = json.dumps(all_refs)
+        
+        # 为了向后兼容，设置 image_url 用于日志和响应
+        image_url = image_path or (main_image_list[0] if main_image_list else None)
 
         # 记录最终使用的图片URL
         logger.info(f"Final image URL for processing: {image_url}")
@@ -1617,15 +1650,21 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
+                        # 构建 extra_config，包含 image_mode
+                        extra_config_data = {'image_mode': image_mode}
+                        extra_config_json = json.dumps(extra_config_data)
+                        
                         id = AIToolsModel.create(
                             prompt=prompt,
                             user_id=user_id,
                             type=image_to_video_type,
-                            image_path=image_url,
+                            image_path=image_path,
                             ratio=ratio,
                             duration=duration_seconds,
                             transaction_id=transaction_id,
-                            status=AI_TOOL_STATUS_PENDING
+                            status=AI_TOOL_STATUS_PENDING,
+                            extra_config=extra_config_json,
+                            reference_images=reference_images_json
                         )
                         TasksModel.create(
                             task_type=TASK_TYPE_GENERATE_VIDEO,
