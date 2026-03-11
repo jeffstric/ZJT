@@ -62,10 +62,10 @@
     }
 
     // 生成视频API调用
-    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel){
+    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages){
       // 测试模式：模拟API响应
       if(TEST_MODE){
-        console.log('[TEST MODE] 模拟生成视频API调用', { imageUrl, prompt, duration, count, ratio, videoModel });
+        console.log('[TEST MODE] 模拟生成视频API调用', { imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages });
         await new Promise(r => setTimeout(r, 500)); // 模拟网络延迟
         const mockIds = [];
         for(let i = 0; i < (count || 1); i++){
@@ -89,12 +89,20 @@
       const form = new FormData();
       
       // 直接使用image_urls，不需要重新上传
-      form.append('image_urls', imageUrl);
+      form.append('image_urls', imageUrl || '');
       form.append('prompt', prompt || '');
       form.append('ratio', ratio || '9:16');
       form.append('duration_seconds', duration || 5);
       form.append('count', count || 1);
       form.append('task_id', taskId);
+      
+      // 图片模式和参考图
+      if(imageMode){
+        form.append('image_mode', imageMode);
+      }
+      if(referenceImages){
+        form.append('reference_image_urls', referenceImages);
+      }
       
       if(userId){
         form.append('user_id', userId);

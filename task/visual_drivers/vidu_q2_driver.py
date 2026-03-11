@@ -4,7 +4,7 @@ Vidu Q2 驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
-from .base_video_driver import BaseVideoDriver, ImageMode
+from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync

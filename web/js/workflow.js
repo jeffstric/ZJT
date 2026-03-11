@@ -1094,6 +1094,9 @@
         node.data.drawCount = nodeData.data.drawCount || 1;
         node.data.motionLevel = nodeData.data.motionLevel || 5;
         node.data.useMotion = nodeData.data.useMotion || false;
+        // 恢复图片模式和参考图
+        node.data.imageMode = nodeData.data.imageMode || 'first_last_frame';
+        node.data.referenceUrls = nodeData.data.referenceUrls || [];
         
         // 更新DOM显示
         const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -1109,8 +1112,46 @@
           }
           
           // 先更新视频模型选择
+          // 根据图片模式筛选并填充视频模型选项
           const videoModelSelect = el.querySelector('.video-model-select');
-          if(videoModelSelect) videoModelSelect.value = node.data.videoModel;
+          if(videoModelSelect) {
+            const imageMode = node.data.imageMode || 'first_last_frame';
+            const savedVideoModel = node.data.videoModel;
+            videoModelSelect.innerHTML = '';
+            
+            if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+              const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+              let firstAvailable = null;
+              
+              options.forEach(opt => {
+                const config = modelConfigs[opt.value];
+                const supportedModes = config?.supported_image_modes || ['first_last_frame'];
+                const supportsCurrentMode = supportedModes.includes(imageMode);
+                
+                const optEl = document.createElement('option');
+                optEl.value = opt.value;
+                optEl.textContent = supportsCurrentMode ? opt.label : opt.label + ' (不支持当前模式)';
+                optEl.disabled = !supportsCurrentMode;
+                videoModelSelect.appendChild(optEl);
+                
+                if(supportsCurrentMode && !firstAvailable) {
+                  firstAvailable = opt.value;
+                }
+              });
+              
+              // 恢复之前的选择（如果仍然可用且支持当前模式）
+              const selectedOption = videoModelSelect.querySelector(`option[value="${savedVideoModel}"]:not([disabled])`);
+              if(selectedOption) {
+                videoModelSelect.value = savedVideoModel;
+              } else if(firstAvailable) {
+                videoModelSelect.value = firstAvailable;
+                node.data.videoModel = firstAvailable;
+              }
+            } else {
+              // 回退：直接设置保存的值
+              videoModelSelect.value = savedVideoModel;
+            }
+          }
           
           // 根据模型更新时长选项（从后端配置获取）
           const durationSelect = el.querySelector('.duration-select');
@@ -1205,6 +1246,15 @@
                 } else {
                   singlePower = viduPower || 0;
                 }
+              } else if(videoModel === 'vidu_q2') {
+                const viduQ2Power = config[19];
+                if(typeof viduQ2Power === 'object') {
+                  singlePower = viduQ2Power[duration] || viduQ2Power[5] || 0;
+                } else {
+                  singlePower = viduQ2Power || 0;
+                }
+              } else if(videoModel === 'veo3') {
+                singlePower = config[15] || 0;
               }
             }
             const count = node.data.drawCount || 1;
@@ -1237,6 +1287,67 @@
             }
             if(endPreviewRow) endPreviewRow.style.display = 'flex';
             if(endImagePort) endImagePort.classList.add('disabled');
+          }
+          
+          // 更新图片模式UI
+          const imageModeSelect = el.querySelector('.image-mode-select');
+          const imageModeHint = el.querySelector('.image-mode-hint');
+          const firstLastFields = el.querySelectorAll('.first-last-fields');
+          const referenceFields = el.querySelector('.reference-fields');
+          const startImagePort = el.querySelector('.start-image-port');
+          const endImagePort2 = el.querySelector('.end-image-port');
+          const referencePreviewList = el.querySelector('.reference-preview-list');
+          
+          const imageMode = node.data.imageMode || 'first_last_frame';
+          const imageModeHints = {
+            'first_last_frame': '第一张为首帧，第二张（可选）为尾帧',
+            'multi_reference': '所有图片作为风格参考'
+          };
+          
+          if(imageModeSelect) imageModeSelect.value = imageMode;
+          if(imageModeHint) imageModeHint.textContent = imageModeHints[imageMode] || '';
+          
+          // 显示/隐藏对应的上传区域
+          firstLastFields.forEach(field => {
+            field.style.display = imageMode === 'first_last_frame' ? '' : 'none';
+          });
+          if(referenceFields) referenceFields.style.display = imageMode === 'multi_reference' ? '' : 'none';
+          
+          // 显示/隐藏端口
+          if(startImagePort) startImagePort.style.display = imageMode === 'first_last_frame' ? '' : 'none';
+          if(endImagePort2) endImagePort2.style.display = imageMode === 'first_last_frame' ? '' : 'none';
+          
+          // 渲染参考图预览
+          if(referencePreviewList && node.data.referenceUrls && node.data.referenceUrls.length > 0) {
+            referencePreviewList.innerHTML = '';
+            node.data.referenceUrls.forEach((url, idx) => {
+              const item = document.createElement('div');
+              item.style.cssText = 'position: relative; width: 50px; height: 50px;';
+              item.innerHTML = `
+                <img src="${url}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: pointer;" />
+                <button class="ref-remove-btn" data-idx="${idx}" style="position: absolute; top: -4px; right: -4px; width: 16px; height: 16px; border-radius: 50%; background: #ef4444; border: none; color: white; font-size: 10px; cursor: pointer; line-height: 1;">×</button>
+              `;
+              item.querySelector('img').addEventListener('click', (e) => {
+                e.stopPropagation();
+                openImageModal(url, `参考图 ${idx + 1}`);
+              });
+              item.querySelector('.ref-remove-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                node.data.referenceUrls.splice(idx, 1);
+                // 重新渲染
+                const newList = el.querySelector('.reference-preview-list');
+                if(newList) {
+                  newList.innerHTML = '';
+                  node.data.referenceUrls.forEach((u, i) => {
+                    const newItem = document.createElement('div');
+                    newItem.style.cssText = 'position: relative; width: 50px; height: 50px;';
+                    newItem.innerHTML = `<img src="${u}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px;" />`;
+                    newList.appendChild(newItem);
+                  });
+                }
+              });
+              referencePreviewList.appendChild(item);
+            });
           }
         }
       }
