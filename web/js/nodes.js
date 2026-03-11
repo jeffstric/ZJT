@@ -1307,7 +1307,7 @@
             shotGroupModelEl.innerHTML = `
               <option value="gemini" ${node.data.model === 'gemini' ? 'selected' : ''}>标准版</option>
               <option value="gemini_pro" ${node.data.model === 'gemini_pro' ? 'selected' : ''}>加强版</option>
-              <option value="seedream" ${node.data.model === 'seedream' ? 'selected' : ''}>Seedream 5.0</option>
+              <option value="seedream-5.0" ${node.data.model === 'seedream-5.0' ? 'selected' : ''}>Seedream 5.0</option>
             `;
           }
           // 如果没有设置默认值，使用后端配置的第一个选项
@@ -3905,7 +3905,7 @@
           const fallbackOptions = [
             { value: 'gemini', label: '标准版 (2算力)' },
             { value: 'gemini_pro', label: '加强版 (6算力)' },
-            { value: 'seedream', label: 'Seedream 5.0 (6算力)' }
+            { value: 'seedream-5.0', label: 'Seedream 5.0 (6算力)' }
           ];
           fallbackOptions.forEach(opt => {
             const optEl = document.createElement('option');
@@ -4722,7 +4722,7 @@
           gridModelSelect.innerHTML += `
             <option value="gemini">标准版 (4宫格)</option>
             <option value="gemini_pro">加强版 (9宫格)</option>
-            <option value="seedream">Seedream 5.0</option>
+            <option value="seedream-5.0">Seedream 5.0</option>
           `;
         }
       }
@@ -6438,7 +6438,7 @@
           shotGroupModelEl.innerHTML = `
             <option value="gemini">标准版</option>
             <option value="gemini_pro">加强版</option>
-            <option value="seedream">Seedream 5.0</option>
+            <option value="seedream-5.0">Seedream 5.0</option>
           `;
         }
         if(!node.data.model) node.data.model = firstShotGroupModelValue;
@@ -6461,7 +6461,7 @@
           gridModelSelect.innerHTML += `
             <option value="gemini">标准版 (4宫格)</option>
             <option value="gemini_pro">加强版 (9宫格)</option>
-            <option value="seedream">Seedream 5.0</option>
+            <option value="seedream-5.0">Seedream 5.0</option>
           `;
         }
       }
@@ -6472,6 +6472,8 @@
       }
       if(gridModelSelect){
         gridModelSelect.value = node.data.gridModel;
+        // 应用驱动状态禁用未配置的宫格生图模型选项
+        applyDriverStatusToSelect(gridModelSelect);
         gridModelSelect.addEventListener('change', () => {
           node.data.gridModel = gridModelSelect.value;
         });
@@ -7441,7 +7443,7 @@
           modelEl.innerHTML = `
             <option value="gemini">标准版 (2算力)</option>
             <option value="gemini_pro">加强版 (6算力)</option>
-            <option value="seedream">Seedream 5.0 (6算力)</option>
+            <option value="seedream-5.0">Seedream 5.0 (6算力)</option>
           `;
         }
         modelEl.value = node.data.model || firstImageModelValue;
