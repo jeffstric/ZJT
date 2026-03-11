@@ -862,7 +862,7 @@ JSON格式示例：
             model=model,
             messages=messages,
             temperature=temperature,
-            max_tokens=16000,
+            max_tokens=65536,
             auth_token=auth_token,
             vendor_id=vendor_id,
             model_id=model_id
