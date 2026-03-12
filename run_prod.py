@@ -100,7 +100,7 @@ def main():
         # Linux/macOS 使用 gunicorn（性能更好）
         print(f"[Manager] Starting gunicorn on port {port}...")
         web_cmd = [
-            "gunicorn", "server:app",
+            sys.executable, "-m", "gunicorn", "server:app",
             "-w", "4",
             "-k", "uvicorn.workers.UvicornWorker",
             "--bind", f"0.0.0.0:{port}",

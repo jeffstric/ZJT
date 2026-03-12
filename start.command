@@ -126,10 +126,11 @@ echo "[OK] MySQL found"
 # [4/4] 启动服务
 echo ""
 echo "[4/4] Starting services..."
-echo "[INFO] Using Python target: $UV_PYTHON_TARGET"
 
 # 使用 uv 启动 Mac 启动管理器
-"$UV_CMD" run --python "$UV_PYTHON_TARGET" --with-requirements requirements.txt start_mac.py
+# 让 uv 自动选择合适的 Python 版本(系统 Python 或自动下载)
+echo "[INFO] Starting with uv (auto-detect Python)..."
+"$UV_CMD" run --with-requirements requirements.txt start_mac.py
 
 echo ""
 echo "========================================"

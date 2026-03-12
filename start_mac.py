@@ -226,6 +226,7 @@ def check_and_update_ffmpeg_paths(config, config_file):
 def check_mysql_path():
     """
     检查 MySQL 相关路径
+    如果 my.cnf 不存在,则从模板自动创建
     Returns:
         tuple: (bool, dict|str) - (是否找到所有必需文件, 包含所有路径的字典或错误信息)
     """
@@ -249,8 +250,28 @@ def check_mysql_path():
             return False, f"mysql不存在: {mysql_client}"
 
         mysql_cnf = os.path.join(mysql_dir, 'my.cnf')
+        mysql_cnf_template = os.path.join(mysql_dir, 'my.cnf.template')
+
         if not os.path.exists(mysql_cnf):
-            return False, f"my.cnf不存在: {mysql_cnf}"
+            logger.warning(f"my.cnf不存在: {mysql_cnf}")
+
+            if os.path.exists(mysql_cnf_template):
+                logger.info(f"从模板创建 my.cnf: {mysql_cnf_template}")
+                basedir = mysql_dir
+                datadir = os.path.join(current_dir, 'data', 'mysql')
+
+                with open(mysql_cnf_template, 'r', encoding='utf-8') as f:
+                    template_content = f.read()
+
+                cnf_content = template_content.replace('{BASEDIR}', basedir)
+                cnf_content = cnf_content.replace('{DATADIR}', datadir)
+
+                with open(mysql_cnf, 'w', encoding='utf-8') as f:
+                    f.write(cnf_content)
+
+                logger.info(f"my.cnf 创建成功: basedir={basedir}, datadir={datadir}")
+            else:
+                return False, f"my.cnf 和 my.cnf.template 都不存在: {mysql_cnf}"
 
         paths = {
             'mysql_dir': mysql_dir,
@@ -695,14 +716,8 @@ def start_app_service():
         logger.info(f"使用 uv 启动: {run_script}")
         requirements_file = os.path.join(current_dir, "requirements.txt")
 
-        # 检测架构以确定 Python 目标
-        arch = platform.machine()
-        if arch == 'arm64':
-            python_target = 'cpython-3.12-macos-aarch64-64-none'
-        else:  # x86_64
-            python_target = 'cpython-3.12-macos-x86_64-64-none'
-
-        cmd = [uv_path, "run", "--python", python_target]
+        # 让 uv 自动选择合适的 Python 版本(系统 Python 或自动下载)
+        cmd = [uv_path, "run"]
         if os.path.exists(requirements_file):
             cmd.extend(["--with-requirements", requirements_file])
             logger.info(f"使用依赖文件: {requirements_file}")
