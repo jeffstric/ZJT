@@ -1279,6 +1279,13 @@
           <div class="field field-always-visible" style="max-height: 300px; overflow-y: auto;">
             ${shotsHtml || '<div class="shot-group-empty">暂无分镜</div>'}
           </div>
+          <div class="field field-always-visible">
+            <div class="shot-grid-preview-label" style="font-size: 11px; color: #666; margin-bottom: 4px;">分镜预览（0个分镜）</div>
+            <div class="shot-grid-preview-container grid-2x2">
+              <div style="padding: 16px; text-align: center; color: #666; font-size: 11px; grid-column: 1/-1;">暂无分镜节点</div>
+            </div>
+            <div class="grid-merge-status"></div>
+          </div>
           <div class="field field-collapsible">
             <div class="label">分镜模型</div>
             <select class="shot-group-model"></select>
@@ -1286,6 +1293,51 @@
           <div class="field field-collapsible btn-row">
             <button class="mini-btn secondary shot-group-detail-btn" type="button" style="flex: 1;">查看/编辑</button>
             <button class="mini-btn gen-btn-white shot-group-generate-btn" type="button">生成分镜</button>
+          </div>
+          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
+          <div class="field field-collapsible">
+            <div class="label">宫格生图模型</div>
+            <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+          </div>
+          <div class="field field-collapsible btn-row">
+            <button class="mini-btn gen-btn-green shot-group-grid-btn" type="button" style="width: 100%;">宫格生图</button>
+          </div>
+          <div class="gen-meta shot-group-grid-status" style="display:none; margin-top: 8px;"></div>
+          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
+          <div class="field field-collapsible">
+            <div class="label">视频模型</div>
+            <select class="shot-group-video-model"></select>
+          </div>
+          <div class="field field-collapsible">
+            <div class="label">视频时长</div>
+            <select class="shot-group-video-duration">
+              <option value="5" selected>5秒</option>
+              <option value="10">10秒</option>
+            </select>
+          </div>
+          <div class="field field-collapsible">
+            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start;">
+              <div class="gen-container">
+                <button class="gen-btn gen-btn-main shot-group-generate-video-btn" type="button" style="background: #22c55e; color: white;">生成视频</button>
+                <button class="gen-btn gen-btn-caret shot-group-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
+                <div class="gen-menu shot-group-video-menu">
+                  <div class="gen-item" data-count="1">X1</div>
+                  <div class="gen-item" data-count="2">X2</div>
+                  <div class="gen-item" data-count="3">X3</div>
+                  <div class="gen-item" data-count="4">X4</div>
+                </div>
+              </div>
+            </div>
+            <div class="gen-meta shot-group-video-draw-count-label"></div>
+            <div class="shot-group-computing-power" style="margin-top: 6px; padding: 6px; border-radius: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #9ca3af; font-size: 11px;">算力消耗：</span>
+                <span class="shot-group-computing-power-value" style="color: #60a5fa; font-weight: bold; font-size: 12px;">0 算力</span>
+              </div>
+              <div class="shot-group-computing-power-detail" style="margin-top: 2px; font-size: 10px; color: #6b7280;">
+                单个 0 算力 × 1 个 = 0 算力
+              </div>
+            </div>
           </div>
         `;
 
@@ -1342,6 +1394,180 @@
             e.stopPropagation();
             generateShotFramesIndependent(nodeId, node);
           });
+        }
+
+        // 宫格生图按钮和模型选择器
+        const shotGroupGridModelEl = nodeBody.querySelector('.shot-group-grid-model');
+        if(shotGroupGridModelEl) {
+          shotGroupGridModelEl.innerHTML = '<option value="auto">智能模式 (自动选择)</option>';
+          if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+            const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
+            options.forEach(opt => {
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              shotGroupGridModelEl.appendChild(optEl);
+            });
+          } else {
+            shotGroupGridModelEl.innerHTML += `
+              <option value="gemini-2.5-pro-image-preview">标准版 (4宫格)</option>
+              <option value="gemini-3-pro-4grid">加强版4宫格</option>
+              <option value="gemini-3-pro-image-preview">加强版9宫格</option>
+            `;
+          }
+          // 初始化宫格模型选择（默认智能模式）
+          if(!node.data.gridModel){
+            node.data.gridModel = 'auto';
+          }
+          shotGroupGridModelEl.value = node.data.gridModel;
+          // 应用驱动状态禁用未配置的宫格生图模型选项
+          applyDriverStatusToSelect(shotGroupGridModelEl);
+          shotGroupGridModelEl.addEventListener('change', () => {
+            node.data.gridModel = shotGroupGridModelEl.value;
+          });
+        }
+
+        // 视频模型选择器和相关元素
+        const shotGroupVideoModelEl = nodeBody.querySelector('.shot-group-video-model');
+        if(shotGroupVideoModelEl) {
+          if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+            const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+            options.forEach(opt => {
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              if(opt.value === node.data.videoModel) optEl.selected = true;
+              shotGroupVideoModelEl.appendChild(optEl);
+            });
+          } else {
+            shotGroupVideoModelEl.innerHTML = `
+              <option value="wan22" ${node.data.videoModel === 'wan22' ? 'selected' : ''}>Wan2.2</option>
+              <option value="sora2" ${node.data.videoModel === 'sora2' ? 'selected' : ''}>Sora2</option>
+              <option value="ltx2" ${node.data.videoModel === 'ltx2' ? 'selected' : ''}>LTX2.0</option>
+              <option value="kling" ${node.data.videoModel === 'kling' ? 'selected' : ''}>可灵</option>
+              <option value="vidu" ${node.data.videoModel === 'vidu' ? 'selected' : ''}>Vidu</option>
+              <option value="veo3" ${node.data.videoModel === 'veo3' ? 'selected' : ''}>VEO3.1</option>
+            `;
+          }
+          if(!node.data.videoModel) node.data.videoModel = shotGroupVideoModelEl.value;
+          // 应用驱动状态禁用未配置的视频模型选项
+          applyDriverStatusToSelect(shotGroupVideoModelEl);
+        }
+
+        const shotGroupGridBtn = nodeBody.querySelector('.shot-group-grid-btn');
+        const shotGroupGenerateVideoBtn = nodeBody.querySelector('.shot-group-generate-video-btn');
+        const shotGroupVideoCaret = nodeBody.querySelector('.shot-group-video-caret');
+        const shotGroupVideoMenu = nodeBody.querySelector('.shot-group-video-menu');
+        const shotGroupVideoDuration = nodeBody.querySelector('.shot-group-video-duration');
+        const shotGroupDrawCountLabel = nodeBody.querySelector('.shot-group-video-draw-count-label');
+        const shotGroupComputingPowerValue = nodeBody.querySelector('.shot-group-computing-power-value');
+        const shotGroupComputingPowerDetail = nodeBody.querySelector('.shot-group-computing-power-detail');
+        const shotGroupGridStatus = nodeBody.querySelector('.shot-group-grid-status');
+
+        // 计算视频生成算力消耗的本地函数
+        function calculateVideoComputingPower() {
+          const config = getTaskComputingPowerConfig();
+          if(!config || Object.keys(config).length === 0) return 0;
+
+          let power = 0;
+          const videoModel = node.data.videoModel || 'wan22';
+          const duration = node.data.videoDuration || 5;
+
+          if(videoModel === 'sora2') {
+            power = config[3] || 0;
+          } else if(videoModel === 'ltx2') {
+            power = config[10] || 0;
+          } else if(videoModel === 'wan22') {
+            const wan22Power = config[11];
+            if(typeof wan22Power === 'object') {
+              power = wan22Power[duration] || wan22Power[5] || 0;
+            } else {
+              power = wan22Power || 0;
+            }
+          } else if(videoModel === 'kling') {
+            const klingPower = config[12];
+            if(typeof klingPower === 'object') {
+              power = klingPower[duration] || klingPower[5] || 0;
+            } else {
+              power = klingPower || 0;
+            }
+          } else if(videoModel === 'vidu') {
+            const viduPower = config[14];
+            if(typeof viduPower === 'object') {
+              power = viduPower[duration] || viduPower[5] || 0;
+            } else {
+              power = viduPower || 0;
+            }
+          } else if(videoModel === 'veo3') {
+            power = config[15] || 0;
+          }
+
+          return power;
+        }
+
+        // 更新视频算力显示的本地函数
+        function updateVideoComputingPowerDisplay() {
+          const singlePower = calculateVideoComputingPower();
+          const count = node.data.videoDrawCount || 1;
+          const totalPower = singlePower * count;
+
+          if(shotGroupComputingPowerValue) {
+            shotGroupComputingPowerValue.textContent = `${totalPower} 算力`;
+          }
+          if(shotGroupComputingPowerDetail) {
+            shotGroupComputingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
+          }
+        }
+
+        // 视频时长选择
+        if(shotGroupVideoDuration) {
+          shotGroupVideoDuration.value = node.data.videoDuration || '5';
+          shotGroupVideoDuration.addEventListener('change', () => {
+            node.data.videoDuration = Number(shotGroupVideoDuration.value);
+            updateVideoComputingPowerDisplay();
+          });
+        }
+
+        // 抽卡次数菜单
+        let videoDrawCount = node.data.videoDrawCount || 1;
+        if(shotGroupGenerateVideoBtn) {
+          if(shotGroupDrawCountLabel) shotGroupDrawCountLabel.textContent = `抽卡次数: ${videoDrawCount}`;
+          updateVideoComputingPowerDisplay();
+          shotGroupGenerateVideoBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            generateShotGroupVideo(nodeId, node);
+          });
+        }
+
+        if(shotGroupVideoCaret && shotGroupVideoMenu) {
+          shotGroupVideoCaret.addEventListener('click', (e) => {
+            e.stopPropagation();
+            shotGroupVideoMenu.style.display = shotGroupVideoMenu.style.display === 'block' ? 'none' : 'block';
+          });
+          const menuItems = shotGroupVideoMenu.querySelectorAll('.gen-item');
+          menuItems.forEach(item => {
+            item.addEventListener('click', (e) => {
+              e.stopPropagation();
+              videoDrawCount = parseInt(item.dataset.count);
+              node.data.videoDrawCount = videoDrawCount;
+              if(shotGroupDrawCountLabel) shotGroupDrawCountLabel.textContent = `抽卡次数: ${videoDrawCount}`;
+              updateVideoComputingPowerDisplay();
+              shotGroupVideoMenu.style.display = 'none';
+            });
+          });
+        }
+
+        // 宫格生图按钮点击事件
+        if(shotGroupGridBtn) {
+          shotGroupGridBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            generateShotGroupGridImages(nodeId, node, shotGroupGridStatus);
+          });
+        }
+
+        // 初始化宫格预览
+        if(el.querySelector('.shot-grid-preview-container')) {
+          updateGridPreviewUI(el, node);
         }
       }
 
