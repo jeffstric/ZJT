@@ -28,9 +28,11 @@
       <header>
         <div style="display: flex; align-items: center; gap: 12px;">
           <img src="/files/logo.svg" alt="Logo" style="width: 48px; height: 48px;" />
-          <div class="title">{{ pageTitle }}</div>
+          <div class="header-title-group">
+            <div class="title">{{ mainTitle }}</div>
+            <div class="subtitle" v-if="route.name==='list'">AI短剧制作平台</div>
+          </div>
         </div>
-        <div class="muted" v-if="route.name==='list'">共 {{ tools.length }} 个工具</div>
         <div style="display: flex; gap: 10px; align-items: center;">
           <button class="btn secondary" v-if="route.name!=='list'" @click="goHome">返回</button>
           <template v-if="isLoggedIn">
@@ -424,31 +426,25 @@
     </div>
     
     <!-- Mode Selection Modal -->
-    <div class="modal-overlay" v-if="showModeSelectModal">
+    <div class="modal-overlay" v-if="showModeSelectModal" @click.self="creationMode ? showModeSelectModal = false : null">
       <div class="modal" style="position: relative; max-width: 500px;">
+        <button class="modal-close" v-if="creationMode" @click="showModeSelectModal = false">×</button>
         <div class="modal-title" style="text-align: center;">选择创作模式</div>
         <div style="padding: 20px;">
-          <p style="text-align: center; color: var(--muted); margin-bottom: 24px;">请选择您的创作模式，目前支持短剧模式</p>
+          <p style="text-align: center; color: var(--muted); margin-bottom: 24px;">请选择您的创作模式</p>
           <div class="mode-select-list">
-            <div class="mode-select-item active" @click="selectCreationMode('short_drama')">
+            <div class="mode-select-item" :class="{active: creationMode === 'short_drama'}" @click="selectCreationMode('short_drama')">
               <div class="mode-select-icon">🎬</div>
               <div class="mode-select-content">
                 <div class="mode-select-title">短剧模式</div>
                 <div class="mode-select-desc">适用于AI短剧创作，包含剧本、角色、场景、视频生成全流程</div>
               </div>
-              <div class="mode-select-check">✓</div>
+              <div class="mode-select-check" v-if="creationMode === 'short_drama'">✓</div>
             </div>
             <div class="mode-select-item disabled" style="opacity: 0.5; cursor: not-allowed;">
-              <div class="mode-select-icon">📹</div>
+              <div class="mode-select-icon">🛒</div>
               <div class="mode-select-content">
-                <div class="mode-select-title">纪录片模式</div>
-                <div class="mode-select-desc">即将推出...</div>
-              </div>
-            </div>
-            <div class="mode-select-item disabled" style="opacity: 0.5; cursor: not-allowed;">
-              <div class="mode-select-icon">📺</div>
-              <div class="mode-select-content">
-                <div class="mode-select-title">广告模式</div>
+                <div class="mode-select-title">电商模式</div>
                 <div class="mode-select-desc">即将推出...</div>
               </div>
             </div>
@@ -457,48 +453,6 @@
       </div>
     </div>
     
-    <!-- Create Workflow Modal -->
-    <div class="modal-overlay" v-if="showCreateWorkflowModal" @click.self="closeCreateWorkflowModal">
-      <div class="modal" style="position: relative; max-width: 500px;">
-        <button class="modal-close" @click="closeCreateWorkflowModal">×</button>
-        <div class="modal-title">新建工作流</div>
-        <div style="padding: 20px;">
-          <div class="field">
-            <label class="label">工作流名称 <span style="color: red;">*</span></label>
-            <input class="input" type="text" v-model="createWorkflowForm.name" placeholder="请输入工作流名称" maxlength="50" />
-          </div>
-          <div class="field">
-            <label class="label">描述</label>
-            <textarea class="input" v-model="createWorkflowForm.description" placeholder="请输入工作流描述（选填）" rows="3"></textarea>
-          </div>
-          <div class="field">
-            <label class="label">关联世界</label>
-            <select class="input" v-model="createWorkflowForm.worldId" :disabled="worldListLoading">
-              <option value="">{{ worldListLoading ? '加载中...' : '请选择世界（选填）' }}</option>
-              <option v-for="world in worldList" :key="world.id" :value="world.id">{{ world.name }}</option>
-            </select>
-          </div>
-          <div class="field">
-            <label class="label">风格描述</label>
-            <textarea class="input" v-model="createWorkflowForm.style" placeholder="请输入风格描述（选填）" rows="2"></textarea>
-          </div>
-          <div class="field">
-            <label class="label">风格参考图</label>
-            <div v-if="createWorkflowForm.styleImagePreview" style="margin-bottom: 8px; position: relative; display: inline-block;">
-              <img :src="createWorkflowForm.styleImagePreview" style="max-width: 120px; max-height: 120px; border-radius: 8px;" />
-              <button @click="clearStyleImage" style="position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; border-radius: 50%; background: var(--danger); color: white; border: none; cursor: pointer; font-size: 12px;">×</button>
-            </div>
-            <input class="input" type="file" accept="image/*" @change="handleStyleImageChange" />
-          </div>
-          <div class="field" style="margin-top: 20px;">
-            <button class="btn" style="width: 100%;" @click="submitCreateWorkflow" :disabled="createWorkflowLoading">
-              {{ createWorkflowLoading ? '创建中...' : '创建并进入剧本创作' }}
-            </button>
-          </div>
-          <div class="status danger" v-if="createWorkflowError" style="text-align: center; margin-top: 10px;">{{ createWorkflowError }}</div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
@@ -515,6 +469,13 @@
     },
     template: `
       <div class="homepage-container">
+        <!-- 当前模式显示 -->
+        <div class="current-mode-bar">
+          <span class="current-mode-label">当前模式：</span>
+          <span class="current-mode-value">{{ $root.creationMode === 'short_drama' ? '🎬 短剧模式' : '未选择' }}</span>
+          <button class="mode-switch-btn" @click.stop="$root.showModeSelectModal = true">切换模式</button>
+        </div>
+        
         <!-- 开始创作大横幅 -->
         <div class="start-creation-banner" @click="handleStartCreation">
           <div class="banner-content">
@@ -586,7 +547,6 @@
                   <div class="tool-card-title">图片编辑</div>
                   <div class="tool-card-desc">上传图片 + 提示词</div>
                 </div>
-                <button class="tool-card-btn">打开</button>
               </div>
               <div class="tool-card" @click="$router.push({name:'text-to-image'})">
                 <div class="tool-card-icon purple">🎨</div>
@@ -594,7 +554,6 @@
                   <div class="tool-card-title">AI文生图</div>
                   <div class="tool-card-desc">输入文本提示词生成图片</div>
                 </div>
-                <button class="tool-card-btn">打开</button>
               </div>
               <div class="tool-card" @click="$router.push({name:'ai-video-gen'})">
                 <div class="tool-card-icon orange">📹</div>
@@ -602,7 +561,6 @@
                   <div class="tool-card-title">AI视频生成</div>
                   <div class="tool-card-desc">输入文本提示词生成视频</div>
                 </div>
-                <button class="tool-card-btn">打开</button>
               </div>
               <div class="tool-card" @click="$router.push({name:'image-to-video'})">
                 <div class="tool-card-icon green">🎬</div>
@@ -610,7 +568,6 @@
                   <div class="tool-card-title">图片生成视频</div>
                   <div class="tool-card-desc">上传图片 + 提示词生成视频</div>
                 </div>
-                <button class="tool-card-btn">打开</button>
               </div>
               <div class="tool-card" @click="$router.push({name:'video-enhance'})">
                 <div class="tool-card-icon yellow">✨</div>
@@ -618,7 +575,6 @@
                   <div class="tool-card-title">视频高清修复</div>
                   <div class="tool-card-desc">上传模糊视频进行高清修复</div>
                 </div>
-                <button class="tool-card-btn">打开</button>
               </div>
               <div class="tool-card" @click="$router.push({name:'audio-generate'})">
                 <div class="tool-card-icon purple">🎵</div>
@@ -626,7 +582,6 @@
                   <div class="tool-card-title">AI音频生成</div>
                   <div class="tool-card-desc">输入文本生成语音，支持声音克隆</div>
                 </div>
-                <button class="tool-card-btn">打开</button>
               </div>
               <div class="tool-card" @click="$router.push({name:'digital-human'})">
                 <div class="tool-card-icon pink">👤</div>
@@ -634,7 +589,6 @@
                   <div class="tool-card-title">在线图片数字人</div>
                   <div class="tool-card-desc">上传图片+文本+音频生成数字人</div>
                 </div>
-                <button class="tool-card-btn">打开</button>
               </div>
             </div>
           </div>
@@ -643,8 +597,8 @@
     `,
     methods: {
       handleStartCreation() {
-        // 调用父组件的打开创建工作流弹窗方法
-        this.$root.openCreateWorkflowModal();
+        // 跳转到工作流列表页面并自动打开新建表单
+        window.location.href = '/video-workflow-list?action=create';
       },
       handleVideoWorkflowClick() {
         window.location.href = '/video-workflow-list';
@@ -5931,20 +5885,6 @@
       // 模式选择相关
       showModeSelectModal: false,
       creationMode: '',
-      // 创建工作流相关
-      showCreateWorkflowModal: false,
-      createWorkflowForm: {
-        name: '',
-        description: '',
-        worldId: '',
-        style: '',
-        styleImageFile: null,
-        styleImagePreview: ''
-      },
-      createWorkflowLoading: false,
-      createWorkflowError: '',
-      worldList: [],
-      worldListLoading: false
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -6046,8 +5986,8 @@
     },
     computed: {
       route(){ return this.$route },
-      pageTitle(){ 
-        if (this.route.name === 'list') return '智剧通 AI短剧制作平台';
+      mainTitle(){ 
+        if (this.route.name === 'list') return '智剧通';
         if (this.route.name === 'image-edit') return '图片编辑';
         if (this.route.name === 'ai-video-gen') return 'AI 视频生成';
         if (this.route.name === 'image-to-video') return '图片生成视频';
@@ -6917,146 +6857,6 @@
         this.showModeSelectModal = false;
       },
       
-      // 打开创建工作流弹窗
-      async openCreateWorkflowModal() {
-        if (!this.authToken) {
-          this.showLoginModal = true;
-          return;
-        }
-        this.createWorkflowForm = {
-          name: '',
-          description: '',
-          worldId: '',
-          style: '',
-          styleImageFile: null,
-          styleImagePreview: ''
-        };
-        this.createWorkflowError = '';
-        this.showCreateWorkflowModal = true;
-        await this.loadWorldList();
-      },
-      
-      // 关闭创建工作流弹窗
-      closeCreateWorkflowModal() {
-        this.showCreateWorkflowModal = false;
-        this.createWorkflowForm = {
-          name: '',
-          description: '',
-          worldId: '',
-          style: '',
-          styleImageFile: null,
-          styleImagePreview: ''
-        };
-        this.createWorkflowError = '';
-      },
-      
-      // 加载世界列表
-      async loadWorldList() {
-        this.worldListLoading = true;
-        try {
-          const res = await axios.get('/api/worlds', {
-            headers: {
-              'Authorization': this.authToken,
-              'X-User-Id': this.userId
-            }
-          });
-          if (res.data.code === 0) {
-            this.worldList = res.data.data || [];
-          }
-        } catch (err) {
-          console.error('加载世界列表失败:', err);
-        } finally {
-          this.worldListLoading = false;
-        }
-      },
-      
-      // 处理风格参考图选择
-      handleStyleImageChange(e) {
-        const file = e.target.files[0];
-        if (file) {
-          this.createWorkflowForm.styleImageFile = file;
-          const reader = new FileReader();
-          reader.onload = (ev) => {
-            this.createWorkflowForm.styleImagePreview = ev.target.result;
-          };
-          reader.readAsDataURL(file);
-        }
-      },
-      
-      // 清除风格参考图
-      clearStyleImage() {
-        this.createWorkflowForm.styleImageFile = null;
-        this.createWorkflowForm.styleImagePreview = '';
-      },
-      
-      // 提交创建工作流
-      async submitCreateWorkflow() {
-        const form = this.createWorkflowForm;
-        if (!form.name.trim()) {
-          this.createWorkflowError = '请输入工作流名称';
-          return;
-        }
-        
-        this.createWorkflowLoading = true;
-        this.createWorkflowError = '';
-        
-        try {
-          const data = {
-            name: form.name.trim(),
-            description: form.description.trim(),
-            status: 1
-          };
-          
-          if (form.worldId) {
-            data.default_world_id = parseInt(form.worldId);
-          }
-          
-          if (form.style.trim()) {
-            data.style = form.style.trim();
-          }
-          
-          // 如果有风格参考图，先上传
-          if (form.styleImageFile) {
-            const uploadForm = new FormData();
-            uploadForm.append('file', form.styleImageFile);
-            
-            const uploadRes = await axios.post('/api/video-workflow/upload', uploadForm, {
-              headers: {
-                'Authorization': this.authToken,
-                'X-User-Id': this.userId,
-                'Content-Type': 'multipart/form-data'
-              }
-            });
-            
-            if (uploadRes.data.code === 0 && uploadRes.data.data && uploadRes.data.data.url) {
-              data.style_reference_image = uploadRes.data.data.url;
-            }
-          }
-          
-          // 创建工作流
-          const res = await axios.post('/api/video-workflow/create', data, {
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': this.authToken,
-              'X-User-Id': this.userId
-            }
-          });
-          
-          if (res.data.code === 0) {
-            const workflowId = res.data.data.id;
-            this.closeCreateWorkflowModal();
-            // 跳转到剧本创作系统
-            window.location.href = `/script-writer?workflow_id=${workflowId}&user_id=${encodeURIComponent(this.userId)}`;
-          } else {
-            this.createWorkflowError = res.data.message || '创建失败';
-          }
-        } catch (err) {
-          console.error('创建工作流失败:', err);
-          this.createWorkflowError = err?.response?.data?.message || '创建失败，请重试';
-        } finally {
-          this.createWorkflowLoading = false;
-        }
-      }
     },
     
     beforeUnmount() {

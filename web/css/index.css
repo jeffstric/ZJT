@@ -44,10 +44,22 @@ header {
   margin-bottom: 16px;
 }
 
+.header-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .title { 
   font-size: 18px; 
   font-weight: 700; 
   letter-spacing: .4px; 
+}
+
+.header-title-group .subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .muted { 
@@ -810,6 +822,47 @@ header {
   max-width: 1100px;
   margin: 0 auto;
   padding: 20px 24px;
+}
+
+/* Current Mode Bar */
+.current-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(71, 85, 105, 0.4);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+
+.current-mode-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.current-mode-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mode-switch-btn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: #a5b4fc;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-switch-btn:hover {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: #6366f1;
+  color: #c7d2fe;
 }
 
 /* Start Creation Banner */

@@ -14,54 +14,52 @@
     <script src="js/axios.min.js"></script>
 </head>
 <body>
-    <div class="app-container">
-        <!-- 左侧导览条 -->
-        <nav class="step-nav" id="step-nav">
-            <div class="step-nav-toggle" onclick="toggleStepNav()" title="展开/收起导览">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M9 18l6-6-6-6"/>
-                </svg>
-            </div>
-            <div class="step-nav-content">
-                <div class="step-nav-title">创作流程</div>
-                <div class="step-nav-list">
-                    <div class="step-nav-item active" data-step="script">
-                        <div class="step-nav-icon">📚</div>
-                        <div class="step-nav-text">剧本资产</div>
-                        <div class="step-nav-badge current">当前</div>
-                    </div>
-                    <div class="step-nav-connector"></div>
-                    <div class="step-nav-item clickable" data-step="canvas" onclick="goToWorkflowCanvas()">
-                        <div class="step-nav-icon">🎬</div>
-                        <div class="step-nav-text">无限画布</div>
-                        <div class="step-nav-arrow">→</div>
-                    </div>
+    <!-- 左侧导览条 - 悬浮模式 -->
+    <nav class="step-nav" id="step-nav">
+        <div class="step-nav-content">
+            <div class="step-nav-title">创作流程</div>
+            <div class="step-nav-list">
+                <div class="step-nav-item active" data-step="script">
+                    <div class="step-nav-icon">📚</div>
+                    <div class="step-nav-text">剧本资产</div>
+                    <div class="step-nav-badge current">当前</div>
+                </div>
+                <div class="step-nav-connector"></div>
+                <div class="step-nav-item clickable" data-step="canvas" onclick="goToWorkflowCanvas()">
+                    <div class="step-nav-icon">🎬</div>
+                    <div class="step-nav-text">制作工坊</div>
+                    <div class="step-nav-arrow">→</div>
                 </div>
             </div>
-        </nav>
-        
-        <!-- 世界选择侧边栏 -->
-        <aside class="world-sidebar" id="world-sidebar">
-            <div class="world-sidebar-header">
-                <h3 class="world-sidebar-title">🌍 选择世界</h3>
-                <div class="world-header-actions">
-                    <button class="world-add-btn" onclick="showNewWorldModal()" title="新建世界">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M12 5v14M5 12h14"/>
-                        </svg>
-                    </button>
-                    <button class="world-close-btn" onclick="toggleWorldSidebar()">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M18 6L6 18M6 6l12 12"/>
-                        </svg>
-                    </button>
-                </div>
+        </div>
+    </nav>
+    
+    <!-- 世界选择遮罩层 -->
+    <div class="world-sidebar-overlay" id="world-sidebar-overlay" onclick="toggleWorldSidebar()"></div>
+    
+    <!-- 世界选择侧边栏 -->
+    <aside class="world-sidebar" id="world-sidebar">
+        <div class="world-sidebar-header">
+            <h3 class="world-sidebar-title">🌍 选择世界</h3>
+            <div class="world-header-actions">
+                <button class="world-add-btn" onclick="showNewWorldModal()" title="新建世界">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                </button>
+                <button class="world-close-btn" onclick="toggleWorldSidebar()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
             </div>
-            <div class="world-list" id="world-list">
-                <div class="world-empty">加载中...</div>
-            </div>
-        </aside>
+        </div>
+        <div class="world-list" id="world-list">
+            <div class="world-empty">加载中...</div>
+        </div>
+    </aside>
 
+    <div class="app-container">
         <!-- 顶部导航栏 -->
         <header class="top-header">
             <div class="header-left">
@@ -2415,7 +2413,9 @@
 
         function toggleWorldSidebar() {
             const sidebar = document.getElementById('world-sidebar');
+            const overlay = document.getElementById('world-sidebar-overlay');
             sidebar.classList.toggle('open');
+            overlay.classList.toggle('active');
         }
 
         function switchWorld(worldId) {
@@ -2675,7 +2675,9 @@
         function showWorldSelectionPrompt() {
             // 自动打开世界选择侧边栏
             const sidebar = document.getElementById('world-sidebar');
+            const overlay = document.getElementById('world-sidebar-overlay');
             sidebar.classList.add('open');
+            overlay.classList.add('active');
             
             // 更新欢迎卡片内容，显示世界选择提示
             const chatMessages = document.getElementById('chat-messages');
@@ -2727,23 +2729,7 @@
         }
         
         // ========== 左侧导览条相关函数 ==========
-        
-        // 切换导览条展开/收起
-        function toggleStepNav() {
-            const nav = document.getElementById('step-nav');
-            nav.classList.toggle('collapsed');
-            // 保存状态到localStorage
-            localStorage.setItem('step_nav_collapsed', nav.classList.contains('collapsed'));
-        }
-        
-        // 初始化导览条状态
-        function initStepNav() {
-            const collapsed = localStorage.getItem('step_nav_collapsed') === 'true';
-            const nav = document.getElementById('step-nav');
-            if (collapsed) {
-                nav.classList.add('collapsed');
-            }
-        }
+        // 导览条现在是悬浮模式，通过CSS hover自动展开/收起，无需JavaScript控制
         
         // 检查资产完成状态
         async function checkAssetsComplete() {
@@ -2845,10 +2831,6 @@
             }
         }
         
-        // 页面加载时初始化导览条
-        document.addEventListener('DOMContentLoaded', function() {
-            initStepNav();
-        });
     </script>
 </body>
 </html>
