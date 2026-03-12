@@ -61,6 +61,8 @@ def main():
             print("[Manager] Database migrations completed.")
         except Exception as e:
             print(f"[Manager] Database migration failed: {e}")
+            print("[Manager] Cannot start server with failed migrations. Exiting...")
+            sys.exit(1)
     
     # 优先使用环境变量 PORT，否则从配置文件读取
     port = os.environ.get("PORT")

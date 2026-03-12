@@ -7295,6 +7295,8 @@ if __name__ == "__main__":
             run_migrations()
         except Exception as e:
             logger.error(f"Database migration failed on startup: {e}")
+            logger.error("Cannot start server with failed migrations. Exiting...")
+            sys.exit(1)
 
     if https_enabled:
         # HTTPS configuration
