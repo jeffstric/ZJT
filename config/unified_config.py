@@ -76,6 +76,7 @@ class UnifiedTaskConfig:
         default_duration: 默认时长
         enabled: 是否启用
         sort_order: 排序顺序（用于前端展示）
+        supports_grid_merge: 是否支持宫格合并生成视频（将多个分镜合并为一个视频）
     """
     id: int
     key: str
@@ -96,6 +97,7 @@ class UnifiedTaskConfig:
     categories: List[str] = field(default_factory=list)  # 额外分类列表
     supported_image_modes: List[str] = field(default_factory=lambda: ['first_last_frame'])  # 支持的图片模式（图生视频任务）
     default_image_mode: str = 'first_last_frame'  # 默认图片模式
+    supports_grid_merge: bool = False  # 是否支持宫格合并生成视频
     
     def get_computing_power(self, duration: Optional[int] = None) -> int:
         """
@@ -147,6 +149,7 @@ class UnifiedTaskConfig:
         if self.category == TaskCategory.IMAGE_TO_VIDEO:
             result['supported_image_modes'] = self.supported_image_modes
             result['default_image_mode'] = self.default_image_mode
+            result['supports_grid_merge'] = self.supports_grid_merge
             
         return result
 
@@ -542,6 +545,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=10,
         sort_order=31,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+        supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.LTX2_IMAGE_TO_VIDEO,
@@ -574,6 +578,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=33,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+        supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VIDU_IMAGE_TO_VIDEO,
@@ -622,6 +627,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=8,
         sort_order=35,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME,ImageMode.MULTI_REFERENCE],  # 支持首尾帧
+        supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
     
     # ==================== 数字人 ====================
