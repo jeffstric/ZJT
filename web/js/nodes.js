@@ -5135,6 +5135,17 @@
             <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">已有分镜组和分镜时，仅生成宫格图片</div>
             <div class="gen-meta script-grid-only-status" style="display:none; margin-top: 8px;"></div>
           </div>
+          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
+          <div class="field field-collapsible">
+            <div class="label">视频生成模型</div>
+            <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">为整个剧本设置默认视频生成模型，分镜可单独设置覆盖</div>
+          </div>
+          <div class="field field-collapsible">
+            <button class="gen-btn gen-btn-blue script-batch-generate-btn" type="button" style="border-radius: 10px; width: 100%; background: #3b82f6; color: white;">逐个生成视频</button>
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">为整个剧本的所有分镜生成视频，支持所有模型但可能浪费时长</div>
+            <div class="gen-meta script-batch-status" style="display:none; margin-top: 8px;"></div>
+          </div>
         </div>
       `;
 
@@ -5157,11 +5168,68 @@
       const statusEl = el.querySelector('.script-status');
       const charCountEl = el.querySelector('.script-char-count');
       const warningField = el.querySelector('.script-warning-field');
+      const videoModelSelect = el.querySelector('.script-video-model');
       const gridModelSelect = el.querySelector('.script-grid-model');
       const splitGridBtn = el.querySelector('.script-split-grid-btn');
       const gridStatusEl = el.querySelector('.script-grid-status');
       const gridOnlyBtn = el.querySelector('.script-grid-only-btn');
       const gridOnlyStatusEl = el.querySelector('.script-grid-only-status');
+      const batchGenerateBtn = el.querySelector('.script-batch-generate-btn');
+      const batchStatusEl = el.querySelector('.script-batch-status');
+      
+      // 动态填充视频模型选项
+      function populateScriptVideoModelOptions() {
+        if(!videoModelSelect) return;
+        
+        videoModelSelect.innerHTML = '';
+        
+        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+          options.forEach(opt => {
+            const optEl = document.createElement('option');
+            optEl.value = opt.value;
+            optEl.textContent = opt.label;
+            videoModelSelect.appendChild(optEl);
+          });
+        } else {
+          // 回退：硬编码选项
+          const fallbackOptions = [
+            { value: 'wan22', label: 'Wan2.2' },
+            { value: 'sora2', label: 'Sora2' },
+            { value: 'ltx2', label: 'LTX2.0' },
+            { value: 'kling', label: '可灵' },
+            { value: 'vidu', label: 'Vidu' },
+            { value: 'veo3', label: 'VEO3.1' }
+          ];
+          fallbackOptions.forEach(opt => {
+            const optEl = document.createElement('option');
+            optEl.value = opt.value;
+            optEl.textContent = opt.label;
+            videoModelSelect.appendChild(optEl);
+          });
+        }
+        
+        // 恢复之前的选择
+        const currentValue = node.data.videoModel || 'wan22';
+        const selectedOption = videoModelSelect.querySelector(`option[value="${currentValue}"]`);
+        if(selectedOption) {
+          videoModelSelect.value = currentValue;
+        } else {
+          videoModelSelect.value = 'wan22';
+          node.data.videoModel = 'wan22';
+        }
+      }
+      
+      // 初始化视频模型
+      populateScriptVideoModelOptions();
+      
+      // 视频模型切换事件
+      if(videoModelSelect) {
+        videoModelSelect.addEventListener('change', () => {
+          node.data.videoModel = videoModelSelect.value;
+          console.log(`[剧本节点] 视频模型切换为: ${videoModelSelect.value}`);
+        });
+      }
       
       // 动态填充宫格生图模型选项
       if(gridModelSelect) {
@@ -6260,6 +6328,133 @@
         }
       });
 
+      // 批量生成视频按钮监听
+      batchGenerateBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        
+        batchStatusEl.style.display = 'block';
+        batchStatusEl.style.color = '#666';
+        batchStatusEl.textContent = '正在检查分镜节点...';
+        
+        try {
+          // 查找连接到此剧本节点的分镜组
+          const shotGroupConnections = state.connections.filter(c => c.from === id);
+          const shotGroupNodes = shotGroupConnections
+            .map(conn => state.nodes.find(n => n.id === conn.to))
+            .filter(n => n && n.type === 'shot_group');
+          
+          if(shotGroupNodes.length === 0) {
+            batchStatusEl.style.color = '#dc2626';
+            batchStatusEl.textContent = '未找到分镜组节点，请先拆分镜组';
+            showToast('未找到分镜组节点，请先拆分镜组', 'error');
+            return;
+          }
+          
+          // 收集所有分镜节点并计算算力消耗
+          let totalShotFrames = 0;
+          let totalPower = 0;
+          const shotGroupsWithFrames = [];
+          
+          for(const sgNode of shotGroupNodes) {
+            const sfConnections = state.connections.filter(c => c.from === sgNode.id);
+            const sfNodes = sfConnections
+              .map(conn => state.nodes.find(n => n.id === conn.to))
+              .filter(n => n && n.type === 'shot_frame');
+            
+            if(sfNodes.length > 0) {
+              // 检查有预览图的分镜
+              const nodesWithImage = sfNodes.filter(n => n.data.previewImageUrl || n.data.imageUrl);
+              
+              if(nodesWithImage.length > 0) {
+                shotGroupsWithFrames.push({
+                  shotGroupNode: sgNode,
+                  shotFrameNodes: nodesWithImage
+                });
+                
+                // 计算每个分镜的算力消耗
+                // 模型优先级：分镜节点 > 分镜组 > 剧本节点 > 默认wan22
+                nodesWithImage.forEach(sfNode => {
+                  const videoModel = sfNode.data.videoModel || sgNode.data.videoModel || node.data.videoModel || 'wan22';
+                  const duration = sfNode.data.videoDuration || sfNode.data.duration || 5;
+                  const drawCount = sfNode.data.videoDrawCount || 1;
+                  
+                  const singlePower = calculateVideoGenerationPower(videoModel, duration);
+                  totalPower += singlePower * drawCount;
+                  totalShotFrames++;
+                });
+              }
+            }
+          }
+          
+          if(shotGroupsWithFrames.length === 0) {
+            batchStatusEl.style.color = '#dc2626';
+            batchStatusEl.textContent = '分镜组下未找到有预览图的分镜节点';
+            showToast('分镜组下未找到有预览图的分镜节点，请先生成分镜图', 'error');
+            return;
+          }
+          
+          // 显示确认弹窗
+          const confirmMsg = `即将为整个剧本的所有分镜生成视频\n` +
+            `分镜组数量：${shotGroupsWithFrames.length}个\n` +
+            `分镜数量：${totalShotFrames}个\n` +
+            `预计消耗算力：${totalPower}\n\n` +
+            `确认开始生成吗？`;
+          
+          if(!await showConfirmModal(confirmMsg, { title: '批量生成视频确认', confirmText: '开始生成' })) {
+            batchStatusEl.style.color = '#666';
+            batchStatusEl.textContent = '已取消';
+            return;
+          }
+          
+          // 首次使用提示
+          const batchTipKey = 'script_batch_tip_shown';
+          if(!localStorage.getItem(batchTipKey)) {
+            showToast('逐个生成：为整个剧本的所有分镜生成视频，支持所有模型但可能浪费时长', 'info', 5000);
+            localStorage.setItem(batchTipKey, 'true');
+          }
+          
+          batchGenerateBtn.disabled = true;
+          batchGenerateBtn.textContent = '批量生成中...';
+          
+          let successCount = 0;
+          let failCount = 0;
+          
+          for(let i = 0; i < shotGroupsWithFrames.length; i++) {
+            const { shotGroupNode, shotFrameNodes } = shotGroupsWithFrames[i];
+            
+            batchStatusEl.textContent = `正在生成 ${i + 1}/${shotGroupsWithFrames.length} 分镜组的视频...`;
+            showToast(`正在生成 ${i + 1}/${shotGroupsWithFrames.length} 分镜组的视频...`, 'info');
+            
+            try {
+              // 为每个分镜组调用批量生成函数
+              await generateAllShotFrameVideos(shotGroupNode.id, shotGroupNode);
+              successCount++;
+            } catch(error) {
+              console.error(`生成分镜组视频失败:`, error);
+              failCount++;
+            }
+          }
+          
+          batchGenerateBtn.disabled = false;
+          batchGenerateBtn.textContent = '逐个生成视频';
+          
+          const resultMsg = `批量生成完成！成功 ${successCount} 个分镜组，失败 ${failCount} 个`;
+          batchStatusEl.style.color = successCount > 0 ? '#22c55e' : '#dc2626';
+          batchStatusEl.textContent = resultMsg;
+          showToast(resultMsg, successCount > 0 ? 'success' : 'warning');
+          
+          try{ autoSaveWorkflow(); } catch(e){}
+        } catch(error) {
+          console.error('Generate script videos error:', error);
+          showToast(`批量生成失败: ${error.message}`, 'error');
+          
+          batchGenerateBtn.textContent = '逐个生成视频';
+          batchGenerateBtn.disabled = false;
+          batchStatusEl.style.color = '#dc2626';
+          batchStatusEl.textContent = `失败: ${error.message}`;
+        }
+      });
+
       // 宫格生图（仅生图，不拆分）按钮监听
       gridOnlyBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -6763,15 +6958,27 @@
             </select>
           </div>
           <div class="field field-collapsible">
-            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start;">
-              <div class="gen-container">
-                <button class="gen-btn gen-btn-main shot-group-generate-video-btn" type="button" style="background: #22c55e; color: white;">生成视频</button>
+            <div class="label" style="font-size: 11px; color: #6b7280; margin-bottom: 4px;">视频生成方式</div>
+            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start; flex-wrap: wrap;">
+              <div class="gen-container shot-group-merge-container">
+                <button class="gen-btn gen-btn-main shot-group-generate-video-btn" type="button" style="background: #22c55e; color: white;" title="将多个分镜合并为一个视频生成，节省算力（仅 kling/veo3/sora2 支持）">合并生成视频</button>
                 <button class="gen-btn gen-btn-caret shot-group-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
                 <div class="gen-menu shot-group-video-menu">
                   <div class="gen-item" data-count="1">X1</div>
                   <div class="gen-item" data-count="2">X2</div>
                   <div class="gen-item" data-count="3">X3</div>
                   <div class="gen-item" data-count="4">X4</div>
+                </div>
+              </div>
+              <button class="gen-btn gen-btn-main shot-group-batch-generate-btn" type="button" style="background: #3b82f6; color: white;" title="每个分镜独立生成视频，支持所有模型但可能浪费时长">逐个生成视频</button>
+            </div>
+            <div class="shot-group-generation-tips" style="margin-top: 8px; padding: 8px; background: #f9fafb; border-radius: 6px; font-size: 10px; color: #6b7280; line-height: 1.5;">
+              <div style="display: flex; gap: 12px;">
+                <div style="flex: 1;">
+                  <span style="color: #22c55e; font-weight: bold;">合并生成：</span>多个分镜合并为一个视频，节省算力（仅部分模型支持）
+                </div>
+                <div style="flex: 1;">
+                  <span style="color: #3b82f6; font-weight: bold;">逐个生成：</span>每个分镜独立生成，支持所有模型但可能浪费时长
                 </div>
               </div>
             </div>
@@ -7096,7 +7303,32 @@
         node.data.videoModel = videoModelEl.value;
         updateVideoDurationOptions(videoModelEl.value);
         updateVideoComputingPowerDisplay();
+        updateMergeButtonVisibility(videoModelEl.value);
       });
+
+      // 根据模型配置更新合并生成按钮的显示状态
+      function updateMergeButtonVisibility(videoModel) {
+        const mergeContainer = el.querySelector('.shot-group-merge-container');
+        
+        // 从后端配置获取模型是否支持宫格合并（指定分类为图生视频）
+        const taskId = window.TaskConfig?.getTaskIdByKey(videoModel, 'image_to_video');
+        const taskConfig = taskId ? window.TaskConfig?.getTaskById(taskId) : null;
+        const isMergeSupported = taskConfig?.supports_grid_merge || false;
+        
+        if(mergeContainer) {
+          mergeContainer.style.display = isMergeSupported ? 'inline-flex' : 'none';
+        }
+      }
+
+      // 初始化合并按钮显示状态
+      if(window.TaskConfig?.isLoaded()) {
+        updateMergeButtonVisibility(node.data.videoModel || 'wan22');
+      } else {
+        // 等待配置加载完成
+        window.TaskConfig?.onLoaded(() => {
+          updateMergeButtonVisibility(node.data.videoModel || 'wan22');
+        });
+      }
 
       // 视频时长选择事件
       videoDurationEl.addEventListener('change', () => {
@@ -7126,6 +7358,15 @@
         e.stopPropagation();
         generateShotGroupVideo(id, node);
       });
+
+      // 批量生成视频按钮点击事件
+      const batchGenerateBtn = el.querySelector('.shot-group-batch-generate-btn');
+      if(batchGenerateBtn) {
+        batchGenerateBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          generateAllShotFrameVideos(id, node);
+        });
+      }
 
       // 宫格预览刷新方法（挂到node对象上，供外部调用）
       node.refreshGridPreview = function() {
@@ -9504,6 +9745,84 @@
         if(mergeStatusEl){
           mergeStatusEl.style.color = '#ef4444';
           mergeStatusEl.textContent = `失败: ${error.message}`;
+        }
+      }
+    }
+
+    // 逐个生成所有分镜视频
+    async function generateAllShotFrameVideos(shotGroupNodeId, shotGroupNode) {
+      try {
+        // 获取所有子分镜节点
+        const shotFrameConnections = state.connections.filter(c => c.from === shotGroupNodeId);
+        const shotFrameNodes = shotFrameConnections
+          .map(conn => state.nodes.find(n => n.id === conn.to && n.type === 'shot_frame'))
+          .filter(Boolean);
+
+        if(shotFrameNodes.length === 0) {
+          showToast('请先生成分镜节点', 'warning');
+          return;
+        }
+
+        // 检查所有分镜节点是否都有首帧图片
+        const nodesWithImage = shotFrameNodes.filter(n => n.data.previewImageUrl || n.data.imageUrl);
+        if(nodesWithImage.length === 0) {
+          showToast('分镜节点没有首帧图片，请先生成分镜图', 'warning');
+          return;
+        }
+
+        const batchGenerateBtn = document.querySelector(`.node[data-node-id="${shotGroupNodeId}"] .shot-group-batch-generate-btn`);
+        if(!batchGenerateBtn) return;
+
+        // 首次使用提示
+        const batchTipKey = 'shot_group_batch_tip_shown';
+        if(!localStorage.getItem(batchTipKey)) {
+          showToast('逐个生成：每个分镜独立生成视频，支持所有模型但可能浪费时长', 'info', 5000);
+          localStorage.setItem(batchTipKey, 'true');
+        }
+
+        batchGenerateBtn.disabled = true;
+        batchGenerateBtn.textContent = '批量生成中...';
+
+        let successCount = 0;
+        let failCount = 0;
+
+        for(let i = 0; i < shotFrameNodes.length; i++) {
+          const shotFrameNode = shotFrameNodes[i];
+
+          // 检查是否有预览图
+          if(!shotFrameNode.data.previewImageUrl && !shotFrameNode.data.imageUrl) {
+            console.warn(`分镜节点 ${shotFrameNode.id} 没有预览图，跳过`);
+            failCount++;
+            continue;
+          }
+
+          try {
+            showToast(`正在生成 ${i + 1}/${shotFrameNodes.length} 分镜视频...`, 'info');
+            await generateShotFrameVideo(shotFrameNode.id, shotFrameNode);
+            successCount++;
+          } catch(error) {
+            console.error(`生成分镜视频失败:`, error);
+            failCount++;
+          }
+        }
+
+        batchGenerateBtn.disabled = false;
+        batchGenerateBtn.textContent = '逐个生成视频';
+
+        if(successCount > 0) {
+          showToast(`批量生成完成！成功 ${successCount} 个，失败 ${failCount} 个`, 'success');
+        } else {
+          showToast('批量生成失败，请检查分镜节点配置', 'error');
+        }
+
+      } catch(error) {
+        console.error('Generate all shot frame videos error:', error);
+        showToast(`批量生成失败: ${error.message}`, 'error');
+
+        const batchGenerateBtn = document.querySelector(`.node[data-node-id="${shotGroupNodeId}"] .shot-group-batch-generate-btn`);
+        if(batchGenerateBtn) {
+          batchGenerateBtn.disabled = false;
+          batchGenerateBtn.textContent = '逐个生成视频';
         }
       }
     }

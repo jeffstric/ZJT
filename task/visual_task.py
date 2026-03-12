@@ -199,6 +199,14 @@ async def _submit_new_task(ai_tool):
                 AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，请联系技术支持")
                 TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
             
+            # 释放 RunningHub 槽位（如果是 RunningHub 任务）
+            is_runninghub = ai_tool_type in RUNNINGHUB_TASK_TYPES
+            if is_runninghub:
+                task = TasksModel.get_by_task_id(task_id)
+                if task:
+                    RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
+                    logger.info(f"Released RunningHub slot for failed task {task_id}")
+            
             # 返回 True 表示任务已处理完成（虽然失败了），不需要重试
             return True
         
