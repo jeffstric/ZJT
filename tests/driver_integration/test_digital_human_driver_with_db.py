@@ -3,9 +3,9 @@ Digital Human RunningHub 驱动数据库集成测试
 直接测试驱动方法，不依赖 video_task.py 的业务逻辑
 """
 import sys
+import asyncio
 from unittest.mock import patch, MagicMock
 
-sys.modules['runninghub_request'] = MagicMock()
 sys.modules['utils.sentry_util'] = MagicMock()
 
 from tests.base_video_driver_test import BaseVideoDriverTest
@@ -17,10 +17,14 @@ DIGITAL_HUMAN_VIDEO_TYPE = 13
 
 class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
     """Digital Human 驱动数据库集成测试"""
-    
+
     def setUp(self):
+        """测试前准备"""
         super().setUp()
-        self.driver = DigitalHumanRunninghubV1Driver()
+        # Mock 配置
+        with patch('task.visual_drivers.digital_human_runninghub_v1_driver.get_dynamic_config_value') as mock_config:
+            mock_config.return_value = 'test_api_key'
+            self.driver = DigitalHumanRunninghubV1Driver()
     
     
     def test_driver_initialization(self):
@@ -40,7 +44,7 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         )
         
         tool = self.get_ai_tool_from_db(task_id)
-        req = self.driver.build_create_request(tool)
+        req = asyncio.run(self.driver.build_create_request(tool))
         
         # 验证 url
         self.assertIn('/openapi/v2/run/ai-app/', req['url'])
@@ -122,7 +126,7 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
                 "errorMessage": ""
             }
             
-            result = self.driver.submit_task(tool)
+            result = asyncio.run(self.driver.submit_task(tool))
             
             # 验证 _request 被调用一次
             mock_req.assert_called_once()
@@ -183,7 +187,7 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         with patch.object(self.driver, '_request') as mock_req:
             # 返回缺少必要字段的响应
             mock_req.return_value = {"errorCode": "INVALID"}
-            result = self.driver.submit_task(tool)
+            result = asyncio.run(self.driver.submit_task(tool))
             
             self.assertFalse(result['success'])
     
@@ -202,7 +206,7 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         
         with patch.object(self.driver, '_request') as mock_req:
             mock_req.side_effect = ConnectionError('Network timeout')
-            result = self.driver.submit_task(tool)
+            result = asyncio.run(self.driver.submit_task(tool))
             
             self.assertFalse(result['success'])
             self.assertTrue(result['retry'])

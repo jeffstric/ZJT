@@ -5,7 +5,6 @@ Kling Duomi 驱动数据库集成测试
 import sys
 from unittest.mock import patch, MagicMock
 
-sys.modules['duomi_api_requset'] = MagicMock()
 sys.modules['utils.sentry_util'] = MagicMock()
 
 from tests.base_video_driver_test import BaseVideoDriverTest
@@ -17,10 +16,14 @@ KLING_IMAGE_TO_VIDEO_TYPE = 12
 
 class TestKlingDuomiWithDB(BaseVideoDriverTest):
     """Kling 驱动数据库集成测试"""
-    
+
     def setUp(self):
+        """测试前准备"""
         super().setUp()
-        self.driver = KlingDuomiV1Driver()
+        # Mock 配置
+        with patch('task.visual_drivers.kling_duomi_v1_driver.get_dynamic_config_value') as mock_config:
+            mock_config.return_value = 'test_token'
+            self.driver = KlingDuomiV1Driver()
       
     def test_driver_initialization(self):
         self.assertIsNotNone(self.driver)
@@ -50,7 +53,7 @@ class TestKlingDuomiWithDB(BaseVideoDriverTest):
         self.assertEqual(req['json']['model_name'], 'kling-v2-5-turbo')
         self.assertEqual(req['json']['image'], 'https://example.com/test.jpg')
         self.assertEqual(req['json']['prompt'], '测试提示词')
-        self.assertEqual(req['json']['mode'], 'std')  # duration=5 对应 std
+        self.assertEqual(req['json']['mode'], 'std')  # mode 固定为 std
         self.assertEqual(req['json']['duration'], 5)
         self.assertEqual(req['json']['cfg_scale'], 0.5)
         
@@ -169,7 +172,56 @@ class TestKlingDuomiWithDB(BaseVideoDriverTest):
             
             self.assertFalse(result['success'])
             self.assertTrue(result['retry'])
-    
+
+    def test_build_create_request_duration_10_mode_fixed_std(self):
+        """测试构建创建任务请求参数 - duration=10 时 mode 固定为 std"""
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=KLING_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试提示词',
+            image_path='https://example.com/test.jpg',
+            duration=10,
+            status=AI_TOOL_STATUS_PENDING
+        )
+
+        tool = self.get_ai_tool_from_db(task_id)
+        req = self.driver.build_create_request(tool)
+
+        # 验证 mode 固定为 std（不因 duration=10 而变为 pro）
+        self.assertEqual(req['json']['mode'], 'std')
+        self.assertEqual(req['json']['duration'], 10)
+
+    def test_build_create_request_duration_8_mode_fixed_std(self):
+        """测试构建创建任务请求参数 - duration=8 时 mode 固定为 std"""
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=KLING_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试提示词',
+            image_path='https://example.com/test.jpg',
+            duration=8,
+            status=AI_TOOL_STATUS_PENDING
+        )
+
+        tool = self.get_ai_tool_from_db(task_id)
+        req = self.driver.build_create_request(tool)
+
+        # 验证 mode 固定为 std（不因 duration=8 而变为 pro）
+        self.assertEqual(req['json']['mode'], 'std')
+        self.assertEqual(req['json']['duration'], 8)
+
+    def test_build_create_request_default_duration_mode_std(self):
+        """测试构建创建任务请求参数 - duration 为空时 mode 固定为 std"""
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=KLING_IMAGE_TO_VIDEO_TYPE,
+            prompt='测试提示词',
+            image_path='https://example.com/test.jpg',
+            status=AI_TOOL_STATUS_PENDING
+        )
+
+        tool = self.get_ai_tool_from_db(task_id)
+        req = self.driver.build_create_request(tool)
+
+        # 验证 mode 固定为 std（无 duration 时使用默认值 5，mode 仍为 std）
+        self.assertEqual(req['json']['mode'], 'std')
+
     def test_check_status_success(self):
         """测试检查状态 - 成功，并更新数据库 - mock _request"""
         # 创建处理中的任务

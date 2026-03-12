@@ -166,7 +166,8 @@ class TestRunner:
             'tests.driver_integration.test_kling_driver_with_db',
             'tests.driver_integration.test_veo3_driver_with_db',
             'tests.driver_integration.test_gemini_driver_with_db',
-            'tests.driver_integration.test_gemini_pro_driver_with_db',
+            'tests.driver_integration.test_seedream_driver_with_db',
+            'tests.driver_integration.test_vidu_q2_driver_with_db',
         ]
         
         all_passed = True

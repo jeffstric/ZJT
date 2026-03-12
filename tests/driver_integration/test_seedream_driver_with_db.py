@@ -54,7 +54,8 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
         # 验证 json 结构
         self.assertEqual(req['json']['model'], 'doubao-seedream-5-0-260128')
         self.assertEqual(req['json']['prompt'], '一个女孩')
-        self.assertEqual(req['json']['size'], '2K')
+        # size 是像素尺寸，9:16 + 2K = 1600x2848
+        self.assertEqual(req['json']['size'], '1600x2848')
         self.assertEqual(req['json']['output_format'], 'png')
         self.assertEqual(req['json']['watermark'], False)
 
@@ -73,8 +74,8 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         req = self.driver.build_create_request(tool)
 
-        # 默认尺寸应该是 2K
-        self.assertEqual(req['json']['size'], '2K')
+        # 默认尺寸应该是 2K，默认比例 1:1 -> 2048x2048
+        self.assertEqual(req['json']['size'], '2048x2048')
 
     def test_build_create_request_3k_size(self):
         """测试 3K 图片尺寸"""
@@ -88,22 +89,23 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         req = self.driver.build_create_request(tool)
 
-        self.assertEqual(req['json']['size'], '3K')
+        # 3K + 默认比例 1:1 -> 3072x3072
+        self.assertEqual(req['json']['size'], '3072x3072')
 
-    def test_build_create_request_invalid_size_fallback(self):
-        """测试无效尺寸回退到默认值"""
+    def test_build_create_request_4k_size(self):
+        """测试 4K 图片尺寸"""
         task_id = self.create_test_ai_tool(
             ai_tool_type=SEEDREAM_TEXT_TO_IMAGE_TYPE,
             prompt='测试提示词',
-            image_size='4K',  # 不支持的尺寸
+            image_size='4K',
             status=AI_TOOL_STATUS_PENDING
         )
 
         tool = self.get_ai_tool_from_db(task_id)
         req = self.driver.build_create_request(tool)
 
-        # 应该回退到默认尺寸 2K
-        self.assertEqual(req['json']['size'], '2K')
+        # 4K + 默认比例 1:1 -> 4096x4096
+        self.assertEqual(req['json']['size'], '4096x4096')
 
     def test_build_check_query_empty(self):
         """测试构建查询状态请求参数（同步API不需要轮询）"""
@@ -163,7 +165,8 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
         self.assertEqual(call_args.kwargs['method'], 'POST')
         self.assertEqual(call_args.kwargs['json']['model'], 'doubao-seedream-5-0-260128')
         self.assertEqual(call_args.kwargs['json']['prompt'], '一个女孩')
-        self.assertEqual(call_args.kwargs['json']['size'], '2K')
+        # 9:16 + 2K = 1600x2848
+        self.assertEqual(call_args.kwargs['json']['size'], '1600x2848')
 
     @patch.object(Seedream5VolcengineV1Driver, '_request')
     def test_submit_task_api_error(self, mock_request):

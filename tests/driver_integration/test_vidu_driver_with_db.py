@@ -5,7 +5,6 @@ Vidu 驱动数据库集成测试
 import sys
 from unittest.mock import patch, MagicMock
 
-sys.modules['vidu_api_requset'] = MagicMock()
 sys.modules['utils.sentry_util'] = MagicMock()
 
 from tests.base_video_driver_test import BaseVideoDriverTest
@@ -17,10 +16,24 @@ VIDU_IMAGE_TO_VIDEO_TYPE = 14
 
 class TestViduDefaultWithDB(BaseVideoDriverTest):
     """Vidu 驱动数据库集成测试"""
-    
+
     def setUp(self):
+        """测试前准备"""
         super().setUp()
-        self.driver = ViduDefaultDriver()
+        # Mock 配置 - 使用 side_effect 精确控制不同配置的返回值
+        def mock_get_dynamic_config(section, key, default=None):
+            """Mock get_dynamic_config_value 以返回特定配置值"""
+            if section == "vidu" and key == "token":
+                return 'test_api_key'
+            elif section == "timeout" and key == "request_timeout":
+                return 30
+            elif section == "server" and key == "is_local":
+                return False  # 确保不触发图片上传逻辑
+            return default if default is not None else ""
+
+        with patch('task.visual_drivers.vidu_default_driver.get_dynamic_config_value') as mock_config:
+            mock_config.side_effect = mock_get_dynamic_config
+            self.driver = ViduDefaultDriver()
 
     def test_driver_initialization(self):
         self.assertIsNotNone(self.driver)

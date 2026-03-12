@@ -174,8 +174,8 @@ class KlingDuomiV1Driver(BaseVideoDriver):
         Returns:
             Dict[str, Any]: 请求参数字典
         """
-        # 根据时长确定模式
-        mode = "std" if ai_tool.duration == 5 else "pro"
+        # 固定使用标准模式 (std)
+        mode = "std"
 
         # 解析图片模式
         image_info = self.get_all_images_by_mode(ai_tool)
