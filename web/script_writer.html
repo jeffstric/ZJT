@@ -15,6 +15,31 @@
 </head>
 <body>
     <div class="app-container">
+        <!-- 左侧导览条 -->
+        <nav class="step-nav" id="step-nav">
+            <div class="step-nav-toggle" onclick="toggleStepNav()" title="展开/收起导览">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 18l6-6-6-6"/>
+                </svg>
+            </div>
+            <div class="step-nav-content">
+                <div class="step-nav-title">创作流程</div>
+                <div class="step-nav-list">
+                    <div class="step-nav-item active" data-step="script">
+                        <div class="step-nav-icon">📚</div>
+                        <div class="step-nav-text">剧本资产</div>
+                        <div class="step-nav-badge current">当前</div>
+                    </div>
+                    <div class="step-nav-connector"></div>
+                    <div class="step-nav-item clickable" data-step="canvas" onclick="goToWorkflowCanvas()">
+                        <div class="step-nav-icon">🎬</div>
+                        <div class="step-nav-text">无限画布</div>
+                        <div class="step-nav-arrow">→</div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+        
         <!-- 世界选择侧边栏 -->
         <aside class="world-sidebar" id="world-sidebar">
             <div class="world-sidebar-header">
@@ -2700,6 +2725,130 @@
                 worldNameDisplay.style.color = 'var(--warning-color)';
             }
         }
+        
+        // ========== 左侧导览条相关函数 ==========
+        
+        // 切换导览条展开/收起
+        function toggleStepNav() {
+            const nav = document.getElementById('step-nav');
+            nav.classList.toggle('collapsed');
+            // 保存状态到localStorage
+            localStorage.setItem('step_nav_collapsed', nav.classList.contains('collapsed'));
+        }
+        
+        // 初始化导览条状态
+        function initStepNav() {
+            const collapsed = localStorage.getItem('step_nav_collapsed') === 'true';
+            const nav = document.getElementById('step-nav');
+            if (collapsed) {
+                nav.classList.add('collapsed');
+            }
+        }
+        
+        // 检查资产完成状态
+        async function checkAssetsComplete() {
+            const missingAssets = [];
+            
+            // 检查角色图片
+            if (window.charactersData && window.charactersData.length > 0) {
+                const missingCharacters = window.charactersData.filter(c => !c.image_url);
+                if (missingCharacters.length > 0) {
+                    missingAssets.push({
+                        type: '角色',
+                        items: missingCharacters.map(c => c.name)
+                    });
+                }
+            }
+            
+            // 检查场景图片
+            if (window.scenesData && window.scenesData.length > 0) {
+                const missingScenes = window.scenesData.filter(s => !s.image_url);
+                if (missingScenes.length > 0) {
+                    missingAssets.push({
+                        type: '场景',
+                        items: missingScenes.map(s => s.name)
+                    });
+                }
+            }
+            
+            // 检查道具图片
+            if (window.propsData && window.propsData.length > 0) {
+                const missingProps = window.propsData.filter(p => !p.image_url);
+                if (missingProps.length > 0) {
+                    missingAssets.push({
+                        type: '道具',
+                        items: missingProps.map(p => p.name)
+                    });
+                }
+            }
+            
+            return missingAssets;
+        }
+        
+        // 显示资产缺失确认弹窗
+        function showAssetConfirmModal(missingAssets) {
+            return new Promise((resolve) => {
+                let message = '检测到以下资产图片尚未生成：\n\n';
+                missingAssets.forEach(asset => {
+                    message += `【${asset.type}】${asset.items.slice(0, 3).join('、')}`;
+                    if (asset.items.length > 3) {
+                        message += ` 等${asset.items.length}项`;
+                    }
+                    message += '\n';
+                });
+                message += '\n是否确认进入下一步？';
+                
+                if (confirm(message)) {
+                    resolve(true);
+                } else {
+                    resolve(false);
+                }
+            });
+        }
+        
+        // 跳转到工作流画布
+        async function goToWorkflowCanvas() {
+            // 获取workflow_id (兼容两种参数名)
+            const urlParams = new URLSearchParams(window.location.search);
+            let workflowId = urlParams.get('workflow_id') || urlParams.get('id');
+            
+            // 如果没有workflow_id，尝试从当前世界获取关联的工作流
+            if (!workflowId && window.currentWorldId) {
+                // 可以在这里添加获取世界关联工作流的逻辑
+                console.log('当前世界ID:', window.currentWorldId);
+            }
+            
+            // 先提交当前数据
+            try {
+                await submitToDatabase();
+            } catch (e) {
+                console.error('提交数据失败:', e);
+            }
+            
+            // 检查资产完成状态
+            const missingAssets = await checkAssetsComplete();
+            
+            if (missingAssets.length > 0) {
+                const confirmed = await showAssetConfirmModal(missingAssets);
+                if (!confirmed) {
+                    return;
+                }
+            }
+            
+            // 跳转到工作流画布
+            if (workflowId) {
+                window.location.href = `/video-workflow?id=${workflowId}`;
+            } else {
+                // 没有workflow_id，跳转到工作流列表
+                alert('未找到关联的工作流，请先创建工作流');
+                window.location.href = '/video-workflow-list';
+            }
+        }
+        
+        // 页面加载时初始化导览条
+        document.addEventListener('DOMContentLoaded', function() {
+            initStepNav();
+        });
     </script>
 </body>
 </html>
