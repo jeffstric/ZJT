@@ -7,6 +7,9 @@ echo "=================================="
 echo "单元测试一键执行"
 echo "=================================="
 
+# 设置单元测试环境变量，确保使用 config_unit.yml 配置
+export comfyui_env=unit
+
 # 检查 Python
 if ! command -v python3 &> /dev/null; then
     echo "[ERROR] Python3 未安装"

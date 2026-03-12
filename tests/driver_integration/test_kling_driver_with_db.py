@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 sys.modules['utils.sentry_util'] = MagicMock()
 
-from tests.base_video_driver_test import BaseVideoDriverTest
+from tests.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
 from task.visual_drivers.kling_duomi_v1_driver import KlingDuomiV1Driver
 from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
 
@@ -20,9 +20,8 @@ class TestKlingDuomiWithDB(BaseVideoDriverTest):
     def setUp(self):
         """测试前准备"""
         super().setUp()
-        # Mock 配置
-        with patch('task.visual_drivers.kling_duomi_v1_driver.get_dynamic_config_value') as mock_config:
-            mock_config.return_value = 'test_token'
+        # 使用统一的 mock 配置函数，从 config_unit.yml 获取配置
+        with patch('task.visual_drivers.kling_duomi_v1_driver.get_dynamic_config_value', side_effect=mock_get_dynamic_config_value):
             self.driver = KlingDuomiV1Driver()
       
     def test_driver_initialization(self):

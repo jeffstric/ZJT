@@ -3,9 +3,23 @@
 提供视频驱动测试的通用方法和数据库操作
 """
 import logging
+from unittest.mock import patch
 from tests.base_db_test import DatabaseTestCase
+from tests.db_test_config import get_unit_config_value
 
 logger = logging.getLogger(__name__)
+
+
+def mock_get_dynamic_config_value(*keys, default=None):
+    """
+    Mock get_dynamic_config_value，从 config_unit.yml 获取配置
+    
+    用于驱动测试中替代真实的 get_dynamic_config_value
+    所有配置必须在 config_unit.yml 中定义，不使用硬编码默认值
+    """
+    # 从 config_unit.yml 获取配置
+    value = get_unit_config_value(*keys, default=default)
+    return value
 
 
 class BaseVideoDriverTest(DatabaseTestCase):

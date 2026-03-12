@@ -54,9 +54,14 @@ def get_test_db_config():
         try:
             with open(unit_config_file, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
-                if config and 'database' in config:
-                    db_config = config['database'].copy()
-                    logger.info(f"使用 {get_unit_test_config_path()} 中的 database 配置")
+                if config:
+                    # 优先使用 test_database，其次 database
+                    if 'test_database' in config:
+                        db_config = config['test_database'].copy()
+                        logger.info(f"使用 {get_unit_test_config_path()} 中的 test_database 配置")
+                    elif 'database' in config:
+                        db_config = config['database'].copy()
+                        logger.info(f"使用 {get_unit_test_config_path()} 中的 database 配置")
         except Exception as e:
             logger.error(f"加载测试配置文件失败: {e}")
     
@@ -132,6 +137,69 @@ def get_unit_test_setting(key, default=None):
         return value
     except Exception:
         return default
+
+
+# 缓存单元测试配置
+_unit_config_cache = None
+
+
+def get_unit_config():
+    """
+    获取完整的单元测试配置（带缓存）
+    
+    Returns:
+        dict: 完整的配置字典
+    """
+    global _unit_config_cache
+    
+    if _unit_config_cache is not None:
+        return _unit_config_cache
+    
+    config_file = os.path.join(APP_DIR, get_unit_test_config_path())
+    
+    if not os.path.exists(config_file):
+        _unit_config_cache = {}
+        return _unit_config_cache
+    
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            _unit_config_cache = yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.error(f"加载单元测试配置文件失败: {e}")
+        _unit_config_cache = {}
+    
+    return _unit_config_cache
+
+
+def get_unit_config_value(*keys, default=None):
+    """
+    获取单元测试配置中的指定值（支持多层级键）
+    
+    用于替代驱动测试中的 mock get_dynamic_config_value
+    
+    Args:
+        *keys: 配置键路径，如 'server', 'is_local' 表示 config['server']['is_local']
+        default: 键不存在时的默认值
+        
+    Returns:
+        配置值或默认值
+        
+    Example:
+        >>> get_unit_config_value('server', 'is_local', default=False)
+        >>> get_unit_config_value('timeout', 'request_timeout', default=30)
+    """
+    config = get_unit_config()
+    
+    result = config
+    for key in keys:
+        if isinstance(result, dict):
+            result = result.get(key)
+        else:
+            return default
+        if result is None:
+            return default
+    
+    return result if result is not None else default
 
 
 def get_test_db_connection():
