@@ -716,8 +716,8 @@ def start_app_service():
         logger.info(f"使用 uv 启动: {run_script}")
         requirements_file = os.path.join(current_dir, "requirements.txt")
 
-        # 让 uv 自动选择合适的 Python 版本(系统 Python 或自动下载)
-        cmd = [uv_path, "run"]
+        # Mac 有多种架构(x86_64/arm64)，让 uv 自动选择合适的 Python 版本
+        cmd = [uv_path, "run", "--python", "3.10"]
         if os.path.exists(requirements_file):
             cmd.extend(["--with-requirements", requirements_file])
             logger.info(f"使用依赖文件: {requirements_file}")
