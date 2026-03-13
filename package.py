@@ -42,6 +42,7 @@ EXCLUDE_DIRS = [
 # 不需要打包的目录（相对路径，只排除特定子目录）
 EXCLUDE_SUBDIRS = [
     "files/script_writer",
+    "files/tmp",
 ]
 
 # 不需要打包的文件
