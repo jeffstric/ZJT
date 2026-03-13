@@ -8,13 +8,8 @@
   <link rel="stylesheet" href="/css/video_workflow.css" />
 </head>
 <body>
-  <!-- 左侧导览条 -->
+  <!-- 左侧导览条 - 悬浮模式 -->
   <nav class="step-nav" id="step-nav">
-    <div class="step-nav-toggle" onclick="toggleStepNav()" title="展开/收起导览">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M9 18l6-6-6-6"/>
-      </svg>
-    </div>
     <div class="step-nav-content">
       <div class="step-nav-title">创作流程</div>
       <div class="step-nav-list">
@@ -922,45 +917,17 @@
 
   <script>
     // ========== 左侧导览条相关函数 ==========
-    
-    // 切换导览条展开/收起
-    function toggleStepNav() {
-      const nav = document.getElementById('step-nav');
-      nav.classList.toggle('collapsed');
-      // 保存状态到localStorage
-      localStorage.setItem('workflow_step_nav_collapsed', nav.classList.contains('collapsed'));
-      // 调整shell布局
-      adjustShellLayout();
-    }
-    
-    // 初始化导览条状态
-    function initStepNav() {
-      const collapsed = localStorage.getItem('workflow_step_nav_collapsed') === 'true';
-      const nav = document.getElementById('step-nav');
-      if (collapsed) {
-        nav.classList.add('collapsed');
-      }
-      adjustShellLayout();
-    }
-    
-    // 调整shell布局
-    function adjustShellLayout() {
-      const nav = document.getElementById('step-nav');
-      const shell = document.querySelector('.shell');
-      if (nav && shell) {
-        if (nav.classList.contains('collapsed')) {
-          shell.style.marginLeft = '60px';
-        } else {
-          shell.style.marginLeft = '200px';
-        }
-      }
-    }
+    // 导览条现在是悬浮模式，通过CSS hover自动展开/收起，无需JavaScript控制
     
     // 跳转到剧本创作系统
     async function goToScriptWriter() {
       // 获取workflow_id
       const urlParams = new URLSearchParams(window.location.search);
       const workflowId = urlParams.get('id');
+      
+      // 获取当前选择的世界id
+      const worldSelect = document.getElementById('defaultWorldSelect');
+      const worldId = worldSelect ? worldSelect.value : '';
       
       // 先保存当前工作流
       if (typeof saveWorkflow === 'function') {
@@ -973,17 +940,16 @@
       
       // 跳转到剧本创作系统
       const userId = localStorage.getItem('user_id') || '';
-      if (workflowId) {
-        window.location.href = `/script-writer?workflow_id=${workflowId}&user_id=${userId}`;
-      } else {
-        window.location.href = '/script-writer';
+      let url = '/script-writer';
+      if (workflowId || userId || worldId) {
+        const params = new URLSearchParams();
+        if (workflowId) params.set('workflow_id', workflowId);
+        if (userId) params.set('user_id', userId);
+        if (worldId) params.set('world_id', worldId);
+        url += '?' + params.toString();
       }
+      window.location.href = url;
     }
-    
-    // 页面加载时初始化导览条
-    document.addEventListener('DOMContentLoaded', function() {
-      initStepNav();
-    });
     
     // 打开算力日志弹窗
     function openComputingPowerLogs() {

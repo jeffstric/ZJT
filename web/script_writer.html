@@ -797,6 +797,7 @@
         // 全局参数：从URL获取并存储，供所有接口使用
         const USER_ID = urlParams.get('user_id');
         const WORLD_ID = urlParams.get('world_id');
+        const WORKFLOW_ID = urlParams.get('workflow_id')
         // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
         const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
         
@@ -2425,7 +2426,11 @@
             }
             
             // auth_token 已在 localStorage 中，无需通过 URL 传递
-            const newUrl = `${window.location.pathname}?user_id=${USER_ID}&world_id=${worldId}`;
+            // 保留workflow_id参数，确保切换世界后仍能跳转到制作工坊
+            let newUrl = `${window.location.pathname}?user_id=${USER_ID}&world_id=${worldId}`;
+            if (WORKFLOW_ID) {
+                newUrl += `&workflow_id=${WORKFLOW_ID}`;
+            }
             window.location.href = newUrl;
         }
 
@@ -2733,56 +2738,61 @@
         
         // 检查资产完成状态
         async function checkAssetsComplete() {
-            const missingAssets = [];
-            
-            // 检查角色图片
-            if (window.charactersData && window.charactersData.length > 0) {
-                const missingCharacters = window.charactersData.filter(c => !c.image_url);
-                if (missingCharacters.length > 0) {
-                    missingAssets.push({
-                        type: '角色',
-                        items: missingCharacters.map(c => c.name)
-                    });
-                }
+            if (!WORLD_ID) {
+                return { hasScript: false, missingAssets: [] };
             }
             
-            // 检查场景图片
-            if (window.scenesData && window.scenesData.length > 0) {
-                const missingScenes = window.scenesData.filter(s => !s.image_url);
-                if (missingScenes.length > 0) {
-                    missingAssets.push({
-                        type: '场景',
-                        items: missingScenes.map(s => s.name)
-                    });
+            try {
+                const response = await fetch('/api/check-assets-complete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({ world_id: parseInt(WORLD_ID) })
+                });
+                
+                const data = await response.json();
+                
+                if (data.code === 0) {
+                    return {
+                        hasScript: data.data.has_script,
+                        missingAssets: data.data.missing_assets || []
+                    };
+                } else {
+                    console.error('检查资产状态失败:', data.message);
+                    return { hasScript: true, missingAssets: [] };
                 }
+            } catch (error) {
+                console.error('检查资产状态请求失败:', error);
+                return { hasScript: true, missingAssets: [] };
             }
-            
-            // 检查道具图片
-            if (window.propsData && window.propsData.length > 0) {
-                const missingProps = window.propsData.filter(p => !p.image_url);
-                if (missingProps.length > 0) {
-                    missingAssets.push({
-                        type: '道具',
-                        items: missingProps.map(p => p.name)
-                    });
-                }
-            }
-            
-            return missingAssets;
         }
         
-        // 显示资产缺失确认弹窗
-        function showAssetConfirmModal(missingAssets) {
+        // 显示资产检查确认弹窗
+        function showAssetConfirmModal(hasScript, missingAssets) {
             return new Promise((resolve) => {
-                let message = '检测到以下资产图片尚未生成：\n\n';
-                missingAssets.forEach(asset => {
-                    message += `【${asset.type}】${asset.items.slice(0, 3).join('、')}`;
-                    if (asset.items.length > 3) {
-                        message += ` 等${asset.items.length}项`;
-                    }
-                    message += '\n';
-                });
-                message += '\n是否确认进入下一步？';
+                let message = '检测到以下问题：\n\n';
+                
+                // 检查剧本
+                if (!hasScript) {
+                    message += '⚠️ 当前世界还没有剧本\n';
+                }
+                
+                // 检查资产图片
+                if (missingAssets && missingAssets.length > 0) {
+                    message += '\n以下资产图片尚未生成：\n';
+                    missingAssets.forEach(asset => {
+                        message += `【${asset.type}】${asset.items.slice(0, 3).join('、')}`;
+                        if (asset.items.length > 3) {
+                            message += ` 等${asset.items.length}项`;
+                        }
+                        message += '\n';
+                    });
+                }
+                
+                message += '\n是否仍要进入制作工坊？';
                 
                 if (confirm(message)) {
                     resolve(true);
@@ -2794,12 +2804,8 @@
         
         // 跳转到工作流画布
         async function goToWorkflowCanvas() {
-            // 获取workflow_id (兼容两种参数名)
-            const urlParams = new URLSearchParams(window.location.search);
-            let workflowId = urlParams.get('workflow_id') || urlParams.get('id');
-            
-            // 如果没有workflow_id，尝试从当前世界获取关联的工作流
-            if (!workflowId && window.currentWorldId) {
+            // 如果没有WORKFLOW_ID，尝试从当前世界获取关联的工作流
+            if (!WORKFLOW_ID && window.currentWorldId) {
                 // 可以在这里添加获取世界关联工作流的逻辑
                 console.log('当前世界ID:', window.currentWorldId);
             }
@@ -2812,20 +2818,22 @@
             }
             
             // 检查资产完成状态
-            const missingAssets = await checkAssetsComplete();
+            const assetsStatus = await checkAssetsComplete();
             
-            if (missingAssets.length > 0) {
-                const confirmed = await showAssetConfirmModal(missingAssets);
+            // 如果有问题（没有剧本或资产缺失图片），弹出确认提示
+            const hasProblems = !assetsStatus.hasScript || assetsStatus.missingAssets.length > 0;
+            if (hasProblems) {
+                const confirmed = await showAssetConfirmModal(assetsStatus.hasScript, assetsStatus.missingAssets);
                 if (!confirmed) {
                     return;
                 }
             }
             
             // 跳转到工作流画布
-            if (workflowId) {
-                window.location.href = `/video-workflow?id=${workflowId}`;
+            if (WORKFLOW_ID) {
+                window.location.href = `/video-workflow?id=${WORKFLOW_ID}`;
             } else {
-                // 没有workflow_id，跳转到工作流列表
+                // 没有WORKFLOW_ID，跳转到工作流列表
                 alert('未找到关联的工作流，请先创建工作流');
                 window.location.href = '/video-workflow-list';
             }

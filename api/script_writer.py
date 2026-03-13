@@ -37,6 +37,10 @@ _load_api_config()
 
 # 导入数据模型
 from model.world import WorldModel
+from model.script import ScriptModel
+from model.character import CharacterModel
+from model.location import LocationModel
+from model.props import PropsModel
 
 # 导入服务
 from perseids_server.client import async_make_perseids_request
@@ -1977,4 +1981,98 @@ async def save_prop(request: Request, prop_name: str, file_request: FileContentR
         return JSONResponse({
             'success': False,
             'error': str(e)
+        }, status_code=500)
+
+
+# ==================== 资产完成状态检查 API ====================
+
+class CheckAssetsRequest(BaseModel):
+    """检查资产完成状态请求"""
+    world_id: int
+
+
+@router.post('/check-assets-complete')
+@require_permission("world:view")
+async def check_assets_complete(request: Request, check_request: CheckAssetsRequest):
+    """
+    检查世界资产完成状态
+    
+    根据世界ID检查：
+    1. 是否存在剧本
+    2. 角色、场景、道具是否有参考图缺失
+    
+    Returns:
+        {
+            'code': 0,
+            'data': {
+                'has_script': bool,
+                'missing_assets': [
+                    {'type': '角色', 'items': ['角色名1', '角色名2']},
+                    {'type': '场景', 'items': ['场景名1']},
+                    {'type': '道具', 'items': ['道具名1']}
+                ]
+            }
+        }
+    """
+    world_id = check_request.world_id
+    
+    try:
+        result = {
+            'has_script': False,
+            'missing_assets': []
+        }
+        
+        # 1. 检查是否存在剧本
+        scripts_result = ScriptModel.list_by_world(world_id, page=1, page_size=1)
+        result['has_script'] = scripts_result.get('total', 0) > 0
+        
+        # 2. 检查角色参考图
+        characters_result = CharacterModel.list_by_world(world_id, page=1, page_size=1000)
+        characters = characters_result.get('data', [])
+        missing_characters = [
+            c['name'] for c in characters 
+            if not c.get('reference_image')
+        ]
+        if missing_characters:
+            result['missing_assets'].append({
+                'type': '角色',
+                'items': missing_characters
+            })
+        
+        # 3. 检查场景参考图
+        locations_result = LocationModel.list_by_world(world_id, page=1, page_size=1000)
+        locations = locations_result.get('data', [])
+        missing_locations = [
+            loc['name'] for loc in locations 
+            if not loc.get('reference_image')
+        ]
+        if missing_locations:
+            result['missing_assets'].append({
+                'type': '场景',
+                'items': missing_locations
+            })
+        
+        # 4. 检查道具参考图
+        props_result = PropsModel.list_by_world(world_id, page=1, page_size=1000)
+        props = props_result.get('data', [])
+        missing_props = [
+            p['name'] for p in props 
+            if not p.get('reference_image')
+        ]
+        if missing_props:
+            result['missing_assets'].append({
+                'type': '道具',
+                'items': missing_props
+            })
+        
+        return JSONResponse({
+            'code': 0,
+            'data': result
+        })
+        
+    except Exception as e:
+        logger.error(f'检查资产完成状态失败: {str(e)}')
+        return JSONResponse({
+            'code': -1,
+            'message': f'检查失败: {str(e)}'
         }, status_code=500)

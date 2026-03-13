@@ -365,6 +365,7 @@ body {
     flex: 1;
     overflow: hidden;
     background: var(--bg-light);
+    margin-left: 60px;
 }
 
 /* Chat Area */
@@ -2231,7 +2232,3 @@ body {
     margin-left: 0;
 }
 
-/* 中间内容区域需要留出导览条空间 */
-.main-content {
-    margin-left: 60px;
-}
