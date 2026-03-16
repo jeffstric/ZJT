@@ -725,9 +725,12 @@ def start_app_service():
 
         logger.info(f"执行命令: {' '.join(cmd)}")
 
-        # 设置 PYTHONUTF8=1 确保 Python 使用 UTF-8 编码读取包含中文的迁移文件
+        # 设置环境变量
         subprocess_env = os.environ.copy()
         subprocess_env['PYTHONUTF8'] = '1'
+        # 设置 uv 镜像源，加速大陆地区下载
+        subprocess_env['UV_PYTHON_INSTALL_MIRROR'] = 'https://ghfast.top/https://github.com/indygreg/python-build-standalone/releases/download'
+        subprocess_env['UV_INDEX_URL'] = 'https://mirrors.aliyun.com/pypi/simple/'
 
         app_process = subprocess.Popen(
             cmd,
