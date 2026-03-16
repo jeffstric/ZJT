@@ -195,6 +195,38 @@ test_mode:
 
 ---
 
+## 打包工具
+
+### Windows 托盘启动器打包
+
+**📌 详细说明：[scripts/build/README.md](../scripts/build/README.md)**
+
+本项目提供自动化打包工具，用于生成带托盘功能的 Windows 可执行文件：
+
+```bash
+# 方法一：使用批处理脚本（推荐）
+scripts\build\build.bat
+
+# 方法二：直接运行 Python 脚本
+python scripts\build\build_launcher.py
+```
+
+打包工具会自动：
+- 检查并安装必需的依赖（pystray、PIL、PyInstaller）
+- 清理之前的构建文件
+- 使用正确的参数打包
+- 验证输出文件
+
+**输出文件**：`点我启动.exe` - 包含完整托盘功能的可执行程序
+
+**托盘功能**：
+- 系统托盘图标显示启动状态
+- 右键菜单（打开浏览器、查看日志、退出）
+- 自动打开浏览器
+- 单实例检测防止重复启动
+
+---
+
 ## 目录结构
 
 ```
@@ -205,6 +237,10 @@ comfyui_server/
 ├─ start.command              # macOS 启动脚本
 ├─ stop.command               # macOS 停止脚本
 ├─ scripts/                   # 脚本目录
+│  ├─ build/                  # 打包工具目录
+│  │  ├─ build_launcher.py    # 主打包脚本
+│  │  ├─ build.bat            # 批处理打包脚本
+│  │  └─ README.md            # 打包工具说明
 │  ├─ launchers/              # 启动器脚本
 │  │  ├─ launcher.py          # Windows 托盘启动器源码
 │  │  ├─ launcher_mac.py      # macOS 托盘启动器源码
@@ -254,6 +290,7 @@ comfyui_server/
 
 | 文档 | 说明 |
 |------|------|
+| [scripts/build/README.md](../scripts/build/README.md) | Windows 托盘启动器打包工具使用指南 |
 | [Windows启动开发说明.md](Windows启动开发说明.md) | Windows 启动流程详解 |
 | [database_migration.md](database_migration.md) | 数据库迁移指南 |
 | [test_mode_guide.md](test_mode_guide.md) | 测试模式使用指南 |

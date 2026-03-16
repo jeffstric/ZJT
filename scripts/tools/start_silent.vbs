@@ -7,7 +7,8 @@ Set objShell = CreateObject("WScript.Shell")
 Set objFSO = CreateObject("Scripting.FileSystemObject")
 
 strScriptDir = objFSO.GetParentFolderName(WScript.ScriptFullName)
-strBatFile = strScriptDir & "\start.bat"
+' start.bat 在根目录，不在 scripts/tools 目录
+strBatFile = strScriptDir & "\..\..\start.bat"
 
 If Not objFSO.FileExists(strBatFile) Then
     MsgBox "Error: start.bat not found" & vbCrLf & vbCrLf & _

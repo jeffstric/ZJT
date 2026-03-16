@@ -17,6 +17,10 @@ import socket
 import webbrowser
 import ctypes
 
+# 顶层导入 pystray 和 PIL，让 PyInstaller 认为它们是必需模块
+import pystray
+from PIL import Image, ImageDraw, ImageFont
+
 # 单实例检测（使用 Windows 命名互斥锁）
 MUTEX_NAME = "Global\\ZhiJuTong_Launcher_Mutex"
 mutex_handle = None
@@ -47,16 +51,9 @@ def check_single_instance():
         return True
 
 
-# 检查并导入依赖
-HAS_TRAY_DEPS = False
+# 检查托盘依赖是否可用
+HAS_TRAY_DEPS = True
 IMPORT_ERROR = None
-
-try:
-    import pystray
-    from PIL import Image, ImageDraw, ImageFont
-    HAS_TRAY_DEPS = True
-except ImportError as e:
-    IMPORT_ERROR = str(e)
 
 
 class TrayLauncher:
@@ -96,8 +93,12 @@ class TrayLauncher:
     def _get_current_dir(self):
         """获取当前脚本所在目录"""
         if getattr(sys, 'frozen', False):
+            # 打包环境下，返回项目根目录而不是可执行文件目录
+            # 假设可执行文件在项目根目录
             return os.path.dirname(sys.executable)
-        return os.path.dirname(os.path.abspath(__file__))
+        else:
+            # 开发环境下，返回项目根目录
+            return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     def _load_icon_file(self):
         """尝试加载图标文件"""
@@ -158,6 +159,11 @@ class TrayLauncher:
             color = self.STATUS_COLORS.get(self.status, "#FFA500")
             self.icon.icon = self._create_icon_image(color)
             self.icon.title = self.STATUS_TEXTS.get(self.status, "智剧通")
+            # 更新菜单内容以刷新状态消息
+            try:
+                self.icon.update_menu()
+            except Exception as e:
+                print(f"更新菜单失败: {e}")
     
     def _notify(self, title, message):
         """显示气泡通知"""
@@ -283,12 +289,8 @@ class TrayLauncher:
                     line = line.strip()
                     if line:
                         print(f"[服务] {line}")
-                        if "MySQL" in line:
-                            self.status_message = "正在启动 MySQL..."
-                        elif "应用服务" in line or "Web" in line.lower():
-                            self.status_message = "正在启动 Web 服务..."
-                        elif "迁移" in line or "migration" in line.lower():
-                            self.status_message = "正在执行数据库迁移..."
+                        # 只打印日志，不更新状态，避免状态卡住
+                        # 状态由 _start_service 方法统一管理
             except Exception as e:
                 print(f"读取输出失败: {e}")
     
@@ -361,7 +363,7 @@ class TrayLauncher:
         """创建右键菜单"""
         return pystray.Menu(
             pystray.MenuItem(
-                lambda text: self.status_message,
+                lambda item: self.status_message,
                 None,
                 enabled=False
             ),
@@ -394,12 +396,43 @@ def show_error(message):
     ctypes.windll.user32.MessageBoxW(0, message, "错误", 0x10)
 
 
+def check_non_ascii_in_path():
+    """检查路径是否包含非ASCII字符（包括中文、日文、韩文等）"""
+    import re
+    
+    current_path = os.getcwd()
+    
+    # 检查路径中是否包含非ASCII字符（超出ASCII 0-127范围的字符）
+    non_ascii_pattern = re.compile(r'[^\x00-\x7F]')
+    if non_ascii_pattern.search(current_path):
+        error_msg = (
+            f"路径兼容性检查失败\n\n"
+            f"当前路径：{current_path}\n\n"
+            f"问题原因：\n"
+            f"• 检测到路径包含非英文字符（可能包括中文、日文、韩文等）\n"
+            f"• MySQL 配置文件在 Windows 系统下对非英文字符路径存在编码兼容性问题\n"
+            f"• 可能导致配置文件读取失败，数据库无法正常启动\n\n"
+            f"解决方案：\n"
+            f"请将整个程序文件夹移动到纯英文路径下，例如：\n"
+            f"• C:\\ZhiJuTong\\\n"
+            f"• D:\\Programs\\ZhiJuTong\\\n"
+            f"• C:\\ComfyUI\\\n"
+            f"• D:\\Tools\\ComfyUI\\\n\n"
+            f"移动后重新运行程序即可。"
+        )
+        show_error(error_msg)
+        return False
+    
+    return True
+
+
 def fallback_vbs_launch():
     """回退到 VBS 静默启动"""
     if getattr(sys, 'frozen', False):
+        # 打包环境下，可执行文件应该在根目录
         current_dir = os.path.dirname(sys.executable)
     else:
-        # 获取项目根目录
+        # 开发环境下，获取项目根目录
         current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     vbs_path = os.path.join(current_dir, "scripts", "tools", "start_silent.vbs")
@@ -412,6 +445,10 @@ def fallback_vbs_launch():
 
 def main():
     """主函数"""
+    # 检查路径是否包含非ASCII字符
+    if not check_non_ascii_in_path():
+        sys.exit(1)
+    
     # 单实例检测
     if not check_single_instance():
         sys.exit(0)
@@ -438,7 +475,7 @@ def main():
             if getattr(sys, 'frozen', False):
                 log_dir = os.path.dirname(sys.executable)
             else:
-                # 获取项目根目录
+                # 开发环境下，获取项目根目录
                 log_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             log_file = os.path.join(log_dir, "launcher_error.log")
             with open(log_file, 'w', encoding='utf-8') as f:
