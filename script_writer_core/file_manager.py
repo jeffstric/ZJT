@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 from config.constant import FilePathConstants
+from utils.project_path import get_project_root
 
 
 class FileManager:
@@ -21,7 +22,8 @@ class FileManager:
             base_dir: 项目根目录，默认为当前文件所在目录
         """
         if base_dir is None:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
+            # 使用统一的项目根目录获取函数
+            base_dir = get_project_root()
         
         self.base_dir = Path(base_dir)
     

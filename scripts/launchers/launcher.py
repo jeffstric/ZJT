@@ -399,9 +399,10 @@ def fallback_vbs_launch():
     if getattr(sys, 'frozen', False):
         current_dir = os.path.dirname(sys.executable)
     else:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # 获取项目根目录
+        current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
-    vbs_path = os.path.join(current_dir, "start_silent.vbs")
+    vbs_path = os.path.join(current_dir, "scripts", "tools", "start_silent.vbs")
     
     if os.path.exists(vbs_path):
         subprocess.Popen(["wscript", vbs_path], cwd=current_dir)
@@ -437,7 +438,8 @@ def main():
             if getattr(sys, 'frozen', False):
                 log_dir = os.path.dirname(sys.executable)
             else:
-                log_dir = os.path.dirname(os.path.abspath(__file__))
+                # 获取项目根目录
+                log_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             log_file = os.path.join(log_dir, "launcher_error.log")
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(error_msg)

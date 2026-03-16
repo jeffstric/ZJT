@@ -27,7 +27,8 @@ def check_single_instance():
     global LOCK_FD, LOCK_FILE
 
     try:
-        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # 获取项目根目录
+        current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         lock_file = os.path.join(current_dir, ".launcher_lock")
 
         LOCK_FILE = lock_file
@@ -437,7 +438,8 @@ def main():
             if getattr(sys, 'frozen', False):
                 log_dir = os.path.dirname(sys.executable)
             else:
-                log_dir = os.path.dirname(os.path.abspath(__file__))
+                # 获取项目根目录
+                log_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             log_file = os.path.join(log_dir, "launcher_error.log")
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(error_msg)
