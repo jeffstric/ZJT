@@ -17,6 +17,16 @@ import socket
 import webbrowser
 import ctypes
 
+# 导入 PID 管理模块
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pid_manager import (
+    add_pid,
+    remove_pid,
+    clear_pids,
+    cleanup_dead_pids_on_startup,
+    check_launcher_running
+)
+
 # 顶层导入 pystray 和 PIL，让 PyInstaller 认为它们是必需模块
 import pystray
 from PIL import Image, ImageDraw, ImageFont
@@ -29,24 +39,32 @@ mutex_handle = None
 def check_single_instance():
     """检查是否已有实例在运行"""
     global mutex_handle
-    
+
     try:
+        # 先检查是否有 launcher 进程真的在运行（通过 PID 文件和进程检测）
+        is_running, running_pid = check_launcher_running()
+
         # 创建命名互斥锁
         mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX_NAME)
         last_error = ctypes.windll.kernel32.GetLastError()
-        
+
         # ERROR_ALREADY_EXISTS = 183
         if last_error == 183:
-            # 已有实例运行，显示提示并退出
-            ctypes.windll.user32.MessageBoxW(
-                0, 
-                "智剧通已在运行中，请查看系统托盘图标。", 
-                "提示", 
-                0x40  # MB_ICONINFORMATION
-            )
-            return False
+            # 互斥锁已存在，但需要验证进程是否真的在运行
+            if is_running:
+                # 进程真的在运行，显示提示并退出
+                ctypes.windll.user32.MessageBoxW(
+                    0,
+                    "智剧通已在运行中，请查看系统托盘图标。",
+                    "提示",
+                    0x40  # MB_ICONINFORMATION
+                )
+                return False
+            else:
+                # 互斥锁存在但进程不存在，说明是残留锁，允许继续运行
+                return True
         return True
-    except Exception:
+    except Exception as e:
         # 如果互斥锁检测失败，允许继续运行
         return True
 
@@ -87,8 +105,16 @@ class TrayLauncher:
         self.icon = None
         self.process = None
         self.server_port = 9003
+        self.server_url = f"http://localhost:{self.server_port}"
         self.should_stop = False
         self.current_dir = self._get_current_dir()
+
+        # 启动时清理残留的死亡进程 PID
+        cleanup_dead_pids_on_startup()
+
+        # 记录 launcher 自身的 PID（带进程名和工作目录）
+        launcher_name = "点我启动.exe" if getattr(sys, 'frozen', False) else "python"
+        add_pid(os.getpid(), launcher_name, self.current_dir)
         
     def _get_current_dir(self):
         """获取当前脚本所在目录"""
@@ -163,7 +189,7 @@ class TrayLauncher:
             try:
                 self.icon.update_menu()
             except Exception as e:
-                print(f"更新菜单失败: {e}")
+                pass
     
     def _notify(self, title, message):
         """显示气泡通知"""
@@ -171,7 +197,7 @@ class TrayLauncher:
             try:
                 self.icon.notify(message, title)
             except Exception as e:
-                print(f"通知失败: {e}")
+                pass
     
     def _check_port_available(self, port, timeout=1):
         """检查端口是否可访问"""
@@ -195,29 +221,41 @@ class TrayLauncher:
             time.sleep(1)
         return False
     
-    def _read_config_port(self):
-        """从配置文件读取端口号"""
+    def _read_config_url(self):
+        """从配置文件读取服务器 URL 和端口号"""
         try:
             import yaml
             env = os.environ.get('comfyui_env', 'prod')
             config_file = os.path.join(self.current_dir, f"config_{env}.yml")
-            
+
             if not os.path.exists(config_file):
                 config_file = os.path.join(self.current_dir, "config.example.yml")
-            
+
             if os.path.exists(config_file):
                 with open(config_file, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
-                    return config.get('server', {}).get('port', 9003)
-        except Exception as e:
-            print(f"读取配置失败: {e}")
-        return 9003
+                    server_config = config.get('server', {})
+                    # 优先使用 server.host，如果没有则用 host 和 port 组合
+                    server_url = server_config.get('host')
+                    if server_url:
+                        # 确保 server_url 以 http:// 或 https:// 开头
+                        if not server_url.startswith(('http://', 'https://')):
+                            server_url = f"http://{server_url}"
+                    else:
+                        # 回退到使用 localhost + port
+                        port = server_config.get('port', 9003)
+                        server_url = f"http://localhost:{port}"
+                    port = server_config.get('port', 9003)
+                    return server_url, port
+        except Exception:
+            pass
+        return "http://localhost:9003", 9003
     
     def _start_service(self):
         """启动服务的线程"""
         try:
-            self.server_port = self._read_config_port()
-            
+            self.server_url, self.server_port = self._read_config_url()
+
             self.status_message = "正在启动服务..."
             self._notify("智剧通", "正在启动服务，请稍候...")
             
@@ -251,7 +289,11 @@ class TrayLauncher:
                 creationflags=subprocess.CREATE_NO_WINDOW,
                 env=env
             )
-            
+
+            # 记录启动的进程 PID（带进程名和工作目录）
+            if self.process and self.process.pid:
+                add_pid(self.process.pid, "cmd.exe", self.current_dir)
+
             # 启动日志读取线程
             log_thread = threading.Thread(target=self._read_process_output, daemon=True)
             log_thread.start()
@@ -261,13 +303,13 @@ class TrayLauncher:
             
             if self._wait_for_service(self.server_port, timeout=180):
                 time.sleep(2)
-                
+
                 self.status = self.STATUS_READY
                 self.status_message = "服务已就绪"
                 self._update_icon()
-                self._notify("启动成功", f"服务已就绪\nhttp://localhost:{self.server_port}")
-                
-                webbrowser.open(f"http://localhost:{self.server_port}")
+                self._notify("启动成功", f"服务已就绪\n{self.server_url}")
+
+                webbrowser.open(self.server_url)
             else:
                 if not self.should_stop:
                     self.status = self.STATUS_ERROR
@@ -286,17 +328,13 @@ class TrayLauncher:
         if self.process and self.process.stdout:
             try:
                 for line in self.process.stdout:
-                    line = line.strip()
-                    if line:
-                        print(f"[服务] {line}")
-                        # 只打印日志，不更新状态，避免状态卡住
-                        # 状态由 _start_service 方法统一管理
-            except Exception as e:
-                print(f"读取输出失败: {e}")
+                    pass
+            except Exception:
+                pass
     
     def _open_browser(self, icon=None, item=None):
         """打开浏览器"""
-        webbrowser.open(f"http://localhost:{self.server_port}")
+        webbrowser.open(self.server_url)
     
     def _show_logs(self, icon=None, item=None):
         """打开日志目录"""
@@ -312,7 +350,7 @@ class TrayLauncher:
         self.status = self.STATUS_STOPPING
         self.status_message = "正在停止服务..."
         self._update_icon()
-        
+
         # 执行 stop.bat 来优雅地停止服务（等待完成）
         stop_script = os.path.join(self.current_dir, "stop.bat")
         if os.path.exists(stop_script):
@@ -320,8 +358,7 @@ class TrayLauncher:
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
-                
-                # 等待 stop.bat 执行完成
+
                 subprocess.run(
                     ["cmd", "/c", stop_script],
                     cwd=self.current_dir,
@@ -330,10 +367,10 @@ class TrayLauncher:
                     timeout=30
                 )
             except subprocess.TimeoutExpired:
-                print("stop.bat 执行超时")
-            except Exception as e:
-                print(f"执行 stop.bat 失败: {e}")
-        
+                pass
+            except Exception:
+                pass
+
         # 使用 /T 参数终止进程树（包括所有子进程）
         if self.process:
             try:
@@ -342,22 +379,33 @@ class TrayLauncher:
                     capture_output=True,
                     timeout=10
                 )
-            except Exception as e:
-                print(f"停止进程失败: {e}")
-        
-        # 清理可能残留的 start.bat 相关 cmd 进程
+            except Exception:
+                pass
+
+        # 清理 PID 记录
         try:
-            # 查找并终止标题包含 "ComfyUI" 的 cmd 窗口
-            subprocess.run(
-                ["taskkill", "/F", "/FI", "WINDOWTITLE eq ComfyUI*"],
-                capture_output=True,
-                timeout=5
-            )
+            my_pid = os.getpid()
+            remove_pid(my_pid)
+            if self.process and self.process.pid:
+                remove_pid(self.process.pid)
         except Exception:
             pass
-        
+
         if self.icon:
-            self.icon.stop()
+            # 先隐藏托盘图标
+            try:
+                self.icon.visible = False
+            except Exception:
+                pass
+
+            # 停止托盘图标（这会退出 icon.run() 事件循环）
+            try:
+                self.icon.stop()
+            except Exception:
+                pass
+
+            # 确保程序完全退出
+            sys.exit(0)
     
     def _create_menu(self):
         """创建右键菜单"""

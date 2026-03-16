@@ -32,6 +32,15 @@ import webbrowser
 import mysql.connector
 from mysql.connector import Error as MysqlError
 
+# 导入 PID 管理模块
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pid_manager import (
+    add_pid,
+    remove_pid,
+    clear_pids,
+    cleanup_dead_pids_on_startup
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -445,6 +454,11 @@ def start_mysql_service():
             creationflags=subprocess.CREATE_NO_WINDOW
         )
 
+        # 记录 MySQL 进程 PID（带进程名和工作目录）
+        if mysql_process.pid:
+            current_dir = get_current_dir()
+            add_pid(mysql_process.pid, "mysqld.exe", current_dir)
+
         retry_count = 0
         max_retries = 60 if is_first_init else 30
 
@@ -712,6 +726,11 @@ def start_app_service():
             env=subprocess_env
         )
 
+        # 记录应用进程 PID（带进程名和工作目录）
+        if app_process.pid:
+            current_dir = get_current_dir()
+            add_pid(app_process.pid, "python.exe", current_dir)
+
         time.sleep(3)
 
         if app_process.poll() is not None:
@@ -866,6 +885,17 @@ def cleanup():
             except Exception as e:
                 logger.error(f"停止MySQL服务时出错: {e}")
 
+    # 清理 PID 记录
+    try:
+        my_pid = os.getpid()
+        remove_pid(my_pid)
+        if app_process is not None and app_process.pid:
+            remove_pid(app_process.pid)
+        if mysql_process is not None and mysql_process.pid:
+            remove_pid(mysql_process.pid)
+    except Exception as e:
+        logger.error(f"清理 PID 记录时出错: {e}")
+
 
 def signal_handler(signum, frame):
     """
@@ -883,6 +913,9 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     atexit.register(cleanup)
+
+    # 启动时清理残留的死亡进程 PID
+    cleanup_dead_pids_on_startup()
 
     env = get_env()
     logger.info("=" * 50)
@@ -930,9 +963,19 @@ def main():
         logger.error("应用服务启动失败，退出")
         sys.exit(1)
 
-    # 从配置文件读取端口号
-    server_port = config.get('server', {}).get('port', 9003)
-    url = f"http://localhost:{server_port}"
+    # 从配置文件读取服务器 URL 和端口号
+    server_config = config.get('server', {})
+    server_port = server_config.get('port', 9003)
+    # 优先使用 server.host，如果没有则用 localhost + port
+    server_url = server_config.get('host')
+    if server_url:
+        # 确保 server_url 以 http:// 或 https:// 开头
+        if not server_url.startswith(('http://', 'https://')):
+            url = f"http://{server_url}"
+        else:
+            url = server_url
+    else:
+        url = f"http://localhost:{server_port}"
     
     # 等待服务真正可用后再打开浏览器（托盘模式由托盘启动器处理）
     if not tray_mode:
