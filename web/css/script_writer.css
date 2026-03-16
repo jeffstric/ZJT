@@ -154,25 +154,85 @@ body {
     gap: 12px;
 }
 
-.model-select {
-    padding: 8px 14px;
-    border: 1px solid var(--border-color);
+/* Model Selector Card - 卡片式模型选择器 */
+.model-selector-card {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    background: #f8f9fa;
     border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    gap: 0;
+}
+
+.model-selector-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.model-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+
+.text-model-icon {
+    background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%);
+    color: white;
+}
+
+.image-model-icon {
+    background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+    color: white;
+}
+
+.model-divider {
+    width: 1px;
+    height: 32px;
+    background: var(--border-color);
+    margin: 0 16px;
+}
+
+.model-select {
+    padding: 8px 32px 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
     background: white;
-    color: var(--text-secondary);
+    color: var(--text-primary);
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
-    min-width: 180px;
+    min-width: 140px;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
 }
 
 .model-select:hover {
     border-color: var(--primary-color);
 }
 
+.model-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
 .model-select option {
     background: white;
     color: var(--text-primary);
+}
+
+/* Legacy styles for backward compatibility */
+.model-selector-group {
+    display: none;
 }
 
 /* Computing Power Display */

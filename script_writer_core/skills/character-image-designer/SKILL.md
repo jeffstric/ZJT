@@ -67,7 +67,6 @@ ENDIF
 **4宫格生成JSON格式：**
 ```json
 {
-  "image_generation_model": "NanoBananaPro",
   "grid_layout": "2x2",
   "grid_aspect_ratio": "16:9",
   "global_watermark": "",
@@ -454,7 +453,7 @@ Expressions (Bottom Right): A row of 6 headshots displaying various facial expre
   - `prompts`: 4个提示词的列表（必须是4个）
     - 如果实际角色<4个，用"pure black background"补齐
     - 例如：2个角色 → [提示词1, 提示词2, "pure black background", "pure black background"]
-  - `model`: "gemini-3-pro-image-preview" (默认)
+- **注意**：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。
 - **功能说明**：
   - 自动构建4宫格JSON格式
   - 自动添加 `image_size="4k"` 参数生成高分辨率图像
@@ -484,10 +483,9 @@ Expressions (Bottom Right): A row of 6 headshots displaying various facial expre
 - 调用 `generate_text_to_image()` 函数
 - 参数设置：
   - `prompt`: 单个角色的提示词
-  - `model`: "gemini-3-pro-image-preview"
   - `item_type`: 1 (角色类型)
   - `item_name`: 角色名称
-  - `is_grid`: false
+- **注意**：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。
 
 **❌ 错误示例（禁止）：**
 ```python

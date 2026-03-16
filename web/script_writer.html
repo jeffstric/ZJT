@@ -79,9 +79,35 @@
                 <span class="world-name-display" id="world-name-display">加载中...</span>
             </div>
             <div class="header-right">
-                <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型">
-                    <option value="">加载中...</option>
-                </select>
+                <div class="model-selector-card">
+                    <div class="model-selector-item">
+                        <div class="model-icon text-model-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
+                                <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
+                            </svg>
+                        </div>
+                        <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型">
+                            <option value="">加载中...</option>
+                        </select>
+                    </div>
+                    <div class="model-divider"></div>
+                    <div class="model-selector-item">
+                        <div class="model-icon image-model-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 5c-2.5 0-4.5 1.5-4.5 3.5 0 1.5 1 2.8 2.5 3.4-.3.8-.5 1.6-.5 2.6 0 3 2.5 5.5 5.5 5.5s5.5-2.5 5.5-5.5c0-1-.2-1.8-.5-2.6 1.5-.6 2.5-1.9 2.5-3.4 0-2-2-3.5-4.5-3.5z"/>
+                                <path d="M12 5c0-1.5-1-2.5-2.5-2.5s-2.5 1-2.5 2.5"/>
+                                <path d="M12 5c0-1.5 1-2.5 2.5-2.5s2.5 1 2.5 2.5"/>
+                                <path d="M7.5 8c-1 0-2 .5-2.5 1.5"/>
+                                <path d="M16.5 8c1 0 2 .5 2.5 1.5"/>
+                                <path d="M9 12c0 1.5 1 3 3 3s3-1.5 3-3"/>
+                            </svg>
+                        </div>
+                        <select id="text-to-image-model-selector" class="model-select" onchange="changeTextToImageModel()" title="选择生图模型" style="display: none;">
+                            <option value="">加载中...</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="computing-power-display" id="computing-power-display" title="当前算力余额（点击查看日志）" onclick="openComputingPowerLogsModal()" style="cursor: pointer;">
                     <span class="power-icon">⚡</span>
                     <span class="power-value" id="power-value">--</span>
@@ -916,6 +942,7 @@
 
             configureMarked();
             await loadAvailableModels();
+            await loadTextToImageModels();
             await loadComputingPower();
             await loadUserWorlds();
 
@@ -1811,6 +1838,110 @@
                 }
             } catch (error) {
                 showError('切换模型失败: ' + error.message);
+            }
+        }
+
+        async function loadTextToImageModels() {
+            try {
+                const response = await fetch('/api/text-to-image-models', {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                const data = await response.json();
+
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+
+                const selector = document.getElementById('text-to-image-model-selector');
+                selector.innerHTML = '';
+
+                if (!data.success) {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = '模型加载失败';
+                    selector.appendChild(option);
+                    showError(data.error || '获取生图模型列表失败');
+                    return;
+                }
+
+                const models = data.models;
+                if (!models || models.length === 0) {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = '暂无可用模型';
+                    selector.appendChild(option);
+                    return;
+                }
+
+                // 只显示支持宫格生图的模型
+                models.forEach(model => {
+                    if (model.supports_grid_image) {
+                        const option = document.createElement('option');
+                        option.value = model.task_id;
+                        option.textContent = model.name;
+                        if (model.task_id === data.default_task_id) option.selected = true;
+                        selector.appendChild(option);
+                    }
+                });
+
+                // 显示选择器
+                selector.style.display = '';
+            } catch (error) {
+                console.error('加载生图模型列表失败:', error);
+                const selector = document.getElementById('text-to-image-model-selector');
+                if (selector) {
+                    selector.innerHTML = '<option value="">模型加载失败</option>';
+                }
+                showError('加载生图模型列表失败，请稍后重试');
+            }
+        }
+
+        async function changeTextToImageModel() {
+            if (!sessionId) {
+                showError('请先创建会话');
+                return;
+            }
+
+            const selector = document.getElementById('text-to-image-model-selector');
+            const model = selector.value;
+
+            if (!model) {
+                showError('请选择生图模型');
+                return;
+            }
+
+            if (!USER_ID || !WORLD_ID) {
+                showError('缺少用户ID或世界ID，请刷新页面重试');
+                return;
+            }
+
+            if (!AUTH_TOKEN) {
+                showError('缺少认证信息，请重新登录');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/text-to-image-model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        model_id: model,
+                        auth_token: AUTH_TOKEN,
+                        session_id: sessionId
+                    })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showSuccess(`已切换到 ${selector.options[selector.selectedIndex].text}`);
+                } else {
+                    showError('切换生图模型失败: ' + data.error);
+                }
+            } catch (error) {
+                showError('切换生图模型失败: ' + error.message);
             }
         }
 

@@ -59,6 +59,37 @@ router = APIRouter(prefix="/api", tags=["script_writer"])
 sessions_storage: Dict[str, ChatSession] = {}
 sessions_lock = threading.RLock()  # 使用可重入锁保护 sessions_storage 字典的并发访问
 
+# 生图模型配置存储（按 user_id + world_id 存储 task_id）
+# key: f"{user_id}_{world_id}", value: task_id (int)
+text_to_image_model_config: Dict[str, int] = {}
+TEXT_TO_IMAGE_MODEL_LOCK = threading.RLock()
+
+# 默认生图模型 task_id (nano-banana-Pro)
+DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
+
+
+def _get_text_to_image_models_from_config():
+    """从统一配置获取文生图模型列表"""
+    from config.unified_config import UnifiedConfigRegistry, TaskCategory
+    configs = UnifiedConfigRegistry.get_by_category(TaskCategory.TEXT_TO_IMAGE)
+    return {c.id: {"name": c.name, "computing_power": c.get_computing_power(), "supports_grid_image": c.supports_grid_image}
+            for c in configs if c.enabled}
+
+
+def get_text_to_image_model_id(user_id: str, world_id: str) -> int:
+    """获取用户在指定世界的生图模型 task_id"""
+    key = f"{user_id}_{world_id}"
+    with TEXT_TO_IMAGE_MODEL_LOCK:
+        return text_to_image_model_config.get(key, DEFAULT_TEXT_TO_IMAGE_TASK_ID)
+
+
+def set_text_to_image_model_id(user_id: str, world_id: str, task_id: int):
+    """设置用户在指定世界的生图模型 task_id"""
+    key = f"{user_id}_{world_id}"
+    with TEXT_TO_IMAGE_MODEL_LOCK:
+        text_to_image_model_config[key] = task_id
+
+
 # 全局组件
 task_manager = TaskManager()
 # 指定项目根目录作为 base_dir，确保文件保存到正确位置
@@ -70,6 +101,10 @@ tool_executor = ToolExecutor(file_manager=file_manager)
 # 设置 mcp_tool 的全局 file_manager
 from script_writer_core.mcp_tool import set_file_manager
 set_file_manager(file_manager)
+
+# 设置 mcp_tool 的生图模型获取函数
+from script_writer_core.mcp_tool import set_text_to_image_model_getter
+set_text_to_image_model_getter(get_text_to_image_model_id)
 
 # 加载智能体配置
 import json
@@ -794,6 +829,128 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
             'success': False,
             'error': str(e)
         }, status_code=500)
+
+
+# ==================== 生图模型配置 API ====================
+
+@router.get('/text-to-image-models')
+async def get_text_to_image_models():
+    """获取可用的生图模型列表（从统一配置读取）"""
+    try:
+        models_config = _get_text_to_image_models_from_config()
+        models = [
+            {
+                "task_id": task_id,
+                "name": info["name"],
+                "computing_power": info["computing_power"],
+                "supports_grid_image": info.get("supports_grid_image", False)
+            }
+            for task_id, info in models_config.items()
+        ]
+        return JSONResponse({
+            "success": True,
+            "models": models,
+            "default_task_id": DEFAULT_TEXT_TO_IMAGE_TASK_ID
+        })
+    except Exception as e:
+        logger.error(f'获取生图模型列表失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+@router.post('/text-to-image-model')
+async def set_text_to_image_model(request: Request):
+    """设置当前会话的生图模型"""
+    try:
+        data = await request.json()
+        user_id = str(data.get('user_id', ''))
+        world_id = str(data.get('world_id', ''))
+        session_id = data.get('session_id')
+        # 支持 model_id 和 task_id 两种参数名
+        task_id = data.get('task_id') or data.get('model_id')
+
+        # 如果没有提供 user_id 和 world_id，尝试从 session 中获取
+        if (not user_id or not world_id) and session_id:
+            with sessions_lock:
+                session = sessions_storage.get(session_id)
+                if session and hasattr(session, 'user_id') and hasattr(session, 'world_id'):
+                    user_id = str(session.user_id)
+                    world_id = str(session.world_id)
+                    logger.info(f'从 session 获取 user_id 和 world_id - session_id: {session_id}, user_id: {user_id}, world_id: {world_id}')
+
+        if not user_id or not world_id:
+            return JSONResponse({
+                'success': False,
+                'error': 'user_id 和 world_id 不能为空'
+            }, status_code=400)
+
+        if task_id is None:
+            return JSONResponse({
+                'success': False,
+                'error': 'task_id 不能为空'
+            }, status_code=400)
+
+        try:
+            task_id = int(task_id)
+        except (TypeError, ValueError):
+            return JSONResponse({
+                'success': False,
+                'error': 'task_id 必须为数字'
+            }, status_code=400)
+
+        # 从配置获取有效模型列表
+        models_config = _get_text_to_image_models_from_config()
+        if task_id not in models_config:
+            return JSONResponse({
+                'success': False,
+                'error': f'无效的 task_id: {task_id}，有效值为: {list(models_config.keys())}'
+            }, status_code=400)
+
+        set_text_to_image_model_id(user_id, world_id, task_id)
+
+        model_info = models_config[task_id]
+        logger.info(f'生图模型设置成功 - user_id: {user_id}, world_id: {world_id}, task_id: {task_id}, model: {model_info["name"]}')
+
+        return JSONResponse({
+            'success': True,
+            'message': '生图模型设置成功',
+            'task_id': task_id,
+            'model_name': model_info["name"]
+        })
+    except Exception as e:
+        logger.error(f'设置生图模型失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+@router.get('/text-to-image-model')
+async def get_current_text_to_image_model(
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...)
+):
+    """获取当前会话的生图模型配置"""
+    try:
+        task_id = get_text_to_image_model_id(user_id, world_id)
+        models_config = _get_text_to_image_models_from_config()
+        model_info = models_config.get(task_id, models_config.get(DEFAULT_TEXT_TO_IMAGE_TASK_ID, {}))
+
+        return JSONResponse({
+            'success': True,
+            'task_id': task_id,
+            'model_name': model_info.get("name", "unknown"),
+            'computing_power': model_info.get("computing_power", 0)
+        })
+    except Exception as e:
+        logger.error(f'获取生图模型配置失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
 
 @router.get('/sessions')
 async def list_sessions():

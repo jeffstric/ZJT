@@ -98,6 +98,7 @@ class UnifiedTaskConfig:
     supported_image_modes: List[str] = field(default_factory=lambda: ['first_last_frame'])  # 支持的图片模式（图生视频任务）
     default_image_mode: str = 'first_last_frame'  # 默认图片模式
     supports_grid_merge: bool = False  # 是否支持宫格合并生成视频
+    supports_grid_image: bool = False  # 是否支持宫格生图（一次生成多张图片）
     
     def get_computing_power(self, duration: Optional[int] = None) -> int:
         """
@@ -150,7 +151,11 @@ class UnifiedTaskConfig:
             result['supported_image_modes'] = self.supported_image_modes
             result['default_image_mode'] = self.default_image_mode
             result['supports_grid_merge'] = self.supports_grid_merge
-            
+
+        # 文生图任务添加宫格生图配置
+        if TaskCategory.TEXT_TO_IMAGE in [self.category] + self.categories:
+            result['supports_grid_image'] = self.supports_grid_image
+
         return result
 
 
@@ -446,6 +451,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='1K',
         sort_order=11,
+        supports_grid_image=True,  # 支持宫格生图
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.GEMINI_3_1_FLASH_IMAGE,
@@ -462,6 +468,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='1K',
         sort_order=12,
+        supports_grid_image=True,  # 支持宫格生图
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_TEXT_TO_IMAGE,
@@ -478,6 +485,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='2K',
         sort_order=13,
+        supports_grid_image=True,  # 支持宫格生图
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_4_5_IMAGE,
@@ -494,6 +502,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='2K',
         sort_order=14,
+        supports_grid_image=True,  # 支持宫格生图
     ),
     
     # ==================== 文生视频 ====================
