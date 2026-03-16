@@ -14,3 +14,4 @@ script_writer_core/logs
 files/script_writer/*
 files/tmp/*
 bin
+build/*
