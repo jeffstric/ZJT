@@ -8,6 +8,10 @@ REM 设置 UTF-8 编码，解决中文路径和文件编码问题
 set PYTHONUTF8=1
 chcp 65001 >nul 2>&1
 
+REM 设置 uv 镜像源，加速大陆地区下载
+set UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/indygreg/python-build-standalone/releases/download
+set UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
 if "%comfyui_env%"=="" (
     set comfyui_env=prod
 )
@@ -67,7 +71,7 @@ echo [4/4] Starting services...
 echo ========================================
 echo.
 
-!UV_CMD! run --python cpython-3.12-windows-x86_64-none --with-requirements requirements.txt start_windows.py
+!UV_CMD! run --python cpython-3.10-windows-x86_64-none --with-requirements requirements.txt start_windows.py
 
 if errorlevel 1 (
     echo.
