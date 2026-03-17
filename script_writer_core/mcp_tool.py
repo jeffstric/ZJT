@@ -13,6 +13,7 @@ from datetime import datetime
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
+from script_writer_core.constant import ItemType
 from config.config_util import get_config
 from config.constant import FilePathConstants
 
@@ -2546,9 +2547,9 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                     'success': False,
                     'error': 'item_type参数错误。正确值：1=角色, 2=地点, 3=道具, 4=角色四宫格, 5=场景四宫格, 6=道具四宫格'
                 }
-            
+
             # 如果是单个角色/场景/道具类型(1/2/3)，但没有设置is_grid=True，给出提示
-            if item_type in [1, 2, 3] and not is_grid:
+            if item_type in ItemType.SINGLE_TYPES and not is_grid:
                 import logging
                 logger = logging.getLogger(__name__)
                 logger.warning(f"[提示] 正在为单个项目生成图像 (item_type={item_type}, item_name={item_name})。如果需要批量生成4个或更多项目，建议使用 generate_4grid_character_images() / generate_4grid_images() 函数以提高效率。")
@@ -2613,7 +2614,15 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
         
         # 如果是4宫格生成，添加 image_size 参数
         if is_grid:
-            request_data['image_size'] = '4k'
+            from config.unified_config import UnifiedConfigRegistry
+            config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
+            if config and config.supported_sizes:
+                # 获取最大尺寸（supported_sizes 列表通常是排序的，取最后一个即可）
+                max_size = config.supported_sizes[-1]
+                request_data['image_size'] = max_size
+            else:
+                # 如果配置中没有 supported_sizes，使用默认 4k
+                request_data['image_size'] = '4k'
         
         # 发起文本生成图片请求
         api_url = f"{comfyui_base_url.rstrip('/')}/api/text-to-image"
@@ -2719,12 +2728,8 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
     import logging
     logger = logging.getLogger(__name__)
 
-    # 项目类型映射（4宫格专用）
-    item_type_map = {
-        4: {'name': 'character_grid', 'name_cn': '角色四宫格', 'base_type': 1},
-        5: {'name': 'location_grid', 'name_cn': '场景四宫格', 'base_type': 2},
-        6: {'name': 'prop_grid', 'name_cn': '道具四宫格', 'base_type': 3}
-    }
+    # 使用常量中的宫格类型映射
+    item_type_map = ItemType.GRID_MAP
 
     try:
         if item_type not in item_type_map:

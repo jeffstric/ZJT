@@ -80,7 +80,9 @@ def get_text_to_image_model_id(user_id: str, world_id: str) -> int:
     """获取用户在指定世界的生图模型 task_id"""
     key = f"{user_id}_{world_id}"
     with TEXT_TO_IMAGE_MODEL_LOCK:
-        return text_to_image_model_config.get(key, DEFAULT_TEXT_TO_IMAGE_TASK_ID)
+        result = text_to_image_model_config.get(key, DEFAULT_TEXT_TO_IMAGE_TASK_ID)
+        logger.info(f"[生图模型配置] 读取: key={key}, task_id={result}, 配置存在={key in text_to_image_model_config}")
+        return result
 
 
 def set_text_to_image_model_id(user_id: str, world_id: str, task_id: int):
@@ -88,6 +90,7 @@ def set_text_to_image_model_id(user_id: str, world_id: str, task_id: int):
     key = f"{user_id}_{world_id}"
     with TEXT_TO_IMAGE_MODEL_LOCK:
         text_to_image_model_config[key] = task_id
+        logger.info(f"[生图模型配置] 已保存: key={key}, task_id={task_id}")
 
 
 # 全局组件

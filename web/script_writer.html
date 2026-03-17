@@ -81,7 +81,7 @@
             <div class="header-right">
                 <div class="model-selector-card">
                     <div class="model-selector-item">
-                        <div class="model-icon text-model-icon">
+                        <div class="model-icon text-model-icon" id="llm-model-icon" title="AI 模型">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/>
                                 <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
@@ -93,7 +93,7 @@
                     </div>
                     <div class="model-divider"></div>
                     <div class="model-selector-item">
-                        <div class="model-icon image-model-icon">
+                        <div class="model-icon image-model-icon" id="image-model-icon" title="生图模型">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M12 5c-2.5 0-4.5 1.5-4.5 3.5 0 1.5 1 2.8 2.5 3.4-.3.8-.5 1.6-.5 2.6 0 3 2.5 5.5 5.5 5.5s5.5-2.5 5.5-5.5c0-1-.2-1.8-.5-2.6 1.5-.6 2.5-1.9 2.5-3.4 0-2-2-3.5-4.5-3.5z"/>
                                 <path d="M12 5c0-1.5-1-2.5-2.5-2.5s-2.5 1-2.5 2.5"/>
@@ -1055,6 +1055,8 @@
                     } else {
                         updateStatus('剧本编排系统已就绪');
                     }
+                    // 会话创建成功后，自动设置生图模型到后端
+                    await autoSetTextToImageModel();
                 } else {
                     showError('创建会话失败: ' + data.error);
                 }
@@ -1759,17 +1761,50 @@
         function updateModelTooltip() {
             const selector = document.getElementById('model-selector');
             if (!selector) return;
-            
+
             const selectedOption = selector.options[selector.selectedIndex];
             if (!selectedOption) return;
-            
+
             const isRecommended = selectedOption.dataset.recommended === 'true';
-            
+
             if (!isRecommended) {
                 selector.style.color = '#ff6b6b';
             } else {
                 selector.style.color = '';
             }
+
+            // 更新 LLM 模型图标的 hover 提示
+            updateLlmModelIcon();
+        }
+
+        function updateLlmModelIcon() {
+            const selector = document.getElementById('model-selector');
+            const icon = document.getElementById('llm-model-icon');
+            if (!selector || !icon) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) {
+                icon.title = 'AI 模型';
+                return;
+            }
+
+            const modelName = selectedOption.textContent;
+            icon.title = `AI 模型: ${modelName}`;
+        }
+
+        function updateImageModelIcon() {
+            const selector = document.getElementById('text-to-image-model-selector');
+            const icon = document.getElementById('image-model-icon');
+            if (!selector || !icon) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) {
+                icon.title = '生图模型';
+                return;
+            }
+
+            const modelName = selectedOption.textContent;
+            icon.title = `生图模型: ${modelName}`;
         }
 
         async function changeModel() {
@@ -1806,9 +1841,10 @@
                     return;
                 }
             }
-            
+
             updateModelTooltip();
-            
+            updateLlmModelIcon();
+
             if (!AUTH_TOKEN) {
                 showError('缺少认证信息，请重新登录');
                 return;
@@ -1875,19 +1911,31 @@
                     return;
                 }
 
-                // 只显示支持宫格生图的模型
-                models.forEach(model => {
-                    if (model.supports_grid_image) {
-                        const option = document.createElement('option');
-                        option.value = model.task_id;
-                        option.textContent = model.name;
-                        if (model.task_id === data.default_task_id) option.selected = true;
-                        selector.appendChild(option);
-                    }
+                // 只显示支持宫格生图的模型，Seedream 5.0 排在最前面
+                const seedreamModel = models.find(m => m.name === 'Seedream 5.0');
+                const otherModels = models.filter(m => m.name !== 'Seedream 5.0' && m.supports_grid_image);
+
+                // 先添加 Seedream 5.0，并默认选中
+                if (seedreamModel) {
+                    const option = document.createElement('option');
+                    option.value = seedreamModel.task_id;
+                    option.textContent = seedreamModel.name;
+                    option.selected = true;  // Seedream 5.0 默认选中
+                    selector.appendChild(option);
+                }
+
+                // 再添加其他模型
+                otherModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.task_id;
+                    option.textContent = model.name;
+                    // 移除默认选中逻辑，由 Seedream 5.0 默认选中
+                    selector.appendChild(option);
                 });
 
                 // 显示选择器
                 selector.style.display = '';
+                // 注意：自动设置模型逻辑已移至 createSession() 成功后执行
             } catch (error) {
                 console.error('加载生图模型列表失败:', error);
                 const selector = document.getElementById('text-to-image-model-selector');
@@ -1896,6 +1944,38 @@
                 }
                 showError('加载生图模型列表失败，请稍后重试');
             }
+        }
+
+        async function autoSetTextToImageModel() {
+            /** 会话创建后自动设置生图模型到后端 */
+            const selector = document.getElementById('text-to-image-model-selector');
+            if (!selector || !sessionId) return;
+
+            const selectedModel = selector.value;
+            if (!selectedModel) return;
+
+            console.log('[DEBUG] 自动设置生图模型:', selector.options[selector.selectedIndex].text, 'task_id:', selectedModel);
+            try {
+                const response = await fetch('/api/text-to-image-model', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        model_id: selectedModel,
+                        auth_token: AUTH_TOKEN,
+                        session_id: sessionId
+                    })
+                });
+                const data = await response.json();
+                console.log('[DEBUG] 设置生图模型响应:', data);
+                if (data.success) {
+                    console.log('[DEBUG] 生图模型已保存:', data.model_name);
+                }
+            } catch (err) {
+                console.error('[DEBUG] 设置生图模型异常:', err);
+            }
+            updateImageModelIcon();
         }
 
         async function changeTextToImageModel() {
@@ -1943,6 +2023,7 @@
             } catch (error) {
                 showError('切换生图模型失败: ' + error.message);
             }
+            updateImageModelIcon();
         }
 
         function escapeHtml(text) {
