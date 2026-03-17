@@ -38,6 +38,9 @@ EXCLUDE_DIRS = [
     "data",
     "logs",
     "script_parser_logs",
+    ".pytest_cache",
+    ".venv",
+    "build",
 ]
 
 # 不需要打包的目录（相对路径，只排除特定子目录）
@@ -119,9 +122,16 @@ def should_exclude_dir(name: str) -> bool:
     return name in EXCLUDE_DIRS
 
 
-def should_exclude_file(name: str) -> bool:
+def should_exclude_file(name: str, rel_path: str = "") -> bool:
     """判断文件是否应该被排除"""
-    return name in EXCLUDE_FILES
+    # 检查文件名匹配
+    if name in EXCLUDE_FILES:
+        return True
+    # 检查根目录下的压缩包
+    if not rel_path or rel_path == name:
+        if any(name.endswith(ext) for ext in [".zip", ".tar", ".tar.gz", ".7z", ".rar"]):
+            return True
+    return False
 
 
 def copy_source_files(src_dir: Path, dst_dir: Path, exclude_files: list):
@@ -144,7 +154,7 @@ def copy_source_files(src_dir: Path, dst_dir: Path, exclude_files: list):
                 copy_recursive(item, new_dst, item_rel_path)
             else:
                 # 跳过排除的文件
-                if should_exclude_file(item.name):
+                if should_exclude_file(item.name, item_rel_path):
                     continue
                 if item.name in exclude_files:
                     continue
