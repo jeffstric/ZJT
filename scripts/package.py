@@ -17,7 +17,7 @@ from pathlib import Path
 # ============================================
 
 # NAS 盘路径（存放二进制文件）
-NAS_PATH = Path(r"U:\智剧通")
+NAS_PATH = Path(r"H:\智剧通")
 
 # 当前脚本所在目录（代码目录）
 # 获取项目根目录（scripts 的父目录）
@@ -124,6 +124,10 @@ def should_exclude_dir(name: str) -> bool:
 
 def should_exclude_file(name: str, rel_path: str = "") -> bool:
     """判断文件是否应该被排除"""
+    # Windows 特殊设备文件名（不区分大小写）
+    windows_device_names = {"nul", "con", "prn", "aux"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
+    if name.lower() in windows_device_names:
+        return True
     # 检查文件名匹配
     if name in EXCLUDE_FILES:
         return True
@@ -132,6 +136,25 @@ def should_exclude_file(name: str, rel_path: str = "") -> bool:
         if any(name.endswith(ext) for ext in [".zip", ".tar", ".tar.gz", ".7z", ".rar"]):
             return True
     return False
+
+
+def fix_line_endings(file_path: Path, extensions: list[str] = [".sh", ".command"]):
+    """将文本文件的 CRLF 行尾符转换为 LF（Unix 格式）"""
+    # 只处理指定扩展名的文件
+    if not any(file_path.name.lower().endswith(ext) for ext in extensions):
+        return
+
+    try:
+        # 读取文件内容
+        content = file_path.read_text(encoding="utf-8")
+        # 替换 CRLF 为 LF
+        content = content.replace("\r\n", "\n")
+        # 写回文件（使用 newline="" 禁止 Windows 自动转换 \n 为 \r\n）
+        file_path.write_text(content, encoding="utf-8", newline="")
+        print(f"      - Fixed line endings: {file_path.name}")
+    except Exception:
+        # 忽略非文本文件或其他错误
+        pass
 
 
 def copy_source_files(src_dir: Path, dst_dir: Path, exclude_files: list):
@@ -160,6 +183,8 @@ def copy_source_files(src_dir: Path, dst_dir: Path, exclude_files: list):
                     continue
                 # 复制文件
                 shutil.copy2(item, current_dst / item.name)
+                # 修复 shell 脚本的行尾符
+                fix_line_endings(current_dst / item.name)
 
     copy_recursive(src_dir, dst_dir)
 
@@ -229,6 +254,8 @@ def build_platform(name: str, config: dict, version: str):
         src = CODE_PATH / extra_file
         if src.exists():
             shutil.copy2(src, package_dir / extra_file)
+            # 修复额外脚本文件的行尾符
+            fix_line_endings(package_dir / extra_file)
 
     # 创建 ZIP
     output_file = OUTPUT_PATH / f"{package_name}-{version}.zip"
