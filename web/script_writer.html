@@ -831,6 +831,7 @@
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
         let currentEditWorld = { id: '', name: '', description: '' };
+        let driverStatus = {};  // 驱动可用状态
 
         function handleTokenExpired() {
             alert('⚠️ 登录已过期\n\n您的登录信息已过期，请重新登录。');
@@ -942,6 +943,7 @@
 
             configureMarked();
             await loadAvailableModels();
+            await loadDriverStatus();
             await loadTextToImageModels();
             await loadComputingPower();
             await loadUserWorlds();
@@ -1877,6 +1879,20 @@
             }
         }
 
+        async function loadDriverStatus() {
+            try {
+                const response = await fetch('/api/computing-power-config', {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
+                const data = await response.json();
+                if (data.success && data.data) {
+                    driverStatus = data.data.driver_status || {};
+                }
+            } catch (error) {
+                console.error('获取驱动状态失败:', error);
+            }
+        }
+
         async function loadTextToImageModels() {
             try {
                 const response = await fetch('/api/text-to-image-models', {
@@ -1919,8 +1935,17 @@
                 if (seedreamModel) {
                     const option = document.createElement('option');
                     option.value = seedreamModel.task_id;
-                    option.textContent = seedreamModel.name;
-                    option.selected = true;  // Seedream 5.0 默认选中
+                    // 检查模型可用性
+                    const taskTypeKey = String(seedreamModel.task_id);
+                    const status = driverStatus[taskTypeKey];
+                    const isAvailable = !status || status.available !== false;
+                    if (!isAvailable) {
+                        option.textContent = `${seedreamModel.name} (未配置)`;
+                        option.disabled = true;
+                    } else {
+                        option.textContent = seedreamModel.name;
+                        option.selected = true;  // Seedream 5.0 默认选中（仅当可用时）
+                    }
                     selector.appendChild(option);
                 }
 
@@ -1928,8 +1953,16 @@
                 otherModels.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model.task_id;
-                    option.textContent = model.name;
-                    // 移除默认选中逻辑，由 Seedream 5.0 默认选中
+                    // 检查模型可用性
+                    const taskTypeKey = String(model.task_id);
+                    const status = driverStatus[taskTypeKey];
+                    const isAvailable = !status || status.available !== false;
+                    if (!isAvailable) {
+                        option.textContent = `${model.name} (未配置)`;
+                        option.disabled = true;
+                    } else {
+                        option.textContent = model.name;
+                    }
                     selector.appendChild(option);
                 });
 
