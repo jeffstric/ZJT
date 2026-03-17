@@ -56,6 +56,8 @@ def main():
     # 注册信号处理器
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
+    # Mac 关闭终端窗口时会发送 SIGHUP，需要捕获并清理子进程
+    signal.signal(signal.SIGHUP, cleanup)
     
     # 使用项目根目录作为工作目录
     current_dir = os.path.dirname(os.path.abspath(__file__))

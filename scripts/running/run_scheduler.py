@@ -27,6 +27,8 @@ def cleanup(signum=None, frame=None):
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
+    # Mac 关闭终端窗口时会发送 SIGHUP，需要捕获并清理
+    signal.signal(signal.SIGHUP, cleanup)
     
     print("[Scheduler] Starting scheduler...")
     print(f"[Scheduler] PID: {os.getpid()}")

@@ -914,6 +914,8 @@ def main():
     """
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+    # Mac 关闭终端窗口时会发送 SIGHUP，需要捕获并清理子进程
+    signal.signal(signal.SIGHUP, signal_handler)
     atexit.register(cleanup)
 
     env = get_env()
