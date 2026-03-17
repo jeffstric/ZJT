@@ -81,7 +81,6 @@ ENDIF
 **4宫格生成JSON格式：**
 ```json
 {
-  "image_generation_model": "NanaBananaPro",
   "grid_layout": "2x2",
   "grid_aspect_ratio": "16:9",
   "global_watermark": "",
@@ -476,7 +475,7 @@ Physical characteristics: approximately 25cm in total length with 15cm handle an
   - `prompts`: 4个提示词的列表（必须是4个）
     - 如果实际场景<4个，用"pure black background"补齐
     - 例如：2个场景 → [提示词1, 提示词2, "pure black background", "pure black background"]
-  - `model`: "gemini-3-pro-image-preview" (默认)
+- **注意**：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。
 - **功能说明**：
   - 自动构建4宫格JSON格式
   - 自动添加 `image_size="4k"` 参数生成高分辨率图像
@@ -511,7 +510,7 @@ Physical characteristics: approximately 25cm in total length with 15cm handle an
   - `prompts`: 4个提示词的列表（必须是4个）
     - 如果实际道具<4个，用"pure black background"补齐
     - 例如：2个道具 → [提示词1, 提示词2, "pure black background", "pure black background"]
-  - `model`: "gemini-3-pro-image-preview" (默认)
+- **注意**：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。
 - **功能说明**：
   - 自动构建4宫格JSON格式
   - 自动添加 `image_size="4k"` 参数生成高分辨率图像
@@ -541,18 +540,15 @@ Physical characteristics: approximately 25cm in total length with 15cm handle an
 - 调用 `generate_text_to_image()` 函数
 - 场景参数设置：
   - `prompt`: 单个场景的提示词
-  - `model`: "gemini-3-pro-image-preview"
   - `item_type`: 2 (场景类型)
   - `item_name`: 场景名称
-  - `is_grid`: false
   - `force_update_exist_image`: **仅在用户明确确认时才能设为true，否则必须为false**
 - 道具参数设置：
   - `prompt`: 单个道具的提示词
-  - `model`: "gemini-3-pro-image-preview"
   - `item_type`: 3 (道具类型)
   - `item_name`: 道具名称
-  - `is_grid`: false
   - `force_update_exist_image`: **仅在用户明确确认时才能设为true，否则必须为false**
+- **注意**：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。
 
 **❌ 错误示例（禁止）：**
 ```python

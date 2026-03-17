@@ -90,15 +90,15 @@
     .btn-secondary:hover{
       background: #e9ecef;
     }
+    .btn-sm{
+      padding: 6px 12px;
+      font-size: 12px;
+    }
     .btn-danger{
       background: var(--danger);
     }
     .btn-danger:hover{
       background: #dc2626;
-    }
-    .btn-sm{
-      padding: 6px 12px;
-      font-size: 13px;
     }
     .toolbar{
       display: flex;
@@ -612,7 +612,8 @@
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" onclick="closeModal()">取消</button>
-          <button type="submit" class="btn">保存</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="handleSubmit(event)">仅创建工作流</button>
+          <button type="button" class="btn" onclick="handleSubmitAndGoScript(event)">创建并生成剧本</button>
         </div>
       </form>
     </div>
@@ -884,10 +885,9 @@
       document.getElementById('createModal').classList.remove('active');
     }
 
-    async function handleSubmit(event) {
-      event.preventDefault();
-
-      if (!ensureLoggedIn()) return;
+    // 创建工作流的通用逻辑，返回创建的工作流ID
+    async function createWorkflowData() {
+      if (!ensureLoggedIn()) return null;
       
       const id = document.getElementById('workflowId').value;
       const name = document.getElementById('workflowName').value.trim();
@@ -899,7 +899,7 @@
 
       if (!name) {
         showToast('请输入工作流名称', 'error');
-        return;
+        return null;
       }
 
       const data = { name, description, status };
@@ -934,11 +934,11 @@
             data.style_reference_image = uploadResult.data.url;
           } else {
             showToast('参考图上传失败', 'error');
-            return;
+            return null;
           }
         } catch (error) {
           showToast('参考图上传失败', 'error');
-          return;
+          return null;
         }
       }
 
@@ -959,14 +959,45 @@
         const result = await response.json();
 
         if (result.code === 0) {
-          showToast(isEdit ? '更新成功' : '创建成功', 'success');
-          closeModal();
-          loadWorkflows();
+          return { isEdit, workflowId: result.data?.id || id };
         } else {
           showToast(result.message || '操作失败', 'error');
+          return null;
         }
       } catch (error) {
         showToast('网络错误', 'error');
+        return null;
+      }
+    }
+
+    async function handleSubmit(event) {
+      if (event) event.preventDefault();
+      
+      const result = await createWorkflowData();
+      if (result) {
+        showToast(result.isEdit ? '更新成功' : '创建成功', 'success');
+        closeModal();
+        loadWorkflows();
+      }
+    }
+
+    async function handleSubmitAndGoScript(event) {
+      if (event) event.preventDefault();
+      
+      // 先获取世界ID，因为createWorkflowData后表单可能被清空
+      const worldId = document.getElementById('workflowWorld').value;
+      
+      const result = await createWorkflowData();
+      if (result && result.workflowId) {
+        showToast('创建成功，正在跳转...', 'success');
+        closeModal();
+        // 跳转到剧本创作系统
+        const userId = getUserId();
+        let url = `/script-writer?workflow_id=${result.workflowId}&user_id=${encodeURIComponent(userId)}`;
+        if (worldId) {
+          url += `&world_id=${worldId}`;
+        }
+        window.location.href = url;
       }
     }
 
@@ -1149,6 +1180,17 @@
 
     // Initial load
     loadWorkflows();
+    
+    // 检测URL参数，如果有action=create则自动打开新建表单
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('action') === 'create') {
+      // 延迟执行，确保页面加载完成
+      setTimeout(() => {
+        openCreateModal();
+      }, 100);
+      // 清除URL参数，避免刷新时重复弹出
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
   </script>
 </body>
 </html>

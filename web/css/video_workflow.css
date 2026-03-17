@@ -860,7 +860,7 @@ svg.connections path.reference-line.selected{
 
 .add-btn-container{
   position: absolute;
-  left: 12px;
+  left: 72px;
   top: 50%;
   transform: translateY(-50%);
   z-index: 45;
@@ -2577,4 +2577,175 @@ textarea:focus{ border-color: var(--primary); }
   margin-top: 6px;
   font-size: 11px;
   color: #666;
+}
+
+/* ========== 左侧导览条样式 - 悬浮模式 ========== */
+.step-nav {
+  position: fixed;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: auto;
+  max-height: calc(100vh - 160px);
+  width: 60px;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid var(--border);
+  border-left: none;
+  border-radius: 0 12px 12px 0;
+  z-index: 1000;
+  transition: width 0.25s ease;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.05);
+}
+
+.step-nav:hover {
+  width: 200px;
+  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.1);
+}
+
+/* 隐藏toggle按钮，改为hover控制 */
+.step-nav-toggle {
+  display: none;
+}
+
+.step-nav-content {
+  padding: 12px 4px;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.step-nav:hover .step-nav-content {
+  padding: 16px 12px;
+}
+
+.step-nav-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 16px;
+  padding-left: 4px;
+  white-space: nowrap;
+  display: none;
+}
+
+.step-nav:hover .step-nav-title {
+  display: block;
+}
+
+.step-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.step-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 4px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  position: relative;
+  min-height: 40px;
+  box-sizing: border-box;
+}
+
+.step-nav:hover .step-nav-item {
+  justify-content: flex-start;
+  padding: 12px 14px;
+}
+
+.step-nav-item.active {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(22, 163, 74, 0.1) 100%);
+  border-color: var(--primary);
+}
+
+.step-nav-item.clickable {
+  cursor: pointer;
+}
+
+.step-nav-item.clickable:hover {
+  background: rgba(34, 197, 94, 0.05);
+  border-color: var(--primary);
+  transform: translateX(4px);
+}
+
+.step-nav-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-nav-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  display: none;
+}
+
+.step-nav:hover .step-nav-text {
+  display: block;
+}
+
+.step-nav-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  display: none;
+}
+
+.step-nav-badge.current {
+  background: var(--primary);
+  color: white;
+}
+
+.step-nav:hover .step-nav-badge {
+  display: inline-block;
+}
+
+.step-nav-arrow {
+  font-size: 16px;
+  color: var(--primary);
+  margin-left: auto;
+  display: none;
+}
+
+.step-nav:hover .step-nav-arrow {
+  display: block;
+}
+
+.step-nav-item.clickable:hover .step-nav-arrow {
+  transform: translateX(-4px);
+}
+
+.step-nav-connector {
+  width: 2px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 auto;
+}
+
+.step-nav:hover .step-nav-connector {
+  margin: 0 0 0 25px;
+}
+
+/* 调整shell布局 - 导览条悬浮不占用空间 */
+.shell {
+  margin-left: 0;
+  transition: margin-left 0.3s ease;
 }

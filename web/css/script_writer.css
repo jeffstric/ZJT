@@ -154,25 +154,85 @@ body {
     gap: 12px;
 }
 
-.model-select {
-    padding: 8px 14px;
-    border: 1px solid var(--border-color);
+/* Model Selector Card - 卡片式模型选择器 */
+.model-selector-card {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    background: #f8f9fa;
     border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    gap: 0;
+}
+
+.model-selector-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.model-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+
+.text-model-icon {
+    background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%);
+    color: white;
+}
+
+.image-model-icon {
+    background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+    color: white;
+}
+
+.model-divider {
+    width: 1px;
+    height: 32px;
+    background: var(--border-color);
+    margin: 0 16px;
+}
+
+.model-select {
+    padding: 8px 32px 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
     background: white;
-    color: var(--text-secondary);
+    color: var(--text-primary);
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
-    min-width: 180px;
+    min-width: 140px;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
 }
 
 .model-select:hover {
     border-color: var(--primary-color);
 }
 
+.model-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
 .model-select option {
     background: white;
     color: var(--text-primary);
+}
+
+/* Legacy styles for backward compatibility */
+.model-selector-group {
+    display: none;
 }
 
 /* Computing Power Display */
@@ -365,6 +425,7 @@ body {
     flex: 1;
     overflow: hidden;
     background: var(--bg-light);
+    margin-left: 60px;
 }
 
 /* Chat Area */
@@ -948,24 +1009,45 @@ body {
     margin-left: auto;
 }
 
-/* World Sidebar */
+/* World Sidebar - 覆盖层模式，独立于导览条 */
 .world-sidebar {
     position: fixed;
     top: 0;
-    left: -320px;
+    left: 0;
     width: 320px;
     height: 100vh;
     background: white;
-    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
-    transition: left 0.3s ease;
-    z-index: 1000;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
+    transition: transform 0.3s ease;
+    z-index: 2000;
     display: flex;
     flex-direction: column;
+    transform: translateX(-100%);
 }
 
 .world-sidebar.open {
-    left: 0;
+    transform: translateX(0);
 }
+
+/* 世界侧边栏打开时的遮罩层 */
+.world-sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 1999;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.world-sidebar-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
 
 .world-sidebar-header {
     display: flex;
@@ -2038,3 +2120,175 @@ body {
     font-size: 14px;
     color: var(--text-secondary);
 }
+
+/* ========== 左侧导览条样式 - 悬浮模式 ========== */
+.step-nav {
+    position: fixed;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: auto;
+    width: 60px;
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    border-right: 1px solid var(--border-color);
+    border-radius: 0 12px 12px 0;
+    z-index: 1000;
+    transition: width 0.25s ease;
+    display: flex;
+    flex-direction: column;
+}
+
+.step-nav:hover {
+    width: 200px;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.1);
+}
+
+
+.step-nav-content {
+    padding: 12px 4px;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.step-nav:hover .step-nav-content {
+    padding: 16px 12px;
+}
+
+.step-nav-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 20px;
+    padding-left: 4px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.step-nav:hover .step-nav-title {
+    opacity: 1;
+}
+
+.step-nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.step-nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 4px;
+    background: var(--bg-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    transition: all 0.2s ease;
+    position: relative;
+    min-height: 40px;
+    box-sizing: border-box;
+}
+
+.step-nav:hover .step-nav-item {
+    justify-content: flex-start;
+    padding: 12px 14px;
+}
+
+.step-nav-item.active {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(99, 102, 241, 0.1) 100%);
+    border-color: var(--primary-color);
+}
+
+.step-nav-item.clickable {
+    cursor: pointer;
+}
+
+.step-nav-item.clickable:hover {
+    background: rgba(139, 92, 246, 0.05);
+    border-color: var(--primary-color);
+    transform: translateX(4px);
+}
+
+.step-nav-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.step-nav-text {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    display: none;
+}
+
+.step-nav:hover .step-nav-text {
+    display: block;
+}
+
+.step-nav-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    display: none;
+}
+
+.step-nav-badge.current {
+    background: var(--primary-color);
+    color: white;
+}
+
+.step-nav:hover .step-nav-badge {
+    display: inline-block;
+}
+
+.step-nav-arrow {
+    font-size: 16px;
+    color: var(--primary-color);
+    margin-left: auto;
+    display: none;
+}
+
+.step-nav:hover .step-nav-arrow {
+    display: block;
+}
+
+.step-nav-item.clickable:hover .step-nav-arrow {
+    transform: translateX(4px);
+}
+
+.step-nav-connector {
+    width: 2px;
+    height: 20px;
+    background: var(--border-color);
+    margin: 0 auto;
+    transition: margin 0.25s ease;
+}
+
+.step-nav:hover .step-nav-connector {
+    margin: 0 0 0 25px;
+}
+
+/* 调整主内容区域以适应悬浮导览条 */
+.app-container {
+    margin-left: 0;
+}
+
+/* top-header和input-section不受导览条影响，左侧不留空 */
+.top-header,
+.input-section {
+    margin-left: 0;
+}
+

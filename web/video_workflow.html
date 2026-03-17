@@ -8,6 +8,26 @@
   <link rel="stylesheet" href="/css/video_workflow.css" />
 </head>
 <body>
+  <!-- 左侧导览条 - 悬浮模式 -->
+  <nav class="step-nav" id="step-nav">
+    <div class="step-nav-content">
+      <div class="step-nav-title">创作流程</div>
+      <div class="step-nav-list">
+        <div class="step-nav-item clickable" data-step="script" onclick="goToScriptWriter()">
+          <div class="step-nav-icon">📚</div>
+          <div class="step-nav-text">剧本资产</div>
+          <div class="step-nav-arrow">←</div>
+        </div>
+        <div class="step-nav-connector"></div>
+        <div class="step-nav-item active" data-step="canvas">
+          <div class="step-nav-icon">🎬</div>
+          <div class="step-nav-text">制作工坊</div>
+          <div class="step-nav-badge current">当前</div>
+        </div>
+      </div>
+    </div>
+  </nav>
+  
   <div class="shell">
     <div class="canvas-container" id="canvasContainer">
       <div class="brand-floating">
@@ -896,6 +916,41 @@
   </div>
 
   <script>
+    // ========== 左侧导览条相关函数 ==========
+    // 导览条现在是悬浮模式，通过CSS hover自动展开/收起，无需JavaScript控制
+    
+    // 跳转到剧本创作系统
+    async function goToScriptWriter() {
+      // 获取workflow_id
+      const urlParams = new URLSearchParams(window.location.search);
+      const workflowId = urlParams.get('id');
+      
+      // 获取当前选择的世界id
+      const worldSelect = document.getElementById('defaultWorldSelect');
+      const worldId = worldSelect ? worldSelect.value : '';
+      
+      // 先保存当前工作流
+      if (typeof saveWorkflow === 'function') {
+        try {
+          await saveWorkflow();
+        } catch (e) {
+          console.error('保存工作流失败:', e);
+        }
+      }
+      
+      // 跳转到剧本创作系统
+      const userId = localStorage.getItem('user_id') || '';
+      let url = '/script-writer';
+      if (workflowId || userId || worldId) {
+        const params = new URLSearchParams();
+        if (workflowId) params.set('workflow_id', workflowId);
+        if (userId) params.set('user_id', userId);
+        if (worldId) params.set('world_id', worldId);
+        url += '?' + params.toString();
+      }
+      window.location.href = url;
+    }
+    
     // 打开算力日志弹窗
     function openComputingPowerLogs() {
       const authToken = localStorage.getItem('auth_token');

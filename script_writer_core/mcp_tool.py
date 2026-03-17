@@ -40,6 +40,31 @@ def log_skill_interaction(message: str, data: Any = None):
 _skill_loader = None
 # 全局文件管理器实例
 _file_manager = None
+# 获取生图模型 task_id 的函数引用（由 script_writer_api.py 设置）
+_get_text_to_image_model_id_func = None
+
+# 默认生图模型 task_id (nano-banana-Pro)
+DEFAULT_TEXT_TO_IMAGE_TASK_ID = 7
+
+
+def set_text_to_image_model_getter(func):
+    """设置获取生图模型 task_id 的函数"""
+    global _get_text_to_image_model_id_func
+    _get_text_to_image_model_id_func = func
+
+
+def _get_text_to_image_task_id(user_id: str, world_id: str) -> int:
+    """获取生图模型的 task_id，默认返回 7 (nano-banana-Pro)"""
+    if _get_text_to_image_model_id_func:
+        return _get_text_to_image_model_id_func(user_id, world_id)
+    return DEFAULT_TEXT_TO_IMAGE_TASK_ID
+
+
+def _get_model_name_by_task_id(task_id: int) -> str:
+    """从统一配置获取模型名称"""
+    from config.unified_config import UnifiedConfigRegistry
+    config = UnifiedConfigRegistry.get_by_id(task_id)
+    return config.name if config else "unknown"
 
 def get_skill_loader():
     """获取技能加载器实例（单例模式）"""
@@ -2204,17 +2229,13 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_text_to_image",
-        "description": "文本生成图片功能（非阻塞版本，支持后台任务）。根据提示词发起图片生成请求，立即返回project_ids。如果指定item_type和item_name，会创建后台任务自动处理图片下载和更新。",
+        "description": "文本生成图片功能（非阻塞版本，支持后台任务）。根据提示词发起图片生成请求，立即返回project_ids。如果指定item_type和item_name，会创建后台任务自动处理图片下载和更新。注意：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型，返回结果中会包含使用的模型信息。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
                     "description": "图片描述提示词（必填），例如：'一个女孩，漫画风格'"
-                },
-                "model": {
-                    "type": "string",
-                    "description": "使用的模型（可选，默认：gemini-3-pro-image-preview）"
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -2238,7 +2259,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_4grid_character_images",
-        "description": "生成4宫格角色图像并自动切分更新到各个角色（一站式解决方案）。自动构建4宫格JSON格式，添加image_size=4k参数生成高分辨率图像，轮询等待生成完成，自动下载并切分4宫格图像为4个独立图像，自动更新每个角色的reference_image字段。",
+        "description": "生成4宫格角色图像并自动切分更新到各个角色（一站式解决方案）。自动构建4宫格JSON格式，添加image_size=4k参数生成高分辨率图像，轮询等待生成完成，自动下载并切分4宫格图像为4个独立图像，自动更新每个角色的reference_image字段。注意：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2255,10 +2276,6 @@ MCP_TOOLS = [
                         "type": "string"
                     },
                     "description": "4个角色的完整提示词列表（必须是4个），每个提示词对应一个角色的详细描述"
-                },
-                "model": {
-                    "type": "string",
-                    "description": "使用的模型（可选，默认：NanoBananaPro）"
                 }
             },
             "required": ["character_names", "prompts"]
@@ -2266,7 +2283,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_4grid_location_images",
-        "description": "生成4宫格场景图像并自动切分更新到各个场景（一站式解决方案）。自动构建4宫格JSON格式，添加image_size=4k参数生成高分辨率图像，轮询等待生成完成，自动下载并切分4宫格图像为4个独立图像，自动更新每个场景的reference_image字段。",
+        "description": "生成4宫格场景图像并自动切分更新到各个场景（一站式解决方案）。自动构建4宫格JSON格式，添加image_size=4k参数生成高分辨率图像，轮询等待生成完成，自动下载并切分4宫格图像为4个独立图像，自动更新每个场景的reference_image字段。注意：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2283,10 +2300,6 @@ MCP_TOOLS = [
                         "type": "string"
                     },
                     "description": "4个场景的完整提示词列表（必须是4个），每个提示词对应一个场景的详细描述。如果实际场景少于4个，用'pure black background'补齐"
-                },
-                "model": {
-                    "type": "string",
-                    "description": "使用的模型（可选，默认：NanoBananaPro）"
                 }
             },
             "required": ["location_names", "prompts"]
@@ -2294,7 +2307,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_4grid_prop_images",
-        "description": "生成4宫格道具图像并自动切分更新到各个道具（一站式解决方案）。自动构建4宫格JSON格式，添加image_size=4k参数生成高分辨率图像，轮询等待生成完成，自动下载并切分4宫格图像为4个独立图像，自动更新每个道具的reference_image字段。",
+        "description": "生成4宫格道具图像并自动切分更新到各个道具（一站式解决方案）。自动构建4宫格JSON格式，添加image_size=4k参数生成高分辨率图像，轮询等待生成完成，自动下载并切分4宫格图像为4个独立图像，自动更新每个道具的reference_image字段。注意：生图模型由用户在前端界面选择，大模型无需关心具体使用哪个模型。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2311,10 +2324,6 @@ MCP_TOOLS = [
                         "type": "string"
                     },
                     "description": "4个道具的完整提示词列表（必须是4个），每个提示词对应一个道具的详细描述。如果实际道具少于4个，用'pure black background'补齐"
-                },
-                "model": {
-                    "type": "string",
-                    "description": "使用的模型（可选，默认：NanoBananaPro）"
                 }
             },
             "required": ["prop_names", "prompts"]
@@ -2482,21 +2491,21 @@ def skill(SkillName: str) -> Dict[str, Any]:
             'content': ''
         }
 
-def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt: str, 
-                          model: str = "gemini-3-pro-image-preview", 
-                          aspect_ratio: str = "16:9", count: int = 1, 
-                          item_type: int = None, item_name: str = None, 
+def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt: str,
+                          aspect_ratio: str = "16:9", count: int = 1,
+                          item_type: int = None, item_name: str = None,
                           force_update_exist_image: bool = False,
                           is_grid: bool = False) -> Dict[str, Any]:
     """
     文本生成图片 - MCP工具函数（非阻塞版本，支持后台任务处理）
-    
+
+    注意：生图模型由用户在前端界面选择，存储在会话配置中，大模型无需关心具体使用哪个模型。
+
     Args:
         user_id: 用户ID（必填）
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         prompt: 图片描述提示词（必填）
-        model: 使用的模型（默认：gemini-3-pro-image-preview）
         aspect_ratio: 图片宽高比（默认：16:9）
         count: 生成图片数量（默认：1）
         item_type: 物品类型（可选）：1=角色(character), 2=地点(location), 3=道具(props)
@@ -2506,10 +2515,14 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                                  - True: 强制生成并更新，覆盖现有图像
         is_grid: 是否为4宫格批量生成（默认：False）
                 - True: 添加 image_size="4k" 参数，用于4宫格高分辨率生成
-    
+
     Returns:
-        dict: 操作结果，包含success状态和project_ids。如果指定了item_type和item_name，会创建后台任务自动处理
+        dict: 操作结果，包含success状态、project_ids、使用的模型信息等
     """
+    # 获取用户配置的生图模型 task_id
+    text_to_image_task_id = _get_text_to_image_task_id(user_id, world_id)
+    model_name = _get_model_name_by_task_id(text_to_image_task_id)
+
     try:
         # 验证 auth_token
         if not auth_token:
@@ -2517,14 +2530,14 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                 'success': False,
                 'error': '认证令牌不能为空'
             }
-        
+
         # 验证必填字段
         if not prompt or not isinstance(prompt, str):
             return {
                 'success': False,
                 'error': '图片描述提示词不能为空且必须是字符串'
             }
-        
+
         # 验证item_type和item_name参数
         if item_type is not None:
             # 检测是否应该使用4宫格生成
@@ -2591,7 +2604,7 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
         # 准备请求数据
         request_data = {
             'prompt': prompt,
-            'model': model,
+            'task_id': text_to_image_task_id,
             'aspect_ratio': aspect_ratio,
             'count': count,
             'user_id': user_id,
@@ -2654,19 +2667,21 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                 'success': True,
                 'project_ids': project_ids,
                 'status': 'submitted',
-                'comfyui_base_url': comfyui_base_url
+                'comfyui_base_url': comfyui_base_url,
+                'model_used': model_name,
+                'text_to_image_task_id': text_to_image_task_id
             }
-            
+
             if task_id:
                 result.update({
                     'task_id': task_id,
                     'item_type': item_type,
                     'item_name': item_name,
-                    'message': f'图片生成请求已提交，后台任务已创建。project_ids: {project_ids}, task_id: {task_id}'
+                    'message': f'图片生成请求已提交（使用模型: {model_name}），后台任务已创建。project_ids: {project_ids}, task_id: {task_id}'
                 })
             else:
-                result['message'] = f'图片生成请求已提交，project_ids: {project_ids}'
-            
+                result['message'] = f'图片生成请求已提交（使用模型: {model_name}），project_ids: {project_ids}'
+
             return result
             
         except requests.exceptions.RequestException as e:
@@ -2682,13 +2697,14 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
         }
 
 
-def generate_4grid_images(user_id: str, world_id: str, auth_token: str, 
+def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
                          item_names: List[str], prompts: List[str],
-                         item_type: int,
-                         model: str = "gemini-3-pro-image-preview") -> Dict[str, Any]:
+                         item_type: int) -> Dict[str, Any]:
     """
     生成4宫格图像并自动切分更新到各个项目（角色/场景/道具）
-    
+
+    注意：生图模型由用户在前端界面选择，存储在会话配置中，大模型无需关心具体使用哪个模型。
+
     Args:
         user_id: 用户ID（必填）
         world_id: 世界ID（必填）
@@ -2696,34 +2712,32 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
         item_names: 4个项目的名称列表（必须是4个）
         prompts: 4个项目的提示词列表（必须是4个）
         item_type: 项目类型（4=角色四宫格, 5=场景四宫格, 6=道具四宫格）
-        model: 使用的模型（默认：NanoBananaPro）
-    
+
     Returns:
         dict: 操作结果，包含每个项目的更新状态
     """
     import logging
     logger = logging.getLogger(__name__)
-    
+
     # 项目类型映射（4宫格专用）
     item_type_map = {
         4: {'name': 'character_grid', 'name_cn': '角色四宫格', 'base_type': 1},
         5: {'name': 'location_grid', 'name_cn': '场景四宫格', 'base_type': 2},
         6: {'name': 'prop_grid', 'name_cn': '道具四宫格', 'base_type': 3}
     }
-    
+
     try:
         if item_type not in item_type_map:
             return {
                 'success': False,
                 'error': f'无效的item_type: {item_type}，必须是4(角色四宫格)、5(场景四宫格)或6(道具四宫格)'
             }
-        
+
         item_info = item_type_map[item_type]
         logger.info(f"[4GRID] 开始执行 generate_4grid_images，类型={item_info['name_cn']}")
         logger.info(f"[4GRID] user_id={user_id}, world_id={world_id}")
         logger.info(f"[4GRID] item_names={item_names}, count={len(item_names) if isinstance(item_names, list) else 'NOT_LIST'}")
         logger.info(f"[4GRID] prompts count={len(prompts) if isinstance(prompts, list) else 'NOT_LIST'}")
-        logger.info(f"[4GRID] model={model}")
         
         # 验证参数
         if len(item_names) != 4:
@@ -2763,7 +2777,6 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
         
         # 构建4宫格JSON格式的prompt
         grid_prompt = {
-            "image_generation_model": model,
             "grid_layout": "2x2",
             "grid_aspect_ratio": "16:9",
             "global_watermark": "",
@@ -2772,21 +2785,20 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
                 for i, prompt in enumerate(prompts)
             ]
         }
-        
+
         # 构建item_name（将4个名称用逗号连接）
         combined_item_name = ','.join(item_names)
-        
+
         # 调用图像生成API（使用is_grid=True）
         logger.info(f"[4GRID] 准备调用 generate_text_to_image")
         logger.info(f"[4GRID] grid_prompt: {json.dumps(grid_prompt, ensure_ascii=False)[:200]}...")
         logger.info(f"[4GRID] item_type={item_type}, item_name={combined_item_name}")
-        
+
         result = generate_text_to_image(
             user_id=user_id,
             world_id=world_id,
             auth_token=auth_token,
             prompt=json.dumps(grid_prompt),
-            model=model,
             aspect_ratio="16:9",
             count=1,
             item_type=item_type,  # 传递4宫格类型（4/5/6）
@@ -2813,20 +2825,20 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
         }
 
 
-def generate_4grid_character_images(user_id: str, world_id: str, auth_token: str, 
-                                    character_names: List[str], prompts: List[str],
-                                    model: str = "gemini-3-pro-image-preview") -> Dict[str, Any]:
+def generate_4grid_character_images(user_id: str, world_id: str, auth_token: str,
+                                    character_names: List[str], prompts: List[str]) -> Dict[str, Any]:
     """
     生成4宫格角色图像并自动切分更新到各个角色（向后兼容的包装函数）
-    
+
+    注意：生图模型由用户在前端界面选择，存储在会话配置中，大模型无需关心具体使用哪个模型。
+
     Args:
         user_id: 用户ID（必填）
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         character_names: 4个角色的名称列表（必须是4个）
         prompts: 4个角色的提示词列表（必须是4个）
-        model: 使用的模型（默认：gemini-3-pro-image-preview）
-    
+
     Returns:
         dict: 操作结果，包含每个角色的更新状态
     """
@@ -2836,31 +2848,30 @@ def generate_4grid_character_images(user_id: str, world_id: str, auth_token: str
         auth_token=auth_token,
         item_names=character_names,
         prompts=prompts,
-        item_type=4,  # 角色四宫格类型
-        model=model
+        item_type=4  # 角色四宫格类型
     )
-    
+
     # 转换返回格式以保持向后兼容
     if result.get('success') and 'items' in result:
         result['characters'] = result['items']
-    
+
     return result
 
 
-def generate_4grid_location_images(user_id: str, world_id: str, auth_token: str, 
-                                    location_names: List[str], prompts: List[str],
-                                    model: str = "gemini-3-pro-image-preview") -> Dict[str, Any]:
+def generate_4grid_location_images(user_id: str, world_id: str, auth_token: str,
+                                    location_names: List[str], prompts: List[str]) -> Dict[str, Any]:
     """
     生成4宫格场景图像并自动切分更新到各个场景（向后兼容的包装函数）
-    
+
+    注意：生图模型由用户在前端界面选择，存储在会话配置中，大模型无需关心具体使用哪个模型。
+
     Args:
         user_id: 用户ID（必填）
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         location_names: 4个场景的名称列表（必须是4个）
         prompts: 4个场景的提示词列表（必须是4个）
-        model: 使用的模型（默认：gemini-3-pro-image-preview）
-    
+
     Returns:
         dict: 操作结果，包含每个场景的更新状态
     """
@@ -2870,31 +2881,30 @@ def generate_4grid_location_images(user_id: str, world_id: str, auth_token: str,
         auth_token=auth_token,
         item_names=location_names,
         prompts=prompts,
-        item_type=5,  # 场景四宫格类型
-        model=model
+        item_type=5  # 场景四宫格类型
     )
-    
+
     # 转换返回格式以保持向后兼容
     if result.get('success') and 'items' in result:
         result['locations'] = result['items']
-    
+
     return result
 
 
-def generate_4grid_prop_images(user_id: str, world_id: str, auth_token: str, 
-                                prop_names: List[str], prompts: List[str],
-                                model: str = "gemini-3-pro-image-preview") -> Dict[str, Any]:
+def generate_4grid_prop_images(user_id: str, world_id: str, auth_token: str,
+                                prop_names: List[str], prompts: List[str]) -> Dict[str, Any]:
     """
     生成4宫格道具图像并自动切分更新到各个道具（向后兼容的包装函数）
-    
+
+    注意：生图模型由用户在前端界面选择，存储在会话配置中，大模型无需关心具体使用哪个模型。
+
     Args:
         user_id: 用户ID（必填）
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         prop_names: 4个道具的名称列表（必须是4个）
         prompts: 4个道具的提示词列表（必须是4个）
-        model: 使用的模型（默认：gemini-3-pro-image-preview）
-    
+
     Returns:
         dict: 操作结果，包含每个道具的更新状态
     """
@@ -2904,14 +2914,13 @@ def generate_4grid_prop_images(user_id: str, world_id: str, auth_token: str,
         auth_token=auth_token,
         item_names=prop_names,
         prompts=prompts,
-        item_type=6,  # 道具四宫格类型
-        model=model
+        item_type=6  # 道具四宫格类型
     )
-    
+
     # 转换返回格式以保持向后兼容
     if result.get('success') and 'items' in result:
         result['props'] = result['items']
-    
+
     return result
 
 
