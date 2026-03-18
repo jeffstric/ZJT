@@ -1,10 +1,30 @@
 #!/bin/bash
 # 创建 macOS 应用程序脚本
-# 使用方法: 在终端中执行 bash create_mac_app.sh
+# 使用方法: 在项目根目录运行 bash scripts/tools/create_mac_app.sh
 
 APP_NAME="ZJT Server"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$SCRIPT_DIR/${APP_NAME}.app"
+
+# 获取脚本所在目录
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+
+# 解析绝对路径
+if [[ -L "$SCRIPT_PATH" ]]; then
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# .app 创建在项目根目录（从 scripts/tools 向上两级）
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# 验证项目目录是否正确（检查是否存在 start.command）
+if [[ ! -f "$PROJECT_DIR/start.command" ]]; then
+    echo "错误: 未找到 start.command 文件"
+    echo "当前项目目录: $PROJECT_DIR"
+    echo "请确保在项目根目录中运行此脚本"
+    exit 1
+fi
+
+APP_DIR="$PROJECT_DIR/${APP_NAME}.app"
 
 echo "=========================================="
 echo "  创建 macOS 应用程序"
