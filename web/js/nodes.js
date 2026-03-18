@@ -8739,11 +8739,11 @@
           
           previewImageEl.src = proxyImageUrl(node.data.previewImageUrl);
           previewImageEl.style.display = 'block';
-          previewFieldEl.style.display = 'block';
+          // 不再控制 previewFieldEl 的显示，保持首帧端口始终可见
         } else {
           node.data.previewImageUrl = '';
           previewImageEl.style.display = 'none';
-          previewFieldEl.style.display = 'none';
+          // 不再控制 previewFieldEl 的显示，保持首帧端口始终可见
         }
         
         // 更新图片选择菜单
@@ -8780,7 +8780,6 @@
             node.data.previewImageUrl = fromNode.data.url;
             previewImageEl.src = proxyImageUrl(fromNode.data.url);
             previewImageEl.style.display = 'block';
-            previewFieldEl.style.display = 'block';
             refreshParentShotGroupPreview();
             
             renderFirstFrameConnections();
