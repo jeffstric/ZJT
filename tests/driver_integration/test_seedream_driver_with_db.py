@@ -128,7 +128,7 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
             'model': 'doubao-seedream-5-0-260128',
             'created': 1772622963,
             'data': [{
-                'url': 'https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/doubao-seedream-5-0/0217726229450631201fb9e16e3f5837dd939723f9496115a8934_0.png?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=REDACTED_CREDENTIAL %2F20260304%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20260304T111603Z&X-Tos-Expires=86400&X-Tos-Signature=0fdfb6594f353cc395b1bdb0251517eea510e50c9efe2baaa70967055e5c3569&X-Tos-SignedHeaders=host',
+                'url': 'https://example.com/test-image.png',
                 'size': '2048x2048'
             }],
             'usage': {
