@@ -1548,7 +1548,12 @@
                                 return hljs.highlight(code, { language: lang }).value;
                             } catch (err) {}
                         }
-                        return code;
+                        // 确保代码被正确转义，防止HTML标签破坏页面结构
+                        return code.replace(/&/g, '&amp;')
+                                   .replace(/</g, '&lt;')
+                                   .replace(/>/g, '&gt;')
+                                   .replace(/"/g, '&quot;')
+                                   .replace(/'/g, '&#39;');
                     },
                     breaks: true,
                     gfm: true
@@ -3035,8 +3040,9 @@
                         }
                         message += '\n';
                     });
+                    message += '\n💡 提示：请点击「提交数据」按钮生成资产图片后再进入制作工坊\n';
                 }
-                
+
                 message += '\n是否仍要进入制作工坊？';
                 
                 if (confirm(message)) {
