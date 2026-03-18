@@ -21,6 +21,13 @@ server:
     enabled: false
     certfile: "secret/xxx.pem"
     keyfile: "secret/xxx.key"
+  # 网站底部信息配置
+  footer:
+    copyright: "© 2026 智剧通 AI短剧制作平台 | 所有权利保留"  # 版权信息
+    icp_number: ""  # ICP备案号，如：京ICP备12345678号
+    icp_url: "https://beian.miit.gov.cn/"  # ICP备案查询链接
+    police_number: ""  # 公安备案号，如：京公网安备 11010502000000号
+    police_url: ""  # 公安备案查询链接
 # Default timeout settings
 timeout:
   request_timeout: 10000

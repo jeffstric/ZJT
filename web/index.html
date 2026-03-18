@@ -46,7 +46,7 @@
                   ↻
                 </button>
               </div>
-              <button class="btn secondary" @click="showRechargePowerModal = true; fetchRechargePackages()" style="margin-top: 8px; font-size: 12px; padding: 4px 12px;">算力充值</button>
+              <button class="btn secondary" @click="handleRechargeClick" style="margin-top: 8px; font-size: 12px; padding: 4px 12px;">算力充值</button>
             </div>
             <a v-if="userRole === 'admin'" href="/admin" class="btn secondary" style="text-decoration: none;">管理后台</a>
             <button class="btn secondary" @click="handleLogout">登出</button>
@@ -60,7 +60,9 @@
     
     <!-- ICP备案信息 -->
     <footer class="icp-footer">
-      <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">© 2026 智剧通 AI短剧制作平台 | 所有权利保留</a>
+      <span v-if="footerConfig.copyright">{{ footerConfig.copyright }}</span>
+      <a v-if="footerConfig.icp_number" :href="footerConfig.icp_url" target="_blank" rel="noopener noreferrer" style="margin-left: 8px;">{{ footerConfig.icp_number }}</a>
+      <a v-if="footerConfig.police_number" :href="footerConfig.police_url" target="_blank" rel="noopener noreferrer" style="margin-left: 8px;">{{ footerConfig.police_number }}</a>
     </footer>
 
     <!-- 意见反馈按钮 -->
@@ -143,7 +145,16 @@
             <label class="label">密码</label>
             <input class="input" type="password" v-model="registerForm.password" placeholder="请输入密码" />
           </div>
-          <div class="field">
+          <!-- 本地模式提示 -->
+          <div v-if="isLocal" class="field">
+            <div class="local-mode-tip" style="background: #e8f5e9; padding: 12px; border-radius: 6px; margin-bottom: 10px;">
+              <p style="margin: 0; color: #2e7d32; font-size: 13px;">
+                <strong>本地模式：</strong>您的数据（包括算力）都存储您自己的电脑中，您可以在后台修改或通知管理员(第一位用户)修改。
+              </p>
+            </div>
+          </div>
+          <!-- 非本地模式显示邀请码 -->
+          <div class="field" v-if="!isLocal">
             <label class="label">邀请码（选填）</label>
             <input class="input" type="text" v-model="registerForm.inviteCode" placeholder="请输入邀请码" maxlength="10" @keyup.enter="handleRegister" />
             <div class="invite-tip">
@@ -5885,6 +5896,16 @@
       // 模式选择相关
       showModeSelectModal: false,
       creationMode: '',
+      // 本地模式配置
+      isLocal: false,
+      // 网站底部配置
+      footerConfig: {
+        copyright: '',
+        icp_number: '',
+        icp_url: 'https://beian.miit.gov.cn/',
+        police_number: '',
+        police_url: ''
+      },
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -5920,7 +5941,10 @@
       
       // 尝试从localStorage恢复openid
       this.wechatOpenid = localStorage.getItem('wechat_openid') || '';
-      
+
+      // 获取服务器配置（is_local）
+      this.fetchServerConfig();
+
       // 获取用户IP地址
       this.fetchUserIp();
       
@@ -6705,12 +6729,35 @@
         const appId = 'wxfcf09f56c3d2b2b8'; // TODO: 从后端配置获取
         const redirectUri = encodeURIComponent(window.location.href);
         const scope = 'snsapi_base'; // 静默授权，只获取openid
-        
+
         // 跳转到微信授权页面
         const authUrl = `https://open.weixin.qq.com/connect/oauth2/authorize?appid=${appId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&state=STATE#wechat_redirect`;
         window.location.href = authUrl;
       },
-      
+
+      async fetchServerConfig() {
+        try {
+          const response = await axios.get('/api/system/server-config');
+          if (response.data.code === 0) {
+            this.isLocal = response.data.data.is_local || false;
+            if (response.data.data.footer) {
+              this.footerConfig = response.data.data.footer;
+            }
+          }
+        } catch (error) {
+          console.error('Failed to fetch server config:', error);
+        }
+      },
+
+      handleRechargeClick() {
+        if (this.isLocal) {
+          alert('只有云端环境才能开启二维码支付。本地模式下，管理员用户请进入后台增加算力，非管理员用户请通知管理员。');
+        } else {
+          this.showRechargePowerModal = true;
+          this.fetchRechargePackages();
+        }
+      },
+
       async fetchUserIp() {
         try {
           // 使用公共IP查询API获取用户IP
