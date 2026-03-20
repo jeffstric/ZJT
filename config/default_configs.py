@@ -67,6 +67,13 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
     {
+        'key': 'timeout.sync_request_timeout',
+        'value_type': 'int',
+        'description': '同步请求超时时间（秒），用于火山引擎等同步接口',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
         'key': 'timeout.status_check_timeout',
         'value_type': 'int',
         'description': '状态检查超时时间（秒）',
