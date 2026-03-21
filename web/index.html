@@ -61,6 +61,7 @@
     <!-- ICP备案信息 -->
     <footer class="icp-footer">
       <span v-if="footerConfig.copyright">{{ footerConfig.copyright }}</span>
+      <span v-if="footerConfig.version" style="margin-left: 8px; color: #94a3b8;">v{{ footerConfig.version }}</span>
       <a v-if="footerConfig.icp_number" :href="footerConfig.icp_url" target="_blank" rel="noopener noreferrer" style="margin-left: 8px;">{{ footerConfig.icp_number }}</a>
       <a v-if="footerConfig.police_number" :href="footerConfig.police_url" target="_blank" rel="noopener noreferrer" style="margin-left: 8px;">{{ footerConfig.police_number }}</a>
     </footer>
@@ -6742,6 +6743,9 @@
             this.isLocal = response.data.data.is_local || false;
             if (response.data.data.footer) {
               this.footerConfig = response.data.data.footer;
+            }
+            if (response.data.data.version) {
+              this.footerConfig.version = response.data.data.version;
             }
           }
         } catch (error) {

@@ -8,7 +8,10 @@ const AdminApp = {
             // 认证
             authToken: '',
             adminUser: null,
-            
+
+            // 版本号
+            appVersion: '',
+
             // 当前页面
             currentPage: 'dashboard',
             
@@ -149,9 +152,22 @@ const AdminApp = {
     
     mounted() {
         this.initAuth();
+        this.fetchServerConfig();
     },
     
     methods: {
+        // 获取服务器配置（版本号）
+        async fetchServerConfig() {
+            try {
+                const response = await axios.get('/api/system/server-config');
+                if (response.data.code === 0) {
+                    this.appVersion = response.data.data.version || '';
+                }
+            } catch (error) {
+                console.error('Failed to fetch server config:', error);
+            }
+        },
+
         // 初始化认证
         initAuth() {
             this.authToken = localStorage.getItem('auth_token') || '';

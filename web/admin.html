@@ -280,6 +280,12 @@
             </section>
         </main>
 
+        <!-- 底部版本信息 -->
+        <footer class="admin-footer">
+            <span>智剧通管理后台</span>
+            <span v-if="appVersion" style="margin-left: 8px; color: #64748b;">v{{ appVersion }}</span>
+        </footer>
+
         <!-- 算力调整弹窗 -->
         <div class="modal-overlay" v-if="powerModal.show" @click.self="closePowerModal">
             <div class="modal">

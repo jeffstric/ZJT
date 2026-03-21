@@ -870,3 +870,18 @@ body {
 .config-group .form-group:last-child {
     margin-bottom: 0;
 }
+
+/* 底部版本信息 */
+.admin-footer {
+    position: fixed;
+    bottom: 0;
+    left: 240px;
+    right: 0;
+    padding: 12px 24px;
+    background: var(--admin-bg);
+    border-top: 1px solid var(--admin-border);
+    text-align: center;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+    z-index: 100;
+}
