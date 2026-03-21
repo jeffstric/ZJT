@@ -1,0 +1,86 @@
+# =============================================================================
+# Docker 构建忽略文件
+# =============================================================================
+
+# Python 相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+env/
+
+# IDE 相关
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git 相关
+.git/
+.gitignore
+.gitattributes
+
+# 文档
+README*.md
+*.md
+docs/
+
+# Windows 相关
+start.bat
+stop.bat
+*.command
+*.exe
+*.dll
+*.sys
+
+# macOS 相关
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# 日志和数据目录（会通过 volume 挂载）
+logs/
+data/
+upload/
+files/
+*.log
+
+# 数据库相关
+bin/mysql/
+model/sql/*.sql
+
+# Docker 相关
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# 其他临时文件
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# uv 相关
+uv.lock
+bin/uv/
+
+# 不需要的配置文件
+config_unit.yml
+config_dev.yml
+
+# Docker 专用文件（已处理）
+docker-entrypoint.sh
+docker/mysql/

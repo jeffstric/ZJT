@@ -1,0 +1,89 @@
+# =============================================================================
+# ComfyUI Server Docker Compose Configuration
+# 使用 MySQL 8.0 数据库
+# 使用说明: 在项目根目录运行 docker compose -f docker/docker-compose.yml up -d
+# =============================================================================
+
+services:
+  # MySQL 8.0 数据库服务
+  mysql:
+    image: mysql:8.0
+    container_name: zjt_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: zjt_mysql_password
+      MYSQL_DATABASE: zjt
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+      # 禁用 strict mode 以兼容旧版 SQL
+      MYSQL_SQL_MODE: "STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO"
+    ports:
+      - "3306:3306"
+    volumes:
+      # 数据持久化
+      - mysql_data:/var/lib/mysql
+      # 初始化 SQL 脚本（首次启动时自动执行）
+      - ../model/sql:/docker-entrypoint-initdb.d:ro
+      # MySQL 配置文件
+      - ./mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - zjt_network
+
+  # 主应用服务
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: zjt_app
+    restart: unless-stopped
+    environment:
+      # 环境配置
+      comfyui_env: prod
+      # 数据库配置（覆盖配置文件中的设置）
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: zjt_mysql_password
+      DB_NAME: zjt
+      # 时区设置
+      TZ: Asia/Shanghai
+    ports:
+      - "9003:9003"
+    volumes:
+      # 配置文件挂载（便于修改配置）
+      - ../config_prod.yml:/app/config_prod.yml:ro
+      # 数据持久化
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../upload:/app/upload
+      - ../files:/app/files
+      # ffmpeg 和其他二进制文件
+      - ../bin/ffmpeg:/app/bin/ffmpeg:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9003/api/system/status').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - zjt_network
+
+# 持久化数据卷
+volumes:
+  mysql_data:
+    driver: local
+
+# 网络配置
+networks:
+  zjt_network:
+    driver: bridge

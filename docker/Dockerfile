@@ -1,0 +1,69 @@
+# =============================================================================
+# ComfyUI Server Dockerfile
+# Python 3.10 + FastAPI + MySQL 8.0
+# =============================================================================
+
+FROM python:3.10-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUTF8=1 \
+    comfyui_env=prod \
+    # Set default database config (can be overridden by env vars)
+    DB_HOST=mysql \
+    DB_PORT=3306 \
+    DB_USER=root \
+    DB_PASSWORD=zjt_mysql_password \
+    DB_NAME=zjt
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # ffmpeg and ffprobe for video processing
+    ffmpeg \
+    # MySQL client for database initialization
+    default-mysql-client \
+    # Clean up
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY requirements.txt pyproject.toml ./
+COPY api/ ./api/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
+COPY config/ ./config/
+COPY llm/ ./llm/
+COPY model/ ./model/
+COPY perseids_server/ ./perseids_server/
+COPY script_writer_core/ ./script_writer_core/
+COPY scripts/ ./scripts/
+COPY task/ ./task/
+COPY templates/ ./templates/
+COPY tests/ ./tests/
+COPY utils/ ./utils/
+COPY web/ ./web/
+COPY server.py ./
+COPY config.example.yml ./
+
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Upgrade pip and install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Create necessary directories
+RUN mkdir -p /app/data /app/logs /app/upload/cache /app/dist
+
+# Expose the application port
+EXPOSE 9003
+
+# Set the entrypoint
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+# Default command - start the production server
+CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "9003", "--timeout-keep-alive", "600"]
