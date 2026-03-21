@@ -3082,7 +3082,13 @@
             
             // 跳转到工作流画布
             if (WORKFLOW_ID) {
-                window.location.href = `/video-workflow?id=${WORKFLOW_ID}`;
+                // 传递当前世界ID，供工作流页面自动同步世界配置
+                const currentWorldId = window.currentWorldId || WORLD_ID;
+                let url = `/video-workflow?id=${WORKFLOW_ID}`;
+                if (currentWorldId) {
+                    url += `&from_world_id=${currentWorldId}`;
+                }
+                window.location.href = url;
             } else {
                 // 没有WORKFLOW_ID，跳转到工作流列表
                 alert('未找到关联的工作流，请先创建工作流');
