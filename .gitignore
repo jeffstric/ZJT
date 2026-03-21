@@ -5,7 +5,6 @@ upload/*
 !auto_test/*.json
 auto_test/test_todo_list.json
 logs/*
-script_parser_logs/*
 scheduler.lock
 data/mysql
 *.exe
