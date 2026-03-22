@@ -164,17 +164,11 @@ class SessionStorage:
                 expires_at = datetime.now() + timedelta(hours=expires_hours)
 
             if existing:
-                # Update existing session
+                # Update existing session (conversation history only, tokens are cumulative in DB)
                 ChatSessionsModel.update_conversation_history(
                     session_id=session.session_id,
                     conversation_history=session.get_history(),
-                    update_tokens=True,
-                    token_stats={
-                        'input_tokens': 0,  # Use cumulative values from session
-                        'output_tokens': 0,
-                        'cache_creation_tokens': 0,
-                        'cache_read_tokens': 0
-                    }
+                    update_tokens=False  # Token stats are cumulative, don't add delta
                 )
                 # Also update the model if changed
                 ChatSessionsModel.update_model(session.session_id, session.model, session.model_id)
