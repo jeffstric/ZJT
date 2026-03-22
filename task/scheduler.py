@@ -134,10 +134,10 @@ def init_scheduler(app):
     cleanup_enabled = get_dynamic_config_value("media_cache", "enabled", default=True)
     cleanup_interval_hours = get_dynamic_config_value("media_cache", "cleanup_interval_hours", default=24)
     cleanup_on_startup = get_dynamic_config_value("media_cache", "cleanup_on_startup", default=True)
-    
+
     if cleanup_enabled:
         from utils.media_cache import cleanup_cache
-        
+
         # 启动时执行一次清理
         if cleanup_on_startup:
             logger.info('执行启动时媒体缓存清理')
@@ -145,7 +145,7 @@ def init_scheduler(app):
                 cleanup_cache()
             except Exception as e:
                 logger.error(f"启动时清理缓存失败: {e}")
-        
+
         # 添加定时清理任务
         logger.info(f'启用媒体缓存清理任务，间隔 {cleanup_interval_hours} 小时')
         scheduler.add_job(
@@ -157,6 +157,21 @@ def init_scheduler(app):
             max_instances=1,
             coalesce=True
         )
+
+    # 聊天会话清理任务
+    logger.info('启用聊天会话清理任务')
+    from task.session_cleanup import cleanup_expired_sessions
+    task_with_app_session = partial(cleanup_expired_sessions, app=app)
+
+    scheduler.add_job(
+        func=task_with_app_session,
+        trigger=IntervalTrigger(hours=6),  # 每6小时执行一次
+        id='cleanup_sessions',
+        name='Cleanup expired chat sessions every 6 hours',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
 
     # 启动调度器
     scheduler.start()

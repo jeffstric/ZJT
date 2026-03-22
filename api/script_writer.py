@@ -54,10 +54,10 @@ logger = logging.getLogger(__name__)
 # 创建路由器
 router = APIRouter(prefix="/api", tags=["script_writer"])
 
-# 会话存储（内存中）
-# 注意：这是临时方案，生产环境应使用数据库或Redis
-sessions_storage: Dict[str, ChatSession] = {}
-sessions_lock = threading.RLock()  # 使用可重入锁保护 sessions_storage 字典的并发访问
+# 会话存储（数据库 + 可选内存缓存）
+# 使用数据库存储支持多 worker 进程间会话共享
+from script_writer_core.session_storage import SessionStorage
+session_storage = SessionStorage(use_cache=True, cache_ttl=300)
 
 # 生图模型配置存储（按 user_id + world_id 存储 task_id）
 # key: f"{user_id}_{world_id}", value: task_id (int)
@@ -698,11 +698,15 @@ async def create_session(request: Request, session_request: SessionCreateRequest
             model=session_request.model,
             model_id=session_request.model_id
         )
-        
-        # 存储会话
-        with sessions_lock:
-            sessions_storage[session_id] = session
-        
+
+        # 存储会话到数据库
+        if not session_storage.save_session(session, expires_hours=24):
+            logger.error(f'会话保存到数据库失败 - session_id: {session_id}')
+            return JSONResponse({
+                'success': False,
+                'error': '会话保存失败'
+            }, status_code=500)
+
         logger.info(f'会话创建成功 - session_id: {session_id}, user_id: {session_request.user_id}, world_id: {session_request.world_id}')
         
         return JSONResponse({
@@ -726,19 +730,26 @@ async def create_session(request: Request, session_request: SessionCreateRequest
 async def get_session_history(request: Request, session_id: str):
     """获取会话历史"""
     try:
-        with sessions_lock:
-            if session_id not in sessions_storage:
-                return JSONResponse({
-                    'success': False,
-                    'error': '会话不存在'
-                }, status_code=404)
-            
-            session = sessions_storage[session_id]
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
         return JSONResponse({
             'success': True,
-            'history': session.get('history', []),
-            'created_at': session.get('created_at'),
-            'updated_at': session.get('updated_at')
+            'history': session.get_history(),
+            'created_at': session.created_at.isoformat() if session.created_at else None,
+            'updated_at': session.updated_at.isoformat() if session.updated_at else None
         })
     except Exception as e:
         logger.error(f'获取会话历史失败: {str(e)}')
@@ -752,16 +763,28 @@ async def get_session_history(request: Request, session_id: str):
 async def clear_session_history(request: Request, session_id: str):
     """清空会话历史"""
     try:
-        with sessions_lock:
-            if session_id not in sessions_storage:
-                return JSONResponse({
-                    'success': False,
-                    'error': '会话不存在'
-                }, status_code=404)
-            
-            sessions_storage[session_id]['history'] = []
-            sessions_storage[session_id]['updated_at'] = datetime.now().isoformat()
-        
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
+        # 清空历史
+        session.clear_history()
+
+        # 持久化到数据库
+        from model.chat_sessions import ChatSessionsModel
+        ChatSessionsModel.clear_history(session_id)
+
         return JSONResponse({
             'success': True,
             'message': '会话历史已清空'
@@ -787,15 +810,21 @@ async def clear_user_directory(request: SyncFilesRequest):
 async def set_session_model(request: Request, session_id: str, model_request: ModelChangeRequest):
     """切换会话模型"""
     try:
-        with sessions_lock:
-            if session_id not in sessions_storage:
-                return JSONResponse({
-                    'success': False,
-                    'error': '会话不存在'
-                }, status_code=404)
-            
-            session = sessions_storage[session_id]
-        
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
         # 验证模型是否有效
         if model_request.auth_token:
             is_valid, valid_models, error_msg = await validate_model(model_request.model, model_request.auth_token)
@@ -805,7 +834,7 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
                     'error': error_msg,
                     'valid_models': valid_models
                 }, status_code=400)
-        
+
         # 更新模型 - 使用 ChatSession 的 set_model 方法
         model_id = None
         if model_request.model_id is not None:
@@ -816,11 +845,15 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
                     'success': False,
                     'error': 'model_id 必须为数字'
                 }, status_code=400)
-        
+
         session.set_model(model_request.model, model_id)
-        
+
+        # 持久化到数据库
+        from model.chat_sessions import ChatSessionsModel
+        ChatSessionsModel.update_model(session_id, model_request.model, model_id)
+
         logger.info(f'模型切换成功 - session_id: {session_id}, model: {model_request.model}')
-        
+
         return JSONResponse({
             'success': True,
             'message': '模型切换成功',
@@ -876,12 +909,17 @@ async def set_text_to_image_model(request: Request):
 
         # 如果没有提供 user_id 和 world_id，尝试从 session 中获取
         if (not user_id or not world_id) and session_id:
-            with sessions_lock:
-                session = sessions_storage.get(session_id)
-                if session and hasattr(session, 'user_id') and hasattr(session, 'world_id'):
-                    user_id = str(session.user_id)
-                    world_id = str(session.world_id)
-                    logger.info(f'从 session 获取 user_id 和 world_id - session_id: {session_id}, user_id: {user_id}, world_id: {world_id}')
+            session = session_storage.load_session(
+                session_id=session_id,
+                task_manager=task_manager,
+                file_manager=file_manager,
+                tool_executor=tool_executor,
+                agents_config=agents_config
+            )
+            if session and hasattr(session, 'user_id') and hasattr(session, 'world_id'):
+                user_id = str(session.user_id)
+                world_id = str(session.world_id)
+                logger.info(f'从 session 获取 user_id 和 world_id - session_id: {session_id}, user_id: {user_id}, world_id: {world_id}')
 
         if not user_id or not world_id:
             return JSONResponse({
@@ -956,21 +994,51 @@ async def get_current_text_to_image_model(
 
 
 @router.get('/sessions')
-async def list_sessions():
+async def list_sessions(
+    user_id: Optional[str] = QueryParam(None),
+    world_id: Optional[str] = QueryParam(None)
+):
     """列出所有会话"""
     try:
-        with sessions_lock:
+        from model.chat_sessions import ChatSessionsModel
+
+        if user_id:
+            # 从数据库查询用户的会话
+            entities = ChatSessionsModel.list_by_user(user_id, world_id, active_only=True, limit=100)
             session_list = [
                 {
-                    'session_id': sid,
-                    'user_id': data.get('user_id'),
-                    'world_id': data.get('world_id'),
-                    'created_at': data.get('created_at'),
-                    'message_count': len(data.get('history', []))
+                    'session_id': e.session_id,
+                    'user_id': e.user_id,
+                    'world_id': e.world_id,
+                    'created_at': e.created_at.isoformat() if e.created_at else None,
+                    'updated_at': e.updated_at.isoformat() if e.updated_at else None,
+                    'model': e.model,
+                    'message_count': len(e.conversation_history)
                 }
-                for sid, data in sessions_storage.items()
+                for e in entities
             ]
-        
+        else:
+            # 列出缓存中的会话（用于调试）
+            session_list = []
+            cached_ids = session_storage.get_cached_sessions()
+            for sid in cached_ids:
+                session = session_storage.load_session(
+                    session_id=sid,
+                    task_manager=task_manager,
+                    file_manager=file_manager,
+                    tool_executor=tool_executor,
+                    agents_config=agents_config
+                )
+                if session:
+                    session_list.append({
+                        'session_id': sid,
+                        'user_id': session.user_id,
+                        'world_id': session.world_id,
+                        'created_at': session.created_at.isoformat() if session.created_at else None,
+                        'updated_at': session.updated_at.isoformat() if session.updated_at else None,
+                        'message_count': len(session.get_history())
+                    })
+
         return JSONResponse({
             'success': True,
             'sessions': session_list
@@ -1492,19 +1560,25 @@ async def save_world_file(
 async def create_agent_task(request: Request, session_id: str, task_request: TaskCreateRequest):
     """创建智能体任务"""
     try:
-        # 检查会话是否存在
-        with sessions_lock:
-            if session_id not in sessions_storage:
-                return JSONResponse({
-                    'success': False,
-                    'error': '会话不存在'
-                }, status_code=404)
-            
-            session = sessions_storage[session_id]
-            user_id = session.user_id
-            world_id = session.world_id
-            auth_token = task_request.auth_token or session.auth_token
-        
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
+        user_id = session.user_id
+        world_id = session.world_id
+        auth_token = task_request.auth_token or session.auth_token
+
         # 验证 auth_token
         is_valid, error_response = await verify_auth_token(user_id, auth_token)
         if not is_valid:
@@ -1584,8 +1658,18 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
         # 启动任务（使用 PMAgent，后台线程执行）
         def run_task_sync():
             """同步执行任务（在线程中运行）"""
-            task_manager.start_task(task, session.pm_agent, session_data)
-        
+            try:
+                task_manager.start_task(task, session.pm_agent, session_data)
+                # 任务完成后保存会话状态到数据库
+                session_storage.save_session(session, expires_hours=24)
+            except Exception as e:
+                logger.error(f"任务执行异常: {e}")
+                # 即使出错也尝试保存会话状态
+                try:
+                    session_storage.save_session(session, expires_hours=24)
+                except:
+                    pass
+
         # 在后台线程中启动任务
         import threading
         task_thread = threading.Thread(target=run_task_sync, daemon=True)
