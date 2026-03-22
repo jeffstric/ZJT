@@ -99,8 +99,19 @@ class TaskManager:
         except IOError as e:
             print(f"写入任务状态文件失败: {str(e)}")
     
-    def update_task_status(self, item_type: int, item_name: str, status: str, user_id: str, world_id: str):
-        """更新任务状态"""
+    def update_task_status(self, item_type: int, item_name: str, status: str, user_id: str, world_id: str, 
+                           error_message: str = None, extra_info: dict = None):
+        """更新任务状态
+        
+        Args:
+            item_type: 项目类型
+            item_name: 项目名称
+            status: 状态
+            user_id: 用户ID
+            world_id: 世界ID
+            error_message: 错误信息（可选）
+            extra_info: 额外信息字典（可选）
+        """
         try:
             # 读取现有数据
             data = self._read_task_status_file(user_id, world_id)
@@ -112,11 +123,21 @@ class TaskManager:
             
             # 更新或添加记录（使用item_name作为key）
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            data[item_type_key][item_name] = {
+            status_record = {
                 'item_name': item_name,
                 'status': status,
                 'update_time': current_time
             }
+            
+            # 添加错误信息
+            if error_message:
+                status_record['error_message'] = error_message
+            
+            # 添加额外信息
+            if extra_info:
+                status_record.update(extra_info)
+            
+            data[item_type_key][item_name] = status_record
             
             # 写入文件
             self._write_task_status_file(data, user_id, world_id)
@@ -124,8 +145,19 @@ class TaskManager:
         except Exception as e:
             print(f"更新任务状态失败: {str(e)}")
     
-    def _update_task_status_file(self, item_type: int, item_name: str, status: str, user_id: str, world_id: str = None):
-        """同步任务状态到文件系统"""
+    def _update_task_status_file(self, item_type: int, item_name: str, status: str, user_id: str, world_id: str = None,
+                                  error_message: str = None, extra_info: dict = None):
+        """同步任务状态到文件系统
+        
+        Args:
+            item_type: 项目类型
+            item_name: 项目名称
+            status: 状态
+            user_id: 用户ID
+            world_id: 世界ID（可选）
+            error_message: 错误信息（可选）
+            extra_info: 额外信息字典（可选）
+        """
         try:
             # 如果没有提供world_id，尝试从上下文获取
             if not world_id:
@@ -139,7 +171,7 @@ class TaskManager:
                     return
             
             if world_id:
-                self.update_task_status(item_type, item_name, status, user_id, world_id)
+                self.update_task_status(item_type, item_name, status, user_id, world_id, error_message, extra_info)
         except Exception as e:
             print(f"同步任务状态失败: {str(e)}")
     
@@ -232,7 +264,6 @@ class TaskManager:
                     
                     # 检查是否超过最大尝试次数
                     if task_info['attempts'] > task_info['max_attempts']:
-                        logger = logging.getLogger(__name__)
                         
                         # 记录超时失败信息
                         timeout_details = {
@@ -286,7 +317,6 @@ class TaskManager:
                                        comfyui_base_url, auth_token, user_id, world_id, task_key)
                 elif task_status == 'FAILED':
                     # 图片生成失败
-                    logger = logging.getLogger(__name__)
                     
                     # 记录详细的失败信息
                     failure_reason = task.get('reason', '生成失败')
@@ -329,7 +359,6 @@ class TaskManager:
             
         except Exception as e:
             # 处理异常 - 重新获取锁（因为可能在锁外发生异常）
-            logger = logging.getLogger(__name__)
             
             # 记录详细的失败信息到日志
             error_details = {
@@ -443,9 +472,17 @@ class TaskManager:
             file_url = results[0].get('file_url', '')
             if not file_url:
                 raise Exception('图片生成完成但未返回文件URL')
-                      
-            # 默认关闭图片下载功能
-            enable_image_download = get_config().get("image", {}).get("enable_download", False)
+            
+            # 检查是否为4宫格类型，需要进行图片拆分
+            is_grid_type = item_type in [4, 5, 6]  # 4=character_grid, 5=location_grid, 6=prop_grid
+            
+            # 4宫格类型必须下载到本地才能拆分，强制启用下载
+            if is_grid_type:
+                enable_image_download = True
+                logger.info(f"[4GRID] 检测到4宫格类型(item_type={item_type})，强制启用图片下载")
+            else:
+                # 非宫格类型使用配置中的设置，默认关闭
+                enable_image_download = get_config().get("image", {}).get("enable_download", False)
             
             if enable_image_download:
                 # 启用图片下载和本地存储
@@ -457,14 +494,12 @@ class TaskManager:
                 local_image_url = file_url
                 local_file_path = None
             
-            # 检查是否为4宫格类型，需要进行图片拆分
-            is_grid_type = item_type in [4, 5, 6]  # 4=character_grid, 5=location_grid, 6=prop_grid
             split_image_urls = []
             
             # 调试日志
             print(f"[DEBUG] item_type={item_type}, is_grid_type={is_grid_type}, enable_image_download={enable_image_download}, local_file_path={local_file_path}")
             
-            if is_grid_type and enable_image_download and local_file_path:
+            if is_grid_type and local_file_path:
                 # 4宫格图片需要拆分
                 try:
                     # 解析item_name（格式："name1,name2,name3,name4"）
@@ -586,7 +621,6 @@ class TaskManager:
             self._cleanup_task(task_key, project_id)
             
         except Exception as e:
-            logger = logging.getLogger(__name__)
             
             # 记录下载失败信息
             download_error_details = {
@@ -612,8 +646,16 @@ class TaskManager:
                         self.active_tasks[task_key]['error'] = str(e)
                         self.active_tasks[task_key]['failed_at'] = datetime.now().isoformat()
             
-            # 同步下载失败状态到文件
-            self._update_task_status_file(item_type, item_name, 'failed', user_id, world_id)
+            # 同步下载失败状态到文件（记录详细错误信息）
+            self._update_task_status_file(
+                item_type, item_name, 'failed', user_id, world_id,
+                error_message=f"{type(e).__name__}: {str(e)}",
+                extra_info={
+                    'failure_source': 'Download_Process',
+                    'project_id': project_id,
+                    'error_type': type(e).__name__
+                }
+            )
             
             # 记录任务状态更新到日志
             logger.info(f"任务状态已更新为下载失败: {task_key}", extra={'status_update': download_error_details})
