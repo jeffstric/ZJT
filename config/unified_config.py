@@ -68,6 +68,7 @@ class ImplementationConfig:
         driver_params: 驱动实例化参数（如 {'site_id': 'site_1'}）
         sort_order: 默认排序顺序（代码级后备值）
         site_number: 聚合站点编号（仅聚合站点有值，非聚合站点为 None）
+        sync_mode: 是否为同步模式（同步API会阻塞，需要独立进程池处理）
     """
     name: str
     display_name: str
@@ -78,6 +79,7 @@ class ImplementationConfig:
     driver_params: Dict[str, Any] = field(default_factory=dict)
     sort_order: float = 999999.0  # 默认排序到最后
     site_number: Optional[int] = None  # 仅聚合站点有值
+    sync_mode: bool = False  # 是否为同步模式
 
     def get_computing_power(self, duration: Optional[int] = None) -> int:
         """
@@ -152,6 +154,7 @@ class ImplementationConfig:
             'enabled': self.enabled,
             'description': self.description,
             'driver_params': self.driver_params,
+            'sync_mode': self.sync_mode,
         }
 
 
@@ -918,7 +921,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='API聚合器站点 1',
         sort_order=11000.0,
-        site_number=1
+        site_number=1,
+        sync_mode=True  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site2_v1',
@@ -928,7 +932,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='API聚合器站点 2',
         sort_order=12000.0,
-        site_number=2
+        site_number=2,
+        sync_mode=True  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site3_v1',
@@ -938,7 +943,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='API聚合器站点 3',
         sort_order=13000.0,
-        site_number=3
+        site_number=3,
+        sync_mode=True  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site4_v1',
@@ -948,7 +954,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='API聚合器站点 4',
         sort_order=14000.0,
-        site_number=4
+        site_number=4,
+        sync_mode=True  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site5_v1',
@@ -958,7 +965,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='API聚合器站点 5',
         sort_order=15000.0,
-        site_number=5
+        site_number=5,
+        sync_mode=True  # 同步模式
     ),
     ImplementationConfig(
         name='veo3_duomi_v1',
@@ -1027,7 +1035,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='火山引擎 Seedream 5.0 文生图接口',
-        sort_order=10000.0
+        sort_order=10000.0,
+        sync_mode=True  # 同步模式
     ),
 
     # ==================== 本地处理 ====================

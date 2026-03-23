@@ -453,6 +453,22 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
+
+    # ==================== 同步任务进程池配置 ====================
+    {
+        'key': 'sync_task.max_workers',
+        'value_type': 'int',
+        'description': '同步任务进程池最大并发数',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'sync_task.check_interval',
+        'value_type': 'int',
+        'description': '同步任务结果检查间隔（秒）',
+        'editable': True,
+        'is_sensitive': False
+    },
 ]
 
 

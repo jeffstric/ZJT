@@ -14,10 +14,12 @@ from config.constant import (
     AI_TOOL_STATUS_PROCESSING,
     AI_TOOL_STATUS_COMPLETED,
     AI_TOOL_STATUS_FAILED,
+    AI_TOOL_STATUS_SYNC_QUEUED,
     TASK_STATUS_QUEUED,
     TASK_STATUS_PROCESSING,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
+    TASK_STATUS_SYNC_QUEUED,
     RUNNINGHUB_TASK_TYPES
 )
 
@@ -144,14 +146,34 @@ async def _submit_new_task(ai_tool):
         bool: True 表示成功，False 表示失败
     """
     from task.visual_drivers import VideoDriverFactory
-    
+    from config.unified_config import UnifiedConfigRegistry
+    from task.sync_task_executor import get_sync_task_executor
+
     ai_tool_type = ai_tool.type
     task_id = ai_tool.id
-    
+
     if _is_test_mode_enabled():
         logger.info(f"[TEST MODE] [DRIVER] Submitting task {task_id} (type: {ai_tool_type})")
-    
+
     try:
+        # 0. 检查是否为同步模式 - 分流到进程池
+        implementation_name = VideoDriverFactory.get_implementation_for_user(ai_tool_type, ai_tool.user_id)
+        if implementation_name:
+            impl_config = UnifiedConfigRegistry.get_implementation(implementation_name)
+
+            # 检查是否为同步模式
+            if impl_config and impl_config.sync_mode:
+                # 同步任务：提交到进程池
+                executor = get_sync_task_executor()
+                if executor.is_running():
+                    executor.submit(task_id, ai_tool_type)
+                    AIToolsModel.update(task_id, status=AI_TOOL_STATUS_SYNC_QUEUED)
+                    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
+                    logger.info(f"[SyncTask] Task {task_id} submitted to sync task executor (sync_mode implementation: {impl_config.name})")
+                    return True
+                else:
+                    logger.warning(f"[SyncTask] Sync task executor not running, falling back to normal processing")
+
         # 1. 根据任务类型创建对应的驱动实例
         driver = VideoDriverFactory.create_driver_by_type(ai_tool_type)
         

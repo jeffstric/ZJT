@@ -227,6 +227,7 @@ class AIToolStatus:
     """AI工具状态常量"""
     PENDING = 0       # 未处理
     PROCESSING = 1    # 正在处理
+    SYNC_QUEUED = 3   # 已提交到同步任务进程池
     FAILED = -1       # 处理失败
     COMPLETED = 2     # 处理完成
 
@@ -235,6 +236,7 @@ class TaskStatus:
     """任务状态常量"""
     QUEUED = 0        # 队列中
     PROCESSING = 1    # 处理中
+    SYNC_QUEUED = 3   # 已提交到同步任务进程池
     COMPLETED = 2     # 处理完成
     FAILED = -1       # 处理失败
 
@@ -263,12 +265,14 @@ AI_TOOL_STATUS_PENDING = AIToolStatus.PENDING
 AI_TOOL_STATUS_PROCESSING = AIToolStatus.PROCESSING
 AI_TOOL_STATUS_FAILED = AIToolStatus.FAILED
 AI_TOOL_STATUS_COMPLETED = AIToolStatus.COMPLETED
+AI_TOOL_STATUS_SYNC_QUEUED = AIToolStatus.SYNC_QUEUED
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED
 TASK_STATUS_PROCESSING = TaskStatus.PROCESSING
 TASK_STATUS_COMPLETED = TaskStatus.COMPLETED
 TASK_STATUS_FAILED = TaskStatus.FAILED
+TASK_STATUS_SYNC_QUEUED = TaskStatus.SYNC_QUEUED
 
 # 向后兼容别名 - AI Audio 状态
 AI_AUDIO_STATUS_PENDING = AIAudioStatus.PENDING

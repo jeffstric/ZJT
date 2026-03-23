@@ -213,6 +213,11 @@ media_cache:
   cleanup_on_startup: true         # 启动时执行清理
   cleanup_interval_hours: 24       # 定时清理间隔（小时）
 
+# 同步任务进程池配置（用于Gemini、Seedream等同步API）
+sync_task:
+  max_workers: 4                   # 进程池最大并发数
+  check_interval: 5                # 结果检查间隔（秒）
+
 # Sentry 配置
 sentry:
   dsn: "https://xxxxx6"

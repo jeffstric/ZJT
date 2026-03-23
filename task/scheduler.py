@@ -77,6 +77,39 @@ def _release_scheduler_lock():
             logger.error(f"Error releasing scheduler lock: {e}")
 
 
+def _reset_orphan_sync_tasks():
+    """
+    重置孤儿同步任务
+
+    服务重启后，进程池队列丢失，SYNC_QUEUED 状态的任务需要重置为 PENDING
+    这可能导致少量重复请求，但比任务永久卡住要好
+    """
+    try:
+        from model import AIToolsModel, TasksModel
+        from config.constant import (
+            AI_TOOL_STATUS_SYNC_QUEUED, AI_TOOL_STATUS_PENDING,
+            TASK_STATUS_SYNC_QUEUED, TASK_STATUS_QUEUED,
+        )
+
+        # 重置 AITools 表中的孤儿任务
+        ai_tools_count = AIToolsModel.reset_status(
+            from_status=AI_TOOL_STATUS_SYNC_QUEUED,
+            to_status=AI_TOOL_STATUS_PENDING
+        )
+
+        # 重置 Tasks 表中的孤儿任务
+        tasks_count = TasksModel.reset_status(
+            from_status=TASK_STATUS_SYNC_QUEUED,
+            to_status=TASK_STATUS_QUEUED
+        )
+
+        if ai_tools_count > 0 or tasks_count > 0:
+            logger.info(f"Reset orphan sync tasks: AITools={ai_tools_count}, Tasks={tasks_count}")
+
+    except Exception as e:
+        logger.error(f"Failed to reset orphan sync tasks: {e}")
+
+
 def init_scheduler(app):
     """
     初始化定时任务调度器
@@ -87,14 +120,40 @@ def init_scheduler(app):
     if not _acquire_scheduler_lock():
         logger.info("Scheduler not started due to lock conflict.")
         return
-    
+
+    # 重置孤儿同步任务（服务重启后进程池队列丢失）
+    _reset_orphan_sync_tasks()
+
     scheduler = BackgroundScheduler()
-    
+
+    # 启动同步任务执行器
+    from task.sync_task_executor import SyncTaskExecutor, process_sync_task_results
+    from config.config_util import get_dynamic_config_value
+
+    executor = SyncTaskExecutor.get_instance()
+    if executor.start():
+        logger.info("同步任务执行器启动成功")
+
+        # 添加同步任务结果检查调度任务
+        check_interval = get_dynamic_config_value("sync_task", "check_interval", default=5)
+        logger.info(f'启用同步任务结果检查，间隔 {check_interval} 秒')
+        scheduler.add_job(
+            func=process_sync_task_results,
+            trigger=IntervalTrigger(seconds=check_interval),
+            id='check_sync_tasks',
+            name=f'Check sync task results every {check_interval} seconds',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True
+        )
+    else:
+        logger.warning("同步任务执行器启动失败，同步任务将使用原有流程")
+
     # 创建一个带有app参数的任务函数
     task_with_app_video = partial(generate_video_task, app=app)
     task_with_app_audio = partial(_run_async_task, generate_audio_task, app=app)
     task_with_app_token = partial(process_token_task, app=app)
-    
+
     logger.info('启用视频生成任务')
     scheduler.add_job(
         func=task_with_app_video,
@@ -130,7 +189,6 @@ def init_scheduler(app):
     )
 
     # 媒体缓存清理任务
-    from config.config_util import get_dynamic_config_value
     cleanup_enabled = get_dynamic_config_value("media_cache", "enabled", default=True)
     cleanup_interval_hours = get_dynamic_config_value("media_cache", "cleanup_interval_hours", default=24)
     cleanup_on_startup = get_dynamic_config_value("media_cache", "cleanup_on_startup", default=True)
@@ -197,6 +255,17 @@ def shutdown_scheduler():
     关闭调度器
     """
     global scheduler
+
+    # 关闭同步任务执行器
+    try:
+        from task.sync_task_executor import SyncTaskExecutor
+        executor = SyncTaskExecutor.get_instance()
+        if executor.is_running():
+            executor.shutdown(wait=True)
+            logger.info("同步任务执行器已关闭")
+    except Exception as e:
+        logger.error(f"关闭同步任务执行器失败: {e}")
+
     if scheduler:
         scheduler.shutdown()
     _release_scheduler_lock()

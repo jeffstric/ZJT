@@ -401,19 +401,19 @@ class AIToolsModel:
     def get_by_transaction_ids(transaction_ids: List[str]) -> Dict[str, AITool]:
         """
         Batch get AI tool records by transaction IDs
-        
+
         Args:
             transaction_ids: List of transaction IDs
-        
+
         Returns:
             Dictionary mapping transaction_id to AITool object
         """
         if not transaction_ids:
             return {}
-        
+
         placeholders = ','.join(['%s'] * len(transaction_ids))
         sql = f"SELECT * FROM ai_tools WHERE transaction_id IN ({placeholders})"
-        
+
         try:
             results = execute_query(sql, tuple(transaction_ids), fetch_all=True)
             tools_map = {}
@@ -425,4 +425,29 @@ class AIToolsModel:
             return tools_map
         except Exception as e:
             logger.error(f"Failed to get AI tool records by transaction_ids: {e}")
+            raise
+
+    @staticmethod
+    def reset_status(from_status: int, to_status: int) -> int:
+        """
+        Reset status for all records with a specific status
+
+        Used for resetting orphan sync tasks when service restarts
+
+        Args:
+            from_status: Current status to match
+            to_status: Target status to set
+
+        Returns:
+            Number of affected rows
+        """
+        sql = "UPDATE ai_tools SET status = %s WHERE status = %s"
+
+        try:
+            affected_rows = execute_update(sql, (to_status, from_status))
+            if affected_rows > 0:
+                logger.info(f"Reset {affected_rows} AI tool records from status {from_status} to {to_status}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to reset AI tool status: {e}")
             raise
