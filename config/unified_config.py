@@ -173,6 +173,7 @@ class UnifiedTaskConfig:
         driver_name: 业务驱动名称（用于 VIDEO_DRIVER_MAPPING）
         implementation: 默认实现驱动类名（用于 DRIVER_IMPLEMENTATION_MAPPING）
         implementations: 可选实现方列表（用户可选择），如果为空则只使用默认实现
+        computing_power: 算力消耗覆盖值（优先使用），整数或按时长的字典。如果不设置则从实现方配置读取
         supported_ratios: 支持的比例列表
         supported_sizes: 支持的尺寸列表（图片类任务）
         supported_durations: 支持的时长列表（视频类任务）
@@ -191,6 +192,7 @@ class UnifiedTaskConfig:
     driver_name: Optional[str] = None
     implementation: Optional[str] = None  # 默认实现方
     implementations: List[str] = field(default_factory=list)  # 可选实现方列表
+    computing_power: Union[int, Dict[int, int]] = 0  # 算力覆盖值（优先使用）
     supported_ratios: List[str] = field(default_factory=lambda: ['9:16', '16:9'])
     supported_sizes: List[str] = field(default_factory=list)
     supported_durations: List[int] = field(default_factory=list)
@@ -207,7 +209,9 @@ class UnifiedTaskConfig:
 
     def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None) -> int:
         """
-        获取算力消耗（从实现方配置读取）
+        获取算力消耗
+
+        优先使用任务配置中的 computing_power，如果没有设置（或为0）则从实现方配置读取。
 
         Args:
             duration: 时长（秒），用于按时长计费的任务
@@ -215,19 +219,25 @@ class UnifiedTaskConfig:
 
         Returns:
             算力消耗值
-
-        Raises:
-            ValueError: 如果没有指定实现方或实现方未注册
         """
+        # 优先使用任务配置中的算力覆盖值
+        if self.computing_power:
+            if isinstance(self.computing_power, dict):
+                if duration and duration in self.computing_power:
+                    return self.computing_power[duration]
+                return list(self.computing_power.values())[0] if self.computing_power else 0
+            return self.computing_power
+
+        # 回退到实现方配置
         if not implementation:
             implementation = self.implementation
 
         if not implementation:
-            raise ValueError(f"任务 {self.key} 没有配置实现方，无法获取算力")
+            return 0  # 没有实现方配置，返回0
 
         impl_config = UnifiedConfigRegistry.get_implementation(implementation)
         if not impl_config:
-            raise ValueError(f"实现方 {implementation} 未注册，请检查配置")
+            return 0
 
         return impl_config.get_computing_power(duration)
     
@@ -249,6 +259,7 @@ class UnifiedTaskConfig:
             'sort_order': self.sort_order,
             'implementation': self.implementation,  # 默认实现方
             'implementations': self._get_implementations_info(),  # 可选实现方列表
+            'computing_power': self.computing_power,  # 算力配置（可能是固定值或按时长映射）
         }
 
         if self.supported_sizes:
@@ -279,6 +290,7 @@ class UnifiedTaskConfig:
 
         对于支持 API 聚合器的任务，动态添加所有可用的聚合器实现方
         只返回 enabled=True 的实现方
+        按 sort_order 排序（排序值小的在前）
         """
         result = []
         impl_names = self.implementations if self.implementations else ([self.implementation] if self.implementation else [])
@@ -297,13 +309,27 @@ class UnifiedTaskConfig:
                 if not impl_config.is_enabled():
                     continue
 
+                # 获取排序值（从数据库读取，如果没有则使用默认值）
+                try:
+                    from model.implementation_power import ImplementationPowerModel
+                    db_config = ImplementationPowerModel.get_config(impl_name, self.driver_name)
+                    sort_order = db_config.get('sort_order') if db_config else None
+                    if sort_order is None:
+                        sort_order = impl_config.sort_order
+                except Exception:
+                    sort_order = impl_config.sort_order
+
                 result.append({
                     'name': impl_name,
                     'display_name': impl_config.get_display_name(),
                     'computing_power': impl_config.default_computing_power,
                     'description': impl_config.description,
                     'is_default': impl_name == self.implementation,
+                    'sort_order': sort_order,
                 })
+
+        # 按 sort_order 排序（排序值小的在前）
+        result.sort(key=lambda x: x.get('sort_order', 999999) or 999999)
         return result
 
 
@@ -417,16 +443,23 @@ class UnifiedConfigRegistry:
         return {c.id: c.name for c in cls._configs.values()}
     
     @classmethod
-    def get_computing_power_map(cls) -> Dict[int, int]:
+    def get_computing_power_map(cls) -> Dict[int, Union[int, Dict[int, int]]]:
         """
-        获取 ID -> 默认算力 映射（从实现方配置读取）
+        获取 ID -> 默认算力 映射
 
-        注意：此方法返回默认实现方的算力，如果需要按时长区分的算力，
-        请使用 get_by_id().get_computing_power(duration) 方法
+        优先使用任务配置中的 computing_power，如果没有设置（或为0）则从实现方配置读取。
+
+        Returns:
+            Dict[int, Union[int, Dict[int, int]]]: 任务类型ID到算力的映射
+            - 固定算力任务返回 int
+            - 按时长计费任务返回 Dict[int, int]（时长->算力）
         """
         result = {}
         for c in cls._configs.values():
-            if c.implementation:
+            # 优先使用任务配置中的算力覆盖值
+            if c.computing_power:
+                result[c.id] = c.computing_power
+            elif c.implementation:
                 impl_config = cls.get_implementation(c.implementation)
                 if impl_config:
                     result[c.id] = impl_config.default_computing_power
@@ -630,6 +663,15 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.GEMINI_IMAGE_EDIT,
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
+        implementations=[
+            DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,
+        ],
+        computing_power=2,
         supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3'],
         supported_sizes=['1K'],
         default_ratio='9:16',
@@ -645,6 +687,15 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.GEMINI_IMAGE_EDIT_PRO,
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
+        implementations=[
+            DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,
+        ],
+        computing_power=6,
         supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3'],
         supported_sizes=['1K', '2K', '4K'],
         default_ratio='9:16',
@@ -661,6 +712,15 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.GEMINI_3_1_FLASH_IMAGE_EDIT,
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
+        implementations=[
+            DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,
+        ],
+        computing_power=3,
         supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3', '21:9', '1:4', '4:1', '1:8', '8:1'],
         supported_sizes=['1K', '2K', '4K'],
         default_ratio='9:16',
@@ -677,6 +737,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.VOLCENGINE,
         driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
         implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+        computing_power=6,
         supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
         supported_sizes=['2K', '3K'],
         default_ratio='9:16',
@@ -693,6 +754,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.VOLCENGINE,
         driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
         implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+        computing_power=8,
         supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
         supported_sizes=['2K', '4K'],
         default_ratio='9:16',
@@ -710,6 +772,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.SORA2_TEXT_TO_VIDEO,
         implementation=DriverImplementation.SORA2_DUOMI_V1,
+        computing_power=18,
         supported_ratios=['9:16', '16:9'],
         supported_durations=[10, 15],
         default_ratio='9:16',
@@ -726,6 +789,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.WAN22_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.WAN22_RUNNINGHUB_V1,
+        computing_power={5: 6, 10: 12},
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 10],
         default_ratio='9:16',
@@ -741,6 +805,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.SORA2_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.SORA2_DUOMI_V1,
+        computing_power=18,
         supported_ratios=['9:16', '16:9'],
         supported_durations=[10, 15],
         default_ratio='9:16',
@@ -757,6 +822,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.LTX2_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.LTX2_RUNNINGHUB_V1,
+        computing_power=6,
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 8, 10],
         default_ratio='9:16',
@@ -848,6 +914,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='图片高清放大',
         category=TaskCategory.VISUAL_ENHANCE,
         provider=TaskProvider.LOCAL,
+        implementation='local_enhance',
         sort_order=50,
     ),
     UnifiedTaskConfig(
@@ -856,9 +923,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='AI视频高清修复',
         category=TaskCategory.VISUAL_ENHANCE,
         provider=TaskProvider.LOCAL,
+        implementation='local_video_enhance',
         sort_order=51,
     ),
-    
+
     # ==================== 角色卡 ====================
     UnifiedTaskConfig(
         id=TaskTypeId.CHARACTER_CARD,
@@ -866,9 +934,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='创建角色卡',
         category=TaskCategory.OTHER,
         provider=TaskProvider.LOCAL,
+        implementation='character_card',
         sort_order=60,
     ),
-    
+
     # ==================== 音频 ====================
     UnifiedTaskConfig(
         id=TaskTypeId.AUDIO_GENERATE,
@@ -876,6 +945,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='AI音频生成',
         category=TaskCategory.AUDIO,
         provider=TaskProvider.LOCAL,
+        computing_power=0,  # 音频生成不消耗算力
         sort_order=70,
     ),
 ]

@@ -106,6 +106,25 @@ class VideoDriverFactory:
             return None
 
     @classmethod
+    def get_implementation_for_user(cls, task_type: int, user_id: Optional[int] = None) -> Optional[str]:
+        """
+        获取实现方名称（公开方法，供外部调用）
+
+        Args:
+            task_type: 任务类型
+            user_id: 用户ID（可选）
+
+        Returns:
+            实现方名称，如果不存在返回 None
+        """
+        config = UnifiedConfigRegistry.get_by_id(task_type)
+        if not config:
+            return None
+
+        impl_name, _ = cls._get_implementation_for_user(task_type, user_id, config)
+        return impl_name
+
+    @classmethod
     def _get_implementation_for_user(cls, task_type: int, user_id: Optional[int], config) -> Tuple[Optional[str], Dict[str, Any]]:
         """
         获取实现方名称和驱动参数（考虑用户偏好）
@@ -139,9 +158,17 @@ class VideoDriverFactory:
             except Exception as e:
                 logger.warning(f"Failed to get user preference: {e}")
 
-        # 2. 使用默认实现方
+        # 2. 如果没有用户偏好，根据排序选择排序最靠前的启用实现方
         if not impl_name:
-            impl_name = config.implementation
+            # 获取所有可用的实现方（已启用且已注册）
+            available_impls = config._get_implementations_info()
+            if available_impls:
+                # _get_implementations_info 已经按 sort_order 排序，取第一个
+                impl_name = available_impls[0]['name']
+                logger.debug(f"Auto-selected implementation by sort_order for task {config.key}: {impl_name}")
+            else:
+                # 回退到默认实现方
+                impl_name = config.implementation
 
         # 3. 获取驱动参数
         driver_params = {}

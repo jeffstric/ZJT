@@ -228,6 +228,7 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
                             "data": base64_data
                         }
                     })
+                    self.logger.info(f"已添加图片: mime_type={mime_type}, base64长度={len(base64_data)}")
                 except Exception as e:
                     self.logger.warning(f"Failed to process image {image_path}: {str(e)}")
                     # 继续处理其他图片，不中断
@@ -294,6 +295,30 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
             "json": None,
             "headers": {}
         }
+
+    def _truncate_base64_in_dict(self, data: Any, max_length: int = 100) -> Any:
+        """
+        递归截断字典中的 base64 数据，避免日志过长
+
+        Args:
+            data: 要处理的数据（dict/list/str等）
+            max_length: base64 数据的最大显示长度
+
+        Returns:
+            截断后的数据副本
+        """
+        if isinstance(data, dict):
+            result = {}
+            for key, value in data.items():
+                if key in ["data", "base64"] and isinstance(value, str) and len(value) > max_length:
+                    result[key] = f"{value[:max_length]}... (截断，总长度: {len(value)})"
+                else:
+                    result[key] = self._truncate_base64_in_dict(value, max_length)
+            return result
+        elif isinstance(data, list):
+            return [self._truncate_base64_in_dict(item, max_length) for item in data]
+        else:
+            return data
 
     def _extract_image_from_response(self, response: dict) -> Optional[str]:
         """
@@ -395,7 +420,22 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
                     "retry": True
                 }
 
-            self.logger.info(f"Gemini Image Preview API response keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+            # 记录响应信息（截断 base64 数据避免日志过长）
+            if isinstance(result, dict):
+                response_summary = {}
+                for key, value in result.items():
+                    if key == "candidates" and isinstance(value, list):
+                        # 截断 candidates 中的 base64 数据
+                        truncated_candidates = []
+                        for candidate in value:
+                            truncated_candidate = self._truncate_base64_in_dict(candidate)
+                            truncated_candidates.append(truncated_candidate)
+                        response_summary[key] = truncated_candidates
+                    else:
+                        response_summary[key] = value
+                self.logger.info(f"Gemini Image Preview API response: {response_summary}")
+            else:
+                self.logger.info(f"Gemini Image Preview API response type: {type(result)}")
 
             # 检查是否有错误
             if "error" in result:
