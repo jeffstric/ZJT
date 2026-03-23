@@ -1,0 +1,154 @@
+# =============================================================================
+# 配置文件基类 - 用于配置文件的默认基础配置
+# 用户配置文件 (config_prod.yml) 会与本文件合并，缺失的配置项将使用本文件的值
+# 修改本文件后，请确保同步更新 config.example.yml
+# =============================================================================
+
+runninghub:
+  host: "https://www.runninghub.cn"
+  api_key: ""
+  max_concurrent_slots: 3
+
+server:
+  host: "http://localhost:9003"
+  is_local: true
+  https_host: "https://localhost:12443"
+  port: 9003
+  https_port: 5174
+  https:
+    enabled: false
+    certfile: "secret/xxx.pem"
+    keyfile: "secret/xxx.key"
+  footer:
+    copyright: "© 2026 智剧通 AI短剧制作平台 | 所有权利保留"
+    icp_number: ""
+    icp_url: "https://beian.miit.gov.cn/"
+    police_number: ""
+    police_url: ""
+
+timeout:
+  request_timeout: 10000
+  sync_request_timeout: 300
+  status_check_timeout: 900
+  status_check_interval: 10
+
+sms:
+  active_driver: "perseids"
+  agents:
+    default:
+      driver: "legacy"
+      access_key_id: ""
+      access_key_secret: ""
+      sign_name: ""
+      template_code: ""
+      region_id: "cn-hangzhou"
+    api_agent:
+      driver: "perseids"
+      api_url: ""
+      method: "POST"
+
+database:
+  host: "localhost"
+  port: 3306
+  user: "root"
+  password: ""
+  database: "zjt"
+  charset: "utf8mb4"
+
+duomi:
+  token: ""
+
+vidu:
+  token: ""
+
+volcengine:
+  api_key: ""
+
+pay:
+  wxpay:
+    appId: ""
+    mchId: ""
+    api_key: ""
+    APIv3_key: ""
+    appSecret: ""
+
+bin:
+  ffmpeg: "bin/ffmpeg/ffmpeg"
+  ffprobe: "bin/ffmpeg/ffprobe"
+
+llm:
+  baidu:
+    api_key: ""
+    api_url: "https://qianfan.baidubce.com/v2/chat/completions"
+    model: "ernie-4.5-turbo-vl-latest"
+  qwen:
+    api_key: ""
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-plus"
+  google:
+    api_key: ""
+    gemini_base_url: "https://api.jiekou.ai"
+
+tts:
+  api_url: "http://47.98.190.124"
+  upload_url: "http://ailive.perseids.cn:11442/upload/tts/result_audio/"
+
+test_mode:
+  enabled: false
+  mock_videos:
+    image_to_video: ""
+    text_to_video: ""
+  mock_images:
+    image_edit: ""
+    text_to_image: ""
+
+google:
+  api_key: ""
+  gemini_base_url: "https://api.jiekou.ai"
+
+jiekou:
+  api_key: ""
+  base_url: "https://api.jiekou.ai"
+
+task_queue:
+  max_retry_count: 30
+  task_expire_days: 7
+  enable_expire_check: true
+
+upload:
+  max_image_size_mb: 10
+
+frontend:
+  debug_password: "123"
+
+workflow:
+  poll_status_interval: 30
+
+alembic:
+  auto_migrate: true
+  script_location: "alembic"
+
+edition:
+  mode: "community"
+
+file_storage:
+  qiniu:
+    access_key: ""
+    secret_key: ""
+    bucket_name: ""
+    cdn_domain: ""
+
+image:
+  enable_download: true
+
+media_cache:
+  enabled: true
+  cache_dir: "upload/cache"
+  max_days: 30
+  max_size_gb: 10
+  cleanup_on_startup: true
+  cleanup_interval_hours: 24
+
+sentry:
+  dsn: ""
+  environment: "production"
