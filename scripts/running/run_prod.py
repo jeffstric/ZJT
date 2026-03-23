@@ -114,7 +114,7 @@ def main():
         print(f"[Manager] Starting gunicorn on port {port}...")
         web_cmd = [
             sys.executable, "-m", "gunicorn", "server:app",
-            "-w", "4",
+            "-w", "8",
             "-k", "uvicorn.workers.UvicornWorker",
             "--bind", f"0.0.0.0:{port}",
             "--timeout", "600",
