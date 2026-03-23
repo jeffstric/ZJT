@@ -50,6 +50,7 @@
             </div>
             <a v-if="userRole === 'admin'" href="/admin" class="btn secondary" style="text-decoration: none;">管理后台</a>
             <button class="btn secondary" @click="handleLogout">登出</button>
+            <button class="btn secondary" @click="showUserSettingsModal">设置</button>
           </template>
           <button class="btn" v-else @click="showLoginModal = true">登录</button>
         </div>

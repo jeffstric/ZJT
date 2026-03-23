@@ -20,7 +20,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Union, Dict, List, Any
+from typing import Optional, Union, Dict, List, Any, TYPE_CHECKING
 
 
 class TaskCategory:
@@ -40,7 +40,7 @@ class ImageMode:
     FIRST_LAST_FRAME = 'first_last_frame'     # 首尾帧模式
     MULTI_REFERENCE = 'multi_reference'       # 多参考图模式
     FIRST_LAST_WITH_REF = 'first_last_with_ref'  # 首尾帧+参考图模式
-    
+
     ALL_MODES = [FIRST_LAST_FRAME, MULTI_REFERENCE, FIRST_LAST_WITH_REF]
 
 
@@ -54,10 +54,112 @@ class TaskProvider:
 
 
 @dataclass
+class ImplementationConfig:
+    """
+    实现方配置类 - 定义具体的实现方及其算力配置
+
+    Attributes:
+        name: 实现方名称（如 gemini_duomi_v1）
+        display_name: 显示名称（如 "多米"）
+        driver_class: 驱动类名
+        default_computing_power: 默认算力（代码级后备值）
+        enabled: 是否启用
+        description: 描述
+        driver_params: 驱动实例化参数（如 {'site_id': 'site_1'}）
+        sort_order: 默认排序顺序（代码级后备值）
+        site_number: 聚合站点编号（仅聚合站点有值，非聚合站点为 None）
+    """
+    name: str
+    display_name: str
+    driver_class: str
+    default_computing_power: Union[int, Dict[int, int]] = 0
+    enabled: bool = True
+    description: str = ""
+    driver_params: Dict[str, Any] = field(default_factory=dict)
+    sort_order: float = 999999.0  # 默认排序到最后
+    site_number: Optional[int] = None  # 仅聚合站点有值
+
+    def get_computing_power(self, duration: Optional[int] = None) -> int:
+        """
+        获取算力（优先数据库配置，其次代码默认值）
+
+        Args:
+            duration: 时长（秒），用于按时长计费的实现方
+
+        Returns:
+            算力值
+        """
+        # 尝试从数据库读取（支持管理员热更新）
+        try:
+            from model.implementation_power import ImplementationPowerModel
+            db_power = ImplementationPowerModel.get_power(self.name, duration)
+            if db_power is not None:
+                return db_power
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        # 回退到代码默认值
+        if isinstance(self.default_computing_power, dict):
+            if duration and duration in self.default_computing_power:
+                return self.default_computing_power[duration]
+            return list(self.default_computing_power.values())[0] if self.default_computing_power else 0
+        return self.default_computing_power
+
+    def is_enabled(self) -> bool:
+        """
+        检查实现方是否启用（从数据库读取）
+
+        Returns:
+            True 如果启用，False 如果禁用
+        """
+        try:
+            from model.implementation_power import ImplementationPowerModel
+            return ImplementationPowerModel.is_enabled(self.name)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+        # 回退到代码默认值
+        return self.enabled
+
+    def get_display_name(self) -> str:
+        """
+        获取显示名称（优先数据库配置，其次代码默认值）
+
+        Returns:
+            显示名称
+        """
+        try:
+            from model.implementation_power import ImplementationPowerModel
+            config = ImplementationPowerModel.get_config(self.name)
+            if config and config.get('display_name'):
+                return config['display_name']
+        except ImportError:
+            pass
+        except Exception:
+            pass
+        # 回退到代码默认值
+        return self.display_name
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典格式"""
+        return {
+            'name': self.name,
+            'display_name': self.display_name,
+            'default_computing_power': self.default_computing_power,
+            'enabled': self.enabled,
+            'description': self.description,
+            'driver_params': self.driver_params,
+        }
+
+
+@dataclass
 class UnifiedTaskConfig:
     """
     统一任务配置类 - 整合所有任务相关配置
-    
+
     Attributes:
         id: 任务类型ID（数据库中的 type 字段）
         key: 唯一标识符，用于代码引用（如 sora2_image_to_video）
@@ -66,8 +168,8 @@ class UnifiedTaskConfig:
         categories: 额外分类列表（可选），任务可同时属于多个分类
         provider: 供应商，使用 TaskProvider 常量
         driver_name: 业务驱动名称（用于 VIDEO_DRIVER_MAPPING）
-        implementation: 实现驱动类名（用于 DRIVER_IMPLEMENTATION_MAPPING）
-        computing_power: 算力消耗，整数或按时长的字典
+        implementation: 默认实现驱动类名（用于 DRIVER_IMPLEMENTATION_MAPPING）
+        implementations: 可选实现方列表（用户可选择），如果为空则只使用默认实现
         supported_ratios: 支持的比例列表
         supported_sizes: 支持的尺寸列表（图片类任务）
         supported_durations: 支持的时长列表（视频类任务）
@@ -84,8 +186,8 @@ class UnifiedTaskConfig:
     category: str
     provider: str
     driver_name: Optional[str] = None
-    implementation: Optional[str] = None
-    computing_power: Union[int, Dict[int, int]] = 0
+    implementation: Optional[str] = None  # 默认实现方
+    implementations: List[str] = field(default_factory=list)  # 可选实现方列表
     supported_ratios: List[str] = field(default_factory=lambda: ['9:16', '16:9'])
     supported_sizes: List[str] = field(default_factory=list)
     supported_durations: List[int] = field(default_factory=list)
@@ -99,23 +201,32 @@ class UnifiedTaskConfig:
     default_image_mode: str = 'first_last_frame'  # 默认图片模式
     supports_grid_merge: bool = False  # 是否支持宫格合并生成视频
     supports_grid_image: bool = False  # 是否支持宫格生图（一次生成多张图片）
-    
-    def get_computing_power(self, duration: Optional[int] = None) -> int:
+
+    def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None) -> int:
         """
-        获取算力消耗
-        
+        获取算力消耗（从实现方配置读取）
+
         Args:
             duration: 时长（秒），用于按时长计费的任务
-            
+            implementation: 实现方名称，用于从实现方配置读取算力
+
         Returns:
             算力消耗值
+
+        Raises:
+            ValueError: 如果没有指定实现方或实现方未注册
         """
-        if isinstance(self.computing_power, dict):
-            if duration and duration in self.computing_power:
-                return self.computing_power[duration]
-            # 返回字典中的第一个值作为默认
-            return list(self.computing_power.values())[0] if self.computing_power else 0
-        return self.computing_power
+        if not implementation:
+            implementation = self.implementation
+
+        if not implementation:
+            raise ValueError(f"任务 {self.key} 没有配置实现方，无法获取算力")
+
+        impl_config = UnifiedConfigRegistry.get_implementation(implementation)
+        if not impl_config:
+            raise ValueError(f"实现方 {implementation} 未注册，请检查配置")
+
+        return impl_config.get_computing_power(duration)
     
     def to_frontend_dict(self) -> Dict[str, Any]:
         """
@@ -129,23 +240,24 @@ class UnifiedTaskConfig:
             'category': self.category,
             'categories': all_categories,  # 包含主分类和额外分类
             'provider': self.provider,
-            'computing_power': self.computing_power,
             'supported_ratios': self.supported_ratios,
             'default_ratio': self.default_ratio,
             'enabled': self.enabled,
             'sort_order': self.sort_order,
+            'implementation': self.implementation,  # 默认实现方
+            'implementations': self._get_implementations_info(),  # 可选实现方列表
         }
-        
+
         if self.supported_sizes:
             result['supported_sizes'] = self.supported_sizes
             result['default_size'] = self.default_size
-            
+
         if self.supported_durations:
             result['supported_durations'] = self.supported_durations
             result['default_duration'] = self.default_duration or (
                 self.supported_durations[0] if self.supported_durations else None
             )
-        
+
         # 图生视频任务添加图片模式配置
         if self.category == TaskCategory.IMAGE_TO_VIDEO:
             result['supported_image_modes'] = self.supported_image_modes
@@ -158,21 +270,56 @@ class UnifiedTaskConfig:
 
         return result
 
+    def _get_implementations_info(self) -> List[Dict[str, Any]]:
+        """
+        获取实现方列表及其算力信息
+
+        对于支持 API 聚合器的任务，动态添加所有可用的聚合器实现方
+        只返回 enabled=True 的实现方
+        """
+        result = []
+        impl_names = self.implementations if self.implementations else ([self.implementation] if self.implementation else [])
+
+        # 对于 Gemini 图片任务，动态添加 API 聚合器实现方
+        if self.driver_name in [DriverKey.GEMINI_IMAGE_EDIT, DriverKey.GEMINI_IMAGE_EDIT_PRO]:
+            # 获取所有已注册的 gemini_common_* 实现方
+            for impl_name, impl_config in UnifiedConfigRegistry.get_all_implementations().items():
+                if impl_name.startswith('gemini_common_') and impl_name not in impl_names:
+                    impl_names.append(impl_name)
+
+        for impl_name in impl_names:
+            impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
+            if impl_config:
+                # 检查实现方是否启用（从数据库读取）
+                if not impl_config.is_enabled():
+                    continue
+
+                result.append({
+                    'name': impl_name,
+                    'display_name': impl_config.get_display_name(),
+                    'computing_power': impl_config.default_computing_power,
+                    'description': impl_config.description,
+                    'is_default': impl_name == self.implementation,
+                })
+        return result
+
 
 class UnifiedConfigRegistry:
     """
-    统一配置注册表 - 管理所有任务类型配置
-    
+    统一配置注册表 - 管理所有任务类型配置和实现方配置
+
     提供多种查询方式：
     - 按 ID 查询
     - 按 key 查询
     - 按分类查询
     - 按供应商查询
+    - 按实现方查询
     """
-    
+
     _configs: Dict[str, UnifiedTaskConfig] = {}  # key -> config
     _id_map: Dict[int, str] = {}                 # id -> key
-    
+    _implementations: Dict[str, ImplementationConfig] = {}  # 实现方配置
+
     @classmethod
     def register(cls, config: UnifiedTaskConfig) -> None:
         """注册任务配置"""
@@ -180,9 +327,37 @@ class UnifiedConfigRegistry:
             raise ValueError(f"任务配置 key '{config.key}' 已存在")
         if config.id in cls._id_map:
             raise ValueError(f"任务配置 id {config.id} 已存在")
-        
+
         cls._configs[config.key] = config
         cls._id_map[config.id] = config.key
+
+    @classmethod
+    def register_implementation(cls, impl: ImplementationConfig) -> None:
+        """注册实现方配置"""
+        if impl.name in cls._implementations:
+            raise ValueError(f"实现方配置 '{impl.name}' 已存在")
+        cls._implementations[impl.name] = impl
+
+    @classmethod
+    def register_all_implementations(cls, implementations: List[ImplementationConfig]) -> None:
+        """批量注册实现方配置"""
+        for impl in implementations:
+            cls.register_implementation(impl)
+
+    @classmethod
+    def get_implementation(cls, name: str) -> Optional[ImplementationConfig]:
+        """获取实现方配置"""
+        return cls._implementations.get(name)
+
+    @classmethod
+    def get_all_implementations(cls) -> Dict[str, ImplementationConfig]:
+        """获取所有实现方配置"""
+        return cls._implementations.copy()
+
+    @classmethod
+    def get_enabled_implementations(cls) -> List[ImplementationConfig]:
+        """获取所有启用的实现方配置"""
+        return [impl for impl in cls._implementations.values() if impl.enabled]
     
     @classmethod
     def register_all(cls, configs: List[UnifiedTaskConfig]) -> None:
@@ -239,9 +414,24 @@ class UnifiedConfigRegistry:
         return {c.id: c.name for c in cls._configs.values()}
     
     @classmethod
-    def get_computing_power_map(cls) -> Dict[int, Union[int, Dict[int, int]]]:
-        """获取 ID -> 算力 映射（向后兼容）"""
-        return {c.id: c.computing_power for c in cls._configs.values()}
+    def get_computing_power_map(cls) -> Dict[int, int]:
+        """
+        获取 ID -> 默认算力 映射（从实现方配置读取）
+
+        注意：此方法返回默认实现方的算力，如果需要按时长区分的算力，
+        请使用 get_by_id().get_computing_power(duration) 方法
+        """
+        result = {}
+        for c in cls._configs.values():
+            if c.implementation:
+                impl_config = cls.get_implementation(c.implementation)
+                if impl_config:
+                    result[c.id] = impl_config.default_computing_power
+                else:
+                    result[c.id] = 0
+            else:
+                result[c.id] = 0
+        return result
     
     @classmethod
     def get_driver_mapping(cls) -> Dict[int, str]:
@@ -313,6 +503,7 @@ class UnifiedConfigRegistry:
         """清除所有注册（仅用于测试）"""
         cls._configs.clear()
         cls._id_map.clear()
+        cls._implementations.clear()
 
 
 # ============ 驱动实现类名常量 ============
@@ -326,6 +517,12 @@ class DriverImplementation:
     
     # Gemini
     GEMINI_DUOMI_V1 = 'gemini_duomi_v1'
+    GEMINI_IMAGE_PREVIEW_COMMON_V1 = 'gemini_image_preview_common_v1'
+    GEMINI_IMAGE_PREVIEW_SITE1_V1 = 'gemini_image_preview_site1_v1'
+    GEMINI_IMAGE_PREVIEW_SITE2_V1 = 'gemini_image_preview_site2_v1'
+    GEMINI_IMAGE_PREVIEW_SITE3_V1 = 'gemini_image_preview_site3_v1'
+    GEMINI_IMAGE_PREVIEW_SITE4_V1 = 'gemini_image_preview_site4_v1'
+    GEMINI_IMAGE_PREVIEW_SITE5_V1 = 'gemini_image_preview_site5_v1'
     
     # VEO3
     VEO3_DUOMI_V1 = 'veo3_duomi_v1'
@@ -360,6 +557,7 @@ class DriverKey:
     # Gemini 相关
     GEMINI_IMAGE_EDIT = 'gemini_image_edit'
     GEMINI_IMAGE_EDIT_PRO = 'gemini_image_edit_pro'
+    GEMINI_3_1_FLASH_IMAGE_EDIT = 'gemini_3_1_flash_image_edit'
     
     # VEO3 相关
     VEO3_IMAGE_TO_VIDEO = 'veo3_image_to_video'
@@ -429,7 +627,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.GEMINI_IMAGE_EDIT,
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
-        computing_power=2,
         supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3'],
         supported_sizes=['1K'],
         default_ratio='9:16',
@@ -445,7 +642,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.GEMINI_IMAGE_EDIT_PRO,
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
-        computing_power=6,
         supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3'],
         supported_sizes=['1K', '2K', '4K'],
         default_ratio='9:16',
@@ -460,9 +656,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.DUOMI,
-        driver_name=DriverKey.GEMINI_IMAGE_EDIT,
+        driver_name=DriverKey.GEMINI_3_1_FLASH_IMAGE_EDIT,
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
-        computing_power=3,
         supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3', '21:9', '1:4', '4:1', '1:8', '8:1'],
         supported_sizes=['1K', '2K', '4K'],
         default_ratio='9:16',
@@ -479,7 +674,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.VOLCENGINE,
         driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
         implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
-        computing_power=6,
         supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
         supported_sizes=['2K', '3K'],
         default_ratio='9:16',
@@ -496,7 +690,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.VOLCENGINE,
         driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
         implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
-        computing_power=8,
         supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
         supported_sizes=['2K', '4K'],
         default_ratio='9:16',
@@ -504,7 +697,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=14,
         supports_grid_image=True,  # 支持宫格生图
     ),
-    
+
     # ==================== 文生视频 ====================
     UnifiedTaskConfig(
         id=TaskTypeId.SORA2_TEXT_TO_VIDEO,
@@ -514,14 +707,13 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.SORA2_TEXT_TO_VIDEO,
         implementation=DriverImplementation.SORA2_DUOMI_V1,
-        computing_power=18,
         supported_ratios=['9:16', '16:9'],
         supported_durations=[10, 15],
         default_ratio='9:16',
         default_duration=10,
         sort_order=20,
     ),
-    
+
     # ==================== 图生视频 ====================
     UnifiedTaskConfig(
         id=TaskTypeId.WAN22_IMAGE_TO_VIDEO,
@@ -531,7 +723,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.WAN22_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.WAN22_RUNNINGHUB_V1,
-        computing_power={5: 6, 10: 12},
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 10],
         default_ratio='9:16',
@@ -547,7 +738,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.SORA2_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.SORA2_DUOMI_V1,
-        computing_power=18,
         supported_ratios=['9:16', '16:9'],
         supported_durations=[10, 15],
         default_ratio='9:16',
@@ -564,7 +754,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.LTX2_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.LTX2_RUNNINGHUB_V1,
-        computing_power=6,
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 8, 10],
         default_ratio='9:16',
@@ -580,7 +769,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.KLING_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.KLING_DUOMI_V1,
-        computing_power={5: 38, 10: 70},
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 10],
         default_ratio='9:16',
@@ -597,7 +785,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.VIDU,
         driver_name=DriverKey.VIDU_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.VIDU_DEFAULT,
-        computing_power={5: 16, 8: 22},
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 8],
         default_ratio='9:16',
@@ -613,7 +800,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.VIDU,
         driver_name=DriverKey.VIDU_Q2_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.VIDU_Q2,
-        computing_power={5: 45, 8: 60},
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 8],
         default_ratio='9:16',
@@ -629,7 +815,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.VEO3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.VEO3_DUOMI_V1,
-        computing_power=6,
         supported_ratios=['9:16', '16:9'],
         supported_durations=[8],
         default_ratio='9:16',
@@ -648,7 +833,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.DIGITAL_HUMAN,
         implementation=DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,
-        computing_power=12,
         supported_ratios=['9:16', '16:9', '1:1', '3:2', '2:3', '3:4', '4:3'],
         default_ratio='9:16',
         sort_order=40,
@@ -661,7 +845,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='图片高清放大',
         category=TaskCategory.VISUAL_ENHANCE,
         provider=TaskProvider.LOCAL,
-        computing_power=1,
         sort_order=50,
     ),
     UnifiedTaskConfig(
@@ -670,7 +853,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='AI视频高清修复',
         category=TaskCategory.VISUAL_ENHANCE,
         provider=TaskProvider.LOCAL,
-        computing_power=10,
         sort_order=51,
     ),
     
@@ -681,7 +863,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='创建角色卡',
         category=TaskCategory.OTHER,
         provider=TaskProvider.LOCAL,
-        computing_power=20,
         sort_order=60,
     ),
     
@@ -692,8 +873,195 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='AI音频生成',
         category=TaskCategory.AUDIO,
         provider=TaskProvider.LOCAL,
-        computing_power=5,
         sort_order=70,
+    ),
+]
+
+
+# ============ 静态实现方配置 ============
+ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
+    # ==================== 多米供应商 ====================
+    ImplementationConfig(
+        name='sora2_duomi_v1',
+        display_name='多米',
+        driver_class='Sora2DuomiV1Driver',
+        default_computing_power=18,
+        enabled=True,
+        description='多米平台 Sora2 接口',
+        sort_order=1000.0
+    ),
+    ImplementationConfig(
+        name='kling_duomi_v1',
+        display_name='多米',
+        driver_class='KlingDuomiV1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='多米平台 Kling 接口',
+        sort_order=2000.0
+    ),
+    ImplementationConfig(
+        name='gemini_duomi_v1',
+        display_name='多米',
+        driver_class='GeminiDuomiV1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='多米平台 Gemini 接口',
+        sort_order=3000.0
+    ),
+
+    # ==================== API 聚合器站点 ====================
+    ImplementationConfig(
+        name='gemini_image_preview_site1_v1',
+        display_name='Site 1',
+        driver_class='GeminiImagePreviewSite1V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='API聚合器站点 1',
+        sort_order=11000.0,
+        site_number=1
+    ),
+    ImplementationConfig(
+        name='gemini_image_preview_site2_v1',
+        display_name='Site 2',
+        driver_class='GeminiImagePreviewSite2V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='API聚合器站点 2',
+        sort_order=12000.0,
+        site_number=2
+    ),
+    ImplementationConfig(
+        name='gemini_image_preview_site3_v1',
+        display_name='Site 3',
+        driver_class='GeminiImagePreviewSite3V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='API聚合器站点 3',
+        sort_order=13000.0,
+        site_number=3
+    ),
+    ImplementationConfig(
+        name='gemini_image_preview_site4_v1',
+        display_name='Site 4',
+        driver_class='GeminiImagePreviewSite4V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='API聚合器站点 4',
+        sort_order=14000.0,
+        site_number=4
+    ),
+    ImplementationConfig(
+        name='gemini_image_preview_site5_v1',
+        display_name='Site 5',
+        driver_class='GeminiImagePreviewSite5V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='API聚合器站点 5',
+        sort_order=15000.0,
+        site_number=5
+    ),
+    ImplementationConfig(
+        name='veo3_duomi_v1',
+        display_name='多米',
+        driver_class='Veo3DuomiV1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='多米平台 VEO3 接口',
+        sort_order=4000.0
+    ),
+
+    # ==================== RunningHub 供应商 ====================
+    ImplementationConfig(
+        name='ltx2_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='Ltx2RunninghubV1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='RunningHub LTX2.0 接口',
+        sort_order=5000.0
+    ),
+    ImplementationConfig(
+        name='wan22_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='Wan22RunninghubV1Driver',
+        default_computing_power={5: 6, 10: 12},
+        enabled=True,
+        description='RunningHub Wan2.2 接口',
+        sort_order=6000.0
+    ),
+    ImplementationConfig(
+        name='digital_human_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='DigitalHumanRunninghubV1Driver',
+        default_computing_power=12,
+        enabled=True,
+        description='RunningHub 数字人接口',
+        sort_order=7000.0
+    ),
+
+    # ==================== Vidu 供应商 ====================
+    ImplementationConfig(
+        name='vidu_default',
+        display_name='Vidu',
+        driver_class='ViduDefaultDriver',
+        default_computing_power={5: 16, 8: 22},
+        enabled=True,
+        description='Vidu 图生视频接口',
+        sort_order=8000.0
+    ),
+    ImplementationConfig(
+        name='vidu_q2',
+        display_name='Vidu Q2',
+        driver_class='ViduQ2Driver',
+        default_computing_power={5: 45, 8: 60},
+        enabled=True,
+        description='Vidu Q2 图生视频接口',
+        sort_order=9000.0
+    ),
+
+    # ==================== 火山引擎供应商 ====================
+    ImplementationConfig(
+        name='seedream5_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedream5VolcengineV1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='火山引擎 Seedream 5.0 文生图接口',
+        sort_order=10000.0
+    ),
+
+    # ==================== 本地处理 ====================
+    ImplementationConfig(
+        name='local_enhance',
+        display_name='本地处理',
+        driver_class='LocalEnhanceDriver',
+        default_computing_power=1,
+        enabled=True,
+        description='本地图片增强'
+    ),
+    ImplementationConfig(
+        name='local_video_enhance',
+        display_name='本地处理',
+        driver_class='LocalVideoEnhanceDriver',
+        default_computing_power=10,
+        enabled=True,
+        description='本地视频增强'
+    ),
+    ImplementationConfig(
+        name='character_card',
+        display_name='本地处理',
+        driver_class='CharacterCardDriver',
+        default_computing_power=20,
+        enabled=True,
+        description='角色卡生成'
+    ),
+    ImplementationConfig(
+        name='audio_generate',
+        display_name='本地处理',
+        driver_class='AudioGenerateDriver',
+        default_computing_power=5,
+        enabled=True,
+        description='AI音频生成'
     ),
 ]
 
@@ -705,6 +1073,7 @@ def init_unified_config():
     """
     if not UnifiedConfigRegistry._configs:
         UnifiedConfigRegistry.register_all(ALL_TASK_CONFIGS)
+        UnifiedConfigRegistry.register_all_implementations(ALL_IMPLEMENTATIONS)
 
 
 def validate_configs() -> List[str]:
@@ -740,5 +1109,7 @@ def validate_configs() -> List[str]:
     return errors
 
 
-# 模块加载时自动初始化
+# 模块加载时自动初始化（基础配置）
 init_unified_config()
+# 注意：init_api_aggregator_implementations() 延迟到 register_all_drivers() 中调用
+# 以避免循环导入问题（因为 get_dynamic_config_value -> model.system_config -> config.constant -> config.unified_config）

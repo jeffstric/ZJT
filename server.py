@@ -236,6 +236,10 @@ app.include_router(admin_router)
 # 注册系统状态 API 路由
 app.include_router(system_router)
 
+# 注册用户偏好 API 路由
+from api.user import router as user_router
+app.include_router(user_router)
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1981,6 +1985,224 @@ async def get_invitation_info(request: Request, auth_token: str = Header(None, a
                 'success': False,
                 'message': '服务器错误'
             }
+        )
+
+
+# ==================== 用户实现方偏好 API ====================
+
+@app.get('/api/user/implementation-preferences')
+async def get_user_implementation_preferences(auth_token: str = Header(None, alias="Authorization")):
+    """
+    获取用户所有实现方偏好（当前激活组）
+    """
+    try:
+        if not auth_token:
+            return JSONResponse(
+                status_code=401,
+                content={'success': False, 'message': '未提供认证信息'}
+            )
+
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+
+        user_id = UserTokensModel.get_user_id_by_token(auth_token)
+        if not user_id:
+            return JSONResponse(
+                status_code=401,
+                content={'success': False, 'message': '无效或已过期的认证信息'}
+            )
+
+        preferences = UsersModel.get_all_preferences(user_id)
+
+        return JSONResponse(
+            content={
+                'success': True,
+                'data': preferences
+            }
+        )
+    except Exception as e:
+        logger.error(f'获取用户偏好失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'message': '服务器错误'}
+        )
+
+
+class SetImplementationPreferenceRequest(BaseModel):
+    task_key: str
+    implementation: str
+
+
+@app.post('/api/user/implementation-preference')
+async def set_user_implementation_preference(
+    request: SetImplementationPreferenceRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    设置用户实现方偏好（当前激活组）
+
+    Args:
+        task_key: 任务key（如 gemini-2.5-flash-image-preview）
+        implementation: 实现方名称（如 gemini_duomi_v1）
+    """
+    try:
+        if not auth_token:
+            return JSONResponse(
+                status_code=401,
+                content={'success': False, 'message': '未提供认证信息'}
+            )
+
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+
+        user_id = UserTokensModel.get_user_id_by_token(auth_token)
+        if not user_id:
+            return JSONResponse(
+                status_code=401,
+                content={'success': False, 'message': '无效或已过期的认证信息'}
+            )
+
+        # 验证任务和实现方
+        from config.unified_config import UnifiedConfigRegistry
+        task_config = UnifiedConfigRegistry.get_by_key(request.task_key)
+        if not task_config:
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'message': f'任务不存在: {request.task_key}'}
+            )
+
+        # 验证实现方在可选列表中（使用 _get_implementations_info 获取动态实现方）
+        available_impls = [impl['name'] for impl in task_config._get_implementations_info()]
+        if request.implementation not in available_impls:
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'message': f'实现方不在可选列表中: {request.implementation}'}
+            )
+
+        # 设置偏好
+        UsersModel.set_implementation_preference(user_id, request.task_key, request.implementation)
+
+        return JSONResponse(
+            content={
+                'success': True,
+                'message': '偏好设置成功',
+                'data': {
+                    'task_key': request.task_key,
+                    'implementation': request.implementation
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f'设置用户偏好失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'message': '服务器错误'}
+        )
+
+
+class ClearImplementationPreferenceRequest(BaseModel):
+    task_key: str
+
+
+@app.delete('/api/user/implementation-preference')
+async def clear_user_implementation_preference(
+    request: ClearImplementationPreferenceRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    清除用户对某任务的实现方偏好（恢复使用默认实现方）
+    """
+    try:
+        if not auth_token:
+            return JSONResponse(
+                status_code=401,
+                content={'success': False, 'message': '未提供认证信息'}
+            )
+
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+
+        user_id = UserTokensModel.get_user_id_by_token(auth_token)
+        if not user_id:
+            return JSONResponse(
+                status_code=401,
+                content={'success': False, 'message': '无效或已过期的认证信息'}
+            )
+
+        affected = UsersModel.clear_implementation_preference(user_id, request.task_key)
+
+        return JSONResponse(
+            content={
+                'success': True,
+                'message': '偏好已清除' if affected > 0 else '未找到偏好设置',
+                'data': {'cleared': affected > 0}
+            }
+        )
+    except Exception as e:
+        logger.error(f'清除用户偏好失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'message': '服务器错误'}
+        )
+
+
+@app.get('/api/tasks/{task_key}/implementations')
+async def get_task_implementations(
+    task_key: str,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取任务可选的实现方列表及其算力
+
+    Returns:
+        {
+            "task_key": "gemini-2.5-flash-image-preview",
+            "implementations": [
+                {"name": "gemini_duomi_v1", "display_name": "多米", "computing_power": 2, "description": "..."},
+                {"name": "gemini_image_preview_common_v1", "display_name": "通用接口", "computing_power": 3, "description": "..."}
+            ],
+            "default": "gemini_duomi_v1",
+            "user_selected": "gemini_image_preview_common_v1"
+        }
+    """
+    try:
+        from config.unified_config import UnifiedConfigRegistry, DriverKey
+
+        task_config = UnifiedConfigRegistry.get_by_key(task_key)
+        if not task_config:
+            return JSONResponse(
+                status_code=404,
+                content={'success': False, 'message': f'任务不存在: {task_key}'}
+            )
+
+        # 获取实现方列表（使用 _get_implementations_info 方法，支持动态 API 聚合器）
+        implementations = task_config._get_implementations_info()
+
+        # 获取用户偏好
+        user_selected = None
+        if auth_token:
+            if auth_token.startswith("Bearer "):
+                auth_token = auth_token[7:]
+            user_id = UserTokensModel.get_user_id_by_token(auth_token)
+            if user_id:
+                user_selected = UsersModel.get_implementation_preference(user_id, task_key)
+
+        return JSONResponse(
+            content={
+                'success': True,
+                'data': {
+                    'task_key': task_key,
+                    'implementations': implementations,
+                    'default': task_config.implementation,
+                    'user_selected': user_selected
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f'获取任务实现方失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'message': '服务器错误'}
         )
 
 

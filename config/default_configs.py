@@ -188,6 +188,127 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== API 聚合站配置（兼容云雾、comfly 等中转站）====================
+    {
+        'key': 'api_aggregator.site_1.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点1基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_1.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点1 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_1.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点1名称',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_2.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点2基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_2.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点2 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_2.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点2名称',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_3.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点3基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_3.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点3 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_3.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点3名称',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'api_aggregator.site_4.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点4基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_4.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点4 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_4.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点4名称',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_5.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点5基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_5.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点5 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_5.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点5名称',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== 微信支付配置 ====================
     {
         'key': 'pay.wxpay.appId',

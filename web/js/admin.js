@@ -113,6 +113,33 @@ const AdminApp = {
                 },
                 volcengine: {
                     apiKey: ''
+                },
+                apiAggregator: {
+                    site1: {
+                        name: '',
+                        baseUrl: '',
+                        apiKey: ''
+                    },
+                    site2: {
+                        name: '',
+                        baseUrl: '',
+                        apiKey: ''
+                    },
+                    site3: {
+                        name: '',
+                        baseUrl: '',
+                        apiKey: ''
+                    },
+                    site4: {
+                        name: '',
+                        baseUrl: '',
+                        apiKey: ''
+                    },
+                    site5: {
+                        name: '',
+                        baseUrl: '',
+                        apiKey: ''
+                    }
                 }
             },
             
@@ -120,7 +147,35 @@ const AdminApp = {
             guideModal: {
                 show: false
             },
-            
+
+            // 实现方管理
+            implementations: {
+                groups: [],  // 分组数据
+                loading: false,
+                keyword: '',
+                updating: null  // 正在更新的实现方名称
+            },
+
+            // 实现方编辑弹窗
+            implEditModal: {
+                show: false,
+                implementation: null,
+                display_name: '',
+                enabled: true,
+                sort_order: 0,
+                loading: false
+            },
+
+            // 实现方算力配置弹窗
+            implPowerModal: {
+                show: false,
+                implementation: null,
+                computing_power: 0,
+                duration: null,
+                loading: false,
+                durationOptions: []  // 支持的时长选项
+            },
+
             // 使用手册链接
             userManualUrl: 'https://bq3mlz1jiae.feishu.cn/wiki/W1h2wCK3mi1CgDk36LEcVqggnLe',
             
@@ -137,16 +192,33 @@ const AdminApp = {
         totalPages() {
             return Math.ceil(this.users.total / this.users.pageSize);
         },
-        
+
         configTotalPages() {
             return Math.ceil(this.config.total / this.config.pageSize);
         },
-        
+
         maskedPhone() {
             if (!this.adminUser || !this.adminUser.phone) return '';
             const phone = this.adminUser.phone;
             if (phone.length !== 11) return phone;
             return phone.substring(0, 3) + '****' + phone.substring(7);
+        },
+
+        filteredImplementationGroups() {
+            let groups = this.implementations.groups;
+
+            if (this.implementations.keyword) {
+                const keyword = this.implementations.keyword.toLowerCase();
+                groups = groups.map(group => ({
+                    ...group,
+                    implementations: group.implementations.filter(item =>
+                        item.name.toLowerCase().includes(keyword) ||
+                        item.display_name.toLowerCase().includes(keyword)
+                    )
+                })).filter(group => group.implementations.length > 0);
+            }
+
+            return groups;
         }
     },
     
@@ -252,6 +324,8 @@ const AdminApp = {
                 this.loadUsers();
             } else if (page === 'config') {
                 this.loadConfigs();
+            } else if (page === 'implementations') {
+                this.loadImplementations();
             }
         },
         
@@ -794,6 +868,36 @@ const AdminApp = {
                                     this.quickConfigModal.vidu.token = value;
                                 } else if (config.key === 'volcengine.api_key') {
                                     this.quickConfigModal.volcengine.apiKey = value;
+                                } else if (config.key === 'api_aggregator.site_1.name') {
+                                    this.quickConfigModal.apiAggregator.site1.name = value;
+                                } else if (config.key === 'api_aggregator.site_1.base_url') {
+                                    this.quickConfigModal.apiAggregator.site1.baseUrl = value;
+                                } else if (config.key === 'api_aggregator.site_1.api_key') {
+                                    this.quickConfigModal.apiAggregator.site1.apiKey = value;
+                                } else if (config.key === 'api_aggregator.site_2.name') {
+                                    this.quickConfigModal.apiAggregator.site2.name = value;
+                                } else if (config.key === 'api_aggregator.site_2.base_url') {
+                                    this.quickConfigModal.apiAggregator.site2.baseUrl = value;
+                                } else if (config.key === 'api_aggregator.site_2.api_key') {
+                                    this.quickConfigModal.apiAggregator.site2.apiKey = value;
+                                } else if (config.key === 'api_aggregator.site_3.name') {
+                                    this.quickConfigModal.apiAggregator.site3.name = value;
+                                } else if (config.key === 'api_aggregator.site_3.base_url') {
+                                    this.quickConfigModal.apiAggregator.site3.baseUrl = value;
+                                } else if (config.key === 'api_aggregator.site_3.api_key') {
+                                    this.quickConfigModal.apiAggregator.site3.apiKey = value;
+                                } else if (config.key === 'api_aggregator.site_4.name') {
+                                    this.quickConfigModal.apiAggregator.site4.name = value;
+                                } else if (config.key === 'api_aggregator.site_4.base_url') {
+                                    this.quickConfigModal.apiAggregator.site4.baseUrl = value;
+                                } else if (config.key === 'api_aggregator.site_4.api_key') {
+                                    this.quickConfigModal.apiAggregator.site4.apiKey = value;
+                                } else if (config.key === 'api_aggregator.site_5.name') {
+                                    this.quickConfigModal.apiAggregator.site5.name = value;
+                                } else if (config.key === 'api_aggregator.site_5.base_url') {
+                                    this.quickConfigModal.apiAggregator.site5.baseUrl = value;
+                                } else if (config.key === 'api_aggregator.site_5.api_key') {
+                                    this.quickConfigModal.apiAggregator.site5.apiKey = value;
                                 }
                             }
                         } catch (e) {
@@ -819,6 +923,21 @@ const AdminApp = {
             this.quickConfigModal.runninghub.apiKey = '';
             this.quickConfigModal.vidu.token = '';
             this.quickConfigModal.volcengine.apiKey = '';
+            this.quickConfigModal.apiAggregator.site1.name = '';
+            this.quickConfigModal.apiAggregator.site1.baseUrl = '';
+            this.quickConfigModal.apiAggregator.site1.apiKey = '';
+            this.quickConfigModal.apiAggregator.site2.name = '';
+            this.quickConfigModal.apiAggregator.site2.baseUrl = '';
+            this.quickConfigModal.apiAggregator.site2.apiKey = '';
+            this.quickConfigModal.apiAggregator.site3.name = '';
+            this.quickConfigModal.apiAggregator.site3.baseUrl = '';
+            this.quickConfigModal.apiAggregator.site3.apiKey = '';
+            this.quickConfigModal.apiAggregator.site4.name = '';
+            this.quickConfigModal.apiAggregator.site4.baseUrl = '';
+            this.quickConfigModal.apiAggregator.site4.apiKey = '';
+            this.quickConfigModal.apiAggregator.site5.name = '';
+            this.quickConfigModal.apiAggregator.site5.baseUrl = '';
+            this.quickConfigModal.apiAggregator.site5.apiKey = '';
         },
         
         // 显示 jiekou 注册提示
@@ -888,6 +1007,53 @@ const AdminApp = {
             if (this.quickConfigModal.volcengine.apiKey) {
                 configs.push({ key: 'volcengine.api_key', value: this.quickConfigModal.volcengine.apiKey });
             }
+            
+            // API 聚合器配置
+            if (this.quickConfigModal.apiAggregator.site1.name) {
+                configs.push({ key: 'api_aggregator.site_1.name', value: this.quickConfigModal.apiAggregator.site1.name });
+            }
+            if (this.quickConfigModal.apiAggregator.site1.baseUrl) {
+                configs.push({ key: 'api_aggregator.site_1.base_url', value: this.quickConfigModal.apiAggregator.site1.baseUrl });
+            }
+            if (this.quickConfigModal.apiAggregator.site1.apiKey) {
+                configs.push({ key: 'api_aggregator.site_1.api_key', value: this.quickConfigModal.apiAggregator.site1.apiKey });
+            }
+            if (this.quickConfigModal.apiAggregator.site2.name) {
+                configs.push({ key: 'api_aggregator.site_2.name', value: this.quickConfigModal.apiAggregator.site2.name });
+            }
+            if (this.quickConfigModal.apiAggregator.site2.baseUrl) {
+                configs.push({ key: 'api_aggregator.site_2.base_url', value: this.quickConfigModal.apiAggregator.site2.baseUrl });
+            }
+            if (this.quickConfigModal.apiAggregator.site2.apiKey) {
+                configs.push({ key: 'api_aggregator.site_2.api_key', value: this.quickConfigModal.apiAggregator.site2.apiKey });
+            }
+            if (this.quickConfigModal.apiAggregator.site3.name) {
+                configs.push({ key: 'api_aggregator.site_3.name', value: this.quickConfigModal.apiAggregator.site3.name });
+            }
+            if (this.quickConfigModal.apiAggregator.site3.baseUrl) {
+                configs.push({ key: 'api_aggregator.site_3.base_url', value: this.quickConfigModal.apiAggregator.site3.baseUrl });
+            }
+            if (this.quickConfigModal.apiAggregator.site3.apiKey) {
+                configs.push({ key: 'api_aggregator.site_3.api_key', value: this.quickConfigModal.apiAggregator.site3.apiKey });
+            }
+            if (this.quickConfigModal.apiAggregator.site4.name) {
+                configs.push({ key: 'api_aggregator.site_4.name', value: this.quickConfigModal.apiAggregator.site4.name });
+            }
+            if (this.quickConfigModal.apiAggregator.site4.baseUrl) {
+                configs.push({ key: 'api_aggregator.site_4.base_url', value: this.quickConfigModal.apiAggregator.site4.baseUrl });
+            }
+            if (this.quickConfigModal.apiAggregator.site4.apiKey) {
+                configs.push({ key: 'api_aggregator.site_4.api_key', value: this.quickConfigModal.apiAggregator.site4.apiKey });
+            }
+            if (this.quickConfigModal.apiAggregator.site5.name) {
+                configs.push({ key: 'api_aggregator.site_5.name', value: this.quickConfigModal.apiAggregator.site5.name });
+            }
+            if (this.quickConfigModal.apiAggregator.site5.baseUrl) {
+                configs.push({ key: 'api_aggregator.site_5.base_url', value: this.quickConfigModal.apiAggregator.site5.baseUrl });
+            }
+            if (this.quickConfigModal.apiAggregator.site5.apiKey) {
+                configs.push({ key: 'api_aggregator.site_5.api_key', value: this.quickConfigModal.apiAggregator.site5.apiKey });
+            }
 
             if (configs.length === 0) {
                 this.showToast('请至少填写一项配置', 'error');
@@ -928,6 +1094,455 @@ const AdminApp = {
             } finally {
                 this.quickConfigModal.loading = false;
             }
+        },
+
+        // ==================== 实现方管理方法 ====================
+
+        // 加载实现方列表
+        async loadImplementations() {
+            this.implementations.loading = true;
+            try {
+                const response = await axios.get('/api/admin/implementation-configs', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    console.log('加载实现方数据:', response.data.data);
+                    // 后端现在返回分组数据
+                    this.implementations.groups = response.data.data;
+                    console.log('更新后的 groups:', this.implementations.groups);
+
+                    // 强制触发 Vue 响应式更新
+                    this.$forceUpdate();
+                }
+            } catch (error) {
+                console.error('Load implementations failed:', error);
+                this.showToast('加载实现方列表失败', 'error');
+            } finally {
+                this.implementations.loading = false;
+            }
+        },
+
+        // 搜索实现方
+        searchImplementations() {
+            // 前端过滤，无需重新加载
+        },
+
+        // ==================== 排序管理方法 ====================
+
+        // 更新单个实现方的排序值
+        async updateSortOrder(implementation, newSortOrder, group) {
+            const sortOrder = parseInt(newSortOrder);
+            if (isNaN(sortOrder) || sortOrder < 0) {
+                this.showToast('请输入有效的排序值', 'error');
+                // 恢复原值
+                this.loadImplementations();
+                return;
+            }
+
+            this.implementations.updating = implementation.name;
+
+            try {
+                const response = await axios.post('/api/admin/implementation-configs/sort-order', {
+                    updates: [{
+                        implementation_name: implementation.name,
+                        driver_key: group.driver_key,
+                        sort_order: sortOrder
+                    }]
+                }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    // 更新本地数据
+                    implementation.sort_order = sortOrder;
+                    // 重新加载以获取排序后的数据
+                    await this.loadImplementations();
+                    this.showToast('排序已更新', 'success');
+                } else {
+                    this.showToast(response.data.message || '更新失败', 'error');
+                    this.loadImplementations();
+                }
+            } catch (error) {
+                console.error('Update sort order failed:', error);
+                const detail = error?.response?.data?.detail || '更新失败';
+                this.showToast(detail, 'error');
+                this.loadImplementations();
+            } finally {
+                this.implementations.updating = null;
+            }
+        },
+
+        // 格式化 DriverKey 显示
+        formatDriverKey(driverKey) {
+            const keyMap = {
+                'sora2_text_to_video': 'Sora2 文生视频',
+                'sora2_image_to_video': 'Sora2 图生视频',
+                'kling_image_to_video': 'Kling 图生视频',
+                'gemini_image_edit': 'Gemini 图片编辑 (标准版)',
+                'gemini_image_edit_pro': 'Gemini 图片编辑 (Pro版)',
+                'veo3_image_to_video': 'VEO3 图生视频',
+                'ltx2_image_to_video': 'LTX2 图生视频',
+                'wan22_image_to_video': 'Wan22 图生视频',
+                'digital_human': '数字人',
+                'vidu_image_to_video': 'Vidu 图生视频',
+                'vidu_q2_image_to_video': 'Vidu Q2 图生视频',
+                'seedream_text_to_image': 'Seedream 文生图'
+            };
+            return keyMap[driverKey] || driverKey;
+        },
+
+        // 打开实现方编辑弹窗
+        openImplEditModal(impl, group) {
+            this.implEditModal.implementation = impl;
+            this.implEditModal.driver_key = group.driver_key;
+            this.implEditModal.enabled = impl.enabled;
+            this.implEditModal.sort_order = impl.sort_order || 0;
+            this.implEditModal.show = true;
+        },
+
+        // 关闭实现方编辑弹窗
+        closeImplEditModal() {
+            this.implEditModal.show = false;
+            this.implEditModal.implementation = null;
+            this.implEditModal.driver_key = '';
+            this.implEditModal.enabled = true;
+            this.implEditModal.sort_order = 0;
+        },
+
+        // 提交实现方配置编辑
+        async submitImplEdit() {
+            this.implEditModal.loading = true;
+            try {
+                const response = await axios.put('/api/admin/implementation-config', {
+                    implementation_name: this.implEditModal.implementation.name,
+                    driver_key: this.implEditModal.driver_key,
+                    enabled: this.implEditModal.enabled,
+                    sort_order: this.implEditModal.sort_order
+                }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    this.showToast('配置更新成功', 'success');
+                    this.closeImplEditModal();
+                    this.loadImplementations();
+                }
+            } catch (error) {
+                console.error('Update implementation failed:', error);
+                const detail = error?.response?.data?.detail || '更新失败';
+                this.showToast(detail, 'error');
+            } finally {
+                this.implEditModal.loading = false;
+            }
+        },
+
+        // 快速切换实现方启用状态
+        async toggleImplementation(impl, group) {
+            const action = impl.enabled ? '禁用' : '启用';
+            const newEnabled = !impl.enabled;
+            console.log(`准备${action}实现方: ${impl.name}, 当前状态: ${impl.enabled}, 新状态: ${newEnabled}`);
+
+            if (!confirm(`确定要${action}实现方 "${impl.display_name}" 吗？`)) {
+                return;
+            }
+
+            try {
+                const response = await axios.put('/api/admin/implementation-config', {
+                    implementation_name: impl.name,
+                    driver_key: group.driver_key,
+                    enabled: newEnabled
+                }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                console.log('后端响应:', response.data);
+
+                if (response.data.code === 0) {
+                    this.showToast(`${action}成功`, 'success');
+                    // 重新加载数据以获取最新状态
+                    await this.loadImplementations();
+                    console.log('数据重新加载完成');
+                } else {
+                    this.showToast(response.data.message || '操作失败', 'error');
+                }
+            } catch (error) {
+                console.error('Toggle implementation failed:', error);
+                const detail = error?.response?.data?.detail || '操作失败';
+                this.showToast(detail, 'error');
+            }
+        },
+
+        // 打开算力配置弹窗
+        openImplPowerModal(impl) {
+            this.implPowerModal.implementation = impl;
+            
+            // 获取当前有效的算力值（优先数据库配置，其次默认值）
+            let currentPower = 0;
+            
+            // 如果有 duration_powers，使用第一个时长的算力值
+            if (impl.duration_powers && impl.duration_powers.length > 0) {
+                const firstDuration = impl.duration_powers[0];
+                if (firstDuration.computing_power !== null && firstDuration.computing_power !== undefined) {
+                    currentPower = firstDuration.computing_power;
+                }
+            } else {
+                // 否则使用 default_computing_power
+                let defaultPower = impl.default_computing_power;
+                if (typeof defaultPower === 'object' && defaultPower !== null) {
+                    currentPower = Object.values(defaultPower)[0] || 0;
+                } else {
+                    currentPower = defaultPower || 0;
+                }
+            }
+            
+            this.implPowerModal.computing_power = currentPower;
+            // 从后端返回的数据中获取支持的时长列表
+            this.implPowerModal.durationOptions = impl.supported_durations || [];
+            this.implPowerModal.duration = null;
+            this.implPowerModal.show = true;
+        },
+
+        // 关闭算力配置弹窗
+        closeImplPowerModal() {
+            this.implPowerModal.show = false;
+            this.implPowerModal.implementation = null;
+            this.implPowerModal.computing_power = 0;
+            this.implPowerModal.duration = null;
+            this.implPowerModal.durationOptions = [];
+        },
+
+        // 提交算力配置
+        async submitImplPower() {
+            if (this.implPowerModal.computing_power < 0) {
+                this.showToast('算力值不能为负数', 'error');
+                return;
+            }
+
+            this.implPowerModal.loading = true;
+            try {
+                const payload = {
+                    implementation_name: this.implPowerModal.implementation.name,
+                    computing_power: this.implPowerModal.computing_power
+                };
+
+                if (this.implPowerModal.duration) {
+                    payload.duration = this.implPowerModal.duration;
+                }
+
+                const response = await axios.post('/api/admin/implementation-power', payload, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    this.showToast('算力配置更新成功', 'success');
+                    this.closeImplPowerModal();
+                    this.loadImplementations();
+                }
+            } catch (error) {
+                console.error('Update power failed:', error);
+                const detail = error?.response?.data?.detail || '更新失败';
+                this.showToast(detail, 'error');
+            } finally {
+                this.implPowerModal.loading = false;
+            }
+        },
+
+        // 内联更新时长算力配置
+        async updateDurationPower(implementation, duration, value, group) {
+            const computingPower = parseInt(value);
+            if (isNaN(computingPower) || computingPower < 0) {
+                this.showToast('请输入有效的算力值', 'error');
+                // 恢复原值
+                this.loadImplementations();
+                return;
+            }
+
+            const updateKey = `${implementation.name}-${duration}`;
+            this.implementations.updating = updateKey;
+
+            try {
+                const payload = {
+                    implementation_name: implementation.name,
+                    driver_key: group.driver_key,
+                    computing_power: computingPower,
+                    duration: duration
+                };
+
+                const response = await axios.post('/api/admin/implementation-power', payload, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    // 更新本地数据
+                    const dp = implementation.duration_powers.find(d => d.duration === duration);
+                    if (dp) {
+                        dp.computing_power = computingPower;
+                    }
+                    this.showToast(`${duration}秒算力已更新为 ${computingPower}`, 'success');
+                } else {
+                    // 更新失败，恢复原值
+                    this.showToast(response.data.message || '更新失败', 'error');
+                    this.loadImplementations();
+                }
+            } catch (error) {
+                console.error('Update duration power failed:', error);
+                const detail = error?.response?.data?.detail || '更新失败';
+                this.showToast(detail, 'error');
+                // 出错时恢复原值
+                this.loadImplementations();
+            } finally {
+                this.implementations.updating = null;
+            }
+        },
+
+        // 更新默认算力配置（固定算力，不按时长区分）
+        async updateDefaultPower(implementation, value, group) {
+            const computingPower = parseInt(value);
+            if (isNaN(computingPower) || computingPower < 0) {
+                this.showToast('请输入有效的算力值', 'error');
+                // 恢复原值
+                this.loadImplementations();
+                return;
+            }
+
+            this.implementations.updating = implementation.name;
+
+            try {
+                const payload = {
+                    implementation_name: implementation.name,
+                    driver_key: group.driver_key,
+                    computing_power: computingPower
+                    // 不传 duration，表示固定算力
+                };
+
+                const response = await axios.post('/api/admin/implementation-power', payload, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    // 更新本地数据
+                    implementation.current_default_power = computingPower;
+                    this.showToast(`默认算力已更新为 ${computingPower}`, 'success');
+                } else {
+                    // 更新失败，恢复原值
+                    this.showToast(response.data.message || '更新失败', 'error');
+                    this.loadImplementations();
+                }
+            } catch (error) {
+                console.error('Update default power failed:', error);
+                const detail = error?.response?.data?.detail || '更新失败';
+                this.showToast(detail, 'error');
+                // 出错时恢复原值
+                this.loadImplementations();
+            } finally {
+                this.implementations.updating = null;
+            }
+        },
+
+        // 恢复算力到代码默认值
+        async resetToDefaultPower(implementation, duration, group) {
+            // 获取默认算力值
+            let defaultPower = 0;
+
+            if (duration === null) {
+                // 恢复默认算力（固定算力）
+                defaultPower = implementation.default_computing_power;
+                if (typeof defaultPower === 'object' && defaultPower !== null) {
+                    defaultPower = Object.values(defaultPower)[0] || 0;
+                } else {
+                    defaultPower = defaultPower || 0;
+                }
+
+                // 确认操作
+                if (!confirm(`确定要将 "${implementation.display_name}" 的算力恢复到默认值 ${defaultPower} 吗？\n这将删除当前的数据库配置。`)) {
+                    return;
+                }
+
+                this.implementations.updating = implementation.name;
+
+                try {
+                    // 先删除数据库配置
+                    await axios.delete('/api/admin/implementation-power', {
+                        data: {
+                            implementation_name: implementation.name,
+                            driver_key: group.driver_key,
+                            duration: null
+                        },
+                        headers: { 'Authorization': `Bearer ${this.authToken}` }
+                    });
+
+                    // 更新本地显示
+                    implementation.current_default_power = defaultPower;
+                    this.showToast(`已恢复到默认算力 ${defaultPower}`, 'success');
+
+                } catch (error) {
+                    console.error('Reset default power failed:', error);
+                    const detail = error?.response?.data?.detail || '恢复失败';
+                    this.showToast(detail, 'error');
+                } finally {
+                    this.implementations.updating = null;
+                }
+
+            } else {
+                // 恢复特定时长的算力
+                if (implementation.default_duration_powers && implementation.default_duration_powers[duration] !== undefined) {
+                    defaultPower = implementation.default_duration_powers[duration];
+                } else {
+                    defaultPower = implementation.default_computing_power;
+                    if (typeof defaultPower === 'object' && defaultPower !== null) {
+                        defaultPower = Object.values(defaultPower)[0] || 0;
+                    } else {
+                        defaultPower = defaultPower || 0;
+                    }
+                }
+
+                // 确认操作
+                if (!confirm(`确定要将 "${implementation.display_name}" 的 ${duration}秒 算力恢复到默认值 ${defaultPower} 吗？\n这将删除当前的数据库配置。`)) {
+                    return;
+                }
+
+                const updateKey = `${implementation.name}-${duration}`;
+                this.implementations.updating = updateKey;
+
+                try {
+                    // 先删除数据库配置
+                    await axios.delete('/api/admin/implementation-power', {
+                        data: {
+                            implementation_name: implementation.name,
+                            driver_key: group.driver_key,
+                            duration: duration
+                        },
+                        headers: { 'Authorization': `Bearer ${this.authToken}` }
+                    });
+
+                    // 更新本地显示
+                    const dp = implementation.duration_powers.find(d => d.duration === duration);
+                    if (dp) {
+                        dp.computing_power = defaultPower;
+                    }
+                    this.showToast(`${duration}秒算力已恢复到默认值 ${defaultPower}`, 'success');
+
+                } catch (error) {
+                    console.error('Reset duration power failed:', error);
+                    const detail = error?.response?.data?.detail || '恢复失败';
+                    this.showToast(detail, 'error');
+                } finally {
+                    this.implementations.updating = null;
+                }
+            }
+        },
+
+        // 格式化算力显示
+        formatComputingPower(power) {
+            if (power === null || power === undefined || power === '') return '-';
+            if (typeof power === 'object') {
+                const values = Object.values(power);
+                if (values.length === 0) return '-';
+                if (values.length === 1) return values[0];
+                return values.join(' / ');
+            }
+            return power;
         }
     }
 };

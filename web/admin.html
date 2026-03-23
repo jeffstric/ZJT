@@ -50,6 +50,14 @@
                         <span>系统配置</span>
                     </a>
                 </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'implementations' }" @click.prevent="switchPage('implementations')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                        </svg>
+                        <span>实现方管理</span>
+                    </a>
+                </li>
             </ul>
         </aside>
 
@@ -60,6 +68,7 @@
                 <h2 v-if="currentPage === 'dashboard'">仪表盘</h2>
                 <h2 v-else-if="currentPage === 'users'">用户管理</h2>
                 <h2 v-else-if="currentPage === 'config'">系统配置</h2>
+                <h2 v-else-if="currentPage === 'implementations'">实现方管理</h2>
                 
                 <div class="admin-user">
                     <span class="admin-user-name">{{ maskedPhone }}</span>
@@ -275,6 +284,151 @@
                         <span class="page-info">第 {{ config.page }} / {{ configTotalPages }} 页，共 {{ config.total }} 条</span>
                         <button class="page-btn" @click="goToConfigPage(config.page + 1)" :disabled="config.page >= configTotalPages">下一页</button>
                         <button class="page-btn" @click="goToConfigPage(configTotalPages)" :disabled="config.page >= configTotalPages">末页</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 实现方管理页面 -->
+            <section v-if="currentPage === 'implementations'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>实现方管理</h3>
+                        <div class="table-actions">
+                            <button class="action-btn primary" @click="loadImplementations" :disabled="implementations.loading">
+                                {{ implementations.loading ? '刷新中...' : '刷新' }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 搜索筛选 -->
+                    <div class="table-filters">
+                        <input
+                            type="text"
+                            class="filter-input"
+                            placeholder="搜索实现方..."
+                            v-model="implementations.keyword"
+                            @keyup.enter="searchImplementations"
+                        >
+                        <button class="filter-btn" @click="searchImplementations">搜索</button>
+                    </div>
+
+                    <!-- 分组表格 -->
+                    <div v-if="implementations.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>加载中...</p>
+                    </div>
+
+                    <div v-else class="implementation-groups">
+                        <div v-if="filteredImplementationGroups.length === 0" style="text-align: center; color: #64748b; padding: 40px;">
+                            暂无实现方数据
+                        </div>
+
+                        <div v-for="group in filteredImplementationGroups" :key="group.driver_key" class="implementation-group">
+                            <!-- 分组标题行 -->
+                            <div class="group-header">
+                                <h4>{{ formatDriverKey(group.driver_key) }}</h4>
+                                <span class="group-count">{{ group.implementations.length }} 个实现方</span>
+                            </div>
+
+                            <!-- 该组的实现方表格 -->
+                            <table class="admin-table group-table">
+                                <thead>
+                                    <tr>
+                                        <th class="sort-order-column">排序</th>
+                                        <th>名称</th>
+                                        <th>显示名称</th>
+                                        <th>状态</th>
+                                        <th>算力配置</th>
+                                        <th>描述</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(item, index) in group.implementations"
+                                        :key="item.name"
+                                        :data-implementation-name="item.name"
+                                        :data-driver-key="group.driver_key"
+                                        :data-sort-order="item.sort_order">
+
+                                        <!-- 排序值输入 -->
+                                        <td class="sort-order-column">
+                                            <input
+                                                type="number"
+                                                class="sort-input"
+                                                v-model.number="item.sort_order"
+                                                @change="updateSortOrder(item, item.sort_order, group)"
+                                                :disabled="implementations.updating === item.name"
+                                                min="0"
+                                                step="1"
+                                            >
+                                        </td>
+
+                                        <td><code>{{ item.name }}</code></td>
+                                        <td>{{ item.display_name }}</td>
+                                        <td>
+                                            <span class="status-badge" :class="{ active: item.enabled, inactive: !item.enabled }">
+                                                {{ item.enabled ? '已启用' : '已禁用' }}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div v-if="item.duration_powers && item.duration_powers.length > 0" class="duration-power-list">
+                                                <div v-for="dp in item.duration_powers" :key="dp.duration" class="duration-power-item">
+                                                    <span class="duration-label">{{ dp.duration }}秒:</span>
+                                                    <input
+                                                        type="number"
+                                                        class="power-input"
+                                                        v-model.number="dp.computing_power"
+                                                        @change="updateDurationPower(item, dp.duration, dp.computing_power, group)"
+                                                        min="0"
+                                                        :disabled="implementations.updating === `${item.name}-${dp.duration}`"
+                                                    >
+                                                    <span class="power-unit">算力</span>
+                                                    <button
+                                                        class="action-btn small"
+                                                        @click="resetToDefaultPower(item, dp.duration, group)"
+                                                        :disabled="implementations.updating"
+                                                        title="恢复到代码默认值"
+                                                    >
+                                                        恢复默认
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div v-else class="default-power">
+                                                <input
+                                                    type="number"
+                                                    class="power-input"
+                                                    v-model.number="item.current_default_power"
+                                                    @change="updateDefaultPower(item, item.current_default_power, group)"
+                                                    min="0"
+                                                    :disabled="implementations.updating === item.name"
+                                                >
+                                                <span class="power-unit">算力</span>
+                                                <button
+                                                    class="action-btn small"
+                                                    @click="resetToDefaultPower(item, null, group)"
+                                                    :disabled="implementations.updating"
+                                                    title="恢复到代码默认值"
+                                                >
+                                                    恢复默认
+                                                </button>
+                                                <span class="power-hint">(默认)</span>
+                                            </div>
+                                        </td>
+                                        <td>{{ item.description || '-' }}</td>
+                                        <td>
+                                            <button class="action-btn primary" @click="openImplEditModal(item)">编辑</button>
+                                            <button
+                                                class="action-btn"
+                                                :class="item.enabled ? 'danger' : 'success'"
+                                                @click="toggleImplementation(item, group)"
+                                            >
+                                                {{ item.enabled ? '禁用' : '启用' }}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -555,6 +709,86 @@
                         </div>
                     </div>
 
+                    <!-- API 聚合站配置组 (可选) -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>API 聚合站配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
+                            <span class="config-group-desc">📋 影响服务：Gemini图片生成/编辑（支持云雾、comfly等中转站）</span>
+                        </div>
+                        
+                        <!-- Site 1 -->
+                        <div class="form-group">
+                            <label>站点1名称</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site1.name" placeholder="如：comfly">
+                        </div>
+                        <div class="form-group">
+                            <label>站点1 Base URL <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site1.baseUrl" placeholder="https://ai.comfly.chat">
+                        </div>
+                        <div class="form-group">
+                            <label>站点1 API Key <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site1.apiKey" placeholder="请输入 API Key">
+                        </div>
+                        
+                        <!-- Site 2 -->
+                        <div class="form-group">
+                            <label>站点2名称</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.name" placeholder="如：yunwu">
+                        </div>
+                        <div class="form-group">
+                            <label>站点2 Base URL</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.baseUrl" placeholder="https://yunwu.ai">
+                        </div>
+                        <div class="form-group">
+                            <label>站点2 API Key</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.apiKey" placeholder="请输入 API Key">
+                        </div>
+                        
+                        <!-- Site 3 -->
+                        <div class="form-group">
+                            <label>站点3名称</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.name" placeholder="站点3名称">
+                        </div>
+                        <div class="form-group">
+                            <label>站点3 Base URL</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.baseUrl" placeholder="站点3 URL">
+                        </div>
+                        <div class="form-group">
+                            <label>站点3 API Key</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.apiKey" placeholder="请输入 API Key">
+                        </div>
+                        
+                        <!-- Site 4 -->
+                        <div class="form-group">
+                            <label>站点4名称</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.name" placeholder="如：site4">
+                        </div>
+                        <div class="form-group">
+                            <label>站点4 Base URL</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.baseUrl" placeholder="站点4 URL">
+                        </div>
+                        <div class="form-group">
+                            <label>站点4 API Key</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.apiKey" placeholder="请输入 API Key">
+                        </div>
+                        
+                        <!-- Site 5 -->
+                        <div class="form-group">
+                            <label>站点5名称</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.name" placeholder="如：site5">
+                        </div>
+                        <div class="form-group">
+                            <label>站点5 Base URL</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.baseUrl" placeholder="站点5 URL">
+                        </div>
+                        <div class="form-group">
+                            <label>站点5 API Key</label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.apiKey" placeholder="请输入 API Key">
+                        </div>
+                        
+                        <p class="form-hint">💡 提示：配置完成后需要重启服务才能生效，系统会自动创建对应的实现方</p>
+                    </div>
+
                     <!-- Vidu 配置组 (可选) -->
                     <div class="config-group">
                         <div class="config-group-header">
@@ -611,6 +845,89 @@
                     <button class="modal-btn cancel" @click="guideModal.show = false">稍后查看</button>
                     <button class="modal-btn confirm" @click="guideModal.show = false; window.location.href = '/';">
                         进入主页
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 实现方编辑弹窗 -->
+        <div class="modal-overlay" v-if="implEditModal.show" @click.self="closeImplEditModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>编辑实现方配置</h3>
+                    <button class="modal-close" @click="closeImplEditModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>实现方名称</label>
+                        <input type="text" :value="implEditModal.implementation?.name" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>显示名称</label>
+                        <input type="text" :value="implEditModal.implementation?.display_name" disabled>
+                        <p class="form-hint">显示名称由系统自动管理，API聚合站点从配置读取</p>
+                    </div>
+                    <div class="form-group">
+                        <label>状态</label>
+                        <div class="switch-container">
+                            <label class="switch">
+                                <input type="checkbox" v-model="implEditModal.enabled">
+                                <span class="slider"></span>
+                            </label>
+                            <span>{{ implEditModal.enabled ? '已启用' : '已禁用' }}</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>排序顺序</label>
+                        <input type="number" v-model.number="implEditModal.sort_order" placeholder="数字越小越靠前">
+                        <p class="form-hint">用于在列表中排序，数字小的排在前面</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeImplEditModal">取消</button>
+                    <button class="modal-btn confirm" @click="submitImplEdit" :disabled="implEditModal.loading">
+                        {{ implEditModal.loading ? '保存中...' : '保存' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 实现方算力配置弹窗 -->
+        <div class="modal-overlay" v-if="implPowerModal.show" @click.self="closeImplPowerModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>算力配置 - {{ implPowerModal.implementation?.display_name }}</h3>
+                    <button class="modal-close" @click="closeImplPowerModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>实现方</label>
+                        <input type="text" :value="implPowerModal.implementation?.name" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>默认算力</label>
+                        <input type="text" :value="formatComputingPower(implPowerModal.implementation?.default_computing_power)" disabled>
+                        <p class="form-hint">代码中定义的默认算力值</p>
+                    </div>
+                    <div class="form-group">
+                        <label>算力值 <span style="color: red;">*</span></label>
+                        <input type="number" v-model.number="implPowerModal.computing_power" placeholder="请输入算力值" min="0">
+                        <p class="form-hint">设置后将覆盖默认算力值，立即生效</p>
+                    </div>
+                    <div class="form-group">
+                        <label>时长配置（可选）</label>
+                        <select class="filter-select" v-model="implPowerModal.duration">
+                            <option :value="null">不限制时长（固定算力）</option>
+                            <option v-for="d in implPowerModal.durationOptions" :key="d" :value="d">{{ d }}秒</option>
+                        </select>
+                        <p class="form-hint" v-if="implPowerModal.durationOptions && implPowerModal.durationOptions.length > 0">该实现方支持按时长计费，可选择不同时长配置算力</p>
+                        <p class="form-hint" v-else>该实现方使用固定算力，无需选择时长</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeImplPowerModal">取消</button>
+                    <button class="modal-btn confirm" @click="submitImplPower" :disabled="implPowerModal.loading">
+                        {{ implPowerModal.loading ? '保存中...' : '保存' }}
                     </button>
                 </div>
             </div>

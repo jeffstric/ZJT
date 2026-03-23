@@ -68,6 +68,30 @@ database:
 duomi:
   token: "5q26ybqAXXXXX"
 
+# 适配云雾 comfly这类聚合站
+api_aggregator:
+  site_1:
+    base_url: "https://ai.comfly.chat"  # API 基础 URL（根据实际中转站配置）
+    api_key: "your_api_aggregator_api_key"  # API 聚合器 API Key
+    name: "comfly"
+  site_2:
+    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+    api_key: "your_api_aggregator_api_key"  # API 聚合器 API Key
+    name: "yunwu"
+  site_3:
+    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+    api_key: "your_api_aggregator_api_key"  # API 聚合器 API Key
+    name: "yunwu"
+  site_4:
+    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+    api_key: "your_api_aggregator_api_key"  # API 聚合器 API Key
+    name: "yunwu"
+  site_5:
+    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+    api_key: "your_api_aggregator_api_key"  # API 聚合器 API Key
+    name: "yunwu"
+
+
 vidu:
   token: "vda_xxxx"
 
