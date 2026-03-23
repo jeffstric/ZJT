@@ -848,9 +848,11 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
 
         session.set_model(model_request.model, model_id)
 
-        # 持久化到数据库
+        # 持久化到数据库 - 同时更新过期时间以延长 session 有效期
+        from datetime import datetime, timedelta
         from model.chat_sessions import ChatSessionsModel
-        ChatSessionsModel.update_model(session_id, model_request.model, model_id)
+        expires_at = datetime.now() + timedelta(hours=24)
+        ChatSessionsModel.update_model(session_id, model_request.model, model_id, expires_at=expires_at)
 
         logger.info(f'模型切换成功 - session_id: {session_id}, model: {model_request.model}')
 

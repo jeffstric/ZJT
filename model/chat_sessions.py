@@ -215,7 +215,8 @@ class ChatSessionsModel:
         session_id: str,
         conversation_history: list,
         update_tokens: bool = False,
-        token_stats: Optional[Dict[str, int]] = None
+        token_stats: Optional[Dict[str, int]] = None,
+        expires_at: Optional[datetime] = None
     ) -> int:
         """
         Update conversation history and optionally token statistics
@@ -225,6 +226,7 @@ class ChatSessionsModel:
             conversation_history: New conversation history
             update_tokens: Whether to update token statistics
             token_stats: Dictionary with token deltas (input_tokens, output_tokens, etc.)
+            expires_at: New expiration time (optional, updates if provided)
 
         Returns:
             Number of affected rows
@@ -232,31 +234,61 @@ class ChatSessionsModel:
         history_json = json.dumps(conversation_history, ensure_ascii=False)
 
         if update_tokens and token_stats:
-            sql = """
-                UPDATE chat_sessions
-                SET conversation_history = %s,
-                    updated_at = NOW(),
-                    total_input_tokens = total_input_tokens + %s,
-                    total_output_tokens = total_output_tokens + %s,
-                    total_cache_creation_tokens = total_cache_creation_tokens + %s,
-                    total_cache_read_tokens = total_cache_read_tokens + %s
-                WHERE session_id = %s AND is_active = 1
-            """
-            params = (
-                history_json,
-                token_stats.get('input_tokens', 0),
-                token_stats.get('output_tokens', 0),
-                token_stats.get('cache_creation_tokens', 0),
-                token_stats.get('cache_read_tokens', 0),
-                session_id
-            )
+            if expires_at:
+                sql = """
+                    UPDATE chat_sessions
+                    SET conversation_history = %s,
+                        updated_at = NOW(),
+                        total_input_tokens = total_input_tokens + %s,
+                        total_output_tokens = total_output_tokens + %s,
+                        total_cache_creation_tokens = total_cache_creation_tokens + %s,
+                        total_cache_read_tokens = total_cache_read_tokens + %s,
+                        expires_at = %s
+                    WHERE session_id = %s AND is_active = 1
+                """
+                params = (
+                    history_json,
+                    token_stats.get('input_tokens', 0),
+                    token_stats.get('output_tokens', 0),
+                    token_stats.get('cache_creation_tokens', 0),
+                    token_stats.get('cache_read_tokens', 0),
+                    expires_at,
+                    session_id
+                )
+            else:
+                sql = """
+                    UPDATE chat_sessions
+                    SET conversation_history = %s,
+                        updated_at = NOW(),
+                        total_input_tokens = total_input_tokens + %s,
+                        total_output_tokens = total_output_tokens + %s,
+                        total_cache_creation_tokens = total_cache_creation_tokens + %s,
+                        total_cache_read_tokens = total_cache_read_tokens + %s
+                    WHERE session_id = %s AND is_active = 1
+                """
+                params = (
+                    history_json,
+                    token_stats.get('input_tokens', 0),
+                    token_stats.get('output_tokens', 0),
+                    token_stats.get('cache_creation_tokens', 0),
+                    token_stats.get('cache_read_tokens', 0),
+                    session_id
+                )
         else:
-            sql = """
-                UPDATE chat_sessions
-                SET conversation_history = %s, updated_at = NOW()
-                WHERE session_id = %s AND is_active = 1
-            """
-            params = (history_json, session_id)
+            if expires_at:
+                sql = """
+                    UPDATE chat_sessions
+                    SET conversation_history = %s, updated_at = NOW(), expires_at = %s
+                    WHERE session_id = %s AND is_active = 1
+                """
+                params = (history_json, expires_at, session_id)
+            else:
+                sql = """
+                    UPDATE chat_sessions
+                    SET conversation_history = %s, updated_at = NOW()
+                    WHERE session_id = %s AND is_active = 1
+                """
+                params = (history_json, session_id)
 
         try:
             affected_rows = execute_update(sql, params)
@@ -266,7 +298,7 @@ class ChatSessionsModel:
             raise
 
     @staticmethod
-    def update_model(session_id: str, model: str, model_id: Optional[int] = None) -> int:
+    def update_model(session_id: str, model: str, model_id: Optional[int] = None, expires_at: Optional[datetime] = None) -> int:
         """
         Update session model
 
@@ -274,16 +306,25 @@ class ChatSessionsModel:
             session_id: Session identifier
             model: New model name
             model_id: New model ID
+            expires_at: New expiration time (optional, updates if provided)
 
         Returns:
             Number of affected rows
         """
-        sql = """
-            UPDATE chat_sessions
-            SET model = %s, model_id = %s, updated_at = NOW()
-            WHERE session_id = %s AND is_active = 1
-        """
-        params = (model, model_id, session_id)
+        if expires_at:
+            sql = """
+                UPDATE chat_sessions
+                SET model = %s, model_id = %s, updated_at = NOW(), expires_at = %s
+                WHERE session_id = %s AND is_active = 1
+            """
+            params = (model, model_id, expires_at, session_id)
+        else:
+            sql = """
+                UPDATE chat_sessions
+                SET model = %s, model_id = %s, updated_at = NOW()
+                WHERE session_id = %s AND is_active = 1
+            """
+            params = (model, model_id, session_id)
 
         try:
             affected_rows = execute_update(sql, params)

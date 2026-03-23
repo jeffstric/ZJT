@@ -168,10 +168,11 @@ class SessionStorage:
                 ChatSessionsModel.update_conversation_history(
                     session_id=session.session_id,
                     conversation_history=session.get_history(),
-                    update_tokens=False  # Token stats are cumulative, don't add delta
+                    update_tokens=False,  # Token stats are cumulative, don't add delta
+                    expires_at=expires_at  # Update expiration time to extend session validity
                 )
                 # Also update the model if changed
-                ChatSessionsModel.update_model(session.session_id, session.model, session.model_id)
+                ChatSessionsModel.update_model(session.session_id, session.model, session.model_id, expires_at=expires_at)
                 logger.info(f"Session {session.session_id} updated in database")
             else:
                 # Create new session
