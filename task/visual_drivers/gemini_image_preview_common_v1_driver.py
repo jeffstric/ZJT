@@ -13,11 +13,15 @@ Gemini Image Preview 通用供应商 v1 版本驱动实现
 from typing import Dict, Any, Optional
 import traceback
 import base64
+import os
 import requests
 from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
+from utils.network_utils import is_local_file_path
+from utils.image_upload_utils import try_map_url_to_local_file
+from utils.media_cache import get_cache_manager
 
 
 class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
@@ -98,6 +102,38 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
             context=context
         )
 
+    def _read_local_file_as_base64(self, file_path: str) -> tuple[str, str]:
+        """
+        读取本地文件并转换为 base64 编码
+
+        Args:
+            file_path: 本地文件路径
+
+        Returns:
+            tuple[str, str]: (base64_data, mime_type)
+        """
+        try:
+            # 根据文件扩展名确定 mime_type
+            ext = os.path.splitext(file_path)[1].lower()
+            mime_types = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.webp': 'image/webp'
+            }
+            mime_type = mime_types.get(ext, 'image/jpeg')
+
+            # 读取文件并转换为 base64
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+            base64_data = base64.b64encode(file_content).decode('utf-8')
+            return base64_data, mime_type
+
+        except Exception as e:
+            self.logger.error(f"Failed to read local file: {file_path}, error: {str(e)}")
+            raise
+
     def _download_image_as_base64(self, image_url: str) -> tuple[str, str]:
         """
         下载图片并转换为 base64 编码
@@ -164,12 +200,28 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
 
         # 添加图片（如果存在）
         if ai_tool.image_path:
-            # 支持逗号分隔的多个图片 URL
-            image_urls = [url.strip() for url in ai_tool.image_path.split(',') if url.strip()]
+            # 支持逗号分隔的多个图片路径
+            image_paths = [path.strip() for path in ai_tool.image_path.split(',') if path.strip()]
 
-            for image_url in image_urls:
+            for image_path in image_paths:
                 try:
-                    base64_data, mime_type = self._download_image_as_base64(image_url)
+                    # 判断是本地文件路径还是 URL
+                    if is_local_file_path(image_path):
+                        # 本地文件路径，直接读取
+                        self.logger.info(f"检测到本地文件路径: {image_path}")
+                        base64_data, mime_type = self._read_local_file_as_base64(image_path)
+                    else:
+                        # URL，尝试映射到本地文件
+                        local_file = try_map_url_to_local_file(image_path, self._config)
+                        if local_file:
+                            # 映射成功，直接读取本地文件
+                            self.logger.info(f"URL映射到本地文件: {image_path} -> {local_file}")
+                            base64_data, mime_type = self._read_local_file_as_base64(local_file)
+                        else:
+                            # 映射失败，通过 HTTP 下载
+                            self.logger.info(f"通过HTTP下载图片: {image_path}")
+                            base64_data, mime_type = self._download_image_as_base64(image_path)
+
                     parts.append({
                         "inlineData": {
                             "mimeType": mime_type,
@@ -177,7 +229,7 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
                         }
                     })
                 except Exception as e:
-                    self.logger.warning(f"Failed to process image {image_url}: {str(e)}")
+                    self.logger.warning(f"Failed to process image {image_path}: {str(e)}")
                     # 继续处理其他图片，不中断
 
         return [{"role": "user", "parts": parts}]
@@ -210,15 +262,16 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
             }
         }
 
-        # 构建完整 URL（包含 key 参数）
-        url = f"{self._base_url}/v1beta/models/{model_name}:generateContent?key={self._api_key}"
+        # 构建完整 URL（不包含 key 参数，使用 Bearer Token 认证）
+        url = f"{self._base_url}/v1beta/models/{model_name}:generateContent"
 
         return {
             "url": url,
             "method": "POST",
             "json": payload,
             "headers": {
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._api_key}"
             }
         }
 
@@ -287,6 +340,24 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
 
         except Exception as e:
             self.logger.error(f"Failed to extract image from response: {str(e)}")
+            return None
+
+    def _save_base64_to_cache(self, data_url: str, task_id: str) -> Optional[str]:
+        """
+        将 data URL (base64) 保存到本地缓存
+
+        Args:
+            data_url: data URL 格式的数据 (data:image/png;base64,xxx)
+            task_id: 任务ID
+
+        Returns:
+            本地URL路径，失败返回None
+        """
+        try:
+            cache_manager = get_cache_manager()
+            return cache_manager.save_data_url_to_cache(data_url, int(task_id))
+        except Exception as e:
+            self.logger.error(f"保存 base64 到缓存失败: {str(e)}")
             return None
 
     def submit_task(self, ai_tool) -> Dict[str, Any]:
@@ -358,13 +429,26 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
                     "retry": False
                 }
 
+            # 如果是 data URL (base64)，保存到本地缓存
+            result_url = image_data
+            if image_data.startswith("data:"):
+                cached_url = self._save_base64_to_cache(image_data, str(ai_tool.id))
+                if not cached_url:
+                    self.logger.error(f"保存 base64 到缓存失败")
+                    return {
+                        "success": False,
+                        "error": "服务异常，图片保存失败",
+                        "error_type": "SYSTEM",
+                        "error_detail": "无法保存生成的图片到缓存",
+                        "retry": False
+                    }
+                result_url = cached_url
+
             # 同步接口：直接返回成功结果
-            # 使用特殊的 project_id 标识这是一个同步完成的任务
             return {
                 "success": True,
-                "project_id": f"sync_{ai_tool.id}",
-                "sync_result": True,
-                "result_url": image_data
+                "sync_mode": True,
+                "result_url": result_url
             }
 
         except Exception as e:

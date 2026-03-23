@@ -214,23 +214,32 @@ async def _submit_new_task(ai_tool):
         if result.get("sync_mode"):
             # 同步 API 直接返回结果，无需轮询
             result_url = result.get("result_url")
-            
-            # 下载并缓存媒体文件
-            from utils.media_cache import download_and_cache
-            
-            # 判断媒体类型（根据URL扩展名）
-            media_type = "video"  # 默认为视频
-            if result_url:
-                ext = result_url.split('?')[0].split('.')[-1].lower()
-                if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
-                    media_type = "image"
-            
-            # 下载并缓存，如果失败则使用原URL
-            cached_url = await download_and_cache(result_url, task_id, media_type)
-            final_url = cached_url if cached_url else result_url
-            
-            logger.info(f"Sync task media cached: {result_url} -> {final_url}")
-            
+
+            # 判断是否已经是本地路径（以 /upload/ 开头）
+            # 如果是，则跳过下载，直接使用
+            is_local_path = result_url and result_url.startswith("/upload/")
+
+            if is_local_path:
+                # 已经是本地路径，无需下载
+                final_url = result_url
+                logger.info(f"Sync task result is already local: {result_url}")
+            else:
+                # 下载并缓存媒体文件
+                from utils.media_cache import download_and_cache
+
+                # 判断媒体类型（根据URL扩展名）
+                media_type = "video"  # 默认为视频
+                if result_url:
+                    ext = result_url.split('?')[0].split('.')[-1].lower()
+                    if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                        media_type = "image"
+
+                # 下载并缓存，如果失败则使用原URL
+                cached_url = await download_and_cache(result_url, task_id, media_type)
+                final_url = cached_url if cached_url else result_url
+
+                logger.info(f"Sync task media cached: {result_url} -> {final_url}")
+
             AIToolsModel.update(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED)
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
             logger.info(f"Sync task {task_id} completed with result: {final_url}")
