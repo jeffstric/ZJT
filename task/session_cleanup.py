@@ -22,19 +22,21 @@ def cleanup_expired_sessions(app=None):
         Number of sessions cleaned up
     """
     try:
-        # Delete sessions that expired more than 24 hours ago
-        # This gives a grace period before cleanup
-        cutoff_time = datetime.now() - timedelta(hours=24)
+        # Delete all expired sessions (no grace period)
+        cutoff_time = datetime.now()
+        logger.info(f"[Session Cleanup] Starting cleanup, cutoff_time: {cutoff_time}")
 
         deleted_count = ChatSessionsModel.delete_expired_sessions(before_date=cutoff_time)
 
         if deleted_count > 0:
-            logger.info(f"Cleaned up {deleted_count} expired chat sessions")
+            logger.info(f"[Session Cleanup] Cleaned up {deleted_count} expired chat sessions")
         else:
-            logger.debug("No expired chat sessions to clean up")
+            logger.debug(f"[Session Cleanup] No expired chat sessions to clean up (cutoff: {cutoff_time})")
 
         return deleted_count
 
     except Exception as e:
-        logger.error(f"Failed to cleanup expired sessions: {e}")
+        logger.error(f"[Session Cleanup] Failed to cleanup expired sessions: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return 0

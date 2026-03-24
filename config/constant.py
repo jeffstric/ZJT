@@ -357,6 +357,19 @@ class SystemConfigConstants:
 CONFIG_KEY_MAX_LENGTH = SystemConfigConstants.CONFIG_KEY_MAX_LENGTH
 
 
+# 会话历史配置相关常量
+class SessionHistoryConstants:
+    """会话历史配置相关常量"""
+    MAX_HISTORY_MESSAGES = 100  # 最大历史消息数量（剧本创作需要较多上下文）
+    MIN_HISTORY_MESSAGES = 20   # 最小保留的历史消息数量（确保上下文连续性）
+    TRUNCATION_KEEP_SYSTEM = True  # 截断时保留系统提示
+
+
+# 向后兼容别名
+MAX_HISTORY_MESSAGES = SessionHistoryConstants.MAX_HISTORY_MESSAGES
+MIN_HISTORY_MESSAGES = SessionHistoryConstants.MIN_HISTORY_MESSAGES
+
+
 # Gemini API URL 格式常量
 GEMINI_URL_FORMATS = {
     "proxy": "/gemini/v1/models/{model}:generateContent",      # 第三方代理格式（如 jiekou.ai）

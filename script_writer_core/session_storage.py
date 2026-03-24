@@ -2,15 +2,51 @@
 Session Storage - Abstraction layer for chat session persistence
 Provides database-backed session storage with optional in-memory caching
 """
-import threading
-from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
-
-from .chat_session import ChatSession
-from model.chat_sessions import ChatSessionsModel, ChatSessionEntity
 import logging
+import threading
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
+
+from model.chat_sessions import ChatSessionEntity, ChatSessionsModel
+from script_writer_core.chat_session import ChatSession
+from config.constant import SessionHistoryConstants
 
 logger = logging.getLogger(__name__)
+
+
+def truncate_conversation_history(history: list, max_messages: int = None, keep_system: bool = True) -> list:
+    """
+    截断对话历史，保留系统提示和最近的对话
+
+    Args:
+        history: 对话历史列表
+        max_messages: 最大消息数量（默认使用配置值）
+        keep_system: 是否保留系统提示
+
+    Returns:
+        截断后的对话历史
+    """
+    if max_messages is None:
+        max_messages = SessionHistoryConstants.MAX_HISTORY_MESSAGES
+
+    if len(history) <= max_messages:
+        return history
+
+    # 分离系统提示和普通消息
+    system_messages = [msg for msg in history if msg.get('role') == 'system']
+    other_messages = [msg for msg in history if msg.get('role') != 'system']
+
+    # 计算需要保留的普通消息数量
+    if keep_system and system_messages:
+        # 保留所有系统提示，然后截断普通消息
+        max_other_messages = max_messages - len(system_messages)
+        if max_other_messages < SessionHistoryConstants.MIN_HISTORY_MESSAGES:
+            max_other_messages = SessionHistoryConstants.MIN_HISTORY_MESSAGES
+        truncated_other = other_messages[-max_other_messages:] if len(other_messages) > max_other_messages else other_messages
+        return system_messages + truncated_other
+    else:
+        # 不保留系统提示，直接截断所有消息
+        return history[-max_messages:] if len(history) > max_messages else history
 
 
 class SessionStorage:
@@ -70,12 +106,29 @@ class SessionStorage:
             world_id=entity.world_id,
             auth_token=entity.auth_token or '',
             model=entity.model,
-            model_id=entity.model_id
+            model_id=entity.model_id,
+            text_to_image_model_id=entity.text_to_image_model_id
         )
 
         # Restore conversation history
+        # PM Agent 在初始化时会自动添加系统提示到 conversation_history
+        # 数据库中只保存了用户和助手的对话（不包括 system 消息）
+        # 我们需要将数据库中的对话历史追加到 PM Agent 的系统提示后面
         if entity.conversation_history:
-            session.pm_agent.conversation_history = entity.conversation_history
+            logger.info(f"[Session Load] Restoring {len(entity.conversation_history)} messages from database")
+            logger.info(f"[Session Load] PM Agent has {len(session.pm_agent.conversation_history)} messages (system prompt)")
+            
+            # 将数据库中的历史记录追加到系统提示后面
+            session.pm_agent.conversation_history.extend(entity.conversation_history)
+            
+            logger.info(f"[Session Load] PM Agent conversation_history restored, now has {len(session.pm_agent.conversation_history)} messages")
+            
+            # 记录恢复的消息角色
+            if len(session.pm_agent.conversation_history) > 0:
+                roles = [msg.get('role', 'unknown') for msg in session.pm_agent.conversation_history[-5:]]
+                logger.info(f"[Session Load] Last 5 message roles: {', '.join(roles)}")
+        else:
+            logger.info(f"[Session Load] No conversation history to restore, keeping PM Agent's default (system prompt only)")
 
         # Restore timestamps
         session.created_at = entity.created_at
@@ -164,16 +217,50 @@ class SessionStorage:
                 expires_at = datetime.now() + timedelta(hours=expires_hours)
 
             if existing:
+                # 获取当前历史记录
+                current_history = session.get_history()
+                logger.info(f"[Session Save] Session {session.session_id} - Current history has {len(current_history)} messages")
+                
+                # 过滤掉 system 消息（系统提示在每次初始化时重新生成，不需要保存）
+                filtered_history = [msg for msg in current_history if msg.get('role') != 'system']
+                logger.info(f"[Session Save] After filtering system messages: {len(filtered_history)} messages")
+                
+                # 记录最后几条消息的角色
+                if filtered_history:
+                    last_messages = filtered_history[-3:]
+                    roles_summary = [f"{msg.get('role', 'unknown')}" for msg in last_messages]
+                    logger.info(f"[Session Save] Last {len(last_messages)} message roles: {', '.join(roles_summary)}")
+                
+                # 截断对话历史以避免无限增长
+                truncated_history = truncate_conversation_history(
+                    filtered_history,
+                    max_messages=SessionHistoryConstants.MAX_HISTORY_MESSAGES,
+                    keep_system=False  # 已经过滤掉了 system 消息
+                )
+                
+                logger.info(f"[Session Save] After truncation: {len(truncated_history)} messages")
+                
                 # Update existing session (conversation history only, tokens are cumulative in DB)
                 ChatSessionsModel.update_conversation_history(
                     session_id=session.session_id,
-                    conversation_history=session.get_history(),
+                    conversation_history=truncated_history,
                     update_tokens=False,  # Token stats are cumulative, don't add delta
                     expires_at=expires_at  # Update expiration time to extend session validity
                 )
                 # Also update the model if changed
-                ChatSessionsModel.update_model(session.session_id, session.model, session.model_id, expires_at=expires_at)
+                ChatSessionsModel.update_model(
+                    session_id=session.session_id,
+                    model=session.model,
+                    model_id=session.model_id,
+                    expires_at=expires_at
+                )
                 logger.info(f"Session {session.session_id} updated in database")
+                
+                # Update cache with the latest session state
+                if self.use_cache:
+                    with self._lock:
+                        self._cache[session.session_id] = (session, datetime.now())
+                        logger.info(f"[Session Save] Cache updated after save")
             else:
                 # Create new session
                 ChatSessionsModel.create(
@@ -183,15 +270,20 @@ class SessionStorage:
                     auth_token=session.auth_token,
                     model=session.model,
                     model_id=session.model_id,
+                    text_to_image_model_id=session.text_to_image_model_id,
                     conversation_history=session.get_history(),
                     expires_at=expires_at
                 )
                 logger.info(f"Session {session.session_id} created in database")
+                
+                # Update cache with the new session
+                if self.use_cache:
+                    with self._lock:
+                        self._cache[session.session_id] = (session, datetime.now())
+                        logger.info(f"[Session Save] Cache updated after create")
 
-            # Update cache
-            if self.use_cache:
-                with self._lock:
-                    self._cache[session.session_id] = (session, datetime.now())
+            # Update session timestamps
+            session.updated_at = datetime.now()
 
             return True
 

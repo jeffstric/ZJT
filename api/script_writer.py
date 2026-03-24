@@ -852,7 +852,12 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
         from datetime import datetime, timedelta
         from model.chat_sessions import ChatSessionsModel
         expires_at = datetime.now() + timedelta(hours=24)
-        ChatSessionsModel.update_model(session_id, model_request.model, model_id, expires_at=expires_at)
+        ChatSessionsModel.update_model(
+            session_id=session_id,
+            model=model_request.model,
+            model_id=model_id,
+            expires_at=expires_at
+        )
 
         logger.info(f'模型切换成功 - session_id: {session_id}, model: {model_request.model}')
 
@@ -952,6 +957,21 @@ async def set_text_to_image_model(request: Request):
             }, status_code=400)
 
         set_text_to_image_model_id(user_id, world_id, task_id)
+
+        # 如果提供了 session_id，同时更新数据库中的 chat_sessions 表
+        if session_id:
+            try:
+                from model.chat_sessions import ChatSessionsModel
+                ChatSessionsModel.update_model(
+                    session_id=session_id,
+                    model=None,  # 不更新 LLM 模型
+                    model_id=None,  # 不更新 LLM 模型 ID
+                    text_to_image_model_id=task_id  # 只更新生图模型 ID
+                )
+                logger.info(f'已更新数据库中的生图模型 - session_id: {session_id}, task_id: {task_id}')
+            except Exception as db_error:
+                logger.error(f'更新数据库生图模型失败: {db_error}')
+                # 数据库更新失败不影响内存配置更新，继续执行
 
         model_info = models_config[task_id]
         logger.info(f'生图模型设置成功 - user_id: {user_id}, world_id: {world_id}, task_id: {task_id}, model: {model_info["name"]}')
@@ -1657,25 +1677,20 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             'session_id': session_id
         }
         
-        # 启动任务（使用 PMAgent，后台线程执行）
-        def run_task_sync():
-            """同步执行任务（在线程中运行）"""
+        # 定义任务完成回调函数
+        def on_task_complete(result):
+            """任务完成后的回调函数"""
             try:
-                task_manager.start_task(task, session.pm_agent, session_data)
+                logger.info(f"[Task] Task completed callback triggered for session {session_id}")
                 # 任务完成后保存会话状态到数据库
                 session_storage.save_session(session, expires_hours=24)
+                logger.info(f"[Task] Session {session_id} saved after task completion")
             except Exception as e:
-                logger.error(f"任务执行异常: {e}")
-                # 即使出错也尝试保存会话状态
-                try:
-                    session_storage.save_session(session, expires_hours=24)
-                except:
-                    pass
+                logger.error(f"[Task] Failed to save session after task completion: {e}")
 
-        # 在后台线程中启动任务
-        import threading
-        task_thread = threading.Thread(target=run_task_sync, daemon=True)
-        task_thread.start()
+        # 启动任务（使用 PMAgent，后台线程执行）
+        logger.info(f"[Task] Starting task execution for session {session_id}")
+        task_manager.start_task(task, session.pm_agent, session_data, on_complete=on_task_complete)
         
         return JSONResponse({
             'success': True,

@@ -22,6 +22,7 @@ class ChatSessionEntity:
         self.auth_token = kwargs.get('auth_token', '')
         self.model = kwargs.get('model', 'gemini-3-flash-preview')
         self.model_id = kwargs.get('model_id')
+        self.text_to_image_model_id = kwargs.get('text_to_image_model_id')
 
         # Deserialize conversation_history from JSON
         history_json = kwargs.get('conversation_history', '[]')
@@ -54,6 +55,7 @@ class ChatSessionEntity:
             'auth_token': self.auth_token,
             'model': self.model,
             'model_id': self.model_id,
+            'text_to_image_model_id': self.text_to_image_model_id,
             'conversation_history': json.dumps(self.conversation_history, ensure_ascii=False),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -77,6 +79,7 @@ class ChatSessionsModel:
         auth_token: str = '',
         model: str = 'gemini-3-flash-preview',
         model_id: Optional[int] = None,
+        text_to_image_model_id: Optional[int] = None,
         conversation_history: list = None,
         expires_at: Optional[datetime] = None
     ) -> int:
@@ -90,6 +93,7 @@ class ChatSessionsModel:
             auth_token: Authentication token
             model: AI model name
             model_id: Model ID from vendor
+            text_to_image_model_id: Text-to-image model task ID
             conversation_history: Initial conversation history (default: empty list)
             expires_at: Session expiration time (None = never expires)
 
@@ -99,12 +103,12 @@ class ChatSessionsModel:
         sql = """
             INSERT INTO chat_sessions
             (session_id, user_id, world_id, auth_token, model, model_id,
-             conversation_history, expires_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+             text_to_image_model_id, conversation_history, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         history_json = json.dumps(conversation_history or [], ensure_ascii=False)
         params = (session_id, user_id, world_id, auth_token, model,
-                  model_id, history_json, expires_at)
+                  model_id, text_to_image_model_id, history_json, expires_at)
 
         try:
             record_id = execute_insert(sql, params)
@@ -298,36 +302,56 @@ class ChatSessionsModel:
             raise
 
     @staticmethod
-    def update_model(session_id: str, model: str, model_id: Optional[int] = None, expires_at: Optional[datetime] = None) -> int:
+    def update_model(session_id: str, model: Optional[str] = None, model_id: Optional[int] = None, text_to_image_model_id: Optional[int] = None, expires_at: Optional[datetime] = None) -> int:
         """
         Update session model
 
         Args:
             session_id: Session identifier
-            model: New model name
-            model_id: New model ID
+            model: New model name (optional, if None keeps existing value)
+            model_id: New model ID (optional)
+            text_to_image_model_id: New text-to-image model task ID (optional)
             expires_at: New expiration time (optional, updates if provided)
 
         Returns:
             Number of affected rows
         """
+        # 构建动态 SQL，只更新提供的字段
+        update_fields = []
+        params = []
+
+        if model is not None:
+            update_fields.append("model = %s")
+            params.append(model)
+
+        if model_id is not None:
+            update_fields.append("model_id = %s")
+            params.append(model_id)
+
+        if text_to_image_model_id is not None:
+            update_fields.append("text_to_image_model_id = %s")
+            params.append(text_to_image_model_id)
+
+        if not update_fields:
+            logger.warning(f"No fields to update for session {session_id}")
+            return 0
+
+        update_fields.append("updated_at = NOW()")
+
         if expires_at:
-            sql = """
-                UPDATE chat_sessions
-                SET model = %s, model_id = %s, updated_at = NOW(), expires_at = %s
-                WHERE session_id = %s AND is_active = 1
-            """
-            params = (model, model_id, expires_at, session_id)
-        else:
-            sql = """
-                UPDATE chat_sessions
-                SET model = %s, model_id = %s, updated_at = NOW()
-                WHERE session_id = %s AND is_active = 1
-            """
-            params = (model, model_id, session_id)
+            update_fields.append("expires_at = %s")
+            params.append(expires_at)
+
+        params.append(session_id)
+
+        sql = f"""
+            UPDATE chat_sessions
+            SET {', '.join(update_fields)}
+            WHERE session_id = %s AND is_active = 1
+        """
 
         try:
-            affected_rows = execute_update(sql, params)
+            affected_rows = execute_update(sql, tuple(params))
             return affected_rows
         except Exception as e:
             logger.error(f"Failed to update model for {session_id}: {e}")
@@ -382,7 +406,7 @@ class ChatSessionsModel:
     @staticmethod
     def delete_expired_sessions(before_date: Optional[datetime] = None) -> int:
         """
-        Soft delete expired sessions
+        Delete expired sessions (hard delete)
 
         Args:
             before_date: Cutoff date for expiration (default: now)
@@ -394,16 +418,24 @@ class ChatSessionsModel:
             before_date = datetime.now()
 
         sql = """
-            UPDATE chat_sessions
-            SET is_active = 0, updated_at = NOW()
+            DELETE FROM chat_sessions
             WHERE expires_at <= %s AND is_active = 1
         """
 
         try:
+            # 先查询有多少条符合条件的记录
+            check_sql = "SELECT COUNT(*) as count FROM chat_sessions WHERE expires_at <= %s AND is_active = 1"
+            check_result = execute_query(check_sql, (before_date,), fetch_one=True)
+            if check_result:
+                logger.info(f"[DB] Found {check_result['count']} sessions matching criteria")
+            else:
+                logger.warning(f"[DB] Query returned no results")
+            
             affected_rows = execute_update(sql, (before_date,))
+            logger.info(f"[DB] Deleted {affected_rows} expired sessions")
             return affected_rows
         except Exception as e:
-            logger.error(f"Failed to delete expired sessions: {e}")
+            logger.error(f"[DB] Failed to delete expired sessions: {e}")
             raise
 
     @staticmethod

@@ -221,7 +221,9 @@ class PMAgent(BaseAgent):
                     self._handle_tool_calls(message, task, session_data)
                 else:
                     content = message.content or ""
+                    logger.info(f"{self.agent_id}: Adding assistant response to history (length: {len(content)} chars)")
                     self.add_to_history("assistant", content)
+                    logger.info(f"{self.agent_id}: conversation_history now has {len(self.conversation_history)} messages")
                     
                     task.message_queue.put({
                         "type": "message",

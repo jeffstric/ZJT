@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
   `auth_token` VARCHAR(500) DEFAULT NULL COMMENT 'Authentication token',
   `model` VARCHAR(100) NOT NULL DEFAULT 'gemini-3-flash-preview' COMMENT 'AI model name',
   `model_id` INT DEFAULT NULL COMMENT 'Model ID from vendor',
+  `text_to_image_model_id` INT DEFAULT NULL COMMENT 'Text-to-image model task ID',
   `conversation_history` LONGTEXT NOT NULL COMMENT 'Serialized conversation history (JSON array)',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Session creation time',
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update time',

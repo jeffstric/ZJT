@@ -987,7 +987,7 @@
             }
             
             await loadCurrentWorldName();
-            await createSession();
+            await initOrReuseSession();
             await loadFiles('worlds');
 
             // 有世界时显示需求选择界面
@@ -1002,6 +1002,124 @@
             }
             if (messageInput) messageInput.focus();
         });
+
+        async function loadAndDisplayHistory(sessionId) {
+            try {
+                const response = await fetch(`/api/session/${sessionId}/history`, {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                if (data.success && data.history && data.history.length > 0) {
+                    console.log(`加载历史消息: ${data.history.length} 条`);
+                    
+                    // 显示历史消息
+                    data.history.forEach(msg => {
+                        // 不显示系统提示和工具返回结果
+                        if (msg.role === 'system' || msg.role === 'tool') {
+                            return;
+                        }
+                        
+                        // 处理 content 可能是对象或数组的情况
+                        let content = msg.content;
+                        let hasToolCalls = false;
+                        
+                        if (typeof content === 'object') {
+                            // 检查是否包含函数调用
+                            if (content.tool_calls && Array.isArray(content.tool_calls)) {
+                                hasToolCalls = true;
+                                // 如果只有函数调用，没有文本内容，显示图标
+                                if (!content.text && content.tool_calls.length > 0) {
+                                    content = `<span class="tool-call-icon" title="调用了 ${content.tool_calls.length} 个工具">🔧 执行了 ${content.tool_calls.length} 个操作</span>`;
+                                } else if (content.text) {
+                                    // 如果既有文本又有函数调用，显示文本 + 图标
+                                    content = content.text + `\n\n<span class="tool-call-icon" title="调用了 ${content.tool_calls.length} 个工具">🔧 执行了 ${content.tool_calls.length} 个操作</span>`;
+                                }
+                            } else if (Array.isArray(content)) {
+                                // 如果是数组，提取所有 text 类型的内容，过滤掉 tool_use
+                                const textItems = content.filter(item => item.type === 'text');
+                                if (textItems.length === 0) {
+                                    // 如果没有文本内容（只有函数调用），跳过这条消息
+                                    return;
+                                }
+                                content = textItems.map(item => item.text).join('\n');
+                            } else if (content.text) {
+                                // 如果是对象且有 text 属性
+                                content = content.text;
+                            } else {
+                                // 尝试转为字符串
+                                content = String(content);
+                            }
+                        }
+                        
+                        // 如果 content 为空或只有空白字符，跳过
+                        if (!content || !content.trim()) {
+                            return;
+                        }
+                        
+                        addMessage(msg.role, content);
+                    });
+                    
+                    updateStatus(`已加载 ${data.history.length} 条历史消息`);
+                } else {
+                    console.log('没有历史消息');
+                }
+            } catch (error) {
+                console.error('加载历史消息失败:', error);
+            }
+        }
+
+        async function initOrReuseSession() {
+            try {
+                // 先尝试获取当前用户的最新活跃会话
+                const response = await fetch(`/api/sessions?user_id=${USER_ID}&world_id=${WORLD_ID}&limit=1`, {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                if (data.success && data.sessions && data.sessions.length > 0) {
+                    // 找到活跃会话，复用它
+                    const latestSession = data.sessions[0];
+                    sessionId = latestSession.session_id;
+                    
+                    const sessionIdElement = document.getElementById('session-id');
+                    if (sessionIdElement) {
+                        sessionIdElement.textContent = sessionId.substring(0, 8) + '...';
+                    }
+                    
+                    console.log(`复用已有会话: ${sessionId}`);
+                    updateStatus('剧本编排系统已就绪（复用已有会话）');
+                    
+                    // 加载并显示历史消息
+                    await loadAndDisplayHistory(sessionId);
+                    
+                    // 会话复用成功后，自动设置生图模型到后端
+                    await autoSetTextToImageModel();
+                } else {
+                    // 没有活跃会话，创建新的
+                    console.log('没有找到活跃会话，创建新会话');
+                    await createSession();
+                }
+            } catch (error) {
+                console.error('初始化会话失败:', error);
+                // 出错时尝试创建新会话
+                await createSession();
+            }
+        }
 
         async function createSession(systemPrompt = null) {
             try {
@@ -1131,8 +1249,31 @@
             }
         }
 
-        function refreshPage() {
+        async function refreshPage() {
             if (confirm('⚠️ 确定要新建会话吗？\n\n这将会刷新页面并清空当前对话历史。\n\n本地文件不会被删除，但对话上下文会丢失。\n\n是否继续？')) {
+                try {
+                    // 如果有当前会话，先清空会话历史
+                    if (sessionId) {
+                        updateStatus('正在清空对话历史...');
+                        const response = await fetch(`/api/session/${sessionId}/clear`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${AUTH_TOKEN}`
+                            }
+                        });
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            console.log('会话历史已清空');
+                        } else {
+                            console.warn('清空会话历史失败:', data.error);
+                        }
+                    }
+                } catch (error) {
+                    console.error('清空会话历史失败:', error);
+                }
+                
+                // 刷新页面
                 window.location.reload();
             }
         }
