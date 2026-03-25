@@ -1158,6 +1158,23 @@ const AdminApp = {
             return keyMap[driverKey] || driverKey;
         },
 
+        // 判断是否为默认使用的实现方（排序最靠前的已启用实现方）
+        isDefaultImplementation(implementation, group) {
+            // 过滤出该组中所有已启用的实现方
+            const enabledImplementations = group.implementations.filter(impl => impl.enabled);
+            if (enabledImplementations.length === 0) {
+                return false;
+            }
+            // 按 sort_order 排序，找到排序最靠前的
+            enabledImplementations.sort((a, b) => {
+                const orderA = a.sort_order ?? 999999;
+                const orderB = b.sort_order ?? 999999;
+                return orderA - orderB;
+            });
+            // 判断当前实现方是否是排序最靠前的
+            return enabledImplementations[0].name === implementation.name;
+        },
+
         // 打开实现方编辑弹窗
         openImplEditModal(impl, group) {
             this.implEditModal.implementation = impl;

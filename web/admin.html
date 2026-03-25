@@ -364,7 +364,10 @@
                                         </td>
 
                                         <td><code>{{ item.name }}</code></td>
-                                        <td>{{ item.display_name }}</td>
+                                        <td>
+                                            {{ item.display_name }}
+                                            <span v-if="isDefaultImplementation(item, group)" class="implementation-in-use-label">使用中</span>
+                                        </td>
                                         <td>
                                             <span class="status-badge" :class="{ active: item.enabled, inactive: !item.enabled }">
                                                 {{ item.enabled ? '已启用' : '已禁用' }}
