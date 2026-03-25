@@ -217,6 +217,17 @@ class TaskStatus:
     FAILED = -1       # 处理失败
 
 
+class GridImageTaskStatus:
+    """宫格生图任务状态常量"""
+    QUEUED = 0          # 队列中
+    PROCESSING = 1      # 处理中
+    COMPLETED = 2       # 完成
+    FAILED = -1         # 失败
+    TIMEOUT = -2        # 超时
+    CANCELLED = -3      # 取消
+    DOWNLOAD_FAILED = -4  # 下载失败
+
+
 class AIAudioStatus:
     """AI音频状态常量"""
     PENDING = 0       # 未处理
@@ -355,6 +366,19 @@ class SystemConfigConstants:
 
 # 向后兼容别名
 CONFIG_KEY_MAX_LENGTH = SystemConfigConstants.CONFIG_KEY_MAX_LENGTH
+
+
+# 会话历史配置相关常量
+class SessionHistoryConstants:
+    """会话历史配置相关常量"""
+    MAX_HISTORY_MESSAGES = 100  # 最大历史消息数量（剧本创作需要较多上下文）
+    MIN_HISTORY_MESSAGES = 20   # 最小保留的历史消息数量（确保上下文连续性）
+    TRUNCATION_KEEP_SYSTEM = True  # 截断时保留系统提示
+
+
+# 向后兼容别名
+MAX_HISTORY_MESSAGES = SessionHistoryConstants.MAX_HISTORY_MESSAGES
+MIN_HISTORY_MESSAGES = SessionHistoryConstants.MIN_HISTORY_MESSAGES
 
 
 # Gemini API URL 格式常量

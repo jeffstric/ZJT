@@ -76,6 +76,7 @@ class DatabaseTestCase(unittest.TestCase):
             'ai_audio.sql',
             'payment_orders.sql',
             'tasks.sql',
+            'chat_sessions.sql',
         ]
         
         sql_files = []
