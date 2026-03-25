@@ -262,12 +262,13 @@ class BaseVideoDriver(ABC):
 
     def _truncate_base64_in_response(self, data: Any, max_length: int = 50) -> Any:
         """
-        精简响应体中的 base64 数据，避免日志过大
+        精简响应体中的 base64 数据和大型字段，避免日志过大
 
         处理 Google Gemini API 返回的图片格式:
         {"candidates": [{"content": {"parts": [{"inlineData": {"data": "base64..."}}]}}]}
 
         同时也处理 OpenAI 格式的 b64_json 字段
+        以及 thoughtSignature 等大型字段
         """
         if isinstance(data, dict):
             result = {}
@@ -280,6 +281,9 @@ class BaseVideoDriver(ABC):
                     else:
                         result[key] = value
                 elif key == "b64_json" and isinstance(value, str) and len(value) > max_length:
+                    result[key] = f"{value[:20]}...[truncated, total {len(value)} chars]"
+                # 处理 thoughtSignature 字段（nano banana 响应中的大型签名数据）
+                elif key == "thoughtSignature" and isinstance(value, str) and len(value) > max_length:
                     result[key] = f"{value[:20]}...[truncated, total {len(value)} chars]"
                 elif isinstance(value, dict):
                     result[key] = self._truncate_base64_in_response(value, max_length)
