@@ -698,14 +698,27 @@
                         </div>
                     </div>
 
-                    <!-- RunningHub 配置组 -->
+                    <!-- 火山引擎配置组 (可选) -->
                     <div class="config-group">
                         <div class="config-group-header">
-                            <h4>RunningHub 配置</h4>
+                            <h4>火山引擎配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
+                            <span class="config-group-desc">📋 影响服务：Seedream 5.0 文生图</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key</label>
+                            <input type="text" v-model="quickConfigModal.volcengine.apiKey" placeholder="请输入火山引擎 API Key">
+                            <p class="form-hint">📖 获取方式：<a href="https://console.volcengine.com/ark" target="_blank" style="color: #3b82f6;">火山引擎控制台</a></p>
+                        </div>
+                    </div>
+
+                    <!-- RunningHub 配置组 (可选) -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>RunningHub 配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
                             <span class="config-group-desc">📋 影响服务：LTX2.0视频、Wan2.2视频、数字人合成</span>
                         </div>
                         <div class="form-group">
-                            <label>API Key <span style="color: red;">*</span></label>
+                            <label>API Key</label>
                             <input type="text" v-model="quickConfigModal.runninghub.apiKey" placeholder="请输入 RunningHub API Key">
                             <p class="form-hint">📖 获取方式：<a href="https://www.runninghub.cn/?inviteCode=quacwnzc" target="_blank" style="color: #3b82f6;">快速注册</a></p>
                         </div>
@@ -801,19 +814,6 @@
                             <label>Token</label>
                             <input type="text" v-model="quickConfigModal.vidu.token" placeholder="请输入 Vidu API Token">
                             <p class="form-hint">📖 获取方式：<a href="https://platform.vidu.cn/api-keys" target="_blank" style="color: #3b82f6;">快速注册</a></p>
-                        </div>
-                    </div>
-
-                    <!-- 火山引擎配置组 (可选) -->
-                    <div class="config-group">
-                        <div class="config-group-header">
-                            <h4>火山引擎配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
-                            <span class="config-group-desc">📋 影响服务：Seedream 5.0 文生图</span>
-                        </div>
-                        <div class="form-group">
-                            <label>API Key</label>
-                            <input type="text" v-model="quickConfigModal.volcengine.apiKey" placeholder="请输入火山引擎 API Key">
-                            <p class="form-hint">📖 获取方式：<a href="https://console.volcengine.com/ark" target="_blank" style="color: #3b82f6;">火山引擎控制台</a></p>
                         </div>
                     </div>
                 </div>

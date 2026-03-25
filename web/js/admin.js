@@ -686,12 +686,18 @@ const AdminApp = {
         
         // 打开配置编辑弹窗
         openConfigEditModal(item) {
+            // 检查是否为社区版本且该配置为商业版专属
+            if (this.isCommunityEdition && this.isCommercialOnlyConfig(item.config_key)) {
+                this.showToast('该配置需要商业版本才能修改，请联系管理员升级', 'error');
+                return;
+            }
+
             this.configEditModal.configId = item.id;
             this.configEditModal.configKey = item.config_key;
             this.configEditModal.valueType = item.value_type;
             this.configEditModal.description = item.description || '';
             this.configEditModal.isSensitive = item.is_sensitive;
-            
+
             // 根据类型设置值
             if (item.value_type === 'bool') {
                 const val = String(item.config_value).toLowerCase();
@@ -701,8 +707,20 @@ const AdminApp = {
                 this.configEditModal.value = item.config_value !== null ? String(item.config_value) : '';
                 this.configEditModal.boolValue = false;
             }
-            
+
             this.configEditModal.show = true;
+        },
+
+        // 判断是否为商业版专属配置
+        isCommercialOnlyConfig(configKey) {
+            // 站点2-5的聚合站配置
+            const commercialPatterns = [
+                'api_aggregator.site_2',
+                'api_aggregator.site_3',
+                'api_aggregator.site_4',
+                'api_aggregator.site_5'
+            ];
+            return commercialPatterns.some(pattern => configKey.startsWith(pattern));
         },
         
         // 关闭配置编辑弹窗
