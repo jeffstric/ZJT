@@ -208,7 +208,7 @@ class BaseVideoDriver(ABC):
 
             try:
                 result = response.json()
-                api_logger.info(f"Response Body: {result}")
+                api_logger.info(f"Response Body: {self._truncate_base64_in_response(result)}")
             except:
                 result = {}
                 api_logger.info(f"Response Body (raw): {response.text[:1000]}")
@@ -259,7 +259,40 @@ class BaseVideoDriver(ABC):
             else:
                 masked[key] = value
         return masked
-    
+
+    def _truncate_base64_in_response(self, data: Any, max_length: int = 50) -> Any:
+        """
+        精简响应体中的 base64 数据，避免日志过大
+
+        处理 Google Gemini API 返回的图片格式:
+        {"candidates": [{"content": {"parts": [{"inlineData": {"data": "base64..."}}]}}]}
+
+        同时也处理 OpenAI 格式的 b64_json 字段
+        """
+        if isinstance(data, dict):
+            result = {}
+            for key, value in data.items():
+                # 处理可能包含 base64 数据的字段
+                if key == "data" and isinstance(value, str) and len(value) > max_length:
+                    # 检查是否像 base64 数据
+                    if all(c.isalnum() or c in '+/=' for c in value[:100]):
+                        result[key] = f"{value[:20]}...[truncated, total {len(value)} chars]"
+                    else:
+                        result[key] = value
+                elif key == "b64_json" and isinstance(value, str) and len(value) > max_length:
+                    result[key] = f"{value[:20]}...[truncated, total {len(value)} chars]"
+                elif isinstance(value, dict):
+                    result[key] = self._truncate_base64_in_response(value, max_length)
+                elif isinstance(value, list):
+                    result[key] = [self._truncate_base64_in_response(item, max_length) for item in value]
+                else:
+                    result[key] = value
+            return result
+        elif isinstance(data, list):
+            return [self._truncate_base64_in_response(item, max_length) for item in data]
+        else:
+            return data
+
     @abstractmethod
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
