@@ -2435,8 +2435,16 @@
                             // 从 file_path 提取相对路径（script_writer 之后的部分）
                             let relativePath = '';
                             if (file.file_path) {
-                                const pathMatch = file.file_path.match(/script_writer\/(.*)/)
-                                relativePath = pathMatch ? pathMatch[1] : `${USER_ID}/${WORLD_ID}/${fileType}/${file.name}`;
+                                // 兼容 Windows 反斜杠和 Unix 正斜杠
+                                const normalizedPath = file.file_path.replace(/\\/g, '/');
+                                const pathMatch = normalizedPath.match(/script_writer\/(.*)/)
+                                if (pathMatch) {
+                                    relativePath = pathMatch[1];
+                                } else {
+                                    // fallback: 从文件名构造完整路径（包含前缀和扩展名）
+                                    const fileName = file.file_path.split(/[/\\]/).pop();
+                                    relativePath = `${USER_ID}/${WORLD_ID}/${fileType}/${fileName}`;
+                                }
                             } else {
                                 // 如果没有 file_path，构造默认路径
                                 relativePath = `${USER_ID}/${WORLD_ID}/${fileType}/${file.name}`;
