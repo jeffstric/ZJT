@@ -109,10 +109,32 @@ async def get_implementation_preferences(
                     if db_config and db_config.get('display_name'):
                         display_name = db_config['display_name']
 
+                # 获取算力配置（使用与后台一致的方法）
+                power_configs = ImplementationPowerModel.get_all_powers_for_implementation(impl_name, task_config.driver_name)
+
+                # 优先从数据库获取固定算力
+                computing_power = power_configs.get(None)  # None 表示固定算力
+
+                # 如果没有固定算力配置，尝试获取第一个时长的算力
+                if computing_power is None and power_configs:
+                    # 过滤掉 None 键，获取第一个时长的算力
+                    duration_powers = {k: v for k, v in power_configs.items() if k is not None}
+                    if duration_powers:
+                        # 获取最小时长的算力
+                        min_duration = min(duration_powers.keys())
+                        computing_power = duration_powers[min_duration]
+
+                # 如果数据库也没有配置，回退到代码默认值
+                if computing_power is None:
+                    computing_power = impl_config.default_computing_power
+                    # 如果默认值是字典，取第一个值
+                    if isinstance(computing_power, dict) and computing_power:
+                        computing_power = list(computing_power.values())[0]
+
                 impls.append({
                     "name": impl_name,
                     "display_name": display_name,
-                    "computing_power": impl_config.default_computing_power,
+                    "computing_power": computing_power,
                     "enabled": True
                 })
 

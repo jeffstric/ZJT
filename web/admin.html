@@ -312,6 +312,17 @@
                         <button class="filter-btn" @click="searchImplementations">搜索</button>
                     </div>
 
+                    <!-- 使用说明 -->
+                    <div class="info-box" style="margin-bottom: 16px; padding: 12px 16px; background: #f0f9ff; border-left: 4px solid #3b82f6; border-radius: 4px;">
+                        <p style="margin: 0; color: #1e40af; font-size: 13px;">
+                            <strong>📋 使用说明：</strong>
+                        </p>
+                        <ul style="margin: 8px 0 0 16px; padding: 0; color: #64748b; font-size: 13px; line-height: 1.6;">
+                            <li><strong>调整优先级：</strong>通过修改「排序」值来控制使用哪个实现方。排序值越小，优先级越高。系统会自动使用排序最小的实现方（显示「使用中」标签）。</li>
+                            <li><strong>修改算力：</strong>可以修改每个实现方的算力值。<span style="color: #dc2626;">⚠️ 请谨慎修改，错误的算力配置可能导致金额损失！</span></li>
+                        </ul>
+                    </div>
+
                     <!-- 分组表格 -->
                     <div v-if="implementations.loading" class="loading">
                         <div class="loading-spinner"></div>
@@ -337,10 +348,8 @@
                                         <th class="sort-order-column">排序</th>
                                         <th>名称</th>
                                         <th>显示名称</th>
-                                        <th>状态</th>
                                         <th>算力配置</th>
                                         <th>描述</th>
-                                        <th>操作</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -367,11 +376,6 @@
                                         <td>
                                             {{ item.display_name }}
                                             <span v-if="isDefaultImplementation(item, group)" class="implementation-in-use-label">使用中</span>
-                                        </td>
-                                        <td>
-                                            <span class="status-badge" :class="{ active: item.enabled, inactive: !item.enabled }">
-                                                {{ item.enabled ? '已启用' : '已禁用' }}
-                                            </span>
                                         </td>
                                         <td>
                                             <div v-if="item.duration_powers && item.duration_powers.length > 0" class="duration-power-list">
@@ -418,15 +422,6 @@
                                             </div>
                                         </td>
                                         <td>{{ item.description || '-' }}</td>
-                                        <td>
-                                            <button
-                                                class="action-btn"
-                                                :class="item.enabled ? 'danger' : 'success'"
-                                                @click="toggleImplementation(item, group)"
-                                            >
-                                                {{ item.enabled ? '禁用' : '启用' }}
-                                            </button>
-                                        </td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -868,16 +863,6 @@
                         <label>显示名称</label>
                         <input type="text" :value="implEditModal.implementation?.display_name" disabled>
                         <p class="form-hint">显示名称由系统自动管理，API聚合站点从配置读取</p>
-                    </div>
-                    <div class="form-group">
-                        <label>状态</label>
-                        <div class="switch-container">
-                            <label class="switch">
-                                <input type="checkbox" v-model="implEditModal.enabled">
-                                <span class="slider"></span>
-                            </label>
-                            <span>{{ implEditModal.enabled ? '已启用' : '已禁用' }}</span>
-                        </div>
                     </div>
                     <div class="form-group">
                         <label>排序顺序</label>
