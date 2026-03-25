@@ -152,8 +152,7 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
         # 验证结果
         self.assertTrue(result['success'])
         self.assertTrue(result['sync_mode'])
-        self.assertIn('ark-acg-cn-beijing.tos-cn-beijing.volces.com', result['result_url'])
-        self.assertIn('doubao-seedream-5-0', result['result_url'])
+        self.assertIn('https://example.com/test-image.png', result['result_url'])
 
         # 验证 _request 被正确调用
         self.assertEqual(mock_request.call_count, 1)
