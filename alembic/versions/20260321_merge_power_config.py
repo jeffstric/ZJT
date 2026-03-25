@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
 revision = '20260321_merge_power_config'
-down_revision = '20260321_impl_power'
+down_revision = '20260325_094948'
 branch_labels = None
 depends_on = None
 
