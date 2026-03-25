@@ -11,11 +11,11 @@ import asyncio
 import threading
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from fastapi import APIRouter, Request, Query as QueryParam, Header
+from fastapi import APIRouter, Request, Query as QueryParam, Header, UploadFile, File, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
-from config.config_util import get_dynamic_config_value
+from config.config_util import get_dynamic_config_value, get_config
 
 # ==================== 加载 API 配置 ====================
 def _load_api_config():
@@ -2336,4 +2336,217 @@ async def check_assets_complete(request: Request, check_request: CheckAssetsRequ
         return JSONResponse({
             'code': -1,
             'message': f'检查失败: {str(e)}'
+        }, status_code=500)
+
+
+# ==================== 图片上传 API ====================
+
+@router.post('/upload-image')
+@require_permission("script_writer:upload_image")
+async def upload_reference_image(
+    request: Request,
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+    world_id: str = Form(...),
+    item_type: int = Form(...),
+    auth_token: str = Form(...)
+):
+    """
+    上传角色、场景、道具的参考图片
+    
+    Args:
+        file: 图片文件
+        user_id: 用户ID
+        world_id: 世界ID
+        item_type: 项目类型 (1=character, 2=location, 3=props)
+        auth_token: 认证令牌
+    
+    Returns:
+        图片访问URL
+    """
+    try:
+        # 验证文件类型
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        file_extension = os.path.splitext(file.filename or '')[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            return JSONResponse({
+                'success': False,
+                'error': f'不支持的文件类型。允许的类型: {", ".join(allowed_extensions)}'
+            }, status_code=400)
+        
+        # 验证文件大小
+        max_size_mb = get_dynamic_config_value('upload', 'max_image_size_mb', default=10)
+        max_size_bytes = max_size_mb * 1024 * 1024
+        
+        # 读取文件内容
+        content = await file.read()
+        if len(content) > max_size_bytes:
+            return JSONResponse({
+                'success': False,
+                'error': f'图片大小不能超过 {max_size_mb}MB'
+            }, status_code=400)
+        
+        # 根据 item_type 确定存储路径
+        if item_type == 1:  # character
+            upload_dir = 'upload/character/pic'
+        elif item_type == 2:  # location
+            upload_dir = 'upload/location/pic'
+        elif item_type == 3:  # props
+            upload_dir = 'upload/props/pic'
+        else:
+            return JSONResponse({
+                'success': False,
+                'error': f'无效的 item_type: {item_type}'
+            }, status_code=400)
+        
+        # 获取应用根目录
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        full_upload_dir = os.path.join(app_dir, upload_dir)
+        
+        # 创建目录
+        os.makedirs(full_upload_dir, exist_ok=True)
+        
+        # 生成唯一文件名
+        unique_id = uuid.uuid4().hex[:16]
+        filename = f"{unique_id}{file_extension}"
+        file_path = os.path.join(full_upload_dir, filename)
+        
+        # 保存文件
+        with open(file_path, 'wb') as f:
+            f.write(content)
+        
+        # 获取服务器地址
+        server_host = get_config()["server"]["host"]
+        
+        # 返回URL
+        url = f"{server_host.rstrip('/')}/{upload_dir}/{filename}"
+        
+        logger.info(f'图片上传成功: {url}')
+        
+        return JSONResponse({
+            'success': True,
+            'url': url
+        })
+        
+    except Exception as e:
+        logger.error(f'图片上传失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': f'上传失败: {str(e)}'
+        }, status_code=500)
+
+
+@router.delete('/staging-file')
+@require_permission("script_writer:delete_staging_file")
+async def delete_staging_file(
+    request: Request,
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...),
+    relative_path: str = QueryParam(...),
+    auth_token: str = QueryParam(...)
+):
+    """
+    删除暂存区的角色、场景、道具、剧本文件
+    
+    Args:
+        user_id: 用户ID
+        world_id: 世界ID
+        relative_path: 文件相对路径（从 script_writer 目录开始，如：2/130/props/prop_xxx.json）
+        auth_token: 认证令牌
+    
+    Returns:
+        删除结果
+    """
+    try:
+        # 验证相对路径格式，防止路径遍历攻击
+        if '..' in relative_path or relative_path.startswith('/'):
+            logger.warning(f'检测到可疑路径: {relative_path}')
+            return JSONResponse({
+                'success': False,
+                'error': '无效的文件路径'
+            }, status_code=400)
+        
+        # 验证路径必须属于当前用户和世界
+        expected_prefix = f"{user_id}/{world_id}/"
+        if not relative_path.startswith(expected_prefix):
+            logger.warning(f'路径不匹配用户世界: {relative_path}, 期望前缀: {expected_prefix}')
+            return JSONResponse({
+                'success': False,
+                'error': '无效的文件路径：路径不属于当前用户和世界'
+            }, status_code=403)
+        
+        # 验证文件类型（从路径中提取）
+        path_parts = relative_path.split('/')
+        if len(path_parts) < 4:
+            return JSONResponse({
+                'success': False,
+                'error': '无效的文件路径格式'
+            }, status_code=400)
+        
+        file_type = path_parts[2]  # user_id/world_id/file_type/filename
+        allowed_types = ['characters', 'locations', 'props', 'scripts']
+        if file_type not in allowed_types:
+            return JSONResponse({
+                'success': False,
+                'error': f'不支持的文件类型。允许的类型: {", ".join(allowed_types)}'
+            }, status_code=400)
+        
+        # 构建完整文件路径
+        from config.constant import FilePathConstants
+        file_manager = FileManager()
+        base_dir = file_manager.base_dir / FilePathConstants._SCRIPT_WRITER_USER_DATA_SUBDIR
+        file_path = base_dir / relative_path
+        
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            return JSONResponse({
+                'success': False,
+                'error': '文件不存在'
+            }, status_code=404)
+        
+        # 读取文件内容，验证所属用户
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                file_data = json.load(f)
+            
+            # 验证文件所属用户
+            file_user_id = str(file_data.get('user_id', ''))
+            request_user_id = str(user_id)
+            
+            if file_user_id != request_user_id:
+                logger.warning(f'用户 {request_user_id} 尝试删除用户 {file_user_id} 的文件: {file_path}')
+                return JSONResponse({
+                    'success': False,
+                    'error': '无权限删除此文件：文件不属于当前用户'
+                }, status_code=403)
+        except json.JSONDecodeError:
+            logger.error(f'文件格式错误，无法验证所属用户: {file_path}')
+            return JSONResponse({
+                'success': False,
+                'error': '文件格式错误'
+            }, status_code=400)
+        except KeyError:
+            logger.warning(f'文件缺少 user_id 字段: {file_path}')
+            # 如果文件中没有 user_id 字段，为安全起见拒绝删除
+            return JSONResponse({
+                'success': False,
+                'error': '文件缺少所属用户信息，无法验证权限'
+            }, status_code=400)
+        
+        # 删除文件
+        os.remove(file_path)
+        
+        logger.info(f'暂存区文件删除成功: {file_path}')
+        
+        return JSONResponse({
+            'success': True,
+            'message': '文件删除成功'
+        })
+        
+    except Exception as e:
+        logger.error(f'暂存区文件删除失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': f'删除失败: {str(e)}'
         }, status_code=500)

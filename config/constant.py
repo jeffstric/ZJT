@@ -217,6 +217,17 @@ class TaskStatus:
     FAILED = -1       # 处理失败
 
 
+class GridImageTaskStatus:
+    """宫格生图任务状态常量"""
+    QUEUED = 0          # 队列中
+    PROCESSING = 1      # 处理中
+    COMPLETED = 2       # 完成
+    FAILED = -1         # 失败
+    TIMEOUT = -2        # 超时
+    CANCELLED = -3      # 取消
+    DOWNLOAD_FAILED = -4  # 下载失败
+
+
 class AIAudioStatus:
     """AI音频状态常量"""
     PENDING = 0       # 未处理

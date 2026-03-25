@@ -173,6 +173,21 @@ def init_scheduler(app):
         coalesce=True
     )
 
+    # 宫格生图任务处理
+    logger.info('启用宫格生图任务处理')
+    from task.grid_image_task import process_grid_image_tasks
+    task_with_app_grid_image = partial(process_grid_image_tasks, app=app)
+
+    scheduler.add_job(
+        func=task_with_app_grid_image,
+        trigger=IntervalTrigger(seconds=10),  # 每10秒执行一次
+        id='process_grid_image_tasks',
+        name='Process grid image tasks every 10 seconds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
     # 启动调度器
     scheduler.start()
     logger.info("定时任务启动成功")
