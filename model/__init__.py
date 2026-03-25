@@ -15,6 +15,7 @@ from .computing_power_log import ComputingPowerLogModel, ComputingPowerLog
 from .verify_codes import VerifyCodesModel, VerifyCode
 from .login_log import LoginLogModel, LoginLog
 from .token_log import TokenLogModel, TokenLog
+from .grid_image_tasks import GridImageTasksModel, GridImageTask, GridImageTaskStatus
 
 __all__ = [
     'AIToolsModel',
@@ -47,4 +48,7 @@ __all__ = [
     'LoginLog',
     'TokenLogModel',
     'TokenLog',
+    'GridImageTasksModel',
+    'GridImageTask',
+    'GridImageTaskStatus',
 ]

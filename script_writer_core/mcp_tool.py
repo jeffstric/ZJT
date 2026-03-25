@@ -1102,11 +1102,9 @@ def read_prop_json(user_id: str, world_id: str, auth_token: str, name: str, limi
         safe_name = _sanitize_filename(name)
         filename = f"prop_{safe_name}.json"
         
-        base_dir = "files"
-        user_dir = os.path.join(base_dir, str(user_id))
-        world_dir = os.path.join(user_dir, str(world_id))
-        props_dir = os.path.join(world_dir, "props")
-        file_path = os.path.join(props_dir, filename)
+        # 使用FileManager统一路径管理
+        file_manager = get_file_manager()
+        file_path = file_manager.get_content_file_path(user_id, world_id, "props", filename)
         
         if os.path.exists(file_path):
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -1192,10 +1190,9 @@ def list_prop_jsons(user_id: str, world_id: str, auth_token: str) -> Dict[str, A
         dict: 包含success状态和道具文件列表的结果
     """
     try:
-        base_dir = "files"
-        user_dir = os.path.join(base_dir, str(user_id))
-        world_dir = os.path.join(user_dir, str(world_id))
-        props_dir = os.path.join(world_dir, "props")
+        # 使用FileManager统一路径管理
+        file_manager = get_file_manager()
+        props_dir = file_manager.get_content_dir_path(user_id, world_id, "props")
         
         if not os.path.exists(props_dir):
             return {
@@ -2377,10 +2374,9 @@ def list_script_jsons(user_id: str, world_id: str, auth_token: str) -> Dict[str,
                 'data': []
             }
         
-        base_dir = "files"
-        user_dir = os.path.join(base_dir, str(user_id))
-        world_dir = os.path.join(user_dir, str(world_id))
-        scripts_dir = os.path.join(world_dir, "scripts")
+        # 使用FileManager统一路径管理
+        file_manager = get_file_manager()
+        scripts_dir = file_manager.get_content_dir_path(user_id, world_id, "scripts")
         
         if not os.path.exists(scripts_dir):
             return {

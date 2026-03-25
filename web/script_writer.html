@@ -602,7 +602,27 @@
                         </div>
                         <div class="form-group full-width">
                             <label class="form-label">参考图片</label>
-                            <input type="text" id="char-image" class="form-input" placeholder="图片URL或描述">
+                            <div class="image-upload-container">
+                                <input type="text" id="char-image" class="form-input" placeholder="图片URL或描述" readonly>
+                                <div class="image-upload-actions">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="clearImageInput('char-image')">
+                                        清空
+                                    </button>
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('char-image', 1)">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                            <polyline points="17 8 12 3 7 8"/>
+                                            <line x1="12" y1="3" x2="12" y2="15"/>
+                                        </svg>
+                                        上传图片
+                                    </button>
+                                </div>
+                                <input type="file" id="char-image-file" accept="image/*" style="display: none;" onchange="handleImageUpload(event, 'char-image', 1)">
+                            </div>
+                            <div id="char-image-preview" class="image-preview-box" style="display: none;">
+                                <img class="preview-thumbnail" alt="预览">
+                                <button type="button" class="preview-remove-btn" onclick="removeImagePreview('char-image')">×</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -624,7 +644,27 @@
                         </div>
                         <div class="form-group full-width">
                             <label class="form-label">参考图片</label>
-                            <input type="text" id="loc-image" class="form-input" placeholder="图片URL或描述">
+                            <div class="image-upload-container">
+                                <input type="text" id="loc-image" class="form-input" placeholder="图片URL或描述" readonly>
+                                <div class="image-upload-actions">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="clearImageInput('loc-image')">
+                                        清空
+                                    </button>
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('loc-image', 2)">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                            <polyline points="17 8 12 3 7 8"/>
+                                            <line x1="12" y1="3" x2="12" y2="15"/>
+                                        </svg>
+                                        上传图片
+                                    </button>
+                                </div>
+                                <input type="file" id="loc-image-file" accept="image/*" style="display: none;" onchange="handleImageUpload(event, 'loc-image', 2)">
+                            </div>
+                            <div id="loc-image-preview" class="image-preview-box" style="display: none;">
+                                <img class="preview-thumbnail" alt="预览">
+                                <button type="button" class="preview-remove-btn" onclick="removeImagePreview('loc-image')">×</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -646,7 +686,27 @@
                         </div>
                         <div class="form-group full-width">
                             <label class="form-label">参考图片</label>
-                            <input type="text" id="prop-image" class="form-input" placeholder="图片URL或描述">
+                            <div class="image-upload-container">
+                                <input type="text" id="prop-image" class="form-input" placeholder="图片URL或描述" readonly>
+                                <div class="image-upload-actions">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="clearImageInput('prop-image')">
+                                        清空
+                                    </button>
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('prop-image', 3)">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                            <polyline points="17 8 12 3 7 8"/>
+                                            <line x1="12" y1="3" x2="12" y2="15"/>
+                                        </svg>
+                                        上传图片
+                                    </button>
+                                </div>
+                                <input type="file" id="prop-image-file" accept="image/*" style="display: none;" onchange="handleImageUpload(event, 'prop-image', 3)">
+                            </div>
+                            <div id="prop-image-preview" class="image-preview-box" style="display: none;">
+                                <img class="preview-thumbnail" alt="预览">
+                                <button type="button" class="preview-remove-btn" onclick="removeImagePreview('prop-image')">×</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -811,6 +871,24 @@
             </div>
             <div class="modal-body" style="padding: 0; height: calc(100% - 60px); overflow: hidden;">
                 <iframe id="computing-power-logs-iframe" style="width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <!-- 图片预览弹窗 -->
+    <div id="image-preview-modal" class="modal">
+        <div class="modal-overlay" onclick="closeImagePreviewModal()"></div>
+        <div class="modal-dialog image-preview-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title" id="image-preview-title">图片预览</h3>
+                <button class="modal-close-btn" onclick="closeImagePreviewModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" style="text-align: center; padding: 20px;">
+                <img id="preview-image" class="full-preview-image" alt="参考图片" style="max-width: 100%; max-height: 70vh; border-radius: 8px;">
             </div>
         </div>
     </div>
@@ -987,7 +1065,7 @@
             }
             
             await loadCurrentWorldName();
-            await createSession();
+            await initOrReuseSession();
             await loadFiles('worlds');
 
             // 有世界时显示需求选择界面
@@ -1002,6 +1080,124 @@
             }
             if (messageInput) messageInput.focus();
         });
+
+        async function loadAndDisplayHistory(sessionId) {
+            try {
+                const response = await fetch(`/api/session/${sessionId}/history`, {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                if (data.success && data.history && data.history.length > 0) {
+                    console.log(`加载历史消息: ${data.history.length} 条`);
+                    
+                    // 显示历史消息
+                    data.history.forEach(msg => {
+                        // 不显示系统提示和工具返回结果
+                        if (msg.role === 'system' || msg.role === 'tool') {
+                            return;
+                        }
+                        
+                        // 处理 content 可能是对象或数组的情况
+                        let content = msg.content;
+                        let hasToolCalls = false;
+                        
+                        if (typeof content === 'object') {
+                            // 检查是否包含函数调用
+                            if (content.tool_calls && Array.isArray(content.tool_calls)) {
+                                hasToolCalls = true;
+                                // 如果只有函数调用，没有文本内容，显示图标
+                                if (!content.text && content.tool_calls.length > 0) {
+                                    content = `<span class="tool-call-icon" title="调用了 ${content.tool_calls.length} 个工具">🔧 执行了 ${content.tool_calls.length} 个操作</span>`;
+                                } else if (content.text) {
+                                    // 如果既有文本又有函数调用，显示文本 + 图标
+                                    content = content.text + `\n\n<span class="tool-call-icon" title="调用了 ${content.tool_calls.length} 个工具">🔧 执行了 ${content.tool_calls.length} 个操作</span>`;
+                                }
+                            } else if (Array.isArray(content)) {
+                                // 如果是数组，提取所有 text 类型的内容，过滤掉 tool_use
+                                const textItems = content.filter(item => item.type === 'text');
+                                if (textItems.length === 0) {
+                                    // 如果没有文本内容（只有函数调用），跳过这条消息
+                                    return;
+                                }
+                                content = textItems.map(item => item.text).join('\n');
+                            } else if (content.text) {
+                                // 如果是对象且有 text 属性
+                                content = content.text;
+                            } else {
+                                // 尝试转为字符串
+                                content = String(content);
+                            }
+                        }
+                        
+                        // 如果 content 为空或只有空白字符，跳过
+                        if (!content || !content.trim()) {
+                            return;
+                        }
+                        
+                        addMessage(msg.role, content);
+                    });
+                    
+                    updateStatus(`已加载 ${data.history.length} 条历史消息`);
+                } else {
+                    console.log('没有历史消息');
+                }
+            } catch (error) {
+                console.error('加载历史消息失败:', error);
+            }
+        }
+
+        async function initOrReuseSession() {
+            try {
+                // 先尝试获取当前用户的最新活跃会话
+                const response = await fetch(`/api/sessions?user_id=${USER_ID}&world_id=${WORLD_ID}&limit=1`, {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                if (data.success && data.sessions && data.sessions.length > 0) {
+                    // 找到活跃会话，复用它
+                    const latestSession = data.sessions[0];
+                    sessionId = latestSession.session_id;
+                    
+                    const sessionIdElement = document.getElementById('session-id');
+                    if (sessionIdElement) {
+                        sessionIdElement.textContent = sessionId.substring(0, 8) + '...';
+                    }
+                    
+                    console.log(`复用已有会话: ${sessionId}`);
+                    updateStatus('剧本编排系统已就绪（复用已有会话）');
+                    
+                    // 加载并显示历史消息
+                    await loadAndDisplayHistory(sessionId);
+                    
+                    // 会话复用成功后，自动设置生图模型到后端
+                    await autoSetTextToImageModel();
+                } else {
+                    // 没有活跃会话，创建新的
+                    console.log('没有找到活跃会话，创建新会话');
+                    await createSession();
+                }
+            } catch (error) {
+                console.error('初始化会话失败:', error);
+                // 出错时尝试创建新会话
+                await createSession();
+            }
+        }
 
         async function createSession(systemPrompt = null) {
             try {
@@ -1131,8 +1327,31 @@
             }
         }
 
-        function refreshPage() {
+        async function refreshPage() {
             if (confirm('⚠️ 确定要新建会话吗？\n\n这将会刷新页面并清空当前对话历史。\n\n本地文件不会被删除，但对话上下文会丢失。\n\n是否继续？')) {
+                try {
+                    // 如果有当前会话，先清空会话历史
+                    if (sessionId) {
+                        updateStatus('正在清空对话历史...');
+                        const response = await fetch(`/api/session/${sessionId}/clear`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${AUTH_TOKEN}`
+                            }
+                        });
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            console.log('会话历史已清空');
+                        } else {
+                            console.warn('清空会话历史失败:', data.error);
+                        }
+                    }
+                } catch (error) {
+                    console.error('清空会话历史失败:', error);
+                }
+                
+                // 刷新页面
                 window.location.reload();
             }
         }
@@ -1665,6 +1884,16 @@
             setTimeout(() => successDiv.remove(), 3000);
         }
 
+        function showInfo(message) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'info-toast';
+            infoDiv.textContent = message;
+            messagesDiv.appendChild(infoDiv);
+            scrollToBottom();
+            setTimeout(() => infoDiv.remove(), 3000);
+        }
+
         async function loadComputingPower() {
             try {
                 const response = await fetch('/api/user/computing_power', {
@@ -2080,8 +2309,6 @@
 
         async function loadFiles(fileType) {
             const fileList = document.getElementById('file-list');
-            fileList.innerHTML = '<div class="file-empty">加载中...</div>';
-            
             try {
                 const apiMap = {
                     'worlds': '/api/world-files',
@@ -2091,12 +2318,8 @@
                     'props': '/api/props-files'
                 };
                 
-                const response = await fetch(`${apiMap[fileType]}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
-                    headers: {
-                        'Authorization': AUTH_TOKEN,
-                        'X-User-Id': USER_ID
-                    }
-                });
+                // 添加 raw_json=true 参数以获取完整的JSON数据（包括reference_image）
+                const response = await fetch(`${apiMap[fileType]}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
                 const data = await response.json();
                 
                 if (checkTokenExpired(data, response)) {
@@ -2134,9 +2357,59 @@
                     files.forEach(file => {
                         const fileItem = document.createElement('div');
                         fileItem.className = 'file-item';
+                        
+                        // 对于角色、场景、道具、剧本，添加图片预览图标和删除按钮
+                        let imageIconHtml = '';
+                        let deleteButtonHtml = '';
+                        
+                        // 角色、场景、道具显示图片预览图标
+                        if (['characters', 'locations', 'props'].includes(fileType)) {
+                            // reference_image 在 json_data 对象里
+                            const referenceImage = file.json_data?.reference_image || file.reference_image;
+                            const hasImage = referenceImage && referenceImage.trim() !== '';
+                            const iconClass = hasImage ? 'has-image' : 'no-image';
+                            const iconTitle = hasImage ? '预览图片' : '暂无参考图';
+                            imageIconHtml = `
+                                <button class="file-btn image-preview-btn ${iconClass}" onclick="previewItemImage('${fileType}', '${file.name}')" title="${iconTitle}">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                                        <polyline points="21 15 16 10 5 21"/>
+                                    </svg>
+                                </button>
+                            `;
+                        }
+                        
+                        // 角色、场景、道具、剧本都显示删除按钮
+                        if (['characters', 'locations', 'props', 'scripts'].includes(fileType)) {
+                            // 从 file_path 提取相对路径（script_writer 之后的部分）
+                            let relativePath = '';
+                            if (file.file_path) {
+                                const pathMatch = file.file_path.match(/script_writer\/(.*)/)
+                                relativePath = pathMatch ? pathMatch[1] : `${USER_ID}/${WORLD_ID}/${fileType}/${file.name}`;
+                            } else {
+                                // 如果没有 file_path，构造默认路径
+                                relativePath = `${USER_ID}/${WORLD_ID}/${fileType}/${file.name}`;
+                            }
+                            // 转义路径中的特殊字符
+                            const escapedPath = relativePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+                            deleteButtonHtml = `
+                                <button class="file-btn delete-btn" onclick="deleteStagingFile('${escapedPath}')" title="删除">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"/>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                        <line x1="10" y1="11" x2="10" y2="17"/>
+                                        <line x1="14" y1="11" x2="14" y2="17"/>
+                                    </svg>
+                                </button>
+                            `;
+                        }
+                        
                         fileItem.innerHTML = `
                             <div class="file-name">${file.name}</div>
                             <div class="file-actions">
+                                ${imageIconHtml}
+                                ${deleteButtonHtml}
                                 <button class="file-btn view-btn" onclick="viewFile('${fileType}', '${file.name}')" title="查看">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
@@ -2390,6 +2663,13 @@
             document.getElementById('char-behavior').value = data.behavior || '';
             document.getElementById('char-other').value = data.other_info || '';
             document.getElementById('char-image').value = data.reference_image || '';
+            
+            // 如果有图片，显示预览
+            if (data.reference_image) {
+                showImagePreview('char-image', data.reference_image);
+            } else {
+                removeImagePreview('char-image');
+            }
         }
 
         function showLocationEditor(fileName, data) {
@@ -2399,6 +2679,13 @@
             document.getElementById('loc-parent').value = data.parent_id || '';
             document.getElementById('loc-description').value = data.description || '';
             document.getElementById('loc-image').value = data.reference_image || '';
+            
+            // 如果有图片，显示预览
+            if (data.reference_image) {
+                showImagePreview('loc-image', data.reference_image);
+            } else {
+                removeImagePreview('loc-image');
+            }
         }
 
         function showPropEditor(fileName, data) {
@@ -2408,6 +2695,13 @@
             document.getElementById('prop-type').value = data.type || '';
             document.getElementById('prop-description').value = data.description || '';
             document.getElementById('prop-image').value = data.reference_image || '';
+            
+            // 如果有图片，显示预览
+            if (data.reference_image) {
+                showImagePreview('prop-image', data.reference_image);
+            } else {
+                removeImagePreview('prop-image');
+            }
         }
 
         function showScriptEditor(fileName, data) {
@@ -2429,6 +2723,201 @@
         function closeEditModal() {
             document.getElementById('edit-modal').classList.remove('show');
             currentEditFile = { fileType: '', fileName: '' };
+        }
+
+        async function previewItemImage(fileType, fileName) {
+            try {
+                const apiMap = {
+                    'characters': '/api/characters-files',
+                    'locations': '/api/locations-files',
+                    'props': '/api/props-files'
+                };
+                
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
+                const data = await response.json();
+                
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                
+                if (data.success) {
+                    let jsonData = data.character?.json_data || data.location?.json_data || data.prop?.json_data || {};
+                    
+                    if (!jsonData || Object.keys(jsonData).length === 0) {
+                        const content = data.character?.content || data.location?.content || data.prop?.content || '';
+                        try {
+                            if (content.trim()) {
+                                jsonData = JSON.parse(content);
+                            } else {
+                                jsonData = {};
+                            }
+                        } catch (e) {
+                            showError('无法解析文件数据');
+                            return;
+                        }
+                    }
+                    
+                    const referenceImage = jsonData.reference_image;
+                    
+                    if (!referenceImage || referenceImage.trim() === '') {
+                        showInfo('该项目暂无参考图');
+                        return;
+                    }
+                    
+                    // 显示图片预览弹窗
+                    const typeNames = {
+                        'characters': '角色',
+                        'locations': '场景',
+                        'props': '道具'
+                    };
+                    document.getElementById('image-preview-title').textContent = `${typeNames[fileType]}参考图 - ${fileName}`;
+                    document.getElementById('preview-image').src = referenceImage;
+                    document.getElementById('image-preview-modal').classList.add('show');
+                } else {
+                    showError('获取数据失败: ' + (data.error || '未知错误'));
+                }
+            } catch (error) {
+                showError('预览图片失败: ' + error.message);
+            }
+        }
+
+        function closeImagePreviewModal() {
+            document.getElementById('image-preview-modal').classList.remove('show');
+        }
+
+        function triggerImageUpload(inputId, itemType) {
+            const fileInputId = inputId + '-file';
+            const fileInput = document.getElementById(fileInputId);
+            fileInput.setAttribute('data-item-type', itemType);
+            fileInput.click();
+        }
+
+        async function handleImageUpload(event, inputId, itemType) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            // 验证文件类型
+            if (!file.type.startsWith('image/')) {
+                showError('请选择图片文件');
+                event.target.value = '';
+                return;
+            }
+            
+            // 验证文件大小 (10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                showError('图片大小不能超过10MB');
+                event.target.value = '';
+                return;
+            }
+            
+            // 显示上传进度
+            showInfo('正在上传图片...');
+            
+            // 上传到服务器
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', USER_ID);
+            formData.append('world_id', WORLD_ID);
+            formData.append('item_type', itemType);
+            formData.append('auth_token', AUTH_TOKEN);
+            
+            try {
+                const response = await fetch('/api/upload-image', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: formData
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    // 更新输入框和预览
+                    document.getElementById(inputId).value = data.url;
+                    showImagePreview(inputId, data.url);
+                    showSuccess('图片上传成功');
+                } else {
+                    showError('上传失败: ' + data.error);
+                }
+            } catch (error) {
+                showError('上传失败: ' + error.message);
+            }
+            
+            // 清空file input
+            event.target.value = '';
+        }
+
+        function showImagePreview(inputId, imageUrl) {
+            const previewBox = document.getElementById(inputId + '-preview');
+            const img = previewBox.querySelector('.preview-thumbnail');
+            
+            img.src = imageUrl;
+            previewBox.style.display = 'block';
+        }
+
+        function removeImagePreview(inputId) {
+            document.getElementById(inputId).value = '';
+            document.getElementById(inputId + '-preview').style.display = 'none';
+        }
+
+        function clearImageInput(inputId) {
+            removeImagePreview(inputId);
+        }
+
+        async function deleteStagingFile(relativePath) {
+            // 从相对路径提取文件类型和文件名
+            const pathParts = relativePath.split('/');
+            if (pathParts.length < 4) {
+                showError('无效的文件路径');
+                return;
+            }
+            
+            const fileType = pathParts[2];  // user_id/world_id/file_type/filename
+            const fileName = pathParts[pathParts.length - 1];
+            
+            // 确认提示
+            const typeNames = {
+                'characters': '角色',
+                'locations': '场景',
+                'props': '道具',
+                'scripts': '剧本'
+            };
+            const typeName = typeNames[fileType] || '文件';
+            
+            const confirmed = confirm(
+                `⚠️ 删除暂存区${typeName}\n\n` +
+                `确定要删除 "${fileName}" 吗？\n\n` +
+                `提示：此操作只会删除暂存区的文件，工作流中的${typeName}不会被删除。`
+            );
+            
+            if (!confirmed) {
+                return;
+            }
+            
+            try {
+                showInfo('正在删除...');
+                
+                const response = await fetch(`/api/staging-file?user_id=${USER_ID}&world_id=${WORLD_ID}&relative_path=${encodeURIComponent(relativePath)}&auth_token=${AUTH_TOKEN}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showSuccess('删除成功');
+                    // 重新加载文件列表
+                    loadFiles(fileType);
+                } else {
+                    showError('删除失败: ' + data.error);
+                }
+            } catch (error) {
+                showError('删除失败: ' + error.message);
+            }
         }
 
         async function saveEditedFile() {

@@ -18,6 +18,7 @@ from script_writer_core.image_grid_splitter import ImageGridSplitter
 from config.config_util import get_config
 from config.constant import FilePathConstants
 from utils.network_utils import is_local_file_path
+from model import GridImageTasksModel, GridImageTaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,11 @@ class TaskManager:
     def __init__(self):
         self.scheduler = BackgroundScheduler()
         self.scheduler.start()
-        self.active_tasks = {}  # 存储活跃任务信息
-        self.global_lock = threading.RLock()  # 全局读写锁，用于管理locks字典
-        self.task_locks = {}  # 为每个任务键维护独立的锁
+        # 注意：active_tasks 已废弃，改用数据库存储
+        # 保留此字段仅为向后兼容，实际不再使用
+        self.active_tasks = {}  
+        self.global_lock = threading.RLock()  
+        self.task_locks = {}  # 任务锁仍然保留用于并发控制
     
     def _get_task_lock(self, task_key: str) -> threading.Lock:
         """获取指定任务的锁，如果不存在则创建"""
@@ -178,15 +181,31 @@ class TaskManager:
     def is_item_generating(self, item_type: int, item_name: str, user_id: str) -> bool:
         """检查指定item是否正在生成图片（全局唯一性约束）"""
         task_key = self._generate_task_key(item_type, item_name)
-        with self.global_lock:
-            return task_key in self.active_tasks
+        try:
+            task = GridImageTasksModel.get_by_task_key(task_key)
+            if task and task.status in [GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING]:
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"检查任务状态失败: {e}")
+            return False
     
     def get_active_tasks(self, user_id: str = None) -> Dict[str, Any]:
         """获取活跃任务列表"""
-        with self.global_lock:
+        try:
             if user_id:
-                return {k: v for k, v in self.active_tasks.items() if v.get('user_id') == user_id}
-            return self.active_tasks.copy()
+                tasks = GridImageTasksModel.get_user_tasks(user_id, limit=100)
+            else:
+                tasks = GridImageTasksModel.get_pending_tasks(limit=100)
+            
+            # 转换为旧格式以保持兼容性
+            result = {}
+            for task in tasks:
+                result[task.task_key] = task.to_dict()
+            return result
+        except Exception as e:
+            logger.error(f"获取活跃任务失败: {e}")
+            return {}
     
     def create_image_task(self, project_id: str, item_type: int, item_name: str, 
                          comfyui_base_url: str, auth_token: str, user_id: str, world_id: str) -> str:
@@ -197,48 +216,31 @@ class TaskManager:
         task_lock = self._get_task_lock(task_key)
         
         with task_lock:
-            # 检查是否已有相同任务（使用全局锁进行快速检查）
-            with self.global_lock:
-                if task_key in self.active_tasks:
+            try:
+                # 创建数据库记录（UNIQUE KEY会自动防止重复）
+                GridImageTasksModel.create(
+                    task_key=task_key,
+                    project_id=project_id,
+                    item_type=item_type,
+                    item_name=item_name,
+                    user_id=user_id,
+                    world_id=world_id,
+                    comfyui_base_url=comfyui_base_url,
+                    auth_token=auth_token,
+                    max_attempts=60
+                )
+                logger.info(f"创建宫格生图任务: {task_key}, project_id: {project_id}")
+            except Exception as e:
+                # 数据库插入失败，可能是重复任务
+                if "Duplicate entry" in str(e) or "UNIQUE" in str(e):
                     raise ValueError(f"该项目正在生成图片中，请等待完成后再试")
+                raise e
             
-            # 创建任务记录
-            with self.global_lock:
-                self.active_tasks[task_key] = {
-                    'project_id': project_id,
-                    'item_type': item_type,
-                    'item_name': item_name,
-                    'user_id': user_id,
-                    'world_id': world_id,
-                    'status': 'scheduled',
-                    'attempts': 0,
-                    'max_attempts': 60,
-                    'created_at': datetime.now().isoformat(),
-                    'last_check': None
-                }
-            
-            # 同步任务状态到文件
+            # 同步任务状态到文件（保持兼容性）
             self._update_task_status_file(item_type, item_name, 'scheduled', user_id, world_id)
         
-        # 创建APScheduler任务
+        # 注意：不再创建APScheduler任务，轮询逻辑已迁移到scheduler进程
         job_id = f"image_task_{project_id}"
-        try:
-            self.scheduler.add_job(
-                func=self._process_image_task,
-                trigger='interval',
-                seconds=10,  # 每10秒检查一次
-                max_instances=1,
-                args=[project_id, item_type, item_name, comfyui_base_url, auth_token, user_id, world_id],
-                id=job_id,
-                replace_existing=True
-            )
-        except Exception as e:
-            # 如果调度任务创建失败，清理已创建的任务记录
-            with self.global_lock:
-                if task_key in self.active_tasks:
-                    del self.active_tasks[task_key]
-            raise e
-        
         return job_id
     
     def _process_image_task(self, project_id: str, item_type: int, item_name: str, 
@@ -690,30 +692,26 @@ class TaskManager:
         """取消指定的图片生成任务（全局唯一性约束）"""
         task_key = self._generate_task_key(item_type, item_name)
         
-        # 获取该任务的专用锁
-        task_lock = self._get_task_lock(task_key)
-        
-        with task_lock:
-            with self.global_lock:
-                if task_key not in self.active_tasks:
-                    return False
-                
-                task_info = self.active_tasks[task_key]
-                project_id = task_info['project_id']
-                
-                # 更新状态为已取消
-                task_info['status'] = 'cancelled'
-                task_info['cancelled_at'] = datetime.now().isoformat()
-        
-        # 同步取消状态到文件
-        # 从任务信息中获取world_id
-        world_id = task_info.get('world_id')
-        if world_id:
-            self._update_task_status_file(item_type, item_name, 'cancelled', user_id, world_id)
-        
-        # 移除调度任务
-        self._remove_job(f"image_task_{project_id}")
-        return True
+        try:
+            # 从数据库获取任务
+            task = GridImageTasksModel.get_by_task_key(task_key)
+            if not task:
+                return False
+            
+            # 更新状态为已取消
+            GridImageTasksModel.update_status(
+                task_key=task_key,
+                status=GridImageTaskStatus.CANCELLED
+            )
+            
+            # 同步取消状态到文件
+            self._update_task_status_file(item_type, item_name, 'cancelled', user_id, task.world_id)
+            
+            logger.info(f"取消宫格生图任务: {task_key}")
+            return True
+        except Exception as e:
+            logger.error(f"取消任务失败: {e}")
+            return False
     
     def shutdown(self):
         """关闭任务管理器，清理所有资源"""
@@ -725,6 +723,8 @@ class TaskManager:
         with self.global_lock:
             self.active_tasks.clear()
             self.task_locks.clear()
+        
+        logger.info("TaskManager已关闭")
 
 
 # 全局任务管理器实例

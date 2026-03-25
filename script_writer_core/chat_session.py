@@ -31,12 +31,14 @@ class ChatSession:
         world_id: str = "1",
         auth_token: str = "",
         model: Optional[str] = None,
-        model_id: Optional[int] = None
+        model_id: Optional[int] = None,
+        text_to_image_model_id: Optional[int] = None
     ):
         self.session_id = session_id
         self.user_id = user_id
         self.world_id = world_id
         self.auth_token = auth_token
+        self.text_to_image_model_id = text_to_image_model_id
         
         # 初始化文件操作处理器（带权限控制和认证）
         self.file_handler = FileOperationHandler(user_id, world_id, auth_token, file_manager=file_manager)

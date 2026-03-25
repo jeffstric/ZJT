@@ -1453,6 +1453,14 @@ body {
     background: #fefcbf;
 }
 
+.delete-btn {
+    color: #e53e3e;
+}
+
+.delete-btn:hover {
+    background: #fff5f5;
+}
+
 .file-empty {
     padding: 40px 20px;
     text-align: center;
@@ -1690,7 +1698,8 @@ body {
 
 /* Toast Messages */
 .error-toast,
-.success-toast {
+.success-toast,
+.info-toast {
     padding: 14px 18px;
     margin: 12px 0;
     border-radius: var(--radius-md);
@@ -1708,6 +1717,12 @@ body {
     background: #c6f6d5;
     color: #22543d;
     border-left: 4px solid var(--success-color);
+}
+
+.info-toast {
+    background: #bee3f8;
+    color: #2c5282;
+    border-left: 4px solid #3182ce;
 }
 
 /* Markdown Styles */
@@ -1820,7 +1835,29 @@ body {
     border: none;
     height: 2px;
     background: linear-gradient(to right, transparent, var(--border-color), transparent);
-    margin: 20px 0;
+}
+
+/* Tool Call Icon */
+.tool-call-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 1px solid #bae6fd;
+    border-radius: 8px;
+    font-size: 0.9em;
+    color: #0369a1;
+    font-weight: 500;
+    cursor: help;
+    transition: all 0.2s ease;
+}
+
+.tool-call-icon:hover {
+    background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+    border-color: #7dd3fc;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px -2px rgba(3, 105, 161, 0.2);
 }
 
 /* Scrollbar */
@@ -2290,5 +2327,137 @@ body {
 .top-header,
 .input-section {
     margin-left: 0;
+}
+
+/* ==================== 图片预览和上传功能样式 ==================== */
+
+/* 图片预览图标 */
+.image-preview-btn {
+    color: #666;
+    transition: all 0.2s ease;
+}
+
+.image-preview-btn.has-image {
+    color: #10b981;
+}
+
+.image-preview-btn.has-image:hover {
+    color: #059669;
+    transform: scale(1.1);
+}
+
+.image-preview-btn.no-image {
+    color: #ef4444;
+    opacity: 0.6;
+}
+
+.image-preview-btn.no-image:hover {
+    opacity: 1;
+}
+
+/* 图片预览弹窗 */
+.image-preview-dialog {
+    max-width: 90vw;
+    max-height: 90vh;
+}
+
+.full-preview-image {
+    max-width: 100%;
+    max-height: 70vh;
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+}
+
+/* 图片上传容器 */
+.image-upload-container {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.image-upload-container .form-input {
+    flex: 1;
+    background-color: #f9fafb;
+}
+
+.image-upload-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 13px;
+    border-radius: var(--radius-sm);
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.btn-primary.btn-sm {
+    background: var(--primary-gradient);
+    color: white;
+}
+
+.btn-primary.btn-sm:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.btn-secondary.btn-sm {
+    background: #f3f4f6;
+    color: #6b7280;
+    border: 1px solid #e5e7eb;
+}
+
+.btn-secondary.btn-sm:hover {
+    background: #e5e7eb;
+}
+
+/* 图片预览框 */
+.image-preview-box {
+    margin-top: 12px;
+    position: relative;
+    display: inline-block;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 4px;
+    background: white;
+}
+
+.preview-thumbnail {
+    max-width: 200px;
+    max-height: 200px;
+    display: block;
+    border-radius: 4px;
+}
+
+.preview-remove-btn {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #ef4444;
+    color: white;
+    border: 2px solid white;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-sm);
+}
+
+.preview-remove-btn:hover {
+    background: #dc2626;
+    transform: scale(1.1);
 }
 

@@ -11,11 +11,11 @@ import asyncio
 import threading
 from typing import Optional, Dict, Any, List
 from datetime import datetime
-from fastapi import APIRouter, Request, Query as QueryParam, Header
+from fastapi import APIRouter, Request, Query as QueryParam, Header, UploadFile, File, Form
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
-from config.config_util import get_dynamic_config_value
+from config.config_util import get_dynamic_config_value, get_config
 
 # ==================== 加载 API 配置 ====================
 def _load_api_config():
@@ -54,10 +54,10 @@ logger = logging.getLogger(__name__)
 # 创建路由器
 router = APIRouter(prefix="/api", tags=["script_writer"])
 
-# 会话存储（内存中）
-# 注意：这是临时方案，生产环境应使用数据库或Redis
-sessions_storage: Dict[str, ChatSession] = {}
-sessions_lock = threading.RLock()  # 使用可重入锁保护 sessions_storage 字典的并发访问
+# 会话存储（数据库 + 可选内存缓存）
+# 使用数据库存储支持多 worker 进程间会话共享
+from script_writer_core.session_storage import SessionStorage
+session_storage = SessionStorage(use_cache=True, cache_ttl=300)
 
 # 生图模型配置存储（按 user_id + world_id 存储 task_id）
 # key: f"{user_id}_{world_id}", value: task_id (int)
@@ -698,11 +698,15 @@ async def create_session(request: Request, session_request: SessionCreateRequest
             model=session_request.model,
             model_id=session_request.model_id
         )
-        
-        # 存储会话
-        with sessions_lock:
-            sessions_storage[session_id] = session
-        
+
+        # 存储会话到数据库
+        if not session_storage.save_session(session, expires_hours=24):
+            logger.error(f'会话保存到数据库失败 - session_id: {session_id}')
+            return JSONResponse({
+                'success': False,
+                'error': '会话保存失败'
+            }, status_code=500)
+
         logger.info(f'会话创建成功 - session_id: {session_id}, user_id: {session_request.user_id}, world_id: {session_request.world_id}')
         
         return JSONResponse({
@@ -726,19 +730,26 @@ async def create_session(request: Request, session_request: SessionCreateRequest
 async def get_session_history(request: Request, session_id: str):
     """获取会话历史"""
     try:
-        with sessions_lock:
-            if session_id not in sessions_storage:
-                return JSONResponse({
-                    'success': False,
-                    'error': '会话不存在'
-                }, status_code=404)
-            
-            session = sessions_storage[session_id]
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
         return JSONResponse({
             'success': True,
-            'history': session.get('history', []),
-            'created_at': session.get('created_at'),
-            'updated_at': session.get('updated_at')
+            'history': session.get_history(),
+            'created_at': session.created_at.isoformat() if session.created_at else None,
+            'updated_at': session.updated_at.isoformat() if session.updated_at else None
         })
     except Exception as e:
         logger.error(f'获取会话历史失败: {str(e)}')
@@ -752,16 +763,28 @@ async def get_session_history(request: Request, session_id: str):
 async def clear_session_history(request: Request, session_id: str):
     """清空会话历史"""
     try:
-        with sessions_lock:
-            if session_id not in sessions_storage:
-                return JSONResponse({
-                    'success': False,
-                    'error': '会话不存在'
-                }, status_code=404)
-            
-            sessions_storage[session_id]['history'] = []
-            sessions_storage[session_id]['updated_at'] = datetime.now().isoformat()
-        
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
+        # 清空历史
+        session.clear_history()
+
+        # 持久化到数据库
+        from model.chat_sessions import ChatSessionsModel
+        ChatSessionsModel.clear_history(session_id)
+
         return JSONResponse({
             'success': True,
             'message': '会话历史已清空'
@@ -787,15 +810,21 @@ async def clear_user_directory(request: SyncFilesRequest):
 async def set_session_model(request: Request, session_id: str, model_request: ModelChangeRequest):
     """切换会话模型"""
     try:
-        with sessions_lock:
-            if session_id not in sessions_storage:
-                return JSONResponse({
-                    'success': False,
-                    'error': '会话不存在'
-                }, status_code=404)
-            
-            session = sessions_storage[session_id]
-        
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
         # 验证模型是否有效
         if model_request.auth_token:
             is_valid, valid_models, error_msg = await validate_model(model_request.model, model_request.auth_token)
@@ -805,7 +834,7 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
                     'error': error_msg,
                     'valid_models': valid_models
                 }, status_code=400)
-        
+
         # 更新模型 - 使用 ChatSession 的 set_model 方法
         model_id = None
         if model_request.model_id is not None:
@@ -816,11 +845,22 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
                     'success': False,
                     'error': 'model_id 必须为数字'
                 }, status_code=400)
-        
+
         session.set_model(model_request.model, model_id)
-        
+
+        # 持久化到数据库 - 同时更新过期时间以延长 session 有效期
+        from datetime import datetime, timedelta
+        from model.chat_sessions import ChatSessionsModel
+        expires_at = datetime.now() + timedelta(hours=24)
+        ChatSessionsModel.update_model(
+            session_id=session_id,
+            model=model_request.model,
+            model_id=model_id,
+            expires_at=expires_at
+        )
+
         logger.info(f'模型切换成功 - session_id: {session_id}, model: {model_request.model}')
-        
+
         return JSONResponse({
             'success': True,
             'message': '模型切换成功',
@@ -876,12 +916,17 @@ async def set_text_to_image_model(request: Request):
 
         # 如果没有提供 user_id 和 world_id，尝试从 session 中获取
         if (not user_id or not world_id) and session_id:
-            with sessions_lock:
-                session = sessions_storage.get(session_id)
-                if session and hasattr(session, 'user_id') and hasattr(session, 'world_id'):
-                    user_id = str(session.user_id)
-                    world_id = str(session.world_id)
-                    logger.info(f'从 session 获取 user_id 和 world_id - session_id: {session_id}, user_id: {user_id}, world_id: {world_id}')
+            session = session_storage.load_session(
+                session_id=session_id,
+                task_manager=task_manager,
+                file_manager=file_manager,
+                tool_executor=tool_executor,
+                agents_config=agents_config
+            )
+            if session and hasattr(session, 'user_id') and hasattr(session, 'world_id'):
+                user_id = str(session.user_id)
+                world_id = str(session.world_id)
+                logger.info(f'从 session 获取 user_id 和 world_id - session_id: {session_id}, user_id: {user_id}, world_id: {world_id}')
 
         if not user_id or not world_id:
             return JSONResponse({
@@ -912,6 +957,21 @@ async def set_text_to_image_model(request: Request):
             }, status_code=400)
 
         set_text_to_image_model_id(user_id, world_id, task_id)
+
+        # 如果提供了 session_id，同时更新数据库中的 chat_sessions 表
+        if session_id:
+            try:
+                from model.chat_sessions import ChatSessionsModel
+                ChatSessionsModel.update_model(
+                    session_id=session_id,
+                    model=None,  # 不更新 LLM 模型
+                    model_id=None,  # 不更新 LLM 模型 ID
+                    text_to_image_model_id=task_id  # 只更新生图模型 ID
+                )
+                logger.info(f'已更新数据库中的生图模型 - session_id: {session_id}, task_id: {task_id}')
+            except Exception as db_error:
+                logger.error(f'更新数据库生图模型失败: {db_error}')
+                # 数据库更新失败不影响内存配置更新，继续执行
 
         model_info = models_config[task_id]
         logger.info(f'生图模型设置成功 - user_id: {user_id}, world_id: {world_id}, task_id: {task_id}, model: {model_info["name"]}')
@@ -956,21 +1016,51 @@ async def get_current_text_to_image_model(
 
 
 @router.get('/sessions')
-async def list_sessions():
+async def list_sessions(
+    user_id: Optional[str] = QueryParam(None),
+    world_id: Optional[str] = QueryParam(None)
+):
     """列出所有会话"""
     try:
-        with sessions_lock:
+        from model.chat_sessions import ChatSessionsModel
+
+        if user_id:
+            # 从数据库查询用户的会话
+            entities = ChatSessionsModel.list_by_user(user_id, world_id, active_only=True, limit=100)
             session_list = [
                 {
-                    'session_id': sid,
-                    'user_id': data.get('user_id'),
-                    'world_id': data.get('world_id'),
-                    'created_at': data.get('created_at'),
-                    'message_count': len(data.get('history', []))
+                    'session_id': e.session_id,
+                    'user_id': e.user_id,
+                    'world_id': e.world_id,
+                    'created_at': e.created_at.isoformat() if e.created_at else None,
+                    'updated_at': e.updated_at.isoformat() if e.updated_at else None,
+                    'model': e.model,
+                    'message_count': len(e.conversation_history)
                 }
-                for sid, data in sessions_storage.items()
+                for e in entities
             ]
-        
+        else:
+            # 列出缓存中的会话（用于调试）
+            session_list = []
+            cached_ids = session_storage.get_cached_sessions()
+            for sid in cached_ids:
+                session = session_storage.load_session(
+                    session_id=sid,
+                    task_manager=task_manager,
+                    file_manager=file_manager,
+                    tool_executor=tool_executor,
+                    agents_config=agents_config
+                )
+                if session:
+                    session_list.append({
+                        'session_id': sid,
+                        'user_id': session.user_id,
+                        'world_id': session.world_id,
+                        'created_at': session.created_at.isoformat() if session.created_at else None,
+                        'updated_at': session.updated_at.isoformat() if session.updated_at else None,
+                        'message_count': len(session.get_history())
+                    })
+
         return JSONResponse({
             'success': True,
             'sessions': session_list
@@ -1492,19 +1582,25 @@ async def save_world_file(
 async def create_agent_task(request: Request, session_id: str, task_request: TaskCreateRequest):
     """创建智能体任务"""
     try:
-        # 检查会话是否存在
-        with sessions_lock:
-            if session_id not in sessions_storage:
-                return JSONResponse({
-                    'success': False,
-                    'error': '会话不存在'
-                }, status_code=404)
-            
-            session = sessions_storage[session_id]
-            user_id = session.user_id
-            world_id = session.world_id
-            auth_token = task_request.auth_token or session.auth_token
-        
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
+        user_id = session.user_id
+        world_id = session.world_id
+        auth_token = task_request.auth_token or session.auth_token
+
         # 验证 auth_token
         is_valid, error_response = await verify_auth_token(user_id, auth_token)
         if not is_valid:
@@ -1581,15 +1677,20 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             'session_id': session_id
         }
         
+        # 定义任务完成回调函数
+        def on_task_complete(result):
+            """任务完成后的回调函数"""
+            try:
+                logger.info(f"[Task] Task completed callback triggered for session {session_id}")
+                # 任务完成后保存会话状态到数据库
+                session_storage.save_session(session, expires_hours=24)
+                logger.info(f"[Task] Session {session_id} saved after task completion")
+            except Exception as e:
+                logger.error(f"[Task] Failed to save session after task completion: {e}")
+
         # 启动任务（使用 PMAgent，后台线程执行）
-        def run_task_sync():
-            """同步执行任务（在线程中运行）"""
-            task_manager.start_task(task, session.pm_agent, session_data)
-        
-        # 在后台线程中启动任务
-        import threading
-        task_thread = threading.Thread(target=run_task_sync, daemon=True)
-        task_thread.start()
+        logger.info(f"[Task] Starting task execution for session {session_id}")
+        task_manager.start_task(task, session.pm_agent, session_data, on_complete=on_task_complete)
         
         return JSONResponse({
             'success': True,
@@ -2235,4 +2336,217 @@ async def check_assets_complete(request: Request, check_request: CheckAssetsRequ
         return JSONResponse({
             'code': -1,
             'message': f'检查失败: {str(e)}'
+        }, status_code=500)
+
+
+# ==================== 图片上传 API ====================
+
+@router.post('/upload-image')
+@require_permission("script_writer:upload_image")
+async def upload_reference_image(
+    request: Request,
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+    world_id: str = Form(...),
+    item_type: int = Form(...),
+    auth_token: str = Form(...)
+):
+    """
+    上传角色、场景、道具的参考图片
+    
+    Args:
+        file: 图片文件
+        user_id: 用户ID
+        world_id: 世界ID
+        item_type: 项目类型 (1=character, 2=location, 3=props)
+        auth_token: 认证令牌
+    
+    Returns:
+        图片访问URL
+    """
+    try:
+        # 验证文件类型
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        file_extension = os.path.splitext(file.filename or '')[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            return JSONResponse({
+                'success': False,
+                'error': f'不支持的文件类型。允许的类型: {", ".join(allowed_extensions)}'
+            }, status_code=400)
+        
+        # 验证文件大小
+        max_size_mb = get_dynamic_config_value('upload', 'max_image_size_mb', default=10)
+        max_size_bytes = max_size_mb * 1024 * 1024
+        
+        # 读取文件内容
+        content = await file.read()
+        if len(content) > max_size_bytes:
+            return JSONResponse({
+                'success': False,
+                'error': f'图片大小不能超过 {max_size_mb}MB'
+            }, status_code=400)
+        
+        # 根据 item_type 确定存储路径
+        if item_type == 1:  # character
+            upload_dir = 'upload/character/pic'
+        elif item_type == 2:  # location
+            upload_dir = 'upload/location/pic'
+        elif item_type == 3:  # props
+            upload_dir = 'upload/props/pic'
+        else:
+            return JSONResponse({
+                'success': False,
+                'error': f'无效的 item_type: {item_type}'
+            }, status_code=400)
+        
+        # 获取应用根目录
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        full_upload_dir = os.path.join(app_dir, upload_dir)
+        
+        # 创建目录
+        os.makedirs(full_upload_dir, exist_ok=True)
+        
+        # 生成唯一文件名
+        unique_id = uuid.uuid4().hex[:16]
+        filename = f"{unique_id}{file_extension}"
+        file_path = os.path.join(full_upload_dir, filename)
+        
+        # 保存文件
+        with open(file_path, 'wb') as f:
+            f.write(content)
+        
+        # 获取服务器地址
+        server_host = get_config()["server"]["host"]
+        
+        # 返回URL
+        url = f"{server_host.rstrip('/')}/{upload_dir}/{filename}"
+        
+        logger.info(f'图片上传成功: {url}')
+        
+        return JSONResponse({
+            'success': True,
+            'url': url
+        })
+        
+    except Exception as e:
+        logger.error(f'图片上传失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': f'上传失败: {str(e)}'
+        }, status_code=500)
+
+
+@router.delete('/staging-file')
+@require_permission("script_writer:delete_staging_file")
+async def delete_staging_file(
+    request: Request,
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...),
+    relative_path: str = QueryParam(...),
+    auth_token: str = QueryParam(...)
+):
+    """
+    删除暂存区的角色、场景、道具、剧本文件
+    
+    Args:
+        user_id: 用户ID
+        world_id: 世界ID
+        relative_path: 文件相对路径（从 script_writer 目录开始，如：2/130/props/prop_xxx.json）
+        auth_token: 认证令牌
+    
+    Returns:
+        删除结果
+    """
+    try:
+        # 验证相对路径格式，防止路径遍历攻击
+        if '..' in relative_path or relative_path.startswith('/'):
+            logger.warning(f'检测到可疑路径: {relative_path}')
+            return JSONResponse({
+                'success': False,
+                'error': '无效的文件路径'
+            }, status_code=400)
+        
+        # 验证路径必须属于当前用户和世界
+        expected_prefix = f"{user_id}/{world_id}/"
+        if not relative_path.startswith(expected_prefix):
+            logger.warning(f'路径不匹配用户世界: {relative_path}, 期望前缀: {expected_prefix}')
+            return JSONResponse({
+                'success': False,
+                'error': '无效的文件路径：路径不属于当前用户和世界'
+            }, status_code=403)
+        
+        # 验证文件类型（从路径中提取）
+        path_parts = relative_path.split('/')
+        if len(path_parts) < 4:
+            return JSONResponse({
+                'success': False,
+                'error': '无效的文件路径格式'
+            }, status_code=400)
+        
+        file_type = path_parts[2]  # user_id/world_id/file_type/filename
+        allowed_types = ['characters', 'locations', 'props', 'scripts']
+        if file_type not in allowed_types:
+            return JSONResponse({
+                'success': False,
+                'error': f'不支持的文件类型。允许的类型: {", ".join(allowed_types)}'
+            }, status_code=400)
+        
+        # 构建完整文件路径
+        from config.constant import FilePathConstants
+        file_manager = FileManager()
+        base_dir = file_manager.base_dir / FilePathConstants._SCRIPT_WRITER_USER_DATA_SUBDIR
+        file_path = base_dir / relative_path
+        
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            return JSONResponse({
+                'success': False,
+                'error': '文件不存在'
+            }, status_code=404)
+        
+        # 读取文件内容，验证所属用户
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                file_data = json.load(f)
+            
+            # 验证文件所属用户
+            file_user_id = str(file_data.get('user_id', ''))
+            request_user_id = str(user_id)
+            
+            if file_user_id != request_user_id:
+                logger.warning(f'用户 {request_user_id} 尝试删除用户 {file_user_id} 的文件: {file_path}')
+                return JSONResponse({
+                    'success': False,
+                    'error': '无权限删除此文件：文件不属于当前用户'
+                }, status_code=403)
+        except json.JSONDecodeError:
+            logger.error(f'文件格式错误，无法验证所属用户: {file_path}')
+            return JSONResponse({
+                'success': False,
+                'error': '文件格式错误'
+            }, status_code=400)
+        except KeyError:
+            logger.warning(f'文件缺少 user_id 字段: {file_path}')
+            # 如果文件中没有 user_id 字段，为安全起见拒绝删除
+            return JSONResponse({
+                'success': False,
+                'error': '文件缺少所属用户信息，无法验证权限'
+            }, status_code=400)
+        
+        # 删除文件
+        os.remove(file_path)
+        
+        logger.info(f'暂存区文件删除成功: {file_path}')
+        
+        return JSONResponse({
+            'success': True,
+            'message': '文件删除成功'
+        })
+        
+    except Exception as e:
+        logger.error(f'暂存区文件删除失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': f'删除失败: {str(e)}'
         }, status_code=500)
