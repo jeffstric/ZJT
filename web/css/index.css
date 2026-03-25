@@ -1273,3 +1273,56 @@ header {
   color: var(--primary);
   font-weight: bold;
 }
+
+/* User Settings Modal Styles */
+.settings-item {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-item:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.settings-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.settings-select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.settings-select:hover {
+  border-color: var(--primary);
+}
+
+.settings-select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.status.success {
+  color: var(--primary);
+  background: rgba(34, 197, 94, 0.1);
+  border-radius: 8px;
+}
+
+.status.danger {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 8px;
+}

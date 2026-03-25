@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class User:
     """User model class"""
-    
+
     def __init__(self, **kwargs):
         self.id = kwargs.get('id')
         self.phone = kwargs.get('phone')
@@ -28,7 +28,13 @@ class User:
         self.invite_code = kwargs.get('invite_code')
         self.inviter_id = kwargs.get('inviter_id')
         self.first_recharge = kwargs.get('first_recharge', 0)
-    
+        # 实现方偏好相关字段
+        prefs = kwargs.get('implementation_preferences')
+        if isinstance(prefs, str):
+            prefs = json.loads(prefs)
+        self.implementation_preferences = prefs if prefs else {}
+        self.active_preference_group = kwargs.get('active_preference_group', 1)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
@@ -43,6 +49,8 @@ class User:
             'invite_code': self.invite_code,
             'inviter_id': self.inviter_id,
             'first_recharge': self.first_recharge,
+            'implementation_preferences': self.implementation_preferences,
+            'active_preference_group': self.active_preference_group,
         }
 
 

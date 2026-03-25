@@ -8,7 +8,9 @@ import logging
 
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
-from config.unified_config import UnifiedConfigRegistry
+from model.implementation_power import ImplementationPowerModel
+from config.unified_config import UnifiedConfigRegistry, TaskCategory
+from utils.config_checker import check_implementation_config_exists
 
 logger = logging.getLogger(__name__)
 
@@ -60,38 +62,75 @@ async def get_implementation_preferences(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    # 获取当前偏好
-    current_prefs = user.implementation_preferences or {}
+    # 获取当前激活组的偏好
+    current_prefs = UsersModel.get_all_preferences(user_id)
 
     # 获取所有任务类型及其可选实现方
     all_task_configs = UnifiedConfigRegistry.get_all()
     available_implementations = {}
 
+    # 定义分类分组
+    category_groups = {
+        'image': [TaskCategory.IMAGE_EDIT, TaskCategory.TEXT_TO_IMAGE, TaskCategory.VISUAL_ENHANCE],
+        'video': [TaskCategory.IMAGE_TO_VIDEO, TaskCategory.TEXT_TO_VIDEO],
+    }
+
     for task_config in all_task_configs:
-        if not task_config.implementations:
-            # 只使用默认实现方
-            impl_config = UnifiedConfigRegistry.get_implementation(task_config.implementation)
-            if impl_config:
-                available_implementations[task_config.key] = [{
-                    "name": task_config.implementation,
-                    "display_name": impl_config.display_name,
+        # 只处理有多个可选实现方的任务
+        if not task_config.implementations or len(task_config.implementations) <= 1:
+            continue
+
+        # 过滤出已配置且启用的实现方
+        impls = []
+        for impl_name in task_config.implementations:
+            # 检查实现方是否已配置
+            if not check_implementation_config_exists(impl_name):
+                continue
+
+            impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
+            if impl_config and impl_config.is_enabled():
+                # 使用与后台一致的方式获取 display_name
+                # 参考 admin.py Line 1114
+                display_name = impl_config.display_name
+
+                # 对于 API 聚合器站点，从 system_config 读取站点名称
+                if impl_config.site_number is not None:
+                    try:
+                        from config.config_util import get_dynamic_config_value
+                        site_id = f"site_{impl_config.site_number}"
+                        site_name = get_dynamic_config_value("api_aggregator", site_id, "name", default=site_id)
+                        display_name = site_name
+                    except Exception:
+                        pass
+
+                # 对于非聚合站点，优先使用数据库配置的 display_name
+                else:
+                    db_config = ImplementationPowerModel.get_config(impl_name, task_config.driver_name)
+                    if db_config and db_config.get('display_name'):
+                        display_name = db_config['display_name']
+
+                impls.append({
+                    "name": impl_name,
+                    "display_name": display_name,
                     "computing_power": impl_config.default_computing_power,
-                    "enabled": impl_config.is_enabled()
-                }]
-        else:
-            # 有多个可选实现方
-            impls = []
-            for impl_name in task_config.implementations:
-                impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
-                if impl_config and impl_config.is_enabled():
-                    impls.append({
-                        "name": impl_name,
-                        "display_name": impl_config.display_name,
-                        "computing_power": impl_config.default_computing_power,
-                        "enabled": True
-                    })
-            if impls:
-                available_implementations[task_config.key] = impls
+                    "enabled": True
+                })
+
+        # 只保留有多个可选实现方的任务
+        if len(impls) > 1:
+            # 确定任务所属的分类组
+            category_group = None
+            for group_name, categories in category_groups.items():
+                if task_config.category in categories or any(cat in categories for cat in task_config.categories):
+                    category_group = group_name
+                    break
+
+            available_implementations[task_config.key] = {
+                "name": task_config.name,
+                "category": task_config.category,
+                "category_group": category_group,
+                "implementations": impls
+            }
 
     return {
         "code": 0,
@@ -140,7 +179,7 @@ async def set_implementation_preference(
     success = UsersModel.set_implementation_preference(
         user_id=user_id,
         task_key=request.task_key,
-        implementation_name=request.implementation_name
+        implementation=request.implementation_name
     )
 
     if success:

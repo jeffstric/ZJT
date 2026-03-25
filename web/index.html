@@ -49,8 +49,8 @@
               <button class="btn secondary" @click="handleRechargeClick" style="margin-top: 8px; font-size: 12px; padding: 4px 12px;">算力充值</button>
             </div>
             <a v-if="userRole === 'admin'" href="/admin" class="btn secondary" style="text-decoration: none;">管理后台</a>
-            <button class="btn secondary" @click="handleLogout">登出</button>
             <button class="btn secondary" @click="showUserSettingsModal">设置</button>
+            <button class="btn secondary" @click="handleLogout">登出</button>
           </template>
           <button class="btn" v-else @click="showLoginModal = true">登录</button>
         </div>
@@ -81,6 +81,64 @@
           <p style="color: var(--muted); margin-bottom: 16px;">扫描二维码添加微信，提交您的宝贵意见</p>
           <img src="/files/二维码.jpg" alt="微信二维码" class="feedback-qr-code">
           <p class="feedback-tip">我们会认真听取每一条反馈，持续改进产品体验</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- User Settings Modal -->
+    <div class="modal-overlay" v-if="showUserSettingsModalFlag" @click.self="closeUserSettingsModal">
+      <div class="modal" style="position: relative; max-width: 600px; max-height: 80vh; overflow-y: auto;">
+        <button class="modal-close" @click="closeUserSettingsModal">×</button>
+        <div class="modal-title">用户设置</div>
+
+        <div v-if="userSettingsLoading" style="padding: 40px; text-align: center; color: var(--muted);">
+          加载中...
+        </div>
+
+        <div v-else style="padding: 16px;">
+          <div class="status danger" v-if="userSettingsError" style="margin-bottom: 16px;">{{ userSettingsError }}</div>
+          <div class="status success" v-if="userSettingsSuccess" style="margin-bottom: 16px;">{{ userSettingsSuccess }}</div>
+
+          <h4 style="margin-bottom: 16px; color: var(--text);">实施者偏好设置</h4>
+          <p style="color: var(--muted); font-size: 13px; margin-bottom: 20px;">
+            您可以为不同的任务类型选择不同的实施者（服务商）。选择不同的实施者可能会影响处理速度、质量和算力消耗。
+          </p>
+
+          <div v-if="Object.keys(availableImplementations).length === 0" style="text-align: center; color: var(--muted); padding: 20px;">
+            暂无可配置的任务类型
+          </div>
+
+          <div v-else>
+            <!-- 图片任务 -->
+            <div v-for="(taskConfig, taskKey) in availableImplementations" :key="taskKey">
+              <div v-if="taskConfig.category_group === 'image'">
+                <h5 style="margin: 20px 0 12px; color: var(--text); font-size: 14px;">{{ taskConfig.name }}</h5>
+                <div class="settings-item">
+                  <select class="input settings-select" v-model="userPreferences[taskKey]" @change="handlePreferenceChange(taskKey)">
+                    <option value="">默认（系统自动选择）</option>
+                    <option v-for="impl in taskConfig.implementations" :key="impl.name" :value="impl.name">
+                      {{ impl.display_name }} (算力: {{ impl.computing_power }})
+                    </option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- 视频任务 -->
+            <div v-for="(taskConfig, taskKey) in availableImplementations" :key="taskKey">
+              <div v-if="taskConfig.category_group === 'video'">
+                <h5 style="margin: 20px 0 12px; color: var(--text); font-size: 14px;">{{ taskConfig.name }}</h5>
+                <div class="settings-item">
+                  <select class="input settings-select" v-model="userPreferences[taskKey]" @change="handlePreferenceChange(taskKey)">
+                    <option value="">默认（系统自动选择）</option>
+                    <option v-for="impl in taskConfig.implementations" :key="impl.name" :value="impl.name">
+                      {{ impl.display_name }} (算力: {{ impl.computing_power }})
+                    </option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -5921,6 +5979,14 @@
         police_number: '',
         police_url: ''
       },
+      // 用户设置模态框
+      showUserSettingsModalFlag: false,
+      userSettingsLoading: false,
+      userSettingsError: '',
+      userSettingsSuccess: '',
+      // 用户偏好数据
+      userPreferences: {},
+      availableImplementations: {},
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -6345,7 +6411,93 @@
           this.isAdminMode = false;
         }
       },
-      
+
+      // ==================== 用户设置方法 ====================
+
+      showUserSettingsModal() {
+        this.showUserSettingsModalFlag = true;
+        this.userSettingsError = '';
+        this.userSettingsSuccess = '';
+        this.loadImplementationPreferences();
+      },
+
+      closeUserSettingsModal() {
+        this.showUserSettingsModalFlag = false;
+        this.userSettingsError = '';
+        this.userSettingsSuccess = '';
+      },
+
+      async loadImplementationPreferences() {
+        this.userSettingsLoading = true;
+        this.userSettingsError = '';
+
+        try {
+          const response = await axios.get('/api/user/implementation-preferences', {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+
+          if (response.data.code === 0) {
+            this.userPreferences = response.data.data.preferences || {};
+            this.availableImplementations = response.data.data.available_implementations || {};
+          } else {
+            this.userSettingsError = response.data.message || '加载偏好设置失败';
+          }
+        } catch (error) {
+          console.error('Load implementation preferences error:', error);
+          this.userSettingsError = error?.response?.data?.detail || '加载偏好设置失败，请重试';
+        } finally {
+          this.userSettingsLoading = false;
+        }
+      },
+
+      async handlePreferenceChange(taskKey) {
+        const implementation = this.userPreferences[taskKey];
+        this.userSettingsError = '';
+        this.userSettingsSuccess = '';
+
+        try {
+          if (implementation) {
+            // 设置偏好
+            const response = await axios.put('/api/user/implementation-preference', {
+              task_key: taskKey,
+              implementation_name: implementation
+            }, {
+              headers: {
+                'Authorization': `Bearer ${this.authToken}`
+              }
+            });
+
+            if (response.data.code === 0) {
+              this.userSettingsSuccess = '偏好设置已保存';
+              setTimeout(() => { this.userSettingsSuccess = ''; }, 2000);
+            } else {
+              this.userSettingsError = response.data.message || '保存失败';
+            }
+          } else {
+            // 清除偏好
+            const response = await axios.delete('/api/user/implementation-preference', {
+              params: { task_key: taskKey },
+              headers: {
+                'Authorization': `Bearer ${this.authToken}`
+              }
+            });
+
+            if (response.data.code === 0) {
+              this.userSettingsSuccess = '已恢复默认设置';
+              setTimeout(() => { this.userSettingsSuccess = ''; }, 2000);
+            } else {
+              this.userSettingsError = response.data.message || '清除失败';
+            }
+          }
+        } catch (error) {
+          console.error('Save implementation preference error:', error);
+          this.userSettingsError = error?.response?.data?.detail || '保存失败，请重试';
+        }
+      },
+
+
       closeAdminSwitchModal() {
         this.showAdminSwitchModal = false;
         this.adminSwitchToken = '';
