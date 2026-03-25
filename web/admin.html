@@ -730,59 +730,59 @@
                         </div>
                         
                         <!-- Site 2 -->
-                        <div class="form-group">
-                            <label>站点2名称</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.name" placeholder="如：yunwu">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点2名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.name" placeholder="如：yunwu" :disabled="isCommunityEdition">
                         </div>
-                        <div class="form-group">
-                            <label>站点2 Base URL</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.baseUrl" placeholder="https://yunwu.ai">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点2 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.baseUrl" placeholder="https://yunwu.ai" :disabled="isCommunityEdition">
                         </div>
-                        <div class="form-group">
-                            <label>站点2 API Key</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.apiKey" placeholder="请输入 API Key">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点2 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.apiKey" placeholder="请输入 API Key" :disabled="isCommunityEdition">
                         </div>
                         
                         <!-- Site 3 -->
-                        <div class="form-group">
-                            <label>站点3名称</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.name" placeholder="站点3名称">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点3名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.name" placeholder="站点3名称" :disabled="isCommunityEdition">
                         </div>
-                        <div class="form-group">
-                            <label>站点3 Base URL</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.baseUrl" placeholder="站点3 URL">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点3 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.baseUrl" placeholder="站点3 URL" :disabled="isCommunityEdition">
                         </div>
-                        <div class="form-group">
-                            <label>站点3 API Key</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.apiKey" placeholder="请输入 API Key">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点3 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.apiKey" placeholder="请输入 API Key" :disabled="isCommunityEdition">
                         </div>
                         
                         <!-- Site 4 -->
-                        <div class="form-group">
-                            <label>站点4名称</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.name" placeholder="如：site4">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点4名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.name" placeholder="如：site4" :disabled="isCommunityEdition">
                         </div>
-                        <div class="form-group">
-                            <label>站点4 Base URL</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.baseUrl" placeholder="站点4 URL">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点4 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.baseUrl" placeholder="站点4 URL" :disabled="isCommunityEdition">
                         </div>
-                        <div class="form-group">
-                            <label>站点4 API Key</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.apiKey" placeholder="请输入 API Key">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点4 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.apiKey" placeholder="请输入 API Key" :disabled="isCommunityEdition">
                         </div>
                         
                         <!-- Site 5 -->
-                        <div class="form-group">
-                            <label>站点5名称</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.name" placeholder="如：site5">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点5名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.name" placeholder="如：site5" :disabled="isCommunityEdition">
                         </div>
-                        <div class="form-group">
-                            <label>站点5 Base URL</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.baseUrl" placeholder="站点5 URL">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点5 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.baseUrl" placeholder="站点5 URL" :disabled="isCommunityEdition">
                         </div>
-                        <div class="form-group">
-                            <label>站点5 API Key</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.apiKey" placeholder="请输入 API Key">
+                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
+                            <label>站点5 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.apiKey" placeholder="请输入 API Key" :disabled="isCommunityEdition">
                         </div>
                         
                         <p class="form-hint">💡 提示：配置完成后需要重启服务才能生效，系统会自动创建对应的实现方</p>

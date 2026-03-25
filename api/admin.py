@@ -16,6 +16,7 @@ from model.system_config_history import SystemConfigHistoryModel
 from config.config_util import get_current_env, invalidate_dynamic_cache
 from config.default_configs import init_default_configs, get_default_config_by_key
 from config.constant import GEMINI_URL_FORMATS, DRIVER_IMPLEMENTATION_MAPPING
+from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,8 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
             "code": 0,
             "data": {
                 "total_users": total_users,
-                "active_workflows_3d": active_workflows_3d
+                "active_workflows_3d": active_workflows_3d,
+                "is_community_edition": IS_COMMUNITY_EDITION
             }
         }
     except Exception as e:
@@ -430,7 +432,12 @@ async def admin_batch_update_configs(
     
     if not request.configs:
         raise HTTPException(status_code=400, detail="配置列表不能为空")
-    
+
+    config_keys = [item.key for item in request.configs]
+    is_allowed, error_msg = EditionStrategy.check_aggregator_sites(config_keys)
+    if not is_allowed:
+        raise HTTPException(status_code=403, detail=error_msg)
+
     results = []
     errors = []
     

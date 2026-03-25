@@ -184,7 +184,9 @@ const AdminApp = {
                 show: false,
                 message: '',
                 type: 'success'
-            }
+            },
+
+            isCommunityEdition: false
         };
     },
     
@@ -272,7 +274,9 @@ const AdminApp = {
                     this.dashboard.totalUsers = response.data.data.total_users;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     this.dashboard.loading = false;
-                    
+
+                    this.isCommunityEdition = response.data.data.is_community_edition || false;
+
                     // 默认加载用户列表
                     this.loadUsers();
                     
@@ -1008,51 +1012,13 @@ const AdminApp = {
                 configs.push({ key: 'volcengine.api_key', value: this.quickConfigModal.volcengine.apiKey });
             }
             
-            // API 聚合器配置
-            if (this.quickConfigModal.apiAggregator.site1.name) {
-                configs.push({ key: 'api_aggregator.site_1.name', value: this.quickConfigModal.apiAggregator.site1.name });
-            }
-            if (this.quickConfigModal.apiAggregator.site1.baseUrl) {
-                configs.push({ key: 'api_aggregator.site_1.base_url', value: this.quickConfigModal.apiAggregator.site1.baseUrl });
-            }
-            if (this.quickConfigModal.apiAggregator.site1.apiKey) {
-                configs.push({ key: 'api_aggregator.site_1.api_key', value: this.quickConfigModal.apiAggregator.site1.apiKey });
-            }
-            if (this.quickConfigModal.apiAggregator.site2.name) {
-                configs.push({ key: 'api_aggregator.site_2.name', value: this.quickConfigModal.apiAggregator.site2.name });
-            }
-            if (this.quickConfigModal.apiAggregator.site2.baseUrl) {
-                configs.push({ key: 'api_aggregator.site_2.base_url', value: this.quickConfigModal.apiAggregator.site2.baseUrl });
-            }
-            if (this.quickConfigModal.apiAggregator.site2.apiKey) {
-                configs.push({ key: 'api_aggregator.site_2.api_key', value: this.quickConfigModal.apiAggregator.site2.apiKey });
-            }
-            if (this.quickConfigModal.apiAggregator.site3.name) {
-                configs.push({ key: 'api_aggregator.site_3.name', value: this.quickConfigModal.apiAggregator.site3.name });
-            }
-            if (this.quickConfigModal.apiAggregator.site3.baseUrl) {
-                configs.push({ key: 'api_aggregator.site_3.base_url', value: this.quickConfigModal.apiAggregator.site3.baseUrl });
-            }
-            if (this.quickConfigModal.apiAggregator.site3.apiKey) {
-                configs.push({ key: 'api_aggregator.site_3.api_key', value: this.quickConfigModal.apiAggregator.site3.apiKey });
-            }
-            if (this.quickConfigModal.apiAggregator.site4.name) {
-                configs.push({ key: 'api_aggregator.site_4.name', value: this.quickConfigModal.apiAggregator.site4.name });
-            }
-            if (this.quickConfigModal.apiAggregator.site4.baseUrl) {
-                configs.push({ key: 'api_aggregator.site_4.base_url', value: this.quickConfigModal.apiAggregator.site4.baseUrl });
-            }
-            if (this.quickConfigModal.apiAggregator.site4.apiKey) {
-                configs.push({ key: 'api_aggregator.site_4.api_key', value: this.quickConfigModal.apiAggregator.site4.apiKey });
-            }
-            if (this.quickConfigModal.apiAggregator.site5.name) {
-                configs.push({ key: 'api_aggregator.site_5.name', value: this.quickConfigModal.apiAggregator.site5.name });
-            }
-            if (this.quickConfigModal.apiAggregator.site5.baseUrl) {
-                configs.push({ key: 'api_aggregator.site_5.base_url', value: this.quickConfigModal.apiAggregator.site5.baseUrl });
-            }
-            if (this.quickConfigModal.apiAggregator.site5.apiKey) {
-                configs.push({ key: 'api_aggregator.site_5.api_key', value: this.quickConfigModal.apiAggregator.site5.apiKey });
+            const allowedSites = this.isCommunityEdition ? [1] : [1, 2, 3, 4, 5];
+
+            for (const siteNum of allowedSites) {
+                const site = this.quickConfigModal.apiAggregator[`site${siteNum}`];
+                if (site.name) configs.push({ key: `api_aggregator.site_${siteNum}.name`, value: site.name });
+                if (site.baseUrl) configs.push({ key: `api_aggregator.site_${siteNum}.base_url`, value: site.baseUrl });
+                if (site.apiKey) configs.push({ key: `api_aggregator.site_${siteNum}.api_key`, value: site.apiKey });
             }
 
             if (configs.length === 0) {
