@@ -80,7 +80,8 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
         # 调用驱动提交任务（同步执行）
         from task.visual_drivers import VideoDriverFactory
 
-        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type)
+        # 传递 user_id 以应用用户偏好
+        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
         if not driver:
             logger.error(f"[SyncTask] Unsupported driver type: {ai_tool_type}")
             return SyncTaskResult(

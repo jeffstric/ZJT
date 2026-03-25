@@ -174,9 +174,9 @@ async def _submit_new_task(ai_tool):
                 else:
                     logger.warning(f"[SyncTask] Sync task executor not running, falling back to normal processing")
 
-        # 1. 根据任务类型创建对应的驱动实例
-        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type)
-        
+        # 1. 根据任务类型创建对应的驱动实例（传递 user_id 以应用用户偏好）
+        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+
         if not driver:
             logger.error(f"Unsupported driver type: {ai_tool_type}")
             # 更新任务状态为失败
@@ -330,10 +330,10 @@ async def _check_task_status(ai_tool):
     
     if _is_test_mode_enabled() and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] [DRIVER] Checking status for mock task {project_id}")
-    
+
     try:
-        # 1. 根据任务类型创建对应的驱动实例
-        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type)
+        # 1. 根据任务类型创建对应的驱动实例（传递 user_id 以应用用户偏好）
+        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
         
         if not driver:
             logger.error(f"Unsupported driver type: {ai_tool_type}")
