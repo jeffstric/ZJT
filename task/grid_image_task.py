@@ -13,6 +13,7 @@ from model import GridImageTasksModel, GridImageTaskStatus
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from config.config_util import get_config
 from utils.network_utils import is_local_file_path
+from utils.project_path import get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,19 @@ def _download_and_store_image(file_url: str, item_type: int, comfyui_base_url: s
     # 检查是否为本地文件路径（如 /upload/cache/...）
     if is_local_file_path(file_url):
         # 本地路径，直接映射到文件系统
+        # 安全检查：防止路径遍历攻击
+        if ".." in file_url:
+            raise Exception(f"不允许的路径序列: 路径中不能包含 '..'")
         if file_url.startswith("/"):
             file_url = file_url[1:]  # 移除开头的斜杠
-        src_path = os.path.join(os.path.dirname(__file__), "..", file_url)
-        src_path = os.path.abspath(src_path)
+
+        # 确保文件路径在允许的目录内
+        base_dir = get_project_root()
+        src_path = os.path.abspath(os.path.join(base_dir, file_url))
+
+        # 验证路径在允许的目录内
+        if not src_path.startswith(base_dir):
+            raise Exception(f"不允许访问的路径: {src_path}")
 
         if os.path.exists(src_path):
             # 文件存在，复制到目标目录
