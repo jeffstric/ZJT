@@ -11,7 +11,7 @@ from model.user_tokens import UserTokensModel
 from model.implementation_power import ImplementationPowerModel
 from model.ai_tools import AIToolsModel
 from model.implementation_stats_cache import ImplementationStatsCacheModel
-from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_name
+from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_name, get_implementation_id
 from utils.config_checker import check_implementation_config_exists
 from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
 
@@ -71,6 +71,18 @@ async def get_implementation_preferences(
     # 获取所有任务类型及其可选实现方
     all_task_configs = UnifiedConfigRegistry.get_all()
     available_implementations = {}
+
+    # 一次性加载所有统计数据（仅商业版）
+    stats_map = {}
+    if not IS_COMMUNITY_EDITION:
+        stats_cache = ImplementationStatsCacheModel.get_by_days(7)
+        for stat in stats_cache:
+            key = f"{stat['type']}_{stat['impl_id']}"
+            stats_map[key] = {
+                'success_rate': float(stat['success_rate']) if stat['success_rate'] else 0,
+                'avg_duration_ms': int(stat['avg_duration_ms']) if stat['avg_duration_ms'] else 0,
+                'total_count': int(stat['total_count']) if stat['total_count'] else 0
+            }
 
     # 定义分类分组
     category_groups = {
@@ -134,11 +146,19 @@ async def get_implementation_preferences(
                     if isinstance(computing_power, dict) and computing_power:
                         computing_power = list(computing_power.values())[0]
 
+                # 获取该实现方的统计数据（仅商业版）
+                impl_stats = None
+                if not IS_COMMUNITY_EDITION:
+                    impl_id = get_implementation_id(impl_name)
+                    stat_key = f"{task_config.id}_{impl_id}"
+                    impl_stats = stats_map.get(stat_key, None)
+
                 impls.append({
                     "name": impl_name,
                     "display_name": display_name,
                     "computing_power": computing_power,
-                    "enabled": True
+                    "enabled": True,
+                    "stats": impl_stats
                 })
 
         # 只保留有多个可选实现方的任务

@@ -1989,44 +1989,7 @@ async def get_invitation_info(request: Request, auth_token: str = Header(None, a
 
 
 # ==================== 用户实现方偏好 API ====================
-
-@app.get('/api/user/implementation-preferences')
-async def get_user_implementation_preferences(auth_token: str = Header(None, alias="Authorization")):
-    """
-    获取用户所有实现方偏好（当前激活组）
-    """
-    try:
-        if not auth_token:
-            return JSONResponse(
-                status_code=401,
-                content={'success': False, 'message': '未提供认证信息'}
-            )
-
-        if auth_token.startswith("Bearer "):
-            auth_token = auth_token[7:]
-
-        user_id = UserTokensModel.get_user_id_by_token(auth_token)
-        if not user_id:
-            return JSONResponse(
-                status_code=401,
-                content={'success': False, 'message': '无效或已过期的认证信息'}
-            )
-
-        preferences = UsersModel.get_all_preferences(user_id)
-
-        return JSONResponse(
-            content={
-                'success': True,
-                'data': preferences
-            }
-        )
-    except Exception as e:
-        logger.error(f'获取用户偏好失败: {str(e)}')
-        return JSONResponse(
-            status_code=500,
-            content={'success': False, 'message': '服务器错误'}
-        )
-
+# 注意：用户偏好相关的 API 已迁移到 api/user.py
 
 class SetImplementationPreferenceRequest(BaseModel):
     task_key: str

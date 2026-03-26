@@ -126,17 +126,20 @@
                   </select>
                   <div v-if="isCommunityEdition" style="font-size: 12px; color: var(--muted); margin-top: 4px;">仅商业版可选择</div>
                   
-                  <!-- 社区版演示数据 -->
-                  <div v-if="isCommunityEdition && taskConfig.implementations.length > 0" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 6px;">
-                    <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">商业版数据预览（演示数据）</div>
+                  <!-- 实现方统计数据 -->
+                  <div v-if="taskConfig.implementations.length > 0" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 6px;">
+                    <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">
+                      <span v-if="isCommunityEdition">商业版数据预览（演示数据）</span>
+                      <span v-else>实现方统计数据（最近7天）</span>
+                    </div>
                     <div v-for="(impl, index) in taskConfig.implementations" :key="impl.name" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
                       <span style="font-size: 13px; color: var(--text);">{{ impl.display_name }}</span>
                       <div style="display: flex; gap: 12px; align-items: center;">
-                        <span :style="`font-size: 12px; font-weight: 600; color: ${getSuccessRateColor(getDemoSuccessRate(index))};`">
-                          成功率 {{ getDemoSuccessRate(index) }}%
+                        <span :style="`font-size: 12px; font-weight: 600; color: ${getSuccessRateColor(getDisplaySuccessRate(impl, index))};`">
+                          成功率 {{ getDisplaySuccessRate(impl, index) }}<span v-if="!isCommunityEdition && impl.stats && impl.stats.total_count > 0">%</span>
                         </span>
-                        <span style="font-size: 12px; color: var(--muted);">
-                          平均 {{ getDemoAvgTime(index) }}
+                        <span :style="`font-size: 12px; font-weight: 500; color: ${getAvgTimeColor(impl)};`">
+                          平均 {{ getDisplayAvgTime(impl, index) }}
                         </span>
                       </div>
                     </div>
@@ -158,17 +161,20 @@
                   </select>
                   <div v-if="isCommunityEdition" style="font-size: 12px; color: var(--muted); margin-top: 4px;">仅商业版可选择</div>
                   
-                  <!-- 社区版演示数据 -->
-                  <div v-if="isCommunityEdition && taskConfig.implementations.length > 0" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 6px;">
-                    <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">商业版数据预览</div>
+                  <!-- 实现方统计数据 -->
+                  <div v-if="taskConfig.implementations.length > 0" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 6px;">
+                    <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">
+                      <span v-if="isCommunityEdition">商业版数据预览（演示数据）</span>
+                      <span v-else>实现方统计数据（最近7天）</span>
+                    </div>
                     <div v-for="(impl, index) in taskConfig.implementations" :key="impl.name" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
                       <span style="font-size: 13px; color: var(--text);">{{ impl.display_name }}</span>
                       <div style="display: flex; gap: 12px; align-items: center;">
-                        <span :style="`font-size: 12px; font-weight: 600; color: ${getSuccessRateColor(getDemoSuccessRate(index))};`">
-                          成功率 {{ getDemoSuccessRate(index) }}%
+                        <span :style="`font-size: 12px; font-weight: 600; color: ${getSuccessRateColor(getDisplaySuccessRate(impl, index))};`">
+                          成功率 {{ getDisplaySuccessRate(impl, index) }}<span v-if="!isCommunityEdition && impl.stats && impl.stats.total_count > 0">%</span>
                         </span>
-                        <span style="font-size: 12px; color: var(--muted);">
-                          平均 {{ getDemoAvgTime(index) }}
+                        <span :style="`font-size: 12px; font-weight: 500; color: ${getAvgTimeColor(impl)};`">
+                          平均 {{ getDisplayAvgTime(impl, index) }}
                         </span>
                       </div>
                     </div>
@@ -6476,11 +6482,10 @@
               'Authorization': `Bearer ${this.authToken}`
             }
           });
-
           if (response.data.code === 0) {
             this.userPreferences = response.data.data.preferences || {};
             this.availableImplementations = response.data.data.available_implementations || {};
-            this.isCommunityEdition = response.data.data.is_community_edition || false;
+            this.isCommunityEdition = response.data.data.is_community_edition || false;  
           } else {
             this.userSettingsError = response.data.message || '加载偏好设置失败';
           }
@@ -6537,25 +6542,82 @@
         }
       },
 
-      // 演示数据生成方法
+      // 演示数据生成方法（仅社区版使用）
       getDemoSuccessRate(index) {
-        // 根据索引生成不同的成功率：95%, 92%, 88%, 85%, 78%
         const rates = [95, 92, 88, 85, 78, 75, 70];
         return rates[index % rates.length];
       },
 
       getDemoAvgTime(index) {
-        // 根据索引生成不同的平均处理时间
         const times = ['45秒', '1分12秒', '1分35秒', '2分8秒', '2分45秒', '3分20秒', '4分15秒'];
         return times[index % times.length];
       },
 
+      // 获取真实成功率（商业版）
+      getRealSuccessRate(impl) {
+        if (!impl.stats || impl.stats.total_count === 0) {
+          return '暂无数据';
+        }
+        return impl.stats.success_rate.toFixed(1);
+      },
+
+      // 获取真实平均时间（商业版）
+      getRealAvgTime(impl) {
+        if (!impl.stats || impl.stats.total_count === 0) {
+          return '暂无数据';
+        }
+        return this.formatDuration(impl.stats.avg_duration_ms);
+      },
+
+      // 格式化时长（毫秒转为可读格式）
+      formatDuration(ms) {
+        if (!ms || ms === 0) return '0秒';
+        const seconds = Math.floor(ms / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        
+        if (minutes > 0) {
+          return remainingSeconds > 0 ? `${minutes}分${remainingSeconds}秒` : `${minutes}分钟`;
+        }
+        return `${seconds}秒`;
+      },
+
+      // 获取显示的成功率（自动区分社区版和商业版）
+      getDisplaySuccessRate(impl, index) {
+        if (this.isCommunityEdition) {
+          return this.getDemoSuccessRate(index);
+        }
+        return this.getRealSuccessRate(impl);
+      },
+
+      // 获取显示的平均时间（自动区分社区版和商业版）
+      getDisplayAvgTime(impl, index) {
+        if (this.isCommunityEdition) {
+          return this.getDemoAvgTime(index);
+        }
+        return this.getRealAvgTime(impl);
+      },
+
       getSuccessRateColor(rate) {
-        // 根据成功率返回颜色
-        if (rate >= 90) return '#10b981'; // 绿色 - 优秀
-        if (rate >= 80) return '#3b82f6'; // 蓝色 - 良好
-        if (rate >= 70) return '#f59e0b'; // 橙色 - 一般
-        return '#ef4444'; // 红色 - 较差
+        // 处理"暂无数据"等非数字字符串
+        if (typeof rate === 'string' && isNaN(parseFloat(rate))) return 'var(--muted)';
+        // 将字符串数字转换为数值
+        const numRate = typeof rate === 'string' ? parseFloat(rate) : rate;
+        if (numRate >= 90) return '#10b981';
+        if (numRate >= 70) return '#3b82f6';
+        if (numRate >= 50) return '#f59e0b';
+        return '#ef4444';
+      },
+
+      // 获取平均时间颜色（商业版）
+      getAvgTimeColor(impl) {
+        if (this.isCommunityEdition) return 'var(--muted)';
+        if (!impl.stats || impl.stats.total_count === 0) return 'var(--muted)';
+        const seconds = impl.stats.avg_duration_ms / 1000;
+        if (seconds <= 30) return '#10b981';  // 快速 - 绿色
+        if (seconds <= 60) return '#3b82f6';   // 正常 - 蓝色
+        if (seconds <= 120) return '#f59e0b';  // 较慢 - 橙色
+        return '#ef4444';                        // 很慢 - 红色
       },
 
       closeAdminSwitchModal() {

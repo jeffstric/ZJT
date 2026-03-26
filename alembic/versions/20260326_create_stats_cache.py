@@ -2,9 +2,22 @@
 创建 implementation_stats_cache 表
 
 用于缓存实现方统计数据，避免每次 API 请求都扫描 ai_tools 表
+
+Revision ID: 20260326_stats_cache
+Revises: 20260326_impl_field
+Create Date: 2026-03-26 11:00:00
+
 """
 from alembic import op
 import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision = '20260326_stats_cache'
+down_revision = '20260326_impl_field'
+branch_labels = None
+depends_on = None
+
 
 def upgrade():
     op.execute("""
