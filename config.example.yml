@@ -31,6 +31,7 @@ server:
 # Default timeout settings
 timeout:
   request_timeout: 10000
+  sync_request_timeout: 300  # 同步请求超时时间（秒），用于火山引擎等同步接口
   status_check_timeout: 900
   status_check_interval: 10
 

@@ -68,7 +68,8 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         # 加载配置
         self._api_key = get_dynamic_config_value("volcengine", "api_key", default="")
         self._base_url = "https://ark.cn-beijing.volces.com"
-        self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=60)
+        # 同步请求接口需要更长的超时时间，不复用异步接口的 request_timeout
+        self._timeout = get_dynamic_config_value("timeout", "sync_request_timeout", default=300)
         self._model = "doubao-seedream-5-0-260128"
 
         # 是否为本地环境
