@@ -146,7 +146,7 @@ async def _submit_new_task(ai_tool):
         bool: True 表示成功，False 表示失败
     """
     from task.visual_drivers import VideoDriverFactory
-    from config.unified_config import UnifiedConfigRegistry
+    from config.unified_config import UnifiedConfigRegistry, get_implementation_id
     from task.sync_task_executor import get_sync_task_executor
 
     ai_tool_type = ai_tool.type
@@ -164,6 +164,10 @@ async def _submit_new_task(ai_tool):
             # 检查是否为同步模式
             if impl_config and impl_config.sync_mode:
                 # 同步任务：提交到进程池
+                # 先记录 implementation
+                implementation_id = get_implementation_id(implementation_name)
+                AIToolsModel.update(task_id, implementation=implementation_id)
+
                 executor = get_sync_task_executor()
                 if executor.is_running():
                     executor.submit(task_id, ai_tool_type)
@@ -185,7 +189,13 @@ async def _submit_new_task(ai_tool):
             # 退还算力
             _refund_computing_power(ai_tool, f"不支持的任务类型: {ai_tool_type}")
             return False
-        
+
+        # 记录 implementation 到 ai_tools 表（使用 driver.driver_name 确保是实际使用的 implementation）
+        if driver.driver_name:
+            implementation_id = get_implementation_id(driver.driver_name)
+            AIToolsModel.update(task_id, implementation=implementation_id)
+            logger.info(f"Recorded implementation {driver.driver_name} (id: {implementation_id}) for task {task_id}")
+
         logger.info(f"Using driver: {driver.driver_name} for task {task_id}")
         
         # 2. 调用驱动提交任务

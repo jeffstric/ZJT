@@ -246,6 +246,19 @@ def init_scheduler(app):
         coalesce=True
     )
 
+    # 实现方统计缓存刷新任务
+    logger.info('启用实现方统计缓存刷新任务，每1小时执行一次')
+    from task.stats_cache_task import refresh_implementation_stats_cache
+    scheduler.add_job(
+        func=refresh_implementation_stats_cache,
+        trigger=IntervalTrigger(hours=1),  # 每1小时执行一次
+        id='refresh_implementation_stats_cache',
+        name='Refresh implementation stats cache every 1 hour',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
     # 启动调度器
     scheduler.start()
     logger.info("定时任务启动成功")

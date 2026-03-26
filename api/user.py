@@ -9,7 +9,9 @@ import logging
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
 from model.implementation_power import ImplementationPowerModel
-from config.unified_config import UnifiedConfigRegistry, TaskCategory
+from model.ai_tools import AIToolsModel
+from model.implementation_stats_cache import ImplementationStatsCacheModel
+from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_name
 from utils.config_checker import check_implementation_config_exists
 from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
 
@@ -250,3 +252,69 @@ async def delete_implementation_preference(
         }
     else:
         raise HTTPException(status_code=500, detail="操作失败")
+
+
+@router.get("/implementation-stats")
+async def get_implementation_stats(
+    days: int = Query(7, ge=1, le=90, description="统计天数范围（1-90天）"),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取实现方统计数据（成功率和平均耗时）
+
+    商业版本功能，返回系统级各实现方的执行统计（从缓存读取）
+    """
+    # 社区版不支持此功能
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    # 移除 "Bearer " 前缀
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    if auth_token.startswith("Bearer "):
+        auth_token = auth_token[7:]
+
+    # 验证 token（只需验证有效，不关心具体用户）
+    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+    # 从缓存读取统计数据
+    raw_stats = ImplementationStatsCacheModel.get_by_days(days)
+    latest_update = ImplementationStatsCacheModel.get_latest_update_time(days)
+
+    # 转换统计数据，添加 driver_key 和 implementation_name
+    stats = []
+    for row in raw_stats:
+        task_type = row['type']
+        impl_id = row['impl_id']
+        impl_name = get_implementation_name(impl_id)
+
+        # 获取对应的 driver_key
+        driver_key = None
+        try:
+            config = UnifiedConfigRegistry.get_by_id(task_type)
+            if config:
+                driver_key = config.driver_name
+        except Exception:
+            pass
+
+        stats.append({
+            'driver_key': driver_key,
+            'implementation_name': impl_name,
+            'total_count': row['total_count'],
+            'success_count': row['success_count'],
+            'fail_count': row['fail_count'],
+            'success_rate': float(row['success_rate']),
+            'avg_duration_ms': row['avg_duration_ms']
+        })
+
+    return {
+        "code": 0,
+        "data": {
+            "days": days,
+            "updated_at": latest_update,
+            "implementations": stats
+        }
+    }

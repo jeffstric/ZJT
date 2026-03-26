@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class AITool:
     """AI Tool model class"""
-    
+
     def __init__(self, **kwargs):
         self.id = kwargs.get('id')
         self.prompt = kwargs.get('prompt')
@@ -35,7 +35,8 @@ class AITool:
         self.completed_time = kwargs.get('completed_time')
         self.extra_config = kwargs.get('extra_config')
         self.reference_images = kwargs.get('reference_images')
-    
+        self.implementation = kwargs.get('implementation')
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
@@ -56,7 +57,8 @@ class AITool:
             'image_size': self.image_size,
             'completed_time': self.completed_time.isoformat() if self.completed_time else None,
             'extra_config': self.extra_config,
-            'reference_images': self.reference_images
+            'reference_images': self.reference_images,
+            'implementation': self.implementation
         }
 
 
@@ -79,11 +81,12 @@ class AIToolsModel:
         image_size: Optional[str] = None,
         completed_time: Optional[datetime] = None,
         extra_config: Optional[str] = None,
-        reference_images: Optional[str] = None
+        reference_images: Optional[str] = None,
+        implementation: Optional[int] = 0
     ) -> int:
         """
         Create a new AI tool record
-        
+
         Args:
             prompt: Prompt text
             user_id: User ID
@@ -100,17 +103,18 @@ class AIToolsModel:
             completed_time: Completion time (optional)
             extra_config: Extra configuration in JSON format, includes image_mode (optional)
             reference_images: Reference images as JSON array string (optional)
-        
+            implementation: Implementation ID (optional, default 0)
+
         Returns:
             Inserted record ID
         """
         sql = """
-            INSERT INTO ai_tools 
-            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config, reference_images)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO ai_tools
+            (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config, reference_images, implementation)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config, reference_images)
-        
+        params = (prompt, user_id, type, image_path, duration, ratio, project_id, transaction_id, result_url, status, message, image_size, completed_time, extra_config, reference_images, implementation)
+
         try:
             record_id = execute_insert(sql, params)
             logger.info(f"Created AI tool record with ID: {record_id}")
@@ -274,19 +278,19 @@ class AIToolsModel:
     ) -> int:
         """
         Update AI tool record
-        
+
         Args:
             record_id: Record ID
-            **kwargs: Fields to update (prompt, type, image_path, duration, ratio, 
-                     project_id, transaction_id, result_url, user_id, status, message, image_size, completed_time, extra_config)
-        
+            **kwargs: Fields to update (prompt, type, image_path, duration, ratio,
+                     project_id, transaction_id, result_url, user_id, status, message, image_size, completed_time, extra_config, reference_images, implementation)
+
         Returns:
             Number of affected rows
         """
         # Build update fields
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images'
+            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'implementation'
         ]
         
         update_fields = []
@@ -450,4 +454,79 @@ class AIToolsModel:
             return affected_rows
         except Exception as e:
             logger.error(f"Failed to reset AI tool status: {e}")
+            raise
+
+    @staticmethod
+    def get_implementation_stats(days: int = 7) -> List[Dict[str, Any]]:
+        """
+        获取各实现方的统计数据（系统级，不区分用户）
+
+        统计逻辑：
+        - 成功：status = 2 (AI_TOOL_STATUS_COMPLETED)
+        - 失败：status = -1 (AI_TOOL_STATUS_FAILED)
+        - 耗时：completed_time - create_time (毫秒)
+
+        Args:
+            days: 统计天数范围，默认7天
+
+        Returns:
+            [
+                {
+                    'type': 1,
+                    'implementation': 3,
+                    'total_count': 100,
+                    'success_count': 95,
+                    'fail_count': 5,
+                    'success_rate': 95.0,
+                    'avg_duration_ms': 45000
+                },
+                ...
+            ]
+        """
+        from config.constant import AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
+
+        sql = """
+            SELECT
+                type,
+                implementation,
+                COUNT(*) as total_count,
+                SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN status = %s THEN 1 ELSE 0 END) as fail_count,
+                AVG(TIMESTAMPDIFF(MICROSECOND, create_time, completed_time) / 1000) as avg_duration_ms
+            FROM ai_tools
+            WHERE create_time >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                AND status IN (%s, %s)
+                AND implementation > 0
+            GROUP BY type, implementation
+            ORDER BY total_count DESC
+        """
+
+        try:
+            results = execute_query(sql, (
+                AI_TOOL_STATUS_COMPLETED,
+                AI_TOOL_STATUS_FAILED,
+                days,
+                AI_TOOL_STATUS_COMPLETED,
+                AI_TOOL_STATUS_FAILED
+            ), fetch_all=True)
+
+            stats = []
+            for row in results:
+                total = int(row['total_count'])
+                success_count = int(row['success_count']) if row['success_count'] else 0
+                fail_count = int(row['fail_count']) if row['fail_count'] else 0
+                success_rate = (success_count / total * 100) if total > 0 else 0.0
+
+                stats.append({
+                    'type': row['type'],
+                    'implementation': row['implementation'],
+                    'total_count': total,
+                    'success_count': success_count,
+                    'fail_count': fail_count,
+                    'success_rate': round(success_rate, 2),
+                    'avg_duration_ms': int(row['avg_duration_ms']) if row['avg_duration_ms'] else 0
+                })
+            return stats
+        except Exception as e:
+            logger.error(f"Failed to get implementation stats: {e}")
             raise

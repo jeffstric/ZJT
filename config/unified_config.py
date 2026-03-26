@@ -547,10 +547,10 @@ class DriverImplementation:
     """驱动实现类名常量"""
     # Sora2
     SORA2_DUOMI_V1 = 'sora2_duomi_v1'
-    
+
     # Kling
     KLING_DUOMI_V1 = 'kling_duomi_v1'
-    
+
     # Gemini
     GEMINI_DUOMI_V1 = 'gemini_duomi_v1'
     GEMINI_IMAGE_PREVIEW_COMMON_V1 = 'gemini_image_preview_common_v1'
@@ -559,25 +559,81 @@ class DriverImplementation:
     GEMINI_IMAGE_PREVIEW_SITE3_V1 = 'gemini_image_preview_site3_v1'
     GEMINI_IMAGE_PREVIEW_SITE4_V1 = 'gemini_image_preview_site4_v1'
     GEMINI_IMAGE_PREVIEW_SITE5_V1 = 'gemini_image_preview_site5_v1'
-    
+
     # VEO3
     VEO3_DUOMI_V1 = 'veo3_duomi_v1'
-    
+
     # LTX2
     LTX2_RUNNINGHUB_V1 = 'ltx2_runninghub_v1'
-    
+
     # Wan22
     WAN22_RUNNINGHUB_V1 = 'wan22_runninghub_v1'
-    
+
     # Digital Human
     DIGITAL_HUMAN_RUNNINGHUB_V1 = 'digital_human_runninghub_v1'
-    
+
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
     VIDU_Q2 = 'vidu_q2'
-    
+
     # Seedream 5.0
     SEEDREAM5_VOLCENGINE_V1 = 'seedream5_volcengine_v1'
+
+
+# ============ 驱动实现 ID 常量（用于数据库存储） ============
+class DriverImplementationId:
+    """驱动实现 ID 常量，与 DriverImplementation 字符串一一对应"""
+    UNKNOWN = 0
+    SORA2_DUOMI_V1 = 1
+    KLING_DUOMI_V1 = 2
+    GEMINI_DUOMI_V1 = 3
+    GEMINI_IMAGE_PREVIEW_COMMON_V1 = 4
+    GEMINI_IMAGE_PREVIEW_SITE1_V1 = 5
+    GEMINI_IMAGE_PREVIEW_SITE2_V1 = 6
+    GEMINI_IMAGE_PREVIEW_SITE3_V1 = 7
+    GEMINI_IMAGE_PREVIEW_SITE4_V1 = 8
+    GEMINI_IMAGE_PREVIEW_SITE5_V1 = 9
+    VEO3_DUOMI_V1 = 10
+    LTX2_RUNNINGHUB_V1 = 11
+    WAN22_RUNNINGHUB_V1 = 12
+    DIGITAL_HUMAN_RUNNINGHUB_V1 = 13
+    VIDU_DEFAULT = 14
+    VIDU_Q2 = 15
+    SEEDREAM5_VOLCENGINE_V1 = 16
+
+
+# implementation 字符串到 ID 的映射
+IMPLEMENTATION_TO_ID = {
+    'sora2_duomi_v1': DriverImplementationId.SORA2_DUOMI_V1,
+    'kling_duomi_v1': DriverImplementationId.KLING_DUOMI_V1,
+    'gemini_duomi_v1': DriverImplementationId.GEMINI_DUOMI_V1,
+    'gemini_image_preview_common_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_COMMON_V1,
+    'gemini_image_preview_site1_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE1_V1,
+    'gemini_image_preview_site2_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE2_V1,
+    'gemini_image_preview_site3_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE3_V1,
+    'gemini_image_preview_site4_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE4_V1,
+    'gemini_image_preview_site5_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE5_V1,
+    'veo3_duomi_v1': DriverImplementationId.VEO3_DUOMI_V1,
+    'ltx2_runninghub_v1': DriverImplementationId.LTX2_RUNNINGHUB_V1,
+    'wan22_runninghub_v1': DriverImplementationId.WAN22_RUNNINGHUB_V1,
+    'digital_human_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_RUNNINGHUB_V1,
+    'vidu_default': DriverImplementationId.VIDU_DEFAULT,
+    'vidu_q2': DriverImplementationId.VIDU_Q2,
+    'seedream5_volcengine_v1': DriverImplementationId.SEEDREAM5_VOLCENGINE_V1,
+}
+
+# implementation ID 到字符串的映射
+IMPLEMENTATION_FROM_ID = {v: k for k, v in IMPLEMENTATION_TO_ID.items()}
+
+
+def get_implementation_id(name: str) -> int:
+    """获取 implementation 的 ID，不存在返回 0"""
+    return IMPLEMENTATION_TO_ID.get(name, 0)
+
+
+def get_implementation_name(id: int) -> str:
+    """根据 ID 获取 implementation 名称，不存在返回 'unknown'"""
+    return IMPLEMENTATION_FROM_ID.get(id, 'unknown')
 
 
 # ============ 业务驱动名称常量 ============
