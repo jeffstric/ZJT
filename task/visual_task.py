@@ -238,7 +238,10 @@ async def _submit_new_task(ai_tool):
                 if task:
                     RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
                     logger.info(f"Released RunningHub slot for failed task {task_id}")
-            
+
+            # 退还算力
+            _refund_computing_power(ai_tool, f"任务提交失败: {error}")
+
             # 返回 True 表示任务已处理完成（虽然失败了），不需要重试
             return True
         
@@ -312,7 +315,10 @@ async def _submit_new_task(ai_tool):
         # 更新任务状态为失败
         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，请联系技术支持")
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-        
+
+        # 退还算力
+        _refund_computing_power(ai_tool, "任务提交异常")
+
         return False
 
 
