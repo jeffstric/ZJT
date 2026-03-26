@@ -11,6 +11,7 @@ from model.user_tokens import UserTokensModel
 from model.implementation_power import ImplementationPowerModel
 from config.unified_config import UnifiedConfigRegistry, TaskCategory
 from utils.config_checker import check_implementation_config_exists
+from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,8 @@ async def get_implementation_preferences(
         "code": 0,
         "data": {
             "preferences": current_prefs,
-            "available_implementations": available_implementations
+            "available_implementations": available_implementations,
+            "is_community_edition": IS_COMMUNITY_EDITION
         }
     }
 
