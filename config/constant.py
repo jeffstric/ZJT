@@ -139,8 +139,30 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.KLING_IMAGE_TO_VIDEO: DriverImplementation.KLING_DUOMI_V1,     # 使用多米供应商的 Kling v1 版本
     
     # Gemini 相关驱动
-    DriverKey.GEMINI_IMAGE_EDIT: DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini v1 版本（标准版）
-    DriverKey.GEMINI_IMAGE_EDIT_PRO: DriverImplementation.GEMINI_DUOMI_V1,   # 使用多米供应商的 Gemini v1 版本（Pro模型）
+    DriverKey.GEMINI_IMAGE_EDIT: [
+        DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini v1 版本（标准版）
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
+    ],
+    DriverKey.GEMINI_IMAGE_EDIT_PRO: [
+        DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini v1 版本（Pro模型）
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
+    ],
+    DriverKey.GEMINI_3_1_FLASH_IMAGE_EDIT: [
+        DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini 3.1 Flash 版本
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
+    ],
     
     # VEO3 相关驱动
     DriverKey.VEO3_IMAGE_TO_VIDEO: DriverImplementation.VEO3_DUOMI_V1,       # 使用多米供应商的 VEO3 v1 版本
@@ -205,6 +227,7 @@ class AIToolStatus:
     """AI工具状态常量"""
     PENDING = 0       # 未处理
     PROCESSING = 1    # 正在处理
+    SYNC_QUEUED = 3   # 已提交到同步任务进程池
     FAILED = -1       # 处理失败
     COMPLETED = 2     # 处理完成
 
@@ -213,6 +236,7 @@ class TaskStatus:
     """任务状态常量"""
     QUEUED = 0        # 队列中
     PROCESSING = 1    # 处理中
+    SYNC_QUEUED = 3   # 已提交到同步任务进程池
     COMPLETED = 2     # 处理完成
     FAILED = -1       # 处理失败
 
@@ -241,12 +265,14 @@ AI_TOOL_STATUS_PENDING = AIToolStatus.PENDING
 AI_TOOL_STATUS_PROCESSING = AIToolStatus.PROCESSING
 AI_TOOL_STATUS_FAILED = AIToolStatus.FAILED
 AI_TOOL_STATUS_COMPLETED = AIToolStatus.COMPLETED
+AI_TOOL_STATUS_SYNC_QUEUED = AIToolStatus.SYNC_QUEUED
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED
 TASK_STATUS_PROCESSING = TaskStatus.PROCESSING
 TASK_STATUS_COMPLETED = TaskStatus.COMPLETED
 TASK_STATUS_FAILED = TaskStatus.FAILED
+TASK_STATUS_SYNC_QUEUED = TaskStatus.SYNC_QUEUED
 
 # 向后兼容别名 - AI Audio 状态
 AI_AUDIO_STATUS_PENDING = AIAudioStatus.PENDING

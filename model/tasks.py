@@ -365,19 +365,44 @@ class TasksModel:
     def delete_by_task_id(task_id: int) -> int:
         """
         Delete task record by task ID
-        
+
         Args:
             task_id: Task ID
-        
+
         Returns:
             Number of affected rows
         """
         sql = "DELETE FROM tasks WHERE task_id = %s"
-        
+
         try:
             affected_rows = execute_update(sql, (task_id,))
             logger.info(f"Deleted task record with task_id {task_id}, affected rows: {affected_rows}")
             return affected_rows
         except Exception as e:
             logger.error(f"Failed to delete task record by task_id {task_id}: {e}")
+            raise
+
+    @staticmethod
+    def reset_status(from_status: int, to_status: int) -> int:
+        """
+        Reset status for all records with a specific status
+
+        Used for resetting orphan sync tasks when service restarts
+
+        Args:
+            from_status: Current status to match
+            to_status: Target status to set
+
+        Returns:
+            Number of affected rows
+        """
+        sql = "UPDATE tasks SET status = %s WHERE status = %s"
+
+        try:
+            affected_rows = execute_update(sql, (to_status, from_status))
+            if affected_rows > 0:
+                logger.info(f"Reset {affected_rows} task records from status {from_status} to {to_status}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to reset tasks status: {e}")
             raise

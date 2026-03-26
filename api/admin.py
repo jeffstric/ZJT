@@ -15,7 +15,8 @@ from model.system_config import SystemConfigModel
 from model.system_config_history import SystemConfigHistoryModel
 from config.config_util import get_current_env, invalidate_dynamic_cache
 from config.default_configs import init_default_configs, get_default_config_by_key
-from config.constant import GEMINI_URL_FORMATS
+from config.constant import GEMINI_URL_FORMATS, DRIVER_IMPLEMENTATION_MAPPING
+from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,8 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
             "code": 0,
             "data": {
                 "total_users": total_users,
-                "active_workflows_3d": active_workflows_3d
+                "active_workflows_3d": active_workflows_3d,
+                "is_community_edition": IS_COMMUNITY_EDITION
             }
         }
     except Exception as e:
@@ -430,7 +432,12 @@ async def admin_batch_update_configs(
     
     if not request.configs:
         raise HTTPException(status_code=400, detail="配置列表不能为空")
-    
+
+    config_keys = [item.key for item in request.configs]
+    is_allowed, error_msg = EditionStrategy.check_aggregator_sites(config_keys)
+    if not is_allowed:
+        raise HTTPException(status_code=403, detail=error_msg)
+
     results = []
     errors = []
     
@@ -773,3 +780,457 @@ async def admin_test_google_connection(
             "message": f"连接失败: {str(e)}",
             "data": {"success": False, "error": str(e)}
         }
+
+
+# ==================== 实现方算力配置 API ====================
+
+from model.implementation_power import ImplementationPowerModel
+from config.unified_config import UnifiedConfigRegistry
+
+
+@router.get("/implementation-powers")
+async def admin_get_implementation_powers(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取所有实现方的算力配置
+    返回实现方列表及其算力配置（包含数据库配置和代码默认值）
+    """
+    await require_admin(auth_token)
+
+    try:
+        # 获取所有实现方配置
+        all_implementations = UnifiedConfigRegistry.get_all_implementations()
+
+        # 获取数据库中的算力配置
+        db_powers = ImplementationPowerModel.get_all_powers()
+
+        # 合并数据
+        result = []
+        for impl_name, impl_config in all_implementations.items():
+            # 查找该实现方的数据库配置
+            db_config = [p for p in db_powers if p['implementation_name'] == impl_name]
+
+            # 构建返回数据
+            impl_data = {
+                'name': impl_name,
+                'display_name': impl_config.display_name,
+                'driver_class': impl_config.driver_class,
+                'default_computing_power': impl_config.default_computing_power,
+                'enabled': impl_config.enabled,
+                'description': impl_config.description,
+                'db_config': db_config,
+                'source': 'database' if db_config else 'code_default'
+            }
+            result.append(impl_data)
+
+        return {
+            "code": 0,
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"Failed to get implementation powers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SetImplementationPowerRequest(BaseModel):
+    implementation_name: str
+    driver_key: str  # 必填，用于复合唯一键定位记录
+    computing_power: int
+    duration: Optional[int] = None  # None表示固定算力，否则为特定时长的算力
+
+
+@router.post("/implementation-power")
+async def admin_set_implementation_power(
+    request: SetImplementationPowerRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    设置实现方算力（管理员操作，立即生效，无需重启）
+
+    Args:
+        implementation_name: 实现方名称（如 gemini_duomi_v1）
+        computing_power: 算力值
+        duration: 时长（秒），不传表示固定算力
+    """
+    admin = await require_admin(auth_token)
+
+    # 验证实现方存在
+    impl_config = UnifiedConfigRegistry.get_implementation(request.implementation_name)
+    if not impl_config:
+        raise HTTPException(status_code=404, detail=f"实现方不存在: {request.implementation_name}")
+
+    if request.computing_power < 0:
+        raise HTTPException(status_code=400, detail="算力值不能为负数")
+
+    try:
+        ImplementationPowerModel.set_power(
+            implementation_name=request.implementation_name,
+            driver_key=request.driver_key,
+            computing_power=request.computing_power,
+            duration=request.duration,
+            updated_by=admin.id
+        )
+
+        return {
+            "code": 0,
+            "message": f"算力配置已更新，立即生效",
+            "data": {
+                "implementation_name": request.implementation_name,
+                "computing_power": request.computing_power,
+                "duration": request.duration
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to set implementation power: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class DeleteImplementationPowerRequest(BaseModel):
+    implementation_name: str
+    driver_key: str  # 必填，用于复合唯一键定位记录
+    duration: Optional[int] = None
+
+
+@router.delete("/implementation-power")
+async def admin_delete_implementation_power(
+    request: DeleteImplementationPowerRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    删除实现方算力配置（回退到代码默认值）
+
+    Args:
+        implementation_name: 实现方名称
+        duration: 时长（秒），不传表示删除固定算力配置
+    """
+    await require_admin(auth_token)
+
+    try:
+        affected = ImplementationPowerModel.delete_power(
+            implementation_name=request.implementation_name,
+            driver_key=request.driver_key,
+            duration=request.duration
+        )
+
+        if affected > 0:
+            return {
+                "code": 0,
+                "message": "算力配置已删除，将使用代码默认值"
+            }
+        else:
+            return {
+                "code": 0,
+                "message": "未找到对应的算力配置"
+            }
+    except Exception as e:
+        logger.error(f"Failed to delete implementation power: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 实现方配置（启用/禁用）API ====================
+
+class SetImplementationConfigRequest(BaseModel):
+    implementation_name: str
+    driver_key: str  # 必填，用于复合唯一键定位记录
+    enabled: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+@router.put("/implementation-config")
+async def admin_set_implementation_config(
+    request: SetImplementationConfigRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    设置实现方配置（启用/禁用、排序顺序等）
+
+    管理员操作，立即生效，无需重启服务
+    操作会记录审计日志
+
+    注意：显示名称由系统自动管理，不支持手动设置。
+    API聚合站点的显示名称从 api_aggregator.site_X.name 配置读取。
+
+    Args:
+        implementation_name: 实现方名称（如 gemini_duomi_v1）
+        driver_key: DriverKey（必填）
+        enabled: 是否启用（True/False）
+        sort_order: 排序顺序（可选）
+    """
+    admin = await require_admin(auth_token)
+
+    # 验证实现方存在
+    impl_config = UnifiedConfigRegistry.get_implementation(request.implementation_name)
+    if not impl_config:
+        raise HTTPException(status_code=404, detail=f"实现方不存在: {request.implementation_name}")
+
+    try:
+        success = ImplementationPowerModel.set_config(
+            implementation_name=request.implementation_name,
+            driver_key=request.driver_key,
+            enabled=request.enabled,
+            sort_order=request.sort_order,
+            updated_by=admin.id
+        )
+
+        if success:
+            return {
+                "code": 0,
+                "message": "配置已更新，立即生效",
+                "data": {
+                    "implementation_name": request.implementation_name,
+                    "driver_key": request.driver_key,
+                    "enabled": request.enabled,
+                    "sort_order": request.sort_order
+                }
+            }
+        else:
+            return {
+                "code": 1,
+                "message": "配置未变更（可能是相同的值）"
+            }
+    except Exception as e:
+        logger.error(f"Failed to set implementation config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/implementation-configs")
+async def admin_get_implementation_configs(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取所有实现方配置（包含启用状态），按模型任务（DriverKey）分组返回
+
+    返回所有实现方，包括动态注册的 API 聚合器实现方
+    """
+    await require_admin(auth_token)
+
+    try:
+        # 构建反向映射：实现方 -> DriverKey 列表
+        impl_to_driver_keys = {}
+        for driver_key, impl_names in DRIVER_IMPLEMENTATION_MAPPING.items():
+            # 支持单个实现方（字符串）和多个实现方（列表）
+            if isinstance(impl_names, str):
+                impl_names = [impl_names]
+            
+            for impl_name in impl_names:
+                if impl_name not in impl_to_driver_keys:
+                    impl_to_driver_keys[impl_name] = []
+                impl_to_driver_keys[impl_name].append(driver_key)
+
+        # 获取所有实现方（包括动态注册的 API 聚合器实现方）
+        all_implementations = UnifiedConfigRegistry.get_all_implementations()
+
+        # 获取数据库中的配置
+        db_configs = ImplementationPowerModel.get_all_configs()
+        # 使用 (implementation_name, driver_key) 作为复合键
+        db_config_map = {(c['implementation_name'], c.get('driver_key')): c for c in db_configs}
+
+        # 获取所有任务配置，提取实现方支持的时长
+        impl_durations = {}
+        for task_config in UnifiedConfigRegistry.get_all():
+            # 兼容单数和复数形式的 implementation 属性
+            impl_names = []
+            if hasattr(task_config, 'implementations') and task_config.implementations:
+                impl_names = task_config.implementations if isinstance(task_config.implementations, list) else [task_config.implementations]
+            elif hasattr(task_config, 'implementation') and task_config.implementation:
+                impl_names = [task_config.implementation] if not isinstance(task_config.implementation, list) else task_config.implementation
+
+            for impl_name in impl_names:
+                if impl_name not in impl_durations:
+                    impl_durations[impl_name] = set()
+                if hasattr(task_config, 'supported_durations'):
+                    impl_durations[impl_name].update(task_config.supported_durations)
+
+        # 按 DriverKey 分组
+        driver_key_groups = {}
+
+        # 处理所有实现方（包括动态注册的 API 聚合器实现方）
+        for impl_name, impl_config in all_implementations.items():
+            print(f"Processing implementation: {impl_name}")
+            # 只对 API 聚合器实现方进行配置检查
+            display_name = impl_config.display_name
+            site_name = None
+
+            print(f"Checking if {impl_name} is an API aggregator...")
+            if impl_name.startswith('gemini_image_preview_site') and impl_name.endswith('_v1'):
+                # 检查API聚合器配置是否存在
+                try:
+                    from utils.config_checker import check_api_aggregator_config_exists
+                    from config.config_util import get_dynamic_config_value
+                    # 提取站点ID，如 gemini_image_preview_site1_v1 -> site_1
+                    site_num = impl_name.replace('gemini_image_preview_site', '').replace('_v1', '')
+                    site_id = f"site_{site_num}"
+                    
+                    if not check_api_aggregator_config_exists(site_id):
+                        print(f"API聚合站实现方 {impl_name} 配置不存在，跳过显示")
+                        logger.info(f"API聚合站实现方 {impl_name} 配置不存在，跳过显示")
+                        continue
+                    
+                    # 获取站点配置的名称
+                    site_name = get_dynamic_config_value("api_aggregator", site_id, "name", default=site_id)
+                    print(f"API聚合站实现方 {impl_name} 的站点名称: {site_name}")
+                    display_name = site_name
+                    
+                except ImportError:
+                    logger.warning("无法导入配置检查工具，显示所有API聚合站实现方")
+            
+            print(f"Final display name for {impl_name}: {display_name}")
+                
+            # 确定该实现方属于哪些 DriverKey 组
+            driver_keys = impl_to_driver_keys.get(impl_name, [])
+
+            # 对于 API 聚合器实现方，创建特殊的分组
+            if not driver_keys and impl_name.startswith('gemini_common_'):
+                driver_keys = ["API_AGGREGATOR_GEMINI"]
+
+            # 为每个 driver_key 获取对应的数据库配置
+            for driver_key in driver_keys:
+                # 使用复合键 (implementation_name, driver_key) 获取配置
+                db_config = db_config_map.get((impl_name, driver_key), {})
+
+                # 获取该实现方支持的时长列表
+                supported_durations = sorted(list(impl_durations.get(impl_name, [])))
+
+                # 获取该实现方的算力配置（按时长分组）
+                power_configs = ImplementationPowerModel.get_all_powers_for_implementation(impl_name, driver_key)
+
+                # 构建时长-算力映射
+                duration_powers = []
+                for duration in supported_durations:
+                    power = power_configs.get(duration)
+
+                    # 如果数据库没有配置，尝试从代码默认值获取
+                    if power is None:
+                        default_power = impl_config.default_computing_power
+                        if isinstance(default_power, dict) and duration in default_power:
+                            power = default_power[duration]
+                        elif isinstance(default_power, dict) and default_power:
+                            # 如果是字典但没有对应时长，使用第一个值
+                            power = list(default_power.values())[0]
+                        else:
+                            power = default_power
+
+                    duration_powers.append({
+                        'duration': duration,
+                        'computing_power': power
+                    })
+
+                impl_data = {
+                    'name': impl_name,
+                    'display_name': display_name if impl_config.site_number is not None else (db_config.get('display_name') if db_config else None) or display_name,  # 聚合站点始终使用系统配置名称，其他实现方优先使用数据库值
+                    'enabled': db_config.get('enabled') if db_config and db_config.get('enabled') is not None else impl_config.enabled,
+                    'sort_order': db_config.get('sort_order') if db_config else impl_config.sort_order,  # 优先使用数据库排序，否则使用配置文件默认值
+                    'driver_key': db_config.get('driver_key') if db_config else impl_config.driver_class,  # 使用 driver_key 字段
+                    'default_computing_power': impl_config.default_computing_power,
+                    'description': impl_config.description,
+                    'driver_class': impl_config.driver_class,
+                    'supported_durations': supported_durations,
+                    'duration_powers': duration_powers,
+                }
+
+                # 调试日志：输出实现方数据
+                logger.debug(f"Implementation data: {impl_name}, driver_key={driver_key}, enabled={impl_data['enabled']}, db_config={db_config}")
+
+                # 为没有时长配置的实现方添加当前默认算力值
+                if not duration_powers:
+                    # 获取固定算力配置（duration = None）
+                    fixed_power = power_configs.get(None)
+                    if fixed_power is not None:
+                        impl_data['current_default_power'] = fixed_power
+                    else:
+                        # 使用代码默认值
+                        default_power = impl_config.default_computing_power
+                        if isinstance(default_power, dict) and default_power:
+                            impl_data['current_default_power'] = list(default_power.values())[0]
+                        else:
+                            impl_data['current_default_power'] = default_power or 0
+                else:
+                    # 为有时长配置的实现方添加每个时长的默认值
+                    impl_data['default_duration_powers'] = {}
+                    for duration in supported_durations:
+                        default_power = impl_config.default_computing_power
+                        if isinstance(default_power, dict) and duration in default_power:
+                            impl_data['default_duration_powers'][duration] = default_power[duration]
+                        elif isinstance(default_power, dict) and default_power:
+                            impl_data['default_duration_powers'][duration] = list(default_power.values())[0]
+                        else:
+                            impl_data['default_duration_powers'][duration] = default_power or 0
+
+                # 将实现方添加到对应的 DriverKey 组
+                if driver_key not in driver_key_groups:
+                    driver_key_groups[driver_key] = []
+                driver_key_groups[driver_key].append(impl_data)
+
+        # 对每组内的实现方按 sort_order 排序
+        for driver_key in driver_key_groups:
+            driver_key_groups[driver_key].sort(key=lambda x: (x['sort_order'] or 0, x['name']))
+
+        # 转换为列表格式，按 DriverKey 排序
+        result = [
+            {
+                'driver_key': driver_key,
+                'implementations': impls
+            }
+            for driver_key, impls in sorted(driver_key_groups.items())
+        ]
+
+        return {
+            "code": 0,
+            "data": result
+        }
+    except Exception as e:
+        logger.error(f"Failed to get implementation configs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateSortOrderRequest(BaseModel):
+    updates: List[dict]  # [{'implementation_name': str, 'driver_key': str, 'sort_order': int}]
+
+
+@router.post("/implementation-configs/sort-order")
+async def admin_update_sort_orders(
+    request: UpdateSortOrderRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    批量更新实现方的排序顺序
+
+    用于拖拽排序后保存新的顺序
+    """
+    admin = await require_admin(auth_token)
+
+    if not request.updates:
+        raise HTTPException(status_code=400, detail="更新列表不能为空")
+
+    try:
+        success_count = 0
+        for update in request.updates:
+            impl_name = update.get('implementation_name')
+            driver_key = update.get('driver_key')
+            sort_order = update.get('sort_order')
+
+            if impl_name is None or driver_key is None or sort_order is None:
+                logger.warning(f"Invalid update parameters: {update}")
+                continue
+
+            # 使用复合键 (implementation_name, driver_key) 查询和更新配置
+            existing_config = ImplementationPowerModel.get_config(impl_name, driver_key)
+
+            ImplementationPowerModel.set_config(
+                implementation_name=impl_name,
+                driver_key=driver_key,
+                sort_order=sort_order,
+                updated_by=admin.id
+            )
+            success_count += 1
+            logger.info(f"Updated sort order for {impl_name} (driver_key: {driver_key}) to {sort_order}")
+
+        return {
+            "code": 0,
+            "message": f"成功更新 {success_count} 个实现方的排序",
+            "data": {"updated_count": success_count}
+        }
+    except Exception as e:
+        logger.error(f"Failed to update sort orders: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

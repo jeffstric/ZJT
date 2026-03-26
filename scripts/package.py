@@ -8,6 +8,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -158,6 +159,22 @@ def fix_line_endings(file_path: Path, extensions: list[str] = [".sh", ".command"
         pass
 
 
+def copy_file_with_retry(src: Path, dst: Path, max_retries: int = 3, delay: float = 0.5):
+    """带重试机制的文件复制"""
+    for attempt in range(max_retries):
+        try:
+            shutil.copy2(src, dst)
+            return
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"      [RETRY] {src.name} (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                print(f"      [ERROR] Failed to copy: {src}")
+                print(f"      [ERROR] Destination: {dst}")
+                raise PermissionError(f"无法复制文件 {src}: {e}") from e
+
+
 def copy_source_files(src_dir: Path, dst_dir: Path, exclude_files: list):
     """复制源代码文件（递归处理，排除指定目录和文件）"""
 
@@ -182,8 +199,8 @@ def copy_source_files(src_dir: Path, dst_dir: Path, exclude_files: list):
                     continue
                 if item.name in exclude_files:
                     continue
-                # 复制文件
-                shutil.copy2(item, current_dst / item.name)
+                # 复制文件（带重试）
+                copy_file_with_retry(item, current_dst / item.name)
                 # 修复 shell 脚本的行尾符
                 fix_line_endings(current_dst / item.name)
 
@@ -288,6 +305,24 @@ def create_zip(src_dir: Path, output_file: Path):
                     zf.writestr(zinfo, f.read())
 
 
+def safe_remove_tree(path: Path, max_retries: int = 3, delay: float = 1.0):
+    """安全删除目录树（带重试机制）"""
+    if not path.exists():
+        return
+
+    for attempt in range(max_retries):
+        try:
+            shutil.rmtree(path)
+            return
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"  [RETRY] Removing {path.name} (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                print(f"  [ERROR] Failed to remove: {path}")
+                raise PermissionError(f"无法删除目录 {path}: {e}\n提示：请关闭所有可能占用文件的程序（如编辑器、文件管理器等）") from e
+
+
 def build_platform(name: str, config: dict, version: str):
     """构建单个平台的发布包"""
     print(f"[{name}] Building...")
@@ -295,7 +330,9 @@ def build_platform(name: str, config: dict, version: str):
     # 创建临时目录
     temp_dir = OUTPUT_PATH / "temp"
     if temp_dir.exists():
-        shutil.rmtree(temp_dir)
+        print("  - Cleaning up temporary directory...")
+        safe_remove_tree(temp_dir)
+        time.sleep(0.5)  # 等待文件系统完全释放
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     # 包目录
@@ -326,7 +363,8 @@ def build_platform(name: str, config: dict, version: str):
     create_zip(package_dir, output_file)
 
     # 清理临时目录
-    shutil.rmtree(temp_dir)
+    print("  - Cleaning up...")
+    safe_remove_tree(temp_dir)
 
     print(f"  [OK] {package_name}-{version}.zip")
     print()

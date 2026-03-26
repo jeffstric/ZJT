@@ -236,6 +236,10 @@ app.include_router(admin_router)
 # 注册系统状态 API 路由
 app.include_router(system_router)
 
+# 注册用户偏好 API 路由
+from api.user import router as user_router
+app.include_router(user_router)
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1984,6 +1988,69 @@ async def get_invitation_info(request: Request, auth_token: str = Header(None, a
         )
 
 
+# 用户实现方偏好 API 已迁移到 api/user.py
+
+
+@app.get('/api/tasks/{task_key}/implementations')
+async def get_task_implementations(
+    task_key: str,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取任务可选的实现方列表及其算力
+
+    Returns:
+        {
+            "task_key": "gemini-2.5-flash-image-preview",
+            "implementations": [
+                {"name": "gemini_duomi_v1", "display_name": "多米", "computing_power": 2, "description": "..."},
+                {"name": "gemini_image_preview_common_v1", "display_name": "通用接口", "computing_power": 3, "description": "..."}
+            ],
+            "default": "gemini_duomi_v1",
+            "user_selected": "gemini_image_preview_common_v1"
+        }
+    """
+    try:
+        from config.unified_config import UnifiedConfigRegistry, DriverKey
+
+        task_config = UnifiedConfigRegistry.get_by_key(task_key)
+        if not task_config:
+            return JSONResponse(
+                status_code=404,
+                content={'success': False, 'message': f'任务不存在: {task_key}'}
+            )
+
+        # 获取实现方列表（使用 _get_implementations_info 方法，支持动态 API 聚合器）
+        implementations = task_config._get_implementations_info()
+
+        # 获取用户偏好
+        user_selected = None
+        if auth_token:
+            if auth_token.startswith("Bearer "):
+                auth_token = auth_token[7:]
+            user_id = UserTokensModel.get_user_id_by_token(auth_token)
+            if user_id:
+                user_selected = UsersModel.get_implementation_preference(user_id, task_key)
+
+        return JSONResponse(
+            content={
+                'success': True,
+                'data': {
+                    'task_key': task_key,
+                    'implementations': implementations,
+                    'default': task_config.implementation,
+                    'user_selected': user_selected
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f'获取任务实现方失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'message': '服务器错误'}
+        )
+
+
 class SendVerifyCodeRequest(BaseModel):
     phone: str
     type: str
@@ -2895,7 +2962,6 @@ async def video_enhance(
             # 检查是否为本地缓存文件路径
             if video_url.startswith('/upload/cache/'):
                 # 本地缓存文件，需要上传到 RunningHub
-                import os
                 from pathlib import Path
                 from utils.file_storage import RunningHubFileStorage
                 from config.config_util import get_config, get_dynamic_config_value

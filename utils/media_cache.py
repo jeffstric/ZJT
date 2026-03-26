@@ -139,7 +139,77 @@ class MediaCacheManager:
         except Exception as e:
             logger.error(f"下载媒体文件失败: {e}")
             return None
-    
+
+    def save_data_url_to_cache(self, data_url: str, task_id: int) -> Optional[str]:
+        """
+        将 data URL (base64) 保存到本地缓存
+
+        Args:
+            data_url: data URL 格式的数据 (data:image/png;base64,xxx)
+            task_id: 任务ID
+
+        Returns:
+            本地URL路径，失败返回None
+        """
+        import base64 as b64
+
+        if not self.enabled:
+            logger.info("媒体缓存未启用，跳过保存")
+            return None
+
+        try:
+            # 检查是否是 data URL
+            if not data_url or not data_url.startswith("data:"):
+                return None
+
+            # 解析 data URL
+            # 格式: data:image/png;base64,xxxxx
+            header, data = data_url.split(",", 1)
+            mime_part = header.split(":")[1].split(";")[0]
+
+            # 确定扩展名
+            ext_map = {
+                "image/png": ".png",
+                "image/jpeg": ".jpg",
+                "image/gif": ".gif",
+                "image/webp": ".webp",
+                "video/mp4": ".mp4",
+                "video/webm": ".webm"
+            }
+            ext = ext_map.get(mime_part, ".bin")
+
+            # 判断媒体类型
+            media_type = "image" if mime_part.startswith("image/") else "video"
+
+            # 使用同一个时间戳生成日期目录和文件名
+            current_time = datetime.now()
+
+            # 获取日期目录
+            date_dir = self._get_date_dir(current_time)
+
+            # 生成文件名
+            url_hash = hashlib.md5(data.encode()).hexdigest()[:8]
+            timestamp_str = current_time.strftime("%Y%m%d%H%M%S")
+            filename = f"{task_id}_{timestamp_str}_{url_hash}{ext}"
+            file_path = date_dir / filename
+
+            # 解码并保存
+            logger.info(f"保存 data URL 到缓存: {file_path}")
+            file_bytes = b64.b64decode(data)
+            with open(file_path, 'wb') as f:
+                f.write(file_bytes)
+
+            # 生成本地URL（相对于项目根目录）
+            relative_path = file_path.relative_to(self.root_dir)
+            local_url = f"/{relative_path.as_posix()}"
+
+            logger.info(f"data URL 缓存成功: {local_url}")
+            return local_url
+
+        except Exception as e:
+            logger.error(f"保存 data URL 失败: {e}")
+            return None
+
     def get_cache_stats(self) -> Dict[str, Any]:
         """
         获取缓存统计信息

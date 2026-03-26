@@ -68,6 +68,30 @@ database:
 duomi:
   token: "5q26ybqAXXXXX"
 
+# 适配云雾 comfly这类聚合站
+api_aggregator:
+  site_1:
+    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: "yunwu"
+  site_2:
+    base_url: "https://ai.comfly.chat"  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: "comfly"
+  site_3:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+  site_4:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+  site_5:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+
+
 vidu:
   token: "vda_xxxx"
 
@@ -171,6 +195,7 @@ file_storage:
   # PUT/DELETE 请求：10万次/月
   # GET 请求：100万次/月
   # 具体参考 https://developer.qiniu.com/kodo/6379/metering-and-billing?ref=support.qiniu.com
+  # 注册请使用以下链接，获取专属优惠: https://s.qiniu.com/6zymqy
   qiniu:
     access_key: "IAM-0fZBG5O0nEj9Xy-d_vjtowNp4viwWmjaDx8tNjCY"  # 七牛云 Access Key
     secret_key: "HD3mwsOHnr5uSjPRTyvIWDrmwCEfOUlwQiT5HhNft9TB"  # 七牛云 Secret Key
@@ -188,6 +213,11 @@ media_cache:
   max_size_gb: 10                  # 最大缓存容量GB（0=不限制）
   cleanup_on_startup: true         # 启动时执行清理
   cleanup_interval_hours: 24       # 定时清理间隔（小时）
+
+# 同步任务进程池配置（用于Gemini、Seedream等同步API）
+sync_task:
+  max_workers: 4                   # 进程池最大并发数
+  check_interval: 5                # 结果检查间隔（秒）
 
 # Sentry 配置
 sentry:
