@@ -142,15 +142,22 @@ main() {
     # 创建配置文件
     create_config
 
-    # 执行数据库迁移
-    # run_migrations  # 迁移已在 run_prod.py 中执行
-
     # 启动应用
     log_info "启动应用服务..."
     log_info "========================================"
 
-    # 始终通过 run_prod.py 启动，它会执行迁移并启动服务
-    exec python3 /app/scripts/running/run_prod.py
+    # 测试环境模式
+    if [ "$comfyui_env" = "unit" ]; then
+        log_info "测试环境：执行数据库迁移..."
+        bash /app/scripts/testing/run_migrations.sh
+        # 执行传入的命令（如 python3 scripts/testing/run_unit_tests.py）
+        exec "$@"
+    else
+        # 生产环境：先执行迁移，再启动服务
+        log_info "生产环境：执行数据库迁移..."
+        bash /app/scripts/testing/run_migrations.sh
+        exec python3 /app/scripts/running/run_prod.py
+    fi
 }
 
 # 捕获信号并传递给子进程

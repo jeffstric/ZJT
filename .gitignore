@@ -1,4 +1,5 @@
 config_*.yml
+!config_*.base.yml
 __pycache__/
 server_output/
 upload/*

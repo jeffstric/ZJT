@@ -104,7 +104,6 @@ python3 scripts/running/run_dev.py
 | 配置项 | 说明 |
 |--------|------|
 | `runninghub.*` | RunningHub 视频生成 API |
-| `llm.baidu.*` | 百度千帆大模型 |
 | `llm.qwen.*` | 阿里通义千问 |
 | `llm.google.*` | Google Gemini |
 | `tts.*` | TTS 语音合成服务 |
@@ -252,6 +251,7 @@ comfyui_server/
 │  │  ├─ run_scheduler.py     # 定时任务启动器
 │  │  └─ run_unit_tests.py    # 单元测试启动器
 │  ├─ testing/                # 测试脚本
+│  │  ├─ run_migrations.sh   # 数据库迁移脚本
 │  │  ├─ run_driver_tests.sh  # 驱动测试脚本
 │  │  └─ run_tests.sh         # 测试脚本
 │  ├─ tools/                  # 工具脚本
@@ -288,92 +288,59 @@ comfyui_server/
 
 ## Docker 部署
 
-使用 Docker Compose 可以快速部署整套服务（MySQL + 应用）。
-
-### 快速启动
+### 启动服务
 
 ```bash
-# 构建并启动所有服务（从项目根目录运行）
-docker compose -f docker/docker-compose.yml up -d
+# 进入 docker 目录
+cd docker
 
-# 查看服务状态
-docker compose -f docker/docker-compose.yml ps
+# 启动所有服务（MySQL + 应用）
+docker compose up -d
 
 # 查看日志
-docker compose -f docker/docker-compose.yml logs -f
-
-# 停止服务
-docker compose -f docker/docker-compose.yml down
+docker compose logs -f
 ```
-
-### 服务架构
-
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| MySQL 8.0 | 3306 | 数据库服务 |
-| App | 9003 | FastAPI 应用 |
-
-### 环境变量
-
-可通过修改 `docker/docker-compose.yml` 中的环境变量来配置：
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `MYSQL_ROOT_PASSWORD` | `zjt_mysql_password` | MySQL root 密码 |
-| `MYSQL_DATABASE` | `zjt` | 数据库名称 |
-| `DB_HOST` | `mysql` | 数据库主机（容器内部） |
-| `DB_PORT` | `3306` | 数据库端口 |
-| `DB_USER` | `root` | 数据库用户 |
-| `DB_PASSWORD` | `zjt_mysql_password` | 数据库密码 |
-| `comfyui_env` | `prod` | 运行环境 |
-
-### 数据持久化
-
-以下目录会持久化数据：
-
-| 目录 | 说明 |
-|------|------|
-| `./data` | 应用数据 |
-| `./logs` | 日志文件 |
-| `./upload` | 上传文件 |
-| `./files` | 文件存储 |
-| `mysql_data` | MySQL 数据（Docker volume） |
 
 ### 常用命令
 
 ```bash
-# 仅启动应用服务
-docker compose -f docker/docker-compose.yml up -d app
+# 停止服务
+docker compose down
 
-# 重启应用服务
-docker compose -f docker/docker-compose.yml restart app
-
-# 查看应用日志
-docker compose -f docker/docker-compose.yml logs -f app
+# 重新构建镜像
+docker compose build
 
 # 进入应用容器
-docker compose -f docker/docker-compose.yml exec app bash
+docker compose exec app bash
 
 # 进入数据库
-docker compose -f docker/docker-compose.yml exec mysql mysql -uroot -pzjt_mysql_password zjt
-
-# 重新构建应用镜像
-docker compose -f docker/docker-compose.yml build app
+docker compose exec mysql mysql -uroot -p3bTgThWP2xeX zjt
 ```
 
-### 配置文件
+### 端口
 
-- `docker/Dockerfile` - 应用镜像构建文件
-- `docker/docker-compose.yml` - Docker Compose 编排配置
-- `docker/docker-entrypoint.sh` - 容器启动脚本
-- `docker/mysql/my.cnf` - MySQL 8.0 配置
+| 服务 | 端口 |
+|------|------|
+| MySQL | 3306 |
+| 应用 | 9003 |
 
-### 注意事项
+---
 
-1. **首次启动**：MySQL 会自动执行 `model/sql/` 目录下的 SQL 初始化脚本
-2. **数据库迁移**：应用启动时会自动执行 Alembic 迁移（如果 `alembic.auto_migrate=true`）
-3. **健康检查**：应用使用 `/api/system/status` 端点进行健康检查
-4. **配置文件**：如需自定义配置，可挂载 `config_prod.yml` 到容器
+## Docker 单元测试
+
+```bash
+# 进入 docker 目录
+cd docker
+
+# 启动测试环境（会自动运行测试）
+docker compose -f docker-compose-test.yml up -d
+
+# 查看测试日志
+docker compose -f docker-compose-test.yml logs
+
+# 清理测试环境
+docker compose -f docker-compose-test.yml down -v
+```
 
 ---
 
