@@ -1,0 +1,179 @@
+# =============================================================================
+# GitLab CI/CD 配置文件
+# 自动运行单元测试
+# =============================================================================
+#
+# 使用方式：
+# 1. 将此文件推送到 GitLab 仓库
+# 2. 确保 GitLab Runner 配置了 Docker executor 或 DinD (Docker-in-Docker)
+# 3. 流水线将自动在 push 和 MR 时触发
+#
+# 查看流水线：GitLab → CI/CD → Pipelines
+# =============================================================================
+
+stages:
+  - test
+
+# 变量配置
+variables:
+  # Docker 配置
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+
+  # 测试数据库配置
+  DB_HOST: mysql_test
+  DB_PORT: "3306"
+  DB_USER: root
+  DB_PASSWORD: root_test_pass
+  DB_NAME: zjt_unittest
+
+  # 环境配置
+  comfyui_env: unit
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUTF8: "1"
+
+# =============================================================================
+# 单元测试 job
+# =============================================================================
+unit_tests:
+  stage: test
+
+  # 使用 Docker-in-Docker (DinD) 来运行 docker-compose
+  image: docker:24-dind
+
+  services:
+    - docker:24-dind
+
+  # 缓存配置（加速后续构建）
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - cache/pip
+      - .cache/pip
+
+  before_script:
+    # 安装必要工具
+    - apk add --no-cache python3 py3-pip docker-compose mysql-client
+
+    # 等待 Docker daemon 就绪
+    - for i in {1..30}; do
+        docker info > /dev/null 2>&1 && break
+        sleep 1
+      done
+
+    # 验证 Docker 是否可用
+    - docker --version
+    - docker-compose --version
+
+    # 复制测试配置
+    - cp config.example.yml config_unit.yml || true
+
+  script:
+    # 进入 docker 目录
+    - cd docker
+
+    # 启动测试环境（MySQL + 测试容器）
+    - docker-compose -f docker-compose-test.yml up -d --build
+
+    # 等待 MySQL 就绪
+    - |
+      for i in {1..30}; do
+        docker exec zjt_mysql_test mysqladmin ping -h localhost -u root -proot_test_pass && break
+        echo "等待 MySQL 启动..."
+        sleep 2
+      done
+
+    # 等待测试容器完成并获取日志
+    - |
+      echo "等待测试执行完成..."
+      timeout=600
+      elapsed=0
+      while [ $elapsed -lt $timeout ]; do
+        status=$(docker inspect -f '{{.State.Status}}' zjt_test 2>/dev/null || echo "not_found")
+        if [ "$status" == "exited" ]; then
+          break
+        fi
+        echo "测试进行中... (${elapsed}s)"
+        sleep 10
+        elapsed=$((elapsed + 10))
+      done
+
+    # 显示测试日志
+    - docker logs zjt_test || true
+
+    # 获取测试结果
+    - |
+      if docker cp zjt_test:/app/test-results.xml ./test-results.xml 2>/dev/null; then
+        echo "测试结果已保存"
+      else
+        echo "注意：无法获取 test-results.xml，查看上方日志了解测试情况"
+      fi
+
+    # 停止测试环境
+    - docker-compose -f docker-compose-test.yml down -v || true
+
+  # 测试 artifacts
+  artifacts:
+    when: always
+    paths:
+      - test-results.xml
+      - docker/*.log
+      - docker/logs/
+    reports:
+      junit: test-results.xml
+    expire_in: 7 days
+
+  # 标签（根据实际 Runner 配置调整）
+  tags:
+    - docker
+
+  # 规则：推送和 MR 时触发
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# =============================================================================
+# 简化版测试（如果 DinD 不可用，使用直接安装方式）
+# =============================================================================
+unit_tests_simple:
+  stage: test
+  image: python:3.10-slim
+  services:
+    - name: mysql:8.0
+      alias: mysql_test
+  variables:
+    MYSQL_ROOT_PASSWORD: root_test_pass
+    MYSQL_DATABASE: zjt_unittest
+    MYSQL_USER: unittest_user
+    MYSQL_PASSWORD: unittest_pass
+    MYSQL_CHARSET: utf8mb4
+    MYSQL_COLLATION: utf8mb4_unicode_ci
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends ffmpeg default-mysql-client
+    - pip install --no-cache-dir -r requirements.txt
+    # 等待 MySQL 就绪
+    - |
+      for i in {1..30}; do
+        mysqladmin ping -h mysql_test -u root -proot_test_pass && break
+        echo "等待 MySQL..."
+        sleep 1
+      done
+    # 初始化数据库
+    - mysql -h mysql_test -u root -proot_test_pass zjt_unittest < model/sql/baseline.sql || true
+    # 复制配置
+    - cp config.example.yml config_unit.yml || true
+  script:
+    - python scripts/testing/run_unit_tests.py --verbose
+  artifacts:
+    when: always
+    reports:
+      junit: test-results.xml
+    paths:
+      - test-results.xml
+    expire_in: 7 days
+  tags:
+    - docker
+  rules:
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
