@@ -13,28 +13,82 @@ logger = logging.getLogger(__name__)
 _config_cache: Dict[str, Any] = {}
 
 
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    深度合并两个字典，override 的值会覆盖 base 的值
+    对于嵌套字典，递归合并
+
+    Args:
+        base: 基础字典
+        override: 覆盖字典
+
+    Returns:
+        合并后的字典
+    """
+    result = base.copy()
+
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+
+    return result
+
+
+def _get_base_config_path(config_path: str) -> str:
+    """
+    根据配置文件路径获取基类配置文件路径
+
+    Args:
+        config_path: 配置文件路径，如 'config_prod.yml'
+
+    Returns:
+        基类配置文件路径，如 'config_prod.base.yaml'，如果不存在则返回 None
+    """
+    if config_path is None:
+        return None
+
+    # 从 config_prod.yml -> config_prod.base.yaml
+    # 从 config_dev.yml -> config_dev.base.yaml (如果存在)
+    if config_path.endswith('.yml'):
+        base_path = config_path.replace('.yml', '.base.yaml')
+        return base_path
+    elif config_path.endswith('.yaml'):
+        base_path = config_path.replace('.yaml', '.base.yaml')
+        return base_path
+
+    return None
+
+
 def get_config(config_path: str = None) -> Dict[str, Any]:
     """
     获取配置文件内容（带缓存）
-    
+
     首次调用时读取配置文件并缓存，后续调用直接返回缓存内容。
-    
+
+    支持基类配置文件机制：
+    - 如果存在 config_prod.base.yaml 基类配置文件，会先加载基类
+    - 然后加载用户配置文件 config_prod.yml
+    - 用户配置会与基类配置合并，缺失的配置项使用基类的值
+    - 这确保了即使配置文件缺少某些配置项，也能使用系统默认的基类配置
+
     Args:
         config_path: 可选的配置文件路径，默认根据环境变量自动选择
-        
+
     Returns:
         配置文件内容的字典
-        
+
     Example:
         >>> config = get_config()
         >>> db_config = config.get('database', {})
         >>> edition_mode = config.get('edition', {}).get('mode', 'community')
     """
     global _config_cache
-    
+
     # 获取配置文件路径
     file_path = get_config_path(config_path)
-    
+
     # 检查缓存
     if file_path in _config_cache:
         return _config_cache[file_path]
@@ -43,16 +97,33 @@ def get_config(config_path: str = None) -> Dict[str, Any]:
     config_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(config_dir)  # 回到项目根目录
     full_path = os.path.join(project_root, file_path)
-    
+
     if not os.path.exists(full_path):
         raise FileNotFoundError(f"Configuration file not found: {full_path}")
-    
-    # 读取并缓存
+
+    # 读取用户配置
     with open(full_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
-        _config_cache[file_path] = config or {}
-    
-    return _config_cache[file_path]
+        user_config = config or {}
+
+    # 检查并加载基类配置文件
+    base_config_path = _get_base_config_path(file_path)
+    if base_config_path:
+        base_full_path = os.path.join(project_root, base_config_path)
+        if os.path.exists(base_full_path):
+            logger.info(f"Loading base config from: {base_config_path}")
+            with open(base_full_path, 'r', encoding='utf-8') as f:
+                base_config = yaml.safe_load(f) or {}
+            # 深度合并：用户配置优先，基类配置作为默认值
+            config = _deep_merge(base_config, user_config)
+            logger.info(f"Base config merged with user config: {file_path}")
+        else:
+            logger.debug(f"Base config file not found: {base_config_path}, using user config only")
+
+    # 缓存并返回
+    _config_cache[file_path] = config
+
+    return config
 
 
 def get_config_value(*keys, default: Any = None) -> Any:
