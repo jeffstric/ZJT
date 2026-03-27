@@ -82,6 +82,25 @@ def wait_for_service(port, timeout=60):
     return False
 
 
+def check_path_no_spaces(path, path_name):
+    """
+    检查路径中是否包含空格
+
+    Args:
+        path: 要检查的路径
+        path_name: 路径名称（用于错误提示）
+
+    Returns:
+        bool: 如果路径不包含空格返回 True，否则返回 False
+    """
+    if ' ' in path:
+        logger.error(f"路径包含空格: {path_name}")
+        logger.error(f"路径: {path}")
+        logger.error("请将项目移动到不含空格的路径下，例如: C:\\Projects\\comfyui_server")
+        return False
+    return True
+
+
 def get_current_dir():
     """
     获取项目根目录，兼容打包后的路径
@@ -93,7 +112,7 @@ def get_current_dir():
         # 开发环境，从脚本路径向上三级到达项目根目录
         # scripts/launchers/start_windows.py -> scripts/ -> project_root
         current_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    
+
     return current_dir
 
 
@@ -921,6 +940,13 @@ def main():
     logger.info("=" * 50)
     logger.info(f"Windows 启动脚本 (环境: {env})")
     logger.info("=" * 50)
+
+    # 检查关键路径是否包含空格
+    current_dir = get_current_dir()
+    if not check_path_no_spaces(current_dir, "项目根目录"):
+        sys.exit(1)
+
+    logger.info("路径空格检查通过")
 
     config, config_file = load_config()
     if config is None:

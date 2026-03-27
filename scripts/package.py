@@ -39,7 +39,6 @@ EXCLUDE_DIRS = [
     "upload",
     "data",
     "logs",
-    "script_parser_logs",
     ".pytest_cache",
     ".venv",
     "build",
