@@ -7,7 +7,7 @@
 runninghub:
   host: "https://www.runninghub.cn"
   api_key: ""
-  max_concurrent_slots: 3
+  max_concurrent_slots: 3 # 该值根据runninghub账号的 并发数决定，可以查看 https://www.runninghub.cn/vip-rights/2 查看并发数，注意，必须支持api调用的套餐才能使用 26年3月 基础版为1 专业版为3 专业Plus版为5 Max 为20
 
 server:
   host: "http://localhost:9003"
@@ -32,28 +32,6 @@ timeout:
   status_check_timeout: 900
   status_check_interval: 10
 
-sms:
-  active_driver: "perseids"
-  agents:
-    default:
-      driver: "legacy"
-      access_key_id: ""
-      access_key_secret: ""
-      sign_name: ""
-      template_code: ""
-      region_id: "cn-hangzhou"
-    api_agent:
-      driver: "perseids"
-      api_url: ""
-      method: "POST"
-
-database:
-  host: "localhost"
-  port: 3306
-  user: "root"
-  password: ""
-  database: "zjt"
-  charset: "utf8mb4"
 
 duomi:
   token: ""
@@ -64,6 +42,29 @@ vidu:
 volcengine:
   api_key: ""
 
+# 适配云雾 comfly这类聚合站
+api_aggregator:
+  site_1:
+    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: "yunwu"
+  site_2:
+    base_url: "https://ai.comfly.chat"  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: "comfly"
+  site_3:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+  site_4:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+  site_5:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+
 pay:
   wxpay:
     appId: ""
@@ -72,9 +73,6 @@ pay:
     APIv3_key: ""
     appSecret: ""
 
-bin:
-  ffmpeg: "bin/ffmpeg/ffmpeg"
-  ffprobe: "bin/ffmpeg/ffprobe"
 
 llm:
   baidu:
@@ -121,22 +119,6 @@ upload:
 frontend:
   debug_password: "123"
 
-workflow:
-  poll_status_interval: 30
-
-alembic:
-  auto_migrate: true
-  script_location: "alembic"
-
-edition:
-  mode: "community"
-
-file_storage:
-  qiniu:
-    access_key: ""
-    secret_key: ""
-    bucket_name: ""
-    cdn_domain: ""
 
 image:
   enable_download: true
@@ -148,7 +130,3 @@ media_cache:
   max_size_gb: 10
   cleanup_on_startup: true
   cleanup_interval_hours: 24
-
-sentry:
-  dsn: ""
-  environment: "production"

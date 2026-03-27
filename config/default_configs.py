@@ -153,7 +153,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'runninghub.max_concurrent_slots',
         'value_type': 'int',
-        'description': 'RunningHub 最大并发槽位数量',
+        'description': 'RunningHub 最大并发槽位数量，该值根据runninghub账号的 并发数决定，可以查看 https://www.runninghub.cn/vip-rights/2 查看并发数，注意，必须支持api调用的套餐才能使用 26年3月 基础版为1 专业版为3 专业Plus版为5 Max 为20',
         'editable': True,
         'is_sensitive': False
     },
