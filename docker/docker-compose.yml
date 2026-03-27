@@ -11,7 +11,7 @@ services:
     container_name: zjt_mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: zjt_mysql_password
+      MYSQL_ROOT_PASSWORD: 3bTgThWP2xeX
       MYSQL_DATABASE: zjt
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
@@ -50,7 +50,7 @@ services:
       DB_HOST: mysql
       DB_PORT: 3306
       DB_USER: root
-      DB_PASSWORD: zjt_mysql_password
+      DB_PASSWORD: 3bTgThWP2xeX
       DB_NAME: zjt
       # 时区设置
       TZ: Asia/Shanghai
@@ -66,6 +66,8 @@ services:
       - ../files:/app/files
       # ffmpeg 和其他二进制文件
       - ../bin/ffmpeg:/app/bin/ffmpeg:ro
+      # 挂载 entrypoint 脚本（便于修改无需重新构建）
+      - ./docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh:ro
     depends_on:
       mysql:
         condition: service_healthy

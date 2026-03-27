@@ -14,14 +14,15 @@ ENV PYTHONUNBUFFERED=1 \
     DB_HOST=mysql \
     DB_PORT=3306 \
     DB_USER=root \
-    DB_PASSWORD=zjt_mysql_password \
+    DB_PASSWORD=3bTgThWP2xeX \
     DB_NAME=zjt
 
 # Set working directory
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
     # ffmpeg and ffprobe for video processing
     ffmpeg \
     # MySQL client for database initialization
@@ -48,9 +49,10 @@ COPY web/ ./web/
 COPY server.py ./
 COPY config.example.yml ./
 
-# Copy entrypoint script
-COPY docker-entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Copy entrypoint script and fix line endings for Windows compatibility
+COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Upgrade pip and install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
@@ -63,7 +65,7 @@ RUN mkdir -p /app/data /app/logs /app/upload/cache /app/dist
 EXPOSE 9003
 
 # Set the entrypoint
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Default command - start the production server
 CMD ["python", "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", "9003", "--timeout-keep-alive", "600"]

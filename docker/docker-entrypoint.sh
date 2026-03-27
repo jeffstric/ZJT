@@ -32,7 +32,7 @@ wait_for_mysql() {
     local attempt=1
 
     while [ $attempt -le $max_attempts ]; do
-        if mysqladmin ping -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" --silent 2>/dev/null; then
+        if mysqladmin ping -h"${DB_HOST}" -P"${DB_PORT}" -u"${DB_USER}" -p"${DB_PASSWORD}" --skip-ssl --silent 2>/dev/null; then
             log_info "MySQL 数据库已就绪！"
             return 0
         fi
@@ -72,7 +72,7 @@ if 'database' not in config:
 config['database']['host'] = os.environ.get('DB_HOST', 'mysql')
 config['database']['port'] = int(os.environ.get('DB_PORT', '3306'))
 config['database']['user'] = os.environ.get('DB_USER', 'root')
-config['database']['password'] = os.environ.get('DB_PASSWORD', 'zjt_mysql_password')
+config['database']['password'] = os.environ.get('DB_PASSWORD', '3bTgThWP2xeX')
 config['database']['database'] = os.environ.get('DB_NAME', 'zjt')
 
 with open(config_file, 'w', encoding='utf-8') as f:
@@ -143,19 +143,14 @@ main() {
     create_config
 
     # 执行数据库迁移
-    run_migrations
+    # run_migrations  # 迁移已在 run_prod.py 中执行
 
     # 启动应用
     log_info "启动应用服务..."
     log_info "========================================"
 
-    # 如果提供了命令，执行它；否则使用默认命令
-    if [ $# -gt 0 ]; then
-        exec "$@"
-    else
-        # 默认启动生产环境服务
-        exec python3 /app/scripts/running/run_prod.py
-    fi
+    # 始终通过 run_prod.py 启动，它会执行迁移并启动服务
+    exec python3 /app/scripts/running/run_prod.py
 }
 
 # 捕获信号并传递给子进程
