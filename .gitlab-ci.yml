@@ -57,7 +57,8 @@ unit_tests:
     - apk add --no-cache python3 py3-pip docker-compose mysql-client
 
     # 等待 Docker daemon 就绪
-    - for i in {1..30}; do
+    - |
+      for i in {1..30}; do
         docker info > /dev/null 2>&1 && break
         sleep 1
       done
