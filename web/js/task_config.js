@@ -33,7 +33,10 @@
 
     loadingPromise = (async () => {
       try {
-        const response = await fetch('/api/system/task-configs');
+        // 获取 auth_token（如果存在）
+        const token = localStorage.getItem('auth_token');
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+        const response = await fetch('/api/system/task-configs', { headers });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }

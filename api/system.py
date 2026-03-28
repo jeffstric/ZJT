@@ -1,10 +1,11 @@
 """
 系统状态 API 路由
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Header
 import logging
 
 from model.users import UsersModel
+from model.user_tokens import UserTokensModel
 from config.unified_config import UnifiedConfigRegistry
 from config.config_util import get_config_value
 from config.version import get_app_version
@@ -39,7 +40,7 @@ async def get_system_status():
 
 
 @router.get("/task-configs")
-async def get_task_configs():
+async def get_task_configs(authorization: str = Header(None)):
     """
     获取所有任务类型配置
 
@@ -49,9 +50,23 @@ async def get_task_configs():
     - 供应商信息
 
     前端可以根据此接口动态渲染模型选择器、参数配置等组件
+
+    支持可选的 Authorization 头。如果传入有效token，
+    返回的 computing_power 将根据用户实现方偏好返回对应实现方的算力。
     """
     try:
-        frontend_config = UnifiedConfigRegistry.get_frontend_config()
+        user_id = None
+        user_prefs = {}
+
+        # 如果传入了 Authorization 头，获取用户ID和偏好
+        if authorization:
+            if authorization.startswith("Bearer "):
+                authorization = authorization[7:]
+            user_id = UserTokensModel.get_user_id_by_token(authorization)
+            if user_id:
+                user_prefs = UsersModel.get_all_preferences(user_id)
+
+        frontend_config = UnifiedConfigRegistry.get_frontend_config(user_id, user_prefs)
         return {
             "code": 0,
             "data": frontend_config

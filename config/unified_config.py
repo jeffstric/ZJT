@@ -21,6 +21,9 @@
 
 from dataclasses import dataclass, field
 from typing import Optional, Union, Dict, List, Any, TYPE_CHECKING
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class TaskCategory:
@@ -493,10 +496,14 @@ class UnifiedConfigRegistry:
         return result
     
     @classmethod
-    def get_frontend_config(cls) -> Dict[str, Any]:
+    def get_frontend_config(cls, user_id: int = None, user_prefs: Dict[str, str] = None) -> Dict[str, Any]:
         """
         获取前端需要的完整配置
-        
+
+        Args:
+            user_id: 用户ID（可选，如果有则应用用户偏好）
+            user_prefs: 用户实现方偏好字典（可选）
+
         Returns:
             {
                 'tasks': [...],  # 所有任务配置
@@ -508,7 +515,11 @@ class UnifiedConfigRegistry:
             [c.to_frontend_dict() for c in cls._configs.values() if c.enabled],
             key=lambda x: (x['sort_order'], x['id'])
         )
-        
+
+        # 如果有用户偏好，根据偏好更新 computing_power
+        if user_id and user_prefs:
+            tasks = cls._apply_user_preferences_to_tasks(tasks, user_prefs)
+
         categories = {
             TaskCategory.IMAGE_EDIT: '图片编辑',
             TaskCategory.TEXT_TO_VIDEO: '文生视频',
@@ -519,7 +530,7 @@ class UnifiedConfigRegistry:
             TaskCategory.DIGITAL_HUMAN: '数字人',
             TaskCategory.OTHER: '其他',
         }
-        
+
         providers = {
             TaskProvider.DUOMI: '多米',
             TaskProvider.RUNNINGHUB: 'RunningHub',
@@ -527,12 +538,49 @@ class UnifiedConfigRegistry:
             TaskProvider.VOLCENGINE: '火山引擎',
             TaskProvider.LOCAL: '本地',
         }
-        
+
         return {
             'tasks': tasks,
             'categories': categories,
             'providers': providers,
         }
+
+    @classmethod
+    def _apply_user_preferences_to_tasks(cls, tasks: List[Dict], user_prefs: Dict[str, str]) -> List[Dict]:
+        """
+        根据用户偏好更新 tasks 中的 computing_power
+
+        Args:
+            tasks: 任务配置列表
+            user_prefs: 用户实现方偏好字典 {task_key: implementation_name}
+
+        Returns:
+            更新后的 tasks 列表
+        """
+        from model.implementation_power import ImplementationPowerModel
+
+        for task in tasks:
+            task_key = task.get('key')
+            user_pref_impl = user_prefs.get(task_key)
+
+            if user_pref_impl:
+                # 获取该任务配置，用于获取 driver_name
+                config = cls._configs.get(task_key)
+                if not config:
+                    continue
+
+                driver_name = config.driver_name if hasattr(config, 'driver_name') else None
+
+                # 获取用户偏好实现方的算力
+                try:
+                    impl_power = ImplementationPowerModel.get_power(user_pref_impl, driver_name)
+                    if impl_power is not None:
+                        task['computing_power'] = impl_power
+                        task['user_preferred_implementation'] = user_pref_impl
+                except Exception as e:
+                    logger.debug(f"Failed to get implementation power for {user_pref_impl}: {e}")
+
+        return tasks
     
     @classmethod
     def clear(cls) -> None:
