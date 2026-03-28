@@ -42,7 +42,7 @@ unit_tests:
   image: docker:24-dind
 
   services:
-    - docker:24-dind
+    - docker:dind
 
   # 缓存配置（加速后续构建）
   cache:
@@ -57,10 +57,20 @@ unit_tests:
 
     # 等待 Docker daemon 就绪
     - |
+      echo "Waiting for Docker daemon..."
       for i in {1..30}; do
         docker info > /dev/null 2>&1 && break
+        echo "Attempt $i failed, retrying..."
         sleep 1
       done
+      docker info || echo "Docker daemon not available"
+
+    # 调试：检查 DinD 服务
+    - echo "DOCKER_HOST=$DOCKER_HOST"
+    - cat /etc/docker/daemon.json 2>/dev/null || echo "No daemon.json"
+    - ps aux | grep dockerd || echo "dockerd not running"
+    - cat /etc/resolv.conf | grep docker || echo "No docker in resolv.conf"
+    - nslookup docker 2>/dev/null || echo "Cannot resolve docker"
 
     # 验证 Docker 是否可用
     - docker --version
