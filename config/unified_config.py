@@ -21,6 +21,9 @@
 
 from dataclasses import dataclass, field
 from typing import Optional, Union, Dict, List, Any, TYPE_CHECKING
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class TaskCategory:
@@ -319,10 +322,21 @@ class UnifiedTaskConfig:
                 except Exception:
                     sort_order = impl_config.sort_order
 
+                # 获取算力（从数据库读取，使用 driver_key 查询）
+                try:
+                    from model.implementation_power import ImplementationPowerModel
+                    impl_power = ImplementationPowerModel.get_power(impl_name, self.driver_name)
+                    if impl_power is not None:
+                        computing_power = impl_power
+                    else:
+                        computing_power = impl_config.default_computing_power
+                except Exception:
+                    computing_power = impl_config.default_computing_power
+
                 result.append({
                     'name': impl_name,
                     'display_name': impl_config.get_display_name(),
-                    'computing_power': impl_config.default_computing_power,
+                    'computing_power': computing_power,
                     'description': impl_config.description,
                     'is_default': impl_name == self.implementation,
                     'sort_order': sort_order,
@@ -493,10 +507,14 @@ class UnifiedConfigRegistry:
         return result
     
     @classmethod
-    def get_frontend_config(cls) -> Dict[str, Any]:
+    def get_frontend_config(cls, user_id: int = None, user_prefs: Dict[str, str] = None) -> Dict[str, Any]:
         """
         获取前端需要的完整配置
-        
+
+        Args:
+            user_id: 用户ID（可选，如果有则应用用户偏好）
+            user_prefs: 用户实现方偏好字典（可选）
+
         Returns:
             {
                 'tasks': [...],  # 所有任务配置
@@ -508,7 +526,12 @@ class UnifiedConfigRegistry:
             [c.to_frontend_dict() for c in cls._configs.values() if c.enabled],
             key=lambda x: (x['sort_order'], x['id'])
         )
-        
+
+        # 根据用户偏好更新 computing_power
+        # 1. 如果有用户偏好，使用偏好实现方的算力
+        # 2. 如果没有用户偏好（或未传入），使用 implementations 中排序第一位的算力
+        tasks = cls._apply_user_preferences_to_tasks(tasks, user_prefs or {})
+
         categories = {
             TaskCategory.IMAGE_EDIT: '图片编辑',
             TaskCategory.TEXT_TO_VIDEO: '文生视频',
@@ -519,7 +542,7 @@ class UnifiedConfigRegistry:
             TaskCategory.DIGITAL_HUMAN: '数字人',
             TaskCategory.OTHER: '其他',
         }
-        
+
         providers = {
             TaskProvider.DUOMI: '多米',
             TaskProvider.RUNNINGHUB: 'RunningHub',
@@ -527,12 +550,63 @@ class UnifiedConfigRegistry:
             TaskProvider.VOLCENGINE: '火山引擎',
             TaskProvider.LOCAL: '本地',
         }
-        
+
         return {
             'tasks': tasks,
             'categories': categories,
             'providers': providers,
         }
+
+    @classmethod
+    def _apply_user_preferences_to_tasks(cls, tasks: List[Dict], user_prefs: Dict[str, str]) -> List[Dict]:
+        """
+        根据用户偏好更新 tasks 中的 computing_power
+
+        逻辑：
+        1. 如果用户有偏好，使用偏好实现方的算力
+        2. 如果没有偏好，使用 implementations 中排序第一位的算力
+
+        Args:
+            tasks: 任务配置列表
+            user_prefs: 用户实现方偏好字典 {task_key: implementation_name}
+
+        Returns:
+            更新后的 tasks 列表
+        """
+        from model.implementation_power import ImplementationPowerModel
+
+        for task in tasks:
+            task_key = task.get('key')
+            user_pref_impl = user_prefs.get(task_key)
+            implementations = task.get('implementations', [])
+
+            if user_pref_impl:
+                # 有用户偏好，使用偏好实现方的算力
+                config = cls._configs.get(task_key)
+                if not config:
+                    continue
+
+                driver_name = config.driver_name if hasattr(config, 'driver_name') else None
+
+                try:
+                    impl_power = ImplementationPowerModel.get_power(user_pref_impl, driver_name)
+                    if impl_power is not None:
+                        task['computing_power'] = impl_power
+                        task['user_preferred_implementation'] = user_pref_impl
+                except Exception as e:
+                    logger.debug(f"Failed to get implementation power for {user_pref_impl}: {e}")
+            elif implementations:
+                # 没有用户偏好，使用 implementations 中排序第一位的算力
+                # implementations 已经按 sort_order 排序
+                first_impl = implementations[0]
+                impl_name = first_impl.get('name')
+                impl_power = first_impl.get('computing_power')
+
+                if impl_power is not None:
+                    task['computing_power'] = impl_power
+                    task['default_implementation'] = impl_name
+
+        return tasks
     
     @classmethod
     def clear(cls) -> None:
