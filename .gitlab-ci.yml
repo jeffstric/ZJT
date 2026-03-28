@@ -20,9 +20,6 @@ variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
   FF_NETWORK_PER_BUILD: "1"
-  # 代理配置（如果 runner 机器的 Docker 使用了代理）
-  HTTP_PROXY: "http://172.17.0.1:7890"
-  HTTPS_PROXY: "http://172.17.0.1:7890"
 
   # 测试数据库配置
   DB_HOST: mysql_test
