@@ -57,6 +57,23 @@ class MediaCacheManager:
         date_dir = self.cache_path / date_str
         date_dir.mkdir(parents=True, exist_ok=True)
         return date_dir
+    
+    def get_temp_date_dir(self, date: Optional[datetime] = None) -> Path:
+        """
+        获取临时文件的日期目录路径（upload/temp/YYYYMMDD）
+        
+        Args:
+            date: 日期对象，默认为当前日期
+        
+        Returns:
+            日期目录路径
+        """
+        if date is None:
+            date = datetime.now()
+        date_str = date.strftime("%Y%m%d")
+        temp_dir = self.root_dir / "upload" / "temp" / date_str
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        return temp_dir
 
     def _generate_filename(self, task_id: int, url: str, media_type: str, timestamp: Optional[datetime] = None) -> str:
         """
@@ -360,9 +377,56 @@ class MediaCacheManager:
             logger.error(f"按容量清理失败: {e}")
             return 0
     
+    def cleanup_temp_dir(self, max_days: int = 2) -> int:
+        """
+        清理 upload/temp 目录中超过指定天数的文件
+        
+        Args:
+            max_days: 保留天数，默认 2 天
+        
+        Returns:
+            删除的文件数量
+        """
+        try:
+            temp_path = self.root_dir / "upload" / "temp"
+            if not temp_path.exists():
+                logger.debug(f"临时目录不存在: {temp_path}")
+                return 0
+            
+            deleted_count = 0
+            cutoff_time = datetime.now() - timedelta(days=max_days)
+            
+            logger.info(f"开始清理 upload/temp 目录，保留 {max_days} 天，截止时间: {cutoff_time}")
+            
+            for date_dir in temp_path.iterdir():
+                if not date_dir.is_dir():
+                    continue
+                
+                # 尝试解析日期目录名（格式: YYYYMMDD）
+                try:
+                    dir_date = datetime.strptime(date_dir.name, "%Y%m%d")
+                    if dir_date < cutoff_time:
+                        # 目录过期，删除整个目录
+                        import shutil
+                        file_count = sum(1 for _ in date_dir.rglob('*') if _.is_file())
+                        shutil.rmtree(date_dir)
+                        deleted_count += file_count
+                        logger.info(f"删除过期目录: {date_dir} ({file_count} 个文件)")
+                except ValueError:
+                    # 目录名不符合日期格式，跳过
+                    logger.debug(f"跳过非日期格式目录: {date_dir.name}")
+                    continue
+            
+            logger.info(f"upload/temp 清理完成，删除 {deleted_count} 个文件")
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"清理 upload/temp 目录失败: {e}")
+            return 0
+    
     def cleanup_all(self) -> Dict[str, int]:
         """
-        执行完整清理（按天数 + 按容量）
+        执行完整清理（按天数 + 按容量 + temp 目录）
         
         Returns:
             清理统计信息
@@ -371,11 +435,13 @@ class MediaCacheManager:
         
         expired_count = self.cleanup_expired_files()
         size_count = self.cleanup_by_size()
+        temp_count = self.cleanup_temp_dir(max_days=2)
         
         result = {
             "expired_deleted": expired_count,
             "size_deleted": size_count,
-            "total_deleted": expired_count + size_count
+            "temp_deleted": temp_count,
+            "total_deleted": expired_count + size_count + temp_count
         }
         
         logger.info(f"清理完成: {result}")
@@ -431,3 +497,17 @@ def get_cache_stats() -> Dict[str, Any]:
     """
     manager = get_cache_manager()
     return manager.get_cache_stats()
+
+
+def get_temp_date_dir(date: Optional[datetime] = None) -> Path:
+    """
+    获取临时文件的日期目录路径（便捷函数）
+    
+    Args:
+        date: 日期对象，默认为当前日期
+    
+    Returns:
+        日期目录路径
+    """
+    manager = get_cache_manager()
+    return manager.get_temp_date_dir(date)
