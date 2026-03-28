@@ -1026,9 +1026,15 @@ async def admin_get_implementation_configs(
         # 使用 (implementation_name, driver_key) 作为复合键
         db_config_map = {(c['implementation_name'], c.get('driver_key')): c for c in db_configs}
 
-        # 获取所有任务配置，提取实现方支持的时长
+        # 获取所有任务配置，提取实现方支持的时长和算力配置
         impl_durations = {}
+        # 追踪 (impl_name, driver_key) -> task_config.computing_power 的映射
+        impl_driver_computing_power = {}
         for task_config in UnifiedConfigRegistry.get_all():
+            driver_name = task_config.driver_name
+            if not driver_name:
+                continue
+
             # 兼容单数和复数形式的 implementation 属性
             impl_names = []
             if hasattr(task_config, 'implementations') and task_config.implementations:
@@ -1041,6 +1047,13 @@ async def admin_get_implementation_configs(
                     impl_durations[impl_name] = set()
                 if hasattr(task_config, 'supported_durations'):
                     impl_durations[impl_name].update(task_config.supported_durations)
+
+                # 追踪 task_config.computing_power，按 (impl_name, driver_key) 存储
+                # 只存储有意义的算力值（非0、非空）
+                if task_config.computing_power:
+                    key = (impl_name, driver_name)
+                    if key not in impl_driver_computing_power:
+                        impl_driver_computing_power[key] = task_config.computing_power
 
         # 按 DriverKey 分组
         driver_key_groups = {}
@@ -1100,16 +1113,17 @@ async def admin_get_implementation_configs(
                 for duration in supported_durations:
                     power = power_configs.get(duration)
 
-                    # 如果数据库没有配置，尝试从代码默认值获取
+                    # 如果数据库没有配置，尝试从任务配置或实现方默认配置获取
                     if power is None:
-                        default_power = impl_config.default_computing_power
-                        if isinstance(default_power, dict) and duration in default_power:
-                            power = default_power[duration]
-                        elif isinstance(default_power, dict) and default_power:
+                        # 优先使用任务配置中的 computing_power
+                        task_computing_power = impl_driver_computing_power.get((impl_name, driver_key), impl_config.default_computing_power)
+                        if isinstance(task_computing_power, dict) and duration in task_computing_power:
+                            power = task_computing_power[duration]
+                        elif isinstance(task_computing_power, dict) and task_computing_power:
                             # 如果是字典但没有对应时长，使用第一个值
-                            power = list(default_power.values())[0]
+                            power = list(task_computing_power.values())[0]
                         else:
-                            power = default_power
+                            power = task_computing_power
 
                     duration_powers.append({
                         'duration': duration,
@@ -1122,7 +1136,8 @@ async def admin_get_implementation_configs(
                     'enabled': db_config.get('enabled') if db_config and db_config.get('enabled') is not None else impl_config.enabled,
                     'sort_order': db_config.get('sort_order') if db_config else impl_config.sort_order,  # 优先使用数据库排序，否则使用配置文件默认值
                     'driver_key': db_config.get('driver_key') if db_config else impl_config.driver_class,  # 使用 driver_key 字段
-                    'default_computing_power': impl_config.default_computing_power,
+                    # 优先使用任务配置中的 computing_power，其次使用实现方的默认算力
+                    'default_computing_power': impl_driver_computing_power.get((impl_name, driver_key), impl_config.default_computing_power),
                     'description': impl_config.description,
                     'driver_class': impl_config.driver_class,
                     'supported_durations': supported_durations,
@@ -1139,23 +1154,24 @@ async def admin_get_implementation_configs(
                     if fixed_power is not None:
                         impl_data['current_default_power'] = fixed_power
                     else:
-                        # 使用代码默认值
-                        default_power = impl_config.default_computing_power
-                        if isinstance(default_power, dict) and default_power:
-                            impl_data['current_default_power'] = list(default_power.values())[0]
+                        # 优先使用任务配置中的 computing_power，其次使用实现方的默认算力
+                        task_computing_power = impl_driver_computing_power.get((impl_name, driver_key), impl_config.default_computing_power)
+                        if isinstance(task_computing_power, dict) and task_computing_power:
+                            impl_data['current_default_power'] = list(task_computing_power.values())[0]
                         else:
-                            impl_data['current_default_power'] = default_power or 0
+                            impl_data['current_default_power'] = task_computing_power or 0
                 else:
                     # 为有时长配置的实现方添加每个时长的默认值
                     impl_data['default_duration_powers'] = {}
                     for duration in supported_durations:
-                        default_power = impl_config.default_computing_power
-                        if isinstance(default_power, dict) and duration in default_power:
-                            impl_data['default_duration_powers'][duration] = default_power[duration]
-                        elif isinstance(default_power, dict) and default_power:
-                            impl_data['default_duration_powers'][duration] = list(default_power.values())[0]
+                        # 优先使用任务配置中的 computing_power，其次使用实现方的默认算力
+                        task_computing_power = impl_driver_computing_power.get((impl_name, driver_key), impl_config.default_computing_power)
+                        if isinstance(task_computing_power, dict) and duration in task_computing_power:
+                            impl_data['default_duration_powers'][duration] = task_computing_power[duration]
+                        elif isinstance(task_computing_power, dict) and task_computing_power:
+                            impl_data['default_duration_powers'][duration] = list(task_computing_power.values())[0]
                         else:
-                            impl_data['default_duration_powers'][duration] = default_power or 0
+                            impl_data['default_duration_powers'][duration] = task_computing_power or 0
 
                 # 将实现方添加到对应的 DriverKey 组
                 if driver_key not in driver_key_groups:

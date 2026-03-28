@@ -123,6 +123,8 @@ class TestRunner:
         crud_test_files = [
             'tests.test_ai_tools_crud',
             'tests.test_ai_audio_crud',
+            'tests.test_chat_sessions_crud',
+            'tests.test_implementation_stats',
             'tests.test_location_crud',
             'tests.test_payment_orders_crud',
             'tests.test_props_crud',
@@ -249,6 +251,7 @@ class TestRunner:
         print("=" * 60)
 
         config_test_files = [
+            'tests.test_implementation_config',
             'tests.test_unified_config_frontend',
         ]
 

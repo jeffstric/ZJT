@@ -19,13 +19,13 @@ class DatabaseTestCase(unittest.TestCase):
     2. setUp: 开始事务
     3. tearDown: 清空所有表数据（保持数据库干净）
     """
-    
+
     _db_initialized = False
     _connection = None
-    
+
     @classmethod
     def setUpClass(cls):
-        """测试类初始化：数据库已由 Entrypoint 创建，这里只清空数据"""
+        """测试类初始化：数据库已由 Entrypoint 初始化，这里只清空数据"""
         if not cls._db_initialized:
             logger.info(f"初始化测试数据库: {TEST_DB_CONFIG['database']}")
             cls._clear_all_tables()
