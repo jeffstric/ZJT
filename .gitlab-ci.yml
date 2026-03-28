@@ -16,9 +16,12 @@ stages:
 
 # 变量配置
 variables:
-  # Docker 配置
+  # Docker 配置 - DinD 需要启用 privileged 模式
   DOCKER_DRIVER: overlay2
   DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_HOST: tcp://docker:2375
+  # 禁用 TLS（DinD 默认不启用 TLS）
+  DOCKER_TLS_VERIFY: "0"
 
   # 测试数据库配置
   DB_HOST: mysql_test
