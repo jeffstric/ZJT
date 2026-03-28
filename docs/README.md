@@ -295,26 +295,26 @@ comfyui_server/
 cd docker
 
 # 启动所有服务（MySQL + 应用）
-docker compose up -d
+docker-compose up -d
 
 # 查看日志
-docker compose logs -f
+docker-compose logs -f
 ```
 
 ### 常用命令
 
 ```bash
 # 停止服务
-docker compose down
+docker-compose down
 
 # 重新构建镜像
-docker compose build
+docker-compose build
 
 # 进入应用容器
-docker compose exec app bash
+docker-compose exec app bash
 
 # 进入数据库
-docker compose exec mysql mysql -uroot -p3bTgThWP2xeX zjt
+docker-compose exec mysql mysql -uroot -p3bTgThWP2xeX zjt
 ```
 
 ### 端口
@@ -328,18 +328,32 @@ docker compose exec mysql mysql -uroot -p3bTgThWP2xeX zjt
 
 ## Docker 单元测试
 
+### 方式一：一键脚本（推荐）
+
+```bash
+# Windows
+scripts\testing\run_docker_tests.bat
+
+# Linux/macOS
+./scripts/testing/run_docker_tests.sh
+```
+
+脚本会自动：启动测试环境 → 输出测试日志 → 清理测试容器。
+
+### 方式二：手动命令
+
 ```bash
 # 进入 docker 目录
 cd docker
 
 # 启动测试环境（会自动运行测试）
-docker compose -f docker-compose-test.yml up -d
+docker-compose -f docker-compose-test.yml up -d
 
 # 查看测试日志
-docker compose -f docker-compose-test.yml logs
+docker-compose -f docker-compose-test.yml logs
 
 # 清理测试环境
-docker compose -f docker-compose-test.yml down -v
+docker-compose -f docker-compose-test.yml down -v
 ```
 
 ---
