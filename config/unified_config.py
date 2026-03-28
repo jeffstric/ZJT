@@ -325,7 +325,7 @@ class UnifiedTaskConfig:
                 result.append({
                     'name': impl_name,
                     'display_name': impl_config.get_display_name(),
-                    'computing_power': impl_config.default_computing_power,
+                    'computing_power': impl_config.get_computing_power(),
                     'description': impl_config.description,
                     'is_default': impl_name == self.implementation,
                     'sort_order': sort_order,
