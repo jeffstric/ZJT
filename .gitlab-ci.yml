@@ -20,6 +20,9 @@ variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
   FF_NETWORK_PER_BUILD: "1"
+  # 代理配置（如果 runner 机器的 Docker 使用了代理）
+  HTTP_PROXY: "http://172.17.0.1:7890"
+  HTTPS_PROXY: "http://172.17.0.1:7890"
 
   # 测试数据库配置
   DB_HOST: mysql_test
@@ -46,7 +49,6 @@ unit_tests:
   services:
     - name: docker:dind
       alias: docker
-      command: ["sh", "-c", "echo '{\"registry-mirrors\":[\"https://docker.m.daocloud.io\",\"https://docker.1ms.run\"]}' > /etc/docker/daemon.json && dockerd"]
 
   # 缓存配置（加速后续构建）
   cache:
