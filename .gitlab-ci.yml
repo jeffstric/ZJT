@@ -17,11 +17,7 @@ stages:
 # 变量配置
 variables:
   # Docker 配置 - DinD
-  DOCKER_DRIVER: overlay2
   DOCKER_HOST: tcp://docker:2375
-  # 禁用 Docker Compose 的 TLS 验证
-  COMPOSE_DOCKER_CLI_BUILD: "0"
-  DOCKER_TLS_VERIFY: "0"
 
   # 测试数据库配置
   DB_HOST: mysql_test
@@ -59,20 +55,16 @@ unit_tests:
     # 安装必要工具
     - apk add --no-cache python3 py3-pip docker-compose mysql-client
 
-    # 设置 Docker host（禁用 TLS）
-    - export DOCKER_HOST="tcp://docker:2375"
-    - export DOCKER_TLS_VERIFY=""
-
     # 等待 Docker daemon 就绪
     - |
       for i in {1..30}; do
-        docker -H tcp://docker:2375 info > /dev/null 2>&1 && break
+        docker info > /dev/null 2>&1 && break
         sleep 1
       done
 
     # 验证 Docker 是否可用
-    - docker -H tcp://docker:2375 --version
-    - docker-compose -H tcp://docker:2375 --version
+    - docker --version
+    - docker-compose --version
 
     # 复制测试配置
     - cp config.example.yml config_unit.yml || true
@@ -82,12 +74,12 @@ unit_tests:
     - cd docker
 
     # 启动测试环境（MySQL + 测试容器）
-    - docker-compose -H tcp://docker:2375 -f docker-compose-test.yml up -d --build
+    - docker-compose -f docker-compose-test.yml up -d --build
 
     # 等待 MySQL 就绪
     - |
       for i in {1..30}; do
-        docker -H tcp://docker:2375 exec zjt_mysql_test mysqladmin ping -h localhost -u root -proot_test_pass && break
+        docker exec zjt_mysql_test mysqladmin ping -h localhost -u root -proot_test_pass && break
         echo "等待 MySQL 启动..."
         sleep 2
       done
@@ -98,7 +90,7 @@ unit_tests:
       timeout=600
       elapsed=0
       while [ $elapsed -lt $timeout ]; do
-        status=$(docker -H tcp://docker:2375 inspect -f '{{.State.Status}}' zjt_test 2>/dev/null || echo "not_found")
+        status=$(docker inspect -f '{{.State.Status}}' zjt_test 2>/dev/null || echo "not_found")
         if [ "$status" == "exited" ]; then
           break
         fi
@@ -108,18 +100,18 @@ unit_tests:
       done
 
     # 显示测试日志
-    - docker -H tcp://docker:2375 logs zjt_test || true
+    - docker logs zjt_test || true
 
     # 获取测试结果
     - |
-      if docker -H tcp://docker:2375 cp zjt_test:/app/test-results.xml ./test-results.xml 2>/dev/null; then
+      if docker cp zjt_test:/app/test-results.xml ./test-results.xml 2>/dev/null; then
         echo "测试结果已保存"
       else
         echo "注意：无法获取 test-results.xml，查看上方日志了解测试情况"
       fi
 
     # 停止测试环境
-    - docker-compose -H tcp://docker:2375 -f docker-compose-test.yml down -v || true
+    - docker-compose -f docker-compose-test.yml down -v || true
 
   # 测试 artifacts
   artifacts:
