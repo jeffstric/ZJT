@@ -252,6 +252,15 @@ class BaseVideoDriver(ABC):
                     masked[key] = str_value[:4] + "***" + str_value[-4:]
                 else:
                     masked[key] = "***"
+            elif key == "inlineData" and isinstance(value, dict):
+                # Gemini API 的 inlineData 中包含 base64 图片数据，需要特殊处理
+                masked_inline = {}
+                for k, v in value.items():
+                    if k == "data" and isinstance(v, str) and len(v) > 20:
+                        masked_inline[k] = v[:20] + "...[masked]"
+                    else:
+                        masked_inline[k] = v
+                masked[key] = masked_inline
             elif isinstance(value, dict):
                 masked[key] = self._mask_sensitive_payload(value)
             elif isinstance(value, list):
@@ -273,18 +282,21 @@ class BaseVideoDriver(ABC):
         if isinstance(data, dict):
             result = {}
             for key, value in data.items():
+                # 处理 inlineData 中的 data 字段（Gemini API 返回的图片 base64），完全不记录
+                if key == "inlineData" and isinstance(value, dict):
+                    result[key] = {"mimeType": value.get("mimeType", "unknown"), "data": "[base64 image data masked]"}
                 # 处理可能包含 base64 数据的字段
-                if key == "data" and isinstance(value, str) and len(value) > max_length:
+                elif key == "data" and isinstance(value, str) and len(value) > max_length:
                     # 检查是否像 base64 数据
                     if all(c.isalnum() or c in '+/=' for c in value[:100]):
-                        result[key] = f"{value[:20]}...[truncated, total {len(value)} chars]"
+                        result[key] = f"[base64 data {len(value)} chars masked]"
                     else:
                         result[key] = value
                 elif key == "b64_json" and isinstance(value, str) and len(value) > max_length:
-                    result[key] = f"{value[:20]}...[truncated, total {len(value)} chars]"
-                # 处理 thoughtSignature 字段（nano banana 响应中的大型签名数据）
-                elif key == "thoughtSignature" and isinstance(value, str) and len(value) > max_length:
-                    result[key] = f"{value[:20]}...[truncated, total {len(value)} chars]"
+                    result[key] = "[b64_json masked]"
+                # 完全跳过 thoughtSignature 字段（nano banana 响应中的大型签名数据），不记录日志
+                elif key == "thoughtSignature":
+                    continue
                 elif isinstance(value, dict):
                     result[key] = self._truncate_base64_in_response(value, max_length)
                 elif isinstance(value, list):
