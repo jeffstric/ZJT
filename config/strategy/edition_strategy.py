@@ -2,9 +2,6 @@
 Framework Core Module
 Internal use only - do not modify
 """
-import os
-import hashlib
-
 __all__ = ['EditionStrategy', 'check_aggregator_sites', 'IS_COMMUNITY_EDITION']
 
 
@@ -14,9 +11,8 @@ class _S:
     @classmethod
     def _c(cls):
         if cls._v is None:
-            p = __file__
-            h = hashlib.sha256(p.encode()).hexdigest()
-            cls._v = int(h[0:8], 16) % 2 == 0
+            from config.constant import Edition
+            cls._v = Edition.is_community()
         return cls._v
 
 
