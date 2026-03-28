@@ -18,6 +18,8 @@ stages:
 variables:
   # Docker 配置 - DinD
   DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  FF_NETWORK_PER_BUILD: "1"
 
   # 测试数据库配置
   DB_HOST: mysql_test
@@ -39,10 +41,11 @@ unit_tests:
   stage: test
 
   # 使用 Docker-in-Docker (DinD) 来运行 docker-compose
-  image: docker:24-dind
+  image: alpine:latest
 
   services:
-    - docker:dind
+    - name: docker:dind
+      alias: docker
 
   # 缓存配置（加速后续构建）
   cache:
@@ -52,8 +55,8 @@ unit_tests:
       - .cache/pip
 
   before_script:
-    # 安装必要工具
-    - apk add --no-cache python3 py3-pip docker-compose mysql-client
+    # 安装必要工具（包括 Docker CLI）
+    - apk add --no-cache python3 py3-pip docker-compose mysql-client docker-cli
 
     # 等待 Docker daemon 就绪
     - |
