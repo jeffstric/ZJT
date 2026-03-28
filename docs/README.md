@@ -104,7 +104,6 @@ python3 scripts/running/run_dev.py
 | 配置项 | 说明 |
 |--------|------|
 | `runninghub.*` | RunningHub 视频生成 API |
-| `llm.baidu.*` | 百度千帆大模型 |
 | `llm.qwen.*` | 阿里通义千问 |
 | `llm.google.*` | Google Gemini |
 | `tts.*` | TTS 语音合成服务 |
@@ -252,6 +251,7 @@ comfyui_server/
 │  │  ├─ run_scheduler.py     # 定时任务启动器
 │  │  └─ run_unit_tests.py    # 单元测试启动器
 │  ├─ testing/                # 测试脚本
+│  │  ├─ run_migrations.sh   # 数据库迁移脚本
 │  │  ├─ run_driver_tests.sh  # 驱动测试脚本
 │  │  └─ run_tests.sh         # 测试脚本
 │  ├─ tools/                  # 工具脚本
@@ -282,6 +282,64 @@ comfyui_server/
 ├─ tests/                     # 单元测试
 ├─ auto_test/                 # 自动化测试
 └─ docs/                      # 文档
+```
+
+---
+
+## Docker 部署
+
+### 启动服务
+
+```bash
+# 进入 docker 目录
+cd docker
+
+# 启动所有服务（MySQL + 应用）
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+```
+
+### 常用命令
+
+```bash
+# 停止服务
+docker compose down
+
+# 重新构建镜像
+docker compose build
+
+# 进入应用容器
+docker compose exec app bash
+
+# 进入数据库
+docker compose exec mysql mysql -uroot -p3bTgThWP2xeX zjt
+```
+
+### 端口
+
+| 服务 | 端口 |
+|------|------|
+| MySQL | 3306 |
+| 应用 | 9003 |
+
+---
+
+## Docker 单元测试
+
+```bash
+# 进入 docker 目录
+cd docker
+
+# 启动测试环境（会自动运行测试）
+docker compose -f docker-compose-test.yml up -d
+
+# 查看测试日志
+docker compose -f docker-compose-test.yml logs
+
+# 清理测试环境
+docker compose -f docker-compose-test.yml down -v
 ```
 
 ---

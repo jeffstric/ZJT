@@ -7,6 +7,7 @@ import logging
 from model.users import UsersModel
 from config.unified_config import UnifiedConfigRegistry
 from config.config_util import get_config_value
+from config.version import get_app_version
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +74,13 @@ async def get_server_config():
     try:
         is_local = get_config_value('server', 'is_local', default=False)
         footer = get_config_value('server', 'footer', default={})
+        version = get_app_version()
 
         return {
             "code": 0,
             "data": {
                 "is_local": is_local,
+                "version": version,
                 "footer": {
                     "copyright": footer.get('copyright', ''),
                     "icp_number": footer.get('icp_number', ''),

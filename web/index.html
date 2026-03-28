@@ -49,6 +49,7 @@
               <button class="btn secondary" @click="handleRechargeClick" style="margin-top: 8px; font-size: 12px; padding: 4px 12px;">算力充值</button>
             </div>
             <a v-if="userRole === 'admin'" href="/admin" class="btn secondary" style="text-decoration: none;">管理后台</a>
+            <button class="btn secondary" @click="showUserSettingsModal">设置</button>
             <button class="btn secondary" @click="handleLogout">登出</button>
           </template>
           <button class="btn" v-else @click="showLoginModal = true">登录</button>
@@ -61,6 +62,7 @@
     <!-- ICP备案信息 -->
     <footer class="icp-footer">
       <span v-if="footerConfig.copyright">{{ footerConfig.copyright }}</span>
+      <span v-if="footerConfig.version" style="margin-left: 8px; color: #94a3b8;">v{{ footerConfig.version }}</span>
       <a v-if="footerConfig.icp_number" :href="footerConfig.icp_url" target="_blank" rel="noopener noreferrer" style="margin-left: 8px;">{{ footerConfig.icp_number }}</a>
       <a v-if="footerConfig.police_number" :href="footerConfig.police_url" target="_blank" rel="noopener noreferrer" style="margin-left: 8px;">{{ footerConfig.police_number }}</a>
     </footer>
@@ -79,6 +81,108 @@
           <p style="color: var(--muted); margin-bottom: 16px;">扫描二维码添加微信，提交您的宝贵意见</p>
           <img src="/files/二维码.jpg" alt="微信二维码" class="feedback-qr-code">
           <p class="feedback-tip">我们会认真听取每一条反馈，持续改进产品体验</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- User Settings Modal -->
+    <div class="modal-overlay" v-if="showUserSettingsModalFlag" @click.self="closeUserSettingsModal">
+      <div class="modal" style="position: relative; max-width: 600px; max-height: 80vh; overflow-y: auto;">
+        <button class="modal-close" @click="closeUserSettingsModal">×</button>
+        <div class="modal-title">用户设置</div>
+
+        <div v-if="userSettingsLoading" style="padding: 40px; text-align: center; color: var(--muted);">
+          加载中...
+        </div>
+
+        <div v-else style="padding: 16px;">
+          <div class="status danger" v-if="userSettingsError" style="margin-bottom: 16px;">{{ userSettingsError }}</div>
+          <div class="status success" v-if="userSettingsSuccess" style="margin-bottom: 16px;">{{ userSettingsSuccess }}</div>
+
+          <h4 style="margin-bottom: 16px; color: var(--text);">服务商偏好设置</h4>
+          <p style="color: var(--muted); font-size: 13px; margin-bottom: 20px;">
+            您可以为不同的任务类型选择不同的服务商。选择不同的服务商可能会影响处理速度、质量和算力消耗。
+          </p>
+
+          <div v-if="isCommunityEdition" class="status warning" style="margin-bottom: 16px;">
+            仅支持<span style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: bold;">商业版本</span> 智剧通 可以选择服务商
+          </div>
+
+          <div v-if="Object.keys(availableImplementations).length === 0" style="text-align: center; color: var(--muted); padding: 20px;">
+            暂无可配置的任务类型
+          </div>
+
+          <div v-else>
+            <!-- 图片任务 -->
+            <div v-for="(taskConfig, taskKey) in availableImplementations" :key="taskKey">
+              <div v-if="taskConfig.category_group === 'image'">
+                <h5 style="margin: 20px 0 12px; color: var(--text); font-size: 14px;">{{ taskConfig.name }}</h5>
+                <div class="settings-item">
+                  <select class="input settings-select" v-model="userPreferences[taskKey]" @change="handlePreferenceChange(taskKey)" :disabled="isCommunityEdition" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''">
+                    <option value="">默认（系统自动选择）</option>
+                    <option v-for="impl in taskConfig.implementations" :key="impl.name" :value="impl.name">
+                      {{ impl.display_name }} (算力: {{ impl.computing_power }})
+                    </option>
+                  </select>
+                  <div v-if="isCommunityEdition" style="font-size: 12px; color: var(--muted); margin-top: 4px;">仅商业版可选择</div>
+                  
+                  <!-- 实现方统计数据 -->
+                  <div v-if="taskConfig.implementations.length > 0" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 6px;">
+                    <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">
+                      <span v-if="isCommunityEdition">商业版数据预览（演示数据）</span>
+                      <span v-else>实现方统计数据（最近7天）</span>
+                    </div>
+                    <div v-for="(impl, index) in taskConfig.implementations" :key="impl.name" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
+                      <span style="font-size: 13px; color: var(--text);">{{ impl.display_name }}</span>
+                      <div style="display: flex; gap: 12px; align-items: center;">
+                        <span :style="`font-size: 12px; font-weight: 600; color: ${getSuccessRateColor(getDisplaySuccessRate(impl, index))};`">
+                          成功率 {{ getDisplaySuccessRate(impl, index) }}<span v-if="!isCommunityEdition && impl.stats && impl.stats.total_count > 0">%</span>
+                        </span>
+                        <span :style="`font-size: 12px; font-weight: 500; color: ${getAvgTimeColor(impl)};`">
+                          平均 {{ getDisplayAvgTime(impl, index) }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 视频任务 -->
+            <div v-for="(taskConfig, taskKey) in availableImplementations" :key="taskKey">
+              <div v-if="taskConfig.category_group === 'video'">
+                <h5 style="margin: 20px 0 12px; color: var(--text); font-size: 14px;">{{ taskConfig.name }}</h5>
+                <div class="settings-item">
+                  <select class="input settings-select" v-model="userPreferences[taskKey]" @change="handlePreferenceChange(taskKey)" :disabled="isCommunityEdition" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''">
+                    <option value="">默认（系统自动选择）</option>
+                    <option v-for="impl in taskConfig.implementations" :key="impl.name" :value="impl.name">
+                      {{ impl.display_name }} (算力: {{ impl.computing_power }})
+                    </option>
+                  </select>
+                  <div v-if="isCommunityEdition" style="font-size: 12px; color: var(--muted); margin-top: 4px;">仅商业版可选择</div>
+                  
+                  <!-- 实现方统计数据 -->
+                  <div v-if="taskConfig.implementations.length > 0" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.05); border-radius: 6px;">
+                    <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px; font-weight: 500;">
+                      <span v-if="isCommunityEdition">商业版数据预览（演示数据）</span>
+                      <span v-else>实现方统计数据（最近7天）</span>
+                    </div>
+                    <div v-for="(impl, index) in taskConfig.implementations" :key="impl.name" style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
+                      <span style="font-size: 13px; color: var(--text);">{{ impl.display_name }}</span>
+                      <div style="display: flex; gap: 12px; align-items: center;">
+                        <span :style="`font-size: 12px; font-weight: 600; color: ${getSuccessRateColor(getDisplaySuccessRate(impl, index))};`">
+                          成功率 {{ getDisplaySuccessRate(impl, index) }}<span v-if="!isCommunityEdition && impl.stats && impl.stats.total_count > 0">%</span>
+                        </span>
+                        <span :style="`font-size: 12px; font-weight: 500; color: ${getAvgTimeColor(impl)};`">
+                          平均 {{ getDisplayAvgTime(impl, index) }}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -905,16 +1009,18 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
       },
-      
+
       getHistoryStatusColor(status) {
         const colorMap = {
           0: '#888',
           1: '#3b82f6',
           2: '#10b981',
+          3: '#f59e0b',
           '-1': '#ef4444'
         };
         return colorMap[status] || '#888';
@@ -1623,16 +1729,18 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
       },
-      
+
       getHistoryStatusColor(status) {
         const colorMap = {
           0: '#888',
           1: '#3b82f6',
           2: '#10b981',
+          3: '#f59e0b',
           '-1': '#ef4444'
         };
         return colorMap[status] || '#888';
@@ -1981,16 +2089,18 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
       },
-      
+
       getHistoryStatusColor(status) {
         const colorMap = {
           0: '#888',
           1: '#3b82f6',
           2: '#10b981',
+          3: '#f59e0b',
           '-1': '#ef4444'
         };
         return colorMap[status] || '#888';
@@ -2530,6 +2640,7 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
@@ -3216,6 +3327,7 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
@@ -4051,6 +4163,7 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
@@ -4693,6 +4806,7 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
@@ -4743,6 +4857,7 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
@@ -5364,6 +5479,7 @@
           0: '未处理',
           1: '处理中',
           2: '处理完成',
+          3: '排队处理中',
           '-1': '处理失败'
         };
         return statusMap[status] || '未知';
@@ -5373,6 +5489,7 @@
           0: '#888',
           1: '#3b82f6',
           2: '#10b981',
+          3: '#f59e0b',
           '-1': '#ef4444'
         };
         return colorMap[status] || '#888';
@@ -5906,6 +6023,15 @@
         police_number: '',
         police_url: ''
       },
+      // 用户设置模态框
+      showUserSettingsModalFlag: false,
+      userSettingsLoading: false,
+      userSettingsError: '',
+      userSettingsSuccess: '',
+      // 用户偏好数据
+      userPreferences: {},
+      availableImplementations: {},
+      isCommunityEdition: false,
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -6330,7 +6456,170 @@
           this.isAdminMode = false;
         }
       },
-      
+
+      // ==================== 用户设置方法 ====================
+
+      showUserSettingsModal() {
+        this.showUserSettingsModalFlag = true;
+        this.userSettingsError = '';
+        this.userSettingsSuccess = '';
+        this.loadImplementationPreferences();
+      },
+
+      closeUserSettingsModal() {
+        this.showUserSettingsModalFlag = false;
+        this.userSettingsError = '';
+        this.userSettingsSuccess = '';
+      },
+
+      async loadImplementationPreferences() {
+        this.userSettingsLoading = true;
+        this.userSettingsError = '';
+
+        try {
+          const response = await axios.get('/api/user/implementation-preferences', {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.code === 0) {
+            this.userPreferences = response.data.data.preferences || {};
+            this.availableImplementations = response.data.data.available_implementations || {};
+            this.isCommunityEdition = response.data.data.is_community_edition || false;  
+          } else {
+            this.userSettingsError = response.data.message || '加载偏好设置失败';
+          }
+        } catch (error) {
+          console.error('Load implementation preferences error:', error);
+          this.userSettingsError = error?.response?.data?.detail || '加载偏好设置失败，请重试';
+        } finally {
+          this.userSettingsLoading = false;
+        }
+      },
+
+      async handlePreferenceChange(taskKey) {
+        const implementation = this.userPreferences[taskKey];
+        this.userSettingsError = '';
+        this.userSettingsSuccess = '';
+
+        try {
+          if (implementation) {
+            // 设置偏好
+            const response = await axios.put('/api/user/implementation-preference', {
+              task_key: taskKey,
+              implementation_name: implementation
+            }, {
+              headers: {
+                'Authorization': `Bearer ${this.authToken}`
+              }
+            });
+
+            if (response.data.code === 0) {
+              this.userSettingsSuccess = '偏好设置已保存';
+              setTimeout(() => { this.userSettingsSuccess = ''; }, 2000);
+            } else {
+              this.userSettingsError = response.data.message || '保存失败';
+            }
+          } else {
+            // 清除偏好
+            const response = await axios.delete('/api/user/implementation-preference', {
+              params: { task_key: taskKey },
+              headers: {
+                'Authorization': `Bearer ${this.authToken}`
+              }
+            });
+
+            if (response.data.code === 0) {
+              this.userSettingsSuccess = '已恢复默认设置';
+              setTimeout(() => { this.userSettingsSuccess = ''; }, 2000);
+            } else {
+              this.userSettingsError = response.data.message || '清除失败';
+            }
+          }
+        } catch (error) {
+          console.error('Save implementation preference error:', error);
+          this.userSettingsError = error?.response?.data?.detail || '保存失败，请重试';
+        }
+      },
+
+      // 演示数据生成方法（仅社区版使用）
+      getDemoSuccessRate(index) {
+        const rates = [95, 92, 88, 85, 78, 75, 70];
+        return rates[index % rates.length];
+      },
+
+      getDemoAvgTime(index) {
+        const times = ['45秒', '1分12秒', '1分35秒', '2分8秒', '2分45秒', '3分20秒', '4分15秒'];
+        return times[index % times.length];
+      },
+
+      // 获取真实成功率（商业版）
+      getRealSuccessRate(impl) {
+        if (!impl.stats || impl.stats.total_count === 0) {
+          return '暂无数据';
+        }
+        return impl.stats.success_rate.toFixed(1);
+      },
+
+      // 获取真实平均时间（商业版）
+      getRealAvgTime(impl) {
+        if (!impl.stats || impl.stats.total_count === 0) {
+          return '暂无数据';
+        }
+        return this.formatDuration(impl.stats.avg_duration_ms);
+      },
+
+      // 格式化时长（毫秒转为可读格式）
+      formatDuration(ms) {
+        if (!ms || ms === 0) return '0秒';
+        const seconds = Math.floor(ms / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+        
+        if (minutes > 0) {
+          return remainingSeconds > 0 ? `${minutes}分${remainingSeconds}秒` : `${minutes}分钟`;
+        }
+        return `${seconds}秒`;
+      },
+
+      // 获取显示的成功率（自动区分社区版和商业版）
+      getDisplaySuccessRate(impl, index) {
+        if (this.isCommunityEdition) {
+          return this.getDemoSuccessRate(index);
+        }
+        return this.getRealSuccessRate(impl);
+      },
+
+      // 获取显示的平均时间（自动区分社区版和商业版）
+      getDisplayAvgTime(impl, index) {
+        if (this.isCommunityEdition) {
+          return this.getDemoAvgTime(index);
+        }
+        return this.getRealAvgTime(impl);
+      },
+
+      getSuccessRateColor(rate) {
+        // 处理"暂无数据"等非数字字符串
+        if (typeof rate === 'string' && isNaN(parseFloat(rate))) return 'var(--muted)';
+        // 将字符串数字转换为数值
+        const numRate = typeof rate === 'string' ? parseFloat(rate) : rate;
+        if (numRate >= 90) return '#10b981';
+        if (numRate >= 70) return '#3b82f6';
+        if (numRate >= 50) return '#f59e0b';
+        return '#ef4444';
+      },
+
+      // 获取平均时间颜色（商业版）
+      getAvgTimeColor(impl) {
+        if (this.isCommunityEdition) return 'var(--muted)';
+        if (!impl.stats || impl.stats.total_count === 0) return 'var(--muted)';
+        const seconds = impl.stats.avg_duration_ms / 1000;
+        if (seconds <= 30) return '#10b981';  // 快速 - 绿色
+        if (seconds <= 60) return '#3b82f6';   // 正常 - 蓝色
+        if (seconds <= 120) return '#f59e0b';  // 较慢 - 橙色
+        return '#ef4444';                        // 很慢 - 红色
+      },
+
       closeAdminSwitchModal() {
         this.showAdminSwitchModal = false;
         this.adminSwitchToken = '';
@@ -6742,6 +7031,9 @@
             this.isLocal = response.data.data.is_local || false;
             if (response.data.data.footer) {
               this.footerConfig = response.data.data.footer;
+            }
+            if (response.data.data.version) {
+              this.footerConfig.version = response.data.data.version;
             }
           }
         } catch (error) {

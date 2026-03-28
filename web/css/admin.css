@@ -297,6 +297,40 @@ body {
     color: #3730a3;
 }
 
+/* 实现方使用中标签 */
+.implementation-in-use-label {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    margin-left: 8px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 500;
+    border-radius: 12px;
+    box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+}
+
+.implementation-in-use-label::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background: #fff;
+    border-radius: 50%;
+    margin-right: 4px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
 /* 操作按钮 */
 .action-btn {
     padding: 6px 12px;
@@ -830,6 +864,13 @@ body {
     color: #fff;
 }
 
+/* 小尺寸按钮样式 */
+.action-btn.small {
+    padding: 4px 8px;
+    font-size: 12px;
+    margin-left: 8px;
+}
+
 /* ==================== 快速配置样式 ==================== */
 
 /* 配置组 */
@@ -869,4 +910,156 @@ body {
 
 .config-group .form-group:last-child {
     margin-bottom: 0;
+}
+
+/* 底部版本信息 */
+.admin-footer {
+    position: fixed;
+    bottom: 0;
+    left: 240px;
+    right: 0;
+    padding: 12px 24px;
+    background: var(--admin-bg);
+    border-top: 1px solid var(--admin-border);
+    text-align: center;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+    z-index: 100;
+}
+/* ==================== 实现方算力配置样式 ==================== */
+
+/* 时长算力列表 */
+.duration-power-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.duration-power-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.duration-label {
+    color: var(--admin-text-muted);
+    min-width: 45px;
+    font-weight: 500;
+}
+
+.power-input {
+    width: 70px;
+    padding: 4px 8px;
+    border: 1px solid var(--admin-border);
+    border-radius: 4px;
+    font-size: 13px;
+    text-align: center;
+    transition: border-color 0.2s;
+}
+
+.power-input:focus {
+    outline: none;
+    border-color: var(--admin-primary);
+}
+
+.power-input:disabled {
+    background: #f1f5f9;
+    cursor: not-allowed;
+}
+
+.power-unit {
+    color: var(--admin-text-muted);
+    font-size: 12px;
+}
+
+.power-hint {
+    color: var(--admin-text-muted);
+    font-size: 12px;
+}
+
+.default-power {
+    color: var(--admin-text-muted);
+}
+
+.updating-indicator {
+    color: var(--admin-warning);
+    font-size: 11px;
+    margin-left: auto;
+}
+
+/* ==================== 实现方分组表格样式 ==================== */
+
+.implementation-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.implementation-group {
+    background: var(--admin-card-bg);
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.group-header h4 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.group-count {
+    font-size: 12px;
+    opacity: 0.9;
+    background: rgba(255,255,255,0.2);
+    padding: 4px 12px;
+    border-radius: 12px;
+}
+
+.group-table {
+    margin: 0;
+    border-radius: 0;
+}
+
+.group-table thead {
+    background: #f8fafc;
+}
+
+/* 排序列样式 */
+.sort-order-column {
+    width: 100px;
+    text-align: center;
+    padding: 8px !important;
+}
+
+.sort-input {
+    width: 80px;
+    padding: 4px 8px;
+    border: 1px solid var(--admin-border);
+    border-radius: 4px;
+    text-align: center;
+    font-size: 13px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.sort-input:focus {
+    outline: none;
+    border-color: var(--admin-primary);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.sort-input:disabled {
+    background: #f1f5f9;
+    cursor: not-allowed;
+    opacity: 0.6;
 }

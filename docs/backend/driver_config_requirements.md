@@ -73,7 +73,10 @@ volcengine:
   api_key: "your_volcengine_api_key"
 ```
 
-**注意**: Seedream 是同步 API，一次请求直接返回图片 URL，无需轮询。支持的图片尺寸：2K、3K。
+**注意**: 
+- Seedream 是同步 API，一次请求直接返回图片 URL，无需轮询
+- 支持的图片尺寸：2K、3K、4K
+- **图片大小限制**: 输入图片不能超过 10 MB，系统会自动压缩超过限制的图片
 
 ## 配置检查
 

@@ -13,6 +13,7 @@ import sys
 import time
 import yaml
 import platform
+import argparse
 
 # 添加项目根目录到 Python 路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +54,16 @@ def get_port_from_config():
 
 
 def main():
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='生产环境统一启动器')
+    parser.add_argument(
+        '-w', '--workers',
+        type=int,
+        default=4,
+        help='Gunicorn worker 进程数 (默认: 4, 仅适用于 Linux)'
+    )
+    args = parser.parse_args()
+    
     # 注册信号处理器
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
@@ -111,10 +122,10 @@ def main():
         web_server_name = "uvicorn"
     else:
         # Linux 使用 gunicorn（性能更好）
-        print(f"[Manager] Starting gunicorn on port {port}...")
+        print(f"[Manager] Starting gunicorn with {args.workers} workers on port {port}...")
         web_cmd = [
             sys.executable, "-m", "gunicorn", "server:app",
-            "-w", "8",
+            "-w", str(args.workers),
             "-k", "uvicorn.workers.UvicornWorker",
             "--bind", f"0.0.0.0:{port}",
             "--timeout", "600",

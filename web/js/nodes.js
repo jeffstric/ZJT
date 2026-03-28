@@ -1410,7 +1410,7 @@
             });
           } else {
             shotGroupGridModelEl.innerHTML += `
-              <option value="gemini-2.5-pro-image-preview">标准版 (4宫格)</option>
+              <option value="gemini-2.5-flash-image-preview">标准版 (4宫格)</option>
               <option value="gemini-3-pro-4grid">加强版4宫格</option>
               <option value="gemini-3-pro-image-preview">加强版9宫格</option>
             `;
@@ -5636,13 +5636,13 @@
                 if(shotCount <= 5 && !forceEnhancedModel) {
                   gridSize = 4;
                   gridLayout = '2x2';
-                  finalModel = 'gemini-2.5-pro-image-preview';
+                  finalModel = 'gemini-2.5-flash-image-preview';
                 } else {
                   gridSize = 9;
                   gridLayout = '3x3';
                   finalModel = 'gemini-3-pro-image-preview';
                 }
-              } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+              } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
                 // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
                 gridSize = 4;
                 gridLayout = '2x2';
@@ -5652,11 +5652,16 @@
                 gridSize = 4;
                 gridLayout = '2x2';
                 finalModel = 'gemini-3-pro-image-preview';
-              } else {
-                // 加强版9宫格，或因参考图数量强制升级
+              } else if(gridModel === 'gemini-3-pro-image-preview') {
+                // 加强版9宫格
                 gridSize = 9;
                 gridLayout = '3x3';
-                finalModel = 'gemini-3-pro-image-preview';
+                finalModel = gridModel;
+              } else {
+                // 用户选择了其他模型（如 Seedream），直接使用用户选择
+                gridSize = 9;
+                gridLayout = '3x3';
+                finalModel = gridModel;
               }
               
               // 限制参考图片数量（标准版最多5张，增强版最多13张）
@@ -5669,14 +5674,18 @@
               
               node.data.gridModel = finalModel;
 
-              const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+              const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
               const imageCount = Math.ceil(shotCount / gridSize);
               const totalPower = imageCount * imagePower;
+
+              // 获取模型显示名称
+              const taskInfo = TaskConfig.getTaskByKey(finalModel);
+              const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
 
               const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
               const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
                 `分镜数量：${shotCount}个\n` +
-                `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+                `模型：${modelDisplayName}${refImageInfo}\n` +
                 `预计消耗算力：${totalPower}\n\n` +
                 `确认生成吗？`;
               
@@ -6052,13 +6061,13 @@
             if(shotCount <= 5 && !forceEnhancedModel) {
               gridSize = 4;
               gridLayout = '2x2';
-              finalModel = 'gemini-2.5-pro-image-preview';
+              finalModel = 'gemini-2.5-flash-image-preview';
             } else {
               gridSize = 9;
               gridLayout = '3x3';
               finalModel = 'gemini-3-pro-image-preview';
             }
-          } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+          } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
             // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
             gridSize = 4;
             gridLayout = '2x2';
@@ -6068,13 +6077,18 @@
             gridSize = 4;
             gridLayout = '2x2';
             finalModel = 'gemini-3-pro-image-preview';
-          } else {
-            // 加强版9宫格，或因参考图数量强制升级
+          } else if(gridModel === 'gemini-3-pro-image-preview') {
+            // 加强版9宫格
             gridSize = 9;
             gridLayout = '3x3';
-            finalModel = 'gemini-3-pro-image-preview';
+            finalModel = gridModel;
+          } else {
+            // 用户选择了其他模型（如 Seedream），直接使用用户选择
+            gridSize = 9;
+            gridLayout = '3x3';
+            finalModel = gridModel;
           }
-          
+
           // 限制参考图片数量（标准版最多5张，增强版最多10张）
           const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 10 : 5;
           if(referenceImageUrls.length > maxRefImages) {
@@ -6084,15 +6098,19 @@
           }
           
           node.data.gridModel = finalModel;
-          const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+          const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
           const imageCount = Math.ceil(shotCount / gridSize);
           const totalPower = imageCount * imagePower;
+
+          // 获取模型显示名称
+          const taskInfo = TaskConfig.getTaskByKey(finalModel);
+          const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
 
           // 确认生成
           const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
           const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
             `分镜数量：${shotCount}个\n` +
-            `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+            `模型：${modelDisplayName}${refImageInfo}\n` +
             `预计消耗算力：${totalPower}\n\n` +
             `确认生成吗？`;
           
@@ -6522,13 +6540,13 @@
             if(shotCount <= 5 && !forceEnhancedModel) {
               gridSize = 4;
               gridLayout = '2x2';
-              finalModel = 'gemini-2.5-pro-image-preview';
+              finalModel = 'gemini-2.5-flash-image-preview';
             } else {
               gridSize = 9;
               gridLayout = '3x3';
               finalModel = 'gemini-3-pro-image-preview';
             }
-          } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+          } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
             gridSize = 4;
             gridLayout = '2x2';
             finalModel = gridModel;
@@ -6536,10 +6554,16 @@
             gridSize = 4;
             gridLayout = '2x2';
             finalModel = 'gemini-3-pro-image-preview';
-          } else {
+          } else if(gridModel === 'gemini-3-pro-image-preview') {
+            // 加强版9宫格
             gridSize = 9;
             gridLayout = '3x3';
-            finalModel = 'gemini-3-pro-image-preview';
+            finalModel = gridModel;
+          } else {
+            // 用户选择了其他模型（如 Seedream），直接使用用户选择
+            gridSize = 9;
+            gridLayout = '3x3';
+            finalModel = gridModel;
           }
           
           // 限制参考图片数量
@@ -6550,15 +6574,19 @@
           }
           
           node.data.gridModel = finalModel;
-          
-          const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+
+          const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
           const imageCount = Math.ceil(shotCount / gridSize);
           const totalPower = imageCount * imagePower;
-          
+
+          // 获取模型显示名称
+          const taskInfo = TaskConfig.getTaskByKey(finalModel);
+          const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
+
           const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
           const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
             `分镜数量：${shotCount}个\n` +
-            `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+            `模型：${modelDisplayName}${refImageInfo}\n` +
             `预计消耗算力：${totalPower}\n\n` +
             `确认生成吗？`;
           
@@ -7453,13 +7481,13 @@
           if(shotCount <= 5 && !forceEnhancedModel) {
             gridSize = 4;
             gridLayout = '2x2';
-            finalModel = 'gemini-2.5-pro-image-preview';
+            finalModel = 'gemini-2.5-flash-image-preview';
           } else {
             gridSize = 9;
             gridLayout = '3x3';
             finalModel = 'gemini-3-pro-image-preview';
           }
-        } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+        } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
           // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
           gridSize = 4;
           gridLayout = '2x2';
@@ -7469,13 +7497,18 @@
           gridSize = 4;
           gridLayout = '2x2';
           finalModel = 'gemini-3-pro-image-preview';
-        } else {
-          // 加强版9宫格，或因参考图数量强制升级
+        } else if(gridModel === 'gemini-3-pro-image-preview') {
+          // 加强版9宫格
           gridSize = 9;
           gridLayout = '3x3';
-          finalModel = 'gemini-3-pro-image-preview';
+          finalModel = gridModel;
+        } else {
+          // 用户选择了其他模型（如 Seedream），直接使用用户选择
+          gridSize = 9;
+          gridLayout = '3x3';
+          finalModel = gridModel;
         }
-        
+
         // 限制参考图片数量（标准版最多5张，增强版最多13张）
         const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;
         if(referenceImageUrls.length > maxRefImages) {
@@ -7485,15 +7518,19 @@
         }
         
         shotGroupNode.data.gridModel = finalModel;
-        
-        const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+
+        const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
         const imageCount = Math.ceil(shotCount / gridSize);
         const totalPower = imageCount * imagePower;
-        
+
+        // 获取模型显示名称
+        const taskInfo = TaskConfig.getTaskByKey(finalModel);
+        const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
+
         const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
         const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
           `分镜数量：${shotCount}个\n` +
-          `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+          `模型：${modelDisplayName}${refImageInfo}\n` +
           `预计消耗算力：${totalPower}\n\n` +
           `确认生成吗？`;
         

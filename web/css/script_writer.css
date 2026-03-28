@@ -1329,7 +1329,6 @@ body {
     border-radius: var(--radius-md);
     background: transparent;
     color: var(--text-secondary);
-    font-size: 16px;
     cursor: pointer;
     transition: all 0.2s;
     display: flex;
@@ -1340,7 +1339,13 @@ body {
 .refresh-icon-btn:hover {
     background: var(--bg-light);
     color: var(--primary-color);
-    transform: rotate(90deg);
+    transform: rotate(180deg);
+}
+
+.refresh-icon-btn svg {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.3s ease;
 }
 
 .file-tabs {
