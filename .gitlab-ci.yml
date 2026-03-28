@@ -46,10 +46,7 @@ unit_tests:
   services:
     - name: docker:dind
       alias: docker
-      command: ["sh", "-c", "echo '{\"registry-mirrors\":[\"https://docker.1ms.run\"]}' > /etc/docker/daemon.json && dockerd"]
-      environment:
-        HTTP_PROXY: "http://host.docker.internal:7890"
-        HTTPS_PROXY: "http://host.docker.internal:7890"
+      command: ["sh", "-c", "echo '{\"registry-mirrors\":[\"https://docker.m.daocloud.io\",\"https://docker.1ms.run\"]}' > /etc/docker/daemon.json && dockerd"]
 
   # 缓存配置（加速后续构建）
   cache:
