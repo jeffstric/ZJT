@@ -100,14 +100,6 @@ test_mode:
     image_edit: ""
     text_to_image: ""
 
-google:
-  api_key: ""
-  gemini_base_url: "https://api.jiekou.ai"
-
-jiekou:
-  api_key: ""
-  base_url: "https://api.jiekou.ai"
-
 task_queue:
   max_retry_count: 30
   task_expire_days: 7
