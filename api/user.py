@@ -177,6 +177,38 @@ async def get_implementation_preferences(
                 "implementations": impls
             }
 
+    # 社区版且没有可用实现方时，返回示例数据
+    if IS_COMMUNITY_EDITION and len(available_implementations) == 0:
+        available_implementations = {
+            "gemini-2.5-flash-image-preview": {
+                "name": "nano-banana",
+                "category": "image_edit",
+                "category_group": "image",
+                "implementations": [
+                    {"name": "gemini_duomi_v1", "display_name": "云雾", "computing_power": 95, "enabled": True, "stats": None},
+                    {"name": "comfiy", "display_name": "ComfyUI", "computing_power": 92, "enabled": True, "stats": None}
+                ]
+            },
+            "gemini-3-pro-image-preview": {
+                "name": "nano-banana-Pro",
+                "category": "image_edit",
+                "category_group": "image",
+                "implementations": [
+                    {"name": "gemini_duomi_v1", "display_name": "云雾", "computing_power": 98, "enabled": True, "stats": None},
+                    {"name": "comfiy", "display_name": "ComfyUI", "computing_power": 95, "enabled": True, "stats": None}
+                ]
+            },
+            "gemini-3.1-flash-image-preview": {
+                "name": "nano-banana-2",
+                "category": "image_edit",
+                "category_group": "image",
+                "implementations": [
+                    {"name": "gemini_duomi_v1", "display_name": "云雾", "computing_power": 96, "enabled": True, "stats": None},
+                    {"name": "comfiy", "display_name": "ComfyUI", "computing_power": 93, "enabled": True, "stats": None}
+                ]
+            }
+        }
+
     return {
         "code": 0,
         "data": {
