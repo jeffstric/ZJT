@@ -3354,7 +3354,6 @@
           document.getElementById('editCharacterModal').classList.remove('show');
           currentEditingCharacterNodeId = null;
 
-
           // 删除工作流中的角色节点
           const characterNodesToRemove = state.nodes.filter(n => n.type === 'character' && n.data.id == characterId);
           characterNodesToRemove.forEach(node => removeNode(node.id));
