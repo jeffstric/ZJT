@@ -1,8 +1,7 @@
 """
 数据库测试基类
-提供数据库测试的基础设施，包括自动建表、事务隔离、测试数据管理
+提供数据库测试的基础设施，包括事务隔离、测试数据管理
 """
-import os
 import unittest
 import logging
 from typing import List, Dict, Any
@@ -14,109 +13,52 @@ logger = logging.getLogger(__name__)
 class DatabaseTestCase(unittest.TestCase):
     """
     数据库测试基类
-    
+
     特性：
-    1. setUpClass: 连接测试数据库，执行建表 SQL
+    1. setUpClass: 清空所有表数据（数据库由 Entrypoint 初始化）
     2. setUp: 开始事务
-    3. tearDown: 回滚事务（保持数据库干净）
-    4. tearDownClass: 清理连接
+    3. tearDown: 清空所有表数据（保持数据库干净）
     """
-    
+
     _db_initialized = False
     _connection = None
-    
+
     @classmethod
     def setUpClass(cls):
-        """测试类初始化：创建数据库表结构"""
+        """测试类初始化：数据库已由 Entrypoint 初始化，这里只清空数据"""
         if not cls._db_initialized:
             logger.info(f"初始化测试数据库: {TEST_DB_CONFIG['database']}")
-            cls._init_database_schema()
+            cls._clear_all_tables()
             cls._db_initialized = True
-    
+
     @classmethod
-    def _init_database_schema(cls):
-        """初始化数据库表结构"""
-        sql_files = cls._get_sql_files_in_order()
-        
-        with get_test_db_connection() as conn:
+    def _clear_all_tables(cls):
+        """清空所有表的数据（保留表结构）"""
+        import pymysql
+
+        conn = pymysql.connect(
+            host=TEST_DB_CONFIG['host'],
+            port=TEST_DB_CONFIG['port'],
+            user=TEST_DB_CONFIG['user'],
+            password=TEST_DB_CONFIG['password'],
+            database=TEST_DB_CONFIG['database'],
+            charset=TEST_DB_CONFIG['charset']
+        )
+        try:
             cursor = conn.cursor()
-            
             cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
-            
-            for sql_file in sql_files:
-                logger.info(f"执行 SQL 文件: {sql_file}")
-                cls._execute_sql_file(cursor, sql_file)
-            
+            cursor.execute("SHOW TABLES")
+            # SHOW TABLES 返回 [(table_name,), ...]
+            tables = [row[0] for row in cursor.fetchall()]
+            for table in tables:
+                if table != 'alembic_version':
+                    cursor.execute(f"TRUNCATE TABLE `{table}`")
             cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
             conn.commit()
-            logger.info("数据库表结构初始化完成")
-    
-    @classmethod
-    def _get_sql_files_in_order(cls) -> List[str]:
-        """
-        按依赖顺序获取 SQL 文件列表
-        
-        Returns:
-            SQL 文件路径列表
-        """
-        sql_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'model', 'sql'
-        )
-        
-        ordered_files = [
-            'world.sql',
-            'character.sql',
-            'location.sql',
-            'props.sql',
-            'script.sql',
-            'video_workflow.sql',
-            'ai_tools.sql',
-            'runninghub_slots.sql',
-            'ai_audio.sql',
-            'payment_orders.sql',
-            'tasks.sql',
-        ]
-        
-        sql_files = []
-        for filename in ordered_files:
-            filepath = os.path.join(sql_dir, filename)
-            if os.path.exists(filepath):
-                sql_files.append(filepath)
-            else:
-                logger.warning(f"SQL 文件不存在: {filepath}")
-        
-        return sql_files
-    
-    @classmethod
-    def _execute_sql_file(cls, cursor, sql_file: str):
-        """
-        执行 SQL 文件
-        
-        Args:
-            cursor: 数据库游标
-            sql_file: SQL 文件路径
-        """
-        with open(sql_file, 'r', encoding='utf-8') as f:
-            sql_content = f.read()
-        
-        lines = []
-        for line in sql_content.split('\n'):
-            line = line.strip()
-            if line and not line.startswith('--'):
-                lines.append(line)
-        
-        clean_sql = ' '.join(lines)
-        statements = [s.strip() for s in clean_sql.split(';') if s.strip()]
-        
-        for statement in statements:
-            if statement:
-                try:
-                    cursor.execute(statement)
-                except Exception as e:
-                    logger.error(f"执行 SQL 失败: {statement[:100]}... 错误: {e}")
-                    raise
-    
+            logger.info(f"清空了 {len(tables)} 个表的数据")
+        finally:
+            conn.close()
+
     def setUp(self):
         """每个测试用例开始前：开启事务"""
         import pymysql

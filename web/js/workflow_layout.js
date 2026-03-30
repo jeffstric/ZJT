@@ -474,4 +474,69 @@
   }
 
   window.autoArrangeNodes = autoArrangeNodes;
+
+  // ==================== 碰撞检测与最近可用位置算法 ====================
+
+  function isPositionAvailable(x, y, width, height, excludeNodeId) {
+    for (const node of state.nodes) {
+      if (excludeNodeId !== undefined && node.id === excludeNodeId) continue;
+
+      const nodeDims = getNodeDimensions(node.id);
+      const noOverlap =
+        node.x + nodeDims.width + COLUMN_GAP <= x ||
+        x + width + COLUMN_GAP <= node.x ||
+        node.y + nodeDims.height + ROW_GAP <= y ||
+        y + height + ROW_GAP <= node.y;
+
+      if (!noOverlap) return false;
+    }
+    return true;
+  }
+
+  function findNearestAvailablePosition(x, y, width, height, excludeNodeId) {
+    const w = width || DEFAULT_NODE_WIDTH;
+    const h = height || DEFAULT_NODE_HEIGHT;
+
+    if (isPositionAvailable(x, y, w, h, excludeNodeId)) {
+      return { x, y, found: true };
+    }
+
+    const maxIterations = 1000;
+    const directions = [
+      { dx: 1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: -1 },
+    ];
+
+    let stepX = 0, stepY = 0;
+    let dirIndex = 0;
+    let stepsInDir = 0;
+    let layer = 1;
+
+    for (let i = 0; i < maxIterations; i++) {
+      const candidateX = x + stepX;
+      const candidateY = y + stepY;
+
+      if (isPositionAvailable(candidateX, candidateY, w, h, excludeNodeId)) {
+        return { x: candidateX, y: candidateY, found: true };
+      }
+
+      stepsInDir++;
+      if (stepsInDir === layer) {
+        stepsInDir = 0;
+        dirIndex = (dirIndex + 1) % 4;
+        if (dirIndex % 2 === 0) layer++;
+      }
+
+      const dir = directions[dirIndex];
+      stepX += dir.dx * COLUMN_GAP;
+      stepY += dir.dy * ROW_GAP;
+    }
+
+    return { x, y, found: false };
+  }
+
+  window.findNearestAvailablePosition = findNearestAvailablePosition;
+  window.isPositionAvailable = isPositionAvailable;
 })();

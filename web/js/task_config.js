@@ -33,7 +33,10 @@
 
     loadingPromise = (async () => {
       try {
-        const response = await fetch('/api/system/task-configs');
+        // 获取 auth_token（如果存在）
+        const token = localStorage.getItem('auth_token');
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+        const response = await fetch('/api/system/task-configs', { headers });
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
@@ -286,6 +289,13 @@
    * @returns {Object} { image_edit_types, image_to_video_types, text_to_image_types, ... }
    */
   function getTaskTypeConfig() {
+    // 生成任务类型ID到名称的映射
+    const task_type_name_map = {};
+    const allTasks = getAllTasks();
+    allTasks.forEach(task => {
+      task_type_name_map[task.id] = task.name;
+    });
+
     return {
       image_edit_types: getTaskTypeIdsByCategory('image_edit'),
       image_to_video_types: getTaskTypeIdsByCategory('image_to_video'),
@@ -293,7 +303,8 @@
       text_to_image_types: getTaskTypeIdsByCategory('text_to_image'),
       visual_enhance_types: getTaskTypeIdsByCategory('visual_enhance'),
       audio_types: getTaskTypeIdsByCategory('audio'),
-      digital_human_types: getTaskTypeIdsByCategory('digital_human')
+      digital_human_types: getTaskTypeIdsByCategory('digital_human'),
+      task_type_name_map: task_type_name_map  // 添加任务类型名称映射
     };
   }
 

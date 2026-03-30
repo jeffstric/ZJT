@@ -254,8 +254,15 @@
     function createVideoNode(opts){
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
-      const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
+      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+
+      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
+      if (opts && opts.checkCollision) {
+        const avail = findNearestAvailablePosition(x, y, 320, 220);
+        x = avail.x;
+        y = avail.y;
+      }
       const node = {
         id,
         type: 'video',
@@ -1410,7 +1417,7 @@
             });
           } else {
             shotGroupGridModelEl.innerHTML += `
-              <option value="gemini-2.5-pro-image-preview">标准版 (4宫格)</option>
+              <option value="gemini-2.5-flash-image-preview">标准版 (4宫格)</option>
               <option value="gemini-3-pro-4grid">加强版4宫格</option>
               <option value="gemini-3-pro-image-preview">加强版9宫格</option>
             `;
@@ -3480,7 +3487,7 @@
           const newVideoNodeIds = [];
 
           for(let i = 0; i < missingCount; i++){
-            const newVideoId = createVideoNode({ x: node.x + 380, y: node.y + i * 260 });
+            const newVideoId = createVideoNode({ x: node.x + 380, y: node.y + i * 260, checkCollision: true });
             state.connections.push({ id: state.nextConnId++, from: id, to: newVideoId });
             newVideoNodeIds.push(newVideoId);
             
@@ -3956,8 +3963,15 @@
     function createImageNode(opts){
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
-      const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
+      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+
+      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
+      if (opts && opts.checkCollision) {
+        const avail = findNearestAvailablePosition(x, y, 320, 220);
+        x = avail.x;
+        y = avail.y;
+      }
       const defaultRatio = state.ratio || ratioSelectEl.value || '9:16';
       
       // 从后端配置获取第一个图片模型作为默认值
@@ -4698,9 +4712,10 @@
 
           for(let i = 0; i < imageCount; i++){
             const offsetY = i * 280;
-            const newNodeId = createImageNode({ 
-              x: node.x + 380, 
-              y: node.y + offsetY 
+            const newNodeId = createImageNode({
+              x: node.x + 380,
+              y: node.y + offsetY,
+              checkCollision: true
             });
             const newNode = state.nodes.find(n => n.id === newNodeId);
             if(newNode){
@@ -5636,13 +5651,13 @@
                 if(shotCount <= 5 && !forceEnhancedModel) {
                   gridSize = 4;
                   gridLayout = '2x2';
-                  finalModel = 'gemini-2.5-pro-image-preview';
+                  finalModel = 'gemini-2.5-flash-image-preview';
                 } else {
                   gridSize = 9;
                   gridLayout = '3x3';
                   finalModel = 'gemini-3-pro-image-preview';
                 }
-              } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+              } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
                 // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
                 gridSize = 4;
                 gridLayout = '2x2';
@@ -5652,11 +5667,16 @@
                 gridSize = 4;
                 gridLayout = '2x2';
                 finalModel = 'gemini-3-pro-image-preview';
-              } else {
-                // 加强版9宫格，或因参考图数量强制升级
+              } else if(gridModel === 'gemini-3-pro-image-preview') {
+                // 加强版9宫格
                 gridSize = 9;
                 gridLayout = '3x3';
-                finalModel = 'gemini-3-pro-image-preview';
+                finalModel = gridModel;
+              } else {
+                // 用户选择了其他模型（如 Seedream），直接使用用户选择
+                gridSize = 9;
+                gridLayout = '3x3';
+                finalModel = gridModel;
               }
               
               // 限制参考图片数量（标准版最多5张，增强版最多13张）
@@ -5669,14 +5689,18 @@
               
               node.data.gridModel = finalModel;
 
-              const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+              const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
               const imageCount = Math.ceil(shotCount / gridSize);
               const totalPower = imageCount * imagePower;
+
+              // 获取模型显示名称
+              const taskInfo = TaskConfig.getTaskByKey(finalModel);
+              const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
 
               const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
               const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
                 `分镜数量：${shotCount}个\n` +
-                `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+                `模型：${modelDisplayName}${refImageInfo}\n` +
                 `预计消耗算力：${totalPower}\n\n` +
                 `确认生成吗？`;
               
@@ -5792,7 +5816,8 @@
                   const gridIndex = idx + 1;
                   const gridImageNodeId = createImageNode({
                     x: shotFrameNode.x + 380,
-                    y: shotFrameNode.y
+                    y: shotFrameNode.y,
+                    checkCollision: true
                   });
                   
                   const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
@@ -6052,13 +6077,13 @@
             if(shotCount <= 5 && !forceEnhancedModel) {
               gridSize = 4;
               gridLayout = '2x2';
-              finalModel = 'gemini-2.5-pro-image-preview';
+              finalModel = 'gemini-2.5-flash-image-preview';
             } else {
               gridSize = 9;
               gridLayout = '3x3';
               finalModel = 'gemini-3-pro-image-preview';
             }
-          } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+          } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
             // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
             gridSize = 4;
             gridLayout = '2x2';
@@ -6068,13 +6093,18 @@
             gridSize = 4;
             gridLayout = '2x2';
             finalModel = 'gemini-3-pro-image-preview';
-          } else {
-            // 加强版9宫格，或因参考图数量强制升级
+          } else if(gridModel === 'gemini-3-pro-image-preview') {
+            // 加强版9宫格
             gridSize = 9;
             gridLayout = '3x3';
-            finalModel = 'gemini-3-pro-image-preview';
+            finalModel = gridModel;
+          } else {
+            // 用户选择了其他模型（如 Seedream），直接使用用户选择
+            gridSize = 9;
+            gridLayout = '3x3';
+            finalModel = gridModel;
           }
-          
+
           // 限制参考图片数量（标准版最多5张，增强版最多10张）
           const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 10 : 5;
           if(referenceImageUrls.length > maxRefImages) {
@@ -6084,15 +6114,19 @@
           }
           
           node.data.gridModel = finalModel;
-          const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+          const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
           const imageCount = Math.ceil(shotCount / gridSize);
           const totalPower = imageCount * imagePower;
+
+          // 获取模型显示名称
+          const taskInfo = TaskConfig.getTaskByKey(finalModel);
+          const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
 
           // 确认生成
           const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
           const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
             `分镜数量：${shotCount}个\n` +
-            `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+            `模型：${modelDisplayName}${refImageInfo}\n` +
             `预计消耗算力：${totalPower}\n\n` +
             `确认生成吗？`;
           
@@ -6213,7 +6247,8 @@
               const gridIndex = idx + 1;
               const gridImageNodeId = createImageNode({
                 x: shotFrameNode.x + 380,
-                y: shotFrameNode.y
+                y: shotFrameNode.y,
+                checkCollision: true
               });
               
               const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
@@ -6522,13 +6557,13 @@
             if(shotCount <= 5 && !forceEnhancedModel) {
               gridSize = 4;
               gridLayout = '2x2';
-              finalModel = 'gemini-2.5-pro-image-preview';
+              finalModel = 'gemini-2.5-flash-image-preview';
             } else {
               gridSize = 9;
               gridLayout = '3x3';
               finalModel = 'gemini-3-pro-image-preview';
             }
-          } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+          } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
             gridSize = 4;
             gridLayout = '2x2';
             finalModel = gridModel;
@@ -6536,10 +6571,16 @@
             gridSize = 4;
             gridLayout = '2x2';
             finalModel = 'gemini-3-pro-image-preview';
-          } else {
+          } else if(gridModel === 'gemini-3-pro-image-preview') {
+            // 加强版9宫格
             gridSize = 9;
             gridLayout = '3x3';
-            finalModel = 'gemini-3-pro-image-preview';
+            finalModel = gridModel;
+          } else {
+            // 用户选择了其他模型（如 Seedream），直接使用用户选择
+            gridSize = 9;
+            gridLayout = '3x3';
+            finalModel = gridModel;
           }
           
           // 限制参考图片数量
@@ -6550,15 +6591,19 @@
           }
           
           node.data.gridModel = finalModel;
-          
-          const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+
+          const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
           const imageCount = Math.ceil(shotCount / gridSize);
           const totalPower = imageCount * imagePower;
-          
+
+          // 获取模型显示名称
+          const taskInfo = TaskConfig.getTaskByKey(finalModel);
+          const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
+
           const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
           const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
             `分镜数量：${shotCount}个\n` +
-            `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+            `模型：${modelDisplayName}${refImageInfo}\n` +
             `预计消耗算力：${totalPower}\n\n` +
             `确认生成吗？`;
           
@@ -6671,7 +6716,8 @@
               const gridIndex = idx + 1;
               const gridImageNodeId = createImageNode({
                 x: shotFrameNode.x + 380,
-                y: shotFrameNode.y
+                y: shotFrameNode.y,
+                checkCollision: true
               });
               
               const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
@@ -7453,13 +7499,13 @@
           if(shotCount <= 5 && !forceEnhancedModel) {
             gridSize = 4;
             gridLayout = '2x2';
-            finalModel = 'gemini-2.5-pro-image-preview';
+            finalModel = 'gemini-2.5-flash-image-preview';
           } else {
             gridSize = 9;
             gridLayout = '3x3';
             finalModel = 'gemini-3-pro-image-preview';
           }
-        } else if(gridModel === 'gemini-2.5-pro-image-preview' && !forceEnhancedModel) {
+        } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
           // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
           gridSize = 4;
           gridLayout = '2x2';
@@ -7469,13 +7515,18 @@
           gridSize = 4;
           gridLayout = '2x2';
           finalModel = 'gemini-3-pro-image-preview';
-        } else {
-          // 加强版9宫格，或因参考图数量强制升级
+        } else if(gridModel === 'gemini-3-pro-image-preview') {
+          // 加强版9宫格
           gridSize = 9;
           gridLayout = '3x3';
-          finalModel = 'gemini-3-pro-image-preview';
+          finalModel = gridModel;
+        } else {
+          // 用户选择了其他模型（如 Seedream），直接使用用户选择
+          gridSize = 9;
+          gridLayout = '3x3';
+          finalModel = gridModel;
         }
-        
+
         // 限制参考图片数量（标准版最多5张，增强版最多13张）
         const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;
         if(referenceImageUrls.length > maxRefImages) {
@@ -7485,15 +7536,19 @@
         }
         
         shotGroupNode.data.gridModel = finalModel;
-        
-        const imagePower = finalModel === 'gemini-3-pro-image-preview' ? 6 : 2;
+
+        const imagePower = TaskConfig.getComputingPower(finalModel) || 2;
         const imageCount = Math.ceil(shotCount / gridSize);
         const totalPower = imageCount * imagePower;
-        
+
+        // 获取模型显示名称
+        const taskInfo = TaskConfig.getTaskByKey(finalModel);
+        const modelDisplayName = taskInfo ? taskInfo.name : finalModel;
+
         const refImageInfo = referenceImageUrls.length > 0 ? `\n参考图片：${referenceImageUrls.length}张` : '';
         const confirmMsg = `即将生成${imageCount}张${gridLayout}宫格图片\n` +
           `分镜数量：${shotCount}个\n` +
-          `模型：${finalModel === 'gemini-3-pro-image-preview' ? '加强版' : '标准版'}${refImageInfo}\n` +
+          `模型：${modelDisplayName}${refImageInfo}\n` +
           `预计消耗算力：${totalPower}\n\n` +
           `确认生成吗？`;
         
@@ -7609,7 +7664,8 @@
             const gridIndex = idx + 1;
             const gridImageNodeId = createImageNode({
               x: shotFrameNode.x + 380,
-              y: shotFrameNode.y
+              y: shotFrameNode.y,
+              checkCollision: true
             });
             
             const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
@@ -7730,7 +7786,8 @@
           x: shotGroupNode.x + offsetX,
           y: nextY,
           shotData: shotDataWithLocation,
-          model: shotGroupNode.data.model
+          model: shotGroupNode.data.model,
+          checkCollision: true
         });
         createdNodeIds.push(shotFrameNodeId);
         nextY += 700;
@@ -7831,7 +7888,8 @@
           x: shotGroupNode.x + offsetX,
           y: nextY,
           shotData: shotDataWithLocation,
-          model: shotGroupNode.data.model
+          model: shotGroupNode.data.model,
+          checkCollision: true
         });
         createdNodeIds.push(shotFrameNodeId);
         nextY += 700;
@@ -7888,8 +7946,15 @@
     function createShotFrameNode(opts){
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
-      const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
+      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+
+      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
+      if (opts && opts.checkCollision) {
+        const avail = findNearestAvailablePosition(x, y, 320, 220);
+        x = avail.x;
+        y = avail.y;
+      }
       const shotData = opts && opts.shotData ? opts.shotData : {};
       
       // 从后端配置获取默认模型
@@ -9617,9 +9682,10 @@
         
         for(let i = 0; i < videoCount; i++){
           const offsetY = i * 280;
-          const newVideoNodeId = createVideoNode({ 
-            x: firstShotFrame.x + 380, 
-            y: firstShotFrame.y + offsetY 
+          const newVideoNodeId = createVideoNode({
+            x: firstShotFrame.x + 380,
+            y: firstShotFrame.y + offsetY,
+            checkCollision: true
           });
           
           const newVideoNode = state.nodes.find(n => n.id === newVideoNodeId);

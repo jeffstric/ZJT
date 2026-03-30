@@ -67,6 +67,13 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
     {
+        'key': 'timeout.sync_request_timeout',
+        'value_type': 'int',
+        'description': '同步请求超时时间（秒），用于火山引擎等同步接口',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
         'key': 'timeout.status_check_timeout',
         'value_type': 'int',
         'description': '状态检查超时时间（秒）',
@@ -146,7 +153,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'runninghub.max_concurrent_slots',
         'value_type': 'int',
-        'description': 'RunningHub 最大并发槽位数量',
+        'description': 'RunningHub 最大并发槽位数量，该值根据runninghub账号的 并发数决定，可以查看 https://www.runninghub.cn/vip-rights/2 查看并发数，注意，必须支持api调用的套餐才能使用 26年3月 基础版为1 专业版为3 专业Plus版为5 Max 为20',
         'editable': True,
         'is_sensitive': False
     },
@@ -178,6 +185,127 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': '火山引擎 API Key（Seedream 5.0 文生图）',
         'editable': True,
         'is_sensitive': True,
+        'quick_config': True
+    },
+
+    # ==================== API 聚合站配置（兼容云雾、comfly 等中转站）====================
+    {
+        'key': 'api_aggregator.site_1.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点1基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_1.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点1 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_1.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点1名称',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_2.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点2基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_2.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点2 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_2.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点2名称',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_3.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点3基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_3.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点3 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_3.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点3名称',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'api_aggregator.site_4.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点4基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_4.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点4 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_4.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点4名称',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_5.base_url',
+        'value_type': 'string',
+        'description': 'API 聚合站站点5基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_5.api_key',
+        'value_type': 'string',
+        'description': 'API 聚合站站点5 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'api_aggregator.site_5.name',
+        'value_type': 'string',
+        'description': 'API 聚合站站点5名称',
+        'editable': True,
+        'is_sensitive': False,
         'quick_config': True
     },
 
@@ -322,6 +450,22 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'media_cache.cleanup_interval_hours',
         'value_type': 'int',
         'description': '定时清理间隔（小时）',
+        'editable': True,
+        'is_sensitive': False
+    },
+
+    # ==================== 同步任务进程池配置 ====================
+    {
+        'key': 'sync_task.max_workers',
+        'value_type': 'int',
+        'description': '同步任务进程池最大并发数',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'sync_task.check_interval',
+        'value_type': 'int',
+        'description': '同步任务结果检查间隔（秒）',
         'editable': True,
         'is_sensitive': False
     },

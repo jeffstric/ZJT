@@ -613,16 +613,16 @@
         });
 
         const result = await response.json();
-        
+
         if(result.code === 0 && result.data){
           const workflow = result.data;
-          
+
           // 更新页面标题
           if(workflow.name){
             document.querySelector('.brand-title').textContent = workflow.name;
             document.title = workflow.name + ' - 视频工作流';
           }
-          
+
           // 加载画风信息
           if(workflow.style){
             state.style.name = workflow.style;
@@ -630,7 +630,22 @@
           if(workflow.style_reference_image){
             state.style.referenceImageUrl = workflow.style_reference_image;
           }
-          
+
+          // 检查是否从剧本智能体跳转过来，且带有世界ID
+          const urlParams = new URLSearchParams(window.location.search);
+          const fromWorldId = urlParams.get('from_world_id');
+
+          // 判断工作流是否已配置世界
+          const hasWorldConfigured = workflow.default_world_id || (workflow.workflow_data && workflow.workflow_data.defaultWorldId);
+
+          // 如果工作流没有配置世界，且从剧本智能体跳转过来带有世界ID，则自动同步
+          if(!hasWorldConfigured && fromWorldId){
+            console.log('[加载工作流] 工作流未配置世界，从剧本智能体同步世界ID:', fromWorldId);
+            // 更新工作流的默认世界
+            await saveDefaultWorld(workflowId, parseInt(fromWorldId, 10));
+            workflow.default_world_id = parseInt(fromWorldId, 10);
+          }
+
           // 加载默认世界
           if(workflow.default_world_id){
             state.defaultWorldId = workflow.default_world_id;
@@ -644,10 +659,10 @@
               }
             }
           }
-          
+
           // 在恢复节点之前，先获取世界数据（角色、道具、场景），避免节点创建时数据为空
           await pollWorkflowNodeStatus();
-          
+
           // 如果有workflow_data，恢复状态
           if(workflow.workflow_data){
             console.log('[加载工作流] workflow_data.defaultWorldId:', workflow.workflow_data.defaultWorldId);
@@ -1361,7 +1376,7 @@
       state.nextNodeId = nodeData.id;
       
       // 调用原有的创建函数
-      createVideoNode({ x: nodeData.x, y: nodeData.y });
+      createVideoNode({ x: nodeData.x, y: nodeData.y, checkCollision: true });
       
       // 恢复nextNodeId为最大值
       state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);

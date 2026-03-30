@@ -236,6 +236,10 @@ app.include_router(admin_router)
 # 注册系统状态 API 路由
 app.include_router(system_router)
 
+# 注册用户偏好 API 路由
+from api.user import router as user_router
+app.include_router(user_router)
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1984,6 +1988,69 @@ async def get_invitation_info(request: Request, auth_token: str = Header(None, a
         )
 
 
+# 用户实现方偏好 API 已迁移到 api/user.py
+
+
+@app.get('/api/tasks/{task_key}/implementations')
+async def get_task_implementations(
+    task_key: str,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取任务可选的实现方列表及其算力
+
+    Returns:
+        {
+            "task_key": "gemini-2.5-flash-image-preview",
+            "implementations": [
+                {"name": "gemini_duomi_v1", "display_name": "多米", "computing_power": 2, "description": "..."},
+                {"name": "gemini_image_preview_common_v1", "display_name": "通用接口", "computing_power": 3, "description": "..."}
+            ],
+            "default": "gemini_duomi_v1",
+            "user_selected": "gemini_image_preview_common_v1"
+        }
+    """
+    try:
+        from config.unified_config import UnifiedConfigRegistry, DriverKey
+
+        task_config = UnifiedConfigRegistry.get_by_key(task_key)
+        if not task_config:
+            return JSONResponse(
+                status_code=404,
+                content={'success': False, 'message': f'任务不存在: {task_key}'}
+            )
+
+        # 获取实现方列表（使用 _get_implementations_info 方法，支持动态 API 聚合器）
+        implementations = task_config._get_implementations_info()
+
+        # 获取用户偏好
+        user_selected = None
+        if auth_token:
+            if auth_token.startswith("Bearer "):
+                auth_token = auth_token[7:]
+            user_id = UserTokensModel.get_user_id_by_token(auth_token)
+            if user_id:
+                user_selected = UsersModel.get_implementation_preference(user_id, task_key)
+
+        return JSONResponse(
+            content={
+                'success': True,
+                'data': {
+                    'task_key': task_key,
+                    'implementations': implementations,
+                    'default': task_config.implementation,
+                    'user_selected': user_selected
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f'获取任务实现方失败: {str(e)}')
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'message': '服务器错误'}
+        )
+
+
 class SendVerifyCodeRequest(BaseModel):
     phone: str
     type: str
@@ -2474,12 +2541,20 @@ async def get_ai_tools_history(
                     }
                 )
         
+        # 动态生成 type_mapping，基于 unified_config.py 中的分类定义
+        from config.unified_config import UnifiedConfigRegistry, TaskCategory
+        
         type_mapping = {
-            1: [1, 4, 7],  # 图片编辑 + 图片高清放大
-            2: [2, 5],  # AI视频生成 + 高清修复
-            3: [3, 6, 10, 11, 12],  # 图片生成视频（Sora2、LTX2.0、Wan2.2、可灵）+ 高清修复
-            4: [5, 6] # 高清修复
+            1: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.IMAGE_EDIT),  # 图片编辑
+            2: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.TEXT_TO_VIDEO),  # AI视频生成
+            3: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.IMAGE_TO_VIDEO),  # 图片生成视频
+            4: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.VISUAL_ENHANCE),  # 视觉增强
+            13: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.DIGITAL_HUMAN)  # 数字人
         }
+        
+        # 如果数字人分类为空，则使用图生视频类型（向后兼容）
+        if not type_mapping[13]:
+            type_mapping[13] = type_mapping[3]
 
         if type_list_param:
             # Use types parameter (comma-separated list)
@@ -2895,7 +2970,6 @@ async def video_enhance(
             # 检查是否为本地缓存文件路径
             if video_url.startswith('/upload/cache/'):
                 # 本地缓存文件，需要上传到 RunningHub
-                import os
                 from pathlib import Path
                 from utils.file_storage import RunningHubFileStorage
                 from config.config_util import get_config, get_dynamic_config_value
@@ -6008,6 +6082,64 @@ async def update_character(
         )
 
 
+@app.delete('/api/characters/{character_id}')
+async def delete_character(
+    character_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除角色
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+
+        # 获取角色信息
+        character = CharacterModel.get_by_id(character_id)
+        if not character:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'code': -1,
+                    'message': '角色不存在',
+                    'data': None
+                }
+            )
+
+        # 验证权限
+        if character.user_id != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    'code': -1,
+                    'message': '无权限删除此角色',
+                    'data': None
+                }
+            )
+
+        # 删除角色
+        CharacterModel.delete(character_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '删除成功',
+                'data': None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete character: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
 @app.get('/api/locations')
 async def get_locations(
     world_id: int = Query(..., description="世界ID"),
@@ -6295,6 +6427,64 @@ async def update_location(
         )
     except Exception as e:
         logger.error(f"Failed to update location: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.delete('/api/locations/{location_id}')
+async def delete_location(
+    location_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除场景
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+
+        # 获取场景信息
+        location = LocationModel.get_by_id(location_id)
+        if not location:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'code': -1,
+                    'message': '场景不存在',
+                    'data': None
+                }
+            )
+
+        # 验证权限
+        if location.user_id != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    'code': -1,
+                    'message': '无权限删除此场景',
+                    'data': None
+                }
+            )
+
+        # 删除场景
+        LocationModel.delete(location_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '删除成功',
+                'data': None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete location: {e}")
         return JSONResponse(
             status_code=500,
             content={

@@ -1,0 +1,80 @@
+# =============================================================================
+# ComfyUI Server Docker Compose Configuration for Testing
+# 使用 MySQL 8.0 数据库
+# 使用说明: docker compose -f docker/docker-compose-test.yml up -d
+# =============================================================================
+
+services:
+  # MySQL 8.0 数据库服务（测试专用）
+  mysql_test:
+    image: mysql:8.0
+    container_name: zjt_mysql_test
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_test_pass
+      MYSQL_DATABASE: zjt_unittest
+      MYSQL_USER: unittest_user
+      MYSQL_PASSWORD: unittest_pass
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_unicode_ci
+      # 禁用 strict mode 以兼容旧版 SQL
+      MYSQL_SQL_MODE: "STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO"
+    ports:
+      - "3307:3306"
+    volumes:
+      # MySQL 配置文件
+      - ./mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      # 初始化 SQL 脚本（首次启动时自动执行）
+      - ../model/sql:/docker-entrypoint-initdb.d:ro
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_test_pass"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - zjt_test_network
+
+  # 测试服务
+  test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: zjt_test
+    restart: "no"
+    environment:
+      # 环境配置
+      comfyui_env: unit
+      # 测试数据库配置（覆盖配置文件中的设置）
+      DB_HOST: mysql_test
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root_test_pass
+      DB_NAME: zjt_unittest
+      # 测试模式
+      UNIT_TEST_CONFIG: config_unit.yml
+      # 时区设置
+      TZ: Asia/Shanghai
+    volumes:
+      # 配置文件挂载
+      - ../config_unit.yml:/app/config_unit.yml:ro
+      # 数据持久化
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../upload:/app/upload
+      - ../files:/app/files
+      # ffmpeg 和其他二进制文件
+      - ../bin/ffmpeg:/app/bin/ffmpeg:ro
+    depends_on:
+      mysql_test:
+        condition: service_healthy
+    # 直接运行测试脚本，不启动服务器
+    command: python3 scripts/testing/run_unit_tests.py
+    networks:
+      - zjt_test_network
+
+# 网络配置
+networks:
+  zjt_test_network:
+    driver: bridge

@@ -5,11 +5,12 @@ Seedream 火山引擎供应商 v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
+import os
 from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
-from utils.image_upload_utils import upload_local_images_to_cdn_sync
+from utils.image_upload_utils import compress_and_upload_image_sync
 
 
 class Seedream5VolcengineV1Driver(BaseVideoDriver):
@@ -68,7 +69,8 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         # 加载配置
         self._api_key = get_dynamic_config_value("volcengine", "api_key", default="")
         self._base_url = "https://ark.cn-beijing.volces.com"
-        self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=60)
+        # 同步请求接口需要更长的超时时间，不复用异步接口的 request_timeout
+        self._timeout = get_dynamic_config_value("timeout", "sync_request_timeout", default=300)
         self._model = "doubao-seedream-5-0-260128"
 
         # 是否为本地环境
@@ -177,11 +179,34 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         image_urls = None
         if ai_tool.image_path:
             image_urls = ai_tool.image_path.split(',') if ',' in ai_tool.image_path else [ai_tool.image_path]
-            # 如果是本地环境，将本地图片上传到图床
-            if self._is_local:
-                self.logger.info(f"本地环境检测到图片路径，准备上传到图床: {image_urls}")
-                image_urls = upload_local_images_to_cdn_sync(image_urls, self._config)
-                self.logger.info(f"图片上传完成，CDN链接: {image_urls}")
+            
+            # 统一处理：解析 URL → 压缩（如需要）→ 上传/保存
+            processed_urls = []
+            for img_url in image_urls:
+                img_url = img_url.strip()
+                if not img_url:
+                    continue
+                
+                # 使用统一函数处理图片：解析、压缩、上传
+                success, new_url, error = compress_and_upload_image_sync(
+                    img_url,
+                    self._config,
+                    max_size_mb=10.0,
+                    is_local=True  # 火山引擎要求参考图在5秒内下载完成，强制走图床上传
+                )
+                
+                if success:
+                    processed_urls.append(new_url)
+                else:
+                    self.logger.error(f"处理图片失败: {error}")
+                    return {
+                        "success": False,
+                        "error": f"处理图片失败: {error}",
+                        "error_type": "USER",
+                        "retry": False
+                    }
+            
+            image_urls = processed_urls
 
         # 根据 task_id 选择模型
         task_type = getattr(ai_tool, 'type', None)

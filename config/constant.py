@@ -139,14 +139,37 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.KLING_IMAGE_TO_VIDEO: DriverImplementation.KLING_DUOMI_V1,     # 使用多米供应商的 Kling v1 版本
     
     # Gemini 相关驱动
-    DriverKey.GEMINI_IMAGE_EDIT: DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini v1 版本（标准版）
-    DriverKey.GEMINI_IMAGE_EDIT_PRO: DriverImplementation.GEMINI_DUOMI_V1,   # 使用多米供应商的 Gemini v1 版本（Pro模型）
+    DriverKey.GEMINI_IMAGE_EDIT: [
+        DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini v1 版本（标准版）
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
+    ],
+    DriverKey.GEMINI_IMAGE_EDIT_PRO: [
+        DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini v1 版本（Pro模型）
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
+    ],
+    DriverKey.GEMINI_3_1_FLASH_IMAGE_EDIT: [
+        DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini 3.1 Flash 版本
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
+    ],
     
     # VEO3 相关驱动
     DriverKey.VEO3_IMAGE_TO_VIDEO: DriverImplementation.VEO3_DUOMI_V1,       # 使用多米供应商的 VEO3 v1 版本
     
     # RunningHub 相关驱动
     DriverKey.LTX2_IMAGE_TO_VIDEO: DriverImplementation.LTX2_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2 v1 版本
+    DriverKey.LTX2_3_IMAGE_TO_VIDEO: DriverImplementation.LTX2_3_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 v1 版本
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1, # 使用 RunningHub 的数字人 v1 版本
     
@@ -205,6 +228,7 @@ class AIToolStatus:
     """AI工具状态常量"""
     PENDING = 0       # 未处理
     PROCESSING = 1    # 正在处理
+    SYNC_QUEUED = 3   # 已提交到同步任务进程池
     FAILED = -1       # 处理失败
     COMPLETED = 2     # 处理完成
 
@@ -213,8 +237,20 @@ class TaskStatus:
     """任务状态常量"""
     QUEUED = 0        # 队列中
     PROCESSING = 1    # 处理中
+    SYNC_QUEUED = 3   # 已提交到同步任务进程池
     COMPLETED = 2     # 处理完成
     FAILED = -1       # 处理失败
+
+
+class GridImageTaskStatus:
+    """宫格生图任务状态常量"""
+    QUEUED = 0          # 队列中
+    PROCESSING = 1      # 处理中
+    COMPLETED = 2       # 完成
+    FAILED = -1         # 失败
+    TIMEOUT = -2        # 超时
+    CANCELLED = -3      # 取消
+    DOWNLOAD_FAILED = -4  # 下载失败
 
 
 class AIAudioStatus:
@@ -230,12 +266,14 @@ AI_TOOL_STATUS_PENDING = AIToolStatus.PENDING
 AI_TOOL_STATUS_PROCESSING = AIToolStatus.PROCESSING
 AI_TOOL_STATUS_FAILED = AIToolStatus.FAILED
 AI_TOOL_STATUS_COMPLETED = AIToolStatus.COMPLETED
+AI_TOOL_STATUS_SYNC_QUEUED = AIToolStatus.SYNC_QUEUED
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED
 TASK_STATUS_PROCESSING = TaskStatus.PROCESSING
 TASK_STATUS_COMPLETED = TaskStatus.COMPLETED
 TASK_STATUS_FAILED = TaskStatus.FAILED
+TASK_STATUS_SYNC_QUEUED = TaskStatus.SYNC_QUEUED
 
 # 向后兼容别名 - AI Audio 状态
 AI_AUDIO_STATUS_PENDING = AIAudioStatus.PENDING
@@ -355,6 +393,19 @@ class SystemConfigConstants:
 
 # 向后兼容别名
 CONFIG_KEY_MAX_LENGTH = SystemConfigConstants.CONFIG_KEY_MAX_LENGTH
+
+
+# 会话历史配置相关常量
+class SessionHistoryConstants:
+    """会话历史配置相关常量"""
+    MAX_HISTORY_MESSAGES = 100  # 最大历史消息数量（剧本创作需要较多上下文）
+    MIN_HISTORY_MESSAGES = 20   # 最小保留的历史消息数量（确保上下文连续性）
+    TRUNCATION_KEEP_SYSTEM = True  # 截断时保留系统提示
+
+
+# 向后兼容别名
+MAX_HISTORY_MESSAGES = SessionHistoryConstants.MAX_HISTORY_MESSAGES
+MIN_HISTORY_MESSAGES = SessionHistoryConstants.MIN_HISTORY_MESSAGES
 
 
 # Gemini API URL 格式常量

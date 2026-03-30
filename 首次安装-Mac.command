@@ -15,6 +15,10 @@ echo ""
 # 执行创建应用脚本
 bash scripts/tools/create_mac_app.sh
 
+# 设置 .app 可执行权限
+echo "正在设置可执行权限..."
+chmod -R +x "ZJT Server.app"
+
 echo ""
 echo "安装完成!"
 echo ""

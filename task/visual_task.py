@@ -14,10 +14,12 @@ from config.constant import (
     AI_TOOL_STATUS_PROCESSING,
     AI_TOOL_STATUS_COMPLETED,
     AI_TOOL_STATUS_FAILED,
+    AI_TOOL_STATUS_SYNC_QUEUED,
     TASK_STATUS_QUEUED,
     TASK_STATUS_PROCESSING,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
+    TASK_STATUS_SYNC_QUEUED,
     RUNNINGHUB_TASK_TYPES
 )
 
@@ -144,17 +146,41 @@ async def _submit_new_task(ai_tool):
         bool: True 表示成功，False 表示失败
     """
     from task.visual_drivers import VideoDriverFactory
-    
+    from config.unified_config import UnifiedConfigRegistry, get_implementation_id
+    from task.sync_task_executor import get_sync_task_executor
+
     ai_tool_type = ai_tool.type
     task_id = ai_tool.id
-    
+
     if _is_test_mode_enabled():
         logger.info(f"[TEST MODE] [DRIVER] Submitting task {task_id} (type: {ai_tool_type})")
-    
+
     try:
-        # 1. 根据任务类型创建对应的驱动实例
-        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type)
-        
+        # 0. 检查是否为同步模式 - 分流到进程池
+        implementation_name = VideoDriverFactory.get_implementation_for_user(ai_tool_type, ai_tool.user_id)
+        if implementation_name:
+            impl_config = UnifiedConfigRegistry.get_implementation(implementation_name)
+
+            # 检查是否为同步模式
+            if impl_config and impl_config.sync_mode:
+                # 同步任务：提交到进程池
+                # 先记录 implementation
+                implementation_id = get_implementation_id(implementation_name)
+                AIToolsModel.update(task_id, implementation=implementation_id)
+
+                executor = get_sync_task_executor()
+                if executor.is_running():
+                    executor.submit(task_id, ai_tool_type)
+                    AIToolsModel.update(task_id, status=AI_TOOL_STATUS_SYNC_QUEUED)
+                    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
+                    logger.info(f"[SyncTask] Task {task_id} submitted to sync task executor (sync_mode implementation: {impl_config.name})")
+                    return True
+                else:
+                    logger.warning(f"[SyncTask] Sync task executor not running, falling back to normal processing")
+
+        # 1. 根据任务类型创建对应的驱动实例（传递 user_id 以应用用户偏好）
+        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+
         if not driver:
             logger.error(f"Unsupported driver type: {ai_tool_type}")
             # 更新任务状态为失败
@@ -163,7 +189,13 @@ async def _submit_new_task(ai_tool):
             # 退还算力
             _refund_computing_power(ai_tool, f"不支持的任务类型: {ai_tool_type}")
             return False
-        
+
+        # 记录 implementation 到 ai_tools 表（使用 driver.driver_name 确保是实际使用的 implementation）
+        if driver.driver_name:
+            implementation_id = get_implementation_id(driver.driver_name)
+            AIToolsModel.update(task_id, implementation=implementation_id)
+            logger.info(f"Recorded implementation {driver.driver_name} (id: {implementation_id}) for task {task_id}")
+
         logger.info(f"Using driver: {driver.driver_name} for task {task_id}")
         
         # 2. 调用驱动提交任务
@@ -206,7 +238,10 @@ async def _submit_new_task(ai_tool):
                 if task:
                     RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
                     logger.info(f"Released RunningHub slot for failed task {task_id}")
-            
+
+            # 退还算力
+            _refund_computing_power(ai_tool, f"任务提交失败: {error}")
+
             # 返回 True 表示任务已处理完成（虽然失败了），不需要重试
             return True
         
@@ -214,24 +249,34 @@ async def _submit_new_task(ai_tool):
         if result.get("sync_mode"):
             # 同步 API 直接返回结果，无需轮询
             result_url = result.get("result_url")
-            
-            # 下载并缓存媒体文件
-            from utils.media_cache import download_and_cache
-            
-            # 判断媒体类型（根据URL扩展名）
-            media_type = "video"  # 默认为视频
-            if result_url:
-                ext = result_url.split('?')[0].split('.')[-1].lower()
-                if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
-                    media_type = "image"
-            
-            # 下载并缓存，如果失败则使用原URL
-            cached_url = await download_and_cache(result_url, task_id, media_type)
-            final_url = cached_url if cached_url else result_url
-            
-            logger.info(f"Sync task media cached: {result_url} -> {final_url}")
-            
-            AIToolsModel.update(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED)
+
+            # 判断是否已经是本地路径（以 /upload/ 开头）
+            # 如果是，则跳过下载，直接使用
+            is_local_path = result_url and result_url.startswith("/upload/")
+
+            if is_local_path:
+                # 已经是本地路径，无需下载
+                final_url = result_url
+                logger.info(f"Sync task result is already local: {result_url}")
+            else:
+                # 下载并缓存媒体文件
+                from utils.media_cache import download_and_cache
+
+                # 判断媒体类型（根据URL扩展名）
+                media_type = "video"  # 默认为视频
+                if result_url:
+                    ext = result_url.split('?')[0].split('.')[-1].lower()
+                    if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                        media_type = "image"
+
+                # 下载并缓存，如果失败则使用原URL
+                cached_url = await download_and_cache(result_url, task_id, media_type)
+                final_url = cached_url if cached_url else result_url
+
+                logger.info(f"Sync task media cached: {result_url} -> {final_url}")
+
+            from datetime import datetime
+            AIToolsModel.update(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
             logger.info(f"Sync task {task_id} completed with result: {final_url}")
             return True
@@ -270,7 +315,10 @@ async def _submit_new_task(ai_tool):
         # 更新任务状态为失败
         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，请联系技术支持")
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-        
+
+        # 退还算力
+        _refund_computing_power(ai_tool, "任务提交异常")
+
         return False
 
 
@@ -299,10 +347,10 @@ async def _check_task_status(ai_tool):
     
     if _is_test_mode_enabled() and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] [DRIVER] Checking status for mock task {project_id}")
-    
+
     try:
-        # 1. 根据任务类型创建对应的驱动实例
-        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type)
+        # 1. 根据任务类型创建对应的驱动实例（传递 user_id 以应用用户偏好）
+        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
         
         if not driver:
             logger.error(f"Unsupported driver type: {ai_tool_type}")
@@ -386,10 +434,12 @@ async def _handle_task_success(project_id, task_id, media_url):
         
         logger.info(f"Media cached: {media_url} -> {final_url}")
         
+        from datetime import datetime
         AIToolsModel.update_by_project_id(
             project_id=project_id,
             result_url=final_url,
-            status=AI_TOOL_STATUS_COMPLETED
+            status=AI_TOOL_STATUS_COMPLETED,
+            completed_time=datetime.now()
         )
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
 

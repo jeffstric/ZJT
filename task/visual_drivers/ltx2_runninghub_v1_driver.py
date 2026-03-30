@@ -185,13 +185,13 @@ class Ltx2RunninghubV1Driver(BaseVideoDriver):
         if not image_path:
             raise ValueError("LTX2 任务需要至少1张图片")
 
-        # 处理图片路径 - 如果是本地环境，上传到 RunningHub
-        if self._is_local and image_path:
-            self.logger.info(f"本地环境检测到图片路径，准备上传到 RunningHub: {image_path}")
+        # 处理图片路径 - 上传到 RunningHub 图床（RunningHub AI-App 需要图床 URL）
+        if image_path:
+            self.logger.info(f"准备上传图片到 RunningHub 图床: {image_path}")
             result = await self._storage.upload_file("", image_path)
             if result.success:
-                image_path = result.key
-                self.logger.info(f"图片上传完成，使用 fileName: {image_path}")
+                image_path = result.url if result.url else result.key
+                self.logger.info(f"图片上传完成，使用 URL: {image_path}")
             else:
                 self.logger.warning(f"图片上传失败: {result.error}")
 

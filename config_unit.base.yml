@@ -1,0 +1,146 @@
+# =============================================================================
+# 单元测试配置文件 - 基础配置
+# 此文件作为 config_unit.yml 的基础配置，提供默认值
+# config_unit.yml 中的配置会覆盖此文件中的值
+# =============================================================================
+
+# Server configuration
+server:
+  host: "http://localhost:9003"
+  is_local: true
+  https_host: "https://localhost:12443"
+  port: 9003
+  https_port: 5174
+  https:
+    enabled: false
+    certfile: "secret/xxx.pem"
+    keyfile: "secret/xxx.key"
+  footer:
+    copyright: "© 2026 智剧通 AI短剧制作平台 | 所有权利保留"
+    icp_number: ""
+    icp_url: ""
+    police_number: ""
+    police_url: ""
+
+# Default timeout settings
+timeout:
+  request_timeout: 10000
+  sync_request_timeout: 300
+  status_check_timeout: 900
+  status_check_interval: 10
+
+# Task queue management
+task_queue:
+  max_retry_count: 30
+  task_expire_days: 7
+  enable_expire_check: true
+
+# Upload file size limits (in MB)
+upload:
+  max_image_size_mb: 10
+
+# Frontend debug mode
+frontend:
+  debug_password: "123"
+
+# Alembic database migration configuration
+alembic:
+  auto_migrate: true
+  script_location: "alembic"
+
+# Test mode configuration (mock mode for unit tests)
+test_mode:
+  enabled: true
+  mock_videos:
+    image_to_video: "https://cdn3.dmiapi.com/attachments/sora/20260107/968e1cf718e6e115fdb0a5874d39c470.mp4?e=1768198067&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:LWFb2h3-ecBwr-YBQWToVPcEkJw="
+    text_to_video: "https://cdn3.dmiapi.com/attachments/sora/20260107/968e1cf718e6e115fdb0a5874d39c470.mp4?e=1768198067&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:LWFb2h3-ecBwr-YBQWToVPcEkJw="
+  mock_images:
+    image_edit: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="
+    text_to_image: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="
+
+# Video/Audio API configurations (empty by default, override in config_unit.yml)
+runninghub:
+  host: "https://www.runninghub.cn"
+  api_key: ""
+  max_concurrent_slots: 3
+
+google:
+  api_key: ""
+  gemini_base_url: ""
+
+jiekou:
+  api_key: ""
+  base_url: "https://api.jiekou.ai"
+
+llm:
+  baidu:
+    api_key: ""
+    api_url: "https://qianfan.baidubce.com/v2/chat/completions"
+    model: ""
+  qwen:
+    api_key: ""
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: ""
+
+vidu:
+  token: ""
+
+yunwu:
+  api_key: ""
+  base_url: "https://yunwu.ai"
+
+duomi:
+  token: ""
+
+ai_tools:
+  token: ""
+
+# Volcengine configuration (for Seedream driver)
+volcengine:
+  api_key: "unittest"
+
+# File storage configuration
+file_storage:
+  qiniu:
+    access_key: ""
+    secret_key: ""
+    bucket_name: ""
+    cdn_domain: ""
+
+# SMS configuration (empty by default)
+sms:
+  agents:
+    default:
+      access_key_id: ""
+      access_key_secret: ""
+      sign_name: ""
+      template_code: ""
+      broadcast_template_code: ""
+      region_id: ""
+
+# Authentication
+authentication:
+  url: ""
+
+# Payment configuration (empty by default)
+pay:
+  wxpay:
+    appId: ""
+    mchId: ""
+    api_key: ""
+    APIv3_key: ""
+    appSecret: ""
+
+# Sync task configuration
+sync_task:
+  max_workers: 4
+  check_interval: 5
+
+# Edition mode
+edition:
+  mode: "community"
+
+# FFMPEG binary path
+bin:
+  ffmpeg: "ffmpeg"
+  ffprobe: "ffprobe"

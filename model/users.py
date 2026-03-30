@@ -1,19 +1,19 @@
 """
 Users Model - Database operations for users table
-对应Go的models/users.go
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .database import execute_query, execute_update, execute_insert
 import logging
 import random
 import string
+import json
 
 logger = logging.getLogger(__name__)
 
 
 class User:
     """User model class"""
-    
+
     def __init__(self, **kwargs):
         self.id = kwargs.get('id')
         self.phone = kwargs.get('phone')
@@ -28,7 +28,13 @@ class User:
         self.invite_code = kwargs.get('invite_code')
         self.inviter_id = kwargs.get('inviter_id')
         self.first_recharge = kwargs.get('first_recharge', 0)
-    
+        # 实现方偏好相关字段
+        prefs = kwargs.get('implementation_preferences')
+        if isinstance(prefs, str):
+            prefs = json.loads(prefs)
+        self.implementation_preferences = prefs if prefs else {}
+        self.active_preference_group = kwargs.get('active_preference_group', 1)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
@@ -43,6 +49,8 @@ class User:
             'invite_code': self.invite_code,
             'inviter_id': self.inviter_id,
             'first_recharge': self.first_recharge,
+            'implementation_preferences': self.implementation_preferences,
+            'active_preference_group': self.active_preference_group,
         }
 
 
@@ -336,7 +344,7 @@ class UsersModel:
         """
         if role not in ('user', 'admin'):
             raise ValueError(f"Invalid role: {role}")
-        
+
         sql = "UPDATE users SET role = %s, updated_at = NOW() WHERE id = %s"
         try:
             affected = execute_update(sql, (role, user_id))
@@ -345,3 +353,193 @@ class UsersModel:
         except Exception as e:
             logger.error(f"Failed to update user role: {e}")
             raise
+
+    # ==================== 实现方偏好方法 ====================
+
+    @staticmethod
+    def get_implementation_preference(user_id: int, task_key: str) -> Optional[str]:
+        """
+        获取用户对某任务的实现方偏好
+
+        Args:
+            user_id: 用户ID
+            task_key: 任务key（如 gemini-2.5-flash-image-preview）
+
+        Returns:
+            用户偏好的实现方名称，未设置或不存在返回 None
+        """
+        sql = """
+            SELECT implementation_preferences, active_preference_group
+            FROM users WHERE id = %s
+        """
+        try:
+            result = execute_query(sql, (user_id,), fetch_one=True)
+            if not result or not result.get('implementation_preferences'):
+                return None
+
+            preferences = result['implementation_preferences']
+            if isinstance(preferences, str):
+                preferences = json.loads(preferences)
+
+            active_group = str(result.get('active_preference_group', 1))
+
+            # 获取当前激活组的偏好
+            groups = preferences.get('groups', {})
+            active_group_prefs = groups.get(active_group, {})
+            group_preferences = active_group_prefs.get('preferences', {})
+
+            return group_preferences.get(task_key)
+        except Exception as e:
+            logger.error(f"Failed to get implementation preference for user {user_id}: {e}")
+            return None
+
+    @staticmethod
+    def set_implementation_preference(user_id: int, task_key: str, implementation: str) -> int:
+        """
+        设置用户实现方偏好（当前激活组）
+
+        Args:
+            user_id: 用户ID
+            task_key: 任务key（如 gemini-2.5-flash-image-preview）
+            implementation: 实现方名称（如 gemini_duomi_v1）
+
+        Returns:
+            受影响的行数
+        """
+        # 先获取当前配置
+        sql_get = """
+            SELECT implementation_preferences, active_preference_group
+            FROM users WHERE id = %s
+        """
+        try:
+            result = execute_query(sql_get, (user_id,), fetch_one=True)
+            active_group = 1
+
+            if result and result.get('implementation_preferences'):
+                preferences = result['implementation_preferences']
+                if isinstance(preferences, str):
+                    preferences = json.loads(preferences)
+                active_group = result.get('active_preference_group', 1)
+            else:
+                # 创建默认结构
+                preferences = {'groups': {'1': {'name': '默认配置', 'preferences': {}}}}
+
+            # 确保组存在
+            groups = preferences.get('groups', {})
+            active_group = str(active_group)
+            if active_group not in groups:
+                groups[active_group] = {'name': f'组{active_group}', 'preferences': {}}
+
+            # 设置偏好
+            groups[active_group]['preferences'][task_key] = implementation
+            preferences['groups'] = groups
+
+            # 更新数据库
+            sql_update = """
+                UPDATE users
+                SET implementation_preferences = %s, updated_at = NOW()
+                WHERE id = %s
+            """
+            affected = execute_update(sql_update, (json.dumps(preferences, ensure_ascii=False), user_id))
+            logger.info(f"Set implementation preference for user {user_id}: {task_key} -> {implementation}")
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to set implementation preference for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_all_preferences(user_id: int) -> Dict[str, str]:
+        """
+        获取用户所有实现方偏好（当前激活组）
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            Dict[task_key, implementation] 偏好字典
+        """
+        sql = """
+            SELECT implementation_preferences, active_preference_group
+            FROM users WHERE id = %s
+        """
+        try:
+            result = execute_query(sql, (user_id,), fetch_one=True)
+            if not result or not result.get('implementation_preferences'):
+                return {}
+
+            preferences = result['implementation_preferences']
+            if isinstance(preferences, str):
+                preferences = json.loads(preferences)
+
+            active_group = str(result.get('active_preference_group', 1))
+            groups = preferences.get('groups', {})
+            active_group_prefs = groups.get(active_group, {})
+
+            return active_group_prefs.get('preferences', {})
+        except Exception as e:
+            logger.error(f"Failed to get all preferences for user {user_id}: {e}")
+            return {}
+
+    @staticmethod
+    def clear_implementation_preference(user_id: int, task_key: str) -> int:
+        """
+        清除用户对某任务的实现方偏好
+
+        Args:
+            user_id: 用户ID
+            task_key: 任务key
+
+        Returns:
+            受影响的行数
+        """
+        sql_get = """
+            SELECT implementation_preferences, active_preference_group
+            FROM users WHERE id = %s
+        """
+        try:
+            result = execute_query(sql_get, (user_id,), fetch_one=True)
+            if not result or not result.get('implementation_preferences'):
+                return 0
+
+            preferences = result['implementation_preferences']
+            if isinstance(preferences, str):
+                preferences = json.loads(preferences)
+
+            active_group = str(result.get('active_preference_group', 1))
+            groups = preferences.get('groups', {})
+            active_group_prefs = groups.get(active_group, {})
+
+            # 删除偏好
+            if task_key in active_group_prefs.get('preferences', {}):
+                del active_group_prefs['preferences'][task_key]
+                preferences['groups'][active_group] = active_group_prefs
+
+                sql_update = """
+                    UPDATE users
+                    SET implementation_preferences = %s, updated_at = NOW()
+                    WHERE id = %s
+                """
+                return execute_update(sql_update, (json.dumps(preferences, ensure_ascii=False), user_id))
+            return 0
+        except Exception as e:
+            logger.error(f"Failed to clear implementation preference for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_active_preference_group(user_id: int) -> int:
+        """
+        获取用户当前激活的偏好组
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            当前激活的组号（默认为1）
+        """
+        sql = "SELECT active_preference_group FROM users WHERE id = %s"
+        try:
+            result = execute_query(sql, (user_id,), fetch_one=True)
+            return result.get('active_preference_group', 1) if result else 1
+        except Exception as e:
+            logger.error(f"Failed to get active preference group for user {user_id}: {e}")
+            return 1

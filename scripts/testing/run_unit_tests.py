@@ -44,6 +44,8 @@ class TestRunner:
             'db_connection': {'passed': 0, 'failed': 0, 'errors': 0},
             'crud': {'passed': 0, 'failed': 0, 'errors': 0},
             'driver': {'passed': 0, 'failed': 0, 'errors': 0},
+            'utils': {'passed': 0, 'failed': 0, 'errors': 0},
+            'config': {'passed': 0, 'failed': 0, 'errors': 0},
             'total': {'passed': 0, 'failed': 0, 'errors': 0}
         }
     
@@ -121,6 +123,8 @@ class TestRunner:
         crud_test_files = [
             'tests.test_ai_tools_crud',
             'tests.test_ai_audio_crud',
+            'tests.test_chat_sessions_crud',
+            'tests.test_implementation_stats',
             'tests.test_location_crud',
             'tests.test_payment_orders_crud',
             'tests.test_props_crud',
@@ -155,6 +159,42 @@ class TestRunner:
         print()
         return all_passed
     
+    def run_utils_tests(self):
+        """执行工具函数测试"""
+        print("=" * 60)
+        print("步骤 4: 工具函数测试")
+        print("=" * 60)
+        
+        utils_test_files = [
+            'tests.test_image_upload_utils',
+            'tests.test_media_cache_temp',
+            'tests.test_auth_service',
+        ]
+        
+        all_passed = True
+        for test_module in utils_test_files:
+            try:
+                print(f"\n执行: {test_module}")
+                suite = unittest.TestLoader().loadTestsFromName(test_module)
+                runner = unittest.TextTestRunner(verbosity=1)
+                result = runner.run(suite)
+                
+                self.test_results['utils']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
+                self.test_results['utils']['failed'] += len(result.failures)
+                self.test_results['utils']['errors'] += len(result.errors)
+                
+                if not result.wasSuccessful():
+                    all_passed = False
+                    if self.args.failfast:
+                        break
+                        
+            except Exception as e:
+                print(f"[ERROR] 执行 {test_module} 失败: {e}")
+                all_passed = False
+        
+        print()
+        return all_passed
+    
     def run_driver_tests(self):
         """执行所有驱动集成测试"""
         print("=" * 60)
@@ -165,6 +205,7 @@ class TestRunner:
             'tests.driver_integration.test_digital_human_driver_with_db',
             'tests.driver_integration.test_sora2_driver_with_db',
             'tests.driver_integration.test_ltx2_driver_with_db',
+            'tests.driver_integration.test_ltx2_3_driver_with_db',
             'tests.driver_integration.test_vidu_driver_with_db',
             'tests.driver_integration.test_wan22_driver_with_db',
             'tests.driver_integration.test_kling_driver_with_db',
@@ -204,7 +245,49 @@ class TestRunner:
         
         print()
         return all_passed
-    
+
+    def run_config_tests(self):
+        """执行配置相关测试"""
+        print("=" * 60)
+        print("步骤 5: 配置测试")
+        print("=" * 60)
+
+        config_test_files = [
+            'tests.test_implementation_config',
+            'tests.test_unified_config_frontend',
+        ]
+
+        all_passed = True
+        for test_module in config_test_files:
+            try:
+                # 检查文件是否存在
+                file_path = test_module.replace('.', '/') + '.py'
+                full_path = os.path.join(APP_DIR, file_path)
+                if not os.path.exists(full_path):
+                    print(f"[SKIP] {test_module} (文件不存在)")
+                    continue
+
+                print(f"\n执行: {test_module}")
+                suite = unittest.TestLoader().loadTestsFromName(test_module)
+                runner = unittest.TextTestRunner(verbosity=1)
+                result = runner.run(suite)
+
+                self.test_results['config']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
+                self.test_results['config']['failed'] += len(result.failures)
+                self.test_results['config']['errors'] += len(result.errors)
+
+                if not result.wasSuccessful():
+                    all_passed = False
+                    if self.args.failfast:
+                        break
+
+            except Exception as e:
+                print(f"[ERROR] 执行 {test_module} 失败: {e}")
+                all_passed = False
+
+        print()
+        return all_passed
+
     def print_summary(self):
         """打印测试摘要"""
         print("=" * 60)
@@ -212,7 +295,7 @@ class TestRunner:
         print("=" * 60)
         
         # 计算总数
-        for category in ['db_connection', 'crud', 'driver']:
+        for category in ['db_connection', 'crud', 'driver', 'config']:
             for key in ['passed', 'failed', 'errors']:
                 self.test_results['total'][key] += self.test_results[category][key]
         
@@ -231,6 +314,16 @@ class TestRunner:
               f"失败 {self.test_results['driver']['failed']}, "
               f"错误 {self.test_results['driver']['errors']}")
         
+        print(f"工具函数测试:    "
+              f"通过 {self.test_results['utils']['passed']}, "
+              f"失败 {self.test_results['utils']['failed']}, "
+              f"错误 {self.test_results['utils']['errors']}")
+
+        print(f"配置测试:       "
+              f"通过 {self.test_results['config']['passed']}, "
+              f"失败 {self.test_results['config']['failed']}, "
+              f"错误 {self.test_results['config']['errors']}")
+
         print("-" * 60)
         print(f"总计:            "
               f"通过 {self.test_results['total']['passed']}, "
@@ -260,14 +353,22 @@ class TestRunner:
                     return 1
         
         # 步骤 3: CRUD 测试
-        if not self.args.driver_only:
+        if not self.args.driver_only and not self.args.utils_only:
             self.run_crud_tests()
         
-        # 步骤 4: 驱动测试
-        if not self.args.crud_only:
-            self.run_driver_tests()
+        # 步骤 4: 工具函数测试
+        if not self.args.crud_only and not self.args.driver_only:
+            self.run_utils_tests()
         
-        # 步骤 5: 输出摘要
+        # 步骤 5: 驱动测试
+        if not self.args.crud_only and not self.args.utils_only and not self.args.config_only:
+            self.run_driver_tests()
+
+        # 步骤 6: 配置测试
+        if not self.args.crud_only and not self.args.driver_only:
+            self.run_config_tests()
+
+        # 步骤 7: 输出摘要
         return_code = self.print_summary()
         
         print("\n测试执行完成！")
@@ -278,6 +379,8 @@ def main():
     parser = argparse.ArgumentParser(description='单元测试一键执行脚本')
     parser.add_argument('--crud-only', action='store_true', help='只执行 CRUD 测试')
     parser.add_argument('--driver-only', action='store_true', help='只执行驱动测试')
+    parser.add_argument('--utils-only', action='store_true', help='只执行工具函数测试')
+    parser.add_argument('--config-only', action='store_true', help='只执行配置测试')
     parser.add_argument('--verbose', '-v', action='store_true', help='显示详细输出')
     parser.add_argument('--failfast', '-x', action='store_true', help='遇到失败立即停止')
     parser.add_argument('--coverage', action='store_true', help='生成覆盖率报告')

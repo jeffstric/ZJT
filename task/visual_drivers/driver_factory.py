@@ -2,7 +2,7 @@
 视频驱动工厂类
 根据驱动类型或驱动名称创建相应的驱动实例
 """
-from typing import Optional
+from typing import Optional, Tuple, Dict, Any
 import logging
 from .base_video_driver import BaseVideoDriver
 from .exceptions import DriverConfigError
@@ -51,19 +51,20 @@ class VideoDriverFactory:
         logger.debug(f"Registered video driver: {driver_name} -> {driver_class.__name__}")
     
     @classmethod
-    def create_driver_by_type(cls, driver_type: int) -> Optional[BaseVideoDriver]:
+    def create_driver_by_type(cls, driver_type: int, user_id: Optional[int] = None) -> Optional[BaseVideoDriver]:
         """
-        根据驱动类型创建驱动实例
-        
+        根据驱动类型创建驱动实例（支持用户偏好）
+
         Args:
             driver_type: 驱动类型（对应 ai_tools 表的 type 字段）
-        
+            user_id: 用户ID（可选），用于获取用户偏好
+
         Returns:
             BaseVideoDriver: 驱动实例，如果类型不支持或驱动未注册则返回 None
-        
+
         流程：
             1. 任务类型 -> 业务驱动名称（通过 VIDEO_DRIVER_MAPPING）
-            2. 业务驱动名称 -> 实现驱动名称（通过 DRIVER_IMPLEMENTATION_MAPPING）
+            2. 业务驱动名称 -> 实现驱动名称（通过 DRIVER_IMPLEMENTATION_MAPPING 或用户偏好）
             3. 实现驱动名称 -> 驱动类实例（通过 _registered_drivers）
         """
         # 从统一配置获取任务配置
@@ -72,29 +73,30 @@ class VideoDriverFactory:
             logger.error(f"Unsupported driver type: {driver_type}")
             logger.info(f"Supported types: {[c.id for c in UnifiedConfigRegistry.get_all()]}")
             return None
-        
+
         business_driver_name = config.driver_name
         if not business_driver_name:
             logger.error(f"No driver configured for task type: {driver_type}")
             return None
-        
-        # 从统一配置获取实现驱动名称
-        implementation_driver_name = config.implementation
+
+        # 获取实现驱动名称（考虑用户偏好）和驱动参数
+        implementation_driver_name, driver_params = cls._get_implementation_for_user(driver_type, user_id, config)
         if not implementation_driver_name:
             logger.error(f"No implementation configured for business driver: {business_driver_name}")
             return None
-        
+
         # 第三层：根据实现驱动名称获取驱动类
         driver_class = cls._registered_drivers.get(implementation_driver_name)
         if not driver_class:
             logger.error(f"Driver implementation not registered: {implementation_driver_name}")
             logger.info(f"Registered implementations: {list(cls._registered_drivers.keys())}")
             return None
-        
+
         # 创建驱动实例
         try:
             logger.info(f"Creating driver: type={driver_type} -> business={business_driver_name} -> implementation={implementation_driver_name}")
-            return driver_class()
+            # 使用 driver_params 动态创建驱动实例
+            return driver_class(**driver_params)
         except DriverConfigError as e:
             logger.warning(f"Driver {implementation_driver_name} 配置不完整: {e.message}")
             logger.info(f"缺少配置: {', '.join(e.missing_configs)}")
@@ -102,6 +104,80 @@ class VideoDriverFactory:
         except Exception as e:
             logger.error(f"Failed to create driver instance for {implementation_driver_name}: {str(e)}")
             return None
+
+    @classmethod
+    def get_implementation_for_user(cls, task_type: int, user_id: Optional[int] = None) -> Optional[str]:
+        """
+        获取实现方名称（公开方法，供外部调用）
+
+        Args:
+            task_type: 任务类型
+            user_id: 用户ID（可选）
+
+        Returns:
+            实现方名称，如果不存在返回 None
+        """
+        config = UnifiedConfigRegistry.get_by_id(task_type)
+        if not config:
+            return None
+
+        impl_name, _ = cls._get_implementation_for_user(task_type, user_id, config)
+        return impl_name
+
+    @classmethod
+    def _get_implementation_for_user(cls, task_type: int, user_id: Optional[int], config) -> Tuple[Optional[str], Dict[str, Any]]:
+        """
+        获取实现方名称和驱动参数（考虑用户偏好）
+
+        Args:
+            task_type: 任务类型
+            user_id: 用户ID
+            config: 任务配置
+
+        Returns:
+            (implementation_name, driver_params) 元组
+            - implementation_name: 实现方名称
+            - driver_params: 创建驱动实例需要的额外参数，如 {'site_id': 'site_1'}
+        """
+        impl_name = None
+
+        # 1. 检查用户偏好
+        if user_id:
+            try:
+                from model.users import UsersModel
+                task_key = config.key
+                user_pref = UsersModel.get_implementation_preference(user_id, task_key)
+                if user_pref:
+                    # 验证用户偏好在可选列表中（使用 _get_implementations_info 获取动态实现方）
+                    available_impls = [impl['name'] for impl in config._get_implementations_info()]
+                    if user_pref in available_impls:
+                        logger.debug(f"Using user preference for task {task_key}: {user_pref}")
+                        impl_name = user_pref
+                    else:
+                        logger.warning(f"User preference {user_pref} not in available implementations {available_impls}")
+            except Exception as e:
+                logger.warning(f"Failed to get user preference: {e}")
+
+        # 2. 如果没有用户偏好，根据排序选择排序最靠前的启用实现方
+        if not impl_name:
+            # 获取所有可用的实现方（已启用且已注册）
+            available_impls = config._get_implementations_info()
+            if available_impls:
+                # _get_implementations_info 已经按 sort_order 排序，取第一个
+                impl_name = available_impls[0]['name']
+                logger.debug(f"Auto-selected implementation by sort_order for task {config.key}: {impl_name}")
+            else:
+                # 回退到默认实现方
+                impl_name = config.implementation
+
+        # 3. 获取驱动参数
+        driver_params = {}
+        if impl_name:
+            impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
+            if impl_config and impl_config.driver_params:
+                driver_params = impl_config.driver_params.copy()
+
+        return impl_name, driver_params
     
     @classmethod
     def get_supported_types(cls) -> list:
@@ -203,7 +279,7 @@ class VideoDriverFactory:
                     "available": False,
                     "missing_configs": [str(e)]
                 }
-        
+
         return result
 
 
@@ -211,7 +287,7 @@ def register_all_drivers():
     """
     注册所有视频驱动
     此函数应在应用启动时调用
-    
+
     注意：这里注册的是具体实现驱动（implementation_driver_name），
     而不是业务驱动名称（business_driver_name）
     """
@@ -238,7 +314,7 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.GEMINI_DUOMI_V1, GeminiDuomiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import GeminiDuomiV1Driver: {e}")
-    
+
     try:
         from .veo3_duomi_v1_driver import Veo3DuomiV1Driver
         # 注册 VEO3 多米供应商 v1 版本
@@ -246,13 +322,68 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import Veo3DuomiV1Driver: {e}")
     
+    # 注册 API 聚合器站点驱动（仅在配置存在时注册）
+    try:
+        from utils.config_checker import check_api_aggregator_config_exists
+    except ImportError:
+        logger.warning("无法导入配置检查工具，跳过API聚合器驱动注册")
+        check_api_aggregator_config_exists = lambda site_id: False
+    
+    aggregator_sites = [
+        ('site_1', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1, 'GeminiImagePreviewSite1V1Driver'),
+        ('site_2', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1, 'GeminiImagePreviewSite2V1Driver'),
+        ('site_3', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1, 'GeminiImagePreviewSite3V1Driver'),
+        ('site_4', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1, 'GeminiImagePreviewSite4V1Driver'),
+        ('site_5', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1, 'GeminiImagePreviewSite5V1Driver'),
+    ]
+    
+    # 先导入所有站点驱动类
+    try:
+        from .gemini_image_preview_common_v1_driver import (
+            GeminiImagePreviewSite1V1Driver,
+            GeminiImagePreviewSite2V1Driver,
+            GeminiImagePreviewSite3V1Driver,
+            GeminiImagePreviewSite4V1Driver,
+            GeminiImagePreviewSite5V1Driver
+        )
+        
+        site_driver_classes = {
+            'site_1': GeminiImagePreviewSite1V1Driver,
+            'site_2': GeminiImagePreviewSite2V1Driver,
+            'site_3': GeminiImagePreviewSite3V1Driver,
+            'site_4': GeminiImagePreviewSite4V1Driver,
+            'site_5': GeminiImagePreviewSite5V1Driver,
+        }
+    except ImportError as e:
+        logger.warning(f"Failed to import Gemini Image Preview Site drivers: {e}")
+        site_driver_classes = {}
+    
+    # 只为有配置的站点注册驱动
+    for site_id, impl_name, driver_class_name in aggregator_sites:
+        if check_api_aggregator_config_exists(site_id):
+            driver_class = site_driver_classes.get(site_id)
+            if driver_class:
+                VideoDriverFactory.register_driver(impl_name, driver_class)
+                logger.info(f"已注册 {site_id} 驱动: {impl_name}")
+            else:
+                logger.warning(f"{site_id} 驱动类未找到，跳过注册")
+        else:
+            logger.info(f"{site_id} 配置不存在或不完整，跳过驱动注册")
+    
     try:
         from .ltx2_runninghub_v1_driver import Ltx2RunninghubV1Driver
         # 注册 LTX2 RunningHub v1 版本
         VideoDriverFactory.register_driver(DriverImplementation.LTX2_RUNNINGHUB_V1, Ltx2RunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Ltx2RunninghubV1Driver: {e}")
-    
+
+    try:
+        from .ltx2_3_runninghub_v1_driver import Ltx2Dot3RunninghubV1Driver
+        # 注册 LTX2.3 RunningHub v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.LTX2_3_RUNNINGHUB_V1, Ltx2Dot3RunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Ltx2Dot3RunninghubV1Driver: {e}")
+
     try:
         from .wan22_runninghub_v1_driver import Wan22RunninghubV1Driver
         # 注册 Wan22 RunningHub v1 版本

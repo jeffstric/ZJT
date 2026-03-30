@@ -9,7 +9,7 @@
 runninghub:
   host: "https://www.runninghub.cn"
   api_key: "9549532f3c3d435eXXXX"
-  max_concurrent_slots: 3  # RunningHub 最大并发槽位数量 根据您的 RunningHub 套餐设置
+  max_concurrent_slots: 3    # 该值根据runninghub账号的 并发数决定，可以查看 https://www.runninghub.cn/vip-rights/2 查看并发数，注意，必须支持api调用的套餐才能使用 26年3月 基础版为1 专业版为3 专业Plus版为5 Max 为20
 # Server configuration
 server:
   host: "http://localhost:9003"
@@ -31,6 +31,7 @@ server:
 # Default timeout settings
 timeout:
   request_timeout: 10000
+  sync_request_timeout: 300  # 同步请求超时时间（秒），用于火山引擎等同步接口
   status_check_timeout: 900
   status_check_interval: 10
 
@@ -67,6 +68,30 @@ database:
 duomi:
   token: "5q26ybqAXXXXX"
 
+# 适配云雾 comfly这类聚合站
+api_aggregator:
+  site_1:
+    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: "yunwu"
+  site_2:
+    base_url: "https://ai.comfly.chat"  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: "comfly"
+  site_3:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+  site_4:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+  site_5:
+    base_url: ""  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: ""
+
+
 vidu:
   token: "vda_xxxx"
 
@@ -93,6 +118,7 @@ bin:
   # 3. 使用系统 PATH 查找: "ffmpeg"
   ffmpeg: "bin/ffmpeg/ffmpeg"
   ffprobe: "bin/ffmpeg/ffprobe"
+
 
 llm:
   baidu:
@@ -123,22 +149,13 @@ test_mode:
     image_edit: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 图片编辑的测试图片URL
     text_to_image: "https://cdn3.dmiapi.com/attachments/gemini/20260107/636584241e053a19c784b4c1ac6a4c83.png?e=1768198099&token=mTvq9hVVEUusCokO8WegAYo2IjxRSvr97Q4j2lrx:cPKvpbphxp-XZGU8630BEA_zcos="  # 文生图的测试图片URL
 
-# Anthropic Claude API configuration (script_writer 智能体使用)
-# Google Gemini API configuration
-google:
-  api_key: "sk_xxxxxxxxxxx"
-  gemini_base_url: "https://api.jiekou.ai"
-
-# JIEKOU API configuration
-jiekou:
-  api_key: "sk_xxxxxxxxxx"
-  base_url: "https://api.jiekou.ai"
 
 # Task queue management
 task_queue:
   max_retry_count: 30  # 最大重试次数，超过后任务将被标记为失败
   task_expire_days: 7  # 任务过期天数，创建后超过此天数的任务将被自动失败
   enable_expire_check: true  # 是否启用任务过期检查
+
 
 # Upload file size limits (in MB)
 upload:
@@ -170,6 +187,7 @@ file_storage:
   # PUT/DELETE 请求：10万次/月
   # GET 请求：100万次/月
   # 具体参考 https://developer.qiniu.com/kodo/6379/metering-and-billing?ref=support.qiniu.com
+  # 注册请使用以下链接，获取专属优惠: https://s.qiniu.com/6zymqy
   qiniu:
     access_key: "IAM-0fZBG5O0nEj9Xy-d_vjtowNp4viwWmjaDx8tNjCY"  # 七牛云 Access Key
     secret_key: "HD3mwsOHnr5uSjPRTyvIWDrmwCEfOUlwQiT5HhNft9TB"  # 七牛云 Secret Key
@@ -187,6 +205,11 @@ media_cache:
   max_size_gb: 10                  # 最大缓存容量GB（0=不限制）
   cleanup_on_startup: true         # 启动时执行清理
   cleanup_interval_hours: 24       # 定时清理间隔（小时）
+
+# 同步任务进程池配置（用于Gemini、Seedream等同步API）
+sync_task:
+  max_workers: 4                   # 进程池最大并发数
+  check_interval: 5                # 结果检查间隔（秒）
 
 # Sentry 配置
 sentry:

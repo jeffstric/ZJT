@@ -184,7 +184,7 @@ def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int,
     logger.info(f"分镜组重组完成: {original_group_count} -> {new_group_count}")
     
     # 保存重组信息到日志
-    _save_log_file(log_dir, f"{timestamp}_07_reorganize_info.txt", reorganize_info)
+    _save_log_file(log_dir, f"script_parser_{timestamp}_07_reorganize_info.txt", reorganize_info)
     
     # 更新parsed_data
     parsed_data["shot_groups"] = new_shot_groups
@@ -370,8 +370,8 @@ async def convert_script_to_narration(
     from datetime import datetime
     
     if ENABLE_SCRIPT_PARSER_LOGGING:
-        log_dir = Path("script_parser_logs")
-        log_dir.mkdir(exist_ok=True)
+        log_dir = Path("logs/script_parser")
+        log_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     else:
         log_dir = None
@@ -402,8 +402,8 @@ async def convert_script_to_narration(
     ]
     
     # 保存转换请求日志
-    _save_log_file(log_dir, f"{timestamp}_narration_convert_system_prompt.txt", NARRATION_CONVERSION_SYSTEM_PROMPT)
-    _save_log_file(log_dir, f"{timestamp}_narration_convert_user_prompt.txt", user_prompt)
+    _save_log_file(log_dir, f"script_parser_{timestamp}_narration_convert_system_prompt.txt", NARRATION_CONVERSION_SYSTEM_PROMPT)
+    _save_log_file(log_dir, f"script_parser_{timestamp}_narration_convert_user_prompt.txt", user_prompt)
     
     # 获取 Gemini 客户端
     gemini_client = get_gemini_client()
@@ -429,7 +429,7 @@ async def convert_script_to_narration(
     logger.info(f"剧本转换完成，转换后长度: {len(converted_script)} 字符")
     
     # 保存转换结果日志
-    _save_log_file(log_dir, f"{timestamp}_narration_convert_result.txt", converted_script)
+    _save_log_file(log_dir, f"script_parser_{timestamp}_narration_convert_result.txt", converted_script)
     
     if not converted_script.strip():
         raise Exception("剧本转换失败：LLM返回空内容")
@@ -483,8 +483,8 @@ async def parse_script_to_shots(
         logger = logging.getLogger(__name__)
         
         if ENABLE_SCRIPT_PARSER_LOGGING:
-            log_dir = Path("script_parser_logs")
-            log_dir.mkdir(exist_ok=True)
+            log_dir = Path("logs/script_parser")
+            log_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         else:
             log_dir = None
@@ -493,7 +493,7 @@ async def parse_script_to_shots(
         # 解说剧模式：先将对话剧本转换为纯旁白剧本
         if narration_as_dialogue:
             logger.info("解说剧模式已启用，先将剧本转换为纯旁白格式...")
-            _save_log_file(log_dir, f"{timestamp}_00_original_script_before_narration_convert.txt", script_content)
+            _save_log_file(log_dir, f"script_parser_{timestamp}_00_original_script_before_narration_convert.txt", script_content)
             
             script_content = await convert_script_to_narration(
                 script_content=script_content,
@@ -505,7 +505,7 @@ async def parse_script_to_shots(
             )
             
             logger.info(f"剧本已转换为纯旁白格式，新内容长度: {len(script_content)} 字符")
-            _save_log_file(log_dir, f"{timestamp}_00_converted_narration_script.txt", script_content)
+            _save_log_file(log_dir, f"script_parser_{timestamp}_00_converted_narration_script.txt", script_content)
 
         # 获取数据库中的场景列表（如果提供了world_id）
         db_locations_text = ""
@@ -832,12 +832,11 @@ JSON格式示例：
 下面请开始解析："""
 
         # 保存提示词和输入内容（仅在启用日志时）
-        _save_log_file(log_dir, f"{timestamp}_01_system_prompt.txt", SCRIPT_PARSER_SYSTEM_PROMPT)
-        _save_log_file(log_dir, f"{timestamp}_02_user_prompt.txt", user_prompt)
-        _save_log_file(log_dir, f"{timestamp}_03_input_script.txt", script_content)
-        
+        _save_log_file(log_dir, f"script_parser_{timestamp}_01_system_prompt.txt", SCRIPT_PARSER_SYSTEM_PROMPT)
+        _save_log_file(log_dir, f"script_parser_{timestamp}_02_user_prompt.txt", user_prompt)
+
         if ENABLE_SCRIPT_PARSER_LOGGING:
-            logger.info(f"剧本解析日志保存到: {log_dir}/{timestamp}_*.txt")
+            logger.info(f"剧本解析日志保存到: {log_dir}/script_parser_{timestamp}_*.txt")
 
         # 构建消息列表
         messages = [
@@ -874,7 +873,7 @@ JSON格式示例：
         logger.info(f"LLM响应长度: {len(response_content)} 字符")
         
         # 保存原始响应
-        _save_log_file(log_dir, f"{timestamp}_04_raw_response.txt", response_content)
+        _save_log_file(log_dir, f"script_parser_{timestamp}_04_raw_response.txt", response_content)
         
         # 清理响应内容（移除可能的markdown代码块标记）
         cleaned_content = response_content.strip()
@@ -889,14 +888,14 @@ JSON格式示例：
         logger.info(f"清理后内容长度: {len(cleaned_content)} 字符")
         
         # 保存清理后的内容
-        _save_log_file(log_dir, f"{timestamp}_05_cleaned_content.txt", cleaned_content)
+        _save_log_file(log_dir, f"script_parser_{timestamp}_05_cleaned_content.txt", cleaned_content)
         
         # 解析JSON
         try:
             parsed_data = json.loads(cleaned_content)
             
             # 保存解析成功的JSON
-            _save_log_file(log_dir, f"{timestamp}_06_parsed_success.json", parsed_data)
+            _save_log_file(log_dir, f"script_parser_{timestamp}_06_parsed_success.json", parsed_data)
             
             logger.info("JSON解析成功")
             
@@ -914,7 +913,7 @@ JSON格式示例：
 内容末尾500字符:
 ...{cleaned_content[-500:]}
 """
-            _save_log_file(log_dir, f"{timestamp}_ERROR_parse_failed.txt", error_info)
+            _save_log_file(log_dir, f"script_parser_{timestamp}_ERROR_parse_failed.txt", error_info)
             
             logger.error(f"JSON解析失败，完整内容长度: {len(cleaned_content)}")
             logger.error(f"错误位置: {e.lineno}行, {e.colno}列")
@@ -931,20 +930,20 @@ JSON格式示例：
                     fixed_content = cleaned_content[:last_bracket+1] + '\n}'
                     
                     # 保存修复尝试
-                    _save_log_file(log_dir, f"{timestamp}_07_fixed_attempt.txt", fixed_content)
+                    _save_log_file(log_dir, f"script_parser_{timestamp}_07_fixed_attempt.txt", fixed_content)
                     
                     try:
                         parsed_data = json.loads(fixed_content)
                         
                         # 保存修复成功的JSON
-                        _save_log_file(log_dir, f"{timestamp}_08_fixed_success.json", parsed_data)
+                        _save_log_file(log_dir, f"script_parser_{timestamp}_08_fixed_success.json", parsed_data)
                         
                         logger.info("JSON修复成功")
                         return parsed_data
                     except Exception as fix_error:
                         logger.error(f"JSON修复失败: {str(fix_error)}")
             
-            raise Exception(f"JSON解析失败: {str(e)}\n响应长度: {len(cleaned_content)} 字符\n错误位置: 第{e.lineno}行, 第{e.colno}列\n建议: 剧本内容可能过长，请尝试缩短剧本或分段处理\n详细日志已保存到: {log_dir}/{timestamp}_*.txt")
+            raise Exception(f"JSON解析失败: {str(e)}\n响应长度: {len(cleaned_content)} 字符\n错误位置: 第{e.lineno}行, 第{e.colno}列\n建议: 剧本内容可能过长，请尝试缩短剧本或分段处理\n详细日志已保存到: {log_dir}/script_parser_{timestamp}_*.txt")
         
         # 验证必需字段
         required_keys = ["characters", "locations", "shot_groups"]
@@ -999,19 +998,18 @@ LLM响应:
   - 分镜总数: {total_shots}
 
 日志文件:
-  - {timestamp}_01_system_prompt.txt
-  - {timestamp}_02_user_prompt.txt
-  - {timestamp}_03_input_script.txt
-  - {timestamp}_04_raw_response.txt
-  - {timestamp}_05_cleaned_content.txt
-  - {timestamp}_06_parsed_success.json
+  - script_parser_{timestamp}_01_system_prompt.txt
+  - script_parser_{timestamp}_02_user_prompt.txt
+  - script_parser_{timestamp}_04_raw_response.txt
+  - script_parser_{timestamp}_05_cleaned_content.txt
+  - script_parser_{timestamp}_06_parsed_success.json
 
 所有日志文件已保存到: {log_dir.absolute() if log_dir else 'N/A'}
 """
-        _save_log_file(log_dir, f"{timestamp}_00_SUMMARY.txt", summary)
-        
+        _save_log_file(log_dir, f"script_parser_{timestamp}_00_SUMMARY.txt", summary)
+
         if ENABLE_SCRIPT_PARSER_LOGGING:
-            logger.info(f"解析成功，详细日志已保存到: {log_dir}/{timestamp}_*.txt")
+            logger.info(f"解析成功，详细日志已保存到: {log_dir}/script_parser_{timestamp}_*.txt")
         else:
             logger.info("解析成功")
         
