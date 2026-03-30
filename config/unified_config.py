@@ -982,22 +982,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
     ),
     UnifiedTaskConfig(
-        id=TaskTypeId.LTX2_3_IMAGE_TO_VIDEO,
-        key='ltx2_3_image_to_video',
-        name='图片生成视频 (LTX2.3)',
-        category=TaskCategory.IMAGE_TO_VIDEO,
-        provider=TaskProvider.RUNNINGHUB,
-        driver_name=DriverKey.LTX2_3_IMAGE_TO_VIDEO,
-        implementation=DriverImplementation.LTX2_3_RUNNINGHUB_V1,
-        computing_power=6,
-        supported_ratios=['9:16', '16:9'],
-        supported_durations=[5, 8, 10],
-        default_ratio='9:16',
-        default_duration=5,
-        sort_order=30,
-        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
-    ),
-    UnifiedTaskConfig(
         id=TaskTypeId.KLING_IMAGE_TO_VIDEO,
         key='kling_image_to_video',
         name='图片生成视频 (可灵v2.5-turbo)',
