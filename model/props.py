@@ -254,11 +254,7 @@ class PropsModel:
         if other_info is not None:
             update_fields.append("other_info = %s")
             params.append(other_info)
-        
-        if user_id is not None:
-            update_fields.append("user_id = %s")
-            params.append(user_id)
-        
+
         if not update_fields:
             logger.warning(f"No fields to update for props {props_id}")
             return 0

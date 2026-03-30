@@ -639,6 +639,7 @@ class DriverImplementation:
 
     # LTX2
     LTX2_RUNNINGHUB_V1 = 'ltx2_runninghub_v1'
+    LTX2_3_RUNNINGHUB_V1 = 'ltx2.3_runninghub_v1'
 
     # Wan22
     WAN22_RUNNINGHUB_V1 = 'wan22_runninghub_v1'
@@ -674,6 +675,7 @@ class DriverImplementationId:
     VIDU_DEFAULT = 14
     VIDU_Q2 = 15
     SEEDREAM5_VOLCENGINE_V1 = 16
+    LTX2_3_RUNNINGHUB_V1 = 17
 
 
 # implementation 字符串到 ID 的映射
@@ -694,6 +696,7 @@ IMPLEMENTATION_TO_ID = {
     'vidu_default': DriverImplementationId.VIDU_DEFAULT,
     'vidu_q2': DriverImplementationId.VIDU_Q2,
     'seedream5_volcengine_v1': DriverImplementationId.SEEDREAM5_VOLCENGINE_V1,
+    'ltx2.3_runninghub_v1': DriverImplementationId.LTX2_3_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -730,7 +733,8 @@ class DriverKey:
     
     # LTX2 相关
     LTX2_IMAGE_TO_VIDEO = 'ltx2_image_to_video'
-    
+    LTX2_3_IMAGE_TO_VIDEO = 'ltx2_3_image_to_video'
+
     # Wan22 相关
     WAN22_IMAGE_TO_VIDEO = 'wan22_image_to_video'
     
@@ -761,6 +765,7 @@ class TaskTypeId:
     # 图生视频
     SORA2_IMAGE_TO_VIDEO = 3            # Sora2 图生视频
     LTX2_IMAGE_TO_VIDEO = 10            # LTX2.0 图生视频
+    LTX2_3_IMAGE_TO_VIDEO = 20          # LTX2.3 图生视频
     WAN22_IMAGE_TO_VIDEO = 11           # Wan2.2 图生视频
     KLING_IMAGE_TO_VIDEO = 12           # 可灵图生视频
     VIDU_IMAGE_TO_VIDEO = 14            # Vidu 图生视频
@@ -924,7 +929,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_durations=[5, 10],
         default_ratio='9:16',
         default_duration=5,
-        sort_order=30,
+        sort_order=32,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
     ),
     UnifiedTaskConfig(
@@ -957,7 +962,23 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_durations=[5, 8, 10],
         default_ratio='9:16',
         default_duration=5,
-        sort_order=32,
+        sort_order=33,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.LTX2_3_IMAGE_TO_VIDEO,
+        key='ltx2_3_image_to_video',
+        name='图片生成视频 (LTX2.3)',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.LTX2_3_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.LTX2_3_RUNNINGHUB_V1,
+        computing_power=6,
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 8, 10],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=30,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
     ),
     UnifiedTaskConfig(

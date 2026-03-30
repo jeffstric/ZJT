@@ -280,8 +280,9 @@
 
             // 创建新的图片节点
             const imageNodeId = createImageNode({
-              x: node.x + 280,  // 放在提取帧节点右侧
-              y: node.y
+              x: node.x + 280,
+              y: node.y,
+              checkCollision: true
             });
             const imageNode = state.nodes.find(n => n.id === imageNodeId);
             if(imageNode){

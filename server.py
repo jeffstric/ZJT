@@ -6074,6 +6074,64 @@ async def update_character(
         )
 
 
+@app.delete('/api/characters/{character_id}')
+async def delete_character(
+    character_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除角色
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+
+        # 获取角色信息
+        character = CharacterModel.get_by_id(character_id)
+        if not character:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'code': -1,
+                    'message': '角色不存在',
+                    'data': None
+                }
+            )
+
+        # 验证权限
+        if character.user_id != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    'code': -1,
+                    'message': '无权限删除此角色',
+                    'data': None
+                }
+            )
+
+        # 删除角色
+        CharacterModel.delete(character_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '删除成功',
+                'data': None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete character: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
 @app.get('/api/locations')
 async def get_locations(
     world_id: int = Query(..., description="世界ID"),
@@ -6361,6 +6419,64 @@ async def update_location(
         )
     except Exception as e:
         logger.error(f"Failed to update location: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                'code': -1,
+                'message': str(e),
+                'data': None
+            }
+        )
+
+
+@app.delete('/api/locations/{location_id}')
+async def delete_location(
+    location_id: int,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除场景
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+
+        # 获取场景信息
+        location = LocationModel.get_by_id(location_id)
+        if not location:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    'code': -1,
+                    'message': '场景不存在',
+                    'data': None
+                }
+            )
+
+        # 验证权限
+        if location.user_id != user_id:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    'code': -1,
+                    'message': '无权限删除此场景',
+                    'data': None
+                }
+            )
+
+        # 删除场景
+        LocationModel.delete(location_id)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'code': 0,
+                'message': '删除成功',
+                'data': None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete location: {e}")
         return JSONResponse(
             status_code=500,
             content={

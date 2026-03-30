@@ -168,6 +168,7 @@ class TestRunner:
         utils_test_files = [
             'tests.test_image_upload_utils',
             'tests.test_media_cache_temp',
+            'tests.test_auth_service',
         ]
         
         all_passed = True
@@ -204,6 +205,7 @@ class TestRunner:
             'tests.driver_integration.test_digital_human_driver_with_db',
             'tests.driver_integration.test_sora2_driver_with_db',
             'tests.driver_integration.test_ltx2_driver_with_db',
+            'tests.driver_integration.test_ltx2_3_driver_with_db',
             'tests.driver_integration.test_vidu_driver_with_db',
             'tests.driver_integration.test_wan22_driver_with_db',
             'tests.driver_integration.test_kling_driver_with_db',

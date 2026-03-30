@@ -25,6 +25,7 @@ class AuthService:
     DEFAULT_COMPUTING_POWER = 50  # 默认算力
     INVITE_BONUS_POWER = 75  # 邀请人奖励算力
     INVITED_USER_POWER = 75  # 被邀请人算力
+    FIRST_ADMIN_POWER = 100000  # 首个管理员算力
     TOKEN_EXPIRE_DAYS = 30  # Token过期天数
     
     @staticmethod
@@ -196,9 +197,15 @@ class AuthService:
         
         # 删除验证码
         VerifyCodesModel.delete_by_phone(phone)
-        
-        # 设置初始算力
-        new_user_power = AuthService.INVITED_USER_POWER if inviter_id else AuthService.DEFAULT_COMPUTING_POWER
+
+        # 设置初始算力：首个管理员用户获得100000算力
+        if is_first_user:
+            new_user_power = AuthService.FIRST_ADMIN_POWER
+            logger.info(f"首个管理员用户，注册算力={new_user_power}")
+        elif inviter_id:
+            new_user_power = AuthService.INVITED_USER_POWER
+        else:
+            new_user_power = AuthService.DEFAULT_COMPUTING_POWER
         ComputingPowerModel.create(user_id, new_user_power, None)
         
         # 给邀请人增加算力

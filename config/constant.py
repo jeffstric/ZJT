@@ -169,6 +169,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     
     # RunningHub 相关驱动
     DriverKey.LTX2_IMAGE_TO_VIDEO: DriverImplementation.LTX2_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2 v1 版本
+    DriverKey.LTX2_3_IMAGE_TO_VIDEO: DriverImplementation.LTX2_3_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 v1 版本
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1, # 使用 RunningHub 的数字人 v1 版本
     

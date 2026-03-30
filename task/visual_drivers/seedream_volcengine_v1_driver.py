@@ -192,7 +192,7 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
                     img_url,
                     self._config,
                     max_size_mb=10.0,
-                    is_local=self._is_local
+                    is_local=True  # 火山引擎要求参考图在5秒内下载完成，强制走图床上传
                 )
                 
                 if success:

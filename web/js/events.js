@@ -3228,10 +3228,147 @@
       savePropsEdit();
     });
 
+    // 删除道具按钮
+    document.getElementById('editPropsDeleteBtn').addEventListener('click', async () => {
+      const propsId = document.getElementById('editPropsId').value;
+      if (!propsId) {
+        showToast('无法获取道具信息', 'error');
+        return;
+      }
+
+      if (!confirm('确定要删除这个道具吗？此操作不可撤销。')) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/props/${propsId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          }
+        });
+
+        const result = await response.json();
+
+        if (result.code === 0) {
+          showToast('道具删除成功', 'success');
+          document.getElementById('editPropsModal').classList.remove('show');
+          currentEditingPropsNodeId = null;
+
+          // 删除工作流中的道具节点
+          const propsNodesToRemove = state.nodes.filter(n => n.type === 'props' && n.data.id == propsId);
+          propsNodesToRemove.forEach(node => removeNode(node.id));
+
+          // 刷新道具列表
+          const worldSelect = document.getElementById('propsWorldSelect');
+          if (worldSelect && worldSelect.value) {
+            loadProps(worldSelect.value);
+          }
+        } else {
+          showToast(result.message || '删除失败', 'error');
+        }
+      } catch (error) {
+        console.error('删除道具失败:', error);
+        showToast('删除道具失败', 'error');
+      }
+    });
+
     document.getElementById('editPropsModal').addEventListener('click', (e) => {
       if (e.target.id === 'editPropsModal') {
         document.getElementById('editPropsModal').classList.remove('show');
         currentEditingPropsNodeId = null;
+      }
+    });
+
+    // 删除场景按钮
+    document.getElementById('editLocationDeleteBtn').addEventListener('click', async () => {
+      const locationId = document.getElementById('editLocationId').value;
+      if (!locationId) {
+        showToast('无法获取场景信息', 'error');
+        return;
+      }
+
+      if (!confirm('确定要删除这个场景吗？此操作不可撤销。')) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/locations/${locationId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          }
+        });
+
+        const result = await response.json();
+
+        if (result.code === 0) {
+          showToast('场景删除成功', 'success');
+          document.getElementById('editLocationModal').classList.remove('show');
+
+          // 删除工作流中的场景节点
+          const locationNodesToRemove = state.nodes.filter(n => n.type === 'location' && n.data.id == locationId);
+          locationNodesToRemove.forEach(node => removeNode(node.id));
+
+          // 刷新场景列表
+          const worldSelect = document.getElementById('locationWorldSelect');
+          if (worldSelect && worldSelect.value) {
+            loadLocations(worldSelect.value);
+          }
+        } else {
+          showToast(result.message || '删除失败', 'error');
+        }
+      } catch (error) {
+        console.error('删除场景失败:', error);
+        showToast('删除场景失败', 'error');
+      }
+    });
+
+    // 删除角色按钮
+    document.getElementById('editCharacterDeleteBtn').addEventListener('click', async () => {
+      const characterId = document.getElementById('editCharacterId').value;
+      if (!characterId) {
+        showToast('无法获取角色信息', 'error');
+        return;
+      }
+
+      if (!confirm('确定要删除这个角色吗？此操作不可撤销。')) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/characters/${characterId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': localStorage.getItem('auth_token') || '',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          }
+        });
+
+        const result = await response.json();
+
+        if (result.code === 0) {
+          showToast('角色删除成功', 'success');
+          document.getElementById('editCharacterModal').classList.remove('show');
+          currentEditingCharacterNodeId = null;
+
+          // 删除工作流中的角色节点
+          const characterNodesToRemove = state.nodes.filter(n => n.type === 'character' && n.data.id == characterId);
+          characterNodesToRemove.forEach(node => removeNode(node.id));
+
+          // 刷新角色列表（如果存在对应的世界选择器）
+          const worldSelect = document.getElementById('characterWorldSelect');
+          if (worldSelect && worldSelect.value) {
+            loadCharacters(worldSelect.value);
+          }
+        } else {
+          showToast(result.message || '删除失败', 'error');
+        }
+      } catch (error) {
+        console.error('删除角色失败:', error);
+        showToast('删除角色失败', 'error');
       }
     });
 
@@ -3485,7 +3622,8 @@
     // 打开角色编辑模态框
     function openCharacterEditModal(nodeId, character) {
       currentEditingCharacterNodeId = nodeId;
-      
+
+      document.getElementById('editCharacterId').value = character.id || '';
       document.getElementById('editCharacterNameInput').value = character.name || '';
       document.getElementById('editCharacterAgeInput').value = character.age || '';
       document.getElementById('editCharacterIdentityInput').value = character.identity || '';
@@ -3827,9 +3965,10 @@
             const videoNodeX = characterNode.x + offsetX;
             const videoNodeY = characterNode.y + offsetY;
             
-            const newVideoNodeId = createVideoNode({ 
-              x: videoNodeX, 
-              y: videoNodeY 
+            const newVideoNodeId = createVideoNode({
+              x: videoNodeX,
+              y: videoNodeY,
+              checkCollision: true
             });
             
             const newVideoNode = state.nodes.find(n => n.id === newVideoNodeId);
