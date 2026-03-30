@@ -994,7 +994,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_durations=[5, 8, 10],
         default_ratio='9:16',
         default_duration=5,
-        sort_order=33,
+        sort_order=30,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
     ),
     UnifiedTaskConfig(
