@@ -65,9 +65,18 @@ class RunningHubFileStorage(BaseFileStorage):
         # 延迟导入避免循环依赖
         from utils.network_utils import is_local_file_path, is_local_or_private_url
         from utils.image_upload_utils import try_map_url_to_local_file, download_url_to_temp
+        from utils.project_path import get_project_path
 
         if is_local_file_path(file_path_or_url):
-            return file_path_or_url if os.path.exists(file_path_or_url) else None
+            # 尝试直接使用原路径（如果是绝对路径）
+            if os.path.exists(file_path_or_url):
+                return file_path_or_url
+            # 尝试基于项目根目录的相对路径
+            project_path = get_project_path(file_path_or_url)
+            if os.path.exists(project_path):
+                return project_path
+            # 都找不到，返回None
+            return None
         elif is_local_or_private_url(file_path_or_url):
             # 先尝试映射到本地文件
             local_path = try_map_url_to_local_file(file_path_or_url, self._config)

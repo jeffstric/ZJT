@@ -2541,12 +2541,20 @@ async def get_ai_tools_history(
                     }
                 )
         
+        # 动态生成 type_mapping，基于 unified_config.py 中的分类定义
+        from config.unified_config import UnifiedConfigRegistry, TaskCategory
+        
         type_mapping = {
-            1: [1, 4, 7],  # 图片编辑 + 图片高清放大
-            2: [2, 5],  # AI视频生成 + 高清修复
-            3: [3, 6, 10, 11, 12],  # 图片生成视频（Sora2、LTX2.0、Wan2.2、可灵）+ 高清修复
-            4: [5, 6] # 高清修复
+            1: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.IMAGE_EDIT),  # 图片编辑
+            2: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.TEXT_TO_VIDEO),  # AI视频生成
+            3: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.IMAGE_TO_VIDEO),  # 图片生成视频
+            4: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.VISUAL_ENHANCE),  # 视觉增强
+            13: UnifiedConfigRegistry.get_ids_by_category(TaskCategory.DIGITAL_HUMAN)  # 数字人
         }
+        
+        # 如果数字人分类为空，则使用图生视频类型（向后兼容）
+        if not type_mapping[13]:
+            type_mapping[13] = type_mapping[3]
 
         if type_list_param:
             # Use types parameter (comma-separated list)

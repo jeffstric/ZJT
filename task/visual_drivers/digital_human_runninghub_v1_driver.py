@@ -165,14 +165,14 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
             else:
                 self.logger.warning(f"音频上传失败: {result.error}")
 
-        # 处理图片路径 - 如果是本地环境，上传到 RunningHub
+        # 处理图片路径 - 上传到 RunningHub 图床（RunningHub AI-App 需要图床 URL）
         image_path = ai_tool.image_path
-        if self._is_local and image_path:
-            self.logger.info(f"本地环境检测到图片路径，准备上传到 RunningHub: {image_path}")
+        if image_path:
+            self.logger.info(f"准备上传图片到 RunningHub 图床: {image_path}")
             result = await self._storage.upload_file("", image_path)
             if result.success:
-                image_path = result.key
-                self.logger.info(f"图片上传完成，使用 fileName: {image_path}")
+                image_path = result.url if result.url else result.key
+                self.logger.info(f"图片上传完成，使用 URL: {image_path}")
             else:
                 self.logger.warning(f"图片上传失败: {result.error}")
 

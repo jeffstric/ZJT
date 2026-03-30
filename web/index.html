@@ -4103,7 +4103,7 @@
           }
           
           // 使用后端返回的图生视频类型列表，如果没有则使用默认值
-          const imageToVideoTypes = this.taskTypeConfig?.image_to_video_types || [3, 10, 11, 12, 14, 15];
+          const imageToVideoTypes = this.taskTypeConfig?.image_to_video_types || [3, 10, 11, 12, 14, 15, 19, 20];
           const typesStr = imageToVideoTypes.join(',');
           
           const response = await axios.get('/api/ai-tools/history', {
@@ -4759,12 +4759,22 @@
         this.historyLoading = true;
         try {
           const authToken = localStorage.getItem('auth_token');
+          
+          // 如果没有获取到任务类型配置，先获取
+          if (!this.taskTypeConfig) {
+            await this.fetchTaskTypeConfig();
+          }
+          
+          // 使用后端返回的图生视频类型列表，如果没有则使用默认值
+          const imageToVideoTypes = this.taskTypeConfig?.image_to_video_types || [3, 10, 11, 12, 14, 15, 19, 20];
+          const typesStr = imageToVideoTypes.join(',');
+          
           const response = await axios.get('/api/ai-tools/history', {
             params: {
               user_id: parseInt(userId),
               page: this.historyPage,
               page_size: 20,
-              types: '3,10,11,12,14,15',  // 3-Sora2图生视频, 10-LTX2.0, 11-Wan2.2, 12-可灵, 14-Vidu, 15-VEO3
+              types: typesStr,  // 使用后端配置的所有图生视频类型
               auth_token: authToken || undefined
             }
           });
@@ -5426,7 +5436,7 @@
           }
           
           // 使用后端返回的图生视频类型列表，如果没有则使用默认值
-          const imageToVideoTypes = this.taskTypeConfig?.image_to_video_types || [3, 10, 11, 12, 14, 15];
+          const imageToVideoTypes = this.taskTypeConfig?.image_to_video_types || [3, 10, 11, 12, 14, 15, 19, 20];
           const typesStr = imageToVideoTypes.join(',');
           
           const response = await axios.get('/api/ai-tools/history', {
