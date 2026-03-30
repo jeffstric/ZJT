@@ -2051,9 +2051,8 @@
             const selectedOption = selector.options[selector.selectedIndex];
             if (!selectedOption) return;
 
-            const isRecommended = selectedOption.dataset.recommended === 'true';
-
-            if (!isRecommended) {
+            // 非 gemini-3-flash-preview 显示红色
+            if (selectedOption.value !== 'gemini-3-flash-preview') {
                 selector.style.color = '#ff6b6b';
             } else {
                 selector.style.color = '';
@@ -2102,19 +2101,36 @@
             const selectedOption = selector.options[selector.selectedIndex];
             const model = selector.value;
             const modelId = selectedOption?.dataset?.modelId;
-            
-            // 检查是否是推荐模型
-            const isRecommended = selectedOption?.dataset.recommended === 'true';
-            
-            if (!isRecommended) {
-                const confirmed = confirm(
-                    '⚠️ 模型算力提醒\n\n' +
-                    '您选择的是 gemini-3-pro-preview 模型。\n\n' +
-                    '该模型的算力消耗是 gemini-3-flash-preview 的 7 倍左右，消耗较高。\n\n' +
-                    '推荐使用 gemini-3-flash-preview 以节省算力。\n\n' +
-                    '是否继续使用当前选择的模型？'
-                );
-                
+
+            // 非 gemini-3-flash-preview 的模型都需要提示
+            if (model !== 'gemini-3-flash-preview') {
+                let warningMessage = '';
+
+                if (model === 'gemini-3.1-pro-preview') {
+                    warningMessage = (
+                        '⚠️ 模型算力提醒\n\n' +
+                        '您选择的是 gemini-3.1-pro-preview 模型。\n\n' +
+                        '该模型的算力消耗是 gemini-3-flash-preview 的 7 倍左右，价格较贵。\n\n' +
+                        '是否继续使用当前选择的模型？'
+                    );
+                } else if (model === 'gemini-3.1-flash-lite-preview') {
+                    warningMessage = (
+                        '⚠️ 模型能力提醒\n\n' +
+                        '您选择的是 gemini-3.1-flash-lite-preview 模型。\n\n' +
+                        '该模型价格较低，但可能在复杂任务上不够聪明。\n\n' +
+                        '是否继续使用当前选择的模型？'
+                    );
+                } else {
+                    warningMessage = (
+                        '⚠️ 模型切换提醒\n\n' +
+                        '您选择的是 ' + model + ' 模型。\n\n' +
+                        '推荐使用 gemini-3-flash-preview 以获得最佳性价比。\n\n' +
+                        '是否继续使用当前选择的模型？'
+                    );
+                }
+
+                const confirmed = confirm(warningMessage);
+
                 if (!confirmed) {
                     // 用户取消，恢复到推荐模型
                     for (let i = 0; i < selector.options.length; i++) {

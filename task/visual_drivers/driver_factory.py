@@ -376,7 +376,14 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.LTX2_RUNNINGHUB_V1, Ltx2RunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Ltx2RunninghubV1Driver: {e}")
-    
+
+    try:
+        from .ltx2_3_runninghub_v1_driver import Ltx2Dot3RunninghubV1Driver
+        # 注册 LTX2.3 RunningHub v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.LTX2_3_RUNNINGHUB_V1, Ltx2Dot3RunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Ltx2Dot3RunninghubV1Driver: {e}")
+
     try:
         from .wan22_runninghub_v1_driver import Wan22RunninghubV1Driver
         # 注册 Wan22 RunningHub v1 版本

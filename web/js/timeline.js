@@ -1575,6 +1575,10 @@
               </div>
             </div>
             
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button class="mini-btn btn-secondary" id="cancelExportBtn" type="button">取消</button>
+              <button class="btn btn-primary" id="confirmExportBtn" type="button">开始导出</button>
+            </div>
             <div style="margin-bottom: 20px;">
               <div style="font-weight: 500; margin-bottom: 12px; color: #111827;">如何获取剪影草稿路径：</div>
               <div style="margin-bottom: 12px;">
@@ -1591,10 +1595,6 @@
               </div>
             </div>
             
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-              <button class="mini-btn btn-secondary" id="cancelExportBtn" type="button">取消</button>
-              <button class="btn btn-primary" id="confirmExportBtn" type="button">开始导出</button>
-            </div>
           </div>
         </div>
       `;

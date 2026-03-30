@@ -147,9 +147,10 @@ async function generateShotFrameVideo(nodeId, node){
     
     for(let i = 0; i < videoCount; i++){
       const offsetY = i * 280;
-      const newVideoNodeId = createVideoNode({ 
-        x: node.x + 380, 
-        y: node.y + offsetY 
+      const newVideoNodeId = createVideoNode({
+        x: node.x + 380,
+        y: node.y + offsetY,
+        checkCollision: true
       });
       
       const newVideoNode = state.nodes.find(n => n.id === newVideoNodeId);

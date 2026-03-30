@@ -1376,7 +1376,7 @@
       state.nextNodeId = nodeData.id;
       
       // 调用原有的创建函数
-      createVideoNode({ x: nodeData.x, y: nodeData.y });
+      createVideoNode({ x: nodeData.x, y: nodeData.y, checkCollision: true });
       
       // 恢复nextNodeId为最大值
       state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);

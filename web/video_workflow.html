@@ -526,9 +526,12 @@
           </div>
         </div>
       </div>
-      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
-        <button class="mini-btn secondary" id="editLocationCancelBtn" type="button">取消</button>
-        <button class="mini-btn" id="editLocationSaveBtn" type="button">保存</button>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn danger" id="editLocationDeleteBtn" type="button" style="background: #ef4444; color: #ffffff;">删除</button>
+        <div style="display: flex; gap: 10px;">
+          <button class="mini-btn secondary" id="editLocationCancelBtn" type="button">取消</button>
+          <button class="mini-btn" id="editLocationSaveBtn" type="button">保存</button>
+        </div>
       </div>
     </div>
   </div>
@@ -636,9 +639,12 @@
           </div>
         </div>
       </div>
-      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
-        <button class="mini-btn secondary" id="editPropsCancelBtn" type="button">取消</button>
-        <button class="mini-btn" id="editPropsSaveBtn" type="button">保存</button>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn danger" id="editPropsDeleteBtn" type="button" style="background: #ef4444; color: #ffffff;">删除</button>
+        <div style="display: flex; gap: 10px;">
+          <button class="mini-btn secondary" id="editPropsCancelBtn" type="button">取消</button>
+          <button class="mini-btn" id="editPropsSaveBtn" type="button">保存</button>
+        </div>
       </div>
     </div>
   </div>
@@ -703,6 +709,7 @@
         <button class="modal-close" id="editCharacterModalClose" type="button" aria-label="关闭">×</button>
       </div>
       <div class="modal-body" style="background: #ffffff; padding: 20px; max-height: 65vh; overflow-y: auto;">
+        <input type="hidden" id="editCharacterId" />
         <div style="display: flex; flex-direction: column; gap: 16px;">
           <div class="field">
             <label class="label" style="color: #0f172a;">角色名称 <span style="color: #ef4444;">*</span></label>
@@ -757,9 +764,12 @@
           </div>
         </div>
       </div>
-      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
-        <button class="mini-btn secondary" id="editCharacterCancelBtn" type="button">取消</button>
-        <button class="mini-btn" id="editCharacterSaveBtn" type="button">保存</button>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn danger" id="editCharacterDeleteBtn" type="button" style="background: #ef4444; color: #ffffff;">删除</button>
+        <div style="display: flex; gap: 10px;">
+          <button class="mini-btn secondary" id="editCharacterCancelBtn" type="button">取消</button>
+          <button class="mini-btn" id="editCharacterSaveBtn" type="button">保存</button>
+        </div>
       </div>
     </div>
   </div>

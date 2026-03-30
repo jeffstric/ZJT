@@ -79,19 +79,49 @@ class TestPropsCRUD(DatabaseTestCase):
             'name': '临时道具',
             'user_id': 1
         })
-        
+
         count_before = self.count_rows('props', 'id = %s', (props_id,))
         self.assertEqual(count_before, 1)
-        
+
         affected_rows = self.execute_update(
             "DELETE FROM `props` WHERE id = %s",
             (props_id,)
         )
-        
+
         self.assertEqual(affected_rows, 1)
-        
+
         count_after = self.count_rows('props', 'id = %s', (props_id,))
         self.assertEqual(count_after, 0)
+
+    def test_delete_props_with_model(self):
+        """测试使用PropsModel删除道具"""
+        from model.props import PropsModel
+
+        props_id = self.insert_fixture('props', {
+            'world_id': self.test_world_id,
+            'name': '待删除道具',
+            'content': '测试删除功能',
+            'user_id': 1
+        })
+
+        # 验证道具已创建（使用测试连接查询）
+        result = self.execute_query(
+            "SELECT * FROM `props` WHERE id = %s",
+            (props_id,)
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['name'], '待删除道具')
+
+        # 提交当前事务，使数据对其他连接可见
+        self._connection.commit()
+
+        # 删除道具
+        affected_rows = PropsModel.delete(props_id)
+        self.assertEqual(affected_rows, 1)
+
+        # 验证道具已删除
+        deleted_props = PropsModel.get_by_id(props_id)
+        self.assertIsNone(deleted_props)
     
     def test_query_props_by_world(self):
         """测试按世界查询道具"""

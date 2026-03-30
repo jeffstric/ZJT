@@ -74,23 +74,101 @@ class TestGetFrontendConfig(unittest.TestCase):
         self.assertIn('tasks', config)
         # 所有任务的 computing_power 应该保持默认（未修改）
 
-    def test_get_frontend_config_without_user_prefs_uses_first_impl_power(self):
-        """测试无用户偏好时使用 implementations 排序第一位的算力"""
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_get_frontend_config_with_user_prefs_applies_power(self, mock_impl_power_model):
+        """测试用户偏好会应用对应实现方的算力"""
         from config.unified_config import UnifiedConfigRegistry
 
-        config = UnifiedConfigRegistry.get_frontend_config()
+        # Mock ImplementationPowerModel methods
+        mock_impl_power_model.get_power.return_value = 4
+        mock_impl_power_model.get_config.return_value = {}
 
-        # 找到 gemini-2.5-flash-image-preview 任务
-        for task in config['tasks']:
-            if task.get('key') == 'gemini-2.5-flash-image-preview':
-                impls = task.get('implementations', [])
-                if impls:
-                    # implementations 按 sort_order 排序，第一位应该是 sort_order 最小的
-                    first_impl = impls[0]
-                    # 验证 task.computing_power 等于第一位 implementations 的 computing_power
-                    self.assertEqual(task.get('computing_power'), first_impl.get('computing_power'))
-                    self.assertEqual(task.get('default_implementation'), first_impl.get('name'))
+        # 获取默认配置（无偏好）作为基准
+        default_config = UnifiedConfigRegistry.get_frontend_config()
+
+        # 找到第一个有 computing_power 的任务
+        task_with_power = None
+        for task in default_config['tasks']:
+            if task.get('computing_power') is not None:
+                task_with_power = task
                 break
+
+        if not task_with_power:
+            self.skipTest("没有找到有算力配置的任务，跳过此测试")
+
+        task_key = task_with_power['key']
+        default_power = task_with_power.get('computing_power')
+
+        # 设置用户偏好：让该任务使用 gemini_duomi_v1 实现方
+        user_prefs = {
+            task_key: 'gemini_duomi_v1'
+        }
+
+        # 获取带偏好的配置
+        config_with_prefs = UnifiedConfigRegistry.get_frontend_config(
+            user_id=1,
+            user_prefs=user_prefs
+        )
+
+        # 找到同一任务，检查算力是否被更新
+        updated_task = None
+        for task in config_with_prefs['tasks']:
+            if task['key'] == task_key:
+                updated_task = task
+                break
+
+        self.assertIsNotNone(updated_task)
+        # 如果用户偏好的实现方算力获取成功，应该返回 4
+        mock_impl_power_model.get_power.assert_called()
+        self.assertEqual(updated_task.get('computing_power'), 4)
+        self.assertEqual(updated_task.get('user_preferred_implementation'), 'gemini_duomi_v1')
+
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_get_frontend_config_with_user_prefs_get_power_returns_none(self, mock_impl_power_model):
+        """测试用户偏好设置但算力获取返回None时保持默认"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        # Mock ImplementationPowerModel methods
+        mock_impl_power_model.get_power.return_value = None
+        mock_impl_power_model.get_config.return_value = {}
+
+        # 获取默认配置（无偏好）作为基准
+        default_config = UnifiedConfigRegistry.get_frontend_config()
+
+        # 找到第一个有 computing_power 的任务
+        task_with_power = None
+        for task in default_config['tasks']:
+            if task.get('computing_power') is not None:
+                task_with_power = task
+                break
+
+        if not task_with_power:
+            self.skipTest("没有找到有算力配置的任务，跳过此测试")
+
+        task_key = task_with_power['key']
+        default_power = task_with_power.get('computing_power')
+
+        # 设置用户偏好
+        user_prefs = {
+            task_key: 'gemini_duomi_v1'
+        }
+
+        # 获取带偏好的配置
+        config_with_prefs = UnifiedConfigRegistry.get_frontend_config(
+            user_id=1,
+            user_prefs=user_prefs
+        )
+
+        # 找到同一任务
+        updated_task = None
+        for task in config_with_prefs['tasks']:
+            if task['key'] == task_key:
+                updated_task = task
+                break
+
+        self.assertIsNotNone(updated_task)
+        # 算力应该保持默认值（因为 get_power 返回 None）
+        self.assertEqual(updated_task.get('computing_power'), default_power)
 
 
 class TestApplyUserPreferencesToTasks(unittest.TestCase):

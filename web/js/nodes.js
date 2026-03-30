@@ -254,8 +254,15 @@
     function createVideoNode(opts){
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
-      const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
+      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+
+      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
+      if (opts && opts.checkCollision) {
+        const avail = findNearestAvailablePosition(x, y, 320, 220);
+        x = avail.x;
+        y = avail.y;
+      }
       const node = {
         id,
         type: 'video',
@@ -3480,7 +3487,7 @@
           const newVideoNodeIds = [];
 
           for(let i = 0; i < missingCount; i++){
-            const newVideoId = createVideoNode({ x: node.x + 380, y: node.y + i * 260 });
+            const newVideoId = createVideoNode({ x: node.x + 380, y: node.y + i * 260, checkCollision: true });
             state.connections.push({ id: state.nextConnId++, from: id, to: newVideoId });
             newVideoNodeIds.push(newVideoId);
             
@@ -3956,8 +3963,15 @@
     function createImageNode(opts){
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
-      const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
+      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+
+      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
+      if (opts && opts.checkCollision) {
+        const avail = findNearestAvailablePosition(x, y, 320, 220);
+        x = avail.x;
+        y = avail.y;
+      }
       const defaultRatio = state.ratio || ratioSelectEl.value || '9:16';
       
       // 从后端配置获取第一个图片模型作为默认值
@@ -4698,9 +4712,10 @@
 
           for(let i = 0; i < imageCount; i++){
             const offsetY = i * 280;
-            const newNodeId = createImageNode({ 
-              x: node.x + 380, 
-              y: node.y + offsetY 
+            const newNodeId = createImageNode({
+              x: node.x + 380,
+              y: node.y + offsetY,
+              checkCollision: true
             });
             const newNode = state.nodes.find(n => n.id === newNodeId);
             if(newNode){
@@ -5801,7 +5816,8 @@
                   const gridIndex = idx + 1;
                   const gridImageNodeId = createImageNode({
                     x: shotFrameNode.x + 380,
-                    y: shotFrameNode.y
+                    y: shotFrameNode.y,
+                    checkCollision: true
                   });
                   
                   const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
@@ -6231,7 +6247,8 @@
               const gridIndex = idx + 1;
               const gridImageNodeId = createImageNode({
                 x: shotFrameNode.x + 380,
-                y: shotFrameNode.y
+                y: shotFrameNode.y,
+                checkCollision: true
               });
               
               const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
@@ -6699,7 +6716,8 @@
               const gridIndex = idx + 1;
               const gridImageNodeId = createImageNode({
                 x: shotFrameNode.x + 380,
-                y: shotFrameNode.y
+                y: shotFrameNode.y,
+                checkCollision: true
               });
               
               const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
@@ -7646,7 +7664,8 @@
             const gridIndex = idx + 1;
             const gridImageNodeId = createImageNode({
               x: shotFrameNode.x + 380,
-              y: shotFrameNode.y
+              y: shotFrameNode.y,
+              checkCollision: true
             });
             
             const gridImageNode = state.nodes.find(n => n.id === gridImageNodeId);
@@ -7767,7 +7786,8 @@
           x: shotGroupNode.x + offsetX,
           y: nextY,
           shotData: shotDataWithLocation,
-          model: shotGroupNode.data.model
+          model: shotGroupNode.data.model,
+          checkCollision: true
         });
         createdNodeIds.push(shotFrameNodeId);
         nextY += 700;
@@ -7868,7 +7888,8 @@
           x: shotGroupNode.x + offsetX,
           y: nextY,
           shotData: shotDataWithLocation,
-          model: shotGroupNode.data.model
+          model: shotGroupNode.data.model,
+          checkCollision: true
         });
         createdNodeIds.push(shotFrameNodeId);
         nextY += 700;
@@ -7925,8 +7946,15 @@
     function createShotFrameNode(opts){
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
-      const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
+      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+
+      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
+      if (opts && opts.checkCollision) {
+        const avail = findNearestAvailablePosition(x, y, 320, 220);
+        x = avail.x;
+        y = avail.y;
+      }
       const shotData = opts && opts.shotData ? opts.shotData : {};
       
       // 从后端配置获取默认模型
@@ -9654,9 +9682,10 @@
         
         for(let i = 0; i < videoCount; i++){
           const offsetY = i * 280;
-          const newVideoNodeId = createVideoNode({ 
-            x: firstShotFrame.x + 380, 
-            y: firstShotFrame.y + offsetY 
+          const newVideoNodeId = createVideoNode({
+            x: firstShotFrame.x + 380,
+            y: firstShotFrame.y + offsetY,
+            checkCollision: true
           });
           
           const newVideoNode = state.nodes.find(n => n.id === newVideoNodeId);

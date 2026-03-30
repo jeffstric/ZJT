@@ -330,9 +330,10 @@ async function generateShotFrameImage(nodeId, node){
     
     for(let i = 0; i < imageCount; i++){
       const offsetY = i * 280;
-      const newNodeId = createImageNode({ 
-        x: node.x + 380, 
-        y: node.y + offsetY 
+      const newNodeId = createImageNode({
+        x: node.x + 380,
+        y: node.y + offsetY,
+        checkCollision: true
       });
       
       const newNode = state.nodes.find(n => n.id === newNodeId);
