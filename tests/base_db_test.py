@@ -154,11 +154,12 @@ class DatabaseTestCase(unittest.TestCase):
     def clear_table(self, table: str):
         """
         清空表数据
-        
+
         Args:
             table: 表名
         """
         self.execute_update(f"DELETE FROM `{table}`")
+        self._connection.commit()
         logger.debug(f"清空表: {table}")
     
     def count_rows(self, table: str, where: str = None, params=None) -> int:

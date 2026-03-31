@@ -52,7 +52,8 @@ class ApiSmsDriver(BaseSmsDriver):
             }
             
             # 发送HTTP请求
-            with httpx.Client(timeout=10) as client:
+            # 显式使用 HTTP/1.1 避免 macOS 上的 SSL EOF 问题
+            with httpx.Client(timeout=10, http2=False) as client:
                 if self.method == 'POST':
                     response = client.post(
                         self.api_url,

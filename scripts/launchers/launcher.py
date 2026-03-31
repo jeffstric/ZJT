@@ -32,41 +32,53 @@ import pystray
 from PIL import Image, ImageDraw, ImageFont
 
 # 单实例检测（使用 Windows 命名互斥锁）
-MUTEX_NAME = "Global\\ZhiJuTong_Launcher_Mutex"
-mutex_handle = None
+# 注意：不使用 Global\ 前缀，避免需要管理员权限
+MUTEX_NAME = "Local\\ZhiJuTong_Launcher_Mutex_v2"
+_mutex_handle = None
 
 
-def check_single_instance():
-    """检查是否已有实例在运行"""
-    global mutex_handle
+def ensure_single_instance():
+    """
+    使用 Windows 命名互斥体确保只有一个实例运行。
+    如果已有实例在运行，弹出提示并退出。
+    """
+    global _mutex_handle
+    kernel32 = ctypes.windll.kernel32
+    user32 = ctypes.windll.user32
 
-    try:
-        # 先检查是否有 launcher 进程真的在运行（通过 PID 文件和进程检测）
-        is_running, running_pid = check_launcher_running()
+    # 尝试创建互斥体（CreateMutexW）
+    # bInitialOwner=True 表示创建者拥有互斥体
+    _mutex_handle = kernel32.CreateMutexW(None, True, MUTEX_NAME)
+    last_error = kernel32.GetLastError()
 
-        # 创建命名互斥锁
-        mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX_NAME)
-        last_error = ctypes.windll.kernel32.GetLastError()
+    # ERROR_ALREADY_EXISTS = 183，表示互斥体已存在（另一个实例正在运行）
+    if last_error == 183:
+        # 关闭刚获取的句柄
+        if _mutex_handle:
+            kernel32.CloseHandle(_mutex_handle)
+            _mutex_handle = None
 
-        # ERROR_ALREADY_EXISTS = 183
-        if last_error == 183:
-            # 互斥锁已存在，但需要验证进程是否真的在运行
-            if is_running:
-                # 进程真的在运行，显示提示并退出
-                ctypes.windll.user32.MessageBoxW(
-                    0,
-                    "智剧通已在运行中，请查看系统托盘图标。",
-                    "提示",
-                    0x40  # MB_ICONINFORMATION
-                )
-                return False
-            else:
-                # 互斥锁存在但进程不存在，说明是残留锁，允许继续运行
-                return True
-        return True
-    except Exception as e:
-        # 如果互斥锁检测失败，允许继续运行
-        return True
+        # 显示提示并退出
+        # MB_TOPMOST = 0x40000, MB_ICONINFORMATION = 0x40
+        user32.MessageBoxW(
+            0,
+            "智剧通已在运行中，请查看系统托盘图标。\n\n如需重启，请先通过托盘图标退出。",
+            "智剧通 - 重复启动",
+            0x40000 | 0x40  # MB_TOPMOST | MB_ICONINFORMATION
+        )
+        sys.exit(0)
+
+
+def release_mutex():
+    """释放互斥体"""
+    global _mutex_handle
+    if _mutex_handle:
+        try:
+            ctypes.windll.kernel32.ReleaseMutex(_mutex_handle)
+            ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+        except Exception:
+            pass
+        _mutex_handle = None
 
 
 # 检查托盘依赖是否可用
@@ -391,6 +403,9 @@ class TrayLauncher:
         except Exception:
             pass
 
+        # 释放互斥体
+        release_mutex()
+
         if self.icon:
             # 先隐藏托盘图标
             try:
@@ -498,8 +513,7 @@ def main():
         sys.exit(1)
     
     # 单实例检测
-    if not check_single_instance():
-        sys.exit(0)
+    ensure_single_instance()
     
     try:
         if HAS_TRAY_DEPS:

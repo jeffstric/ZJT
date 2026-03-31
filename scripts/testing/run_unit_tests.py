@@ -37,7 +37,7 @@ from tests.db_test_config import get_test_db_config
 
 class TestRunner:
     """测试执行器"""
-    
+
     def __init__(self, args):
         self.args = args
         self.test_results = {
@@ -48,6 +48,8 @@ class TestRunner:
             'config': {'passed': 0, 'failed': 0, 'errors': 0},
             'total': {'passed': 0, 'failed': 0, 'errors': 0}
         }
+        # 收集所有失败测试的详细信息
+        self.failed_tests = []
     
     def check_environment(self):
         """检查测试环境"""
@@ -85,28 +87,44 @@ class TestRunner:
         print("=" * 60)
         print("步骤 2: 数据库连接测试")
         print("=" * 60)
-        
+
         try:
             import unittest
             from tests.test_db_connection import TestDatabaseConnection
-            
+
             loader = unittest.TestLoader()
             suite = loader.loadTestsFromTestCase(TestDatabaseConnection)
-            
+
             runner = unittest.TextTestRunner(verbosity=2 if self.args.verbose else 1)
             result = runner.run(suite)
-            
+
             self.test_results['db_connection']['passed'] = result.testsRun - len(result.failures) - len(result.errors)
             self.test_results['db_connection']['failed'] = len(result.failures)
             self.test_results['db_connection']['errors'] = len(result.errors)
-            
+
+            # 收集失败信息
+            for test, traceback_str in result.failures:
+                self.failed_tests.append({
+                    'category': 'db_connection',
+                    'test': str(test),
+                    'type': 'failure',
+                    'traceback': traceback_str
+                })
+            for test, traceback_str in result.errors:
+                self.failed_tests.append({
+                    'category': 'db_connection',
+                    'test': str(test),
+                    'type': 'error',
+                    'traceback': traceback_str
+                })
+
             if result.wasSuccessful():
                 print("[OK] 数据库连接测试通过")
                 return True
             else:
                 print("[FAILED] 数据库连接测试失败")
                 return False
-                
+
         except Exception as e:
             print(f"[ERROR] 执行连接测试时出错: {e}")
             self.test_results['db_connection']['errors'] = 1
@@ -119,7 +137,7 @@ class TestRunner:
         print("=" * 60)
         print("步骤 3: CRUD 测试")
         print("=" * 60)
-        
+
         crud_test_files = [
             'tests.test_ai_tools_crud',
             'tests.test_ai_audio_crud',
@@ -134,7 +152,7 @@ class TestRunner:
             'tests.test_video_workflow_crud',
             'tests.test_world_crud',
         ]
-        
+
         all_passed = True
         for test_module in crud_test_files:
             try:
@@ -142,20 +160,38 @@ class TestRunner:
                 suite = unittest.TestLoader().loadTestsFromName(test_module)
                 runner = unittest.TextTestRunner(verbosity=1)
                 result = runner.run(suite)
-                
+
                 self.test_results['crud']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
                 self.test_results['crud']['failed'] += len(result.failures)
                 self.test_results['crud']['errors'] += len(result.errors)
-                
+
+                # 收集失败信息
+                for test, traceback_str in result.failures:
+                    self.failed_tests.append({
+                        'category': 'crud',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'failure',
+                        'traceback': traceback_str
+                    })
+                for test, traceback_str in result.errors:
+                    self.failed_tests.append({
+                        'category': 'crud',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'error',
+                        'traceback': traceback_str
+                    })
+
                 if not result.wasSuccessful():
                     all_passed = False
                     if self.args.failfast:
                         break
-                        
+
             except Exception as e:
                 print(f"[ERROR] 执行 {test_module} 失败: {e}")
                 all_passed = False
-        
+
         print()
         return all_passed
     
@@ -164,13 +200,13 @@ class TestRunner:
         print("=" * 60)
         print("步骤 4: 工具函数测试")
         print("=" * 60)
-        
+
         utils_test_files = [
             'tests.test_image_upload_utils',
             'tests.test_media_cache_temp',
             'tests.test_auth_service',
         ]
-        
+
         all_passed = True
         for test_module in utils_test_files:
             try:
@@ -178,20 +214,38 @@ class TestRunner:
                 suite = unittest.TestLoader().loadTestsFromName(test_module)
                 runner = unittest.TextTestRunner(verbosity=1)
                 result = runner.run(suite)
-                
+
                 self.test_results['utils']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
                 self.test_results['utils']['failed'] += len(result.failures)
                 self.test_results['utils']['errors'] += len(result.errors)
-                
+
+                # 收集失败信息
+                for test, traceback_str in result.failures:
+                    self.failed_tests.append({
+                        'category': 'utils',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'failure',
+                        'traceback': traceback_str
+                    })
+                for test, traceback_str in result.errors:
+                    self.failed_tests.append({
+                        'category': 'utils',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'error',
+                        'traceback': traceback_str
+                    })
+
                 if not result.wasSuccessful():
                     all_passed = False
                     if self.args.failfast:
                         break
-                        
+
             except Exception as e:
                 print(f"[ERROR] 执行 {test_module} 失败: {e}")
                 all_passed = False
-        
+
         print()
         return all_passed
     
@@ -200,7 +254,7 @@ class TestRunner:
         print("=" * 60)
         print("步骤 4: 驱动集成测试")
         print("=" * 60)
-        
+
         driver_test_files = [
             'tests.driver_integration.test_digital_human_driver_with_db',
             'tests.driver_integration.test_sora2_driver_with_db',
@@ -214,7 +268,7 @@ class TestRunner:
             'tests.driver_integration.test_seedream_driver_with_db',
             'tests.driver_integration.test_vidu_q2_driver_with_db',
         ]
-        
+
         all_passed = True
         for test_module in driver_test_files:
             try:
@@ -224,25 +278,43 @@ class TestRunner:
                 if not os.path.exists(full_path):
                     print(f"[SKIP] {test_module} (文件不存在)")
                     continue
-                
+
                 print(f"\n执行: {test_module}")
                 suite = unittest.TestLoader().loadTestsFromName(test_module)
                 runner = unittest.TextTestRunner(verbosity=1)
                 result = runner.run(suite)
-                
+
                 self.test_results['driver']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
                 self.test_results['driver']['failed'] += len(result.failures)
                 self.test_results['driver']['errors'] += len(result.errors)
-                
+
+                # 收集失败信息
+                for test, traceback_str in result.failures:
+                    self.failed_tests.append({
+                        'category': 'driver',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'failure',
+                        'traceback': traceback_str
+                    })
+                for test, traceback_str in result.errors:
+                    self.failed_tests.append({
+                        'category': 'driver',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'error',
+                        'traceback': traceback_str
+                    })
+
                 if not result.wasSuccessful():
                     all_passed = False
                     if self.args.failfast:
                         break
-                        
+
             except Exception as e:
                 print(f"[ERROR] 执行 {test_module} 失败: {e}")
                 all_passed = False
-        
+
         print()
         return all_passed
 
@@ -276,6 +348,24 @@ class TestRunner:
                 self.test_results['config']['failed'] += len(result.failures)
                 self.test_results['config']['errors'] += len(result.errors)
 
+                # 收集失败信息
+                for test, traceback_str in result.failures:
+                    self.failed_tests.append({
+                        'category': 'config',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'failure',
+                        'traceback': traceback_str
+                    })
+                for test, traceback_str in result.errors:
+                    self.failed_tests.append({
+                        'category': 'config',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'error',
+                        'traceback': traceback_str
+                    })
+
                 if not result.wasSuccessful():
                     all_passed = False
                     if self.args.failfast:
@@ -293,27 +383,27 @@ class TestRunner:
         print("=" * 60)
         print("测试执行摘要")
         print("=" * 60)
-        
+
         # 计算总数
-        for category in ['db_connection', 'crud', 'driver', 'config']:
+        for category in ['db_connection', 'crud', 'driver', 'utils', 'config']:
             for key in ['passed', 'failed', 'errors']:
                 self.test_results['total'][key] += self.test_results[category][key]
-        
+
         print(f"数据库连接测试: "
               f"通过 {self.test_results['db_connection']['passed']}, "
               f"失败 {self.test_results['db_connection']['failed']}, "
               f"错误 {self.test_results['db_connection']['errors']}")
-        
+
         print(f"CRUD 测试:       "
               f"通过 {self.test_results['crud']['passed']}, "
               f"失败 {self.test_results['crud']['failed']}, "
               f"错误 {self.test_results['crud']['errors']}")
-        
+
         print(f"驱动集成测试:    "
               f"通过 {self.test_results['driver']['passed']}, "
               f"失败 {self.test_results['driver']['failed']}, "
               f"错误 {self.test_results['driver']['errors']}")
-        
+
         print(f"工具函数测试:    "
               f"通过 {self.test_results['utils']['passed']}, "
               f"失败 {self.test_results['utils']['failed']}, "
@@ -330,36 +420,59 @@ class TestRunner:
               f"失败 {self.test_results['total']['failed']}, "
               f"错误 {self.test_results['total']['errors']}")
         print("=" * 60)
-        
+
         # 返回码
         if self.test_results['total']['failed'] > 0 or self.test_results['total']['errors'] > 0:
             return 1
         return 0
+
+    def print_failed_tests(self):
+        """打印所有失败的测试详情"""
+        if not self.failed_tests:
+            print("\n" + "=" * 60)
+            print("没有失败的测试")
+            print("=" * 60)
+            return
+
+        print("\n" + "=" * 60)
+        print(f"失败测试详情 (共 {len(self.failed_tests)} 项)")
+        print("=" * 60)
+
+        for i, failed in enumerate(self.failed_tests, 1):
+            print(f"\n{'─' * 60}")
+            print(f"#{i} [{failed['category'].upper()}] {failed.get('module', 'N/A')}")
+            print(f"测试: {failed['test']}")
+            print(f"类型: {failed['type'].upper()}")
+            print(f"{'─' * 60}")
+            print(failed['traceback'])
+
+        print("\n" + "=" * 60)
     
     def run(self):
         """执行完整测试流程"""
         print("\n" + "=" * 60)
         print("单元测试一键执行")
         print("=" * 60 + "\n")
-        
+
         # 步骤 1: 检查环境
         if not self.check_environment():
             return 1
-        
+
         # 步骤 2: 数据库连接测试
         if not self.args.crud_only and not self.args.driver_only:
             if not self.run_db_connection_test():
                 if self.args.failfast:
+                    self.print_failed_tests()
                     return 1
-        
+
         # 步骤 3: CRUD 测试
         if not self.args.driver_only and not self.args.utils_only:
             self.run_crud_tests()
-        
+
         # 步骤 4: 工具函数测试
         if not self.args.crud_only and not self.args.driver_only:
             self.run_utils_tests()
-        
+
         # 步骤 5: 驱动测试
         if not self.args.crud_only and not self.args.utils_only and not self.args.config_only:
             self.run_driver_tests()
@@ -370,7 +483,10 @@ class TestRunner:
 
         # 步骤 7: 输出摘要
         return_code = self.print_summary()
-        
+
+        # 步骤 8: 输出失败测试详情
+        self.print_failed_tests()
+
         print("\n测试执行完成！")
         return return_code
 

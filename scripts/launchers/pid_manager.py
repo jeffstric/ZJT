@@ -408,7 +408,8 @@ def check_launcher_running():
 
     for entry in entries:
         name = entry.get('name', '').lower()
-        if 'launcher' in name or '点我启动' in name:
+        # 检查多种可能的进程名：launcher、点我启动、python（开发环境）
+        if 'launcher' in name or '点我启动' in name or name == 'python':
             pid = entry.get('pid')
             cwd = entry.get('cwd')
             if pid and is_process_running(pid, name, cwd):
