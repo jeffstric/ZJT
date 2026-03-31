@@ -298,9 +298,9 @@ else:
 **⚠️ 关键区别**：写实风格**不使用** "reference sheet"、"grid paper"、"borders" 等动漫设定图术语，而是使用摄影和电影术语。
 
 ```
-[画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop.
+[画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. This is a multi-angle photo shoot layout showing the SAME person from three camera angles arranged side by side: front-facing, side profile, and back view. The three-angle full body turnaround is the PRIMARY and LARGEST section of this portfolio.
 
-Full Body Portraits: Three high-resolution photographs showing [角色名] from front angle, side profile, and back view. The subject is wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色]. Physical characteristics: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Facial expression: [基于性格的默认表情].
+Full Body Portraits (PRIMARY section, occupying the largest area): Three high-resolution photographs arranged in a horizontal row from left to right showing [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色] in all three shots with identical appearance. Physical characteristics consistent across all three photos: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Facial expression: [基于性格的默认表情].
 
 Detail Shots: Close-up photographs of key accessories and personal items arranged on a clean surface: [配饰1名称和详细外观], [配饰2名称和详细外观], [重要道具名称、材质、颜色、状态描述], [其他随身物品的细节]. Color reference swatches visible: [列出5-8个主要颜色].
 
@@ -309,6 +309,8 @@ Wardrobe Collection: Additional full-body photographs showing alternate outfits.
 Action Photography: Dynamic shots capturing characteristic movements and poses. First pose: [基于角色身份/职业的标志性动作描述，包含姿态细节和动作感]. Second pose: [基于角色性格的动作，如战斗姿态、思考姿态、奔跑姿态等的摄影描述]. Third pose: [日常习惯性动作或特殊技能展示的动态抓拍].
 
 Portrait Series: A collection of 6 headshot photographs showing different facial expressions: neutral/contemplative expression with slightly furrowed brow and thoughtful gaze, genuine smile with warm eyes and relaxed features, intense concentration with narrowed eyes and focused look, concerned expression with worried frown and tense features, surprised look with raised eyebrows and wide eyes, determined expression with firm jaw and steady gaze.
+
+CRITICAL REMINDER: The three-angle full body turnaround (front/side/back) is the CORE of this portfolio. All three photos MUST be present in the main section showing the same person from front, side, and back.
 ```
 
 ---
@@ -318,9 +320,9 @@ Portrait Series: A collection of 6 headshot photographs showing different facial
 **⚠️ 关键区别**：动漫风格**使用** "reference sheet"、"grid paper"、"borders" 等动漫设定图术语。
 
 ```
-[画风描述], [时代环境], [色彩基调]. A character design reference sheet for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a beige grid paper background. The layout is divided into several organized sections with rounded red rectangular borders.
+[画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet (showing the same character from multiple angles) for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a beige grid paper background. This is a multi-view turnaround sheet showing the SAME character from front, side, and back angles. The layout is divided into several organized sections with rounded red rectangular borders. The MAIN and LARGEST section displays the full-body three-view turnaround.
 
-Main Character Views (Left): Full body illustrations showing front view, side view, and back view of [角色名] wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色]. Physical features: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Expression shows [基于性格的默认表情].
+Main Character Views (Left, the LARGEST and PRIMARY section): Three full body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色]. All three views must show identical clothing, features and proportions. Physical features: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Expression shows [基于性格的默认表情].
 
 Color Palette & Accessories (Top Left): A small section showing color swatches ([列出5-8个主要颜色，如：black for hair, amber for eyes, dark blue for robe, gold for trim, brown for belt]) and small illustrations of key accessories: [配饰1名称和简述], [配饰2名称和简述], [重要道具名称、外观和状态描述], [其他随身物品].
 
@@ -329,6 +331,8 @@ Outfit Designs (Top Right): Alternate costumes shown in front, side, and back vi
 Action Poses (Middle Right): Dynamic sketches showing characteristic movements. Pose 1: [基于角色身份/职业的标志性动作，如挥剑、施法、读书等，包含姿态细节]. Pose 2: [基于角色性格的动作，如战斗姿态、思考姿态、奔跑姿态等]. Pose 3: [日常习惯性动作或特殊技能展示].
 
 Expressions (Bottom Right): A row of 5-6 headshots displaying various facial expressions based on character personality: [表情1，如neutral/calm], [表情2，如happy/smiling], [表情3，如angry/fierce], [表情4，如sad/melancholic], [表情5，如surprised/shocked], [表情6，如determined/focused或其他符合角色性格的表情].
+
+CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) is the CORE and LARGEST section of this reference sheet. All three views of the SAME character MUST be clearly visible and equally sized in the main section.
 ```
 
 #### 3.3 画风信息整合规则
@@ -392,9 +396,9 @@ Expressions (Bottom Right): A row of 5-6 headshots displaying various facial exp
 **以下是动漫风格的样例（仅供参考）：**
 
 ```
-Japanese anime style, Ancient Chinese setting, Warm earthy color palette. A character design reference sheet for Chen Feng (陈风) from The Scholar's Journey, set on a clean neutral background. The layout is divided into several organized sections with clear, subtle dividers.
+Japanese anime style, Ancient Chinese setting, Warm earthy color palette. A character turnaround reference sheet (showing the same character from multiple angles) for Chen Feng (陈风) from The Scholar's Journey, set on a clean neutral background. This is a multi-view turnaround sheet showing the SAME character from front, side, and back angles. The layout is divided into several organized sections with clear, subtle dividers. The MAIN and LARGEST section displays the full-body three-view turnaround.
 
-Main Character Views (Left): Full body illustrations showing front view, side view, and back view of Chen Feng wearing traditional Chinese scholar robes in deep navy blue with intricate golden thread embroidery along the sleeves and collar, a black silk sash around the waist, dark brown leather boots, and a small jade pendant hanging from his belt. Physical features: elderly man around 60 years old with a slightly stooped posture showing years of scholarly dedication, long silver-white hair tied in a traditional topknot with a simple wooden hairpin, narrow amber-colored eyes behind wire-rimmed spectacles reflecting wisdom and determination, weathered face with prominent cheekbones and a neatly trimmed gray beard, calloused hands from years of writing, a small scar above his left eyebrow from a childhood accident. Expression shows calm determination mixed with underlying worry about his cracked scholar's token.
+Main Character Views (Left, the LARGEST and PRIMARY section): Three full body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character Chen Feng wearing traditional Chinese scholar robes in deep navy blue with intricate golden thread embroidery along the sleeves and collar, a black silk sash around the waist, dark brown leather boots, and a small jade pendant hanging from his belt. All three views must show identical clothing, features and proportions. Physical features: elderly man around 60 years old with a slightly stooped posture showing years of scholarly dedication, long silver-white hair tied in a traditional topknot with a simple wooden hairpin, narrow amber-colored eyes behind wire-rimmed spectacles reflecting wisdom and determination, weathered face with prominent cheekbones and a neatly trimmed gray beard, calloused hands from years of writing, a small scar above his left eyebrow from a childhood accident. Expression shows calm determination mixed with underlying worry about his cracked scholar's token.
 
 Color Palette & Accessories (Top Left): A small section showing color swatches (deep navy blue for robes, golden yellow for embroidery, silver-white for hair, amber for eyes, jade green for pendant, dark brown for boots, weathered bronze for spectacles, ivory white for the cracked token) and small illustrations of key accessories: wire-rimmed bronze spectacles with thin chains, circular jade pendant with carved dragon motif, wooden hairpin with simple geometric patterns, leather-bound scroll case with brass fittings, the cracked scholar's token showing visible stress fractures and faded inscriptions, a worn leather pouch containing writing brushes and ink stones.
 
@@ -403,6 +407,8 @@ Outfit Designs (Top Right): Alternate costumes shown in front, side, and back vi
 Action Poses (Middle Right): Dynamic sketches showing characteristic scholarly movements. Pose 1: Chen Feng in a teaching gesture with one hand raised, index finger pointing upward while explaining a complex concept, his other hand holding an open scroll, body leaning slightly forward with engaged expression and eyes focused on unseen students. Pose 2: Chen Feng in deep contemplation, sitting cross-legged with the cracked token held carefully in both hands, head tilted downward, brow furrowed in concentration as he examines the damage and considers its implications. Pose 3: Chen Feng in a moment of realization, standing with both hands pressed together in front of his chest, eyes wide with sudden understanding, mouth slightly open as if about to speak an important insight.
 
 Expressions (Bottom Right): A row of 6 headshots displaying various facial expressions based on his scholarly and worried personality: neutral/contemplative with slightly furrowed brow and thoughtful gaze, gentle smile while teaching with warm eyes and relaxed features, intense concentration with narrowed eyes and tight lips while studying, deep concern with worried frown and tense jaw while examining the token, surprised revelation with raised eyebrows and wide eyes upon discovering something important, determined resolve with firm set mouth and steady gaze when facing difficult decisions.
+
+CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) is the CORE and LARGEST section of this reference sheet. All three views of the SAME character MUST be clearly visible and equally sized in the main section.
 ```
 
 **要求：生成的提示词必须比上述样例更加详细，每个区域的描述应该包含更多具体细节。**
