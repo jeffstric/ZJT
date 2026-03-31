@@ -13,7 +13,7 @@ Mac 启动脚本
 1. 启动 MySQL 服务（bin/mysql）
 2. 首次启动时执行 --initialize-insecure 初始化
 3. 从 config_{env}.yml 读取数据库密码并设置
-4. 首次初始化时导入 model/sql/baseline.sql
+4. 首次初始化时导入 model/sql/baseline_with_db.sql
 5. 通过 uv 启动 run_{env}.py（Web 服务 + 定时任务）
 6. 服务监控和自动重启
 """
@@ -509,7 +509,7 @@ def init_database(config):
     """
     检查并初始化数据库
     - 首次启动时设置 root 密码
-    - 导入 baseline.sql
+    - 导入 baseline_with_db.sql
     """
     try:
         mysql_port = get_mysql_port()
@@ -600,15 +600,15 @@ def init_database(config):
         database_exists = cursor.fetchone() is not None
 
         if not database_exists:
-            logger.info("zjt数据库不存在，准备导入baseline.sql...")
+            logger.info("zjt数据库不存在，准备导入baseline_with_db.sql...")
 
             current_dir = get_current_dir()
-            baseline_sql_path = os.path.join(current_dir, 'model', 'sql', 'baseline.sql')
+            baseline_sql_path = os.path.join(current_dir, 'model', 'sql', 'baseline_with_db.sql')
 
             if not os.path.exists(baseline_sql_path):
                 cursor.close()
                 conn.close()
-                return False, f"找不到baseline.sql文件: {baseline_sql_path}"
+                return False, f"找不到baseline_with_db.sql文件: {baseline_sql_path}"
 
             mysql_exists, mysql_paths = check_mysql_path()
             if not mysql_exists:
