@@ -1012,31 +1012,31 @@ const AdminApp = {
             const configs = [];
             
             if (this.quickConfigModal.duomi.token) {
-                configs.push({ key: 'duomi.token', value: this.quickConfigModal.duomi.token });
+                configs.push({ key: 'duomi.token', value: this.quickConfigModal.duomi.token.trim() });
             }
             if (this.quickConfigModal.google.apiKey) {
-                configs.push({ key: 'llm.google.api_key', value: this.quickConfigModal.google.apiKey });
+                configs.push({ key: 'llm.google.api_key', value: this.quickConfigModal.google.apiKey.trim() });
             }
             if (this.quickConfigModal.google.baseUrl) {
-                configs.push({ key: 'llm.google.gemini_base_url', value: this.quickConfigModal.google.baseUrl });
+                configs.push({ key: 'llm.google.gemini_base_url', value: this.quickConfigModal.google.baseUrl.trim() });
             }
             if (this.quickConfigModal.runninghub.apiKey) {
-                configs.push({ key: 'runninghub.api_key', value: this.quickConfigModal.runninghub.apiKey });
+                configs.push({ key: 'runninghub.api_key', value: this.quickConfigModal.runninghub.apiKey.trim() });
             }
             if (this.quickConfigModal.vidu.token) {
-                configs.push({ key: 'vidu.token', value: this.quickConfigModal.vidu.token });
+                configs.push({ key: 'vidu.token', value: this.quickConfigModal.vidu.token.trim() });
             }
             if (this.quickConfigModal.volcengine.apiKey) {
-                configs.push({ key: 'volcengine.api_key', value: this.quickConfigModal.volcengine.apiKey });
+                configs.push({ key: 'volcengine.api_key', value: this.quickConfigModal.volcengine.apiKey.trim() });
             }
-            
+
             const allowedSites = this.isCommunityEdition ? [1] : [1, 2, 3, 4, 5];
 
             for (const siteNum of allowedSites) {
                 const site = this.quickConfigModal.apiAggregator[`site${siteNum}`];
-                if (site.name) configs.push({ key: `api_aggregator.site_${siteNum}.name`, value: site.name });
-                if (site.baseUrl) configs.push({ key: `api_aggregator.site_${siteNum}.base_url`, value: site.baseUrl });
-                if (site.apiKey) configs.push({ key: `api_aggregator.site_${siteNum}.api_key`, value: site.apiKey });
+                if (site.name) configs.push({ key: `api_aggregator.site_${siteNum}.name`, value: site.name.trim() });
+                if (site.baseUrl) configs.push({ key: `api_aggregator.site_${siteNum}.base_url`, value: site.baseUrl.trim() });
+                if (site.apiKey) configs.push({ key: `api_aggregator.site_${siteNum}.api_key`, value: site.apiKey.trim() });
             }
 
             if (configs.length === 0) {

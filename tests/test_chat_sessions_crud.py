@@ -92,7 +92,8 @@ class TestChatSessionsCRUD(DatabaseTestCase):
             'user_id': '4',
             'world_id': '1',
             'model': 'gemini-2.0-flash-exp',
-            'model_id': 1
+            'model_id': 1,
+            'conversation_history': '[]'
         })
 
         affected_rows = self.execute_update(
@@ -144,7 +145,8 @@ class TestChatSessionsCRUD(DatabaseTestCase):
         inserted_id = self.insert_fixture('chat_sessions', {
             'session_id': session_id,
             'user_id': '6',
-            'world_id': '1'
+            'world_id': '1',
+            'conversation_history': '[]'
         })
 
         # 验证初始状态为 active
@@ -178,7 +180,8 @@ class TestChatSessionsCRUD(DatabaseTestCase):
             'session_id': 'expired-session-001',
             'user_id': '7',
             'world_id': '1',
-            'expires_at': expired_time
+            'expires_at': expired_time,
+            'conversation_history': '[]'
         })
 
         # 创建未过期的会话
@@ -188,7 +191,8 @@ class TestChatSessionsCRUD(DatabaseTestCase):
             'session_id': 'active-session-001',
             'user_id': '8',
             'world_id': '1',
-            'expires_at': future_time
+            'expires_at': future_time,
+            'conversation_history': '[]'
         })
 
         # 创建永不过期的会话
@@ -196,7 +200,8 @@ class TestChatSessionsCRUD(DatabaseTestCase):
             'session_id': 'never-expire-session-001',
             'user_id': '9',
             'world_id': '1',
-            'expires_at': None
+            'expires_at': None,
+            'conversation_history': '[]'
         })
 
         # 删除过期会话
@@ -236,19 +241,22 @@ class TestChatSessionsCRUD(DatabaseTestCase):
         self.insert_fixture('chat_sessions', {
             'session_id': 'user-session-001',
             'user_id': user_id,
-            'world_id': '1'
+            'world_id': '1',
+            'conversation_history': '[]'
         })
 
         self.insert_fixture('chat_sessions', {
             'session_id': 'user-session-002',
             'user_id': user_id,
-            'world_id': '2'
+            'world_id': '2',
+            'conversation_history': '[]'
         })
 
         self.insert_fixture('chat_sessions', {
             'session_id': 'other-session-001',
             'user_id': '11',
-            'world_id': '1'
+            'world_id': '1',
+            'conversation_history': '[]'
         })
 
         result = self.execute_query(
@@ -268,13 +276,15 @@ class TestChatSessionsCRUD(DatabaseTestCase):
         self.insert_fixture('chat_sessions', {
             'session_id': 'world-session-001',
             'user_id': user_id,
-            'world_id': world_id
+            'world_id': world_id,
+            'conversation_history': '[]'
         })
 
         self.insert_fixture('chat_sessions', {
             'session_id': 'world-session-002',
             'user_id': user_id,
-            'world_id': '6'
+            'world_id': '6',
+            'conversation_history': '[]'
         })
 
         result = self.execute_query(
@@ -294,7 +304,8 @@ class TestChatSessionsCRUD(DatabaseTestCase):
             'user_id': '13',
             'world_id': '1',
             'total_input_tokens': 100,
-            'total_output_tokens': 50
+            'total_output_tokens': 50,
+            'conversation_history': '[]'
         })
 
         # 累加 token
@@ -323,7 +334,8 @@ class TestChatSessionsCRUD(DatabaseTestCase):
             'session_id': 'active-session-002',
             'user_id': '14',
             'world_id': '1',
-            'is_active': 1
+            'is_active': 1,
+            'conversation_history': '[]'
         })
 
         # 创建不活跃会话
@@ -331,7 +343,8 @@ class TestChatSessionsCRUD(DatabaseTestCase):
             'session_id': 'inactive-session-001',
             'user_id': '15',
             'world_id': '1',
-            'is_active': 0
+            'is_active': 0,
+            'conversation_history': '[]'
         })
 
         # 只查询活跃会话

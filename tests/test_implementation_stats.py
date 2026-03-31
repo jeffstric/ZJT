@@ -227,6 +227,9 @@ class TestAIToolsStatsQuery(DatabaseTestCase):
             'completed_time': base_time + timedelta(seconds=5)
         })
 
+        # 提交事务，使数据对其他数据库连接可见（AIToolsModel 使用独立连接）
+        self._connection.commit()
+
         # 查询统计
         stats = AIToolsModel.get_implementation_stats(days=7)
 

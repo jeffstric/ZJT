@@ -310,6 +310,9 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
         if isinstance(data, dict):
             result = {}
             for key, value in data.items():
+                # 完全跳过 thoughtSignature 字段（可能很长，包含 base64 图片数据）
+                if key == "thoughtSignature":
+                    continue
                 if key in ["data", "base64"] and isinstance(value, str) and len(value) > max_length:
                     result[key] = f"{value[:max_length]}... (截断，总长度: {len(value)})"
                 else:
