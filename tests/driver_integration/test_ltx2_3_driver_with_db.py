@@ -4,7 +4,8 @@ LTX2.3 RunningHub 驱动数据库集成测试
 """
 import sys
 import asyncio
-from unittest.mock import patch, MagicMock
+from dataclasses import dataclass
+from unittest.mock import patch, MagicMock, AsyncMock
 
 # Mock 第三方依赖模块
 sys.modules['utils.sentry_util'] = MagicMock()
@@ -22,6 +23,21 @@ from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, A
 LTX2_3_IMAGE_TO_VIDEO_TYPE = 10
 
 
+@dataclass
+class MockUploadResult:
+    """Mock 上传结果"""
+    success: bool = True
+    key: str = ""
+    hash: str = ""
+    url: str = ""
+    error: str = ""
+
+
+def create_mock_upload_result(key: str, image_path: str) -> MockUploadResult:
+    """创建 mock 上传结果 - 公网 URL 直接返回原路径"""
+    return MockUploadResult(success=True, key=image_path, url=image_path)
+
+
 class TestLtx2Dot3RunninghubWithDB(BaseVideoDriverTest):
     """LTX2.3 驱动数据库集成测试"""
 
@@ -31,6 +47,8 @@ class TestLtx2Dot3RunninghubWithDB(BaseVideoDriverTest):
         # 使用统一的 mock 配置函数，从 config_unit.yml 获取配置
         with patch('task.visual_drivers.ltx2_3_runninghub_v1_driver.get_dynamic_config_value', side_effect=mock_get_dynamic_config_value):
             self.driver = Ltx2Dot3RunninghubV1Driver()
+            # Mock _storage.upload_file 为异步方法
+            self.driver._storage.upload_file = AsyncMock(side_effect=create_mock_upload_result)
 
     def test_driver_initialization(self):
         """测试驱动初始化"""
