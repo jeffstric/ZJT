@@ -134,6 +134,6 @@
 | 微信群 | 个人微信 |
 |:---:|:---:|
 | <img src="http://ailive.perseids.cn/upload/assert/wx_group.jpg" width="200" alt="群二维码"> | <img src="files/二维码.jpg" width="200" alt="个人二维码"> |
-| 扫码加入交流群 | 扫码添加作者 |
+| 扫码加入交流群 | 群加不了请扫码添加作者 |
 
 © 2025 智剧通. All rights reserved.
