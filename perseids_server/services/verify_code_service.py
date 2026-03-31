@@ -64,10 +64,10 @@ class VerifyCodeService:
             sms_result = SmsDriverFactory.send_code(phone, code)
             if not sms_result.get('success'):
                 logger.warning(f"短信发送失败: {sms_result.get('message')}")
-                # 短信发送失败不影响验证码创建，但返回提示
+                # 短信发送失败时返回 failure，不让用户进入验证流程
                 return {
-                    "success": True,
-                    "message": "验证码已创建，但短信发送失败",
+                    "success": False,
+                    "message": sms_result.get('message', '短信发送失败，请稍后重试'),
                     "expire_minutes": VerifyCodeService.CODE_EXPIRE_MINUTES,
                 }
         
