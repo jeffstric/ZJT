@@ -110,6 +110,32 @@ ENDIF
 - 同一批次的4个角色会保持一致的视觉风格
 - 切分后的图像会自动保存到角色的 `reference_image` 字段
 
+## 🔴 防止图片中出现文字（Seedream文字抑制规则 - 强制执行）
+
+**问题背景：** Seedream等生图模型有在生成的图片中自动添加文字（如标题、标签、水印、标识、中英文文字、印章等）的倾向。必须在提示词中采取强力措施抑制文字生成。
+
+**强制规则（每个提示词必须遵守）：**
+
+### 规则1：提示词末尾必须追加反向文字声明
+每个提示词的**最后（结尾处）**必须追加以下反向文字声明：
+
+```
+ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language
+```
+
+### 规则2：提示词中避免使用可能诱导文字生成的词汇
+以下词汇可能诱导生图模型在图片中添加文字，应当避免或替换：
+- ❌ "title" → ✅ 不使用，或改用描述性语言如 "top section"
+- ❌ "label" → ✅ "color swatch" 或 "color block"
+- ❌ "caption" → ✅ 不使用
+- ❌ "name tag" → ✅ 不使用
+- ❌ "header" → ✅ "top area" 或 "upper section"
+- ❌ "written in" → ✅ 不使用
+
+### 规则3：双重保险机制
+- 即使模板中已包含"No text"相关描述，末尾仍**必须**追加上述完整的反向文字声明
+- 这是因为Seedream等模型对提示词**末尾**的指令更为敏感，将禁止文字声明放在末尾效果最佳
+
 ## 工作流程
 
 ### 0. 获取世界画风信息（必须首先执行）
@@ -310,7 +336,7 @@ Action Photography: Dynamic shots capturing characteristic movements and poses. 
 
 Portrait Series: A collection of 6 headshot photographs showing different facial expressions: neutral/contemplative expression with slightly furrowed brow and thoughtful gaze, genuine smile with warm eyes and relaxed features, intense concentration with narrowed eyes and focused look, concerned expression with worried frown and tense features, surprised look with raised eyebrows and wide eyes, determined expression with firm jaw and steady gaze.
 
-CRITICAL REMINDER: The three-angle full body turnaround (front/side/back) is the CORE of this portfolio. All three photos MUST be present in the main section showing the same person from front, side, and back.
+CRITICAL REMINDER: The three-angle full body turnaround (front/side/back) is the CORE of this portfolio. All three photos MUST be present in the main section showing the same person from front, side, and back. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 ---
@@ -332,7 +358,7 @@ Action Poses (Middle Right): Dynamic sketches showing characteristic movements. 
 
 Expressions (Bottom Right): A row of 5-6 headshots displaying various facial expressions based on character personality: [表情1，如neutral/calm], [表情2，如happy/smiling], [表情3，如angry/fierce], [表情4，如sad/melancholic], [表情5，如surprised/shocked], [表情6，如determined/focused或其他符合角色性格的表情].
 
-CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) is the CORE and LARGEST section of this reference sheet. All three views of the SAME character MUST be clearly visible and equally sized in the main section.
+CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) is the CORE and LARGEST section of this reference sheet. All three views of the SAME character MUST be clearly visible and equally sized in the main section. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 #### 3.3 画风信息整合规则
@@ -408,7 +434,7 @@ Action Poses (Middle Right): Dynamic sketches showing characteristic scholarly m
 
 Expressions (Bottom Right): A row of 6 headshots displaying various facial expressions based on his scholarly and worried personality: neutral/contemplative with slightly furrowed brow and thoughtful gaze, gentle smile while teaching with warm eyes and relaxed features, intense concentration with narrowed eyes and tight lips while studying, deep concern with worried frown and tense jaw while examining the token, surprised revelation with raised eyebrows and wide eyes upon discovering something important, determined resolve with firm set mouth and steady gaze when facing difficult decisions.
 
-CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) is the CORE and LARGEST section of this reference sheet. All three views of the SAME character MUST be clearly visible and equally sized in the main section.
+CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) is the CORE and LARGEST section of this reference sheet. All three views of the SAME character MUST be clearly visible and equally sized in the main section. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 **要求：生成的提示词必须比上述样例更加详细，每个区域的描述应该包含更多具体细节。**
