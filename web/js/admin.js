@@ -44,7 +44,19 @@ const AdminApp = {
                 reason: '',
                 loading: false
             },
-            
+
+            // 智剧通Token有效期调整弹窗
+            zjtExpireModal: {
+                show: false,
+                userId: null,
+                userName: '',
+                currentExpireAt: null,
+                currentExpireAtDisplay: '',
+                newExpireAt: '',
+                loading: false
+            },
+            zjtDatePicker: null,
+
             // 用户详情弹窗
             userDetailModal: {
                 show: false,
@@ -221,6 +233,14 @@ const AdminApp = {
             }
 
             return groups;
+        },
+
+        minDate() {
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = String(today.getMonth() + 1).padStart(2, '0');
+            const day = String(today.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
         }
     },
     
@@ -230,6 +250,32 @@ const AdminApp = {
     },
     
     methods: {
+        // 初始化智剧通日期选择器
+        initZjtDatePicker() {
+            const elem = document.getElementById("zjtExpireDatePicker");
+            if (!elem) {
+                console.error("zjtExpireDatePicker element not found");
+                return;
+            }
+
+            // 如果已存在实例，先销毁
+            if (this.zjtDatePicker) {
+                this.zjtDatePicker.destroy();
+                this.zjtDatePicker = null;
+            }
+
+            // 创建新实例，使用中文配置
+            this.zjtDatePicker = flatpickr(elem, {
+                dateFormat: "Y-m-d",
+                allowInput: true,
+                minDate: "today",
+                disableMobile: true,
+                locale: "zh",
+                onChange: (selectedDates, dateStr) => {
+                    this.zjtExpireModal.newExpireAt = dateStr || '';
+                }
+            });
+        },
         // 获取服务器配置（版本号）
         async fetchServerConfig() {
             try {
@@ -540,7 +586,139 @@ const AdminApp = {
                 this.powerModal.loading = false;
             }
         },
-        
+
+        // 切换用户智剧通Token启用状态
+        async toggleZjtToken(user) {
+            const newEnabled = !user.zjt_token_enabled;
+            const action = newEnabled ? '启用' : '禁用';
+
+            if (!confirm(`确定要${action}该用户的智剧通Token功能吗？`)) {
+                return;
+            }
+
+            try {
+                const response = await axios.put(
+                    `/api/admin/users/${user.user_id}/zjt-token`,
+                    { enabled: newEnabled },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    // 启用时默认设置1年过期
+                    if (newEnabled) {
+                        const expireDate = new Date();
+                        expireDate.setFullYear(expireDate.getFullYear() + 1);
+                        const expireAt = expireDate.toISOString().split('T')[0];
+                        await axios.put(
+                            `/api/admin/users/${user.user_id}/zjt-token-expire`,
+                            { expire_at: expireAt },
+                            { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                        );
+                    }
+                    this.showToast(`智剧通Token已${action}，有效期1年`, 'success');
+                    this.loadUsers();
+                }
+            } catch (error) {
+                console.error('Toggle ZJT token failed:', error);
+                const detail = error?.response?.data?.detail || `${action}失败`;
+                this.showToast(detail, 'error');
+            }
+        },
+
+        // 打开智剧通Token有效期调整弹窗
+        async openZjtExpireModal(user) {
+            this.zjtExpireModal.userId = user.user_id;
+            this.zjtExpireModal.userName = user.phone;
+
+            // 获取当前有效期配置
+            try {
+                const response = await axios.get(
+                    `/api/admin/users/${user.user_id}/zjt-token`,
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    const expireAt = response.data.data.zjt_token_expire_at;
+                    this.zjtExpireModal.currentExpireAt = expireAt;
+
+                    if (expireAt) {
+                        // 格式化为日期字符串用于显示
+                        const date = new Date(expireAt);
+                        this.zjtExpireModal.currentExpireAtDisplay = date.toLocaleString('zh-CN');
+                        // 默认新日期为当前过期日期
+                        const year = date.getFullYear();
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const day = String(date.getDate()).padStart(2, '0');
+                        this.zjtExpireModal.newExpireAt = `${year}-${month}-${day}`;
+                    } else {
+                        this.zjtExpireModal.currentExpireAtDisplay = '永不过期';
+                        this.zjtExpireModal.newExpireAt = '';
+                    }
+                }
+            } catch (error) {
+                console.error('Get ZJT token config failed:', error);
+                this.zjtExpireModal.currentExpireAtDisplay = '未设置';
+                this.zjtExpireModal.newExpireAt = '';
+            }
+
+            this.zjtExpireModal.show = true;
+
+            // 等 DOM 渲染后再初始化 flatpickr
+            setTimeout(() => {
+                this.initZjtDatePicker();
+                if (this.zjtDatePicker) {
+                    if (this.zjtExpireModal.newExpireAt) {
+                        this.zjtDatePicker.setDate(this.zjtExpireModal.newExpireAt);
+                    } else {
+                        this.zjtDatePicker.clear();
+                    }
+                }
+            }, 100);
+        },
+
+        // 关闭智剧通Token有效期调整弹窗
+        closeZjtExpireModal() {
+            this.zjtExpireModal.show = false;
+            this.zjtExpireModal.userId = null;
+            this.zjtExpireModal.userName = '';
+            this.zjtExpireModal.currentExpireAt = null;
+            this.zjtExpireModal.currentExpireAtDisplay = '';
+            this.zjtExpireModal.newExpireAt = '';
+            this.zjtExpireModal.loading = false;
+            if (this.zjtDatePicker) {
+                this.zjtDatePicker.clear();
+            }
+        },
+
+        // 提交智剧通Token有效期调整
+        async submitZjtExpireAdjust() {
+            if (!confirm('确定要调整智剧通Token有效期吗？')) {
+                return;
+            }
+
+            this.zjtExpireModal.loading = true;
+
+            try {
+                const response = await axios.put(
+                    `/api/admin/users/${this.zjtExpireModal.userId}/zjt-token-expire`,
+                    { expire_at: this.zjtExpireModal.newExpireAt || null },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    this.showToast(response.data.message || '智剧通Token有效期已调整', 'success');
+                    this.closeZjtExpireModal();
+                    this.loadUsers();
+                }
+            } catch (error) {
+                console.error('Adjust ZJT expire failed:', error);
+                const detail = error?.response?.data?.detail || '保存失败';
+                this.showToast(detail, 'error');
+            } finally {
+                this.zjtExpireModal.loading = false;
+            }
+        },
+
         // 退出登录
         logout() {
             if (!confirm('确定要退出登录吗？')) {

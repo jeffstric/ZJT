@@ -110,3 +110,34 @@ def is_local_path(path: str) -> bool:
 
     # 非URL视为本地文件路径
     return True
+
+
+def get_local_ip() -> str:
+    """
+    获取本机对外的 IP 地址
+
+    Returns:
+        str: 本机 IP 地址
+    """
+    import socket
+
+    try:
+        # 连接外部 DNS 服务器来获取本机 IP
+        # 这是一种常见的获取本机对外 IP 的方法
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(1.0)
+        try:
+            # 不需要真正连接，只是获取本机到目标的路由
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        return ip
+    except Exception:
+        try:
+            # 备用方法：获取主机名对应的 IP
+            hostname = socket.gethostname()
+            ip = socket.gethostbyname(hostname)
+            return ip
+        except Exception:
+            return "unknown"

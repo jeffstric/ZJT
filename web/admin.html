@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>管理后台 - 智剧通</title>
     <link rel="stylesheet" href="/css/admin.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/zh.js"></script>
 </head>
 <body>
     <div id="app" class="admin-layout">
@@ -162,15 +165,30 @@
                                 <td>
                                     <button class="action-btn primary" @click="viewUserDetail(user.user_id)">详情</button>
                                     <button class="action-btn success" @click="openPowerModal(user)">调整算力</button>
-                                    <button 
-                                        class="action-btn" 
+                                    <button
+                                        v-if="!isCommunityEdition"
+                                        class="action-btn"
+                                        :class="user.zjt_token_enabled ? 'warning' : 'default'"
+                                        @click="toggleZjtToken(user)"
+                                    >
+                                        {{ user.zjt_token_enabled ? '智剧通Token(已开启)' : '智剧通Token(未开启)' }}
+                                    </button>
+                                    <button
+                                        v-if="!isCommunityEdition && user.zjt_token_enabled"
+                                        class="action-btn primary"
+                                        @click="openZjtExpireModal(user)"
+                                    >
+                                        调整有效期
+                                    </button>
+                                    <button
+                                        class="action-btn"
                                         :class="user.status === 1 ? 'danger' : 'success'"
                                         @click="updateUserStatus(user.user_id, user.status)"
                                     >
                                         {{ user.status === 1 ? '禁用' : '启用' }}
                                     </button>
-                                    <button 
-                                        class="action-btn primary" 
+                                    <button
+                                        class="action-btn primary"
                                         @click="updateUserRole(user.user_id, user.role)"
                                         v-if="user.role !== 'admin'"
                                     >
@@ -467,6 +485,37 @@
                     <button class="modal-btn cancel" @click="closePowerModal">取消</button>
                     <button class="modal-btn confirm" @click="submitPowerAdjust" :disabled="powerModal.loading">
                         {{ powerModal.loading ? '提交中...' : '确认调整' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 智剧通Token有效期调整弹窗 -->
+        <div class="modal-overlay" v-if="zjtExpireModal.show" @click.self="closeZjtExpireModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>调整智剧通Token过期时间</h3>
+                    <button class="modal-close" @click="closeZjtExpireModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>用户</label>
+                        <input type="text" :value="zjtExpireModal.userName" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>当前过期时间</label>
+                        <input type="text" :value="zjtExpireModal.currentExpireAtDisplay" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>新过期时间</label>
+                        <input type="text" id="zjtExpireDatePicker" class="filter-input" readonly placeholder="留空表示永不过期">
+                        <p class="form-hint">留空表示永不过期</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeZjtExpireModal">取消</button>
+                    <button class="modal-btn confirm" @click="submitZjtExpireAdjust" :disabled="zjtExpireModal.loading">
+                        {{ zjtExpireModal.loading ? '保存中...' : '确认保存' }}
                     </button>
                 </div>
             </div>
