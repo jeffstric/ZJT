@@ -1280,8 +1280,41 @@
       }
     },
     methods: {
-      onRefAudioFile(e) { this.refAudioFile = e.target.files[0] || null; },
-      onEmoRefAudioFile(e) { this.emoRefAudioFile = e.target.files[0] || null; },
+      validateAudioDuration(file, label) {
+        return new Promise((resolve) => {
+          const audio = new Audio();
+          const url = URL.createObjectURL(file);
+          audio.onloadedmetadata = () => {
+            URL.revokeObjectURL(url);
+            if (audio.duration > 20) {
+              this.error = label + '时长不能超过20秒，当前时长：' + audio.duration.toFixed(1) + '秒';
+              resolve(false);
+            } else {
+              resolve(true);
+            }
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            this.error = label + '文件无法播放，请确认是有效的音频文件';
+            resolve(false);
+          };
+          audio.src = url;
+        });
+      },
+      async onRefAudioFile(e) {
+        const file = e.target.files[0] || null;
+        if (!file) { this.refAudioFile = null; return; }
+        const valid = await this.validateAudioDuration(file, '参考音频');
+        this.refAudioFile = valid ? file : null;
+        if (!valid) e.target.value = '';
+      },
+      async onEmoRefAudioFile(e) {
+        const file = e.target.files[0] || null;
+        if (!file) { this.emoRefAudioFile = null; return; }
+        const valid = await this.validateAudioDuration(file, '情感参考音频');
+        this.emoRefAudioFile = valid ? file : null;
+        if (!valid) e.target.value = '';
+      },
       
       async submit() {
         if (!this.canSubmit) return;
@@ -1457,7 +1490,7 @@
         <div class="field">
           <label class="label">参考音频（可选）</label>
           <input type="file" @change="onRefAudioFile" accept="audio/*" class="input" :disabled="loading">
-          <div class="muted" style="margin-top: 4px;">上传参考音频进行声音克隆</div>
+          <div class="muted" style="margin-top: 4px;">上传参考音频进行声音克隆（时长不超过20秒）</div>
         </div>
         
         <div class="field">
@@ -1481,7 +1514,7 @@
           </div>
           <input v-if="emoRefType === 'file'" type="file" @change="onEmoRefAudioFile" accept="audio/*" class="input" :disabled="loading">
           <input v-if="emoRefType === 'video_url'" type="text" v-model="emoRefVideoUrl" placeholder="输入视频链接（支持40MB以内，20秒以内的视频）" class="input" :disabled="loading">
-          <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'file'">上传情感参考音频文件</div>
+          <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'file'">上传情感参考音频文件（时长不超过20秒）</div>
           <div class="muted" style="margin-top: 4px;" v-if="emoRefType === 'video_url'">输入视频链接，将自动提取音频（视频大小限制40MB，时长不超过20秒）</div>
         </div>
         
