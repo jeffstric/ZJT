@@ -3464,8 +3464,12 @@
             let promptText = '';
             switch(option) {
                 case 1:
-                    promptText = '请帮我导入已有的剧本内容，我将直接粘贴剧本文本，请帮我分析并适配到当前世界';
-                    break;
+                    // 隐藏需求选择区域
+                    if (requirementSelector) {
+                        requirementSelector.style.display = 'none';
+                    }
+                    openImportScriptModal();
+                    return;
                 case 2:
                     promptText = '我想进行剧本续写，请继续之前的剧情发展';
                     break;
@@ -3658,7 +3662,135 @@
                 window.location.href = '/video-workflow-list';
             }
         }
-        
+
+        // ========== 导入剧本弹窗 ==========
+        let importScriptFileContent = '';
+
+        function openImportScriptModal() {
+            importScriptFileContent = '';
+            document.getElementById('import-script-content').value = '';
+            document.getElementById('import-script-file').value = '';
+            document.getElementById('drop-zone-text').innerHTML = '拖拽 TXT 文件到此处，或<span class="drop-zone-link">点击选择文件</span>';
+            document.getElementById('script-drop-zone').classList.remove('has-file');
+            document.getElementById('import-script-modal').classList.add('show');
+        }
+
+        function closeImportScriptModal() {
+            document.getElementById('import-script-modal').classList.remove('show');
+            importScriptFileContent = '';
+        }
+
+        async function submitImportScript() {
+            const textareaContent = document.getElementById('import-script-content').value.trim();
+            const content = textareaContent || importScriptFileContent;
+
+            if (!content) {
+                showError('请上传文件或输入剧本内容');
+                return;
+            }
+
+            closeImportScriptModal();
+            const message = `请帮我导入以下已有剧本内容：\n\n---\n${content}\n---`;
+            await sendMessage(message);
+        }
+
+        function readScriptFile(file) {
+            if (!file) return;
+            if (!file.name.toLowerCase().endsWith('.txt')) {
+                showError('仅支持 TXT 文件');
+                return;
+            }
+            if (file.size > 5 * 1024 * 1024) {
+                showError('文件大小不能超过5MB');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                importScriptFileContent = (e.target.result || '').trim();
+                if (!importScriptFileContent) {
+                    showError('文件内容为空');
+                    return;
+                }
+                document.getElementById('drop-zone-text').innerHTML = `已选择: <strong>${file.name}</strong>`;
+                document.getElementById('script-drop-zone').classList.add('has-file');
+            };
+            reader.onerror = function() {
+                showError('读取文件失败');
+            };
+            reader.readAsText(file, 'UTF-8');
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const dropZone = document.getElementById('script-drop-zone');
+            const fileInput = document.getElementById('import-script-file');
+
+            if (dropZone && fileInput) {
+                fileInput.addEventListener('change', (e) => {
+                    readScriptFile(e.target.files[0]);
+                    e.target.value = '';
+                });
+
+                dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.add('drag-over');
+                });
+
+                dropZone.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.remove('drag-over');
+                });
+
+                dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.remove('drag-over');
+                    const file = e.dataTransfer.files[0];
+                    readScriptFile(file);
+                });
+            }
+        });
+
     </script>
+    <!-- 导入剧本弹窗 -->
+    <div id="import-script-modal" class="modal">
+        <div class="modal-overlay" onclick="closeImportScriptModal()"></div>
+        <div class="modal-dialog large">
+            <div class="modal-header">
+                <h3 class="modal-title">📥 导入已有剧本</h3>
+                <button class="modal-close-btn" onclick="closeImportScriptModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group full-width" style="margin-bottom: 16px;">
+                    <label class="form-label">上传 TXT 文件</label>
+                    <div class="drop-zone" id="script-drop-zone" onclick="document.getElementById('import-script-file').click()">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--text-muted);">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        <p class="drop-zone-text" id="drop-zone-text">拖拽 TXT 文件到此处，或<span class="drop-zone-link">点击选择文件</span></p>
+                    </div>
+                    <input type="file" id="import-script-file" accept=".txt" style="display: none;">
+                </div>
+                <div class="import-divider"><span>或直接输入剧本内容</span></div>
+                <div class="form-group full-width">
+                    <label class="form-label">剧本内容</label>
+                    <textarea id="import-script-content" class="form-textarea" rows="8" placeholder="在此粘贴或输入剧本内容..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeImportScriptModal()">取消</button>
+                <button class="btn btn-primary" onclick="submitImportScript()">导入剧本</button>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
