@@ -216,3 +216,6 @@ sentry:
   dsn: "https://xxxxx6"
   environment: "test"  # 可选，默认 "production"
 
+zjt:
+  token: ""
+

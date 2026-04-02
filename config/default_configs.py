@@ -178,6 +178,16 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== 智剧通配置 ====================
+    {
+        'key': 'zjt.token',
+        'value_type': 'string',
+        'description': '智剧通 API Token',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+
     # ==================== 火山引擎配置 ====================
     {
         'key': 'volcengine.api_key',

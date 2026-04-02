@@ -14,6 +14,7 @@ from model.implementation_stats_cache import ImplementationStatsCacheModel
 from config.unified_config import UnifiedConfigRegistry, TaskCategory, get_implementation_name, get_implementation_id
 from utils.config_checker import check_implementation_config_exists
 from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
+from perseids_server.utils.token import generate_secret_key
 
 logger = logging.getLogger(__name__)
 
@@ -369,4 +370,272 @@ async def get_implementation_stats(
             "updated_at": latest_update,
             "implementations": stats
         }
+    }
+
+
+@router.get("/api-token")
+async def get_api_token(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取用户API Token（仅商业版可用）
+
+    返回格式：
+    {
+        "code": 0,
+        "data": {
+            "has_token": true,
+            "token": "完整的token字符串"
+        }
+    }
+    """
+    # 社区版不支持此功能
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    # 移除 "Bearer " 前缀
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    if auth_token.startswith("Bearer "):
+        auth_token = auth_token[7:]
+
+    # 验证 token 并获取用户ID
+    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+    # 获取用户信息
+    user = UsersModel.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 获取API Token
+    try:
+        token = UsersModel.get_api_token(user_id)
+        has_token = token is not None and token != ""
+
+        logger.info(f"API token status for user {user_id}: has_token={has_token}")
+
+        return {
+            "code": 0,
+            "data": {
+                "has_token": has_token,
+                "token": token if has_token else None
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get API token: {e}")
+        # 如果发生错误，返回没有token的状态
+        return {
+            "code": 0,
+            "data": {
+                "has_token": False,
+                "token": None
+            }
+        }
+
+
+@router.post("/api-token")
+async def create_api_token(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    生成用户API Token（仅商业版可用）
+
+    生成后返回完整Token（仅此一次可见）
+
+    返回格式：
+    {
+        "code": 0,
+        "data": {
+            "token": "完整token字符串"
+        }
+    }
+    """
+    # 社区版不支持此功能
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    # 移除 "Bearer " 前缀
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    if auth_token.startswith("Bearer "):
+        auth_token = auth_token[7:]
+
+    # 验证 token 并获取用户ID
+    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+    # 获取用户信息
+    user = UsersModel.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 生成新Token
+    new_token = generate_secret_key()
+
+    # 保存Token
+    UsersModel.set_api_token(user_id, new_token)
+
+    return {
+        "code": 0,
+        "data": {
+            "token": new_token
+        }
+    }
+
+
+@router.delete("/api-token")
+async def delete_api_token(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    删除用户API Token（仅商业版可用）
+
+    返回格式：
+    {
+        "code": 0,
+        "message": "Token已撤销"
+    }
+    """
+    # 社区版不支持此功能
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    # 移除 "Bearer " 前缀
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    if auth_token.startswith("Bearer "):
+        auth_token = auth_token[7:]
+
+    # 验证 token 并获取用户ID
+    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+    # 获取用户信息
+    user = UsersModel.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 删除Token
+    UsersModel.delete_api_token(user_id)
+
+    return {
+        "code": 0,
+        "message": "Token已撤销"
+    }
+
+
+# ==================== 智剧通Token配置接口 ====================
+
+class ZJTTokenConfigRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/zjt-token-config")
+async def get_zjt_token_config(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取用户智剧通Token配置（仅商业版可用）
+
+    返回格式：
+    {
+        "code": 0,
+        "data": {
+            "enabled": true,           # 用户是否开启了智剧通Token
+            "expire_days": 30,         # 管理员配置的有效期天数
+            "has_personal_token": false  # 用户是否配置了自己的Token
+        }
+    }
+    """
+    # 社区版不支持此功能
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    # 移除 "Bearer " 前缀
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    if auth_token.startswith("Bearer "):
+        auth_token = auth_token[7:]
+
+    # 验证 token 并获取用户ID
+    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+    # 获取用户信息
+    user = UsersModel.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 获取用户是否启用了智剧通Token
+    enabled = UsersModel.get_zjt_token_enabled(user_id)
+
+    # 获取管理员配置的有效期
+    from config.config_util import get_dynamic_config_value
+    expire_days = get_dynamic_config_value("zjt", "token_expire_days", default=365)
+
+    # 获取用户是否配置了自己的Token（通过api_token字段）
+    has_personal_token = UsersModel.get_api_token(user_id) is not None and UsersModel.get_api_token(user_id) != ""
+
+    return {
+        "code": 0,
+        "data": {
+            "enabled": enabled,
+            "expire_days": expire_days,
+            "has_personal_token": has_personal_token
+        }
+    }
+
+
+@router.put("/zjt-token-config")
+async def set_zjt_token_config(
+    request: ZJTTokenConfigRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    设置用户智剧通Token启用状态（仅商业版可用）
+
+    返回格式：
+    {
+        "code": 0,
+        "message": "智剧通Token已启用"
+    }
+    """
+    # 社区版不支持此功能
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    # 移除 "Bearer " 前缀
+    if not auth_token:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    if auth_token.startswith("Bearer "):
+        auth_token = auth_token[7:]
+
+    # 验证 token 并获取用户ID
+    user_id = UserTokensModel.get_user_id_by_token(auth_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+    # 获取用户信息
+    user = UsersModel.get_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    # 设置启用状态
+    UsersModel.set_zjt_token_enabled(user_id, request.enabled)
+
+    message = "智剧通Token已启用" if request.enabled else "智剧通Token已禁用"
+
+    return {
+        "code": 0,
+        "message": message
     }

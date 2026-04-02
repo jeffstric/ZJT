@@ -224,7 +224,19 @@ def _get_wechat_pay_util():
 # 兼容旧代码，初始化时创建一个实例
 wechat_pay_util = _get_wechat_pay_util()
 
-app = FastAPI(title="ComfyUI Qwen Image Edit Proxy")
+app = FastAPI(title="ZJT Server")
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时执行的任务"""
+    async def start_edition_auth_service():
+        try:
+            from services.edition_auth_service import edition_auth_service
+            await edition_auth_service.start()
+        except Exception as e:
+            logger.warning(f"Failed to start edition auth service (non-critical): {e}")
+    
+    asyncio.create_task(start_edition_auth_service())
 
 # 导入并注册 script_writer API 路由
 from api.script_writer import router as script_writer_router
@@ -5466,6 +5478,33 @@ async def get_edition():
             }
         )
 
+
+@app.get("/api/is_zjt")
+async def is_zjt():
+    """
+    检查是否为智剧通版本
+
+    返回格式：
+    {
+        "code": 0,
+        "data": {
+            "is_zjt": true,
+            "message": "本系统由智剧通提供服务"
+        }
+    }
+    """
+    return JSONResponse(
+        status_code=200,
+        content={
+            'code': 0,
+            'data': {
+                'is_zjt': True,
+                'message': '本系统由智剧通提供服务'
+            }
+        }
+    )
+
+
 @app.get('/api/worlds')
 async def get_worlds(
     page: int = Query(1, ge=1, description="页码"),
@@ -7502,8 +7541,9 @@ if __name__ == "__main__":
         logger.info(f"Starting HTTPS server on port {port}")
         logger.info(f"Using SSL cert: {ssl_certfile}")
         logger.info(f"Using SSL key: {ssl_keyfile}")
-        
+
         init_scheduler(app)
+
         uvicorn.run(
             "server:app",
             host="0.0.0.0",
@@ -7516,4 +7556,5 @@ if __name__ == "__main__":
         # HTTP configuration
         logger.info(f"Starting HTTP server on port {port}")
         init_scheduler(app)
+
         uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)

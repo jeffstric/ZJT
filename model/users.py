@@ -2,6 +2,7 @@
 Users Model - Database operations for users table
 """
 from typing import Optional, Dict, Any, List
+from datetime import datetime
 from .database import execute_query, execute_update, execute_insert
 import logging
 import random
@@ -28,6 +29,8 @@ class User:
         self.invite_code = kwargs.get('invite_code')
         self.inviter_id = kwargs.get('inviter_id')
         self.first_recharge = kwargs.get('first_recharge', 0)
+        self.zjt_token_enabled = kwargs.get('zjt_token_enabled', 0)
+        self.zjt_token_expire_at = kwargs.get('zjt_token_expire_at')
         # 实现方偏好相关字段
         prefs = kwargs.get('implementation_preferences')
         if isinstance(prefs, str):
@@ -51,6 +54,8 @@ class User:
             'first_recharge': self.first_recharge,
             'implementation_preferences': self.implementation_preferences,
             'active_preference_group': self.active_preference_group,
+            'zjt_token_enabled': self.zjt_token_enabled,
+            'zjt_token_expire_at': self.zjt_token_expire_at,
         }
 
 
@@ -287,8 +292,9 @@ class UsersModel:
         # 获取分页数据
         offset = (page - 1) * page_size
         data_sql = f"""
-            SELECT id, phone, status, role, created_at, updated_at, invite_code, inviter_id, first_recharge
-            FROM users 
+            SELECT id, phone, status, role, created_at, updated_at, invite_code, inviter_id, first_recharge,
+                   zjt_token_enabled, zjt_token_expire_at
+            FROM users
             WHERE {where_clause}
             ORDER BY id DESC
             LIMIT %s OFFSET %s
@@ -543,3 +549,160 @@ class UsersModel:
         except Exception as e:
             logger.error(f"Failed to get active preference group for user {user_id}: {e}")
             return 1
+
+    # ==================== API Token 方法 ====================
+
+    @staticmethod
+    def get_api_token(user_id: int) -> Optional[str]:
+        """
+        获取用户的API Token
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            API Token字符串，不存在返回None
+        """
+        sql = "SELECT api_token FROM users WHERE id = %s"
+        try:
+            result = execute_query(sql, (user_id,), fetch_one=True)
+            if result is None:
+                return None
+            # 如果列不存在，会抛出异常，这里捕获并返回None
+            try:
+                return result.get('api_token')
+            except Exception:
+                return None
+        except Exception as e:
+            logger.error(f"Failed to get API token for user {user_id}: {e}")
+            return None  # 静默处理，返回None
+
+    @staticmethod
+    def set_api_token(user_id: int, token: str) -> int:
+        """
+        设置用户的API Token（覆盖旧值）
+
+        Args:
+            user_id: 用户ID
+            token: API Token
+
+        Returns:
+            受影响的行数
+        """
+        sql = "UPDATE users SET api_token = %s, updated_at = NOW() WHERE id = %s"
+        try:
+            affected = execute_update(sql, (token, user_id))
+            logger.info(f"Set API token for user {user_id}")
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to set API token for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    def delete_api_token(user_id: int) -> int:
+        """
+        删除用户的API Token
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            受影响的行数
+        """
+        sql = "UPDATE users SET api_token = NULL, updated_at = NOW() WHERE id = %s"
+        try:
+            affected = execute_update(sql, (user_id,))
+            logger.info(f"Deleted API token for user {user_id}")
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to delete API token for user {user_id}: {e}")
+            raise
+
+    # ==================== 智剧通Token方法 ====================
+
+    @staticmethod
+    def get_zjt_token_enabled(user_id: int) -> bool:
+        """
+        获取用户是否启用了智剧通Token
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            是否启用（True-启用，False-未启用）
+        """
+        sql = "SELECT zjt_token_enabled FROM users WHERE id = %s"
+        try:
+            result = execute_query(sql, (user_id,), fetch_one=True)
+            if result is None:
+                return False
+            try:
+                return bool(result.get('zjt_token_enabled', 0))
+            except Exception:
+                return False
+        except Exception as e:
+            logger.error(f"Failed to get zjt_token_enabled for user {user_id}: {e}")
+            return False
+
+    @staticmethod
+    def set_zjt_token_enabled(user_id: int, enabled: bool) -> int:
+        """
+        设置用户是否启用智剧通Token
+
+        Args:
+            user_id: 用户ID
+            enabled: 是否启用
+
+        Returns:
+            受影响的行数
+        """
+        sql = "UPDATE users SET zjt_token_enabled = %s, updated_at = NOW() WHERE id = %s"
+        try:
+            affected = execute_update(sql, (1 if enabled else 0, user_id))
+            logger.info(f"Set zjt_token_enabled for user {user_id} to {enabled}")
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to set zjt_token_enabled for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_zjt_token_expire_at(user_id: int) -> Optional[datetime]:
+        """
+        获取用户智剧通Token过期时间
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            过期时间datetime对象，None表示未设置
+        """
+        sql = "SELECT zjt_token_expire_at FROM users WHERE id = %s"
+        try:
+            result = execute_query(sql, (user_id,), fetch_one=True)
+            if result is None:
+                return None
+            return result.get('zjt_token_expire_at')
+        except Exception as e:
+            logger.error(f"Failed to get zjt_token_expire_at for user {user_id}: {e}")
+            return None
+
+    @staticmethod
+    def set_zjt_token_expire_at(user_id: int, expire_at: Optional[datetime]) -> int:
+        """
+        设置用户智剧通Token过期时间
+
+        Args:
+            user_id: 用户ID
+            expire_at: 过期时间datetime对象，None表示永不过期
+
+        Returns:
+            受影响的行数
+        """
+        sql = "UPDATE users SET zjt_token_expire_at = %s, updated_at = NOW() WHERE id = %s"
+        try:
+            affected = execute_update(sql, (expire_at, user_id))
+            logger.info(f"Set zjt_token_expire_at for user {user_id} to {expire_at}")
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to set zjt_token_expire_at for user {user_id}: {e}")
+            raise

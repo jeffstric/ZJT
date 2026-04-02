@@ -122,3 +122,6 @@ media_cache:
   max_size_gb: 10
   cleanup_on_startup: true
   cleanup_interval_hours: 24
+
+zjt:
+  token: ""
