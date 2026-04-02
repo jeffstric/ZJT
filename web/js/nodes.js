@@ -2783,8 +2783,6 @@
       el.style.top = node.y + 'px';
 
       el.innerHTML = `
-        <div class="port start-image-port" data-port-type="start" title="连接图片节点（首帧）"></div>
-        <div class="port end-image-port" data-port-type="end" title="连接图片节点（尾帧）"></div>
         <div class="port output" title="输出（连接到视频节点）"></div>
         <div class="node-header">
           <div class="node-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="M17 10L21 8V16L17 14V10Z" fill="currentColor"/></svg>${node.title}</div>
@@ -2802,7 +2800,8 @@
             </select>
             <div class="image-mode-hint" style="font-size: 11px; color: #6b7280; margin-top: 4px;"></div>
           </div>
-          <div class="field field-collapsible first-last-fields">
+          <div class="field field-collapsible first-last-fields port-anchor-start">
+            <div class="port start-image-port" data-port-type="start" title="连接图片节点（首帧）"></div>
             <div class="label">首帧画面<span class="req">*</span></div>
             <input class="start-file" type="file" accept="image/*" />
             <button class="mini-btn start-clear" type="button" style="margin-top: 4px;">清除</button>
@@ -2810,7 +2809,8 @@
               <img class="preview start-preview" />
             </div>
           </div>
-          <div class="field field-collapsible first-last-fields">
+          <div class="field field-collapsible first-last-fields port-anchor-end">
+            <div class="port end-image-port" data-port-type="end" title="连接图片节点（尾帧）"></div>
             <div class="label">尾帧画面（可选）</div>
             <input class="end-file" type="file" accept="image/*" />
             <button class="mini-btn end-clear" type="button" style="margin-top: 4px;">清除</button>
