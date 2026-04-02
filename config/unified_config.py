@@ -654,6 +654,11 @@ class DriverImplementation:
     # Seedream 5.0
     SEEDREAM5_VOLCENGINE_V1 = 'seedream5_volcengine_v1'
 
+    # Seedance (图生视频)
+    SEEDANCE_1_5_PRO_VOLCENGINE_V1 = 'seedance_1_5_pro_volcengine_v1'
+    SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 'seedance_2_0_fast_volcengine_v1'
+    SEEDANCE_2_0_VOLCENGINE_V1 = 'seedance_2_0_volcengine_v1'
+
 
 # ============ 驱动实现 ID 常量（用于数据库存储） ============
 class DriverImplementationId:
@@ -676,6 +681,9 @@ class DriverImplementationId:
     VIDU_Q2 = 15
     SEEDREAM5_VOLCENGINE_V1 = 16
     LTX2_3_RUNNINGHUB_V1 = 17
+    SEEDANCE_1_5_PRO_VOLCENGINE_V1 = 18
+    SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 19
+    SEEDANCE_2_0_VOLCENGINE_V1 = 20
 
 
 # implementation 字符串到 ID 的映射
@@ -697,6 +705,9 @@ IMPLEMENTATION_TO_ID = {
     'vidu_q2': DriverImplementationId.VIDU_Q2,
     'seedream5_volcengine_v1': DriverImplementationId.SEEDREAM5_VOLCENGINE_V1,
     'ltx2.3_runninghub_v1': DriverImplementationId.LTX2_3_RUNNINGHUB_V1,
+    'seedance_1_5_pro_volcengine_v1': DriverImplementationId.SEEDANCE_1_5_PRO_VOLCENGINE_V1,
+    'seedance_2_0_fast_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
+    'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -748,6 +759,11 @@ class DriverKey:
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
 
+    # Seedance 图生视频
+    SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 'seedance_1_5_pro_image_to_video'
+    SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 'seedance_2_0_fast_image_to_video'
+    SEEDANCE_2_0_IMAGE_TO_VIDEO = 'seedance_2_0_image_to_video'
+
 
 # ============ 任务类型 ID 常量 ============
 class TaskTypeId:
@@ -771,6 +787,9 @@ class TaskTypeId:
     VIDU_IMAGE_TO_VIDEO = 14            # Vidu 图生视频
     VEO3_IMAGE_TO_VIDEO = 15            # VEO3.1 图生视频
     VIDU_Q2_IMAGE_TO_VIDEO = 19         # Vidu Q2 图生视频
+    SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 21  # Seedance 1.5 Pro 图生视频
+    SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 22 # Seedance 2.0 Fast 图生视频
+    SEEDANCE_2_0_IMAGE_TO_VIDEO = 23      # Seedance 2.0 图生视频
     
     # 图片/视频 增强
     IMAGE_ENHANCE = 4                   # 图片高清放大
@@ -1043,7 +1062,52 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME,ImageMode.MULTI_REFERENCE],  # 支持首尾帧
         supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
-    
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO,
+        key='seedance_1_5_pro_image_to_video',
+        name='图片生成视频 (Seedance 1.5 Pro)',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.SEEDANCE_1_5_PRO_VOLCENGINE_V1,
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12],
+        default_ratio='9:16',
+        default_duration=4,
+        sort_order=37,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
+        key='seedance_2_0_fast_image_to_video',
+        name='图片生成视频 (Seedance 2.0 Fast)',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=38,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO,
+        key='seedance_2_0_image_to_video',
+        name='图片生成视频 (Seedance 2.0)',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=39,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+    ),
+
     # ==================== 数字人 ====================
     UnifiedTaskConfig(
         id=TaskTypeId.DIGITAL_HUMAN,
@@ -1258,6 +1322,33 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='火山引擎 Seedream 5.0 文生图接口',
         sort_order=10000.0,
         sync_mode=True  # 同步模式
+    ),
+    ImplementationConfig(
+        name='seedance_1_5_pro_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedance15ProVolcengineV1Driver',
+        default_computing_power={5: 46, 6: 56, 7: 66, 8: 76, 9: 85, 10: 94, 11: 103, 12: 112},
+        enabled=True,
+        description='火山引擎 Seedance 1.5 Pro 图生视频接口',
+        sort_order=10500.0
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_fast_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedance20FastVolcengineV1Driver',
+        default_computing_power={5: 105, 6: 126, 7: 147, 8: 168, 9: 189, 10: 210, 11: 231, 12: 252, 13: 273, 14: 294, 15: 315},
+        enabled=True,
+        description='火山引擎 Seedance 2.0 Fast 图生视频接口',
+        sort_order=10600.0
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedance20VolcengineV1Driver',
+        default_computing_power={5: 250, 6: 300, 7: 350, 8: 400, 9: 450, 10: 500, 11: 550, 12: 600, 13: 650, 14: 700, 15: 750},
+        enabled=True,
+        description='火山引擎 Seedance 2.0 图生视频接口',
+        sort_order=10700.0
     ),
 
     # ==================== 本地处理 ====================
