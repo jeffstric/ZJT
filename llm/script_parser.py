@@ -447,6 +447,7 @@ async def parse_script_to_shots(
     no_bg_music: bool = False,
     split_multi_dialogue: bool = False,
     narration_as_dialogue: bool = False,
+    language: Optional[str] = None,
     auth_token: Optional[str] = None,
     vendor_id: Optional[int] = None,
     model_id: Optional[int] = None
@@ -464,6 +465,7 @@ async def parse_script_to_shots(
         no_bg_music: 是否不生成背景音乐，默认False
         split_multi_dialogue: 是否将多人对话镜头拆分为单人对话镜头，默认False
         narration_as_dialogue: 是否为解说剧模式（先将对话剧本转为纯旁白剧本，再解析），默认False
+        language: 解析结果输出语言（如'中文'、'English'、'Deutsch'等），为空则默认中文
         auth_token: 认证token
         vendor_id: 商家ID
         model_id: 模型ID
@@ -586,7 +588,7 @@ async def parse_script_to_shots(
         
         # 构建特殊要求文本
         special_requirements = ""
-        logger.info(f"Script parser parameters - force_medium_shot: {force_medium_shot}, no_bg_music: {no_bg_music}, split_multi_dialogue: {split_multi_dialogue}, narration_as_dialogue: {narration_as_dialogue}")
+        logger.info(f"Script parser parameters - force_medium_shot: {force_medium_shot}, no_bg_music: {no_bg_music}, split_multi_dialogue: {split_multi_dialogue}, narration_as_dialogue: {narration_as_dialogue}, language: {language}")
         
         if force_medium_shot:
             special_requirements += """
@@ -731,7 +733,25 @@ async def parse_script_to_shots(
     ```
 
 """
-        
+
+        # 语言设置
+        LANGUAGE_MAP = {
+            'English': 'English',
+            'Deutsch': 'Deutsch（德语）',
+            'Français': 'Français（法语）',
+            'Русский': 'Русский（俄语）',
+        }
+        if language and language.strip():
+            lang_name = language.strip()
+            lang_display = LANGUAGE_MAP.get(lang_name, lang_name)
+            special_requirements += f"""
+**【输出语言要求 - 极其重要】**
+- **所有文本字段（description、opening_frame_description、scene_detail、action、dialogue.text、mood、environment_sound、background_music、audio_notes、characters的description等）必须使用{lang_display}输出**
+- JSON的key（字段名）保持英文不变，只翻译value中的文本内容
+- 确保翻译自然流畅，符合{lang_display}的表达习惯
+
+"""
+
         # 构建用户提示词
         user_prompt = f"""请将以下剧本内容解析为结构化的JSON数据。
 

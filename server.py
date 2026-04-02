@@ -5145,7 +5145,8 @@ async def parse_script(
         no_bg_music = body.get('no_bg_music', False)
         split_multi_dialogue = body.get('split_multi_dialogue', False)
         narration_as_dialogue = body.get('narration_as_dialogue', False)
-        
+        language = body.get('language', '')
+
         if not script_content:
             return JSONResponse(
                 status_code=400,
@@ -5196,6 +5197,7 @@ async def parse_script(
             no_bg_music=no_bg_music,
             split_multi_dialogue=split_multi_dialogue,
             narration_as_dialogue=narration_as_dialogue,
+            language=language,
             auth_token=auth_token,
             vendor_id=1,
             model_id=1

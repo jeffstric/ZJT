@@ -5130,6 +5130,19 @@
             </label>
             <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将有角色对话的剧本转换为仅旁白解说的剧本格式</div>
           </div>
+          <div class="field field-collapsible">
+            <div class="label">输出语言</div>
+            <select class="script-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="">中文（默认）</option>
+              <option value="English">English</option>
+              <option value="Deutsch">Deutsch</option>
+              <option value="Français">Français</option>
+              <option value="Русский">Русский</option>
+              <option value="__custom__">自定义语言...</option>
+            </select>
+            <input type="text" class="script-language-custom" placeholder="或输入自定义语言..." style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">解析结果的文本输出语言</div>
+          </div>
           <div class="field field-always-visible script-warning-field" style="display:none;">
             <div class="gen-meta" style="color: #f59e0b;">文件内容超过30000字符，已自动截取前30000字符。建议将剧本分段处理。</div>
           </div>
@@ -5176,6 +5189,8 @@
       const noBgMusicEl = el.querySelector('.script-no-bg-music');
       const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
       const narrationAsDialogueEl = el.querySelector('.script-narration-as-dialogue');
+      const languageSelectEl = el.querySelector('.script-language');
+      const languageCustomEl = el.querySelector('.script-language-custom');
       const infoField = el.querySelector('.script-info-field');
       const nameEl = el.querySelector('.script-name');
       const lengthEl = el.querySelector('.script-length');
@@ -5272,6 +5287,7 @@
       node.data.noBgMusic = true;
       node.data.splitMultiDialogue = false;
       node.data.narrationAsDialogue = false;
+      node.data.language = '';
       node.data.gridModel = 'auto';
       
       // 应用驱动状态禁用未配置的宫格生图模型选项
@@ -5357,6 +5373,35 @@
       narrationAsDialogueEl.addEventListener('change', () => {
         node.data.narrationAsDialogue = narrationAsDialogueEl.checked;
       });
+
+      // 语言选择监听
+      if(languageSelectEl) {
+        languageSelectEl.addEventListener('change', () => {
+          if(languageSelectEl.value === '__custom__') {
+            languageCustomEl.style.display = 'block';
+            languageCustomEl.focus();
+            node.data.language = languageCustomEl.value;
+          } else {
+            languageCustomEl.style.display = 'none';
+            node.data.language = languageSelectEl.value;
+          }
+        });
+        languageCustomEl.addEventListener('input', () => {
+          node.data.language = languageCustomEl.value;
+        });
+        // 恢复之前的选择
+        if(node.data.language) {
+          const presetValues = ['', 'English', 'Deutsch', 'Français', 'Русский'];
+          if(presetValues.includes(node.data.language)) {
+            languageSelectEl.value = node.data.language;
+            languageCustomEl.style.display = 'none';
+          } else {
+            languageSelectEl.value = '__custom__';
+            languageCustomEl.style.display = 'block';
+            languageCustomEl.value = node.data.language;
+          }
+        }
+      }
 
       // 宫格模型选择监听
       gridModelSelect.addEventListener('change', () => {
@@ -5463,7 +5508,8 @@
               force_medium_shot: node.data.forceMediumShot || false,
               no_bg_music: node.data.noBgMusic || false,
               split_multi_dialogue: node.data.splitMultiDialogue || false,
-              narration_as_dialogue: node.data.narrationAsDialogue || false
+              narration_as_dialogue: node.data.narrationAsDialogue || false,
+              language: node.data.language || ''
             })
           });
 
@@ -5956,7 +6002,8 @@
               force_medium_shot: node.data.forceMediumShot || false,
               no_bg_music: node.data.noBgMusic || false,
               split_multi_dialogue: node.data.splitMultiDialogue || false,
-              narration_as_dialogue: node.data.narrationAsDialogue || false
+              narration_as_dialogue: node.data.narrationAsDialogue || false,
+              language: node.data.language || ''
             })
           });
 
