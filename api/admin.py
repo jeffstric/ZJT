@@ -280,6 +280,132 @@ async def admin_adjust_user_power(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SetZJTTokenRequest(BaseModel):
+    enabled: bool
+
+
+class SetZJTTokenExpireRequest(BaseModel):
+    expire_at: Optional[str]  # 过期时间 ISO格式字符串，null表示永不过期
+
+
+@router.put("/users/{user_id}/zjt-token")
+async def admin_set_user_zjt_token(
+    user_id: int = Path(...),
+    request: SetZJTTokenRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    管理员设置用户智剧通Token启用状态（仅商业版）
+    """
+    from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    admin = await require_admin(auth_token)
+
+    try:
+        user = UsersModel.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+
+        UsersModel.set_zjt_token_enabled(user_id, request.enabled)
+
+        message = "已启用智剧通Token" if request.enabled else "已禁用智剧通Token"
+        logger.info(f"Admin {admin.phone} set user {user_id} zjt_token_enabled to {request.enabled}")
+
+        return {
+            "code": 0,
+            "message": message
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set user {user_id} zjt_token_enabled: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}/zjt-token")
+async def admin_get_user_zjt_token(
+    user_id: int = Path(...),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    获取用户智剧通Token配置（仅商业版）
+    """
+    from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    await require_admin(auth_token)
+
+    try:
+        user = UsersModel.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+
+        return {
+            "code": 0,
+            "data": {
+                "zjt_token_enabled": UsersModel.get_zjt_token_enabled(user_id),
+                "zjt_token_expire_at": UsersModel.get_zjt_token_expire_at(user_id)
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user {user_id} zjt token config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/users/{user_id}/zjt-token-expire")
+async def admin_set_user_zjt_token_expire(
+    user_id: int = Path(...),
+    request: SetZJTTokenExpireRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    管理员设置用户智剧通Token过期时间（仅商业版）
+    expire_at: 过期时间 ISO格式字符串，null表示永不过期
+    """
+    from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
+    if IS_COMMUNITY_EDITION:
+        raise HTTPException(status_code=403, detail="此功能仅商业版本可用")
+
+    admin = await require_admin(auth_token)
+
+    try:
+        user = UsersModel.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+
+        expire_at = None
+        message = "智剧通Token已设置为永不过期"
+
+        if request.expire_at:
+            # 解析日期字符串
+            from datetime import datetime
+            try:
+                expire_at = datetime.strptime(request.expire_at, "%Y-%m-%d")
+                # 设置为当天 23:59:59
+                expire_at = expire_at.replace(hour=23, minute=59, second=59)
+                message = f"智剧通Token过期时间已调整为 {request.expire_at}"
+            except ValueError:
+                raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD 格式")
+
+        UsersModel.set_zjt_token_expire_at(user_id, expire_at)
+        logger.info(f"Admin {admin.phone} set user {user_id} zjt_token_expire_at to {expire_at}")
+
+        return {
+            "code": 0,
+            "message": message
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set user {user_id} zjt_token_expire_at: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== 系统配置管理 API ====================
 
 
