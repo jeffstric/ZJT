@@ -3643,6 +3643,11 @@
             this.durationSeconds = config.default_duration || config.durations[0] || 5;
           }
         }
+        // 如果不支持尾帧且当前有2张图片，移除尾帧
+        const supportsLastFrame = config?.supports_last_frame !== false;
+        if (!supportsLastFrame && this.files.length > 1) {
+          this.files = [this.files[0]];
+        }
       },
       imageMode(newMode, oldMode) {
         // 切换图片模式时，检查当前模型是否支持新模式
@@ -3667,11 +3672,16 @@
       }
     },
     computed: {
-      canSubmit() { 
+      supportsLastFrame() {
+        const config = this.modelConfigs[this.videoModel];
+        return config?.supports_last_frame !== false;
+      },
+      canSubmit() {
         // 根据模式验证图片数量
         if (this.imageMode === 'first_last_frame') {
-          // 首尾帧模式：1-2张图片
-          return this.files.length >= 1 && this.files.length <= 2 && !!this.prompt.trim() && !this.loading;
+          // 首尾帧模式：1-2张图片（不支持尾帧时最多1张）
+          const maxFiles = this.supportsLastFrame ? 2 : 1;
+          return this.files.length >= 1 && this.files.length <= maxFiles && !!this.prompt.trim() && !this.loading;
         } else if (this.imageMode === 'multi_reference') {
           // 多参考图模式：1-5张图片
           return this.files.length >= 1 && this.files.length <= 5 && !!this.prompt.trim() && !this.loading;
@@ -3690,19 +3700,19 @@
         ];
       },
       maxFilesForMode() {
-        if (this.imageMode === 'first_last_frame') return 2;
+        if (this.imageMode === 'first_last_frame') return this.supportsLastFrame ? 2 : 1;
         if (this.imageMode === 'multi_reference') return 5;
         if (this.imageMode === 'first_last_with_ref') return 2;
         return 5;
       },
       filesLabel() {
-        if (this.imageMode === 'first_last_frame') return '上传首尾帧图片 (1-2张)';
+        if (this.imageMode === 'first_last_frame') return this.supportsLastFrame ? '上传首尾帧图片 (1-2张)' : '上传首帧图片 (1张)';
         if (this.imageMode === 'multi_reference') return '上传参考图片 (1-5张)';
         if (this.imageMode === 'first_last_with_ref') return '上传首尾帧图片 (1-2张)';
         return '上传图片';
       },
       filesHint() {
-        if (this.imageMode === 'first_last_frame') return '第一张为首帧，第二张（可选）为尾帧';
+        if (this.imageMode === 'first_last_frame') return this.supportsLastFrame ? '第一张为首帧，第二张（可选）为尾帧' : '该模型仅支持首帧图';
         if (this.imageMode === 'multi_reference') return '多张图片将作为风格参考';
         if (this.imageMode === 'first_last_with_ref') return '第一张为首帧，第二张（可选）为尾帧';
         return '';

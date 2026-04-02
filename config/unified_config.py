@@ -209,6 +209,7 @@ class UnifiedTaskConfig:
     default_image_mode: str = 'first_last_frame'  # 默认图片模式
     supports_grid_merge: bool = False  # 是否支持宫格合并生成视频
     supports_grid_image: bool = False  # 是否支持宫格生图（一次生成多张图片）
+    supports_last_frame: bool = True  # 是否支持尾帧（某些模型虽然支持首尾帧模式，但只使用首帧，忽略尾帧）
 
     def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None) -> int:
         """
@@ -280,6 +281,7 @@ class UnifiedTaskConfig:
             result['supported_image_modes'] = self.supported_image_modes
             result['default_image_mode'] = self.default_image_mode
             result['supports_grid_merge'] = self.supports_grid_merge
+            result['supports_last_frame'] = self.supports_last_frame
 
         # 文生图任务添加宫格生图配置
         if TaskCategory.TEXT_TO_IMAGE in [self.category] + self.categories:
@@ -931,7 +933,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_durations=[10, 15],
         default_ratio='9:16',
         default_duration=10,
-        sort_order=20,
+        sort_order=200,
     ),
 
     # ==================== 图生视频 ====================
@@ -950,6 +952,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=32,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SORA2_IMAGE_TO_VIDEO,
@@ -966,6 +969,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=10,
         sort_order=31,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
         supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
     UnifiedTaskConfig(
@@ -983,6 +987,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=33,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.LTX2_3_IMAGE_TO_VIDEO,
@@ -999,6 +1004,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=30,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.KLING_IMAGE_TO_VIDEO,
@@ -1014,6 +1020,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=33,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
+        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
         supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
     UnifiedTaskConfig(
@@ -1030,6 +1037,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=34,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧（1-2张图片）
+        supports_last_frame=True,  # 真正支持尾帧
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VIDU_Q2_IMAGE_TO_VIDEO,
@@ -1045,6 +1053,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=36,
         supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 仅支持参考图模式
+        supports_last_frame=False,  # 不支持尾帧（多参考图模式）
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VEO3_IMAGE_TO_VIDEO,
@@ -1060,6 +1069,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=8,
         sort_order=35,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME,ImageMode.MULTI_REFERENCE],  # 支持首尾帧
+        supports_last_frame=True,  # 真正支持尾帧
         supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
     UnifiedTaskConfig(
@@ -1076,6 +1086,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=4,
         sort_order=37,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
@@ -1091,6 +1102,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=38,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO,
@@ -1106,6 +1118,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         sort_order=39,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
     ),
 
     # ==================== 数字人 ====================

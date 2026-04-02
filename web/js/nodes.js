@@ -2960,18 +2960,50 @@
       
       function updateImageModeUI() {
         const mode = node.data.imageMode || 'first_last_frame';
+        const modelConfigs = getModelConfigs();
+        const config = modelConfigs[node.data.videoModel];
+        const supportsLastFrame = config?.supports_last_frame !== false;
+
         imageModeSelect.value = mode;
         imageModeHint.textContent = imageModeHints[mode] || '';
-        
+
         // 显示/隐藏对应的上传区域
         firstLastFields.forEach(field => {
           field.style.display = mode === 'first_last_frame' ? '' : 'none';
         });
         referenceFields.style.display = mode === 'multi_reference' ? '' : 'none';
-        
+
         // 显示/隐藏端口
         startImagePort.style.display = mode === 'first_last_frame' ? '' : 'none';
         endImagePort.style.display = mode === 'first_last_frame' ? '' : 'none';
+
+        // 根据 supports_last_frame 控制尾帧输入框的可用性
+        const endFileInput = el.querySelector('.end-file');
+        const endClearBtn = el.querySelector('.end-clear');
+        const endPreviewRow = el.querySelector('.end-preview-row');
+        // 尾帧字段是 first-last-fields 中的第二个（索引1）
+        const endField = firstLastFields.length > 1 ? firstLastFields[1] : null;
+        const endLabel = endField ? endField.querySelector('.label') : null;
+
+        if (mode === 'first_last_frame') {
+          if (!supportsLastFrame) {
+            // 禁用尾帧输入
+            if (endFileInput) endFileInput.disabled = true;
+            if (endClearBtn) endClearBtn.disabled = true;
+            if (endPreviewRow) endPreviewRow.style.opacity = '0.5';
+            endImagePort.classList.add('disabled');
+            // 修改提示文字
+            if (endLabel) endLabel.textContent = '尾帧画面（该模型不支持）';
+          } else {
+            // 启用尾帧输入
+            if (endFileInput) endFileInput.disabled = false;
+            if (endClearBtn) endClearBtn.disabled = false;
+            if (endPreviewRow) endPreviewRow.style.opacity = '1';
+            endImagePort.classList.remove('disabled');
+            // 恢复提示文字
+            if (endLabel) endLabel.textContent = '尾帧画面（可选）';
+          }
+        }
       }
       
       // 渲染参考图预览
@@ -3198,6 +3230,8 @@
         // 模型改变时更新时长和比例选项
         updateDurationOptions(videoModelSelect.value);
         updateRatioOptions(videoModelSelect.value);
+        // 更新图片模式UI（如尾帧是否支持）
+        updateImageModeUI();
         // 更新算力显示
         updateComputingPowerDisplay();
       });
