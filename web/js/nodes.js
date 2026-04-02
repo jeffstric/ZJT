@@ -1473,43 +1473,16 @@
 
         // 计算视频生成算力消耗的本地函数
         function calculateVideoComputingPower() {
-          const config = getTaskComputingPowerConfig();
-          if(!config || Object.keys(config).length === 0) return 0;
+          // 检查 TaskConfig 是否已加载
+          if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
+            return 0;
+          }
 
-          let power = 0;
           const videoModel = node.data.videoModel || 'wan22';
           const duration = node.data.videoDuration || 5;
 
-          if(videoModel === 'sora2') {
-            power = config[3] || 0;
-          } else if(videoModel === 'ltx2') {
-            power = config[10] || 0;
-          } else if(videoModel === 'wan22') {
-            const wan22Power = config[11];
-            if(typeof wan22Power === 'object') {
-              power = wan22Power[duration] || wan22Power[5] || 0;
-            } else {
-              power = wan22Power || 0;
-            }
-          } else if(videoModel === 'kling') {
-            const klingPower = config[12];
-            if(typeof klingPower === 'object') {
-              power = klingPower[duration] || klingPower[5] || 0;
-            } else {
-              power = klingPower || 0;
-            }
-          } else if(videoModel === 'vidu') {
-            const viduPower = config[14];
-            if(typeof viduPower === 'object') {
-              power = viduPower[duration] || viduPower[5] || 0;
-            } else {
-              power = viduPower || 0;
-            }
-          } else if(videoModel === 'veo3') {
-            power = config[15] || 0;
-          }
-
-          return power;
+          // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
+          return TaskConfig.getComputingPower(videoModel, duration);
         }
 
         // 更新视频算力显示的本地函数
@@ -3080,57 +3053,16 @@
       
       // 计算算力消耗
       function calculateComputingPower() {
-        const config = getTaskComputingPowerConfig();
-        if(!config || Object.keys(config).length === 0) {
+        // 检查 TaskConfig 是否已加载
+        if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
           return 0;
         }
-        
-        let power = 0;
+
         const videoModel = node.data.videoModel || 'sora2';
         const duration = node.data.duration || 10;
-        
-        if(videoModel === 'sora2') {
-          power = config[3] || 0;  // type=3: Sora2 图生视频
-        } else if(videoModel === 'ltx2') {
-          power = config[10] || 0;  // type=10: LTX2.0 图生视频
-        } else if(videoModel === 'wan22') {
-          // type=11: Wan2.2根据时长区分算力
-          const wan22Power = config[11];
-          if(typeof wan22Power === 'object') {
-            power = wan22Power[duration] || wan22Power[5] || 0;
-          } else {
-            power = wan22Power || 0;
-          }
-        } else if(videoModel === 'kling') {
-          // type=12: 可灵根据时长区分算力
-          const klingPower = config[12];
-          if(typeof klingPower === 'object') {
-            power = klingPower[duration] || klingPower[5] || 0;
-          } else {
-            power = klingPower || 0;
-          }
-        } else if(videoModel === 'vidu') {
-          // type=14: Vidu根据时长区分算力
-          const viduPower = config[14];
-          if(typeof viduPower === 'object') {
-            power = viduPower[duration] || viduPower[5] || 0;
-          } else {
-            power = viduPower || 0;
-          }
-        } else if(videoModel === 'veo3') {
-          // type=15: VEO3固定算力
-          power = config[15] || 0;
-        } else if(videoModel === 'vidu_q2') {
-          // type=19: Vidu Q2根据时长区分算力
-          const viduQ2Power = config[19];
-          if(typeof viduQ2Power === 'object') {
-            power = viduQ2Power[duration] || viduQ2Power[5] || 0;
-          } else {
-            power = viduQ2Power || 0;
-          }
-        }
-        
-        return power;
+
+        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
+        return TaskConfig.getComputingPower(videoModel, duration);
       }
       
       // 更新算力显示
@@ -7332,45 +7264,16 @@
 
       // 计算视频生成算力消耗
       function calculateVideoComputingPower() {
-        const config = getTaskComputingPowerConfig();
-        if(!config || Object.keys(config).length === 0) {
+        // 检查 TaskConfig 是否已加载
+        if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
           return 0;
         }
-        
-        let power = 0;
+
         const videoModel = node.data.videoModel || 'wan22';
         const duration = node.data.videoDuration || 5;
-        
-        if(videoModel === 'sora2') {
-          power = config[3] || 0;
-        } else if(videoModel === 'ltx2') {
-          power = config[10] || 0;
-        } else if(videoModel === 'wan22') {
-          const wan22Power = config[11];
-          if(typeof wan22Power === 'object') {
-            power = wan22Power[duration] || wan22Power[5] || 0;
-          } else {
-            power = wan22Power || 0;
-          }
-        } else if(videoModel === 'kling') {
-          const klingPower = config[12];
-          if(typeof klingPower === 'object') {
-            power = klingPower[duration] || klingPower[5] || 0;
-          } else {
-            power = klingPower || 0;
-          }
-        } else if(videoModel === 'vidu') {
-          const viduPower = config[14];
-          if(typeof viduPower === 'object') {
-            power = viduPower[duration] || viduPower[5] || 0;
-          } else {
-            power = viduPower || 0;
-          }
-        } else if(videoModel === 'veo3') {
-          power = config[15] || 0;
-        }
-        
-        return power;
+
+        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
+        return TaskConfig.getComputingPower(videoModel, duration);
       }
       
       // 更新视频算力显示
@@ -8620,57 +8523,16 @@
       
       // 计算视频生成算力消耗
       function calculateVideoComputingPower() {
-        const config = getTaskComputingPowerConfig();
-        if(!config || Object.keys(config).length === 0) {
+        // 检查 TaskConfig 是否已加载
+        if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
           return 0;
         }
-        
-        let power = 0;
+
         const videoModel = node.data.videoModel || 'sora2';
         const duration = node.data.videoDuration || 10;
-        
-        if(videoModel === 'sora2') {
-          power = config[3] || 0;  // type=3: Sora2 图生视频
-        } else if(videoModel === 'ltx2') {
-          power = config[10] || 0;  // type=10: LTX2.0 图生视频
-        } else if(videoModel === 'wan22') {
-          // type=11: Wan2.2根据时长区分算力
-          const wan22Power = config[11];
-          if(typeof wan22Power === 'object') {
-            power = wan22Power[duration] || wan22Power[5] || 0;
-          } else {
-            power = wan22Power || 0;
-          }
-        } else if(videoModel === 'kling') {
-          // type=12: 可灵根据时长区分算力
-          const klingPower = config[12];
-          if(typeof klingPower === 'object') {
-            power = klingPower[duration] || klingPower[5] || 0;
-          } else {
-            power = klingPower || 0;
-          }
-        } else if(videoModel === 'vidu') {
-          // type=14: Vidu根据时长区分算力
-          const viduPower = config[14];
-          if(typeof viduPower === 'object') {
-            power = viduPower[duration] || viduPower[5] || 0;
-          } else {
-            power = viduPower || 0;
-          }
-        } else if(videoModel === 'vidu_q2') {
-          // type=19: Vidu Q2根据时长区分算力
-          const viduQ2Power = config[19];
-          if(typeof viduQ2Power === 'object') {
-            power = viduQ2Power[duration] || viduQ2Power[5] || 0;
-          } else {
-            power = viduQ2Power || 0;
-          }
-        } else if(videoModel === 'veo3') {
-          // type=15: VEO3固定算力
-          power = config[15] || 0;
-        }
-        
-        return power;
+
+        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
+        return TaskConfig.getComputingPower(videoModel, duration);
       }
       
       // 更新视频算力显示

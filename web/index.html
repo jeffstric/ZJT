@@ -3777,53 +3777,14 @@
         ];
       },
       computingPower() {
-        // 计算单个任务的算力消耗（从接口获取的配置）
-        if (!this.taskComputingPower || Object.keys(this.taskComputingPower).length === 0) {
+        // 使用 TaskConfig API 动态获取算力（自动适配新增模型）
+        if (!this.configLoaded) {
           return 0;  // 配置未加载时返回0
         }
-        
-        let power = 0;
-        if (this.videoModel === 'sora2') {
-          power = this.taskComputingPower[3] || 0;  // type=3: Sora2 图生视频
-        } else if (this.videoModel === 'ltx2') {
-          power = this.taskComputingPower[10] || 0;  // type=10: LTX2.0 图生视频
-        } else if (this.videoModel === 'wan22') {
-          // type=11: Wan2.2根据时长区分算力
-          const wan22Power = this.taskComputingPower[11];
-          if (typeof wan22Power === 'object') {
-            power = wan22Power[this.durationSeconds] || wan22Power[5] || 0;
-          } else {
-            power = wan22Power || 0;
-          }
-        } else if (this.videoModel === 'kling') {
-          // type=12: 可灵根据时长区分算力
-          const klingPower = this.taskComputingPower[12];
-          if (typeof klingPower === 'object') {
-            power = klingPower[this.durationSeconds] || klingPower[5] || 0;
-          } else {
-            power = klingPower || 0;
-          }
-        } else if (this.videoModel === 'vidu') {
-          // type=14: Vidu根据时长区分算力
-          const viduPower = this.taskComputingPower[14];
-          if (typeof viduPower === 'object') {
-            power = viduPower[this.durationSeconds] || viduPower[5] || 0;
-          } else {
-            power = viduPower || 0;
-          }
-        } else if (this.videoModel === 'veo3') {
-          // type=15: VEO3固定算力
-          power = this.taskComputingPower[15] || 0;
-        } else if (this.videoModel === 'vidu_q2') {
-          // type=19: Vidu Q2根据时长区分算力
-          const viduQ2Power = this.taskComputingPower[19];
-          if (typeof viduQ2Power === 'object') {
-            power = viduQ2Power[this.durationSeconds] || viduQ2Power[5] || 0;
-          } else {
-            power = viduQ2Power || 0;
-          }
-        }
-        return power;
+
+        // 使用 TaskConfig.getComputingPower 动态获取算力
+        // 该方法会自动处理固定算力和按时长计费两种情况
+        return TaskConfig.getComputingPower(this.videoModel, this.durationSeconds);
       },
       totalComputingPower() {
         // 总算力 = 单个算力 × 生成数量
