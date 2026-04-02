@@ -6766,14 +6766,36 @@
           setTimeout(() => { this.apiTokenError = ''; }, 2000);
           return;
         }
-        navigator.clipboard.writeText(textToCopy).then(() => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(textToCopy).then(() => {
+            this.userSettingsSuccess = 'Token已复制到剪贴板';
+            setTimeout(() => { this.userSettingsSuccess = ''; }, 3000);
+          }).catch(err => {
+            console.error('Copy failed:', err);
+            this.fallbackCopyApiToken(textToCopy);
+          });
+        } else {
+          this.fallbackCopyApiToken(textToCopy);
+        }
+      },
+
+      fallbackCopyApiToken(textToCopy) {
+        const textarea = document.createElement('textarea');
+        textarea.value = textToCopy;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
           this.userSettingsSuccess = 'Token已复制到剪贴板';
           setTimeout(() => { this.userSettingsSuccess = ''; }, 3000);
-        }).catch(err => {
-          console.error('Copy failed:', err);
+        } catch (err) {
+          console.error('Fallback copy failed:', err);
           this.apiTokenError = '复制失败，请手动复制';
           setTimeout(() => { this.apiTokenError = ''; }, 2000);
-        });
+        }
+        document.body.removeChild(textarea);
       },
 
       // 演示数据生成方法（仅社区版使用）
