@@ -8,6 +8,7 @@ Seedance 火山引擎供应商 v1 版本驱动实现
 """
 from typing import Dict, Any, Optional
 import traceback
+import json
 from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
@@ -58,6 +59,17 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             level=AlertLevel.ERROR,
             context=context
         )
+
+    def _parse_extra_config(self, ai_tool) -> Dict[str, Any]:
+        """解析 extra_config JSON"""
+        if not ai_tool.extra_config:
+            return {}
+        try:
+            config = ai_tool.extra_config if isinstance(ai_tool.extra_config, dict) else json.loads(ai_tool.extra_config)
+            return config if isinstance(config, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            self.logger.warning(f"无法解析 extra_config: {ai_tool.extra_config}")
+            return {}
 
     def _validate_submit_response(self, result: Any) -> tuple[bool, Optional[str]]:
         """
@@ -118,66 +130,157 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         """
         构建 Seedance 图生视频创建任务请求
 
-        content 数组格式: [text, image_url]
+        content 数组格式:
+        [
+            { "type": "text", "text": "prompt" },
+            { "type": "image_url", "image_url": { "url": "首帧图" } },
+            { "type": "image_url", "image_url": { "url": "参考图1" }, "role": "reference_image" },
+            { "type": "image_url", "image_url": { "url": "参考图2" }, "role": "reference_image" },
+            { "type": "video_url", "video_url": { "url": "参考视频" }, "role": "reference_video" },
+            { "type": "audio_url", "audio_url": { "url": "参考音频" }, "role": "reference_audio" }
+        ]
         """
-        # 处理图片（必须传图片）
-        if not ai_tool.image_path:
-            raise ValueError("Seedance 图生视频需要至少1张图片")
+        # 1. 解析 extra_config
+        extra_config = self._parse_extra_config(ai_tool)
 
-        image_urls = [url.strip() for url in ai_tool.image_path.split(',') if url.strip()]
+        # 2. 获取图片信息（首帧 + 尾帧 + 参考图）
+        all_images_info = self.get_all_images_by_mode(ai_tool)
+        first_frame = all_images_info.get('first_frame')
+        last_frame = all_images_info.get('last_frame')
+        reference_images = all_images_info.get('reference_images', [])
 
-        if not image_urls:
-            raise ValueError("Seedance 图生视频需要至少1张图片")
-
-        # 压缩并上传图片
-        processed_urls = []
-        for img_url in image_urls:
-            success, new_url, error = compress_and_upload_image_sync(
-                img_url,
+        # 3. 处理首帧图片（multi_reference 模式下可选）
+        processed_first_frame = None
+        if first_frame:
+            success, processed_url, error = compress_and_upload_image_sync(
+                first_frame,
                 self._config,
                 max_size_mb=10.0,
                 is_local=True
             )
             if success:
-                processed_urls.append(new_url)
+                processed_first_frame = processed_url
             else:
-                self.logger.error(f"处理图片失败: {error}")
+                self.logger.error(f"处理首帧图片失败: {error}")
                 return {
                     "success": False,
-                    "error": f"处理图片失败: {error}",
+                    "error": f"处理首帧图片失败: {error}",
                     "error_type": "USER",
                     "retry": False
                 }
 
-        # 构建提示词（内嵌 duration 等参数）
-        prompt = ai_tool.prompt or ""
-        duration = getattr(ai_tool, 'duration', None) or 5
-        prompt_with_params = f"{prompt} --duration {duration}"
+        # 4. 处理尾帧图片（可选）
+        processed_last_frame = None
+        if last_frame:
+            success, processed_url, error = compress_and_upload_image_sync(
+                last_frame,
+                self._config,
+                max_size_mb=10.0,
+                is_local=True
+            )
+            if success:
+                processed_last_frame = processed_url
+            else:
+                self.logger.warning(f"处理尾帧图片失败，跳过: {error}")
 
-        # 构建 content 数组
+        # 5. 处理参考图列表
+        processed_reference_images = []
+        for ref_img in reference_images:
+            success, new_url, error = compress_and_upload_image_sync(
+                ref_img,
+                self._config,
+                max_size_mb=10.0,
+                is_local=True
+            )
+            if success:
+                processed_reference_images.append(new_url)
+            else:
+                self.logger.warning(f"处理参考图失败，跳过: {error}")
+                # 参考图失败不阻断流程，继续处理
+
+        # 6. 构建 content 数组
         content = []
 
-        # 文本部分
-        if prompt_with_params:
+        # 文本部分（放在最前面）
+        prompt = ai_tool.prompt or ""
+        if prompt:
             content.append({
                 "type": "text",
-                "text": prompt_with_params
+                "text": prompt
             })
 
-        # 图片部分（取第一张作为参考图）
-        content.append({
-            "type": "image_url",
-            "image_url": {
-                "url": processed_urls[0]
-            }
-        })
+        # 首帧图（role: "first_frame"，可选）
+        if processed_first_frame:
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": processed_first_frame
+                },
+                "role": "first_frame"
+            })
 
-        self.logger.info(f"使用模型: {self._model}, driver_type: {self.driver_type}")
+        # 尾帧图（role: "last_frame"，可选）
+        if processed_last_frame:
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": processed_last_frame
+                },
+                "role": "last_frame"
+            })
 
+        # 参考图列表（role: "reference_image"）
+        for ref_img_url in processed_reference_images:
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": ref_img_url
+                },
+                "role": "reference_image"
+            })
+
+        # 参考视频（role: "reference_video"）
+        reference_video = extra_config.get('reference_video')
+        if reference_video:
+            content.append({
+                "type": "video_url",
+                "video_url": {
+                    "url": reference_video
+                },
+                "role": "reference_video"
+            })
+
+        # 参考音频（role: "reference_audio"）
+        reference_audio = extra_config.get('reference_audio')
+        if reference_audio:
+            content.append({
+                "type": "audio_url",
+                "audio_url": {
+                    "url": reference_audio
+                },
+                "role": "reference_audio"
+            })
+
+        # 6. 构建 payload
         payload = {
             "model": self._model,
             "content": content
         }
+
+        # 添加可选参数
+        if extra_config.get('generate_audio') is not None:
+            payload["generate_audio"] = extra_config['generate_audio']
+
+        if extra_config.get('watermark') is not None:
+            payload["watermark"] = extra_config['watermark']
+
+        if extra_config.get('ratio'):
+            payload["ratio"] = extra_config['ratio']
+
+        if ai_tool.duration:
+            payload["duration"] = ai_tool.duration
+
+        self.logger.info(f"使用模型: {self._model}, driver_type: {self.driver_type}, content 元素数: {len(content)}")
 
         headers = {
             "Content-Type": "application/json",

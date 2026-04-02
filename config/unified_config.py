@@ -1083,10 +1083,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 6, 7, 8, 9, 10, 11, 12],
         default_ratio='9:16',
-        default_duration=4,
+        default_duration=5,
         sort_order=37,
-        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
-        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 1.5 Pro 不支持多参考图
+        supports_last_frame=True,  # 支持首尾帧
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
@@ -1101,8 +1101,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=5,
         sort_order=38,
-        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
-        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
+        supports_last_frame=True,  # 支持首尾帧
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO,
@@ -1117,8 +1117,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=5,
         sort_order=39,
-        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
-        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
+        supports_last_frame=True,  # 支持首尾帧
     ),
 
     # ==================== 数字人 ====================
