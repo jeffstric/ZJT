@@ -18,7 +18,7 @@ services:
       # 禁用 strict mode 以兼容旧版 SQL
       MYSQL_SQL_MODE: "STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO"
     ports:
-      - "3306:3306"
+      - "3307:3306"  # 使用 3307 避免与宿主机 MySQL 冲突
     volumes:
       # 数据持久化
       - mysql_data:/var/lib/mysql
@@ -57,8 +57,8 @@ services:
     ports:
       - "9003:9003"
     volumes:
-      # 配置文件挂载（便于修改配置）
-      - ../config_prod.yml:/app/config_prod.yml:ro
+      # 配置文件挂载（便于修改配置，首次启动会自动创建）
+      - ../config_prod.yml:/app/config_prod.yml
       # 数据持久化
       - ../data:/app/data
       - ../logs:/app/logs

@@ -21,13 +21,15 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install system dependencies
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
+# 兼容不同版本 Debian 的源文件路径
+RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list; \
+    fi && \
     apt-get update && apt-get install -y --no-install-recommends \
-    # ffmpeg and ffprobe for video processing
     ffmpeg \
-    # MySQL client for database initialization
     default-mysql-client \
-    # Clean up
     && rm -rf /var/lib/apt/lists/*
 
 # Copy project files
