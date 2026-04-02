@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.sql import text
 
 
 revision: str = '20260401_add_api_token_idx'
@@ -18,14 +19,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    result = op.execute("""
+    conn = op.get_bind()
+
+    result = conn.execute(text("""
         SELECT COUNT(*) FROM information_schema.statistics
         WHERE table_schema=DATABASE() AND table_name='users' AND index_name='idx_api_token'
-    """)
-    if result is not None:
-        row = result.fetchone()
-        if row and row[0] == 0:
-            op.create_index('idx_api_token', 'users', ['api_token'], unique=True)
+    """))
+    row = result.fetchone()
+    if row and row[0] == 0:
+        op.create_index('idx_api_token', 'users', ['api_token'], unique=True)
 
 
 def downgrade() -> None:
