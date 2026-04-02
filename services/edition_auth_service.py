@@ -140,9 +140,13 @@ class EditionAuthService:
 
     def _get_first_user_phone(self) -> str:
         try:
-            result = UsersModel.list_all(page=1, page_size=1)
-            if result and result.get("data") and len(result["data"]) > 0:
-                return result["data"][0].get("phone", "")
+            from model.database import execute_query
+            result = execute_query(
+                "SELECT phone FROM users ORDER BY id ASC LIMIT 1",
+                fetch_one=True
+            )
+            if result and result.get("phone"):
+                return result["phone"]
         except Exception as e:
             pass
         return ""
