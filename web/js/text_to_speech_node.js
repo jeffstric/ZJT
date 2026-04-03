@@ -2,7 +2,7 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      const y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
       const node = {
         id,
         type: 'text_to_speech',

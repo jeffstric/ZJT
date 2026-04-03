@@ -255,13 +255,13 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
 
       // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
       if (opts && opts.checkCollision) {
         const avail = findNearestAvailablePosition(x, y, 320, 220);
         x = avail.x;
-        y = avail.y;
+        y = Math.max(MIN_NODE_Y, avail.y);
       }
       const node = {
         id,
@@ -2714,8 +2714,8 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
-      
+      const y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
+
       // 从后端配置获取第一个视频模型作为默认值
       let defaultVideoModel = 'wan22';
       if(window.TaskConfig && window.TaskConfig.isLoaded()) {
@@ -3930,13 +3930,13 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
 
       // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
       if (opts && opts.checkCollision) {
         const avail = findNearestAvailablePosition(x, y, 320, 220);
         x = avail.x;
-        y = avail.y;
+        y = Math.max(MIN_NODE_Y, avail.y);
       }
       const defaultRatio = state.ratio || ratioSelectEl.value || '9:16';
       
@@ -5007,7 +5007,7 @@
       }
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      const y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
       const node = {
         id,
         type: 'script',
@@ -6914,7 +6914,7 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      const y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
       const shotGroupData = opts && opts.shotGroupData ? opts.shotGroupData : {};
       const scriptData = opts && opts.scriptData ? opts.scriptData : {};
       
@@ -7931,13 +7931,13 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
 
       // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
       if (opts && opts.checkCollision) {
         const avail = findNearestAvailablePosition(x, y, 320, 220);
         x = avail.x;
-        y = avail.y;
+        y = Math.max(MIN_NODE_Y, avail.y);
       }
       const shotData = opts && opts.shotData ? opts.shotData : {};
       
