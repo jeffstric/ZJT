@@ -816,10 +816,6 @@
             if(node.type === 'shot_frame' && node.updatePreview){
               node.updatePreview();
             }
-            // 更新角色节点的创建角色卡按钮状态
-            if(node.type === 'character'){
-              updateCharacterCardButtonState(node.id);
-            }
             // 更新图片节点的参考图显示
             if(node.type === 'image' && node.updateReferenceImages){
               node.updateReferenceImages();

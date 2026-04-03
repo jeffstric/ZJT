@@ -625,6 +625,19 @@
                                 <img class="preview-thumbnail" alt="预览">
                                 <button type="button" class="preview-remove-btn" onclick="removeImagePreview('char-image')">×</button>
                             </div>
+                            <!-- 多服装参考图区域 -->
+                            <div style="margin-top: 12px;">
+                                <label class="form-label" style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+                                    多服装/造型参考图
+                                    <span style="font-size: 11px; color: #6b7280; font-weight: normal;">（可选）</span>
+                                </label>
+                                <div id="char-multi-image-list" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 20px;"></div>
+                                <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                                    <input type="text" id="char-multi-image-label" class="form-input" placeholder="标签，如：晚礼服" style="flex: 0 0 100px;">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="triggerCharMultiImageUpload()">上传图片</button>
+                                    <input type="file" id="char-multi-image-file" accept="image/*" style="display: none;" onchange="handleCharMultiImageUpload(event)">
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -666,6 +679,26 @@
                             <div id="loc-image-preview" class="image-preview-box" style="display: none;">
                                 <img class="preview-thumbnail" alt="预览">
                                 <button type="button" class="preview-remove-btn" onclick="removeImagePreview('loc-image')">×</button>
+                            </div>
+                            <!-- 多角度参考图区域 -->
+                            <div style="margin-top: 12px;">
+                                <label class="form-label" style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+                                    多角度参考图
+                                    <span style="font-size: 11px; color: #6b7280; font-weight: normal;">（可选）</span>
+                                </label>
+                                <div id="loc-multi-image-list" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 20px;"></div>
+                                <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                                    <select id="loc-multi-image-angle" class="form-input" style="flex: 0 0 90px;">
+                                        <option value="front">正面</option>
+                                        <option value="back">背面</option>
+                                        <option value="left">左侧</option>
+                                        <option value="right">右侧</option>
+                                        <option value="custom">自定义</option>
+                                    </select>
+                                    <input type="text" id="loc-multi-image-label" class="form-input" placeholder="标签，如：正门" style="flex: 0 0 100px;">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="triggerLocMultiImageUpload()">上传图片</button>
+                                    <input type="file" id="loc-multi-image-file" accept="image/*" style="display: none;" onchange="handleLocMultiImageUpload(event)">
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2743,12 +2776,21 @@
             document.getElementById('char-behavior').value = data.behavior || '';
             document.getElementById('char-other').value = data.other_info || '';
             document.getElementById('char-image').value = data.reference_image || '';
-            
+
             // 如果有图片，显示预览
             if (data.reference_image) {
                 showImagePreview('char-image', data.reference_image);
             } else {
                 removeImagePreview('char-image');
+            }
+
+            // 填充多服装参考图
+            const multiImageList = document.getElementById('char-multi-image-list');
+            multiImageList.innerHTML = '';
+            if (data.reference_images && Array.isArray(data.reference_images)) {
+                data.reference_images.forEach(img => {
+                    addCharMultiImageItem(multiImageList, img.label || '服装', img.url, img.id);
+                });
             }
         }
 
@@ -2759,13 +2801,104 @@
             document.getElementById('loc-parent').value = data.parent_id || '';
             document.getElementById('loc-description').value = data.description || '';
             document.getElementById('loc-image').value = data.reference_image || '';
-            
+
             // 如果有图片，显示预览
             if (data.reference_image) {
                 showImagePreview('loc-image', data.reference_image);
             } else {
                 removeImagePreview('loc-image');
             }
+
+            // 填充多角度参考图
+            const multiImageList = document.getElementById('loc-multi-image-list');
+            multiImageList.innerHTML = '';
+            if (data.reference_images && Array.isArray(data.reference_images)) {
+                data.reference_images.forEach(img => {
+                    addLocMultiImageItem(multiImageList, img.label || img.angle || '正面', img.url, img.angle || 'front', img.id);
+                });
+            }
+        }
+
+        // 触发场景多角度图片上传
+        function triggerLocMultiImageUpload() {
+            const fileInput = document.getElementById('loc-multi-image-file');
+            fileInput.click();
+        }
+
+        // 处理场景多角度图片上传
+        async function handleLocMultiImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // 验证文件类型
+            if (!file.type.startsWith('image/')) {
+                showError('请选择图片文件');
+                event.target.value = '';
+                return;
+            }
+
+            // 验证文件大小 (10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                showError('图片大小不能超过10MB');
+                event.target.value = '';
+                return;
+            }
+
+            const angleSelect = document.getElementById('loc-multi-image-angle');
+            const labelInput = document.getElementById('loc-multi-image-label');
+            const list = document.getElementById('loc-multi-image-list');
+            const angle = angleSelect.value;
+            const label = labelInput.value.trim() || angleSelect.options[angleSelect.selectedIndex].text;
+
+            showInfo('正在上传图片...');
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', USER_ID);
+            formData.append('world_id', WORLD_ID);
+            formData.append('item_type', 2); // 2=location
+            formData.append('auth_token', AUTH_TOKEN);
+
+            try {
+                const response = await fetch('/api/upload-image', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    addLocMultiImageItem(list, label, data.url, angle, undefined);
+                    labelInput.value = '';
+                    showSuccess('图片上传成功');
+                } else {
+                    showError('上传失败: ' + data.error);
+                }
+            } catch (error) {
+                showError('上传失败: ' + error.message);
+            }
+
+            event.target.value = '';
+        }
+
+        function addLocMultiImageItem(container, label, url, angle, imgId) {
+            const wrapper = document.createElement('div');
+            wrapper.dataset.multiLocImage = '';
+            wrapper.dataset.id = imgId || '';
+            wrapper.dataset.label = label;
+            wrapper.dataset.angle = angle;
+            wrapper.dataset.url = url;
+            wrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+            wrapper.innerHTML = `
+                <img src="${url}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'" />
+                <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+                <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
+            `;
+            wrapper.querySelector('button').addEventListener('click', () => wrapper.remove());
+            container.appendChild(wrapper);
         }
 
         function showPropEditor(fileName, data) {
@@ -3087,7 +3220,101 @@
                 other_info: document.getElementById('char-other').value.trim(),
                 reference_image: document.getElementById('char-image').value.trim()
             };
+            // 收集多服装参考图
+            const multiImageItems = document.querySelectorAll('#char-multi-image-list [data-multi-char-image]');
+            if (multiImageItems.length > 0) {
+                data.reference_images = [];
+                multiImageItems.forEach(item => {
+                    const imgData = {
+                        label: item.dataset.label || '默认',
+                        url: item.dataset.url
+                    };
+                    if (item.dataset.id) {
+                        imgData.id = item.dataset.id;
+                    }
+                    data.reference_images.push(imgData);
+                });
+            }
             return JSON.stringify(data, null, 2);
+        }
+
+        // 触发角色多图片上传
+        function triggerCharMultiImageUpload() {
+            const fileInput = document.getElementById('char-multi-image-file');
+            fileInput.click();
+        }
+
+        // 处理角色多图片上传
+        async function handleCharMultiImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // 验证文件类型
+            if (!file.type.startsWith('image/')) {
+                showError('请选择图片文件');
+                event.target.value = '';
+                return;
+            }
+
+            // 验证文件大小 (10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                showError('图片大小不能超过10MB');
+                event.target.value = '';
+                return;
+            }
+
+            const labelInput = document.getElementById('char-multi-image-label');
+            const list = document.getElementById('char-multi-image-list');
+            const label = labelInput.value.trim() || '服装';
+
+            showInfo('正在上传图片...');
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', USER_ID);
+            formData.append('world_id', WORLD_ID);
+            formData.append('item_type', 1); // 1=character
+            formData.append('auth_token', AUTH_TOKEN);
+
+            try {
+                const response = await fetch('/api/upload-image', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    addCharMultiImageItem(list, label, data.url, undefined);
+                    labelInput.value = '';
+                    showSuccess('图片上传成功');
+                } else {
+                    showError('上传失败: ' + data.error);
+                }
+            } catch (error) {
+                showError('上传失败: ' + error.message);
+            }
+
+            event.target.value = '';
+        }
+
+        function addCharMultiImageItem(container, label, url, imgId) {
+            const wrapper = document.createElement('div');
+            wrapper.dataset.multiCharImage = '';
+            wrapper.dataset.id = imgId || '';
+            wrapper.dataset.label = label;
+            wrapper.dataset.url = url;
+            wrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+            wrapper.innerHTML = `
+                <img src="${url}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'" />
+                <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+                <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
+            `;
+            wrapper.querySelector('button').addEventListener('click', () => wrapper.remove());
+            container.appendChild(wrapper);
         }
 
         function collectLocationData() {
@@ -3098,6 +3325,22 @@
                 description: document.getElementById('loc-description').value.trim(),
                 reference_image: document.getElementById('loc-image').value.trim()
             };
+            // 收集多角度参考图
+            const multiImageItems = document.querySelectorAll('#loc-multi-image-list [data-multi-loc-image]');
+            if (multiImageItems.length > 0) {
+                data.reference_images = [];
+                multiImageItems.forEach(item => {
+                    const imgData = {
+                        label: item.dataset.label || '',
+                        angle: item.dataset.angle || 'front',
+                        url: item.dataset.url
+                    };
+                    if (item.dataset.id) {
+                        imgData.id = item.dataset.id;
+                    }
+                    data.reference_images.push(imgData);
+                });
+            }
             return JSON.stringify(data, null, 2);
         }
 

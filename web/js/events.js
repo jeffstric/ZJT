@@ -1096,12 +1096,6 @@
                 from: state.connecting.fromId,
                 to: nearestPort.nodeId
               });
-              
-              // 如果连接涉及角色节点，更新角色卡按钮状态
-              const sourceNode = state.nodes.find(n => n.id === state.connecting.fromId);
-              if(sourceNode && sourceNode.type === 'character'){
-                updateCharacterCardButtonState(state.connecting.fromId);
-              }
             }
           }
         }
@@ -1637,7 +1631,7 @@
     function createCharacterNodeWithData(nodeData) {
       const savedNextNodeId = state.nextNodeId;
       state.nextNodeId = nodeData.id;
-      
+
       const id = state.nextNodeId++;
       const node = {
         id,
@@ -1648,14 +1642,22 @@
         data: nodeData.data
       };
       state.nodes.push(node);
-      
+
       const el = document.createElement('div');
       el.className = 'node';
       el.dataset.nodeId = String(id);
       el.style.left = node.x + 'px';
       el.style.top = node.y + 'px';
-      
+
       const character = nodeData.data;
+      // 确保 reference_images 是数组
+      if (character.reference_images && typeof character.reference_images === 'string') {
+        try {
+          character.reference_images = JSON.parse(character.reference_images);
+        } catch (e) {
+          character.reference_images = [];
+        }
+      }
       el.innerHTML = `
         <div class="node-header">
           <div class="node-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><circle cx="12" cy="8" r="3"/><path d="M6 21C6 17.6863 8.68629 15 12 15C15.3137 15 18 17.6863 18 21" stroke-linecap="round"/></svg>角色: ${escapeHtml(character.name)}</div>
@@ -1671,6 +1673,16 @@
               </div>
             </div>
           ` : ''}
+          ${character.reference_images && Array.isArray(character.reference_images) && character.reference_images.length > 0 ? `
+            <div class="field">
+              <div class="label">多服装参考图</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                ${character.reference_images.map((img, idx) => `
+                  <img src="${img.url}" class="preview character-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.label || '服装'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
           ${character.age ? `<div class="field"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
           ${character.identity ? `<div class="field"><div class="label">身份/职业</div><div>${escapeHtml(character.identity)}</div></div>` : ''}
           ${character.personality ? `<div class="field"><div class="label">性格</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.personality.slice(0, 100))}${character.personality.length > 100 ? '...' : ''}</div></div>` : ''}
@@ -1678,36 +1690,27 @@
           ${character.other_info ? `<div class="field"><div class="label">其他信息</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.other_info.slice(0, 100))}${character.other_info.length > 100 ? '...' : ''}</div></div>` : ''}
           <div class="field btn-row">
             <button class="mini-btn character-edit-btn" type="button">编辑</button>
-            <button class="mini-btn character-sora-video-btn" type="button" style="${character.sora_character ? 'background: white; color: #111827; border: 1px solid #d1d5db;' : 'background: #8b5cf6; color: white;'}">${character.sora_character ? '重新生成sora角色视频' : '生成sora角色视频'}</button>
           </div>
-          <div class="field btn-row" style="display: flex; align-items: center; gap: 8px;">
-            <button class="mini-btn character-create-card-btn" type="button" style="${character.sora_character ? 'background: white; color: #111827; border: 1px solid #d1d5db;' : 'background: #10b981; color: white;'} opacity: 0.5; cursor: not-allowed;" data-can-click="false">${character.sora_character ? '重新生成sora角色卡' : '创建sora角色卡'}</button>
-            <span class="character-card-help-icon" style="display: none; width: 16px; height: 16px; border-radius: 50%; background: #ef4444; color: white; font-size: 12px; line-height: 16px; text-align: center; cursor: help; flex-shrink: 0;" title="如果角色持续创建失败，请尝试更改角色图片 并 重新生成角色视频">?</span>
-          </div>
-          <div class="character-sora-video-error" style="display: none; color: #dc2626; font-size: 12px; margin-top: 8px; padding: 8px; background: #fee2e2; border-radius: 6px; border: 1px solid #fecaca;"></div>
         </div>
         <div class="port output" data-port="output" title="输出"></div>
       `;
       
       // 添加调试按钮
       addDebugButtonToNode(el, node);
-      
+
       canvasEl.appendChild(el);
-      
+
       // 绑定事件
       const headerEl = el.querySelector('.node-header');
       const deleteBtn = el.querySelector('[data-action="delete"]');
       const editBtn = el.querySelector('.character-edit-btn');
-      const soraVideoBtn = el.querySelector('.character-sora-video-btn');
-      const createCardBtn = el.querySelector('.character-create-card-btn');
-      const helpIcon = el.querySelector('.character-card-help-icon');
       const outputPort = el.querySelector('.port.output');
-      
+
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         removeNode(id);
       });
-      
+
       // 图片点击放大事件
       const characterImg = el.querySelector('.character-preview-img');
       if (characterImg) {
@@ -1716,7 +1719,18 @@
           openImageModal(character.reference_image, `角色: ${character.name}`);
         });
       }
-      
+
+      // 多服装参考图点击放大事件
+      const multiImgList = el.querySelectorAll('.character-multi-preview-img');
+      multiImgList.forEach((img) => {
+        img.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = img.dataset.refImg;
+          const imgLabel = img.dataset.refLabel || '服装';
+          openImageModal(imgUrl, `角色: ${character.name} - ${imgLabel}`);
+        });
+      });
+
       // 下载图片按钮事件
       const downloadImgBtn = el.querySelector('.character-download-btn');
       if (downloadImgBtn) {
@@ -1728,45 +1742,18 @@
           }
         });
       }
-      
+
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openCharacterEditModal(id, character);
       });
-      
-      soraVideoBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        generateSoraCharacterVideo(id, character);
-      });
-      
-      createCardBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const canClick = createCardBtn.getAttribute('data-can-click') === 'true';
-        if (!canClick) {
-          showToast('请先连接一个视频节点，或生成角色视频后再创建角色卡', 'warning');
-          return;
-        }
-        createSoraCharacterCard(id, character);
-      });
-      
-      // 初始化时检查是否已有连接的视频节点
-      setTimeout(() => {
-        updateCharacterCardButtonState(id);
-      }, 100);
-      
-      if (helpIcon) {
-        helpIcon.addEventListener('click', (e) => {
-          e.stopPropagation();
-          showToast('如果角色持续创建失败，请尝试更改角色图片并重新生成角色视频', 'info');
-        });
-      }
-      
+
       el.addEventListener('mousedown', (e) => {
         if(e.target.classList.contains('port')) return;
         e.stopPropagation();
         setSelected(id);
       });
-      
+
       headerEl.addEventListener('mousedown', (e) => {
         if(e.target.classList.contains('port')) return;
         e.preventDefault();
@@ -1777,7 +1764,7 @@
         }
         initNodeDrag(id, e.clientX, e.clientY);
       });
-      
+
       if(outputPort) {
         outputPort.addEventListener('mousedown', (e) => {
           e.preventDefault();
@@ -1786,17 +1773,26 @@
           canvasEl.style.cursor = 'crosshair';
         });
       }
-      
+
       state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
     }
-    
+
     // 创建角色节点
     function createCharacterNode(character) {
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       const x = viewportPos.x;
       const y = viewportPos.y;
-      
+
+      // 确保 reference_images 是数组
+      if (character.reference_images && typeof character.reference_images === 'string') {
+        try {
+          character.reference_images = JSON.parse(character.reference_images);
+        } catch (e) {
+          character.reference_images = [];
+        }
+      }
+
       const node = {
         id,
         type: 'character',
@@ -1806,7 +1802,7 @@
         data: character
       };
       state.nodes.push(node);
-      
+
       const el = document.createElement('div');
       el.className = 'node';
       el.dataset.nodeId = String(id);
@@ -1825,6 +1821,16 @@
               <img src="${character.reference_image}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
             </div>
           ` : ''}
+          ${character.reference_images && Array.isArray(character.reference_images) && character.reference_images.length > 0 ? `
+            <div class="field field-always-visible">
+              <div class="label">多服装参考图</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                ${character.reference_images.map((img, idx) => `
+                  <img src="${img.url}" class="preview character-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.label || '服装'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
           ${character.age ? `<div class="field field-always-visible"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
           ${character.identity ? `<div class="field field-always-visible"><div class="label">身份/职业</div><div>${escapeHtml(character.identity)}</div></div>` : ''}
           ${character.personality ? `<div class="field field-always-visible"><div class="label">性格</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.personality.slice(0, 100))}${character.personality.length > 100 ? '...' : ''}</div></div>` : ''}
@@ -1835,36 +1841,27 @@
           </div>
           <div class="field field-collapsible btn-row">
             <button class="mini-btn character-edit-btn" type="button">编辑</button>
-            <button class="mini-btn character-sora-video-btn" type="button" style="${character.sora_character ? 'background: white; color: #111827; border: 1px solid #d1d5db;' : 'background: #8b5cf6; color: white;'}">${character.sora_character ? '重新生成sora角色视频' : '生成sora角色视频'}</button>
           </div>
-          <div class="field field-collapsible btn-row" style="display: flex; align-items: center; gap: 8px;">
-            <button class="mini-btn character-create-card-btn" type="button" style="${character.sora_character ? 'background: white; color: #111827; border: 1px solid #d1d5db;' : 'background: #10b981; color: white;'} opacity: 0.5; cursor: not-allowed;" data-can-click="false">${character.sora_character ? '重新生成sora角色卡' : '创建sora角色卡'}</button>
-            <span class="character-card-help-icon" style="display: none; width: 16px; height: 16px; border-radius: 50%; background: #ef4444; color: white; font-size: 12px; line-height: 16px; text-align: center; cursor: help; flex-shrink: 0;" title="如果角色持续创建失败，请尝试更改角色图片 并 重新生成角色视频">?</span>
-          </div>
-          <div class="character-sora-video-error" style="display: none; color: #dc2626; font-size: 12px; margin-top: 8px; padding: 8px; background: #fee2e2; border-radius: 6px; border: 1px solid #fecaca;"></div>
         </div>
         <div class="port output" data-port="output" title="输出"></div>
       `;
-      
+
       // 添加调试按钮
       addDebugButtonToNode(el, node);
-      
+
       canvasEl.appendChild(el);
-      
+
       // 绑定事件
       const headerEl = el.querySelector('.node-header');
       const deleteBtn = el.querySelector('[data-action="delete"]');
       const editBtn = el.querySelector('.character-edit-btn');
-      const soraVideoBtn = el.querySelector('.character-sora-video-btn');
-      const createCardBtn = el.querySelector('.character-create-card-btn');
-      const helpIcon = el.querySelector('.character-card-help-icon');
       const outputPort = el.querySelector('.port.output');
-      
+
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         removeNode(id);
       });
-      
+
       // 图片点击放大事件
       const characterImg = el.querySelector('.character-preview-img');
       if (characterImg) {
@@ -1873,7 +1870,18 @@
           openImageModal(character.reference_image, `角色: ${character.name}`);
         });
       }
-      
+
+      // 多服装参考图点击放大事件
+      const multiImgList = el.querySelectorAll('.character-multi-preview-img');
+      multiImgList.forEach((img) => {
+        img.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = img.dataset.refImg;
+          const imgLabel = img.dataset.refLabel || '服装';
+          openImageModal(imgUrl, `角色: ${character.name} - ${imgLabel}`);
+        });
+      });
+
       // 下载图片按钮事件
       const downloadImgBtn = el.querySelector('.character-download-btn');
       if (downloadImgBtn) {
@@ -1885,45 +1893,18 @@
           }
         });
       }
-      
+
       editBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openCharacterEditModal(id, character);
       });
-      
-      soraVideoBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        generateSoraCharacterVideo(id, character);
-      });
-      
-      createCardBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const canClick = createCardBtn.getAttribute('data-can-click') === 'true';
-        if (!canClick) {
-          showToast('请先连接一个视频节点，或生成角色视频后再创建角色卡', 'warning');
-          return;
-        }
-        createSoraCharacterCard(id, character);
-      });
-      
-      // 初始化时检查是否已有连接的视频节点
-      setTimeout(() => {
-        updateCharacterCardButtonState(id);
-      }, 100);
-      
-      if (helpIcon) {
-        helpIcon.addEventListener('click', (e) => {
-          e.stopPropagation();
-          showToast('如果角色持续创建失败，请尝试更改角色图片并重新生成角色视频', 'info');
-        });
-      }
-      
+
       el.addEventListener('mousedown', (e) => {
         if(e.target.classList.contains('port')) return;
         e.stopPropagation();
         setSelected(id);
       });
-      
+
       headerEl.addEventListener('mousedown', (e) => {
         if(e.target.classList.contains('port')) return;
         e.preventDefault();
@@ -1934,7 +1915,7 @@
         }
         initNodeDrag(id, e.clientX, e.clientY);
       });
-      
+
       if(outputPort) {
         outputPort.addEventListener('mousedown', (e) => {
           e.preventDefault();
@@ -1954,7 +1935,7 @@
     function createLocationNodeWithData(nodeData) {
       const savedNextNodeId = state.nextNodeId;
       state.nextNodeId = nodeData.id;
-      
+
       const id = state.nextNodeId++;
       const node = {
         id,
@@ -1965,14 +1946,22 @@
         data: nodeData.data
       };
       state.nodes.push(node);
-      
+
       const el = document.createElement('div');
       el.className = 'node';
       el.dataset.nodeId = String(id);
       el.style.left = node.x + 'px';
       el.style.top = node.y + 'px';
-      
+
       const location = nodeData.data;
+      // 确保 reference_images 是数组
+      if (location.reference_images && typeof location.reference_images === 'string') {
+        try {
+          location.reference_images = JSON.parse(location.reference_images);
+        } catch (e) {
+          location.reference_images = [];
+        }
+      }
       el.innerHTML = `
         <div class="node-header">
           <div class="node-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M12 2C8.13 2 5 5.13 5 9C5 14.25 12 22 12 22C12 22 19 14.25 19 9C19 5.13 15.87 2 12 2Z"/><circle cx="12" cy="9" r="2.5"/></svg>场景: ${escapeHtml(location.name)}</div>
@@ -1988,6 +1977,16 @@
               <img src="${location.reference_image}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
               <div style="display: flex; gap: 8px; margin-top: 8px;">
                 <button class="mini-btn location-download-btn" type="button" data-img-url="${location.reference_image}">下载图片</button>
+              </div>
+            </div>
+          ` : ''}
+          ${location.reference_images && Array.isArray(location.reference_images) && location.reference_images.length > 0 ? `
+            <div class="field">
+              <div class="label">多角度参考图</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                ${location.reference_images.map((img, idx) => `
+                  <img src="${img.url}" class="preview location-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.angle || img.label || '角度'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                `).join('')}
               </div>
             </div>
           ` : ''}
@@ -2032,7 +2031,18 @@
           }
         });
       }
-      
+
+      // 多角度参考图点击放大
+      const multiImgList = el.querySelectorAll('.location-multi-preview-img');
+      multiImgList.forEach(img => {
+        img.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = img.dataset.refImg;
+          const imgLabel = img.dataset.refLabel;
+          openImageModal(imgUrl, imgLabel || '角度参考图');
+        });
+      });
+
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         removeNode(id);
@@ -2073,7 +2083,16 @@
       const viewportPos = getViewportNodePosition();
       const x = viewportPos.x;
       const y = viewportPos.y;
-      
+
+      // 确保 reference_images 是数组
+      if (location.reference_images && typeof location.reference_images === 'string') {
+        try {
+          location.reference_images = JSON.parse(location.reference_images);
+        } catch (e) {
+          location.reference_images = [];
+        }
+      }
+
       const node = {
         id,
         type: 'location',
@@ -2083,13 +2102,13 @@
         data: location
       };
       state.nodes.push(node);
-      
+
       const el = document.createElement('div');
       el.className = 'node';
       el.dataset.nodeId = String(id);
       el.style.left = node.x + 'px';
       el.style.top = node.y + 'px';
-      
+
       el.innerHTML = `
         <div class="node-header">
           <div class="node-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M12 2C8.13 2 5 5.13 5 9C5 14.25 12 22 12 22C12 22 19 14.25 19 9C19 5.13 15.87 2 12 2Z"/><circle cx="12" cy="9" r="2.5"/></svg>场景: ${escapeHtml(location.name)}</div>
@@ -2108,11 +2127,21 @@
               </div>
             </div>
           ` : ''}
+          ${location.reference_images && Array.isArray(location.reference_images) && location.reference_images.length > 0 ? `
+            <div class="field">
+              <div class="label">多角度参考图</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                ${location.reference_images.map((img, idx) => `
+                  <img src="${img.url}" class="preview location-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.angle || img.label || '角度'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
           ${location.description ? `<div class="field"><div class="label">描述</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(location.description)}</div></div>` : ''}
         </div>
         <div class="port output" data-port="output" title="输出"></div>
       `;
-      
+
       // 添加调试按钮
       addDebugButtonToNode(el, node);
       
@@ -2149,7 +2178,18 @@
           }
         });
       }
-      
+
+      // 多角度参考图点击放大
+      const multiImgList = el.querySelectorAll('.location-multi-preview-img');
+      multiImgList.forEach(img => {
+        img.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const imgUrl = img.dataset.refImg;
+          const imgLabel = img.dataset.refLabel;
+          openImageModal(imgUrl, imgLabel || '角度参考图');
+        });
+      });
+
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         removeNode(id);
@@ -2625,7 +2665,16 @@
       document.getElementById('createCharacterOtherInfoInput').value = '';
       document.getElementById('createCharacterImageInput').value = '';
       document.getElementById('createCharacterVoiceInput').value = '';
-      
+
+      // 重置多服装参考图
+      window._pendingMultiImages = [];
+      const multiImageList = document.getElementById('createCharacterMultiImageList');
+      if (multiImageList) multiImageList.innerHTML = '';
+      const multiImageFile = document.getElementById('createCharacterMultiImageFile');
+      if (multiImageFile) multiImageFile.value = '';
+      const multiImageLabel = document.getElementById('createCharacterMultiImageLabel');
+      if (multiImageLabel) multiImageLabel.value = '';
+
       // 重置音频预览
       const voicePreview = document.getElementById('createCharacterVoicePreview');
       const voicePreviewAudio = document.getElementById('createCharacterVoicePreviewAudio');
@@ -2679,7 +2728,27 @@
         if (otherInfoInput.value.trim()) formData.append('other_info', otherInfoInput.value.trim());
         if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
         if (voiceInput.files.length > 0) formData.append('default_voice', voiceInput.files[0]);
-        
+
+        // 添加多服装参考图
+        const multiImageList = document.getElementById('createCharacterMultiImageList');
+        const multiImageItems = multiImageList.querySelectorAll('[data-multi-image]');
+        const multiLabels = [];
+        const multiFiles = [];
+        multiImageItems.forEach(item => {
+          const file = item._file;
+          const label = item.dataset.label || '服装';
+          if (file) {
+            multiFiles.push(file);
+            multiLabels.push(label);
+          }
+        });
+        if (multiFiles.length > 0) {
+          formData.append('reference_images_labels', JSON.stringify(multiLabels));
+          multiFiles.forEach(file => {
+            formData.append('reference_images_files', file);
+          });
+        }
+
         const response = await fetch('/api/characters', {
           method: 'POST',
           headers: {
@@ -2726,11 +2795,51 @@
     document.getElementById('createCharacterSaveBtn').addEventListener('click', () => {
       createCharacter();
     });
-    
+
     document.getElementById('createCharacterModal').addEventListener('click', (e) => {
       if (e.target.id === 'createCharacterModal') {
         document.getElementById('createCharacterModal').classList.remove('show');
       }
+    });
+
+    // 多服装图片添加按钮事件
+    document.getElementById('createCharacterMultiImageAddBtn').addEventListener('click', () => {
+      const fileInput = document.getElementById('createCharacterMultiImageFile');
+      const labelInput = document.getElementById('createCharacterMultiImageLabel');
+      const listEl = document.getElementById('createCharacterMultiImageList');
+
+      if (!fileInput.files || !fileInput.files[0]) {
+        showToast('请选择图片文件', 'error');
+        return;
+      }
+      const file = fileInput.files[0];
+      const maxSize = (typeof uploadConfig !== 'undefined' ? uploadConfig.max_image_size_mb : 10) * 1024 * 1024;
+      if (file.size > maxSize) {
+        showToast(`图片不能超过${maxSize / 1024 / 1024}MB`, 'error');
+        return;
+      }
+
+      const label = labelInput.value.trim() || '默认';
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const imgWrapper = document.createElement('div');
+        imgWrapper.dataset.multiImage = '';
+        imgWrapper.dataset.label = label;
+        imgWrapper._file = file;
+        imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+        imgWrapper.innerHTML = `
+          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+          <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
+        `;
+        imgWrapper.querySelector('button').addEventListener('click', () => {
+          imgWrapper.remove();
+        });
+        listEl.appendChild(imgWrapper);
+      }
+      reader.readAsDataURL(file);
+      fileInput.value = '';
+      labelInput.value = '';
     });
     
     // 创建角色音频文件选择预览
@@ -2885,7 +2994,11 @@
       document.getElementById('createLocationParentSelect').value = '';
       document.getElementById('createLocationDescInput').value = '';
       document.getElementById('createLocationImageInput').value = '';
-      
+
+      // 重置多角度参考图
+      const multiImageList = document.getElementById('createLocationMultiImageList');
+      if (multiImageList) multiImageList.innerHTML = '';
+
       // 加载父场景列表
       await loadParentLocationOptions(worldId);
       
@@ -2961,7 +3074,29 @@
         
         if (descInput.value.trim()) formData.append('description', descInput.value.trim());
         if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
-        
+
+        // 添加多角度参考图
+        const multiImageList = document.getElementById('createLocationMultiImageList');
+        const multiImageItems = multiImageList.querySelectorAll('[data-multi-location-image]');
+        const multiLabels = [];
+        const multiAngles = [];
+        const multiFiles = [];
+        multiImageItems.forEach(item => {
+          const file = item._file;
+          if (file) {
+            multiLabels.push(item.dataset.label || '');
+            multiAngles.push(item.dataset.angle || 'front');
+            multiFiles.push(file);
+          }
+        });
+        if (multiFiles.length > 0) {
+          formData.append('reference_images_labels', JSON.stringify(multiLabels));
+          formData.append('reference_images_angles', JSON.stringify(multiAngles));
+          multiFiles.forEach(file => {
+            formData.append('reference_images_files', file);
+          });
+        }
+
         const response = await fetch('/api/locations', {
           method: 'POST',
           headers: {
@@ -3419,7 +3554,26 @@
           
           // 加载父场景选项
           await loadEditParentLocationOptions(worldId, locationId, location.parent_id);
-          
+
+          // 加载多角度参考图
+          const multiImageList = document.getElementById('editLocationMultiImageList');
+          multiImageList.innerHTML = '';
+          if (location.reference_images && Array.isArray(location.reference_images)) {
+            location.reference_images.forEach((img, idx) => {
+              const imgContainer = document.createElement('div');
+              imgContainer.style.cssText = 'position: relative; display: inline-block;';
+              imgContainer.innerHTML = `
+                <img src="${img.url}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid #d1d5db;" />
+                <button type="button" class="remove-img-btn" data-img-url="${img.url}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #ef4444; color: white; border: none; cursor: pointer; font-size: 12px; line-height: 18px; text-align: center;">×</button>
+                ${img.angle ? `<div style="position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #6b7280; white-space: nowrap;">${escapeHtml(img.angle)}</div>` : ''}
+              `;
+              imgContainer.querySelector('.remove-img-btn').addEventListener('click', () => {
+                imgContainer.remove();
+              });
+              multiImageList.appendChild(imgContainer);
+            });
+          }
+
           document.getElementById('editLocationModal').classList.add('show');
         }
       } catch (error) {
@@ -3501,7 +3655,40 @@
         
         if (descInput.value.trim()) formData.append('description', descInput.value.trim());
         if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
-        
+
+        // 添加多角度参考图
+        const multiImageList = document.getElementById('editLocationMultiImageList');
+        const multiImageItems = multiImageList.querySelectorAll('[data-multi-location-image]');
+        const existingImageUrls = [];
+        const multiLabels = [];
+        const multiAngles = [];
+        const multiFiles = [];
+        multiImageItems.forEach(item => {
+          const file = item._file;
+          if (file) {
+            // 新添加的图片
+            multiLabels.push(item.dataset.label || '');
+            multiAngles.push(item.dataset.angle || 'front');
+            multiFiles.push(file);
+          }
+        });
+        // 收集已存在的图片URL（通过 remove-img-btn 按钮的 data-img-url）
+        const removeBtns = multiImageList.querySelectorAll('.remove-img-btn');
+        removeBtns.forEach(btn => {
+          const url = btn.dataset.imgUrl;
+          if (url) {
+            existingImageUrls.push(url);
+          }
+        });
+        if (multiFiles.length > 0 || existingImageUrls.length > 0) {
+          formData.append('reference_images_labels', JSON.stringify(multiLabels));
+          formData.append('reference_images_angles', JSON.stringify(multiAngles));
+          formData.append('reference_images_existing_urls', JSON.stringify(existingImageUrls));
+          multiFiles.forEach(file => {
+            formData.append('reference_images_files', file);
+          });
+        }
+
         const response = await fetch(`/api/locations/${locationId}`, {
           method: 'PUT',
           headers: {
@@ -3549,7 +3736,55 @@
         document.getElementById('editLocationModal').classList.remove('show');
       }
     });
-    
+
+    // 编辑场景多角度参考图添加按钮事件
+    document.getElementById('editLocationMultiImageAddBtn').addEventListener('click', () => {
+      const fileInput = document.getElementById('editLocationMultiImageFile');
+      const angleSelect = document.getElementById('editLocationMultiImageAngle');
+      const labelInput = document.getElementById('editLocationMultiImageLabel');
+      const listEl = document.getElementById('editLocationMultiImageList');
+
+      if (!fileInput.files || !fileInput.files[0]) {
+        showToast('请选择图片文件', 'error');
+        return;
+      }
+      const file = fileInput.files[0];
+      const maxSize = (typeof uploadConfig !== 'undefined' ? uploadConfig.max_image_size_mb : 10) * 1024 * 1024;
+      if (file.size > maxSize) {
+        showToast(`图片不能超过${maxSize / 1024 / 1024}MB`, 'error');
+        return;
+      }
+
+      const angle = angleSelect.value;
+      let label = labelInput.value.trim();
+      if (!label) {
+        const angleLabels = { front: '正面', back: '背面', left: '左侧', right: '右侧', custom: '自定义' };
+        label = angleLabels[angle] || angle;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const imgWrapper = document.createElement('div');
+        imgWrapper.dataset.multiLocationImage = '';
+        imgWrapper.dataset.label = label;
+        imgWrapper.dataset.angle = angle;
+        imgWrapper._file = file;
+        imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+        imgWrapper.innerHTML = `
+          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+          <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
+        `;
+        imgWrapper.querySelector('button').addEventListener('click', () => {
+          imgWrapper.remove();
+        });
+        listEl.appendChild(imgWrapper);
+      }
+      reader.readAsDataURL(file);
+      fileInput.value = '';
+      labelInput.value = '';
+    });
+
     // 场景描述字数统计
     const createDescInput = document.getElementById('createLocationDescInput');
     const createDescCount = document.getElementById('createLocationDescCount');
@@ -3590,7 +3825,55 @@
         document.getElementById('createLocationModal').classList.remove('show');
       }
     });
-    
+
+    // 多角度参考图添加按钮事件
+    document.getElementById('createLocationMultiImageAddBtn').addEventListener('click', () => {
+      const fileInput = document.getElementById('createLocationMultiImageFile');
+      const angleSelect = document.getElementById('createLocationMultiImageAngle');
+      const labelInput = document.getElementById('createLocationMultiImageLabel');
+      const listEl = document.getElementById('createLocationMultiImageList');
+
+      if (!fileInput.files || !fileInput.files[0]) {
+        showToast('请选择图片文件', 'error');
+        return;
+      }
+      const file = fileInput.files[0];
+      const maxSize = (typeof uploadConfig !== 'undefined' ? uploadConfig.max_image_size_mb : 10) * 1024 * 1024;
+      if (file.size > maxSize) {
+        showToast(`图片不能超过${maxSize / 1024 / 1024}MB`, 'error');
+        return;
+      }
+
+      const angle = angleSelect.value;
+      let label = labelInput.value.trim();
+      if (!label) {
+        const angleLabels = { front: '正面', back: '背面', left: '左侧', right: '右侧', custom: '自定义' };
+        label = angleLabels[angle] || angle;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const imgWrapper = document.createElement('div');
+        imgWrapper.dataset.multiLocationImage = '';
+        imgWrapper.dataset.label = label;
+        imgWrapper.dataset.angle = angle;
+        imgWrapper._file = file;
+        imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+        imgWrapper.innerHTML = `
+          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+          <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
+        `;
+        imgWrapper.querySelector('button').addEventListener('click', () => {
+          imgWrapper.remove();
+        });
+        listEl.appendChild(imgWrapper);
+      }
+      reader.readAsDataURL(file);
+      fileInput.value = '';
+      labelInput.value = '';
+    });
+
     // 创建道具按钮事件
     document.getElementById('createPropsBtn').addEventListener('click', () => {
       openCreatePropsModal();
@@ -3630,7 +3913,6 @@
       document.getElementById('editCharacterPersonalityInput').value = character.personality || '';
       document.getElementById('editCharacterBehaviorInput').value = character.behavior || '';
       document.getElementById('editCharacterOtherInfoInput').value = character.other_info || '';
-      document.getElementById('editCharacterSoraCharacterInput').value = character.sora_character || '';
       
       // 重置文件输入框，防止上一个角色的文件名残留
       document.getElementById('editCharacterImageInput').value = '';
@@ -3653,7 +3935,26 @@
       } else {
         voicePreview.style.display = 'none';
       }
-      
+
+      // 加载多服装参考图
+      const multiImageList = document.getElementById('editCharacterMultiImageList');
+      multiImageList.innerHTML = '';
+      if (character.reference_images && Array.isArray(character.reference_images)) {
+        character.reference_images.forEach((img, idx) => {
+          const imgContainer = document.createElement('div');
+          imgContainer.style.cssText = 'position: relative; display: inline-block;';
+          imgContainer.innerHTML = `
+            <img src="${img.url}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid #d1d5db;" />
+            <button type="button" class="remove-img-btn" data-img-url="${img.url}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #ef4444; color: white; border: none; cursor: pointer; font-size: 12px; line-height: 18px; text-align: center;">×</button>
+            ${img.label ? `<div style="position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #6b7280; white-space: nowrap;">${escapeHtml(img.label)}</div>` : ''}
+          `;
+          imgContainer.querySelector('.remove-img-btn').addEventListener('click', () => {
+            imgContainer.remove();
+          });
+          multiImageList.appendChild(imgContainer);
+        });
+      }
+
       document.getElementById('editCharacterModal').classList.add('show');
     }
     
@@ -3665,7 +3966,6 @@
       const personalityInput = document.getElementById('editCharacterPersonalityInput');
       const behaviorInput = document.getElementById('editCharacterBehaviorInput');
       const otherInfoInput = document.getElementById('editCharacterOtherInfoInput');
-      const soraCharacterInput = document.getElementById('editCharacterSoraCharacterInput');
       const imageInput = document.getElementById('editCharacterImageInput');
       const voiceInput = document.getElementById('editCharacterVoiceInput');
       const saveBtn = document.getElementById('editCharacterSaveBtn');
@@ -3705,10 +4005,39 @@
         if (personalityInput.value.trim()) formData.append('personality', personalityInput.value.trim());
         if (behaviorInput.value.trim()) formData.append('behavior', behaviorInput.value.trim());
         if (otherInfoInput.value.trim()) formData.append('other_info', otherInfoInput.value.trim());
-        if (soraCharacterInput.value.trim()) formData.append('sora_character', soraCharacterInput.value.trim());
         if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
         if (voiceInput.files.length > 0) formData.append('default_voice', voiceInput.files[0]);
-        
+
+        // 添加多服装参考图
+        const multiImageList = document.getElementById('editCharacterMultiImageList');
+        const multiImageItems = multiImageList.querySelectorAll('[data-multi-image]');
+        const existingImageUrls = [];
+        const multiLabels = [];
+        const multiFiles = [];
+        multiImageItems.forEach(item => {
+          const file = item._file;
+          if (file) {
+            // 新添加的图片
+            multiLabels.push(item.dataset.label || '服装');
+            multiFiles.push(file);
+          }
+        });
+        // 收集已存在的图片URL（通过 remove-img-btn 按钮的 data-img-url）
+        const removeBtns = multiImageList.querySelectorAll('.remove-img-btn');
+        removeBtns.forEach(btn => {
+          const url = btn.dataset.imgUrl;
+          if (url) {
+            existingImageUrls.push(url);
+          }
+        });
+        if (multiFiles.length > 0 || existingImageUrls.length > 0) {
+          formData.append('reference_images_labels', JSON.stringify(multiLabels));
+          formData.append('reference_images_existing_urls', JSON.stringify(existingImageUrls));
+          multiFiles.forEach(file => {
+            formData.append('reference_images_files', file);
+          });
+        }
+
         const response = await fetch('/api/characters/update', {
           method: 'POST',
           headers: {
@@ -3742,6 +4071,16 @@
                     <img src="${character.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
                   </div>
                 ` : ''}
+                ${character.reference_images && Array.isArray(character.reference_images) && character.reference_images.length > 0 ? `
+                  <div class="field field-always-visible">
+                    <div class="label">多服装参考图</div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                      ${character.reference_images.map((img, idx) => `
+                        <img src="${img.url}" class="preview character-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.label || '服装'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                      `).join('')}
+                    </div>
+                  </div>
+                ` : ''}
                 ${character.age ? `<div class="field field-always-visible"><div class="label">年龄</div><div>${escapeHtml(character.age)}</div></div>` : ''}
                 ${character.identity ? `<div class="field field-always-visible"><div class="label">身份/职业</div><div>${escapeHtml(character.identity)}</div></div>` : ''}
                 ${character.personality ? `<div class="field field-always-visible"><div class="label">性格</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.personality.slice(0, 100))}${character.personality.length > 100 ? '...' : ''}</div></div>` : ''}
@@ -3752,48 +4091,29 @@
                 </div>
                 <div class="field field-collapsible btn-row">
                   <button class="mini-btn character-edit-btn" type="button">编辑</button>
-                  <button class="mini-btn character-sora-video-btn" type="button" style="${character.sora_character ? 'background: white; color: #111827; border: 1px solid #d1d5db;' : 'background: #8b5cf6; color: white;'}">${character.sora_character ? '重新生成sora角色视频' : '生成sora角色视频'}</button>
                 </div>
-                <div class="field field-collapsible btn-row" style="display: flex; align-items: center; gap: 8px;">
-                  <button class="mini-btn character-create-card-btn" type="button" style="${character.sora_character ? 'background: white; color: #111827; border: 1px solid #d1d5db;' : 'background: #10b981; color: white;'} opacity: 0.5; cursor: not-allowed;" data-can-click="false">${character.sora_character ? '重新生成sora角色卡' : '创建sora角色卡'}</button>
-                  <span class="character-card-help-icon" style="display: none; width: 16px; height: 16px; border-radius: 50%; background: #ef4444; color: white; font-size: 12px; line-height: 16px; text-align: center; cursor: help; flex-shrink: 0;" title="如果角色持续创建失败，请尝试更改角色图片 并 重新生成角色视频">?</span>
-                </div>
-                <div class="character-sora-video-error" style="display: none; color: #dc2626; font-size: 12px; margin-top: 8px; padding: 8px; background: #fee2e2; border-radius: 6px; border: 1px solid #fecaca;"></div>
               `;
-              
+
               // 重新绑定按钮事件
               const editBtn = nodeBody.querySelector('.character-edit-btn');
-              const soraVideoBtn = nodeBody.querySelector('.character-sora-video-btn');
-              const createCardBtn = nodeBody.querySelector('.character-create-card-btn');
-              
+
               if (editBtn) {
                 editBtn.addEventListener('click', (e) => {
                   e.stopPropagation();
                   openCharacterEditModal(savedNodeId, character);
                 });
               }
-              
-              if (soraVideoBtn) {
-                soraVideoBtn.addEventListener('click', (e) => {
+
+              // 多服装参考图点击放大
+              const multiImgList = nodeBody.querySelectorAll('.character-multi-preview-img');
+              multiImgList.forEach(img => {
+                img.addEventListener('click', (e) => {
                   e.stopPropagation();
-                  generateSoraCharacterVideo(savedNodeId, character);
+                  const imgUrl = img.dataset.refImg;
+                  const imgLabel = img.dataset.refLabel;
+                  openImageModal(imgUrl, imgLabel || '服装参考图');
                 });
-              }
-              
-              if (createCardBtn) {
-                createCardBtn.addEventListener('click', (e) => {
-                  e.stopPropagation();
-                  const canClick = createCardBtn.getAttribute('data-can-click') === 'true';
-                  if (!canClick) {
-                    showToast('请先连接一个视频节点，或生成角色视频后再创建角色卡', 'warning');
-                    return;
-                  }
-                  createSoraCharacterCard(savedNodeId, character);
-                });
-              }
-              
-              // 更新按钮状态
-              updateCharacterCardButtonState(savedNodeId);
+              });
             }
             
             el.querySelector('.node-title').textContent = `角色: ${result.data.name}`;
@@ -3833,511 +4153,46 @@
       }
     });
 
-    // ========== 生成Sora角色视频功能 ==========
-    
-    async function generateSoraCharacterVideo(characterNodeId, character) {
-      if (!character || !character.name) {
-        showToast('角色信息不完整', 'error');
-        return;
-      }
-      
-      if (!character.reference_image) {
-        showToast('角色缺少参考图，无法生成视频', 'error');
-        return;
-      }
-      
-      const characterNode = state.nodes.find(n => n.id === characterNodeId);
-      if (!characterNode) {
-        showToast('找不到角色节点', 'error');
-        return;
-      }
-      
-      const soraVideoBtn = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-sora-video-btn`);
-      const errorEl = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-sora-video-error`);
-      
-      if (errorEl) {
-        errorEl.style.display = 'none';
-        errorEl.textContent = '';
-      }
-      
-      if (soraVideoBtn) {
-        soraVideoBtn.disabled = true;
-        soraVideoBtn.textContent = '生成中...';
-      }
-      
-      try {
-        const characterName = character.name;
-        const styleName = state.style.name || '默认风格';
-        const prompt = `说话："我是${characterName}，欢迎大家，非常感谢大家，欢迎大家，非常感谢大家，谢谢！" 然后缓慢转一圈360度全方位展示身体。视频风格为 ${styleName}`;
-        const imageUrl = character.reference_image;
-        const duration = 10;
-        const ratio = state.ratio || '16:9';
-        
-        showToast('正在生成Sora角色视频...', 'info');
-        
-        const userId = localStorage.getItem('user_id') || '1';
-        const authToken = localStorage.getItem('auth_token') || '';
-        
-        // 获取 Sora2 图生视频的 task_id
-        const taskId = TaskConfig.getTaskIdByKey('sora2', 'image_to_video');
-        if (!taskId) {
-          throw new Error('未找到 sora2 视频模型对应的任务配置');
-        }
-        
-        const form = new FormData();
-        
-        form.append('image_urls', imageUrl);
-        form.append('prompt', prompt);
-        form.append('duration_seconds', duration);
-        form.append('count', 1);
-        form.append('ratio', ratio);
-        form.append('task_id', taskId);
-        
-        if (userId) {
-          form.append('user_id', userId);
-        }
-        if (authToken) {
-          form.append('auth_token', authToken);
-        }
-        
-        const res = await fetch('/api/ai-app-run-image', {
-          method: 'POST',
-          body: form
-        });
-        
-        const data = await res.json();
-        
-        if (!data.project_ids || data.project_ids.length === 0) {
-          throw new Error(data.detail || data.message || '提交任务失败');
-        }
-        
-        const projectIds = data.project_ids;
-        showToast('视频生成任务已提交，正在处理...', 'info');
-        
-        pollVideoStatus(
-          projectIds,
-          (msg) => {
-            if (soraVideoBtn) {
-              soraVideoBtn.textContent = msg;
-            }
-          },
-          async (statusResult) => {
-            console.log('Sora character video generation status result:', statusResult);
-            
-            let videoUrls = [];
-            let videoProjectId = null;
-            
-            if (statusResult.tasks && Array.isArray(statusResult.tasks)) {
-              const successTasks = statusResult.tasks.filter(task => task.status === 'SUCCESS' && task.result);
-              videoUrls = successTasks.map(task => normalizeVideoUrl(task.result)).filter(Boolean);
-            } else {
-              const rawResults = extractResultsArray(statusResult);
-              videoUrls = Array.isArray(rawResults)
-                ? rawResults.map(normalizeVideoUrl).filter(Boolean)
-                : [];
-            }
-            
-            // 使用传入的 projectIds 作为 project_id
-            if (projectIds && projectIds.length > 0) {
-              videoProjectId = projectIds[0];
-            }
-            
-            console.log('Extracted video URLs:', videoUrls);
-            console.log('Video project ID:', videoProjectId);
-            
-            if (videoUrls.length === 0) {
-              const errorMsg = 'Sora角色视频生成失败，未获取到结果';
-              showToast(errorMsg, 'error');
-              if (errorEl) {
-                errorEl.textContent = errorMsg;
-                errorEl.style.display = 'block';
-              }
-              if (soraVideoBtn) {
-                soraVideoBtn.disabled = false;
-                soraVideoBtn.textContent = '生成sora角色视频';
-              }
-              return;
-            }
-            
-            const videoUrl = videoUrls[0];
-            const offsetX = 350;
-            const offsetY = 0;
-            const videoNodeX = characterNode.x + offsetX;
-            const videoNodeY = characterNode.y + offsetY;
-            
-            const newVideoNodeId = createVideoNode({
-              x: videoNodeX,
-              y: videoNodeY,
-              checkCollision: true
-            });
-            
-            const newVideoNode = state.nodes.find(n => n.id === newVideoNodeId);
-            if (newVideoNode) {
-              newVideoNode.data.url = videoUrl;
-              newVideoNode.data.name = `${characterName}角色视频`;
-              newVideoNode.data.project_id = videoProjectId;
-              newVideoNode.title = newVideoNode.data.name;
-              
-              const newNodeEl = canvasEl.querySelector(`.node[data-node-id="${newVideoNodeId}"]`);
-              if (newNodeEl) {
-                const titleEl = newNodeEl.querySelector('.node-title');
-                if (titleEl) titleEl.textContent = newVideoNode.title;
-                
-                const nameEl = newNodeEl.querySelector('.video-name');
-                if (nameEl) nameEl.textContent = newVideoNode.data.name;
-                
-                const previewField = newNodeEl.querySelector('.video-preview-field');
-                const thumbVideo = newNodeEl.querySelector('.video-thumb');
-                if (previewField && thumbVideo) {
-                  thumbVideo.src = proxyImageUrl(videoUrl);
-                  previewField.style.display = 'block';
-                }
-                const previewActionsField = newNodeEl.querySelector('.video-preview-actions-field');
-                if(previewActionsField) previewActionsField.style.display = 'block';
-              }
-              
-              state.connections.push({
-                id: state.nextConnId++,
-                from: characterNodeId,
-                to: newVideoNodeId
-              });
-              
-              // 更新角色卡按钮状态
-              updateCharacterCardButtonState(characterNodeId);
-              
-              console.log(`Created Sora character video node ${newVideoNodeId} with project_id:`, videoProjectId);
-              
-              // 延迟渲染连接，确保DOM元素已完全加载（特别是在节点很多的情况下）
-              setTimeout(() => {
-                renderConnections();
-                renderImageConnections();
-                renderFirstFrameConnections();
-                renderVideoConnections();
-                renderMinimap();
-              }, 100);
-            }
-            
-            showToast('Sora角色视频生成成功！现在可以点击"创建sora角色卡"按钮', 'success');
-            try { autoSaveWorkflow(); } catch(e) { console.error('Auto save failed:', e); }
-            
-            if (soraVideoBtn) {
-              soraVideoBtn.disabled = false;
-              soraVideoBtn.textContent = '生成sora角色视频';
-            }
-          },
-          (error) => {
-            const errorMsg = `生成失败: ${error}`;
-            showToast(errorMsg, 'error');
-            if (errorEl) {
-              errorEl.textContent = errorMsg;
-              errorEl.style.display = 'block';
-            }
-            if (soraVideoBtn) {
-              soraVideoBtn.disabled = false;
-              soraVideoBtn.textContent = '生成sora角色视频';
-            }
-          }
-        );
-        
-      } catch (error) {
-        console.error('生成Sora角色视频失败:', error);
-        const errorMsg = `生成失败: ${error.message || error}`;
-        showToast(errorMsg, 'error');
-        if (errorEl) {
-          errorEl.textContent = errorMsg;
-          errorEl.style.display = 'block';
-        }
-        if (soraVideoBtn) {
-          soraVideoBtn.disabled = false;
-          soraVideoBtn.textContent = '生成sora角色视频';
-        }
-      }
-    }
+    // 编辑角色多服装参考图添加按钮事件
+    document.getElementById('editCharacterMultiImageAddBtn').addEventListener('click', () => {
+      const fileInput = document.getElementById('editCharacterMultiImageFile');
+      const labelInput = document.getElementById('editCharacterMultiImageLabel');
+      const listEl = document.getElementById('editCharacterMultiImageList');
 
-    // ========== 创建Sora角色卡功能 ==========
-    
-    async function createSoraCharacterCard(characterNodeId, character) {
-      if (!character || !character.name) {
-        showToast('角色信息不完整', 'error');
+      if (!fileInput.files || !fileInput.files[0]) {
+        showToast('请选择图片文件', 'error');
         return;
       }
-      
-      const characterNode = state.nodes.find(n => n.id === characterNodeId);
-      if (!characterNode) {
-        showToast('找不到角色节点', 'error');
+      const file = fileInput.files[0];
+      const maxSize = (typeof uploadConfig !== 'undefined' ? uploadConfig.max_image_size_mb : 10) * 1024 * 1024;
+      if (file.size > maxSize) {
+        showToast(`图片不能超过${maxSize / 1024 / 1024}MB`, 'error');
         return;
       }
-      
-      const connectedVideoNode = findConnectedVideoNode(characterNodeId);
-      if (!connectedVideoNode) {
-        showToast('请先连接一个视频节点', 'error');
-        return;
-      }
-      
-      const videoProjectId = connectedVideoNode.data.project_id;
-      if (!videoProjectId) {
-        showToast('视频节点缺少project_id，无法创建角色卡', 'error');
-        return;
-      }
-      
-      const createCardBtn = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-create-card-btn`);
-      if (createCardBtn) {
-        createCardBtn.disabled = true;
-        createCardBtn.textContent = '创建中...';
-      }
-      
-      try {
-        showToast('正在创建角色卡...', 'info');
-        
-        const userId = localStorage.getItem('user_id') || '1';
-        const authToken = localStorage.getItem('auth_token') || '';
-        
-        // 从数据库记录ID获取实际的Duomi API任务ID
-        // videoProjectId 是数据库记录ID，需要查询数据库获取实际的 project_id
-        let actualTaskId = videoProjectId;
-        try {
-          // 调用后端接口获取数据库记录详情
-          const detailUrl = `/api/ai-tools/detail/${videoProjectId}`;
-          const detailRes = await fetch(detailUrl, {
-            headers: {
-              'Authorization': authToken ? `Bearer ${authToken}` : '',
-              'X-User-Id': userId
-            }
-          });
-          
-          if (detailRes.ok) {
-            const detailData = await detailRes.json();
-            if (detailData.success && detailData.data && detailData.data.project_id) {
-              actualTaskId = detailData.data.project_id;
-              console.log(`Resolved database record ID ${videoProjectId} to actual task ID: ${actualTaskId}`);
-            } else {
-              console.warn('Database record has no project_id, using record ID as fallback');
-            }
-          } else {
-            console.warn('Failed to fetch record detail, using record ID as fallback');
-          }
-        } catch (resolveError) {
-          console.warn('Failed to resolve task ID, using original value:', resolveError);
-        }
-        
-        const characterCardForm = new FormData();
-        characterCardForm.append('timestamps', '1,3');
-        characterCardForm.append('from_task', actualTaskId);
-        
-        if (userId) {
-          characterCardForm.append('user_id', userId);
-        }
-        if (authToken) {
-          characterCardForm.append('auth_token', authToken);
-        }
-        
-        const characterCardRes = await fetch('/api/create-character', {
-          method: 'POST',
-          body: characterCardForm
+
+      let label = labelInput.value.trim() || '服装';
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const imgWrapper = document.createElement('div');
+        imgWrapper.dataset.multiImage = '';
+        imgWrapper.dataset.label = label;
+        imgWrapper._file = file;
+        imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+        imgWrapper.innerHTML = `
+          <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+          <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
+        `;
+        imgWrapper.querySelector('button').addEventListener('click', () => {
+          imgWrapper.remove();
         });
-        
-        const characterCardData = await characterCardRes.json();
-        
-        if (characterCardData.success && characterCardData.task_id) {
-          const taskId = characterCardData.task_id;
-          console.log('Character card creation task submitted:', taskId);
-          
-          showToast('角色卡创建任务已提交，正在处理...', 'info');
-          
-          if (createCardBtn) {
-            createCardBtn.textContent = '处理中...';
-          }
-          
-          // 轮询状态直到完成（10分钟超时）
-          const maxAttempts = 600;
-          let attempts = 0;
-          
-          while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            attempts++;
-            
-            try {
-              const statusUrl = `/api/character-status/${taskId}${authToken ? '?auth_token=' + authToken : ''}`;
-              const statusRes = await fetch(statusUrl);
-              const statusData = await statusRes.json();
-              
-              console.log(`Character card status check ${attempts}:`, statusData);
-              
-              if (statusData.status === 'SUCCESS') {
-                // 获取角色卡ID
-                if (statusData.characters && statusData.characters.length > 0) {
-                  const characterCardId = statusData.characters[0].id;
-                  console.log('Character card created successfully, ID:', characterCardId);
-                  
-                  // 保存角色卡ID到角色数据
-                  characterNode.data.sora_character = characterCardId;
-                  character.sora_character = characterCardId;
-                  
-                  // 更新数据库中的角色记录
-                  if (character.id) {
-                    try {
-                      const updateForm = new FormData();
-                      updateForm.append('character_id', character.id);
-                      updateForm.append('name', character.name);
-                      updateForm.append('sora_character', characterCardId);
-                      
-                      const updateResponse = await fetch('/api/characters/update', {
-                        method: 'POST',
-                        headers: {
-                          'Authorization': localStorage.getItem('auth_token') || '',
-                          'X-User-Id': localStorage.getItem('user_id') || '1'
-                        },
-                        body: updateForm
-                      });
-                      
-                      if (updateResponse.ok) {
-                        console.log('Character sora_character updated in database');
-                      } else {
-                        console.error('Failed to update character in database');
-                      }
-                    } catch (dbError) {
-                      console.error('Error updating character in database:', dbError);
-                    }
-                  }
-                  
-                  showToast('角色卡创建成功！ID: ' + characterCardId, 'success');
-                  
-                  const helpIcon = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-card-help-icon`);
-                  if (helpIcon) {
-                    helpIcon.style.display = 'none';
-                  }
-                  
-                  // 成功时更新按钮状态
-                  if (createCardBtn) {
-                    createCardBtn.disabled = false;
-                    createCardBtn.textContent = '重新生成sora角色卡';
-                    createCardBtn.style.background = 'white';
-                    createCardBtn.style.color = '#111827';
-                    createCardBtn.style.border = '1px solid #d1d5db';
-                  }
-                  
-                  try { autoSaveWorkflow(); } catch(e) { console.error('Auto save failed:', e); }
-                } else {
-                  showToast('角色卡创建完成，但未获取到角色ID', 'warning');
-                  // 即使没有获取到ID，也恢复按钮状态
-                  if (createCardBtn) {
-                    createCardBtn.disabled = false;
-                    createCardBtn.textContent = '创建角色卡';
-                  }
-                }
-                break;
-              } else if (statusData.status === 'FAILED' || statusData.status === 'ERROR') {
-                showToast('角色卡创建失败: ' + (statusData.error || '未知错误'), 'error');
-                const helpIcon = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-card-help-icon`);
-                if (helpIcon) {
-                  helpIcon.style.display = 'block';
-                }
-                // 失败时恢复按钮状态，允许重试
-                if (createCardBtn) {
-                  createCardBtn.disabled = false;
-                  createCardBtn.textContent = '创建角色卡';
-                }
-                break;
-              } else {
-                // 仍在处理中
-                if (createCardBtn) {
-                  createCardBtn.textContent = `处理中(${attempts}/${maxAttempts})...`;
-                }
-              }
-            } catch (statusError) {
-              console.error('Status check error:', statusError);
-              if (attempts >= maxAttempts) {
-                showToast('角色卡状态检查失败', 'error');
-              }
-            }
-          }
-          
-          if (attempts >= maxAttempts) {
-            showToast('角色卡创建超时，请稍后在编辑界面查看', 'warning');
-            const helpIcon = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-card-help-icon`);
-            if (helpIcon) {
-              helpIcon.style.display = 'block';
-            }
-            // 超时时恢复按钮状态，允许重试
-            if (createCardBtn) {
-              createCardBtn.disabled = false;
-              createCardBtn.textContent = '创建角色卡';
-            }
-          }
-        } else {
-          console.error('Character card creation failed:', characterCardData);
-          const errorMsg = characterCardData.detail || characterCardData.message || '未知错误';
-          showToast('角色卡创建失败: ' + errorMsg, 'error');
-          const helpIcon = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-card-help-icon`);
-          if (helpIcon) {
-            helpIcon.style.display = 'block';
-          }
-          // 失败时恢复按钮状态，不要禁用，允许重试
-          if (createCardBtn) {
-            createCardBtn.disabled = false;
-            createCardBtn.textContent = '创建角色卡';
-          }
-        }
-      } catch (error) {
-        console.error('创建角色卡失败:', error);
-        showToast('创建角色卡失败: ' + (error.message || error), 'error');
-        const helpIcon = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-card-help-icon`);
-        if (helpIcon) {
-          helpIcon.style.display = 'block';
-        }
-        // 失败时恢复按钮状态，不要禁用，允许重试
-        if (createCardBtn) {
-          createCardBtn.disabled = false;
-          createCardBtn.textContent = '创建角色卡';
-        }
-      } finally {
-        // 只在成功时才更新按钮状态为禁用
-        // updateCharacterCardButtonState(characterNodeId);
+        listEl.appendChild(imgWrapper);
       }
-    }
-    
-    function findConnectedVideoNode(characterNodeId) {
-      const connection = state.connections.find(conn => conn.from === characterNodeId);
-      if (!connection) return null;
-      
-      const connectedNode = state.nodes.find(n => n.id === connection.to);
-      if (connectedNode && connectedNode.type === 'video') {
-        return connectedNode;
-      }
-      
-      return null;
-    }
-    
-    function updateCharacterCardButtonState(characterNodeId) {
-      const createCardBtn = document.querySelector(`.node[data-node-id="${characterNodeId}"] .character-create-card-btn`);
-      if (!createCardBtn) return;
-      
-      const characterNode = state.nodes.find(n => n.id === characterNodeId);
-      const hasSoraCharacter = characterNode && characterNode.data && characterNode.data.sora_character;
-      const connectedVideoNode = findConnectedVideoNode(characterNodeId);
-      
-      if (hasSoraCharacter) {
-        createCardBtn.textContent = '重新生成sora角色卡';
-        createCardBtn.style.background = 'white';
-        createCardBtn.style.color = '#111827';
-        createCardBtn.style.border = '1px solid #d1d5db';
-      } else {
-        createCardBtn.textContent = '创建sora角色卡';
-        createCardBtn.style.background = '#10b981';
-        createCardBtn.style.color = 'white';
-        createCardBtn.style.border = 'none';
-      }
-      
-      if (connectedVideoNode && connectedVideoNode.data.project_id) {
-        createCardBtn.setAttribute('data-can-click', 'true');
-        createCardBtn.style.opacity = '1';
-        createCardBtn.style.cursor = 'pointer';
-      } else {
-        createCardBtn.setAttribute('data-can-click', 'false');
-        createCardBtn.style.opacity = '0.5';
-        createCardBtn.style.cursor = 'not-allowed';
-      }
-    }
+      reader.readAsDataURL(file);
+      fileInput.value = '';
+      labelInput.value = '';
+    });
 
     // 页面加载时初始化
     (async function init(){

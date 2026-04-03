@@ -1242,7 +1242,8 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                         behavior = char_data.get('behavior')
                         other_info = char_data.get('other_info')
                         reference_image = char_data.get('reference_image')
-                        
+                        reference_images = char_data.get('reference_images')
+
                         # 使用 create_or_update 避免并发竞态导致的重复创建
                         CharacterModel.create_or_update(
                             world_id=world_id,
@@ -1254,7 +1255,8 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                             personality=personality,
                             behavior=behavior,
                             other_info=other_info,
-                            reference_image=reference_image
+                            reference_image=reference_image,
+                            reference_images=reference_images
                         )
                         results['characters']['success'] += 1
                         results['total'] += 1
@@ -1318,7 +1320,8 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                         parent_id_raw = loc_data.get('parent_id')
                         description = loc_data.get('description')
                         reference_image = loc_data.get('reference_image')
-                        
+                        reference_images = loc_data.get('reference_images')
+
                         # 处理 parent_id：必须是整数或 None
                         parent_id = None
                         if parent_id_raw is not None:
@@ -1326,7 +1329,7 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                                 parent_id = int(parent_id_raw) if parent_id_raw else None
                             except (ValueError, TypeError):
                                 parent_id = None
-                        
+
                         # 使用 create_or_update 避免并发竞态导致的重复创建
                         LocationModel.create_or_update(
                             world_id=world_id,
@@ -1334,6 +1337,7 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                             user_id=user_id,
                             parent_id=parent_id,
                             reference_image=reference_image,
+                            reference_images=reference_images,
                             description=description
                         )
                         results['locations']['success'] += 1

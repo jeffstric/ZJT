@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import tempfile
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Any
 from urllib.parse import urlparse
 from pydantic import BaseModel
 from api.clients.runninghub_client import RunningHubClient, TaskStatus, run_ai_app_task
@@ -5907,6 +5907,8 @@ async def create_character(
     behavior: Optional[str] = Form(None, description="行为习惯"),
     other_info: Optional[str] = Form(None, description="其他信息"),
     reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    reference_images_labels: Optional[str] = Form(None, description="多参考图标签，JSON数组，如['默认服装','晚礼服']"),
+    reference_images_files: Optional[Any] = File(None, description="多参考图文件列表"),
     default_voice: Optional[UploadFile] = File(None, description="参考音频"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -5916,7 +5918,7 @@ async def create_character(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        
+
         if not name or not name.strip():
             return JSONResponse(
                 status_code=400,
@@ -5926,7 +5928,7 @@ async def create_character(
                     'data': None
                 }
             )
-        
+
         # 验证图片文件大小
         is_valid, error_msg = await _validate_image_size(reference_image)
         if not is_valid:
@@ -5938,42 +5940,81 @@ async def create_character(
                     'data': None
                 }
             )
-        
+
         # 处理图片上传
         image_path = None
         if reference_image and reference_image.filename:
             file_ext = os.path.splitext(reference_image.filename)[1]
             filename = f"character_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
-            
+
             char_upload_dir = os.path.join(upload_dir, "character", "pic")
             os.makedirs(char_upload_dir, exist_ok=True)
-            
+
             file_path = os.path.join(char_upload_dir, filename)
             with open(file_path, "wb") as f:
                 content = await reference_image.read()
                 f.write(content)
-            
+
             image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
-        
+
+        # 处理多参考图上传
+        reference_images_list = []
+        if reference_images_files:
+            labels = []
+            if reference_images_labels:
+                try:
+                    labels = json.loads(reference_images_labels)
+                except:
+                    labels = []
+            if not isinstance(labels, list):
+                labels = []
+            # 确保 reference_images_files 是列表
+            files_list = reference_images_files if isinstance(reference_images_files, list) else [reference_images_files] if reference_images_files else []
+
+            for idx, img_file in enumerate(files_list):
+                if not img_file or not img_file.filename:
+                    continue
+                is_valid, error_msg = await _validate_image_size(img_file)
+                if not is_valid:
+                    continue
+                file_ext = os.path.splitext(img_file.filename)[1]
+                filename = f"character_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+                char_upload_dir = os.path.join(upload_dir, "character", "pic")
+                os.makedirs(char_upload_dir, exist_ok=True)
+                file_path = os.path.join(char_upload_dir, filename)
+                with open(file_path, "wb") as f:
+                    content = await img_file.read()
+                    f.write(content)
+                url = f"{SERVER_HOST}/upload/character/pic/{filename}"
+                reference_images_list.append({
+                    'id': str(uuid.uuid4()),
+                    'label': labels[idx] if idx < len(labels) else f'服装{idx+1}',
+                    'url': url
+                })
+
+        # 如果主图没有上传但有参考图，用第一张参考图作为主图
+        if not image_path and reference_images_list:
+            image_path = reference_images_list[0]['url']
+
         # 处理音频上传
         voice_path = None
         if default_voice and default_voice.filename:
             file_ext = os.path.splitext(default_voice.filename)[1]
             filename = f"character_voice_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
-            
+
             voice_upload_dir = os.path.join(upload_dir, "character", "voice")
             os.makedirs(voice_upload_dir, exist_ok=True)
-            
+
             file_path = os.path.join(voice_upload_dir, filename)
             with open(file_path, "wb") as f:
                 content = await default_voice.read()
                 f.write(content)
-            
+
             # 自动裁剪音频（如果超过20秒）
             file_path = _trim_audio_if_needed(file_path, max_duration=20.0)
-            
+
             voice_path = f"{SERVER_HOST}/upload/character/voice/{filename}"
-        
+
         character_id = CharacterModel.create(
             world_id=world_id,
             name=name.strip(),
@@ -5984,6 +6025,7 @@ async def create_character(
             behavior=behavior.strip() if behavior else None,
             other_info=other_info.strip() if other_info else None,
             reference_image=image_path,
+            reference_images=reference_images_list if reference_images_list else None,
             default_voice=voice_path
         )
         
@@ -6020,6 +6062,9 @@ async def update_character(
     other_info: Optional[str] = Form(None, description="其他信息"),
     sora_character: Optional[str] = Form(None, description="Sora角色卡ID"),
     reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    reference_images_labels: Optional[str] = Form(None, description="多参考图标签，JSON数组"),
+    reference_images_files: Optional[Any] = File(None, description="多参考图文件列表"),
+    reference_images_existing_urls: Optional[str] = Form(None, description="多参考图现有URL列表，JSON数组，用于删除已移除的图片"),
     default_voice: Optional[UploadFile] = File(None, description="参考音频"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -6102,7 +6147,73 @@ async def update_character(
             update_fields['reference_image'] = image_path
         if voice_path:
             update_fields['default_voice'] = voice_path
-        
+
+        # 处理多参考图上传
+        if reference_images_files:
+            labels = []
+            if reference_images_labels:
+                try:
+                    labels = json.loads(reference_images_labels)
+                except:
+                    labels = []
+            if not isinstance(labels, list):
+                labels = []
+            # 确保 reference_images_files 是列表
+            files_list = reference_images_files if isinstance(reference_images_files, list) else [reference_images_files] if reference_images_files else []
+            reference_images_list = []
+            for idx, img_file in enumerate(files_list):
+                if not img_file or not img_file.filename:
+                    continue
+                is_valid, error_msg = await _validate_image_size(img_file)
+                if not is_valid:
+                    continue
+                file_ext = os.path.splitext(img_file.filename)[1]
+                filename = f"character_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+                char_upload_dir = os.path.join(upload_dir, "character", "pic")
+                os.makedirs(char_upload_dir, exist_ok=True)
+                file_path = os.path.join(char_upload_dir, filename)
+                with open(file_path, "wb") as f:
+                    content = await img_file.read()
+                    f.write(content)
+                url = f"{SERVER_HOST}/upload/character/pic/{filename}"
+                reference_images_list.append({
+                    'id': str(uuid.uuid4()),
+                    'label': labels[idx] if idx < len(labels) else f'服装{idx+1}',
+                    'url': url
+                })
+
+            # 获取已有参考图
+            existing = CharacterModel.get_by_id(character_id)
+            existing_images = []
+            if existing and existing.reference_images:
+                if isinstance(existing.reference_images, str):
+                    try:
+                        existing_images = json.loads(existing.reference_images)
+                    except:
+                        existing_images = []
+                elif isinstance(existing.reference_images, list):
+                    existing_images = existing.reference_images
+
+            # 处理参考图列表更新（支持删除）
+            if reference_images_existing_urls is not None:
+                # 用户提供了要保留的图片URL列表，过滤已有图片
+                try:
+                    keep_urls = json.loads(reference_images_existing_urls) if reference_images_existing_urls else []
+                except:
+                    keep_urls = []
+                if isinstance(keep_urls, list):
+                    existing_images = [img for img in existing_images if img.get('url') in keep_urls]
+
+            if reference_images_list:
+                # 合并新上传的图片
+                update_fields['reference_images'] = existing_images + reference_images_list
+                # 如果主图没有上传且之前也没有主图，用第一张参考图
+                if not image_path and not (existing and existing.reference_image):
+                    update_fields['reference_image'] = reference_images_list[0]['url']
+            elif reference_images_existing_urls is not None:
+                # 没有新文件上传，但用户修改了保留的图片列表
+                update_fields['reference_images'] = existing_images
+
         CharacterModel.update(character_id, **update_fields)
         
         character = CharacterModel.get_by_id(character_id)
@@ -6309,6 +6420,9 @@ async def create_location(
     parent_id: Optional[int] = Form(None, description="父场景ID，为空表示顶层场景"),
     description: Optional[str] = Form(None, description="场景描述"),
     reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    reference_images_labels: Optional[str] = Form(None, description="多参考图标签，JSON数组"),
+    reference_images_angles: Optional[str] = Form(None, description="多参考图角度，JSON数组，如['front','back','left','right','custom']"),
+    reference_images_files: Optional[Any] = File(None, description="多参考图文件列表"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
@@ -6318,7 +6432,7 @@ async def create_location(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        
+
         if not name or not name.strip():
             return JSONResponse(
                 status_code=400,
@@ -6328,7 +6442,7 @@ async def create_location(
                     'data': None
                 }
             )
-        
+
         # 验证图片文件大小
         is_valid, error_msg = await _validate_image_size(reference_image)
         if not is_valid:
@@ -6340,30 +6454,80 @@ async def create_location(
                     'data': None
                 }
             )
-        
+
         # 处理图片上传
         image_path = None
         if reference_image and reference_image.filename:
             file_ext = os.path.splitext(reference_image.filename)[1]
             filename = f"location_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
-            
+
             loc_upload_dir = os.path.join(upload_dir, "location", "pic")
             os.makedirs(loc_upload_dir, exist_ok=True)
-            
+
             file_path = os.path.join(loc_upload_dir, filename)
             with open(file_path, "wb") as f:
                 content = await reference_image.read()
                 f.write(content)
-            
+
             image_path = f"{SERVER_HOST}/upload/location/pic/{filename}"
-        
+
+        # 处理多角度参考图上传
+        reference_images_list = []
+        if reference_images_files:
+            labels = []
+            angles = []
+            if reference_images_labels:
+                try:
+                    labels = json.loads(reference_images_labels)
+                except:
+                    labels = []
+            if reference_images_angles:
+                try:
+                    angles = json.loads(reference_images_angles)
+                except:
+                    angles = []
+            if not isinstance(labels, list):
+                labels = []
+            if not isinstance(angles, list):
+                angles = []
+            # 确保 reference_images_files 是列表
+            files_list = reference_images_files if isinstance(reference_images_files, list) else [reference_images_files] if reference_images_files else []
+
+            for idx, img_file in enumerate(files_list):
+                if not img_file or not img_file.filename:
+                    continue
+                is_valid, error_msg = await _validate_image_size(img_file)
+                if not is_valid:
+                    continue
+                file_ext = os.path.splitext(img_file.filename)[1]
+                filename = f"location_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+                loc_upload_dir = os.path.join(upload_dir, "location", "pic")
+                os.makedirs(loc_upload_dir, exist_ok=True)
+                file_path = os.path.join(loc_upload_dir, filename)
+                with open(file_path, "wb") as f:
+                    content = await img_file.read()
+                    f.write(content)
+                url = f"{SERVER_HOST}/upload/location/pic/{filename}"
+                angle = angles[idx] if idx < len(angles) else 'front'
+                reference_images_list.append({
+                    'id': str(uuid.uuid4()),
+                    'label': labels[idx] if idx < len(labels) else angle,
+                    'angle': angle,
+                    'url': url
+                })
+
+        # 如果主图没有上传但有参考图，用第一张参考图作为主图
+        if not image_path and reference_images_list:
+            image_path = reference_images_list[0]['url']
+
         location_id = LocationModel.create(
             world_id=world_id,
             name=name.strip(),
             user_id=user_id,
             parent_id=parent_id,
             description=description.strip() if description else None,
-            reference_image=image_path
+            reference_image=image_path,
+            reference_images=reference_images_list if reference_images_list else None
         )
         
         location = LocationModel.get_by_id(location_id)
@@ -6395,6 +6559,10 @@ async def update_location(
     parent_id: Optional[int] = Form(None, description="父场景ID"),
     description: Optional[str] = Form(None, description="场景描述"),
     reference_image: Optional[UploadFile] = File(None, description="参考图"),
+    reference_images_labels: Optional[str] = Form(None, description="多参考图标签，JSON数组"),
+    reference_images_angles: Optional[str] = Form(None, description="多参考图角度，JSON数组"),
+    reference_images_files: Optional[Any] = File(None, description="多参考图文件列表"),
+    reference_images_existing_urls: Optional[str] = Form(None, description="多参考图现有URL列表，JSON数组，用于删除已移除的图片"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
@@ -6444,17 +6612,93 @@ async def update_location(
         if reference_image and reference_image.filename:
             file_ext = os.path.splitext(reference_image.filename)[1]
             filename = f"location_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
-            
+
             loc_upload_dir = os.path.join(upload_dir, "location", "pic")
             os.makedirs(loc_upload_dir, exist_ok=True)
-            
+
             file_path = os.path.join(loc_upload_dir, filename)
             with open(file_path, "wb") as f:
                 content = await reference_image.read()
                 f.write(content)
-            
+
             update_data['reference_image'] = f"{SERVER_HOST}/upload/location/pic/{filename}"
-        
+
+        # 处理多角度参考图上传
+        if reference_images_files:
+            labels = []
+            angles = []
+            if reference_images_labels:
+                try:
+                    labels = json.loads(reference_images_labels)
+                except:
+                    labels = []
+            if reference_images_angles:
+                try:
+                    angles = json.loads(reference_images_angles)
+                except:
+                    angles = []
+            if not isinstance(labels, list):
+                labels = []
+            if not isinstance(angles, list):
+                angles = []
+            # 确保 reference_images_files 是列表
+            files_list = reference_images_files if isinstance(reference_images_files, list) else [reference_images_files] if reference_images_files else []
+            reference_images_list = []
+            for idx, img_file in enumerate(files_list):
+                if not img_file or not img_file.filename:
+                    continue
+                is_valid, error_msg = await _validate_image_size(img_file)
+                if not is_valid:
+                    continue
+                file_ext = os.path.splitext(img_file.filename)[1]
+                filename = f"location_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+                loc_upload_dir = os.path.join(upload_dir, "location", "pic")
+                os.makedirs(loc_upload_dir, exist_ok=True)
+                file_path = os.path.join(loc_upload_dir, filename)
+                with open(file_path, "wb") as f:
+                    content = await img_file.read()
+                    f.write(content)
+                url = f"{SERVER_HOST}/upload/location/pic/{filename}"
+                angle = angles[idx] if idx < len(angles) else 'front'
+                reference_images_list.append({
+                    'id': str(uuid.uuid4()),
+                    'label': labels[idx] if idx < len(labels) else angle,
+                    'angle': angle,
+                    'url': url
+                })
+
+            # 获取已有参考图
+            existing = LocationModel.get_by_id(location_id)
+            existing_images = []
+            if existing and existing.reference_images:
+                if isinstance(existing.reference_images, str):
+                    try:
+                        existing_images = json.loads(existing.reference_images)
+                    except:
+                        existing_images = []
+                elif isinstance(existing.reference_images, list):
+                    existing_images = existing.reference_images
+
+            # 处理参考图列表更新（支持删除）
+            if reference_images_existing_urls is not None:
+                # 用户提供了要保留的图片URL列表，过滤已有图片
+                try:
+                    keep_urls = json.loads(reference_images_existing_urls) if reference_images_existing_urls else []
+                except:
+                    keep_urls = []
+                if isinstance(keep_urls, list):
+                    existing_images = [img for img in existing_images if img.get('url') in keep_urls]
+
+            if reference_images_list:
+                # 合并新上传的图片
+                update_data['reference_images'] = existing_images + reference_images_list
+                # 如果主图没有上传且之前也没有主图，用第一张参考图
+                if not (reference_image and reference_image.filename) and not (existing and existing.reference_image):
+                    update_data['reference_image'] = reference_images_list[0]['url']
+            elif reference_images_existing_urls is not None:
+                # 没有新文件上传，但用户修改了保留的图片列表
+                update_data['reference_images'] = existing_images
+
         # 更新场景
         if update_data:
             LocationModel.update(location_id, **update_data)
@@ -6538,6 +6782,296 @@ async def delete_location(
                 'data': None
             }
         )
+
+
+# ========== 角色参考图管理接口 ==========
+
+@app.post('/api/characters/{character_id}/reference-images')
+async def add_character_reference_images(
+    character_id: int,
+    reference_images_labels: str = Form(..., description="参考图标签，JSON数组，如['晚礼服','运动装']"),
+    reference_images_files: List[UploadFile] = File(..., description="参考图文件列表"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    为角色添加多张参考图
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        character = CharacterModel.get_by_id(character_id)
+        if not character:
+            return JSONResponse(status_code=404, content={'code': -1, 'message': '角色不存在', 'data': None})
+
+        labels = []
+        try:
+            labels = json.loads(reference_images_labels)
+        except:
+            labels = []
+        if not isinstance(labels, list):
+            labels = []
+
+        reference_images_list = []
+        for idx in range(len(reference_images_files)):
+            img_file = reference_images_files[idx]
+            if not img_file or not img_file.filename:
+                continue
+            is_valid, error_msg = await _validate_image_size(img_file)
+            if not is_valid:
+                continue
+            file_ext = os.path.splitext(img_file.filename)[1]
+            filename = f"character_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            char_upload_dir = os.path.join(upload_dir, "character", "pic")
+            os.makedirs(char_upload_dir, exist_ok=True)
+            file_path = os.path.join(char_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await img_file.read()
+                f.write(content)
+            url = f"{SERVER_HOST}/upload/character/pic/{filename}"
+            reference_images_list.append({
+                'id': str(uuid.uuid4()),
+                'label': labels[idx] if idx < len(labels) else f'服装{idx+1}',
+                'url': url
+            })
+
+        if not reference_images_list:
+            return JSONResponse(status_code=400, content={'code': -1, 'message': '没有有效的图片', 'data': None})
+
+        # 合并到已有参考图
+        existing_images = []
+        if character.reference_images:
+            if isinstance(character.reference_images, str):
+                try:
+                    existing_images = json.loads(character.reference_images)
+                except:
+                    existing_images = []
+            elif isinstance(character.reference_images, list):
+                existing_images = character.reference_images
+
+        merged_images = existing_images + reference_images_list
+        CharacterModel.update(character_id, reference_images=merged_images)
+
+        updated_character = CharacterModel.get_by_id(character_id)
+        return JSONResponse(status_code=200, content={
+            'code': 0,
+            'message': '添加成功',
+            'data': updated_character.to_dict() if updated_character else None
+        })
+    except Exception as e:
+        logger.error(f"Failed to add character reference images: {e}")
+        return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
+
+
+@app.delete('/api/characters/{character_id}/reference-images/{image_id}')
+async def delete_character_reference_image(
+    character_id: int,
+    image_id: str,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除角色的指定参考图
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        character = CharacterModel.get_by_id(character_id)
+        if not character:
+            return JSONResponse(status_code=404, content={'code': -1, 'message': '角色不存在', 'data': None})
+
+        existing_images = []
+        if character.reference_images:
+            if isinstance(character.reference_images, str):
+                try:
+                    existing_images = json.loads(character.reference_images)
+                except:
+                    existing_images = []
+            elif isinstance(character.reference_images, list):
+                existing_images = character.reference_images
+
+        # 按 image_id 查找要删除的图片
+        delete_idx = -1
+        deleted_url = None
+        for i, img in enumerate(existing_images):
+            if img.get('id') == image_id:
+                delete_idx = i
+                deleted_url = img.get('url')
+                break
+
+        if delete_idx == -1:
+            return JSONResponse(status_code=404, content={'code': -1, 'message': '图片不存在', 'data': None})
+
+        existing_images.pop(delete_idx)
+
+        update_fields = {'reference_images': existing_images if existing_images else None}
+
+        # 如果删除的是原主图（deleted_url == reference_image），更新主图
+        if deleted_url and character.reference_image and deleted_url == character.reference_image:
+            if existing_images:
+                update_fields['reference_image'] = existing_images[0]['url']
+            else:
+                update_fields['reference_image'] = None
+
+        CharacterModel.update(character_id, **update_fields)
+
+        updated_character = CharacterModel.get_by_id(character_id)
+        return JSONResponse(status_code=200, content={
+            'code': 0,
+            'message': '删除成功',
+            'data': updated_character.to_dict() if updated_character else None
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete character reference image: {e}")
+        return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
+
+
+# ========== 场景参考图管理接口 ==========
+
+@app.post('/api/locations/{location_id}/reference-images')
+async def add_location_reference_images(
+    location_id: int,
+    reference_images_labels: str = Form(..., description="参考图标签，JSON数组，如['正面','背面']"),
+    reference_images_angles: str = Form('[]', description="参考图角度，JSON数组，如['front','back','left','right','custom']"),
+    reference_images_files: List[UploadFile] = File(..., description="参考图文件列表"),
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    为场景添加多张参考图
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        location = LocationModel.get_by_id(location_id)
+        if not location:
+            return JSONResponse(status_code=404, content={'code': -1, 'message': '场景不存在', 'data': None})
+
+        labels = []
+        angles = []
+        try:
+            labels = json.loads(reference_images_labels)
+        except:
+            labels = []
+        try:
+            angles = json.loads(reference_images_angles)
+        except:
+            angles = []
+        if not isinstance(labels, list):
+            labels = []
+        if not isinstance(angles, list):
+            angles = []
+
+        reference_images_list = []
+        for idx in range(len(reference_images_files)):
+            img_file = reference_images_files[idx]
+            if not img_file or not img_file.filename:
+                continue
+            is_valid, error_msg = await _validate_image_size(img_file)
+            if not is_valid:
+                continue
+            file_ext = os.path.splitext(img_file.filename)[1]
+            filename = f"location_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{file_ext}"
+            loc_upload_dir = os.path.join(upload_dir, "location", "pic")
+            os.makedirs(loc_upload_dir, exist_ok=True)
+            file_path = os.path.join(loc_upload_dir, filename)
+            with open(file_path, "wb") as f:
+                content = await img_file.read()
+                f.write(content)
+            url = f"{SERVER_HOST}/upload/location/pic/{filename}"
+            angle = angles[idx] if idx < len(angles) else 'front'
+            reference_images_list.append({
+                'id': str(uuid.uuid4()),
+                'label': labels[idx] if idx < len(labels) else angle,
+                'angle': angle,
+                'url': url
+            })
+
+        if not reference_images_list:
+            return JSONResponse(status_code=400, content={'code': -1, 'message': '没有有效的图片', 'data': None})
+
+        # 合并到已有参考图
+        existing_images = []
+        if location.reference_images:
+            if isinstance(location.reference_images, str):
+                try:
+                    existing_images = json.loads(location.reference_images)
+                except:
+                    existing_images = []
+            elif isinstance(location.reference_images, list):
+                existing_images = location.reference_images
+
+        merged_images = existing_images + reference_images_list
+        LocationModel.update(location_id, reference_images=merged_images)
+
+        updated_location = LocationModel.get_by_id(location_id)
+        return JSONResponse(status_code=200, content={
+            'code': 0,
+            'message': '添加成功',
+            'data': updated_location.to_dict() if updated_location else None
+        })
+    except Exception as e:
+        logger.error(f"Failed to add location reference images: {e}")
+        return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
+
+
+@app.delete('/api/locations/{location_id}/reference-images/{image_id}')
+async def delete_location_reference_image(
+    location_id: int,
+    image_id: str,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    删除场景的指定参考图
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        location = LocationModel.get_by_id(location_id)
+        if not location:
+            return JSONResponse(status_code=404, content={'code': -1, 'message': '场景不存在', 'data': None})
+
+        existing_images = []
+        if location.reference_images:
+            if isinstance(location.reference_images, str):
+                try:
+                    existing_images = json.loads(location.reference_images)
+                except:
+                    existing_images = []
+            elif isinstance(location.reference_images, list):
+                existing_images = location.reference_images
+
+        # 按 image_id 查找要删除的图片
+        delete_idx = -1
+        deleted_url = None
+        for i, img in enumerate(existing_images):
+            if img.get('id') == image_id:
+                delete_idx = i
+                deleted_url = img.get('url')
+                break
+
+        if delete_idx == -1:
+            return JSONResponse(status_code=404, content={'code': -1, 'message': '图片不存在', 'data': None})
+
+        existing_images.pop(delete_idx)
+
+        update_fields = {'reference_images': existing_images if existing_images else None}
+
+        # 如果删除的是原主图（deleted_url == reference_image），更新主图
+        if deleted_url and location.reference_image and deleted_url == location.reference_image:
+            if existing_images:
+                update_fields['reference_image'] = existing_images[0]['url']
+            else:
+                update_fields['reference_image'] = None
+
+        LocationModel.update(location_id, **update_fields)
+
+        updated_location = LocationModel.get_by_id(location_id)
+        return JSONResponse(status_code=200, content={
+            'code': 0,
+            'message': '删除成功',
+            'data': updated_location.to_dict() if updated_location else None
+        })
+    except Exception as e:
+        logger.error(f"Failed to delete location reference image: {e}")
+        return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
 
 
 # ========== 道具相关接口 ==========

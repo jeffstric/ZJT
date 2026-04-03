@@ -176,10 +176,16 @@
                 if (result.code === 0 && result.data && Array.isArray(result.data.data) && result.data.data.length > 0) {
                   const matchedChar = result.data.data.find(c => c.name === characterName) || result.data.data[0];
                   if (matchedChar && matchedChar.reference_image) {
-                    referenceImageUrls.push(matchedChar.reference_image);
-                    promptSuffix.push(`图${imageIndex}是${characterName}`);
+                    // 优先使用用户为该角色选择的特定图片，否则使用主图
+                    const userSelectedUrl = (shotNode.data.selectedCharRefImages && shotNode.data.selectedCharRefImages[characterName]);
+                    const charRefUrl = userSelectedUrl || matchedChar.reference_image;
+                    referenceImageUrls.push(charRefUrl);
+                    const labelSuffix = userSelectedUrl && userSelectedUrl !== matchedChar.reference_image
+                      ? `的${(shotNode.data.selectedCharRefImageLabels && shotNode.data.selectedCharRefImageLabels[characterName]) || '已选择'}`
+                      : '';
+                    promptSuffix.push(`图${imageIndex}是${characterName}${labelSuffix}`);
                     imageIndex++;
-                    console.log(`[宫格生图] 收集角色参考图URL: ${characterName}`);
+                    console.log(`[宫格生图] 收集角色参考图URL: ${characterName}${labelSuffix ? '(' + labelSuffix + ')' : '(主图)'}`);
                   }
                 }
               }
@@ -201,12 +207,20 @@
             });
             if (response.ok) {
               const result = await response.json();
-              if (result.code === 0 && result.data && result.data.reference_image) {
-                referenceImageUrls.push(result.data.reference_image);
-                const locationName = result.data.name || shotData.location_name || '场景';
-                promptSuffix.push(`图${imageIndex}是${locationName}`);
-                imageIndex++;
-                console.log(`[宫格生图] 收集场景参考图URL: ${locationName}`);
+              if (result.code === 0 && result.data) {
+                const locData = result.data;
+                // 优先使用用户选择的特定图片，否则使用主图
+                const mainSceneRef = locData.reference_image;
+                const sceneRefUrl = shotNode.data.selectedSceneRefUrl || mainSceneRef;
+                if (sceneRefUrl) {
+                  referenceImageUrls.push(sceneRefUrl);
+                  const locationName = locData.name || shotData.location_name || '场景';
+                  const isCustom = shotNode.data.selectedSceneRefUrl && shotNode.data.selectedSceneRefUrl !== mainSceneRef;
+                  const angleSuffix = isCustom ? (shotNode.data.selectedSceneRefLabel || '已选角度') : '';
+                  promptSuffix.push(`图${imageIndex}是${locationName}${angleSuffix ? '(' + angleSuffix + ')' : ''}`);
+                  imageIndex++;
+                  console.log(`[宫格生图] 收集场景参考图URL: ${locationName}${isCustom ? '(已选特定角度)' : '(主图)'}`);
+                }
               }
             }
           } catch (error) {
@@ -376,11 +390,6 @@
               renderImageConnections();
               renderFirstFrameConnections();
               renderVideoConnections();
-              
-              // 如果连接涉及角色节点，更新角色卡按钮状态
-              if(fromNode.type === 'character'){
-                updateCharacterCardButtonState(state.connecting.fromId);
-              }
             }
           }
         }
@@ -2184,10 +2193,6 @@
         const toNode = state.nodes.find(n => n.id === conn.to);
         
         // 如果删除的连接涉及角色节点，更新角色卡按钮状态
-        if(fromNode && fromNode.type === 'character' && typeof updateCharacterCardButtonState === 'function'){
-          updateCharacterCardButtonState(conn.from);
-        }
-        
         // 如果是分镜节点连接到图片节点，或图片节点连接到分镜节点
         if(fromNode && fromNode.type === 'shot_frame' && fromNode.updatePreview){
           fromNode.updatePreview();
@@ -8303,13 +8308,18 @@
       function renderSceneTags() {
         sceneTagsEl.innerHTML = '';
         if(node.data.refScene && node.data.refScene.name) {
+          const loc = (state.worldLocations || []).find(l => l.id === node.data.refScene.id);
+          const hasMultiImages = loc && loc.reference_images && Array.isArray(loc.reference_images) && loc.reference_images.length > 0;
+          const selectedSceneUrl = node.data.selectedSceneRefUrl;
           const tag = document.createElement('span');
           tag.className = 'shot-ref-tag scene';
-          tag.title = node.data.refScene.name;
-          tag.innerHTML = `${escapeHtml(node.data.refScene.name)}<span class="ref-tag-remove" title="移除">×</span>`;
+          tag.title = node.data.refScene.name + (selectedSceneUrl ? '（已选特定角度）' : '（使用主图）');
+          tag.innerHTML = `${escapeHtml(node.data.refScene.name)}${selectedSceneUrl ? ' ✓' : ''}<span class="ref-tag-remove" title="移除">×</span>`;
           tag.querySelector('.ref-tag-remove').addEventListener('click', (e) => {
             e.stopPropagation();
             node.data.refScene = null;
+            node.data.selectedSceneRefUrl = null;
+            node.data.selectedSceneRefLabel = null;
             renderSceneTags();
             try{ autoSaveWorkflow(); } catch(e){}
           });
@@ -8318,6 +8328,20 @@
             showSceneDropdown();
           });
           sceneTagsEl.appendChild(tag);
+          // 如果有多张参考图，显示角度选择按钮
+          if(hasMultiImages || (loc && loc.reference_image)) {
+            const selBtn = document.createElement('button');
+            selBtn.className = 'scene-ref-img-btn';
+            selBtn.type = 'button';
+            selBtn.title = '选择角度';
+            selBtn.textContent = '📷';
+            selBtn.style.cssText = 'background: none; border: none; cursor: pointer; font-size: 10px; padding: 0 2px; vertical-align: middle;';
+            selBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              showSceneImageSelector(loc);
+            });
+            sceneTagsEl.appendChild(selBtn);
+          }
         } else {
           const addBtn = document.createElement('button');
           addBtn.className = 'shot-ref-add-btn';
@@ -8329,6 +8353,73 @@
           });
           sceneTagsEl.appendChild(addBtn);
         }
+      }
+
+      // 显示场景角度选择下拉
+      function showSceneImageSelector(loc) {
+        closeRefDropdowns();
+        const dropdown = document.createElement('div');
+        dropdown.className = 'shot-ref-dropdown scene-img-dropdown';
+        dropdown.style.cssText = 'min-width: 200px; max-height: 280px; overflow-y: auto;';
+
+        const options = [];
+        if(loc.reference_image) {
+          options.push({ url: loc.reference_image, label: '正面（主图）', angle: 'front', isMain: true });
+        }
+        if(loc.reference_images && Array.isArray(loc.reference_images)) {
+          loc.reference_images.forEach(img => {
+            if(img.url && (!loc.reference_image || img.url !== loc.reference_image)) {
+              const label = img.label || img.angle || '其他';
+              options.push({ url: img.url, label: label, angle: img.angle || 'custom', isMain: false });
+            }
+          });
+        }
+
+        if(options.length === 0) {
+          const noImg = document.createElement('div');
+          noImg.className = 'shot-ref-dropdown-item';
+          noImg.textContent = '无参考图';
+          dropdown.appendChild(noImg);
+        } else {
+          const mainItem = document.createElement('div');
+          mainItem.className = 'shot-ref-dropdown-item';
+          if(!node.data.selectedSceneRefUrl) mainItem.classList.add('selected');
+          mainItem.innerHTML = `使用主图`;
+          mainItem.addEventListener('click', (e) => {
+            e.stopPropagation();
+            node.data.selectedSceneRefUrl = null;
+            node.data.selectedSceneRefLabel = null;
+            renderSceneTags();
+            closeRefDropdowns();
+            try{ autoSaveWorkflow(); } catch(e){}
+          });
+          dropdown.appendChild(mainItem);
+
+          options.filter(o => !o.isMain).forEach(opt => {
+            const item = document.createElement('div');
+            item.className = 'shot-ref-dropdown-item';
+            if(node.data.selectedSceneRefUrl === opt.url) item.classList.add('selected');
+            item.innerHTML = `<img src="${opt.url}" style="width:16px;height:16px;object-fit:cover;border-radius:2px;margin-right:6px;vertical-align:middle;">${opt.label}${opt.angle !== 'custom' ? '(' + opt.angle + ')' : ''}`;
+            item.addEventListener('click', (e) => {
+              e.stopPropagation();
+              node.data.selectedSceneRefUrl = opt.url;
+              node.data.selectedSceneRefLabel = opt.label;
+              renderSceneTags();
+              closeRefDropdowns();
+              try{ autoSaveWorkflow(); } catch(e){}
+            });
+            dropdown.appendChild(item);
+          });
+        }
+
+        refSectionEl.appendChild(dropdown);
+        const closeHandler = (e) => {
+          if(!dropdown.contains(e.target) && !e.target.classList.contains('scene-ref-img-btn')) {
+            dropdown.remove();
+            document.removeEventListener('click', closeHandler, true);
+          }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler, true), 0);
       }
 
       // 显示场景选择下拉
@@ -8463,19 +8554,115 @@
           validChars.forEach(name => {
             const wc = worldChars.find(c => c.name === name);
             const hasImage = wc && wc.reference_image;
+            const hasMultiImages = wc && wc.reference_images && Array.isArray(wc.reference_images) && wc.reference_images.length > 0;
+            const selectedUrl = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[name]);
             const tag = document.createElement('span');
             tag.className = 'shot-ref-tag character';
-            if(!hasImage) {
+            if(!hasImage && !hasMultiImages) {
               tag.style.cssText = 'border-color: #ef4444; color: #ef4444; background: #fef2f2;';
               tag.title = `${name}（该角色没有参考图片）`;
               tag.textContent = name + ' ⚠';
             } else {
-              tag.title = name;
-              tag.textContent = name;
+              tag.title = name + (selectedUrl ? '（已选特定图片）' : '（使用主图）');
+              tag.textContent = selectedUrl ? name + ' ✓' : name;
+              // 如果有多张参考图，显示选择按钮
+              if(hasMultiImages || (wc.reference_images && wc.reference_images.length > 0) || (wc.reference_image)) {
+                const selBtn = document.createElement('button');
+                selBtn.className = 'char-ref-img-btn';
+                selBtn.type = 'button';
+                selBtn.title = '选择参考图';
+                selBtn.textContent = '📷';
+                selBtn.style.cssText = 'background: none; border: none; cursor: pointer; font-size: 10px; padding: 0 2px; vertical-align: middle;';
+                selBtn.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  showCharImageSelector(wc, name);
+                });
+                tag.appendChild(selBtn);
+              }
             }
             charTagsEl.appendChild(tag);
           });
         }
+      }
+
+      // 显示角色参考图选择下拉
+      function showCharImageSelector(wc, charName) {
+        closeRefDropdowns();
+        const dropdown = document.createElement('div');
+        dropdown.className = 'shot-ref-dropdown char-img-dropdown';
+        dropdown.style.cssText = 'min-width: 200px; max-height: 280px; overflow-y: auto;';
+
+        // 构建图片选项列表：主图 + reference_images
+        const options = [];
+        if(wc.reference_image) {
+          options.push({ url: wc.reference_image, label: '默认主图', isMain: true });
+        }
+        if(wc.reference_images && Array.isArray(wc.reference_images)) {
+          wc.reference_images.forEach(img => {
+            if(img.url && img.url !== wc.reference_image) {
+              options.push({ url: img.url, label: img.label || '其他', isMain: false });
+            }
+          });
+        }
+
+        if(options.length === 0) {
+          const noImg = document.createElement('div');
+          noImg.className = 'shot-ref-dropdown-item';
+          noImg.textContent = '无参考图';
+          dropdown.appendChild(noImg);
+        } else {
+          // 使用主图选项
+          const mainOpt = options.find(o => o.isMain);
+          const otherOpts = options.filter(o => !o.isMain);
+          if(mainOpt) {
+            const mainItem = document.createElement('div');
+            mainItem.className = 'shot-ref-dropdown-item';
+            const currentSelected = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[charName]);
+            if(!currentSelected || currentSelected === mainOpt.url) {
+              mainItem.classList.add('selected');
+            }
+            mainItem.innerHTML = `<img src="${mainOpt.url}" style="width:16px;height:16px;object-fit:cover;border-radius:2px;margin-right:6px;vertical-align:middle;">主图（默认）`;
+            mainItem.addEventListener('click', (e) => {
+              e.stopPropagation();
+              if(!node.data.selectedCharRefImages) node.data.selectedCharRefImages = {};
+              delete node.data.selectedCharRefImages[charName];
+              if(node.data.selectedCharRefImageLabels) delete node.data.selectedCharRefImageLabels[charName];
+              renderCharTags();
+              closeRefDropdowns();
+              try{ autoSaveWorkflow(); } catch(e){}
+            });
+            dropdown.appendChild(mainItem);
+          }
+          otherOpts.forEach(opt => {
+            const item = document.createElement('div');
+            item.className = 'shot-ref-dropdown-item';
+            const currentSelected = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[charName]);
+            if(currentSelected === opt.url) {
+              item.classList.add('selected');
+            }
+            item.innerHTML = `<img src="${opt.url}" style="width:16px;height:16px;object-fit:cover;border-radius:2px;margin-right:6px;vertical-align:middle;">${opt.label}`;
+            item.addEventListener('click', (e) => {
+              e.stopPropagation();
+              if(!node.data.selectedCharRefImages) node.data.selectedCharRefImages = {};
+              if(!node.data.selectedCharRefImageLabels) node.data.selectedCharRefImageLabels = {};
+              node.data.selectedCharRefImages[charName] = opt.url;
+              node.data.selectedCharRefImageLabels[charName] = opt.label;
+              renderCharTags();
+              closeRefDropdowns();
+              try{ autoSaveWorkflow(); } catch(e){}
+            });
+            dropdown.appendChild(item);
+          });
+        }
+
+        refSectionEl.appendChild(dropdown);
+        const closeHandler = (e) => {
+          if(!dropdown.contains(e.target) && !e.target.classList.contains('char-ref-img-btn')) {
+            dropdown.remove();
+            document.removeEventListener('click', closeHandler, true);
+          }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler, true), 0);
       }
 
       // 触发全部引用匹配并渲染
