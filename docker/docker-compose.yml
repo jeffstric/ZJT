@@ -57,8 +57,6 @@ services:
     ports:
       - "9003:9003"
     volumes:
-      # 配置文件挂载（便于修改配置，首次启动会自动创建）
-      - ../config_prod.yml:/app/config_prod.yml
       # 数据持久化
       - ../data:/app/data
       - ../logs:/app/logs
