@@ -91,11 +91,22 @@
         <button class="modal-close" @click="closeUserSettingsModal">×</button>
         <div class="modal-title">用户设置</div>
 
+        <!-- Tab Switcher -->
+        <div class="modal-tabs">
+          <button class="modal-tab" :class="{active: userSettingsTab === 'preferences'}" @click="userSettingsTab = 'preferences'">
+            服务商偏好
+          </button>
+          <button class="modal-tab" :class="{active: userSettingsTab === 'apitoken'}" @click="switchToApiTokenTab" v-if="!isCommunityEdition && zjtTokenEnabled">
+            智剧通token
+          </button>
+        </div>
+
         <div v-if="userSettingsLoading" style="padding: 40px; text-align: center; color: var(--muted);">
           加载中...
         </div>
 
-        <div v-else style="padding: 16px;">
+        <!-- 服务商偏好 Tab -->
+        <div v-else-if="userSettingsTab === 'preferences'" style="padding: 16px;">
           <div class="status danger" v-if="userSettingsError" style="margin-bottom: 16px;">{{ userSettingsError }}</div>
           <div class="status success" v-if="userSettingsSuccess" style="margin-bottom: 16px;">{{ userSettingsSuccess }}</div>
 
@@ -181,6 +192,67 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- API Token Tab -->
+        <div v-else-if="userSettingsTab === 'apitoken'" style="padding: 16px;">
+          <div class="status danger" v-if="apiTokenError" style="margin-bottom: 16px;">{{ apiTokenError }}</div>
+          <div class="status success" v-if="userSettingsSuccess" style="margin-bottom: 16px;">{{ userSettingsSuccess }}</div>
+
+          <h4 style="margin-bottom: 16px; color: var(--text);">智剧通token</h4>
+          <div v-if="apiTokenLoading" style="padding: 40px; text-align: center; color: var(--muted);">
+            加载中...
+          </div>
+
+          <div v-else>
+            <!-- 新生成的Token显示（仅显示一次） -->
+            <div v-if="apiTokenNewToken" class="api-token-new-section">
+              <div class="api-token-success">
+                <div class="api-token-icon">✓</div>
+                <div class="api-token-title">Token已生成</div>
+                <div class="api-token-desc">请妥善保存，关闭后将不再显示完整Token</div>
+              </div>
+              <div style="word-break: break-all; background: #1a1a2e; color: #4ade80; font-size: 13px; padding: 16px; border-radius: 8px; margin: 16px 0; font-family: monospace;">
+                {{ apiTokenNewToken }}
+              </div>
+              <div class="api-token-actions">
+                <button class="btn" @click="copyApiToken">📋 复制Token</button>
+              </div>
+            </div>
+
+            <!-- 已存在Token显示 -->
+            <div v-else-if="apiTokenData.has_token" class="api-token-section">
+              <div class="api-token-status">
+                <div class="api-token-icon success">✓</div>
+                <div class="api-token-title">当前Token</div>
+              </div>
+              <div style="background: rgba(0,0,0,0.05); padding: 16px; border-radius: 8px; margin: 16px 0; text-align: center;">
+                <span style="font-size: 16px; letter-spacing: 2px; font-family: monospace;">{{ maskedToken }}</span>
+              </div>
+              <div class="api-token-hint" style="background: #fffbeb; border-left: 3px solid #f59e0b;">
+                Token已设置，请妥善保管。如需重新生成，当前Token将失效。
+              </div>
+              <div class="api-token-actions" style="display: flex; justify-content: space-between; gap: 12px;">
+                <button class="btn" @click="copyApiToken" :disabled="apiTokenLoading">📋 复制Token</button>
+                <button class="btn secondary" @click="confirmRegenerateToken" :disabled="apiTokenLoading" style="margin-left: auto;">🔄 重新生成</button>
+              </div>
+            </div>
+
+            <!-- 无Token显示 -->
+            <div v-else class="api-token-section">
+              <div class="api-token-empty">
+                <div class="api-token-icon">🔑</div>
+                <div class="api-token-title">尚未生成Token</div>
+                <div class="api-token-desc">生成后可将此Token用于接口授权</div>
+              </div>
+              <div class="api-token-hint" style="background: #eff6ff; border-left: 3px solid #3b82f6; margin-bottom: 20px;">
+                智剧通token可用于后期的 本地智剧通和官网接口打通。
+              </div>
+              <button class="btn" @click="generateApiToken" :disabled="apiTokenLoading">
+                {{ apiTokenLoading ? '生成中...' : '🔑 生成Token' }}
+              </button>
             </div>
           </div>
         </div>
@@ -6038,10 +6110,20 @@
       userSettingsLoading: false,
       userSettingsError: '',
       userSettingsSuccess: '',
+      userSettingsTab: 'preferences', // 'preferences' | 'apitoken'
       // 用户偏好数据
       userPreferences: {},
       availableImplementations: {},
       isCommunityEdition: false,
+      zjtTokenEnabled: false, // 管理员是否开启了智剧通Token
+      // API Token 数据
+      apiTokenData: {
+        has_token: false,
+        token: ''
+      },
+      apiTokenLoading: false,
+      apiTokenError: '',
+      apiTokenNewToken: '', // 仅在生成时显示一次
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -6169,6 +6251,13 @@
         }
         // 隐藏中间4位：138****5678
         return this.userPhone.substring(0, 3) + '****' + this.userPhone.substring(7);
+      },
+      maskedToken() {
+        const token = this.apiTokenData.token;
+        if (!token || token.length < 10) {
+          return token;
+        }
+        return token.substring(0, 6) + '****' + token.substring(token.length - 4);
       }
     },
     methods: {
@@ -6473,7 +6562,17 @@
         this.showUserSettingsModalFlag = true;
         this.userSettingsError = '';
         this.userSettingsSuccess = '';
+        this.userSettingsTab = 'preferences';
+        this.apiTokenNewToken = '';
+        this.apiTokenError = '';
         this.loadImplementationPreferences();
+      },
+
+      switchToApiTokenTab() {
+        this.userSettingsTab = 'apitoken';
+        this.apiTokenError = '';
+        this.apiTokenNewToken = '';
+        this.loadApiToken();
       },
 
       closeUserSettingsModal() {
@@ -6495,7 +6594,7 @@
           if (response.data.code === 0) {
             this.userPreferences = response.data.data.preferences || {};
             this.availableImplementations = response.data.data.available_implementations || {};
-            this.isCommunityEdition = response.data.data.is_community_edition || false;  
+            this.isCommunityEdition = response.data.data.is_community_edition || false;
           } else {
             this.userSettingsError = response.data.message || '加载偏好设置失败';
           }
@@ -6504,6 +6603,25 @@
           this.userSettingsError = error?.response?.data?.detail || '加载偏好设置失败，请重试';
         } finally {
           this.userSettingsLoading = false;
+        }
+
+        // 单独获取智剧通Token配置
+        this.loadZjtTokenConfig();
+      },
+
+      async loadZjtTokenConfig() {
+        try {
+          const response = await axios.get('/api/user/zjt-token-config', {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.code === 0) {
+            this.zjtTokenEnabled = response.data.data.enabled || false;
+          }
+        } catch (error) {
+          console.error('Load ZJT token config error:', error);
+          this.zjtTokenEnabled = false;
         }
       },
 
@@ -6550,6 +6668,134 @@
           console.error('Save implementation preference error:', error);
           this.userSettingsError = error?.response?.data?.detail || '保存失败，请重试';
         }
+      },
+
+      // ==================== API Token 方法 ====================
+
+      async loadApiToken() {
+        console.log('loadApiToken called');
+        this.apiTokenLoading = true;
+        this.apiTokenError = '';
+        this.apiTokenNewToken = '';
+        console.log('apiTokenLoading set to true');
+
+        try {
+          console.log('Making request to /api/user/api-token');
+          const response = await axios.get('/api/user/api-token', {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          console.log('Response received:', response.data);
+          if (response.data.code === 0) {
+            this.apiTokenData = response.data.data || { has_token: false, token: '' };
+            console.log('apiTokenData updated:', this.apiTokenData);
+          } else {
+            this.apiTokenError = response.data.detail || '加载Token失败';
+            console.log('Error set:', this.apiTokenError);
+          }
+        } catch (error) {
+          console.error('Load API token error:', error);
+          this.apiTokenError = error?.response?.data?.detail || '加载Token失败';
+        } finally {
+          this.apiTokenLoading = false;
+          console.log('apiTokenLoading set to false');
+        }
+      },
+
+      confirmRegenerateToken() {
+        if (confirm('重新生成Token将导致当前Token失效，确定要继续吗？')) {
+          this.generateApiToken();
+        }
+      },
+
+      async generateApiToken() {
+        this.apiTokenLoading = true;
+        this.apiTokenError = '';
+        this.apiTokenNewToken = '';
+
+        try {
+          const response = await axios.post('/api/user/api-token', {}, {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.code === 0) {
+            this.apiTokenNewToken = response.data.data.token;
+            this.apiTokenData.has_token = true;
+            this.apiTokenData.token = response.data.data.token;
+          } else {
+            this.apiTokenError = response.data.detail || '生成Token失败';
+          }
+        } catch (error) {
+          console.error('Generate API token error:', error);
+          this.apiTokenError = error?.response?.data?.detail || '生成Token失败';
+        } finally {
+          this.apiTokenLoading = false;
+        }
+      },
+
+      async deleteApiToken() {
+        this.apiTokenLoading = true;
+        this.apiTokenError = '';
+
+        try {
+          const response = await axios.delete('/api/user/api-token', {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.code === 0) {
+            this.apiTokenData = { has_token: false, masked_token: '' };
+            this.apiTokenNewToken = '';
+          } else {
+            this.apiTokenError = response.data.detail || '删除Token失败';
+          }
+        } catch (error) {
+          console.error('Delete API token error:', error);
+          this.apiTokenError = error?.response?.data?.detail || '删除Token失败';
+        } finally {
+          this.apiTokenLoading = false;
+        }
+      },
+
+      copyApiToken() {
+        const textToCopy = this.apiTokenNewToken || this.apiTokenData.token;
+        if (!textToCopy) {
+          this.apiTokenError = '没有可复制的Token';
+          setTimeout(() => { this.apiTokenError = ''; }, 2000);
+          return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(textToCopy).then(() => {
+            this.userSettingsSuccess = 'Token已复制到剪贴板';
+            setTimeout(() => { this.userSettingsSuccess = ''; }, 3000);
+          }).catch(err => {
+            console.error('Copy failed:', err);
+            this.fallbackCopyApiToken(textToCopy);
+          });
+        } else {
+          this.fallbackCopyApiToken(textToCopy);
+        }
+      },
+
+      fallbackCopyApiToken(textToCopy) {
+        const textarea = document.createElement('textarea');
+        textarea.value = textToCopy;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+          this.userSettingsSuccess = 'Token已复制到剪贴板';
+          setTimeout(() => { this.userSettingsSuccess = ''; }, 3000);
+        } catch (err) {
+          console.error('Fallback copy failed:', err);
+          this.apiTokenError = '复制失败，请手动复制';
+          setTimeout(() => { this.apiTokenError = ''; }, 2000);
+        }
+        document.body.removeChild(textarea);
       },
 
       // 演示数据生成方法（仅社区版使用）
