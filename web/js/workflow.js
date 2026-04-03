@@ -1332,7 +1332,39 @@
           // 显示/隐藏端口
           if(startImagePort) startImagePort.style.display = imageMode === 'first_last_frame' ? '' : 'none';
           if(endImagePort2) endImagePort2.style.display = imageMode === 'first_last_frame' ? '' : 'none';
-          
+
+          // 根据 supports_last_frame 控制尾帧输入框的可用性
+          if(imageMode === 'first_last_frame') {
+            const modelConfigs = getModelConfigs();
+            const config = modelConfigs[node.data.videoModel];
+            const supportsLastFrame = config?.supports_last_frame !== false;
+
+            const endFileInput = el.querySelector('.end-file');
+            const endClearBtn = el.querySelector('.end-clear');
+            const endPreviewRow = el.querySelector('.end-preview-row');
+            // 尾帧字段是 first-last-fields 中的第二个（索引1）
+            const endField = firstLastFields.length > 1 ? firstLastFields[1] : null;
+            const endLabel = endField ? endField.querySelector('.label') : null;
+
+            if (!supportsLastFrame) {
+              // 禁用尾帧输入
+              if (endFileInput) endFileInput.disabled = true;
+              if (endClearBtn) endClearBtn.disabled = true;
+              if (endPreviewRow) endPreviewRow.style.opacity = '0.5';
+              if (endImagePort2) endImagePort2.classList.add('disabled');
+              // 修改提示文字
+              if (endLabel) endLabel.textContent = '尾帧画面（该模型不支持）';
+            } else {
+              // 启用尾帧输入
+              if (endFileInput) endFileInput.disabled = false;
+              if (endClearBtn) endClearBtn.disabled = false;
+              if (endPreviewRow) endPreviewRow.style.opacity = '1';
+              if (endImagePort2) endImagePort2.classList.remove('disabled');
+              // 恢复提示文字
+              if (endLabel) endLabel.textContent = '尾帧画面（可选）';
+            }
+          }
+
           // 渲染参考图预览
           if(referencePreviewList && node.data.referenceUrls && node.data.referenceUrls.length > 0) {
             referencePreviewList.innerHTML = '';
