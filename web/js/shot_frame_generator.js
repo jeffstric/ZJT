@@ -144,11 +144,16 @@ async function generateShotFrameImage(nodeId, node){
                 const matchedChar = characters.find(c => c.name === characterName) || characters[0];
                 console.log(`[角色匹配] 最终匹配角色:`, matchedChar.name, '参考图:', matchedChar.reference_image);
                 
-                if(matchedChar && matchedChar.reference_image){
-                  // 直接收集参考图 URL
-                  referenceImageUrls.push(matchedChar.reference_image);
-                  promptSuffix.push(`图${imageIndex}是${characterName}`);
+                // 检查用户是否为该角色选择了特定图片
+                const userSelectedCharUrl = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[characterName]);
+                const charRefUrl = userSelectedCharUrl || (matchedChar && matchedChar.reference_image);
+                if(charRefUrl){
+                  referenceImageUrls.push(charRefUrl);
+                  const labelDesc = userSelectedCharUrl && userSelectedCharUrl !== matchedChar?.reference_image
+                    ? `的${(node.data.selectedCharRefImageLabels && node.data.selectedCharRefImageLabels[characterName]) || '已选择'}` : '';
+                  promptSuffix.push(`图${imageIndex}是${characterName}${labelDesc}`);
                   imageIndex++;
+                  console.log(`[角色匹配] 成功添加角色参考图: ${characterName}${labelDesc ? '(' + labelDesc + ')' : '(主图)'}`);
                 }
               } else {
                 missingCharacters.add(characterName);
@@ -176,15 +181,20 @@ async function generateShotFrameImage(nodeId, node){
     // 3. 添加场景参考图（从 node.data.refScene + state.worldLocations 获取）
     if(node.data.refScene && node.data.refScene.id){
       const loc = (state.worldLocations || []).find(l => l.id === node.data.refScene.id);
-      const refImage = (loc && loc.reference_image) || node.data.refScene.pic || '';
-      if(refImage){
-        referenceImageUrls.push(refImage);
+      const mainRefImage = (loc && loc.reference_image) || node.data.refScene.pic || '';
+
+      // 优先使用用户选择的特定图片，否则使用主图
+      const sceneRefUrl = node.data.selectedSceneRefUrl || mainRefImage;
+      if(sceneRefUrl){
+        referenceImageUrls.push(sceneRefUrl);
         const locationName = (loc && loc.name) || node.data.refScene.name || '场景';
-        promptSuffix.push(`图${imageIndex}是${locationName}所在地点`);
+        const isCustomSelection = node.data.selectedSceneRefUrl && node.data.selectedSceneRefUrl !== mainRefImage;
+        const angleLabel = isCustomSelection ? (node.data.selectedSceneRefLabel || '已选择角度') : '';
+        promptSuffix.push(`图${imageIndex}是${locationName}所在地点${angleLabel ? '(' + angleLabel + ')' : ''}`);
         imageIndex++;
-        console.log(`[场景匹配] 成功添加场景参考图: ${locationName}`);
+        console.log(`[场景匹配] 成功添加场景参考图: ${locationName}${isCustomSelection ? '(已选特定角度)' : '(主图)'}`);
       } else {
-        console.warn(`[场景匹配] 场景“${node.data.refScene.name}”无参考图`);
+        console.warn(`[场景匹配] 场景”${node.data.refScene.name}”无参考图`);
       }
     }
     
