@@ -255,13 +255,13 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
 
       // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
       if (opts && opts.checkCollision) {
         const avail = findNearestAvailablePosition(x, y, 320, 220);
         x = avail.x;
-        y = avail.y;
+        y = Math.max(MIN_NODE_Y, avail.y);
       }
       const node = {
         id,
@@ -1473,43 +1473,16 @@
 
         // 计算视频生成算力消耗的本地函数
         function calculateVideoComputingPower() {
-          const config = getTaskComputingPowerConfig();
-          if(!config || Object.keys(config).length === 0) return 0;
+          // 检查 TaskConfig 是否已加载
+          if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
+            return 0;
+          }
 
-          let power = 0;
           const videoModel = node.data.videoModel || 'wan22';
           const duration = node.data.videoDuration || 5;
 
-          if(videoModel === 'sora2') {
-            power = config[3] || 0;
-          } else if(videoModel === 'ltx2') {
-            power = config[10] || 0;
-          } else if(videoModel === 'wan22') {
-            const wan22Power = config[11];
-            if(typeof wan22Power === 'object') {
-              power = wan22Power[duration] || wan22Power[5] || 0;
-            } else {
-              power = wan22Power || 0;
-            }
-          } else if(videoModel === 'kling') {
-            const klingPower = config[12];
-            if(typeof klingPower === 'object') {
-              power = klingPower[duration] || klingPower[5] || 0;
-            } else {
-              power = klingPower || 0;
-            }
-          } else if(videoModel === 'vidu') {
-            const viduPower = config[14];
-            if(typeof viduPower === 'object') {
-              power = viduPower[duration] || viduPower[5] || 0;
-            } else {
-              power = viduPower || 0;
-            }
-          } else if(videoModel === 'veo3') {
-            power = config[15] || 0;
-          }
-
-          return power;
+          // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
+          return TaskConfig.getComputingPower(videoModel, duration);
         }
 
         // 更新视频算力显示的本地函数
@@ -2741,8 +2714,8 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
-      
+      const y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
+
       // 从后端配置获取第一个视频模型作为默认值
       let defaultVideoModel = 'wan22';
       if(window.TaskConfig && window.TaskConfig.isLoaded()) {
@@ -2783,8 +2756,6 @@
       el.style.top = node.y + 'px';
 
       el.innerHTML = `
-        <div class="port start-image-port" data-port-type="start" title="连接图片节点（首帧）"></div>
-        <div class="port end-image-port" data-port-type="end" title="连接图片节点（尾帧）"></div>
         <div class="port output" title="输出（连接到视频节点）"></div>
         <div class="node-header">
           <div class="node-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="M17 10L21 8V16L17 14V10Z" fill="currentColor"/></svg>${node.title}</div>
@@ -2802,7 +2773,8 @@
             </select>
             <div class="image-mode-hint" style="font-size: 11px; color: #6b7280; margin-top: 4px;"></div>
           </div>
-          <div class="field field-collapsible first-last-fields">
+          <div class="field field-collapsible first-last-fields port-anchor-start">
+            <div class="port start-image-port" data-port-type="start" title="连接图片节点（首帧）"></div>
             <div class="label">首帧画面<span class="req">*</span></div>
             <input class="start-file" type="file" accept="image/*" />
             <button class="mini-btn start-clear" type="button" style="margin-top: 4px;">清除</button>
@@ -2810,7 +2782,8 @@
               <img class="preview start-preview" />
             </div>
           </div>
-          <div class="field field-collapsible first-last-fields">
+          <div class="field field-collapsible first-last-fields port-anchor-end">
+            <div class="port end-image-port" data-port-type="end" title="连接图片节点（尾帧）"></div>
             <div class="label">尾帧画面（可选）</div>
             <input class="end-file" type="file" accept="image/*" />
             <button class="mini-btn end-clear" type="button" style="margin-top: 4px;">清除</button>
@@ -2987,18 +2960,50 @@
       
       function updateImageModeUI() {
         const mode = node.data.imageMode || 'first_last_frame';
+        const modelConfigs = getModelConfigs();
+        const config = modelConfigs[node.data.videoModel];
+        const supportsLastFrame = config?.supports_last_frame !== false;
+
         imageModeSelect.value = mode;
         imageModeHint.textContent = imageModeHints[mode] || '';
-        
+
         // 显示/隐藏对应的上传区域
         firstLastFields.forEach(field => {
           field.style.display = mode === 'first_last_frame' ? '' : 'none';
         });
         referenceFields.style.display = mode === 'multi_reference' ? '' : 'none';
-        
+
         // 显示/隐藏端口
         startImagePort.style.display = mode === 'first_last_frame' ? '' : 'none';
         endImagePort.style.display = mode === 'first_last_frame' ? '' : 'none';
+
+        // 根据 supports_last_frame 控制尾帧输入框的可用性
+        const endFileInput = el.querySelector('.end-file');
+        const endClearBtn = el.querySelector('.end-clear');
+        const endPreviewRow = el.querySelector('.end-preview-row');
+        // 尾帧字段是 first-last-fields 中的第二个（索引1）
+        const endField = firstLastFields.length > 1 ? firstLastFields[1] : null;
+        const endLabel = endField ? endField.querySelector('.label') : null;
+
+        if (mode === 'first_last_frame') {
+          if (!supportsLastFrame) {
+            // 禁用尾帧输入
+            if (endFileInput) endFileInput.disabled = true;
+            if (endClearBtn) endClearBtn.disabled = true;
+            if (endPreviewRow) endPreviewRow.style.opacity = '0.5';
+            endImagePort.classList.add('disabled');
+            // 修改提示文字
+            if (endLabel) endLabel.textContent = '尾帧画面（该模型不支持）';
+          } else {
+            // 启用尾帧输入
+            if (endFileInput) endFileInput.disabled = false;
+            if (endClearBtn) endClearBtn.disabled = false;
+            if (endPreviewRow) endPreviewRow.style.opacity = '1';
+            endImagePort.classList.remove('disabled');
+            // 恢复提示文字
+            if (endLabel) endLabel.textContent = '尾帧画面（可选）';
+          }
+        }
       }
       
       // 渲染参考图预览
@@ -3080,57 +3085,16 @@
       
       // 计算算力消耗
       function calculateComputingPower() {
-        const config = getTaskComputingPowerConfig();
-        if(!config || Object.keys(config).length === 0) {
+        // 检查 TaskConfig 是否已加载
+        if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
           return 0;
         }
-        
-        let power = 0;
+
         const videoModel = node.data.videoModel || 'sora2';
         const duration = node.data.duration || 10;
-        
-        if(videoModel === 'sora2') {
-          power = config[3] || 0;  // type=3: Sora2 图生视频
-        } else if(videoModel === 'ltx2') {
-          power = config[10] || 0;  // type=10: LTX2.0 图生视频
-        } else if(videoModel === 'wan22') {
-          // type=11: Wan2.2根据时长区分算力
-          const wan22Power = config[11];
-          if(typeof wan22Power === 'object') {
-            power = wan22Power[duration] || wan22Power[5] || 0;
-          } else {
-            power = wan22Power || 0;
-          }
-        } else if(videoModel === 'kling') {
-          // type=12: 可灵根据时长区分算力
-          const klingPower = config[12];
-          if(typeof klingPower === 'object') {
-            power = klingPower[duration] || klingPower[5] || 0;
-          } else {
-            power = klingPower || 0;
-          }
-        } else if(videoModel === 'vidu') {
-          // type=14: Vidu根据时长区分算力
-          const viduPower = config[14];
-          if(typeof viduPower === 'object') {
-            power = viduPower[duration] || viduPower[5] || 0;
-          } else {
-            power = viduPower || 0;
-          }
-        } else if(videoModel === 'veo3') {
-          // type=15: VEO3固定算力
-          power = config[15] || 0;
-        } else if(videoModel === 'vidu_q2') {
-          // type=19: Vidu Q2根据时长区分算力
-          const viduQ2Power = config[19];
-          if(typeof viduQ2Power === 'object') {
-            power = viduQ2Power[duration] || viduQ2Power[5] || 0;
-          } else {
-            power = viduQ2Power || 0;
-          }
-        }
-        
-        return power;
+
+        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
+        return TaskConfig.getComputingPower(videoModel, duration);
       }
       
       // 更新算力显示
@@ -3266,6 +3230,8 @@
         // 模型改变时更新时长和比例选项
         updateDurationOptions(videoModelSelect.value);
         updateRatioOptions(videoModelSelect.value);
+        // 更新图片模式UI（如尾帧是否支持）
+        updateImageModeUI();
         // 更新算力显示
         updateComputingPowerDisplay();
       });
@@ -3964,13 +3930,13 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
 
       // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
       if (opts && opts.checkCollision) {
         const avail = findNearestAvailablePosition(x, y, 320, 220);
         x = avail.x;
-        y = avail.y;
+        y = Math.max(MIN_NODE_Y, avail.y);
       }
       const defaultRatio = state.ratio || ratioSelectEl.value || '9:16';
       
@@ -5041,7 +5007,7 @@
       }
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      const y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
       const node = {
         id,
         type: 'script',
@@ -5130,6 +5096,19 @@
             </label>
             <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将有角色对话的剧本转换为仅旁白解说的剧本格式</div>
           </div>
+          <div class="field field-collapsible">
+            <div class="label">输出语言</div>
+            <select class="script-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="">中文（默认）</option>
+              <option value="English">English</option>
+              <option value="Deutsch">Deutsch</option>
+              <option value="Français">Français</option>
+              <option value="Русский">Русский</option>
+              <option value="__custom__">自定义语言...</option>
+            </select>
+            <input type="text" class="script-language-custom" placeholder="或输入自定义语言..." style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
+            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">解析结果的文本输出语言</div>
+          </div>
           <div class="field field-always-visible script-warning-field" style="display:none;">
             <div class="gen-meta" style="color: #f59e0b;">文件内容超过30000字符，已自动截取前30000字符。建议将剧本分段处理。</div>
           </div>
@@ -5176,6 +5155,8 @@
       const noBgMusicEl = el.querySelector('.script-no-bg-music');
       const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
       const narrationAsDialogueEl = el.querySelector('.script-narration-as-dialogue');
+      const languageSelectEl = el.querySelector('.script-language');
+      const languageCustomEl = el.querySelector('.script-language-custom');
       const infoField = el.querySelector('.script-info-field');
       const nameEl = el.querySelector('.script-name');
       const lengthEl = el.querySelector('.script-length');
@@ -5272,6 +5253,7 @@
       node.data.noBgMusic = true;
       node.data.splitMultiDialogue = false;
       node.data.narrationAsDialogue = false;
+      node.data.language = '';
       node.data.gridModel = 'auto';
       
       // 应用驱动状态禁用未配置的宫格生图模型选项
@@ -5357,6 +5339,35 @@
       narrationAsDialogueEl.addEventListener('change', () => {
         node.data.narrationAsDialogue = narrationAsDialogueEl.checked;
       });
+
+      // 语言选择监听
+      if(languageSelectEl) {
+        languageSelectEl.addEventListener('change', () => {
+          if(languageSelectEl.value === '__custom__') {
+            languageCustomEl.style.display = 'block';
+            languageCustomEl.focus();
+            node.data.language = languageCustomEl.value;
+          } else {
+            languageCustomEl.style.display = 'none';
+            node.data.language = languageSelectEl.value;
+          }
+        });
+        languageCustomEl.addEventListener('input', () => {
+          node.data.language = languageCustomEl.value;
+        });
+        // 恢复之前的选择
+        if(node.data.language) {
+          const presetValues = ['', 'English', 'Deutsch', 'Français', 'Русский'];
+          if(presetValues.includes(node.data.language)) {
+            languageSelectEl.value = node.data.language;
+            languageCustomEl.style.display = 'none';
+          } else {
+            languageSelectEl.value = '__custom__';
+            languageCustomEl.style.display = 'block';
+            languageCustomEl.value = node.data.language;
+          }
+        }
+      }
 
       // 宫格模型选择监听
       gridModelSelect.addEventListener('change', () => {
@@ -5463,7 +5474,8 @@
               force_medium_shot: node.data.forceMediumShot || false,
               no_bg_music: node.data.noBgMusic || false,
               split_multi_dialogue: node.data.splitMultiDialogue || false,
-              narration_as_dialogue: node.data.narrationAsDialogue || false
+              narration_as_dialogue: node.data.narrationAsDialogue || false,
+              language: node.data.language || ''
             })
           });
 
@@ -5956,7 +5968,8 @@
               force_medium_shot: node.data.forceMediumShot || false,
               no_bg_music: node.data.noBgMusic || false,
               split_multi_dialogue: node.data.splitMultiDialogue || false,
-              narration_as_dialogue: node.data.narrationAsDialogue || false
+              narration_as_dialogue: node.data.narrationAsDialogue || false,
+              language: node.data.language || ''
             })
           });
 
@@ -6901,7 +6914,7 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      const y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
       const shotGroupData = opts && opts.shotGroupData ? opts.shotGroupData : {};
       const scriptData = opts && opts.scriptData ? opts.scriptData : {};
       
@@ -7285,45 +7298,16 @@
 
       // 计算视频生成算力消耗
       function calculateVideoComputingPower() {
-        const config = getTaskComputingPowerConfig();
-        if(!config || Object.keys(config).length === 0) {
+        // 检查 TaskConfig 是否已加载
+        if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
           return 0;
         }
-        
-        let power = 0;
+
         const videoModel = node.data.videoModel || 'wan22';
         const duration = node.data.videoDuration || 5;
-        
-        if(videoModel === 'sora2') {
-          power = config[3] || 0;
-        } else if(videoModel === 'ltx2') {
-          power = config[10] || 0;
-        } else if(videoModel === 'wan22') {
-          const wan22Power = config[11];
-          if(typeof wan22Power === 'object') {
-            power = wan22Power[duration] || wan22Power[5] || 0;
-          } else {
-            power = wan22Power || 0;
-          }
-        } else if(videoModel === 'kling') {
-          const klingPower = config[12];
-          if(typeof klingPower === 'object') {
-            power = klingPower[duration] || klingPower[5] || 0;
-          } else {
-            power = klingPower || 0;
-          }
-        } else if(videoModel === 'vidu') {
-          const viduPower = config[14];
-          if(typeof viduPower === 'object') {
-            power = viduPower[duration] || viduPower[5] || 0;
-          } else {
-            power = viduPower || 0;
-          }
-        } else if(videoModel === 'veo3') {
-          power = config[15] || 0;
-        }
-        
-        return power;
+
+        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
+        return TaskConfig.getComputingPower(videoModel, duration);
       }
       
       // 更新视频算力显示
@@ -7947,13 +7931,13 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      let y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      let y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
 
       // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
       if (opts && opts.checkCollision) {
         const avail = findNearestAvailablePosition(x, y, 320, 220);
         x = avail.x;
-        y = avail.y;
+        y = Math.max(MIN_NODE_Y, avail.y);
       }
       const shotData = opts && opts.shotData ? opts.shotData : {};
       
@@ -8573,57 +8557,16 @@
       
       // 计算视频生成算力消耗
       function calculateVideoComputingPower() {
-        const config = getTaskComputingPowerConfig();
-        if(!config || Object.keys(config).length === 0) {
+        // 检查 TaskConfig 是否已加载
+        if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
           return 0;
         }
-        
-        let power = 0;
+
         const videoModel = node.data.videoModel || 'sora2';
         const duration = node.data.videoDuration || 10;
-        
-        if(videoModel === 'sora2') {
-          power = config[3] || 0;  // type=3: Sora2 图生视频
-        } else if(videoModel === 'ltx2') {
-          power = config[10] || 0;  // type=10: LTX2.0 图生视频
-        } else if(videoModel === 'wan22') {
-          // type=11: Wan2.2根据时长区分算力
-          const wan22Power = config[11];
-          if(typeof wan22Power === 'object') {
-            power = wan22Power[duration] || wan22Power[5] || 0;
-          } else {
-            power = wan22Power || 0;
-          }
-        } else if(videoModel === 'kling') {
-          // type=12: 可灵根据时长区分算力
-          const klingPower = config[12];
-          if(typeof klingPower === 'object') {
-            power = klingPower[duration] || klingPower[5] || 0;
-          } else {
-            power = klingPower || 0;
-          }
-        } else if(videoModel === 'vidu') {
-          // type=14: Vidu根据时长区分算力
-          const viduPower = config[14];
-          if(typeof viduPower === 'object') {
-            power = viduPower[duration] || viduPower[5] || 0;
-          } else {
-            power = viduPower || 0;
-          }
-        } else if(videoModel === 'vidu_q2') {
-          // type=19: Vidu Q2根据时长区分算力
-          const viduQ2Power = config[19];
-          if(typeof viduQ2Power === 'object') {
-            power = viduQ2Power[duration] || viduQ2Power[5] || 0;
-          } else {
-            power = viduQ2Power || 0;
-          }
-        } else if(videoModel === 'veo3') {
-          // type=15: VEO3固定算力
-          power = config[15] || 0;
-        }
-        
-        return power;
+
+        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
+        return TaskConfig.getComputingPower(videoModel, duration);
       }
       
       // 更新视频算力显示

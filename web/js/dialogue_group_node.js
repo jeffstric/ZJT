@@ -12,7 +12,7 @@
       const id = state.nextNodeId++;
       const viewportPos = getViewportNodePosition();
       const x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
-      const y = opts && typeof opts.y === 'number' ? opts.y : viewportPos.y;
+      const y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
       const dialogueData = opts && opts.dialogueData ? opts.dialogueData : [];
       const shotNumber = opts && opts.shotNumber ? opts.shotNumber : null;
       

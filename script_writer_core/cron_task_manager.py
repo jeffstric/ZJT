@@ -217,6 +217,13 @@ class TaskManager:
         
         with task_lock:
             try:
+                # 清理相同 task_key 的终态旧记录（FAILED/COMPLETED/TIMEOUT等），
+                # 避免 UNIQUE 约束冲突导致无法重新提交任务
+                existing_task = GridImageTasksModel.get_by_task_key(task_key)
+                if existing_task and existing_task.status not in [GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING]:
+                    GridImageTasksModel.delete_by_task_key(task_key)
+                    logger.info(f"清理旧的终态任务记录: {task_key}, 旧状态: {existing_task.status}")
+
                 # 创建数据库记录（UNIQUE KEY会自动防止重复）
                 GridImageTasksModel.create(
                     task_key=task_key,

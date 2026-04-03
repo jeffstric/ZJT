@@ -6,7 +6,7 @@ Seedream 火山引擎供应商 v1 版本驱动实现
 from typing import Dict, Any, Optional
 import traceback
 import os
-from .base_video_driver import BaseVideoDriver
+from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
@@ -163,6 +163,11 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         构建创建 Seedream 任务的完整请求参数
+
+        支持图片模式：
+        - first_last_frame: 首尾帧模式，使用 image_path 中的图片（1-2张）
+        - multi_reference: 多参考图模式，使用 reference_images 中的图片（1-5张）
+        - first_last_with_ref: 首尾帧+参考图模式，优先使用首尾帧
         """
         # 获取图片尺寸，默认 2K
         image_size = getattr(ai_tool, 'image_size', None) or "2K"
@@ -175,38 +180,65 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         # 基于 image_size 和 aspect_ratio 获取像素尺寸
         pixel_size = self._get_pixel_size(image_size, aspect_ratio)
 
-        # 处理图片路径
-        image_urls = None
-        if ai_tool.image_path:
-            image_urls = ai_tool.image_path.split(',') if ',' in ai_tool.image_path else [ai_tool.image_path]
-            
-            # 统一处理：解析 URL → 压缩（如需要）→ 上传/保存
-            processed_urls = []
-            for img_url in image_urls:
-                img_url = img_url.strip()
-                if not img_url:
-                    continue
-                
-                # 使用统一函数处理图片：解析、压缩、上传
-                success, new_url, error = compress_and_upload_image_sync(
-                    img_url,
-                    self._config,
-                    max_size_mb=10.0,
-                    is_local=True  # 火山引擎要求参考图在5秒内下载完成，强制走图床上传
-                )
-                
-                if success:
-                    processed_urls.append(new_url)
-                else:
-                    self.logger.error(f"处理图片失败: {error}")
-                    return {
-                        "success": False,
-                        "error": f"处理图片失败: {error}",
-                        "error_type": "USER",
-                        "retry": False
-                    }
-            
-            image_urls = processed_urls
+        # 根据图片模式获取图片列表
+        image_info = self.get_all_images_by_mode(ai_tool)
+        mode = image_info['mode']
+        first_frame = image_info['first_frame']
+        last_frame = image_info['last_frame']
+        reference_images = image_info['reference_images']
+
+        self.logger.info(f"Seedream 图片模式: {mode}, 首帧: {first_frame}, 尾帧: {last_frame}, 参考图: {len(reference_images)}张")
+
+        # 根据模式构建原始图片URL列表
+        raw_image_urls = []
+
+        if mode == ImageMode.MULTI_REFERENCE:
+            # 多参考图模式：所有参考图
+            raw_image_urls = reference_images
+        elif mode == ImageMode.FIRST_LAST_WITH_REF:
+            # 首尾帧+参考图模式：优先使用首尾帧
+            if first_frame or last_frame:
+                if first_frame:
+                    raw_image_urls.append(first_frame)
+                if last_frame:
+                    raw_image_urls.append(last_frame)
+                if reference_images:
+                    self.logger.warning(f"Seedream 首尾帧+参考图模式暂不支持同时使用，已使用首尾帧，忽略 {len(reference_images)} 张参考图")
+            elif reference_images:
+                raw_image_urls = reference_images
+        else:
+            # first_last_frame 模式（默认）
+            if first_frame:
+                raw_image_urls.append(first_frame)
+            if last_frame:
+                raw_image_urls.append(last_frame)
+
+        # 处理图片：压缩并上传
+        processed_urls = []
+        for img_url in raw_image_urls:
+            img_url = img_url.strip()
+            if not img_url:
+                continue
+
+            success, new_url, error = compress_and_upload_image_sync(
+                img_url,
+                self._config,
+                max_size_mb=10.0,
+                is_local=True  # 火山引擎要求参考图在5秒内下载完成，强制走图床上传
+            )
+
+            if success:
+                processed_urls.append(new_url)
+            else:
+                self.logger.error(f"处理图片失败: {error}")
+                return {
+                    "success": False,
+                    "error": f"处理图片失败: {error}",
+                    "error_type": "USER",
+                    "retry": False
+                }
+
+        image_urls = processed_urls if processed_urls else None
 
         # 根据 task_id 选择模型
         task_type = getattr(ai_tool, 'type', None)

@@ -1,4 +1,7 @@
 
+    // 节点最小Y坐标，防止节点被拖到顶部浮动栏区域
+    const MIN_NODE_Y = 80;
+
     const state = {
       ratio: '16:9',
       nodes: [],

@@ -1675,15 +1675,19 @@ textarea:focus{ border-color: var(--primary); }
   transform: translateY(-50%);
   background: #ccc;
 }
+.port-anchor-start,
+.port-anchor-end{
+  position: relative;
+}
 .port.start-image-port{
-  left: -9px;
-  top: 72px;
+  left: -21px;
+  top: 0;
   transform: translateY(-50%);
   border-color: #3b82f6;
 }
 .port.end-image-port{
-  left: -9px;
-  top: 168px;
+  left: -21px;
+  top: 0;
   transform: translateY(-50%);
   border-color: #3b82f6;
 }

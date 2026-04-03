@@ -95,7 +95,20 @@
   function getTaskByKey(modelKey) {
     const tasks = getAllTasks();
     // 支持简短key匹配（如 'sora2' 匹配 'sora2_image_to_video'）
-    return tasks.find(t => t.key === modelKey || t.key.startsWith(modelKey + '_')) || null;
+    // 先找精确匹配
+    const exact = tasks.find(t => t.key === modelKey);
+    if (exact) return exact;
+    // 前缀匹配时，找最精确的（key最长的），避免 'seedance_2_0' 错误匹配到 'seedance_2_0_fast_image_to_video'
+    const prefixMatches = tasks.filter(t => t.key.startsWith(modelKey + '_'));
+    if (prefixMatches.length === 0) return null;
+    // 优先找 key 去掉后缀后等于 modelKey 的（即 key === modelKey + '_image_to_video' 等）
+    const categorySuffixes = ['_image_to_video', '_text_to_video', '_text_to_image', '_image_edit'];
+    for (const suffix of categorySuffixes) {
+      const direct = prefixMatches.find(t => t.key === modelKey + suffix);
+      if (direct) return direct;
+    }
+    // 回退：返回第一个匹配
+    return prefixMatches[0] || null;
   }
 
   /**
@@ -105,18 +118,16 @@
    * @returns {number|null} 任务类型ID
    */
   function getTaskIdByKey(modelKey, category) {
-    const tasks = getAllTasks();
-    let task;
+    const task = getTaskByKey(modelKey);
+    if (!task) return null;
     if (category) {
-      // 如果指定了分类，在该分类中查找
-      task = tasks.find(t => 
-        (t.key === modelKey || t.key.startsWith(modelKey + '_')) &&
-        (t.category === category || (t.categories && t.categories.includes(category)))
-      );
-    } else {
-      task = tasks.find(t => t.key === modelKey || t.key.startsWith(modelKey + '_'));
+      // 如果指定了分类，检查匹配到的任务是否符合
+      if (task.category === category || (task.categories && task.categories.includes(category))) {
+        return task.id;
+      }
+      return null;
     }
-    return task ? task.id : null;
+    return task.id;
   }
 
   /**
@@ -255,7 +266,9 @@
         default_duration: task.default_duration,
         // 图片模式配置（图生视频任务）
         supported_image_modes: task.supported_image_modes || ['first_last_frame'],
-        default_image_mode: task.default_image_mode || 'first_last_frame'
+        default_image_mode: task.default_image_mode || 'first_last_frame',
+        // 是否支持尾帧（图生视频任务）
+        supports_last_frame: task.supports_last_frame !== false  // 默认为 true
       };
     });
     return result;
