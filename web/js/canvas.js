@@ -273,7 +273,7 @@
       const viewportTop = -state.panY / state.zoom;
       
       const marginLeft = 100;
-      const marginTop = 80;
+      const marginTop = 160;
       
       const x = Math.max(marginLeft, viewportLeft + marginLeft);
       const y = Math.max(marginTop, viewportTop + marginTop);

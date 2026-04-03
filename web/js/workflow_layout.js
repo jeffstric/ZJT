@@ -5,7 +5,7 @@
   const ROW_GAP = 80;
   const COLUMN_STACK_GAP = 48;
   const BASE_PADDING_X = 80;
-  const BASE_PADDING_Y = 80;
+  const BASE_PADDING_Y = 160;
   const LANE_COUNT = 1;
   const LANE_VERTICAL_GAP = 80;
   const CLUSTER_GAP_Y = 120;
@@ -193,7 +193,7 @@
         nodesAtDepth.forEach(entry => {
           const targetX = Math.max(20, column.left + (column.width - entry.dims.width) / 2);
           entry.node.x = Math.round(targetX);
-          entry.node.y = Math.max(20, Math.round(cursorY));
+          entry.node.y = Math.max(120, Math.round(cursorY));
           positionNode(entry.node);
           cursorY += entry.dims.height + ROW_GAP;
           maxBottom = Math.max(maxBottom, entry.node.y + entry.dims.height);
@@ -303,7 +303,7 @@
         let columnY = rowTop + (rowHeight - stackHeight) / 2;
         stackEntries.forEach(entry => {
           const targetX = Math.max(20, column.left + (column.width - entry.dims.width) / 2);
-          const targetY = Math.max(20, columnY);
+          const targetY = Math.max(120, columnY);
           entry.node.x = Math.round(targetX);
           entry.node.y = Math.round(targetY);
           positionNode(entry.node);
@@ -437,9 +437,9 @@
       let targetY;
       if(stats && stats.count){
         const avgCenter = stats.sum / stats.count;
-        targetY = Math.max(20, Math.round(avgCenter - dims.height / 2));
+        targetY = Math.max(120, Math.round(avgCenter - dims.height / 2));
       } else {
-        targetY = Math.max(20, Math.round(currentY));
+        targetY = Math.max(120, Math.round(currentY));
         currentY += dims.height + ROW_GAP;
       }
       scriptNode.x = Math.round(scriptColumnCenterX - dims.width / 2);

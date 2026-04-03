@@ -477,7 +477,7 @@
           const halfW = el ? el.offsetWidth / 2 : 150;
           const halfH = 20;
           n.x = Math.max(20, canvasX - halfW);
-          n.y = Math.max(20, canvasY - halfH);
+          n.y = Math.max(120, canvasY - halfH);
           if(el){
             el.style.left = n.x + 'px';
             el.style.top = n.y + 'px';
@@ -554,7 +554,7 @@
             const origPos = state.drag.nodePositions[nodeId];
             if(!origPos) return;
             n.x = Math.max(20, origPos.x + dx);
-            n.y = Math.max(20, origPos.y + dy);
+            n.y = Math.max(120, origPos.y + dy);
             const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
             if(el){
               el.style.left = n.x + 'px';
@@ -566,7 +566,7 @@
           const n = state.nodes.find(x => x.id === state.drag.nodeId);
           if(!n) return;
           n.x = Math.max(20, state.drag.origX + dx);
-          n.y = Math.max(20, state.drag.origY + dy);
+          n.y = Math.max(120, state.drag.origY + dy);
           const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
           if(el){
             el.style.left = n.x + 'px';
