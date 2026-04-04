@@ -76,6 +76,7 @@ class RunningHubFileStorage(BaseFileStorage):
             if os.path.exists(project_path):
                 return project_path
             # 都找不到，返回None
+            self._log("warning", f"[图片上传诊断] 本地文件路径不存在: {file_path_or_url}, project_path={project_path}")
             return None
         elif is_local_or_private_url(file_path_or_url):
             # 先尝试映射到本地文件
@@ -83,10 +84,25 @@ class RunningHubFileStorage(BaseFileStorage):
             if local_path and os.path.exists(local_path):
                 self._log("info", f"URL映射到本地文件: {file_path_or_url} -> {local_path}")
                 return local_path
+            # 映射失败或文件不存在，记录诊断信息
+            self._log("warning", f"[图片上传诊断] 局域网URL映射失败: url={file_path_or_url}, mapped_path={local_path}, "
+                                 f"file_exists={os.path.exists(local_path) if local_path else 'N/A'}, "
+                                 f"cwd={os.getcwd()}, config_server_host={self._config.get('server', {}).get('host', 'N/A')}")
             # 下载到临时文件
             self._log("info", f"下载局域网文件到临时文件: {file_path_or_url}")
-            return asyncio.run(download_url_to_temp(file_path_or_url, os.getcwd()))
-        return None  # 公网URL
+            try:
+                downloaded = asyncio.run(download_url_to_temp(file_path_or_url, os.getcwd()))
+                if downloaded is None:
+                    self._log("error", f"[图片上传诊断] 下载局域网文件失败返回None: {file_path_or_url}")
+                else:
+                    self._log("info", f"[图片上传诊断] 下载局域网文件成功: {file_path_or_url} -> {downloaded}")
+                return downloaded
+            except Exception as e:
+                self._log("error", f"[图片上传诊断] 下载局域网文件异常: {file_path_or_url}, error={type(e).__name__}: {e}")
+                return None
+        # 公网URL
+        self._log("info", f"[图片上传诊断] 判定为公网URL，无需上传: {file_path_or_url}")
+        return None
 
     def _sync_upload_file(self, file_path: str) -> UploadResult:
         """
@@ -209,7 +225,11 @@ class RunningHubFileStorage(BaseFileStorage):
         local_file = self._resolve_to_local_file(file_path)
         if local_file is None:
             # 公网URL，直接返回原路径
-            self._log("info", f"公网URL，无需上传: {file_path}")
+            from utils.network_utils import is_local_or_private_url
+            if is_local_or_private_url(file_path):
+                self._log("error", f"[图片上传诊断] 局域网URL解析失败，但被当作公网URL返回! url={file_path}, 这会导致发送不可访问的地址给API")
+            else:
+                self._log("info", f"公网URL，无需上传: {file_path}")
             return UploadResult(success=True, key=file_path, url=file_path)
 
         if not os.path.exists(local_file):
