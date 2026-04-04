@@ -306,6 +306,13 @@
               <option value="美漫:DC风">
             </datalist>
           </div>
+          <!-- 同步世界画风提示条 -->
+          <div id="styleSyncBanner" style="display: none; padding: 10px 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; gap: 10px; align-items: center;">
+            <div style="flex: 1; font-size: 13px; color: #1e40af;">
+              <span id="styleSyncBannerText">世界的画风与当前工作流不一致</span>
+            </div>
+            <button type="button" id="styleSyncBtn" style="padding: 6px 14px; background: #3b82f6; color: #ffffff; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; white-space: nowrap; font-weight: 500;">同步世界画风</button>
+          </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">参考图</label>
             <input type="file" id="styleImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
@@ -313,6 +320,11 @@
               <img id="styleImagePreviewImg" style="max-width: 100%; max-height: 200px; border-radius: 8px; border: 1px solid #e5e7eb; object-fit: contain;" />
               <button type="button" id="styleImageRemoveBtn" style="margin-top: 8px; padding: 6px 12px; background: #f3f4f6; color: #111827; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; cursor: pointer;">移除图片</button>
             </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">构图倾向</label>
+            <input type="text" id="compositionInput" placeholder="如：三分法、对称构图、黄金螺旋等" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">构图倾向将附加到图片生成的提示词中</div>
           </div>
         </div>
       </div>
@@ -883,9 +895,9 @@
           <div class="coloring-tools">
             <div class="field" style="flex: 1;">
               <label class="label" style="color: #0f172a;">画笔大小</label>
-              <input type="range" id="coloringBrushSize" min="5" max="50" value="20" style="width: 100%;" />
+              <input type="range" id="coloringBrushSize" min="20" max="200" value="50" style="width: 100%;" />
               <div style="text-align: center; font-size: 12px; color: #6b7280; margin-top: 4px;">
-                <span id="coloringBrushSizeValue">20</span>px
+                <span id="coloringBrushSizeValue">50</span>px
               </div>
             </div>
             <div class="field" style="flex: 1;">

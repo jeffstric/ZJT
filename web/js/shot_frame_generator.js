@@ -243,7 +243,12 @@ async function generateShotFrameImage(nodeId, node){
     if(state.style && state.style.name){
       finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
     }
-    
+
+    // 4.7. 添加构图倾向
+    if(state.style && state.style.compositionPreference){
+      finalPrompt = `${finalPrompt}\n构图倾向：${state.style.compositionPreference}`;
+    }
+
     // 5. 确定使用哪个API（图片编辑或文生图）
     const userId = localStorage.getItem('user_id');
     const authToken = localStorage.getItem('auth_token') || '';

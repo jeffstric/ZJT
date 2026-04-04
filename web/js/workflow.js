@@ -430,6 +430,11 @@
           pillars: state.timeline.pillars.map(p => ({ ...p })),
           nextClipId: state.timeline.nextClipId,
           nextAudioClipId: state.timeline.nextAudioClipId,
+        },
+        style: {
+          name: state.style.name,
+          referenceImageUrl: state.style.referenceImageUrl,
+          compositionPreference: state.style.compositionPreference
         }
       };
     }
@@ -669,6 +674,45 @@
             restoreWorkflow(workflow.workflow_data);
             console.log('[加载工作流] 恢复后 state.defaultWorldId:', state.defaultWorldId);
           }
+
+          // 自动继承世界画风：当工作流画风为空但关联的世界有画风时，自动填充
+          if(!state.style.name && state.defaultWorldId){
+            // 确保世界列表已加载
+            if(typeof populateWorldSelector === 'function'){
+              await populateWorldSelector();
+            }
+            if(typeof getCachedWorld === 'function'){
+              const world = getCachedWorld(state.defaultWorldId);
+              if(world && (world.visual_style || world.composition_preference)){
+                console.log('[加载工作流] 工作流画风为空，自动继承世界画风:', world.visual_style, '构图倾向:', world.composition_preference);
+                if(world.visual_style){
+                  state.style.name = world.visual_style;
+                }
+                if(world.composition_preference){
+                  state.style.compositionPreference = world.composition_preference;
+                }
+                // 保存继承的画风到工作流
+                try {
+                  await fetch(`/api/video-workflow/${workflowId}`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': getAuthToken(),
+                      'X-User-Id': getUserId()
+                    },
+                    body: JSON.stringify({
+                      style: state.style.name || null,
+                      style_reference_image: state.style.referenceImageUrl || null,
+                      workflow_data: serializeWorkflow()
+                    })
+                  });
+                  console.log('[加载工作流] 已将世界画风保存到工作流');
+                } catch(e){
+                  console.error('[加载工作流] 保存世界画风失败:', e);
+                }
+              }
+            }
+          }
         } else {
           showToast(result.message || '加载工作流失败', 'error');
         }
@@ -716,6 +760,20 @@
           ratioSelectEl.value = data.ratio;
         }
         
+        // 恢复画风和构图倾向（从 workflow_data 中恢复）
+        if(data.style){
+          if(data.style.compositionPreference){
+            state.style.compositionPreference = data.style.compositionPreference;
+          }
+          // name 和 referenceImageUrl 从 workflow 记录的 style/style_reference_image 字段恢复，这里仅做兜底
+          if(data.style.name && !state.style.name){
+            state.style.name = data.style.name;
+          }
+          if(data.style.referenceImageUrl && !state.style.referenceImageUrl){
+            state.style.referenceImageUrl = data.style.referenceImageUrl;
+          }
+        }
+
         // 恢复默认世界ID
         const defaultWorldSelect = document.getElementById('defaultWorldSelect');
         const syncDefaultWorldSelector = () => {
@@ -877,20 +935,66 @@
     const styleImageRemoveBtn = document.getElementById('styleImageRemoveBtn');
     const styleSaveBtn = document.getElementById('styleSaveBtn');
     const styleCancelBtn = document.getElementById('styleCancelBtn');
-    
+    const compositionInput = document.getElementById('compositionInput');
+    const styleSyncBanner = document.getElementById('styleSyncBanner');
+    const styleSyncBannerText = document.getElementById('styleSyncBannerText');
+    const styleSyncBtn = document.getElementById('styleSyncBtn');
+
     // 打开画风设置模态框
     function openStyleModal(){
       styleNameInput.value = state.style.name || '';
-      
+
+      if(compositionInput){
+        compositionInput.value = state.style.compositionPreference || '';
+      }
+
       if(state.style.referenceImageUrl){
         styleImagePreviewImg.src = state.style.referenceImageUrl;
         styleImagePreview.style.display = 'block';
       } else {
         styleImagePreview.style.display = 'none';
       }
-      
+
+      // 检查世界画风与当前工作流是否一致
+      _checkWorldStyleSync();
+
       styleModal.classList.add('show');
       styleModal.setAttribute('aria-hidden', 'false');
+    }
+
+    // 检查世界画风与当前工作流是否一致，不一致则显示同步按钮
+    function _checkWorldStyleSync(){
+      if (!styleSyncBanner) return;
+
+      const worldId = state.defaultWorldId;
+      if (!worldId || typeof getCachedWorld !== 'function') {
+        styleSyncBanner.style.display = 'none';
+        return;
+      }
+
+      const world = getCachedWorld(worldId);
+      if (!world) {
+        styleSyncBanner.style.display = 'none';
+        return;
+      }
+
+      const worldStyle = world.visual_style || '';
+      const worldComposition = world.composition_preference || '';
+      const currentStyle = state.style.name || '';
+      const currentComposition = state.style.compositionPreference || '';
+
+      const styleDiffers = worldStyle && worldStyle !== currentStyle;
+      const compositionDiffers = worldComposition && worldComposition !== currentComposition;
+
+      if (styleDiffers || compositionDiffers) {
+        styleSyncBanner.style.display = 'flex';
+        const parts = [];
+        if (styleDiffers) parts.push(`画风: "${worldStyle}"`);
+        if (compositionDiffers) parts.push(`构图倾向: "${worldComposition}"`);
+        if (styleSyncBannerText) styleSyncBannerText.textContent = `世界中的 ${parts.join('、')} 与当前工作流不一致`;
+      } else {
+        styleSyncBanner.style.display = 'none';
+      }
     }
     
     // 关闭画风设置模态框
@@ -909,6 +1013,7 @@
       }
       
       const styleName = styleNameInput.value.trim();
+      const compositionPreference = compositionInput ? compositionInput.value.trim() : '';
       let styleImageUrl = state.style.referenceImageUrl;
       
       // 如果用户选择了新图片，先上传
@@ -943,6 +1048,7 @@
         if(result.code === 0){
           state.style.name = styleName;
           state.style.referenceImageUrl = styleImageUrl;
+          state.style.compositionPreference = compositionPreference;
           showToast('画风设置已保存', 'success');
           closeStyleModal();
         } else {
@@ -982,6 +1088,24 @@
       e.stopPropagation();
       openStyleModal();
     });
+
+    // 同步世界画风按钮
+    if(styleSyncBtn){
+      styleSyncBtn.addEventListener('click', () => {
+        const worldId = state.defaultWorldId;
+        if (!worldId || typeof getCachedWorld !== 'function') return;
+        const world = getCachedWorld(worldId);
+        if (!world) return;
+        if (world.visual_style && styleNameInput) {
+          styleNameInput.value = world.visual_style;
+        }
+        if (world.composition_preference && compositionInput) {
+          compositionInput.value = world.composition_preference;
+        }
+        styleSyncBanner.style.display = 'none';
+        showToast('已同步世界的画风和构图倾向', 'success');
+      });
+    }
     
     // 画风模态框关闭事件
     styleModalClose.addEventListener('click', () => {
