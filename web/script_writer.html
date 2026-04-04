@@ -3164,7 +3164,7 @@
                     'props': '/api/props-files'
                 };
                 
-                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}`, {
+                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -3185,20 +3185,17 @@
                     
                     if (sessionId) {
                         try {
-                            const refreshResponse = await fetch(`/api/session/${sessionId}/refresh`, { method: 'POST' });
-                            const refreshData = await refreshResponse.json();
-                            if (refreshData.success) {
-                                const fileTypeMap = {
-                                    'characters': '角色卡',
-                                    'locations': '场景',
-                                    'props': '道具',
-                                    'scripts': '剧本'
-                                };
-                                const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
-                                await sendMessage(notificationMessage, true);
-                            }
+                            const fileTypeMap = {
+                                'characters': '角色卡',
+                                'locations': '场景',
+                                'props': '道具',
+                                'scripts': '剧本',
+                                'worlds': '世界设定'
+                            };
+                            const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
+                            await sendMessage(notificationMessage, true);
                         } catch (error) {
-                            console.error('自动刷新文件上下文失败:', error);
+                            console.error('发送编辑通知失败:', error);
                         }
                     }
                 } else {
