@@ -35,6 +35,68 @@
     
     // ============ 宫格提示词生成 ============
 
+    // 根据 gridModel 和 gridLayout 用户偏好，计算最终的 gridSize / gridLayout / finalModel
+    function resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel) {
+      let gridSize, gridLayout, finalModel;
+
+      // 如果用户明确选择了宫格类型，以用户选择为准
+      if(gridLayoutPref === '4') {
+        gridSize = 4;
+        gridLayout = '2x2';
+      } else if(gridLayoutPref === '9') {
+        gridSize = 9;
+        gridLayout = '3x3';
+      }
+
+      if(gridModel === 'auto') {
+        // 智能模式
+        if(gridLayoutPref === '4') {
+          finalModel = forceEnhancedModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image-preview';
+        } else if(gridLayoutPref === '9') {
+          finalModel = 'gemini-3-pro-image-preview';
+        } else {
+          // auto: 根据分镜数量和参考图片数量自动选择
+          if(shotCount <= 5 && !forceEnhancedModel) {
+            gridSize = 4;
+            gridLayout = '2x2';
+            finalModel = 'gemini-2.5-flash-image-preview';
+          } else {
+            gridSize = 9;
+            gridLayout = '3x3';
+            finalModel = 'gemini-3-pro-image-preview';
+          }
+        }
+      } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
+        // 标准版（但如果参考图超过5张则强制升级）
+        if(!gridLayoutPref || gridLayoutPref === 'auto') {
+          gridSize = 4;
+          gridLayout = '2x2';
+        }
+        finalModel = gridModel;
+      } else if(gridModel === 'gemini-3-pro-4grid') {
+        if(!gridLayoutPref || gridLayoutPref === 'auto') {
+          gridSize = 4;
+          gridLayout = '2x2';
+        }
+        finalModel = 'gemini-3-pro-image-preview';
+      } else if(gridModel === 'gemini-3-pro-image-preview') {
+        if(!gridLayoutPref || gridLayoutPref === 'auto') {
+          gridSize = 9;
+          gridLayout = '3x3';
+        }
+        finalModel = gridModel;
+      } else {
+        // 用户选择了其他模型（如 Seedream）
+        if(!gridLayoutPref || gridLayoutPref === 'auto') {
+          gridSize = 9;
+          gridLayout = '3x3';
+        }
+        finalModel = gridModel;
+      }
+
+      return { gridSize, gridLayout, finalModel };
+    }
+
     function buildGridPrompt(batchNodes, startIdx, gridLayout, gridSize) {
       const artStyleName = (state.style && state.style.name) ? state.style.name : '';
       const aspectRatio = state.ratio || '16:9';
@@ -1315,6 +1377,14 @@
             <div class="label">宫格生图模型</div>
             <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
           </div>
+          <div class="field field-collapsible">
+            <div class="label">宫格类型</div>
+            <select class="shot-group-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="auto">自动选择</option>
+              <option value="4">4宫格 (2x2)</option>
+              <option value="9">9宫格 (3x3)</option>
+            </select>
+          </div>
           <div class="field field-collapsible btn-row">
             <button class="mini-btn gen-btn-green shot-group-grid-btn" type="button" style="width: 100%;">宫格生图</button>
           </div>
@@ -1440,6 +1510,18 @@
           applyDriverStatusToSelect(shotGroupGridModelEl);
           shotGroupGridModelEl.addEventListener('change', () => {
             node.data.gridModel = shotGroupGridModelEl.value;
+          });
+        }
+
+        // 宫格类型选择器
+        const shotGroupGridLayoutEl = nodeBody.querySelector('.shot-group-grid-layout');
+        if(shotGroupGridLayoutEl) {
+          if(!node.data.gridLayout){
+            node.data.gridLayout = 'auto';
+          }
+          shotGroupGridLayoutEl.value = node.data.gridLayout;
+          shotGroupGridLayoutEl.addEventListener('change', () => {
+            node.data.gridLayout = shotGroupGridLayoutEl.value;
           });
         }
 
@@ -4437,7 +4519,9 @@
           const imageUrl = node.data.url || node.data.preview;
           
           if(window.imageColoringEditor && window.imageColoringEditor.open){
-            window.imageColoringEditor.open(imageUrl, id, async (result) => {
+            // Use proxied URL to avoid cross-origin canvas taint
+            const safeImageUrl = (typeof proxyImageUrl === 'function') ? proxyImageUrl(imageUrl) : imageUrl;
+            window.imageColoringEditor.open(safeImageUrl, id, async (result) => {
               try {
                 coloringBtn.disabled = true;
                 statusEl.style.display = 'block';
@@ -5126,6 +5210,14 @@
             <select class="script-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
           </div>
           <div class="field field-collapsible">
+            <div class="label">宫格类型</div>
+            <select class="script-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="auto">自动选择</option>
+              <option value="4">4宫格 (2x2)</option>
+              <option value="9">9宫格 (3x3)</option>
+            </select>
+          </div>
+          <div class="field field-collapsible">
             <button class="gen-btn gen-btn-green script-split-grid-btn" type="button" style="border-radius: 10px; width: 100%;">拆分分镜组 + 宫格生图</button>
             <div class="gen-meta script-grid-status" style="display:none; margin-top: 8px;"></div>
           </div>
@@ -5378,6 +5470,18 @@
       gridModelSelect.addEventListener('change', () => {
         node.data.gridModel = gridModelSelect.value;
       });
+
+      // 宫格类型选择监听
+      const gridLayoutSelect = el.querySelector('.script-grid-layout');
+      if(!node.data.gridLayout){
+        node.data.gridLayout = 'auto';
+      }
+      if(gridLayoutSelect){
+        gridLayoutSelect.value = node.data.gridLayout;
+        gridLayoutSelect.addEventListener('change', () => {
+          node.data.gridLayout = gridLayoutSelect.value;
+        });
+      }
 
       // 文本框输入监听
       textareaEl.addEventListener('input', () => {
@@ -5655,47 +5759,16 @@
               }
 
               const gridModel = node.data.gridModel || 'auto';
-              let gridSize, gridLayout, finalModel;
-              
+              const gridLayoutPref = node.data.gridLayout || 'auto';
+
               // 如果参考图片超过5张，必须使用增强版模型（支持13张参考图）
               const forceEnhancedModel = referenceImageUrls.length > 5;
               if(forceEnhancedModel) {
                 console.log(`[宫格生图] 参考图片数量(${referenceImageUrls.length})超过5张，强制使用增强版模型`);
               }
-              
-              if(gridModel === 'auto') {
-                // 智能模式：根据分镜数量和参考图片数量自动选择
-                if(shotCount <= 5 && !forceEnhancedModel) {
-                  gridSize = 4;
-                  gridLayout = '2x2';
-                  finalModel = 'gemini-2.5-flash-image-preview';
-                } else {
-                  gridSize = 9;
-                  gridLayout = '3x3';
-                  finalModel = 'gemini-3-pro-image-preview';
-                }
-              } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
-                // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
-                gridSize = 4;
-                gridLayout = '2x2';
-                finalModel = gridModel;
-              } else if(gridModel === 'gemini-3-pro-4grid') {
-                // 加强版4宫格：4宫格但使用加强版模型
-                gridSize = 4;
-                gridLayout = '2x2';
-                finalModel = 'gemini-3-pro-image-preview';
-              } else if(gridModel === 'gemini-3-pro-image-preview') {
-                // 加强版9宫格
-                gridSize = 9;
-                gridLayout = '3x3';
-                finalModel = gridModel;
-              } else {
-                // 用户选择了其他模型（如 Seedream），直接使用用户选择
-                gridSize = 9;
-                gridLayout = '3x3';
-                finalModel = gridModel;
-              }
-              
+
+              const { gridSize, gridLayout, finalModel } = resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel);
+
               // 限制参考图片数量（标准版最多5张，增强版最多13张）
               const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;
               if(referenceImageUrls.length > maxRefImages) {
@@ -6082,46 +6155,15 @@
           }
 
           const gridModel = node.data.gridModel || 'auto';
-          let gridSize, gridLayout, finalModel;
-          
+          const gridLayoutPref = node.data.gridLayout || 'auto';
+
           // 如果参考图片超过5张，必须使用增强版模型（支持13张参考图）
           const forceEnhancedModel = referenceImageUrls.length > 5;
           if(forceEnhancedModel) {
             console.log(`[宫格生图] 参考图片数量(${referenceImageUrls.length})超过5张，强制使用增强版模型`);
           }
-          
-          if(gridModel === 'auto') {
-            // 智能模式：根据分镜数量和参考图片数量自动选择
-            if(shotCount <= 5 && !forceEnhancedModel) {
-              gridSize = 4;
-              gridLayout = '2x2';
-              finalModel = 'gemini-2.5-flash-image-preview';
-            } else {
-              gridSize = 9;
-              gridLayout = '3x3';
-              finalModel = 'gemini-3-pro-image-preview';
-            }
-          } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
-            // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = gridModel;
-          } else if(gridModel === 'gemini-3-pro-4grid') {
-            // 加强版4宫格：4宫格但使用加强版模型
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = 'gemini-3-pro-image-preview';
-          } else if(gridModel === 'gemini-3-pro-image-preview') {
-            // 加强版9宫格
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = gridModel;
-          } else {
-            // 用户选择了其他模型（如 Seedream），直接使用用户选择
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = gridModel;
-          }
+
+          const { gridSize, gridLayout, finalModel } = resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel);
 
           // 限制参考图片数量（标准版最多5张，增强版最多10张）
           const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 10 : 5;
@@ -6567,40 +6609,11 @@
           
           // 决定宫格大小和模型
           const gridModel = node.data.gridModel || 'auto';
-          let gridSize, gridLayout, finalModel;
-          
+          const gridLayoutPref = node.data.gridLayout || 'auto';
           const forceEnhancedModel = referenceImageUrls.length > 5;
-          
-          if(gridModel === 'auto') {
-            if(shotCount <= 5 && !forceEnhancedModel) {
-              gridSize = 4;
-              gridLayout = '2x2';
-              finalModel = 'gemini-2.5-flash-image-preview';
-            } else {
-              gridSize = 9;
-              gridLayout = '3x3';
-              finalModel = 'gemini-3-pro-image-preview';
-            }
-          } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = gridModel;
-          } else if(gridModel === 'gemini-3-pro-4grid') {
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = 'gemini-3-pro-image-preview';
-          } else if(gridModel === 'gemini-3-pro-image-preview') {
-            // 加强版9宫格
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = gridModel;
-          } else {
-            // 用户选择了其他模型（如 Seedream），直接使用用户选择
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = gridModel;
-          }
-          
+
+          const { gridSize, gridLayout, finalModel } = resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel);
+
           // 限制参考图片数量
           const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;
           if(referenceImageUrls.length > maxRefImages) {
@@ -7009,6 +7022,14 @@
             <div class="label">宫格生图模型</div>
             <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
           </div>
+          <div class="field field-collapsible">
+            <div class="label">宫格类型</div>
+            <select class="shot-group-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="auto">自动选择</option>
+              <option value="4">4宫格 (2x2)</option>
+              <option value="9">9宫格 (3x3)</option>
+            </select>
+          </div>
           <div class="field field-collapsible btn-row">
             <button class="mini-btn gen-btn-green shot-group-grid-btn" type="button" style="width: 100%;">宫格生图</button>
           </div>
@@ -7209,7 +7230,19 @@
           node.data.gridModel = gridModelSelect.value;
         });
       }
-      
+
+      // 初始化宫格类型选择（默认自动）
+      const gridLayoutSelect = el.querySelector('.shot-group-grid-layout');
+      if(!node.data.gridLayout){
+        node.data.gridLayout = 'auto';
+      }
+      if(gridLayoutSelect){
+        gridLayoutSelect.value = node.data.gridLayout;
+        gridLayoutSelect.addEventListener('change', () => {
+          node.data.gridLayout = gridLayoutSelect.value;
+        });
+      }
+
       // 宫格生图按钮点击事件
       if(gridBtn){
         gridBtn.addEventListener('click', (e) => {
@@ -7475,46 +7508,15 @@
         }
         
         const gridModel = shotGroupNode.data.gridModel || 'auto';
-        let gridSize, gridLayout, finalModel;
-        
+        const gridLayoutPref = shotGroupNode.data.gridLayout || 'auto';
+
         // 如果参考图片超过5张，必须使用增强版模型（支持13张参考图）
         const forceEnhancedModel = referenceImageUrls.length > 5;
         if(forceEnhancedModel) {
           console.log(`[宫格生图] 参考图片数量(${referenceImageUrls.length})超过5张，强制使用增强版模型`);
         }
-        
-        if(gridModel === 'auto') {
-          // 智能模式：根据分镜数量和参考图片数量自动选择
-          if(shotCount <= 5 && !forceEnhancedModel) {
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = 'gemini-2.5-flash-image-preview';
-          } else {
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = 'gemini-3-pro-image-preview';
-          }
-        } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
-          // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
-          gridSize = 4;
-          gridLayout = '2x2';
-          finalModel = gridModel;
-        } else if(gridModel === 'gemini-3-pro-4grid') {
-          // 加强版4宫格：4宫格但使用加强版模型
-          gridSize = 4;
-          gridLayout = '2x2';
-          finalModel = 'gemini-3-pro-image-preview';
-        } else if(gridModel === 'gemini-3-pro-image-preview') {
-          // 加强版9宫格
-          gridSize = 9;
-          gridLayout = '3x3';
-          finalModel = gridModel;
-        } else {
-          // 用户选择了其他模型（如 Seedream），直接使用用户选择
-          gridSize = 9;
-          gridLayout = '3x3';
-          finalModel = gridModel;
-        }
+
+        const { gridSize, gridLayout, finalModel } = resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel);
 
         // 限制参考图片数量（标准版最多5张，增强版最多13张）
         const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;

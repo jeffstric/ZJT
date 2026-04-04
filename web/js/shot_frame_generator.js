@@ -267,7 +267,7 @@ async function generateShotFrameImage(nodeId, node){
       form.append('count', node.data.drawCount || 1);
       
       // 根据 model 获取 task_id
-      const modelKey = node.data.model || 'gemini-2.5-pro-image-preview';
+      const modelKey = node.data.model || 'gemini-2.5-flash-image-preview';
       const taskId = TaskConfig.getTaskIdByKey(modelKey, 'text_to_image');
       if(!taskId){
         throw new Error(`未找到模型 ${modelKey} 对应的任务配置`);
@@ -287,8 +287,9 @@ async function generateShotFrameImage(nodeId, node){
       });
     } else {
       // 有参考图，使用图片编辑API
-      // 5.5. 限制参考图数量不超过5个
-      const MAX_REFERENCE_IMAGES = 5;
+      // 5.5. 根据模型限制参考图数量
+      const modelKey2 = node.data.model || 'gemini-2.5-flash-image-preview';
+      const MAX_REFERENCE_IMAGES = modelKey2 === 'nano-banana' ? 5 : 14;
       if(referenceImageUrls.length > MAX_REFERENCE_IMAGES){
         console.warn(`参考图数量 ${referenceImageUrls.length} 超过限制 ${MAX_REFERENCE_IMAGES}，将只使用前 ${MAX_REFERENCE_IMAGES} 张`);
         referenceImageUrls.splice(MAX_REFERENCE_IMAGES);
@@ -308,8 +309,7 @@ async function generateShotFrameImage(nodeId, node){
       form.append('ratio', ratio);
       form.append('count', node.data.drawCount || 1);
       
-      // 根据 model 获取 task_id
-      const modelKey2 = node.data.model || 'gemini-2.5-pro-image-preview';
+      // 根据 model 获取 task_id（modelKey2 已在上面声明）
       const taskId2 = TaskConfig.getTaskIdByKey(modelKey2, 'image_edit');
       if(!taskId2){
         throw new Error(`未找到模型 ${modelKey2} 对应的任务配置`);

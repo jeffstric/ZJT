@@ -42,7 +42,8 @@
       },
       style: {
         name: '',
-        referenceImageUrl: ''
+        referenceImageUrl: '',
+        compositionPreference: ''
       },
       defaultWorldId: null,
       worldCharacters: [],
