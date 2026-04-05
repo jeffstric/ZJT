@@ -210,6 +210,7 @@ class UnifiedTaskConfig:
     supports_grid_merge: bool = False  # 是否支持宫格合并生成视频
     supports_grid_image: bool = False  # 是否支持宫格生图（一次生成多张图片）
     supports_last_frame: bool = True  # 是否支持尾帧（某些模型虽然支持首尾帧模式，但只使用首帧，忽略尾帧）
+    hidden: bool = False  # 是否隐藏（隐藏的任务不在前端模型选择器中显示，仅通过API调用）
 
     def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None) -> int:
         """
@@ -260,6 +261,7 @@ class UnifiedTaskConfig:
             'supported_ratios': self.supported_ratios,
             'default_ratio': self.default_ratio,
             'enabled': self.enabled,
+            'hidden': self.hidden,
             'sort_order': self.sort_order,
             'implementation': self.implementation,  # 默认实现方
             'implementations': self._get_implementations_info(),  # 可选实现方列表
@@ -661,6 +663,9 @@ class DriverImplementation:
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 'seedance_2_0_fast_volcengine_v1'
     SEEDANCE_2_0_VOLCENGINE_V1 = 'seedance_2_0_volcengine_v1'
 
+    # Qwen Multi-Angle
+    QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
+
 
 # ============ 驱动实现 ID 常量（用于数据库存储） ============
 class DriverImplementationId:
@@ -686,6 +691,7 @@ class DriverImplementationId:
     SEEDANCE_1_5_PRO_VOLCENGINE_V1 = 18
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 19
     SEEDANCE_2_0_VOLCENGINE_V1 = 20
+    QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 21
 
 
 # implementation 字符串到 ID 的映射
@@ -710,6 +716,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_1_5_pro_volcengine_v1': DriverImplementationId.SEEDANCE_1_5_PRO_VOLCENGINE_V1,
     'seedance_2_0_fast_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
     'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
+    'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -757,6 +764,9 @@ class DriverKey:
     
     # 数字人
     DIGITAL_HUMAN = 'digital_human'
+
+    # Qwen Multi-Angle
+    QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
     
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
@@ -776,6 +786,7 @@ class TaskTypeId:
     GEMINI_3_1_FLASH_IMAGE = 17         # Gemini 3.1 Flash 图片编辑
     SEEDREAM_TEXT_TO_IMAGE = 16         # Seedream 5.0 文生图/图片编辑
     SEEDREAM_4_5_IMAGE = 18             # Seedream 4.5 图片编辑
+    QWEN_MULTI_ANGLE_IMAGE = 24         # Qwen 多角度图片编辑
     
     # 文生视频
     SORA2_TEXT_TO_VIDEO = 2             # Sora2 文生视频
@@ -917,6 +928,22 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_size='2K',
         sort_order=14,
         supports_grid_image=True,  # 支持宫格生图
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.QWEN_MULTI_ANGLE_IMAGE,
+        key='qwen-multi-angle',
+        name='多角度图片编辑',
+        category=TaskCategory.IMAGE_EDIT,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.QWEN_MULTI_ANGLE_IMAGE_EDIT,
+        implementation=DriverImplementation.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
+        computing_power=4,
+        supported_ratios=['9:16', '16:9'],
+        supported_sizes=['1K'],
+        default_ratio='16:9',
+        default_size='1K',
+        sort_order=15,
+        hidden=True,  # 隐藏，前端不显示
     ),
 
     # ==================== 文生视频 ====================
@@ -1294,6 +1321,15 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub Wan2.2 接口',
         sort_order=6000.0
+    ),
+    ImplementationConfig(
+        name='qwen_multi_angle_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='QwenMultiAngleRunninghubV1Driver',
+        default_computing_power=4,
+        enabled=True,
+        description='RunningHub Qwen 多角度图片编辑接口',
+        sort_order=7500.0
     ),
     ImplementationConfig(
         name='digital_human_runninghub_v1',

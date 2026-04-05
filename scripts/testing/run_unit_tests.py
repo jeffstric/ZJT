@@ -207,6 +207,7 @@ class TestRunner:
             'tests.test_image_upload_utils',
             'tests.test_media_cache_temp',
             'tests.test_auth_service',
+            'tests.test_qwen_multi_angle_driver',
         ]
 
         all_passed = True

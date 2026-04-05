@@ -949,7 +949,8 @@ async def image_edit(
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
     image_size: str = Form("1K", description="Image resolution: 1K, 2K, 4K"),
-    ref_image_urls: str = Form(None, description="Reference image URLs, comma separated")
+    ref_image_urls: str = Form(None, description="Reference image URLs, comma separated"),
+    extra_config: str = Form(None, description="Extra config JSON for multi-angle parameters")
 ):
     """
     Submit image editing task to RunningHub nanobanana service
@@ -1057,7 +1058,8 @@ async def image_edit(
                         ratio=ratio,
                         transaction_id=transaction_id,
                         status=AI_TOOL_STATUS_PENDING,
-                        image_size=image_size
+                        image_size=image_size,
+                        extra_config=extra_config
                     )
                     TasksModel.create(
                         task_type=TASK_TYPE_GENERATE_VIDEO,

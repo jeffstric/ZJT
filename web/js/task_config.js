@@ -137,9 +137,10 @@
    */
   function getTasksByCategory(category) {
     const tasks = getAllTasks();
-    return tasks.filter(t => 
-      t.category === category || 
-      (t.categories && t.categories.includes(category))
+    return tasks.filter(t =>
+      !t.hidden &&
+      (t.category === category ||
+       (t.categories && t.categories.includes(category)))
     );
   }
 
@@ -327,8 +328,12 @@
    * @returns {Array} [{ value, label, taskType, computingPower, key }, ...]
    */
   function getModelOptionsForCategory(category) {
-    const tasks = getTasksByCategory(category);
-    return tasks.map(task => {
+    const tasks = getAllTasks().filter(t => !t.hidden);
+    const categoryTasks = tasks.filter(t =>
+      t.category === category ||
+      (t.categories && t.categories.includes(category))
+    );
+    return categoryTasks.map(task => {
       // 提取简短的模型值（去掉 _image_to_video, _text_to_image 等后缀）
       const shortKey = task.key.replace(/_image_to_video|_text_to_video|_text_to_image|_image_edit/g, '');
       const power = typeof task.computing_power === 'object' 

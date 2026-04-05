@@ -432,4 +432,11 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import Seedance drivers: {e}")
 
+    try:
+        from .qwen_multi_angle_runninghub_v1_driver import QwenMultiAngleRunninghubV1Driver
+        # 注册 Qwen Multi-Angle RunningHub v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.QWEN_MULTI_ANGLE_RUNNINGHUB_V1, QwenMultiAngleRunninghubV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import QwenMultiAngleRunninghubV1Driver: {e}")
+
     logger.info(f"Registered {len(VideoDriverFactory.get_supported_drivers())} video drivers")

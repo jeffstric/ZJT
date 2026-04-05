@@ -722,8 +722,41 @@
       }
     }
 
+    // 迁移旧版相机参数 (yaw/pitch/dolly → horizontal_angle/vertical_angle/zoom)
+    function migrateCameraParams(data){
+      if(!data || !data.nodes) return;
+      for(const node of data.nodes){
+        if(node.data && node.data.camera){
+          const cam = node.data.camera;
+          // 检测旧格式：存在 yaw/pitch/dolly 但不存在 horizontal_angle
+          if('yaw' in cam && !('horizontal_angle' in cam)){
+            cam.horizontal_angle = cam.yaw || 0;
+            cam.vertical_angle = cam.pitch || 0;
+            cam.zoom = cam.dolly !== undefined ? cam.dolly : 5.0;
+            if(cam.modified){
+              cam.modified.horizontal_angle = cam.modified.yaw || false;
+              cam.modified.vertical_angle = cam.modified.pitch || false;
+              cam.modified.zoom = cam.modified.dolly !== undefined ? cam.modified.dolly : false;
+            }
+            delete cam.yaw;
+            delete cam.pitch;
+            delete cam.dolly;
+            if(cam.modified){
+              delete cam.modified.yaw;
+              delete cam.modified.pitch;
+              delete cam.modified.dolly;
+            }
+            console.log(`[相机迁移] 节点 ${node.id}: yaw=${cam.horizontal_angle}, pitch=${cam.vertical_angle}, dolly=${cam.zoom}`);
+          }
+        }
+      }
+    }
+
     // 恢复工作流状态
     function restoreWorkflow(data){
+      // 迁移旧版相机参数
+      migrateCameraParams(data);
+
       const wasRestoring = state.isRestoringHistory;
       state.isRestoringHistory = true;
       try{
@@ -1590,10 +1623,10 @@
         
         // 强制重置相机参数为默认值（用户需求：每次加载都重置）
         if(node.data.camera){
-          node.data.camera.yaw = 0;
-          node.data.camera.pitch = 0;
-          node.data.camera.dolly = 0;
-          node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
+          node.data.camera.horizontal_angle = 0;
+          node.data.camera.vertical_angle = 0;
+          node.data.camera.zoom = 5.0;
+          node.data.camera.modified = { horizontal_angle: false, vertical_angle: false, zoom: false };
         }
         
         // 规范化图片 URL
@@ -1638,19 +1671,19 @@
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;
           
           // 同步相机控制 UI 为重置后的值
-          const cameraYawSlider = el.querySelector('.image-camera-yaw-slider');
-          const cameraYawInput = el.querySelector('.image-camera-yaw');
-          const cameraDollySlider = el.querySelector('.image-camera-dolly-slider');
-          const cameraDollyInput = el.querySelector('.image-camera-dolly');
-          const cameraPitchSlider = el.querySelector('.image-camera-pitch-slider');
-          const cameraPitchInput = el.querySelector('.image-camera-pitch');
-          
-          if(cameraYawSlider) cameraYawSlider.value = 0;
-          if(cameraYawInput) cameraYawInput.value = 0;
-          if(cameraDollySlider) cameraDollySlider.value = 0;
-          if(cameraDollyInput) cameraDollyInput.value = 0;
-          if(cameraPitchSlider) cameraPitchSlider.value = 0;
-          if(cameraPitchInput) cameraPitchInput.value = 0;
+          const cameraHorizontalAngleSlider = el.querySelector('.image-camera-horizontal-angle-slider');
+          const cameraHorizontalAngleInput = el.querySelector('.image-camera-horizontal-angle');
+          const cameraVerticalAngleSlider = el.querySelector('.image-camera-vertical-angle-slider');
+          const cameraVerticalAngleInput = el.querySelector('.image-camera-vertical-angle');
+          const cameraZoomSlider = el.querySelector('.image-camera-zoom-slider');
+          const cameraZoomInput = el.querySelector('.image-camera-zoom');
+
+          if(cameraHorizontalAngleSlider) cameraHorizontalAngleSlider.value = 0;
+          if(cameraHorizontalAngleInput) cameraHorizontalAngleInput.value = 0;
+          if(cameraVerticalAngleSlider) cameraVerticalAngleSlider.value = 0;
+          if(cameraVerticalAngleInput) cameraVerticalAngleInput.value = 0;
+          if(cameraZoomSlider) cameraZoomSlider.value = 5.0;
+          if(cameraZoomInput) cameraZoomInput.value = 5.0;
           
           // 更新 3D 预览
           const cameraCanvas = el.querySelector('.image-camera-canvas');
