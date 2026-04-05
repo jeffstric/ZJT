@@ -5,6 +5,8 @@
 import os
 import io
 import logging
+import math
+import uuid
 from typing import Optional, Tuple
 from PIL import Image
 
@@ -188,6 +190,83 @@ def compress_image_to_limit(
         import traceback
         logger.error(traceback.format_exc())
         return False, None, f"压缩图片异常: {str(e)}"
+
+
+def resize_image_to_pixel_limit(
+    image_path: str,
+    max_total_pixels: int = 36_000_000,
+    output_path: Optional[str] = None
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    等比缩放图片，使总像素不超过限制
+
+    Args:
+        image_path: 输入图片路径
+        max_total_pixels: 最大总像素数（width * height），默认 36,000,000
+        output_path: 输出路径，如果为 None 则保存到临时文件
+
+    Returns:
+        Tuple[bool, Optional[str], Optional[str]]:
+            - 是否成功
+            - 输出文件路径（成功时）
+            - 错误信息（失败时）
+    """
+    try:
+        if not os.path.exists(image_path):
+            return False, None, f"文件不存在: {image_path}"
+
+        img = Image.open(image_path)
+        img.load()
+
+        total_pixels = img.width * img.height
+
+        # 像素未超限，直接返回原路径
+        if total_pixels <= max_total_pixels:
+            img.close()
+            return True, image_path, None
+
+        # 计算等比缩放比例
+        scale = math.sqrt(max_total_pixels / total_pixels)
+        new_width = int(img.width * scale)
+        new_height = int(img.height * scale)
+
+        logger.info(f"图片总像素 {total_pixels:,} 超过限制 {max_total_pixels:,}，等比缩放: {img.width}x{img.height} -> {new_width}x{new_height}")
+
+        # 等比缩放
+        resized_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+        # 确定输出路径
+        if output_path is None:
+            from utils.media_cache import get_temp_date_dir
+            from datetime import datetime
+            temp_dir = get_temp_date_dir(datetime.now())
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            ext = os.path.splitext(image_path)[1] or ".jpg"
+            output_path = str(temp_dir / f"pixel_resized_{timestamp}_{uuid.uuid4().hex[:8]}{ext}")
+
+        # 保存缩放后的图片，保持原格式
+        img_format = img.format or 'JPEG'
+        save_kwargs = {'format': img_format}
+        if img_format == 'JPEG':
+            save_kwargs['quality'] = 95
+            save_kwargs['optimize'] = True
+        elif img_format == 'PNG':
+            save_kwargs['optimize'] = True
+
+        resized_img.save(output_path, **save_kwargs)
+
+        actual_pixels = new_width * new_height
+        logger.info(f"像素缩放完成: {total_pixels:,} -> {actual_pixels:,} px, 保存到: {output_path}")
+
+        img.close()
+        resized_img.close()
+        return True, output_path, None
+
+    except Exception as e:
+        logger.error(f"像素缩放异常: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False, None, f"像素缩放异常: {str(e)}"
 
 
 def get_image_size_mb(image_path: str) -> Optional[float]:

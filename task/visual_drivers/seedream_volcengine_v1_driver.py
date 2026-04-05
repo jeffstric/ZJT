@@ -3,14 +3,17 @@ Seedream 火山引擎供应商 v1 版本驱动实现
 同步 API - 一次请求直接返回图片 URL
 支持 Seedream 4.5 和 5.0 两个模型
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import traceback
+import math
 import os
-from .base_video_driver import BaseVideoDriver, ImageMode
+from PIL import Image as PILImage
+from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
-from utils.image_upload_utils import compress_and_upload_image_sync
+from utils.image_upload_utils import compress_and_upload_image_sync, resolve_url_to_local_file_sync
+from utils.image_compressor import resize_image_to_pixel_limit
 
 
 class Seedream5VolcengineV1Driver(BaseVideoDriver):
@@ -28,6 +31,9 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
 
     # 支持的图片尺寸
     SUPPORTED_SIZES = ["2K", "3K", "4K"]
+
+    # 参考图总像素限制（所有参考图的 width * height 之和）
+    MAX_TOTAL_PIXELS = 36_000_000
 
     # 尺寸映射表：基于 image_size 和 aspect_ratio 获取像素值
     SIZE_MAPPING = {
@@ -160,14 +166,49 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         # 默认返回 1:1
         return size_dict.get("1:1", "2048x2048")
 
+    def _ensure_total_pixel_limit(self, local_paths: List[str]) -> List[str]:
+        """
+        确保所有参考图的总像素不超过限制，超限则统一等比缩放
+
+        Args:
+            local_paths: 本地图片路径列表
+
+        Returns:
+            处理后的本地图片路径列表（可能为缩放后的新路径）
+        """
+        # 读取每张图尺寸（仅读头部元数据，不加载像素数据）
+        img_infos = []  # [(path, width, height), ...]
+        total_pixels = 0
+        for path in local_paths:
+            with PILImage.open(path) as img:
+                w, h = img.size
+                img_infos.append((path, w, h))
+                total_pixels += w * h
+
+        if total_pixels <= self.MAX_TOTAL_PIXELS:
+            self.logger.info(f"参考图总像素: {total_pixels:,}，未超限 {self.MAX_TOTAL_PIXELS:,}")
+            return local_paths
+
+        # 计算统一缩放比例，保证缩放后总和 ≈ MAX_TOTAL_PIXELS
+        scale = math.sqrt(self.MAX_TOTAL_PIXELS / total_pixels)
+        self.logger.info(f"参考图总像素 {total_pixels:,} 超限 {self.MAX_TOTAL_PIXELS:,}，等比缩放 scale={scale:.4f}")
+
+        resized = []
+        for path, w, h in img_infos:
+            per_image_limit = max(int(w * scale), 1) * max(int(h * scale), 1)
+            success, new_path, error = resize_image_to_pixel_limit(path, max_total_pixels=per_image_limit)
+            if success and new_path != path:
+                self.logger.info(f"缩放图片: {w}x{h} -> budget={per_image_limit:,} px, path={new_path}")
+                resized.append(new_path)
+            else:
+                if error:
+                    self.logger.error(f"缩放图片失败: {error}，使用原图")
+                resized.append(path)
+        return resized
+
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         构建创建 Seedream 任务的完整请求参数
-
-        支持图片模式：
-        - first_last_frame: 首尾帧模式，使用 image_path 中的图片（1-2张）
-        - multi_reference: 多参考图模式，使用 reference_images 中的图片（1-5张）
-        - first_last_with_ref: 首尾帧+参考图模式，优先使用首尾帧
         """
         # 获取图片尺寸，默认 2K
         image_size = getattr(ai_tool, 'image_size', None) or "2K"
@@ -180,65 +221,52 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         # 基于 image_size 和 aspect_ratio 获取像素尺寸
         pixel_size = self._get_pixel_size(image_size, aspect_ratio)
 
-        # 根据图片模式获取图片列表
-        image_info = self.get_all_images_by_mode(ai_tool)
-        mode = image_info['mode']
-        first_frame = image_info['first_frame']
-        last_frame = image_info['last_frame']
-        reference_images = image_info['reference_images']
+        # 处理图片路径
+        image_urls = None
+        if ai_tool.image_path:
+            raw_urls = ai_tool.image_path.split(',') if ',' in ai_tool.image_path else [ai_tool.image_path]
+            raw_urls = [u.strip() for u in raw_urls if u.strip()]
 
-        self.logger.info(f"Seedream 图片模式: {mode}, 首帧: {first_frame}, 尾帧: {last_frame}, 参考图: {len(reference_images)}张")
+            # 第一步：解析所有图片到本地路径
+            local_paths = []
+            for img_url in raw_urls:
+                local_path = resolve_url_to_local_file_sync(img_url, self._config)
+                if local_path:
+                    local_paths.append(local_path)
+                else:
+                    self.logger.error(f"无法解析图片 URL: {img_url}")
+                    return {
+                        "success": False,
+                        "error": f"无法解析图片 URL: {img_url}",
+                        "error_type": "USER",
+                        "retry": False
+                    }
 
-        # 根据模式构建原始图片URL列表
-        raw_image_urls = []
+            # 第二步：聚合检查总像素，超限则等比缩放
+            local_paths = self._ensure_total_pixel_limit(local_paths)
 
-        if mode == ImageMode.MULTI_REFERENCE:
-            # 多参考图模式：所有参考图
-            raw_image_urls = reference_images
-        elif mode == ImageMode.FIRST_LAST_WITH_REF:
-            # 首尾帧+参考图模式：优先使用首尾帧
-            if first_frame or last_frame:
-                if first_frame:
-                    raw_image_urls.append(first_frame)
-                if last_frame:
-                    raw_image_urls.append(last_frame)
-                if reference_images:
-                    self.logger.warning(f"Seedream 首尾帧+参考图模式暂不支持同时使用，已使用首尾帧，忽略 {len(reference_images)} 张参考图")
-            elif reference_images:
-                raw_image_urls = reference_images
-        else:
-            # first_last_frame 模式（默认）
-            if first_frame:
-                raw_image_urls.append(first_frame)
-            if last_frame:
-                raw_image_urls.append(last_frame)
+            # 第三步：逐张上传
+            processed_urls = []
+            for local_path in local_paths:
+                success, new_url, error = compress_and_upload_image_sync(
+                    local_path,
+                    self._config,
+                    max_size_mb=10.0,
+                    is_local=True  # 火山引擎要求参考图在5秒内下载完成，强制走图床上传
+                )
 
-        # 处理图片：压缩并上传
-        processed_urls = []
-        for img_url in raw_image_urls:
-            img_url = img_url.strip()
-            if not img_url:
-                continue
+                if success:
+                    processed_urls.append(new_url)
+                else:
+                    self.logger.error(f"处理图片失败: {error}")
+                    return {
+                        "success": False,
+                        "error": f"处理图片失败: {error}",
+                        "error_type": "USER",
+                        "retry": False
+                    }
 
-            success, new_url, error = compress_and_upload_image_sync(
-                img_url,
-                self._config,
-                max_size_mb=10.0,
-                is_local=True  # 火山引擎要求参考图在5秒内下载完成，强制走图床上传
-            )
-
-            if success:
-                processed_urls.append(new_url)
-            else:
-                self.logger.error(f"处理图片失败: {error}")
-                return {
-                    "success": False,
-                    "error": f"处理图片失败: {error}",
-                    "error_type": "USER",
-                    "retry": False
-                }
-
-        image_urls = processed_urls if processed_urls else None
+            image_urls = processed_urls
 
         # 根据 task_id 选择模型
         task_type = getattr(ai_tool, 'type', None)
