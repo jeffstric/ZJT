@@ -206,6 +206,16 @@ media_cache:
   cleanup_on_startup: true         # 启动时执行清理
   cleanup_interval_hours: 24       # 定时清理间隔（小时）
 
+# CDN 存储配置（用于 AI Tools 结果自动同步到 CDN）
+cdn_storage:
+  enabled: false                   # 是否启用 CDN 存储
+  provider: "qiniu"               # CDN 提供商（目前仅支持 qiniu）
+  access_key: ""                  # 七牛云 Access Key
+  secret_key: ""                  # 七牛云 Secret Key
+  bucket_name: ""                # CDN 存储空间名称
+  cdn_domain: ""                 # CDN 加速域名
+  prefix: "ai_tools"             # CDN 路径前缀
+
 # 同步任务进程池配置（用于Gemini、Seedream等同步API）
 sync_task:
   max_workers: 4                   # 进程池最大并发数

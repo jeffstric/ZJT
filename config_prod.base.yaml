@@ -123,5 +123,15 @@ media_cache:
   cleanup_on_startup: true
   cleanup_interval_hours: 24
 
+# CDN 存储配置（用于 AI Tools 结果自动同步到 CDN）
+cdn_storage:
+  enabled: false
+  provider: "qiniu"
+  access_key: ""
+  secret_key: ""
+  bucket_name: ""
+  cdn_domain: ""
+  prefix: "ai_tools"
+
 zjt:
   token: ""

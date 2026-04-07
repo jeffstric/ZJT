@@ -276,7 +276,7 @@ async def _submit_new_task(ai_tool):
                 logger.info(f"Sync task media cached: {result_url} -> {final_url}")
 
             from datetime import datetime
-            AIToolsModel.update(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
+            AIToolsModel.update_with_cdn_sync(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
             logger.info(f"Sync task {task_id} completed with result: {final_url}")
             return True
@@ -435,7 +435,7 @@ async def _handle_task_success(project_id, task_id, media_url):
         logger.info(f"Media cached: {media_url} -> {final_url}")
         
         from datetime import datetime
-        AIToolsModel.update_by_project_id(
+        AIToolsModel.update_by_project_id_with_cdn_sync(
             project_id=project_id,
             result_url=final_url,
             status=AI_TOOL_STATUS_COMPLETED,

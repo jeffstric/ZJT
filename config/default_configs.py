@@ -463,6 +463,71 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
+    {
+        'key': 'media_cache.upload_to_cloud',
+        'value_type': 'bool',
+        'description': '是否自动上传到云端（需要配置七牛云）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'media_cache.cloud_prefix',
+        'value_type': 'string',
+        'description': '云端存储路径前缀',
+        'editable': True,
+        'is_sensitive': False
+    },
+
+    # ==================== CDN 存储配置（AI Tools 专用）====================
+    {
+        'key': 'cdn_storage.enabled',
+        'value_type': 'bool',
+        'description': '是否启用 CDN 存储（用于 AI Tools 结果自动同步）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'cdn_storage.provider',
+        'value_type': 'string',
+        'description': 'CDN 提供商（目前仅支持 qiniu）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'cdn_storage.access_key',
+        'value_type': 'string',
+        'description': 'CDN Access Key（七牛云）',
+        'editable': True,
+        'is_sensitive': True
+    },
+    {
+        'key': 'cdn_storage.secret_key',
+        'value_type': 'string',
+        'description': 'CDN Secret Key（七牛云）',
+        'editable': True,
+        'is_sensitive': True
+    },
+    {
+        'key': 'cdn_storage.bucket_name',
+        'value_type': 'string',
+        'description': 'CDN 存储空间名称',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'cdn_storage.cdn_domain',
+        'value_type': 'string',
+        'description': 'CDN 加速域名',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'cdn_storage.prefix',
+        'value_type': 'string',
+        'description': 'CDN 路径前缀',
+        'editable': True,
+        'is_sensitive': False
+    },
 
     # ==================== 同步任务进程池配置 ====================
     {

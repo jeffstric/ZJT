@@ -330,7 +330,55 @@ class AIToolsModel:
         except Exception as e:
             logger.error(f"Failed to update AI tool record {record_id}: {e}")
             raise
-    
+
+    @staticmethod
+    def update_with_cdn_sync(
+        record_id: int,
+        result_url: Optional[str] = None,
+        **kwargs
+    ) -> int:
+        """
+        更新 AI 工具记录，并自动同步 result_url 到 CDN
+
+        如果 result_url 是本地路径（如 /upload/...）且 CDN 已启用，
+        则上传到 CDN 并更新 result_url 为 CDN URL。
+
+        Args:
+            record_id: Record ID
+            result_url: 结果 URL（如果有）
+            **kwargs: 其他要更新的字段
+
+        Returns:
+            Number of affected rows
+        """
+        final_result_url = result_url
+
+        # 如果 result_url 是本地路径，尝试上传到 CDN
+        if result_url and result_url.startswith("/upload/"):
+            try:
+                from utils.cdn_storage import get_cdn_storage
+                cdn_manager = get_cdn_storage()
+
+                if cdn_manager.is_enabled():
+                    # 移除开头的 /
+                    local_path = result_url.lstrip("/")
+                    cdn_url = cdn_manager.upload_local_file_sync(local_path)
+
+                    if cdn_url:
+                        final_result_url = cdn_url
+                        logger.info(f"result_url 已同步到 CDN: {result_url} -> {cdn_url}")
+                    else:
+                        logger.warning(f"CDN 上传失败，保持本地路径: {result_url}")
+            except Exception as e:
+                logger.error(f"CDN 同步失败: {e}")
+                # CDN 上传失败不影响原 result_url
+
+        # 调用原 update 方法
+        if final_result_url is not None:
+            kwargs['result_url'] = final_result_url
+
+        return AIToolsModel.update(record_id, **kwargs)
+
     @staticmethod
     def update_by_project_id(
         project_id: str,
@@ -373,7 +421,55 @@ class AIToolsModel:
         except Exception as e:
             logger.error(f"Failed to update AI tool record by project_id {project_id}: {e}")
             raise
-    
+
+    @staticmethod
+    def update_by_project_id_with_cdn_sync(
+        project_id: str,
+        result_url: Optional[str] = None,
+        **kwargs
+    ) -> int:
+        """
+        更新 AI 工具记录（按 project_id），并自动同步 result_url 到 CDN
+
+        如果 result_url 是本地路径（如 /upload/...）且 CDN 已启用，
+        则上传到 CDN 并更新 result_url 为 CDN URL。
+
+        Args:
+            project_id: Project ID
+            result_url: 结果 URL（如果有）
+            **kwargs: 其他要更新的字段
+
+        Returns:
+            Number of affected rows
+        """
+        final_result_url = result_url
+
+        # 如果 result_url 是本地路径，尝试上传到 CDN
+        if result_url and result_url.startswith("/upload/"):
+            try:
+                from utils.cdn_storage import get_cdn_storage
+                cdn_manager = get_cdn_storage()
+
+                if cdn_manager.is_enabled():
+                    # 移除开头的 /
+                    local_path = result_url.lstrip("/")
+                    cdn_url = cdn_manager.upload_local_file_sync(local_path)
+
+                    if cdn_url:
+                        final_result_url = cdn_url
+                        logger.info(f"result_url 已同步到 CDN: {result_url} -> {cdn_url}")
+                    else:
+                        logger.warning(f"CDN 上传失败，保持本地路径: {result_url}")
+            except Exception as e:
+                logger.error(f"CDN 同步失败: {e}")
+                # CDN 上传失败不影响原 result_url
+
+        # 调用原 update_by_project_id 方法
+        if final_result_url is not None:
+            kwargs['result_url'] = final_result_url
+
+        return AIToolsModel.update_by_project_id(project_id, **kwargs)
+
     @staticmethod
     def delete(record_id: int) -> int:
         """
