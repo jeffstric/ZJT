@@ -199,3 +199,35 @@ class QiniuFileStorage(BaseFileStorage):
         domain = self.cdn_domain.rstrip("/")
         key = key.lstrip("/")
         return f"http://{domain}/{key}"
+
+    def _sync_delete(self, key: str) -> bool:
+        """同步删除文件"""
+        try:
+            qiniu_bucket = qiniu.BucketManager(self._auth)
+            ret, info = qiniu_bucket.delete(self.bucket_name, key)
+            if ret is not None:
+                return True
+            # 如果返回404认为文件不存在也算删除成功
+            if info.status_code == 612:
+                return True
+            return False
+        except Exception as e:
+            return False
+
+    async def delete(self, key: str) -> bool:
+        """
+        异步删除存储中的文件
+
+        Args:
+            key: 文件在存储中的唯一标识
+
+        Returns:
+            bool: 删除是否成功
+        """
+        # 在线程池中执行同步删除操作
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._sync_delete,
+            key
+        )
