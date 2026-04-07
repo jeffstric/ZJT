@@ -179,15 +179,26 @@ async function generateShotFrameImage(nodeId, node){
       finalPrompt = `${imagePrompt}\n\n${promptSuffix.join('，')}。`;
     }
     
-    // 4.5. 添加相机视角描述（从连接的图片节点读取，使用多角度 API）
+    // 4.5. 添加相机视角描述（从连接的图片节点或相机控制节点读取，使用多角度 API）
     const connectedImageNode = state.connections
       .filter(c => c.from === nodeId)
       .map(c => state.nodes.find(n => n.id === c.to))
       .find(n => n && n.type === 'image');
 
     let cameraParams = null;
+    // 优先从图片节点的旧 camera 数据读取（兼容旧工作流）
     if(connectedImageNode && connectedImageNode.data.camera){
       cameraParams = convertCameraToQwenMultiAngleParams(connectedImageNode.data.camera);
+    }
+    // 其次查找连接到该图片节点的 camera_control 节点
+    if(!cameraParams && connectedImageNode){
+      const cameraCtrlNode = state.nodes.find(n => {
+        if(n.type !== 'camera_control') return false;
+        return state.connections.some(c => c.from === connectedImageNode.id && c.to === n.id);
+      });
+      if(cameraCtrlNode && cameraCtrlNode.data.camera){
+        cameraParams = convertCameraToQwenMultiAngleParams(cameraCtrlNode.data.camera);
+      }
     }
     
     // 4.6. 添加画风文字描述

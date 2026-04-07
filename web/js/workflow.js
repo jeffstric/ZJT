@@ -954,6 +954,8 @@
         createTextNodeWithData(nodeData);
       } else if(nodeData.type === 'extract_frame'){
         createExtractFrameNodeWithData(nodeData);
+      } else if(nodeData.type === 'camera_control'){
+        createCameraControlNodeWithData(nodeData);
       }
     }
 
@@ -1620,15 +1622,7 @@
       if(node && nodeData.data){
         // 直接使用保存的所有属性，确保包括 gridIndex、gridSize、isSplit 等分镜图相关属性都能被恢复
         Object.assign(node.data, nodeData.data);
-        
-        // 强制重置相机参数为默认值（用户需求：每次加载都重置）
-        if(node.data.camera){
-          node.data.camera.horizontal_angle = 0;
-          node.data.camera.vertical_angle = 0;
-          node.data.camera.zoom = 5.0;
-          node.data.camera.modified = { horizontal_angle: false, vertical_angle: false, zoom: false };
-        }
-        
+
         // 规范化图片 URL
         if(node.data.url){
           node.data.url = normalizeImageUrl(node.data.url);
@@ -1669,28 +1663,7 @@
           if(ratioEl) ratioEl.value = node.data.ratio;
           if(drawCountLabel) drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;
-          
-          // 同步相机控制 UI 为重置后的值
-          const cameraHorizontalAngleSlider = el.querySelector('.image-camera-horizontal-angle-slider');
-          const cameraHorizontalAngleInput = el.querySelector('.image-camera-horizontal-angle');
-          const cameraVerticalAngleSlider = el.querySelector('.image-camera-vertical-angle-slider');
-          const cameraVerticalAngleInput = el.querySelector('.image-camera-vertical-angle');
-          const cameraZoomSlider = el.querySelector('.image-camera-zoom-slider');
-          const cameraZoomInput = el.querySelector('.image-camera-zoom');
 
-          if(cameraHorizontalAngleSlider) cameraHorizontalAngleSlider.value = 0;
-          if(cameraHorizontalAngleInput) cameraHorizontalAngleInput.value = 0;
-          if(cameraVerticalAngleSlider) cameraVerticalAngleSlider.value = 0;
-          if(cameraVerticalAngleInput) cameraVerticalAngleInput.value = 0;
-          if(cameraZoomSlider) cameraZoomSlider.value = 5.0;
-          if(cameraZoomInput) cameraZoomInput.value = 5.0;
-          
-          // 更新 3D 预览
-          const cameraCanvas = el.querySelector('.image-camera-canvas');
-          if(cameraCanvas && typeof window.updateCameraPreview === 'function'){
-            window.updateCameraPreview(cameraCanvas, node.data.camera);
-          }
-          
           if(node.data.url || node.data.preview){
             const previewImg = el.querySelector('.image-preview');
             const previewRow = el.querySelector('.image-preview-row');
@@ -1700,6 +1673,56 @@
               if(previewRow) previewRow.style.display = 'flex';
             }
           }
+        }
+      }
+    }
+
+    // 带数据创建相机控制节点
+    function createCameraControlNodeWithData(nodeData){
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+
+      createCameraControlNode({ x: nodeData.x, y: nodeData.y });
+
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+
+      const node = state.nodes.find(n => n.id === nodeData.id);
+      if(node && nodeData.data){
+        Object.assign(node.data, nodeData.data);
+
+        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+        if(el){
+          // 恢复相机参数到 UI
+          const hSlider = el.querySelector('.camera-ctrl-horizontal-angle-slider');
+          const hInput = el.querySelector('.camera-ctrl-horizontal-angle');
+          const vSlider = el.querySelector('.camera-ctrl-vertical-angle-slider');
+          const vInput = el.querySelector('.camera-ctrl-vertical-angle');
+          const zSlider = el.querySelector('.camera-ctrl-zoom-slider');
+          const zInput = el.querySelector('.camera-ctrl-zoom');
+
+          if(node.data.camera){
+            if(hSlider) hSlider.value = node.data.camera.horizontal_angle ?? 0;
+            if(hInput) hInput.value = node.data.camera.horizontal_angle ?? 0;
+            if(vSlider) vSlider.value = node.data.camera.vertical_angle ?? 0;
+            if(vInput) vInput.value = node.data.camera.vertical_angle ?? 0;
+            if(zSlider) zSlider.value = node.data.camera.zoom ?? 5.0;
+            if(zInput) zInput.value = node.data.camera.zoom ?? 5.0;
+          }
+
+          // 恢复抽卡次数标签
+          const drawCountLabel = el.querySelector('.camera-ctrl-draw-count-label');
+          if(drawCountLabel) drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount || 1}`;
+
+          // 恢复标题
+          if(nodeData.title){
+            node.title = nodeData.title;
+            const titleEl = el.querySelector('.node-title');
+            if(titleEl) titleEl.textContent = nodeData.title;
+          }
+
+          // 更新源图缩略图
+          const updateSourceThumbnail = el._updateSourceThumbnail;
+          if(typeof updateSourceThumbnail === 'function') updateSourceThumbnail();
         }
       }
     }

@@ -160,6 +160,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddCameraControl').addEventListener('click', () => {
+      const nodeId = createCameraControlNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddScript').addEventListener('click', () => {
       const nodeId = createScriptNode();
       renderMinimap();

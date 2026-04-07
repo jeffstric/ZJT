@@ -4050,12 +4050,6 @@
           model: defaultImageModel,
           drawCount: 1,
           project_id: null,
-          camera: {
-            yaw: 0,
-            dolly: 0,
-            pitch: 0,
-            modified: { yaw: false, dolly: false, pitch: false }
-          }
         }
       };
       state.nodes.push(node);
@@ -4115,65 +4109,8 @@
               <option value="4:3">横屏 (4:3)</option>
             </select>
           </div>
-          <div class="field field-collapsible camera-control-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div class="label" style="margin: 0;">相机控制</div>
-              <button class="mini-btn camera-control-toggle-btn" type="button" style="font-size: 11px; padding: 4px 8px;">展开</button>
-            </div>
-            <div class="camera-control-content" style="display: none; flex-direction: column; gap: 12px; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 4px;">
-              <div class="camera-param-row" data-param="horizontal_angle">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <label style="font-size: 11px; font-weight: 600; color: #374151;">水平角度 (0~360°)</label>
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="number" class="camera-input image-camera-horizontal-angle" value="0" min="0" max="360" step="1" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
-                    <span style="font-size: 11px; color: #6b7280;">°</span>
-                    <button type="button" class="camera-reset-btn image-camera-reset-horizontal-angle" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
-                  </div>
-                </div>
-                <input type="range" class="camera-slider image-camera-horizontal-angle-slider" min="0" max="360" step="1" value="0" style="width: 100%;" />
-                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
-                  <span>0° (正面)</span>
-                  <span>90° (右侧)</span>
-                  <span>180° (背面)</span>
-                  <span>360°</span>
-                </div>
-              </div>
-              <div class="camera-param-row" data-param="vertical_angle">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <label style="font-size: 11px; font-weight: 600; color: #374151;">垂直角度 (-30°~60°)</label>
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="number" class="camera-input image-camera-vertical-angle" value="0" min="-30" max="60" step="1" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
-                    <span style="font-size: 11px; color: #6b7280;">°</span>
-                    <button type="button" class="camera-reset-btn image-camera-reset-vertical-angle" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
-                  </div>
-                </div>
-                <input type="range" class="camera-slider image-camera-vertical-angle-slider" min="-30" max="60" step="1" value="0" style="width: 100%;" />
-                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
-                  <span>-30° (仰视)</span>
-                  <span>0° (平视)</span>
-                  <span>+60° (俯视)</span>
-                </div>
-              </div>
-              <div class="camera-param-row" data-param="zoom">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <label style="font-size: 11px; font-weight: 600; color: #374151;">缩放距离 (0~10)</label>
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="number" class="camera-input image-camera-zoom" value="5.0" min="0" max="10" step="0.1" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
-                    <button type="button" class="camera-reset-btn image-camera-reset-zoom" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
-                  </div>
-                </div>
-                <input type="range" class="camera-slider image-camera-zoom-slider" min="0" max="10" step="0.1" value="5.0" style="width: 100%;" />
-                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
-                  <span>0 (远景)</span>
-                  <span>5 (中景)</span>
-                  <span>10 (特写)</span>
-                </div>
-              </div>
-              <div style="margin-top: 8px;">
-                <label style="display: block; font-size: 11px; font-weight: 600; color: #374151; margin-bottom: 6px;">3D 预览</label>
-                <canvas class="camera-preview-canvas image-camera-canvas" width="200" height="150" style="width: 100%; max-width: 200px; height: 150px; border: 1px solid #e5e7eb; border-radius: 4px; background: #ffffff;"></canvas>
-              </div>
-            </div>
+          <div class="field field-collapsible">
+            <button class="mini-btn image-camera-control-btn" type="button" style="width:100%;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;">相机控制</button>
           </div>
           <div class="field field-collapsible">
             <div class="btn-row" style="display: flex; gap: 8px;">
@@ -4409,6 +4346,7 @@
       const genMenu = el.querySelector('.gen-menu');
       const confirmFieldEl = el.querySelector('.image-confirm-field');
       const confirmShotBtn = el.querySelector('.image-confirm-shot-btn');
+      const cameraControlBtn = el.querySelector('.image-camera-control-btn');
 
       // 动态填充图片模型选项（从 TaskConfig 获取）
       let firstImageModelValue = 'gemini';
@@ -4688,11 +4626,7 @@
           return;
         }
         
-        // 检查是否有相机参数修改
-        const hasCameraModifications = node.data.camera && node.data.camera.modified && 
-          (node.data.camera.modified.yaw || node.data.camera.modified.dolly || node.data.camera.modified.pitch);
-        
-        if(!node.data.prompt && !hasCameraModifications){
+        if(!node.data.prompt){
           statusEl.style.display = 'block';
           statusEl.style.color = '#dc2626';
           statusEl.textContent = '请先输入编辑提示词或调整相机参数';
@@ -4711,15 +4645,7 @@
           }
 
           let finalPrompt = node.data.prompt || '';
-          
-          // 添加相机视角描述
-          if(node.data.camera && typeof convertCameraToQwenMultiAngleParams === 'function'){
-            const cameraParams = convertCameraToQwenMultiAngleParams(node.data.camera);
-            if(cameraParams){
-              finalPrompt = `${finalPrompt}\n\n视角参数：水平${cameraParams.horizontal_angle}° 垂直${cameraParams.vertical_angle}° 缩放${cameraParams.zoom}`;
-            }
-          }
-          
+
           if(state.style && state.style.name){
             finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
           }
@@ -4916,163 +4842,33 @@
         }
       });
 
-      // 相机控制事件绑定
-      const cameraHorizontalAngleSlider = el.querySelector('.image-camera-horizontal-angle-slider');
-      const cameraHorizontalAngleInput = el.querySelector('.image-camera-horizontal-angle');
-      const cameraHorizontalAngleReset = el.querySelector('.image-camera-reset-horizontal-angle');
-      const cameraVerticalAngleSlider = el.querySelector('.image-camera-vertical-angle-slider');
-      const cameraVerticalAngleInput = el.querySelector('.image-camera-vertical-angle');
-      const cameraVerticalAngleReset = el.querySelector('.image-camera-reset-vertical-angle');
-      const cameraZoomSlider = el.querySelector('.image-camera-zoom-slider');
-      const cameraZoomInput = el.querySelector('.image-camera-zoom');
-      const cameraZoomReset = el.querySelector('.image-camera-reset-zoom');
-      const cameraCanvas = el.querySelector('.image-camera-canvas');
-      const cameraControlToggleBtn = el.querySelector('.camera-control-toggle-btn');
-      const cameraControlContent = el.querySelector('.camera-control-content');
-      
-      // 初始化相机数据（强制重置为默认值）
-      node.data.camera = {
-        horizontal_angle: 0,
-        vertical_angle: 0,
-        zoom: 5.0,
-        modified: { horizontal_angle: false, vertical_angle: false, zoom: false }
-      };
-
-      // 从数据恢复相机参数
-      if(cameraHorizontalAngleSlider) cameraHorizontalAngleSlider.value = node.data.camera.horizontal_angle ?? 0;
-      if(cameraHorizontalAngleInput) cameraHorizontalAngleInput.value = node.data.camera.horizontal_angle ?? 0;
-      if(cameraVerticalAngleSlider) cameraVerticalAngleSlider.value = node.data.camera.vertical_angle ?? 0;
-      if(cameraVerticalAngleInput) cameraVerticalAngleInput.value = node.data.camera.vertical_angle ?? 0;
-      if(cameraZoomSlider) cameraZoomSlider.value = node.data.camera.zoom ?? 5.0;
-      if(cameraZoomInput) cameraZoomInput.value = node.data.camera.zoom ?? 5.0;
-      
-      function updateImageCameraPreview(){
-        if(cameraCanvas && typeof window.updateCameraPreview === 'function'){
-          window.updateCameraPreview(cameraCanvas, node.data.camera);
-        }
-      }
-      
-      // 相机控制折叠切换
-      if(cameraControlToggleBtn && cameraControlContent){
-        cameraControlToggleBtn.addEventListener('click', (e) => {
+      // 相机控制按钮：自动创建相机控制节点并连接
+      if(cameraControlBtn){
+        cameraControlBtn?.addEventListener('click', (e) => {
           e.stopPropagation();
-          const isHidden = cameraControlContent.style.display === 'none';
-          if(isHidden){
-            cameraControlContent.style.display = 'flex';
-            cameraControlToggleBtn.textContent = '收起';
-            // 展开时更新预览
-            updateImageCameraPreview();
-          } else {
-            cameraControlContent.style.display = 'none';
-            cameraControlToggleBtn.textContent = '展开';
+          if(!node.data.url && !node.data.preview){
+            showToast('请先上传或生成图片', 'warning');
+            return;
           }
+          const cameraNodeId = createCameraControlNode({
+            x: node.x + 380,
+            y: node.y,
+            checkCollision: true
+          });
+          // 自动连接: image → camera_control
+          state.connections.push({
+            id: state.nextConnId++,
+            from: node.id,
+            to: cameraNodeId
+          });
+          renderConnections();
+          renderImageConnections();
+          renderFirstFrameConnections();
+          renderMinimap();
+          showToast('已创建相机控制节点', 'success');
+          try{ autoSaveWorkflow(); } catch(err){}
         });
       }
-
-      // Horizontal Angle 滑块和输入框
-      if(cameraHorizontalAngleSlider){
-        cameraHorizontalAngleSlider.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { horizontal_angle: 0, vertical_angle: 0, zoom: 5.0, modified: { horizontal_angle: false, vertical_angle: false, zoom: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { horizontal_angle: false, vertical_angle: false, zoom: false };
-          node.data.camera.horizontal_angle = value;
-          node.data.camera.modified.horizontal_angle = true;
-          if(cameraHorizontalAngleInput) cameraHorizontalAngleInput.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraHorizontalAngleInput){
-        cameraHorizontalAngleInput.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { horizontal_angle: 0, vertical_angle: 0, zoom: 5.0, modified: { horizontal_angle: false, vertical_angle: false, zoom: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { horizontal_angle: false, vertical_angle: false, zoom: false };
-          node.data.camera.horizontal_angle = value;
-          node.data.camera.modified.horizontal_angle = true;
-          if(cameraHorizontalAngleSlider) cameraHorizontalAngleSlider.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraHorizontalAngleReset){
-        cameraHorizontalAngleReset.addEventListener('click', (e) => {
-          e.stopPropagation();
-          node.data.camera.horizontal_angle = 0;
-          node.data.camera.modified.horizontal_angle = false;
-          if(cameraHorizontalAngleSlider) cameraHorizontalAngleSlider.value = 0;
-          if(cameraHorizontalAngleInput) cameraHorizontalAngleInput.value = 0;
-          updateImageCameraPreview();
-        });
-      }
-
-      // Vertical Angle 滑块和输入框
-      if(cameraVerticalAngleSlider){
-        cameraVerticalAngleSlider.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { horizontal_angle: 0, vertical_angle: 0, zoom: 5.0, modified: { horizontal_angle: false, vertical_angle: false, zoom: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { horizontal_angle: false, vertical_angle: false, zoom: false };
-          node.data.camera.vertical_angle = value;
-          node.data.camera.modified.vertical_angle = true;
-          if(cameraVerticalAngleInput) cameraVerticalAngleInput.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraVerticalAngleInput){
-        cameraVerticalAngleInput.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { horizontal_angle: 0, vertical_angle: 0, zoom: 5.0, modified: { horizontal_angle: false, vertical_angle: false, zoom: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { horizontal_angle: false, vertical_angle: false, zoom: false };
-          node.data.camera.vertical_angle = value;
-          node.data.camera.modified.vertical_angle = true;
-          if(cameraVerticalAngleSlider) cameraVerticalAngleSlider.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraVerticalAngleReset){
-        cameraVerticalAngleReset.addEventListener('click', (e) => {
-          e.stopPropagation();
-          node.data.camera.vertical_angle = 0;
-          node.data.camera.modified.vertical_angle = false;
-          if(cameraVerticalAngleSlider) cameraVerticalAngleSlider.value = 0;
-          if(cameraVerticalAngleInput) cameraVerticalAngleInput.value = 0;
-          updateImageCameraPreview();
-        });
-      }
-
-      // Zoom 滑块和输入框
-      if(cameraZoomSlider){
-        cameraZoomSlider.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { horizontal_angle: 0, vertical_angle: 0, zoom: 5.0, modified: { horizontal_angle: false, vertical_angle: false, zoom: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { horizontal_angle: false, vertical_angle: false, zoom: false };
-          node.data.camera.zoom = value;
-          node.data.camera.modified.zoom = true;
-          if(cameraZoomInput) cameraZoomInput.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraZoomInput){
-        cameraZoomInput.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { horizontal_angle: 0, vertical_angle: 0, zoom: 5.0, modified: { horizontal_angle: false, vertical_angle: false, zoom: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { horizontal_angle: false, vertical_angle: false, zoom: false };
-          node.data.camera.zoom = value;
-          node.data.camera.modified.zoom = true;
-          if(cameraZoomSlider) cameraZoomSlider.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraZoomReset){
-        cameraZoomReset.addEventListener('click', (e) => {
-          e.stopPropagation();
-          node.data.camera.zoom = 5.0;
-          node.data.camera.modified.zoom = false;
-          if(cameraZoomSlider) cameraZoomSlider.value = 5.0;
-          if(cameraZoomInput) cameraZoomInput.value = 5.0;
-          updateImageCameraPreview();
-        });
-      }
-      
-      // 初始化预览
-      updateImageCameraPreview();
 
       // 暴露更新函数给节点对象
       node.updateReferenceImages = updateReferenceImages;
