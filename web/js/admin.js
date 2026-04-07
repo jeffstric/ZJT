@@ -117,6 +117,10 @@ const AdminApp = {
                     apiKey: '',
                     baseUrl: ''
                 },
+                qwen: {
+                    apiKey: '',
+                    baseUrl: ''
+                },
                 runninghub: {
                     apiKey: ''
                 },
@@ -1183,7 +1187,42 @@ const AdminApp = {
                 this.quickConfigModal.testLoading = false;
             }
         },
-        
+
+        async testQwenConnection() {
+            this.quickConfigModal.testLoading = true;
+            this.quickConfigModal.testResult = null;
+
+            try {
+                const response = await axios.post('/api/admin/config/test-qwen', {
+                    api_key: this.quickConfigModal.qwen.apiKey,
+                    base_url: this.quickConfigModal.qwen.baseUrl || null
+                }, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    this.quickConfigModal.testResult = {
+                        success: true,
+                        message: `✅ ${response.data.message}`
+                    };
+                } else {
+                    this.quickConfigModal.testResult = {
+                        success: false,
+                        message: `❌ ${response.data.message}`
+                    };
+                }
+            } catch (error) {
+                console.error('Test Qwen connection failed:', error);
+                const detail = error?.response?.data?.detail || '测试失败';
+                this.quickConfigModal.testResult = {
+                    success: false,
+                    message: `❌ ${detail}`
+                };
+            } finally {
+                this.quickConfigModal.testLoading = false;
+            }
+        },
+
         // 提交快速配置
         async submitQuickConfig() {
             // 构建配置列表
@@ -1197,6 +1236,12 @@ const AdminApp = {
             }
             if (this.quickConfigModal.google.baseUrl) {
                 configs.push({ key: 'llm.google.gemini_base_url', value: this.quickConfigModal.google.baseUrl.trim() });
+            }
+            if (this.quickConfigModal.qwen.apiKey) {
+                configs.push({ key: 'llm.qwen.api_key', value: this.quickConfigModal.qwen.apiKey.trim() });
+            }
+            if (this.quickConfigModal.qwen.baseUrl) {
+                configs.push({ key: 'llm.qwen.base_url', value: this.quickConfigModal.qwen.baseUrl.trim() });
             }
             if (this.quickConfigModal.runninghub.apiKey) {
                 configs.push({ key: 'runninghub.api_key', value: this.quickConfigModal.runninghub.apiKey.trim() });

@@ -373,7 +373,33 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False,
         'quick_config': True
     },
-    
+
+    # ==================== Qwen 配置 ====================
+    {
+        'key': 'llm.qwen.api_key',
+        'value_type': 'string',
+        'description': 'Qwen API Key（阿里通义千问）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.qwen.base_url',
+        'value_type': 'string',
+        'description': 'Qwen API 基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.qwen.model',
+        'value_type': 'string',
+        'description': 'Qwen 默认模型名称',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== 七牛云存储配置 ====================
     {
         'key': 'file_storage.qiniu.access_key',

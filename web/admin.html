@@ -742,6 +742,36 @@
                         </div>
                     </div>
 
+                    <!-- Qwen 配置组 -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>Qwen 配置</h4>
+                            <span class="config-group-desc">📋 影响服务：剧本创作、AI对话、剧本拆分（与 Gemini 并列可选）</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.qwen.apiKey" placeholder="请输入 Qwen API Key">
+                            <p class="form-hint">📖 获取方式：<a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" style="color: #3b82f6;">阿里云百炼控制台</a></p>
+                        </div>
+                        <div class="form-group">
+                            <label>Base URL (可选)</label>
+                            <input type="text" v-model="quickConfigModal.qwen.baseUrl" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
+                            <p class="form-hint">📖 可使用第三方代理服务，留空使用默认值</p>
+                        </div>
+                        <div class="form-group">
+                            <button
+                                class="action-btn primary"
+                                @click="testQwenConnection"
+                                :disabled="quickConfigModal.testLoading || !quickConfigModal.qwen.apiKey"
+                            >
+                                {{ quickConfigModal.testLoading ? '测试中...' : '🔗 测试连接' }}
+                            </button>
+                            <span v-if="quickConfigModal.testResult" :style="{ color: quickConfigModal.testResult.success ? '#22c55e' : '#ef4444', marginLeft: '10px' }">
+                                {{ quickConfigModal.testResult.message }}
+                            </span>
+                        </div>
+                    </div>
+
                     <!-- 火山引擎配置组 (可选) -->
                     <div class="config-group">
                         <div class="config-group-header">
