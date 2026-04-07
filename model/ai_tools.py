@@ -36,6 +36,7 @@ class AITool:
         self.extra_config = kwargs.get('extra_config')
         self.reference_images = kwargs.get('reference_images')
         self.implementation = kwargs.get('implementation')
+        self.media_mapping_id = kwargs.get('media_mapping_id')
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -65,7 +66,8 @@ class AITool:
             'reference_images': self.reference_images,
             'implementation': self.implementation,
             'implementation_name': get_implementation_name(self.implementation),
-            'model_name': model_name
+            'model_name': model_name,
+            'media_mapping_id': self.media_mapping_id
         }
 
 
@@ -305,7 +307,7 @@ class AIToolsModel:
         # Build update fields
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'implementation'
+            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'implementation', 'media_mapping_id'
         ]
         
         update_fields = []
@@ -338,10 +340,11 @@ class AIToolsModel:
         **kwargs
     ) -> int:
         """
-        更新 AI 工具记录，并自动同步 result_url 到 CDN
+        更新 AI 工具记录，并创建 media_file_mapping 触发 CDN 上传
 
-        如果 result_url 是本地路径（如 /upload/...）且 CDN 已启用，
-        则上传到 CDN 并更新 result_url 为 CDN URL。
+        - result_url 保持本地路径不变
+        - 创建 media_file_mapping 记录用于 CDN 上传
+        - CDN 上传由 MediaFileMappingModel 后台异步处理
 
         Args:
             record_id: Record ID
@@ -351,31 +354,48 @@ class AIToolsModel:
         Returns:
             Number of affected rows
         """
-        final_result_url = result_url
+        media_mapping_id = None
 
-        # 如果 result_url 是本地路径，尝试上传到 CDN
+        # 如果 result_url 是本地路径，创建 media_file_mapping 记录
         if result_url and result_url.startswith("/upload/"):
             try:
-                from utils.cdn_storage import get_cdn_storage
-                cdn_manager = get_cdn_storage()
+                from model.media_file_mapping import MediaFileMappingModel
+                from config.media_file_policy import MediaFilePolicy
 
-                if cdn_manager.is_enabled():
-                    # 移除开头的 /
-                    local_path = result_url.lstrip("/")
-                    cdn_url = cdn_manager.upload_local_file_sync(local_path)
+                local_path = result_url.lstrip("/")
 
-                    if cdn_url:
-                        final_result_url = cdn_url
-                        logger.info(f"result_url 已同步到 CDN: {result_url} -> {cdn_url}")
-                    else:
-                        logger.warning(f"CDN 上传失败，保持本地路径: {result_url}")
+                # 判断媒体类型
+                media_type = 'image' if any(result_url.lower().endswith(ext) for ext in ['.jpg', '.png', '.jpeg', '.gif', '.webp']) else 'video'
+
+                # 创建映射记录
+                mapping_id = MediaFileMappingModel.create(
+                    user_id=kwargs.get('user_id'),
+                    local_path=local_path,
+                    cloud_path=None,
+                    policy_code=MediaFilePolicy.MEDIA_CACHE,
+                    source_type='ai_tools',
+                    source_id=str(record_id),
+                    media_type=media_type,
+                    original_url=None,
+                    file_size=None
+                )
+
+                # 触发异步 CDN 上传
+                MediaFileMappingModel.trigger_cdn_upload(mapping_id, local_path)
+
+                media_mapping_id = mapping_id
+                logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
+
             except Exception as e:
-                logger.error(f"CDN 同步失败: {e}")
-                # CDN 上传失败不影响原 result_url
+                logger.error(f"创建 media_file_mapping 失败: {e}")
 
-        # 调用原 update 方法
-        if final_result_url is not None:
-            kwargs['result_url'] = final_result_url
+        # 更新 ai_tools 记录
+        if media_mapping_id is not None:
+            kwargs['media_mapping_id'] = media_mapping_id
+
+        # result_url 保持本地路径不变
+        if result_url is not None:
+            kwargs['result_url'] = result_url
 
         return AIToolsModel.update(record_id, **kwargs)
 
@@ -429,10 +449,11 @@ class AIToolsModel:
         **kwargs
     ) -> int:
         """
-        更新 AI 工具记录（按 project_id），并自动同步 result_url 到 CDN
+        更新 AI 工具记录（按 project_id），并创建 media_file_mapping 触发 CDN 上传
 
-        如果 result_url 是本地路径（如 /upload/...）且 CDN 已启用，
-        则上传到 CDN 并更新 result_url 为 CDN URL。
+        - result_url 保持本地路径不变
+        - 创建 media_file_mapping 记录用于 CDN 上传
+        - CDN 上传由 MediaFileMappingModel 后台异步处理
 
         Args:
             project_id: Project ID
@@ -442,31 +463,55 @@ class AIToolsModel:
         Returns:
             Number of affected rows
         """
-        final_result_url = result_url
+        # 先查询获取 record_id
+        tool = AIToolsModel.get_by_project_id(project_id)
+        if not tool:
+            logger.warning(f"未找到 project_id={project_id} 的 ai_tools 记录")
+            return 0
 
-        # 如果 result_url 是本地路径，尝试上传到 CDN
+        record_id = tool.id
+        media_mapping_id = None
+
+        # 如果 result_url 是本地路径，创建 media_file_mapping 记录
         if result_url and result_url.startswith("/upload/"):
             try:
-                from utils.cdn_storage import get_cdn_storage
-                cdn_manager = get_cdn_storage()
+                from model.media_file_mapping import MediaFileMappingModel
+                from config.media_file_policy import MediaFilePolicy
 
-                if cdn_manager.is_enabled():
-                    # 移除开头的 /
-                    local_path = result_url.lstrip("/")
-                    cdn_url = cdn_manager.upload_local_file_sync(local_path)
+                local_path = result_url.lstrip("/")
 
-                    if cdn_url:
-                        final_result_url = cdn_url
-                        logger.info(f"result_url 已同步到 CDN: {result_url} -> {cdn_url}")
-                    else:
-                        logger.warning(f"CDN 上传失败，保持本地路径: {result_url}")
+                # 判断媒体类型
+                media_type = 'image' if any(result_url.lower().endswith(ext) for ext in ['.jpg', '.png', '.jpeg', '.gif', '.webp']) else 'video'
+
+                # 创建映射记录
+                mapping_id = MediaFileMappingModel.create(
+                    user_id=kwargs.get('user_id') or tool.user_id,
+                    local_path=local_path,
+                    cloud_path=None,
+                    policy_code=MediaFilePolicy.MEDIA_CACHE,
+                    source_type='ai_tools',
+                    source_id=str(record_id),
+                    media_type=media_type,
+                    original_url=None,
+                    file_size=None
+                )
+
+                # 触发异步 CDN 上传
+                MediaFileMappingModel.trigger_cdn_upload(mapping_id, local_path)
+
+                media_mapping_id = mapping_id
+                logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
+
             except Exception as e:
-                logger.error(f"CDN 同步失败: {e}")
-                # CDN 上传失败不影响原 result_url
+                logger.error(f"创建 media_file_mapping 失败: {e}")
 
-        # 调用原 update_by_project_id 方法
-        if final_result_url is not None:
-            kwargs['result_url'] = final_result_url
+        # 更新 ai_tools 记录
+        if media_mapping_id is not None:
+            kwargs['media_mapping_id'] = media_mapping_id
+
+        # result_url 保持本地路径不变
+        if result_url is not None:
+            kwargs['result_url'] = result_url
 
         return AIToolsModel.update_by_project_id(project_id, **kwargs)
 

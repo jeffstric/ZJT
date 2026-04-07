@@ -122,6 +122,25 @@ class CDNStorageManager:
             logger.error(f"同步上传到 CDN 失败: {e}")
             return None
 
+    def get_public_url(self, cloud_key: str) -> Optional[str]:
+        """
+        获取 CDN 公开访问 URL
+
+        Args:
+            cloud_key: 云端存储路径
+
+        Returns:
+            CDN 公开访问 URL
+        """
+        if not self._storage:
+            return None
+
+        try:
+            return self._storage.get_public_url(cloud_key)
+        except Exception as e:
+            logger.error(f"获取 CDN URL 失败: {e}")
+            return None
+
 
 # 全局单例
 _cdn_storage = None
