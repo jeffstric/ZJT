@@ -354,6 +354,14 @@ class AIToolsModel:
         Returns:
             Number of affected rows
         """
+        # 检查是否已经有 media_mapping_id
+        existing = AIToolsModel.get_by_id(record_id)
+        if existing and existing.media_mapping_id:
+            logger.info(f"record_id={record_id} 已有 media_mapping_id={existing.media_mapping_id}，跳过创建")
+            if result_url is not None:
+                kwargs['result_url'] = result_url
+            return AIToolsModel.update(record_id, **kwargs)
+
         media_mapping_id = None
 
         # 如果 result_url 是本地路径，创建 media_file_mapping 记录
@@ -468,6 +476,13 @@ class AIToolsModel:
         if not tool:
             logger.warning(f"未找到 project_id={project_id} 的 ai_tools 记录")
             return 0
+
+        # 如果已经有 media_mapping_id，不再重复创建
+        if tool.media_mapping_id:
+            logger.info(f"project_id={project_id} 已有 media_mapping_id={tool.media_mapping_id}，跳过创建")
+            if result_url is not None:
+                kwargs['result_url'] = result_url
+            return AIToolsModel.update_by_project_id(project_id, **kwargs)
 
         record_id = tool.id
         media_mapping_id = None
