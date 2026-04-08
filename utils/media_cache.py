@@ -26,7 +26,7 @@ class MediaCacheManager:
         self.cache_dir = get_dynamic_config_value("media_cache", "cache_dir", default="upload/cache")
         self.max_days = get_dynamic_config_value("media_cache", "max_days", default=30)
         self.max_size_gb = get_dynamic_config_value("media_cache", "max_size_gb", default=10)
-        self.upload_to_cloud = get_dynamic_config_value("media_cache", "upload_to_cloud", default=False)
+        self.upload_to_cloud = get_dynamic_config_value("server", "auto_upload_to_cdn", default=False)
         self.cloud_prefix = get_dynamic_config_value("media_cache", "cloud_prefix", default="cache")
 
         # 获取项目根目录

@@ -41,16 +41,12 @@ def upgrade() -> None:
     op.create_index('idx_user_id', 'media_file_mapping', ['user_id'])
     op.create_index('idx_cloud_path', 'media_file_mapping', ['cloud_path'])
     op.create_index('idx_source', 'media_file_mapping', ['source_type', 'source_id'])
-    op.create_index('idx_policy_code', 'media_file_mapping', ['policy_code'])
-    op.create_index('idx_status', 'media_file_mapping', ['status'])
-    op.create_index('idx_media_type', 'media_file_mapping', ['media_type'])
+    op.create_index('idx_status', 'media_file_mapping', ['status', 'created_at'])
 
 
 
 def downgrade() -> None:
-    op.drop_index('idx_media_type', table_name='media_file_mapping')
     op.drop_index('idx_status', table_name='media_file_mapping')
-    op.drop_index('idx_policy_code', table_name='media_file_mapping')
     op.drop_index('idx_source', table_name='media_file_mapping')
     op.drop_index('idx_cloud_path', table_name='media_file_mapping')
     op.drop_index('idx_user_id', table_name='media_file_mapping')

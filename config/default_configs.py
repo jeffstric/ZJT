@@ -493,20 +493,6 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
-    {
-        'key': 'media_cache.upload_to_cloud',
-        'value_type': 'bool',
-        'description': '是否自动上传到云端（需要配置七牛云）',
-        'editable': True,
-        'is_sensitive': False
-    },
-    {
-        'key': 'media_cache.cloud_prefix',
-        'value_type': 'string',
-        'description': '云端存储路径前缀',
-        'editable': True,
-        'is_sensitive': False
-    },
 
     # ==================== CDN 存储配置（AI Tools 专用，已迁移到 file_storage.qiniu_long_term）====================
 
