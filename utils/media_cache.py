@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from config.config_util import get_dynamic_config_value, get_config
 from config.media_file_policy import MediaFilePolicy
+from model.media_file_mapping import MediaFileEntity
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -284,8 +285,8 @@ class MediaCacheManager:
                         local_path=local_path_str,
                         cloud_path=None,
                         policy_code=MediaFilePolicy.MEDIA_CACHE,
-                        source_type='cache',
-                        source_id=str(task_id),
+                        entity_type=MediaFileEntity.CACHE,
+                        source_id=task_id,
                         media_type=media_type,
                         original_url=url,
                         file_size=file_size
@@ -394,8 +395,8 @@ class MediaCacheManager:
                         local_path=local_path_str,
                         cloud_path=None,
                         policy_code=MediaFilePolicy.MEDIA_CACHE,
-                        source_type='cache',
-                        source_id=str(task_id),
+                        entity_type=MediaFileEntity.CACHE,
+                        source_id=task_id,
                         media_type=media_type,
                         original_url=None,
                         file_size=file_size

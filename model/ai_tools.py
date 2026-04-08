@@ -367,7 +367,7 @@ class AIToolsModel:
         # 如果 result_url 是本地路径，创建 media_file_mapping 记录
         if result_url and result_url.startswith("/upload/"):
             try:
-                from model.media_file_mapping import MediaFileMappingModel
+                from model.media_file_mapping import MediaFileMappingModel, MediaFileEntity
                 from config.media_file_policy import MediaFilePolicy
 
                 local_path = result_url.lstrip("/")
@@ -383,8 +383,8 @@ class AIToolsModel:
                     local_path=local_path,
                     cloud_path=None,
                     policy_code=MediaFilePolicy.MEDIA_CACHE,
-                    source_type='ai_tools',
-                    source_id=str(record_id),
+                    entity_type=MediaFileEntity.AI_TOOLS,
+                    source_id=record_id,
                     media_type=media_type,
                     original_url=None,
                     file_size=None
@@ -492,7 +492,7 @@ class AIToolsModel:
         # 如果 result_url 是本地路径，创建 media_file_mapping 记录
         if result_url and result_url.startswith("/upload/"):
             try:
-                from model.media_file_mapping import MediaFileMappingModel
+                from model.media_file_mapping import MediaFileMappingModel, MediaFileEntity
                 from config.media_file_policy import MediaFilePolicy
 
                 local_path = result_url.lstrip("/")
@@ -508,8 +508,8 @@ class AIToolsModel:
                     local_path=local_path,
                     cloud_path=None,
                     policy_code=MediaFilePolicy.MEDIA_CACHE,
-                    source_type='ai_tools',
-                    source_id=str(record_id),
+                    entity_type=MediaFileEntity.AI_TOOLS,
+                    source_id=record_id,
                     media_type=media_type,
                     original_url=None,
                     file_size=None

@@ -4623,46 +4623,6 @@ async def upload_workflow_asset(
         request_host = str(request.base_url).rstrip("/")
         file_url = await asyncio.to_thread(_save_user_asset, file, user_id, "workflow", request_host)
 
-        # 创建媒体文件映射记录
-        try:
-            from model.media_file_mapping import MediaFileMappingModel
-            from config.media_file_policy import MediaFilePolicy
-
-            # 提取本地路径（相对于 upload 目录）
-            if file_url.startswith(request_host):
-                local_path = file_url[len(request_host):].lstrip("/")
-            else:
-                local_path = file_url.lstrip("/")
-
-            # 获取文件大小
-            file.seek(0, 2)
-            file_size = file.tell()
-            file.seek(0)
-
-            # 确定媒体类型
-            if content_type.startswith("image/"):
-                media_type = "image"
-            elif content_type.startswith("video/"):
-                media_type = "video"
-            elif content_type.startswith("audio/"):
-                media_type = "audio"
-            else:
-                media_type = "other"
-
-            MediaFileMappingModel.create(
-                user_id=user_id,
-                local_path=local_path,
-                cloud_path=None,
-                policy_code=MediaFilePolicy.NEVER_EXPIRE,
-                source_type='upload',
-                source_id=f"workflow_{user_id}",
-                media_type=media_type,
-                original_url=None,
-                file_size=file_size
-            )
-        except Exception as mapping_error:
-            logger.error(f"创建媒体文件映射记录失败: {mapping_error}")
-
         return JSONResponse({
             "code": 0,
             "message": "上传成功",
@@ -6090,59 +6050,6 @@ async def create_character(
             default_voice=voice_path
         )
 
-        # 创建媒体文件映射记录
-        try:
-            from model.media_file_mapping import MediaFileMappingModel
-            from config.media_file_policy import MediaFilePolicy
-
-            # 为主参考图创建映射
-            if image_path:
-                local_path = image_path.replace(f"{SERVER_HOST}/", "")
-                MediaFileMappingModel.create(
-                    user_id=user_id,
-                    local_path=local_path,
-                    cloud_path=None,
-                    policy_code=MediaFilePolicy.NEVER_EXPIRE,
-                    source_type='api',
-                    source_id=f'character_{character_id}',
-                    media_type='image',
-                    original_url=None,
-                    file_size=None
-                )
-
-            # 为多参考图创建映射
-            for ref_img in reference_images_list:
-                if ref_img.get('url'):
-                    local_path = ref_img['url'].replace(f"{SERVER_HOST}/", "")
-                    MediaFileMappingModel.create(
-                        user_id=user_id,
-                        local_path=local_path,
-                        cloud_path=None,
-                        policy_code=MediaFilePolicy.NEVER_EXPIRE,
-                        source_type='api',
-                        source_id=f'character_{character_id}',
-                        media_type='image',
-                        original_url=None,
-                        file_size=None
-                    )
-
-            # 为音频创建映射
-            if voice_path:
-                local_path = voice_path.replace(f"{SERVER_HOST}/", "")
-                MediaFileMappingModel.create(
-                    user_id=user_id,
-                    local_path=local_path,
-                    cloud_path=None,
-                    policy_code=MediaFilePolicy.NEVER_EXPIRE,
-                    source_type='api',
-                    source_id=f'character_{character_id}',
-                    media_type='audio',
-                    original_url=None,
-                    file_size=None
-                )
-        except Exception as mapping_error:
-            logger.error(f"创建角色媒体文件映射记录失败: {mapping_error}")
-
         character = CharacterModel.get_by_id(character_id)
         
         return JSONResponse(
@@ -6643,44 +6550,6 @@ async def create_location(
             reference_image=image_path,
             reference_images=reference_images_list if reference_images_list else None
         )
-
-        # 创建媒体文件映射记录
-        try:
-            from model.media_file_mapping import MediaFileMappingModel
-            from config.media_file_policy import MediaFilePolicy
-
-            # 为主参考图创建映射
-            if image_path:
-                local_path = image_path.replace(f"{SERVER_HOST}/", "")
-                MediaFileMappingModel.create(
-                    user_id=user_id,
-                    local_path=local_path,
-                    cloud_path=None,
-                    policy_code=MediaFilePolicy.NEVER_EXPIRE,
-                    source_type='api',
-                    source_id=f'location_{location_id}',
-                    media_type='image',
-                    original_url=None,
-                    file_size=None
-                )
-
-            # 为多参考图创建映射
-            for ref_img in reference_images_list:
-                if ref_img.get('url'):
-                    local_path = ref_img['url'].replace(f"{SERVER_HOST}/", "")
-                    MediaFileMappingModel.create(
-                        user_id=user_id,
-                        local_path=local_path,
-                        cloud_path=None,
-                        policy_code=MediaFilePolicy.NEVER_EXPIRE,
-                        source_type='api',
-                        source_id=f'location_{location_id}',
-                        media_type='image',
-                        original_url=None,
-                        file_size=None
-                    )
-        except Exception as mapping_error:
-            logger.error(f"创建场景媒体文件映射记录失败: {mapping_error}")
 
         location = LocationModel.get_by_id(location_id)
         
@@ -7380,27 +7249,6 @@ async def create_props(
             other_info=other_info.strip() if other_info else None,
             reference_image=image_path
         )
-
-        # 创建媒体文件映射记录
-        try:
-            from model.media_file_mapping import MediaFileMappingModel
-            from config.media_file_policy import MediaFilePolicy
-
-            if image_path:
-                local_path = image_path.replace(f"{SERVER_HOST}/", "")
-                MediaFileMappingModel.create(
-                    user_id=user_id,
-                    local_path=local_path,
-                    cloud_path=None,
-                    policy_code=MediaFilePolicy.NEVER_EXPIRE,
-                    source_type='api',
-                    source_id=f'props_{props_id}',
-                    media_type='image',
-                    original_url=None,
-                    file_size=None
-                )
-        except Exception as mapping_error:
-            logger.error(f"创建道具媒体文件映射记录失败: {mapping_error}")
 
         props = PropsModel.get_by_id(props_id)
 

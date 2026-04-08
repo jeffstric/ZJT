@@ -9,6 +9,42 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class MediaFileEntity:
+    """媒体文件关联实体类型枚举"""
+    CACHE = 0         # 临时缓存（无实体关联）
+    AI_TOOLS = 1      # ai_tools 表
+    CHARACTER = 2      # character 表
+    LOCATION = 3      # location 表
+    PROPS = 4         # props 表
+    WORKFLOW = 5      # 工作流上传
+
+    @staticmethod
+    def get_entity_name(value: int) -> str:
+        """数字枚举转实体表名"""
+        mapping = {
+            MediaFileEntity.CACHE: 'cache',
+            MediaFileEntity.AI_TOOLS: 'ai_tools',
+            MediaFileEntity.CHARACTER: 'character',
+            MediaFileEntity.LOCATION: 'location',
+            MediaFileEntity.PROPS: 'props',
+            MediaFileEntity.WORKFLOW: 'workflow',
+        }
+        return mapping.get(value, 'unknown')
+
+    @staticmethod
+    def from_entity_name(name: str) -> int:
+        """实体表名转数字枚举"""
+        mapping = {
+            'cache': MediaFileEntity.CACHE,
+            'ai_tools': MediaFileEntity.AI_TOOLS,
+            'character': MediaFileEntity.CHARACTER,
+            'location': MediaFileEntity.LOCATION,
+            'props': MediaFileEntity.PROPS,
+            'workflow': MediaFileEntity.WORKFLOW,
+        }
+        return mapping.get(name, 0)
+
+
 class MediaFileMapping:
     """MediaFileMapping model class"""
 
@@ -18,7 +54,7 @@ class MediaFileMapping:
         self.local_path = kwargs.get('local_path')
         self.cloud_path = kwargs.get('cloud_path')
         self.policy_code = kwargs.get('policy_code')
-        self.source_type = kwargs.get('source_type')
+        self.entity_type = kwargs.get('entity_type')
         self.source_id = kwargs.get('source_id')
         self.media_type = kwargs.get('media_type')
         self.original_url = kwargs.get('original_url')
@@ -35,7 +71,8 @@ class MediaFileMapping:
             'local_path': self.local_path,
             'cloud_path': self.cloud_path,
             'policy_code': self.policy_code,
-            'source_type': self.source_type,
+            'entity_type': self.entity_type,
+            'entity_name': MediaFileEntity.get_entity_name(self.entity_type) if self.entity_type else None,
             'source_id': self.source_id,
             'media_type': self.media_type,
             'original_url': self.original_url,
@@ -55,8 +92,8 @@ class MediaFileMappingModel:
         local_path: str,
         cloud_path: Optional[str] = None,
         policy_code: str = 'media_cache',
-        source_type: Optional[str] = None,
-        source_id: Optional[str] = None,
+        entity_type: Optional[int] = None,
+        source_id: Optional[int] = None,
         media_type: Optional[str] = None,
         original_url: Optional[str] = None,
         file_size: Optional[int] = None
@@ -69,9 +106,9 @@ class MediaFileMappingModel:
             local_path: Local file relative path
             cloud_path: Cloud storage path
             policy_code: Policy code (never_expire/media_cache)
-            source_type: Source type (workflow/api/upload/driver/cache/other)
-            source_id: Source ID (workflow_id, task_id, character_id, etc.)
-            media_type: Media type (video/image/audio/document/other)
+            entity_type: Entity type (MediaFileEntity enum int)
+            source_id: Source ID (int, e.g., character_id, task_id)
+            media_type: Media type (MIME type string)
             original_url: Original URL if any
             file_size: File size in bytes
 
@@ -80,10 +117,10 @@ class MediaFileMappingModel:
         """
         sql = """
             INSERT INTO media_file_mapping
-            (user_id, local_path, cloud_path, policy_code, source_type, source_id, media_type, original_url, file_size, status)
+            (user_id, local_path, cloud_path, policy_code, entity_type, source_id, media_type, original_url, file_size, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'active')
         """
-        params = (user_id, local_path, cloud_path, policy_code, source_type, source_id, media_type, original_url, file_size)
+        params = (user_id, local_path, cloud_path, policy_code, entity_type, source_id, media_type, original_url, file_size)
 
         try:
             record_id = execute_insert(sql, params)
@@ -238,7 +275,7 @@ class MediaFileMappingModel:
         page_size: int = 100,
         user_id: Optional[int] = None,
         policy_code: Optional[str] = None,
-        source_type: Optional[str] = None
+        entity_type: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         List active mapping records with pagination
@@ -248,7 +285,7 @@ class MediaFileMappingModel:
             page_size: Number of records per page
             user_id: Filter by user ID (optional)
             policy_code: Filter by policy code (optional)
-            source_type: Filter by source type (optional)
+            entity_type: Filter by entity type (optional)
 
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
@@ -264,9 +301,9 @@ class MediaFileMappingModel:
             where_conditions.append("policy_code = %s")
             params.append(policy_code)
 
-        if source_type:
-            where_conditions.append("source_type = %s")
-            params.append(source_type)
+        if entity_type:
+            where_conditions.append("entity_type = %s")
+            params.append(entity_type)
 
         where_clause = " AND ".join(where_conditions)
 
@@ -323,27 +360,27 @@ class MediaFileMappingModel:
             raise
 
     @staticmethod
-    def get_by_source(source_type: str, source_id: str) -> List[MediaFileMapping]:
+    def get_by_entity(entity_type: int, source_id: int) -> List[MediaFileMapping]:
         """
-        Get all mapping records by source type and ID
+        Get all mapping records by entity type and ID
 
         Args:
-            source_type: Source type
-            source_id: Source ID
+            entity_type: Entity type (MediaFileEntity enum int)
+            source_id: Source ID (entity table primary key)
 
         Returns:
             List of MediaFileMapping objects
         """
         sql = """
             SELECT * FROM media_file_mapping
-            WHERE source_type = %s AND source_id = %s AND status = 'active'
+            WHERE entity_type = %s AND source_id = %s AND status = 'active'
         """
 
         try:
-            results = execute_query(sql, (source_type, source_id), fetch_all=True)
+            results = execute_query(sql, (entity_type, source_id), fetch_all=True)
             return [MediaFileMapping(**row) for row in results] if results else []
         except Exception as e:
-            logger.error(f"Failed to get media_file_mapping by source '{source_type}' '{source_id}': {e}")
+            logger.error(f"Failed to get media_file_mapping by entity_type={entity_type}, source_id={source_id}: {e}")
             raise
 
     @staticmethod
