@@ -943,7 +943,7 @@
                 </div>
                 <!-- 生成多角度图按钮（仅场景显示） -->
                 <div id="preview-generate-section" style="display: none; margin-bottom: 15px; padding-top: 10px; border-top: 1px dashed #e5e7eb;">
-                    <button type="button" class="btn btn-primary" id="preview-generate-multi-angle-btn" onclick="generatePreviewMultiAngleImages()" style="background: #8b5cf6;">
+                    <button type="button" class="btn btn-primary disabled" id="preview-generate-multi-angle-btn" onclick="generatePreviewMultiAngleImages()" style="background: #8b5cf6;" disabled="" title="该功能依赖runninghub接口，请配置密钥">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
                             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
                             <circle cx="8.5" cy="8.5" r="1.5"/>
@@ -951,7 +951,7 @@
                         </svg>
                         生成多角度图（90°, 180°, 270°）
                     </button>
-                    <span id="preview-generate-status" style="margin-left: 10px; font-size: 12px; color: #6b7280;"></span>
+                    <span id="preview-generate-status" style="margin-left: 10px; font-size: 12px; color: #ef4444;">该功能依赖runninghub接口，请配置密钥</span>
                 </div>
                 <!-- 缩略图网格 -->
                 <div id="image-preview-thumbnails" style="display: flex; justify-content: center; flex-wrap: wrap; gap: 10px;"></div>
@@ -3062,6 +3062,8 @@
             const generateSection = document.getElementById('preview-generate-section');
             if (previewImageFileType === 'locations' && previewMainImage) {
                 generateSection.style.display = 'block';
+                // 根据 runninghub 配置状态更新预览按钮
+                checkRunningHubForMultiAngle();
             } else {
                 generateSection.style.display = 'none';
             }
@@ -3181,16 +3183,48 @@
         function checkRunningHubForMultiAngle() {
             const btn = document.getElementById('generate-loc-multi-angle-btn');
             const statusSpan = document.getElementById('generate-multi-angle-status');
-            if (!btn) return;
+            const previewBtn = document.getElementById('preview-generate-multi-angle-btn');
+            const previewStatusSpan = document.getElementById('preview-generate-status');
 
             const isConfigured = window.TaskConfig && window.TaskConfig.isRunningHubConfigured();
-            if (!isConfigured) {
-                btn.disabled = true;
-                btn.title = '该功能依赖runninghub接口，请配置密钥';
-                btn.classList.add('disabled');
-                if (statusSpan) {
-                    statusSpan.textContent = '该功能依赖runninghub接口，请配置密钥';
-                    statusSpan.style.color = '#ef4444';
+
+            // 编辑表单按钮
+            if (btn) {
+                if (!isConfigured) {
+                    btn.disabled = true;
+                    btn.title = '该功能依赖runninghub接口，请配置密钥';
+                    btn.classList.add('disabled');
+                    if (statusSpan) {
+                        statusSpan.textContent = '该功能依赖runninghub接口，请配置密钥';
+                        statusSpan.style.color = '#ef4444';
+                    }
+                } else {
+                    btn.disabled = false;
+                    btn.title = '';
+                    btn.classList.remove('disabled');
+                    if (statusSpan) {
+                        statusSpan.textContent = '';
+                    }
+                }
+            }
+
+            // 预览弹窗按钮
+            if (previewBtn) {
+                if (!isConfigured) {
+                    previewBtn.disabled = true;
+                    previewBtn.title = '该功能依赖runninghub接口，请配置密钥';
+                    previewBtn.classList.add('disabled');
+                    if (previewStatusSpan) {
+                        previewStatusSpan.textContent = '该功能依赖runninghub接口，请配置密钥';
+                        previewStatusSpan.style.color = '#ef4444';
+                    }
+                } else {
+                    previewBtn.disabled = false;
+                    previewBtn.title = '';
+                    previewBtn.classList.remove('disabled');
+                    if (previewStatusSpan) {
+                        previewStatusSpan.textContent = '';
+                    }
                 }
             }
         }
