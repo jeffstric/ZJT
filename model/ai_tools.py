@@ -39,6 +39,11 @@ class AITool:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
+        # 延迟导入避免循环依赖
+        from config.unified_config import get_implementation_name, UnifiedConfigRegistry
+        # 获取模型名称
+        task_config = UnifiedConfigRegistry.get_by_id(self.type)
+        model_name = task_config.name if task_config else None
         return {
             'id': self.id,
             'prompt': self.prompt,
@@ -58,7 +63,9 @@ class AITool:
             'completed_time': self.completed_time.isoformat() if self.completed_time else None,
             'extra_config': self.extra_config,
             'reference_images': self.reference_images,
-            'implementation': self.implementation
+            'implementation': self.implementation,
+            'implementation_name': get_implementation_name(self.implementation),
+            'model_name': model_name
         }
 
 
@@ -175,11 +182,12 @@ class AIToolsModel:
         order_by: str = 'create_time',
         order_direction: str = 'DESC',
         type: Optional[int] = None,
-        type_list: Optional[List[int]] = None
+        type_list: Optional[List[int]] = None,
+        has_image_path: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Get AI tool records list by user ID with pagination
-        
+
         Args:
             user_id: User ID
             page: Page number (starting from 1)
@@ -188,23 +196,24 @@ class AIToolsModel:
             order_direction: Order direction (ASC, DESC)
             type: Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频, 4-图片高清放大)
             type_list: List of tool types to filter (alternative to type)
-        
+            has_image_path: Filter by whether image_path is not null (True=图片编辑, False=文生图)
+
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
         """
         # Validate order_by and order_direction to prevent SQL injection
         valid_order_fields = ['id', 'create_time', 'update_time']
         valid_directions = ['ASC', 'DESC']
-        
+
         if order_by not in valid_order_fields:
             order_by = 'create_time'
         if order_direction.upper() not in valid_directions:
             order_direction = 'DESC'
-        
+
         # Build WHERE clause
         where_conditions = ["user_id = %s"]
         params = [user_id]
-        
+
         if type_list is not None and len(type_list) > 0:
             # Use IN clause for multiple types
             placeholders = ','.join(['%s'] * len(type_list))
@@ -213,7 +222,13 @@ class AIToolsModel:
         elif type is not None:
             where_conditions.append("type = %s")
             params.append(type)
-        
+
+        if has_image_path is True:
+            where_conditions.append("image_path IS NOT NULL AND image_path != ''")
+        elif has_image_path is False:
+            where_conditions.append("(image_path IS NULL OR image_path = '')")
+            where_conditions.append("reference_images IS NULL")
+
         where_clause = " AND ".join(where_conditions)
         
         # Get total count

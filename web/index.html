@@ -2694,6 +2694,7 @@
               page: this.historyPage,
               page_size: 20,
               types: typesStr,
+              has_image_path: true,
               auth_token: authToken || undefined
             }
           });
@@ -3010,6 +3011,17 @@
                   <span v-else-if="item.type == 4">类型: 高清放大</span>
                   <span>比例: {{ getRatioLabel(item.ratio) }}</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
+                  <span v-if="item.model_name">模型: {{ item.model_name }}</span>
+                  <span v-if="item.implementation_name">驱动: {{ item.implementation_name }}</span>
+                </div>
+                <div v-if="item.reference_images || item.image_path" style="margin-top: 8px;">
+                  <span style="font-size: 13px; color: var(--muted);">参考图片:</span>
+                  <div style="display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
+                    <template v-for="(img, idx) in (item.reference_images ? JSON.parse(item.reference_images) : (item.image_path ? item.image_path.split(',') : []))" :key="idx">
+                      <img v-if="img" :src="img" style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); cursor: pointer;"
+                           @click="window.open(img, '_blank')" />
+                    </template>
+                  </div>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
