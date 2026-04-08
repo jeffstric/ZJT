@@ -980,17 +980,17 @@
 
         // 角度配置列表 - 用于生成多角度图片
         const ANGLES_CONFIG = [
-            { angle: 90, label: AngleKey.RIGHT_90, angleKey: AngleKey.RIGHT_90 },
-            { angle: 180, label: AngleKey.BACK_180, angleKey: AngleKey.BACK_180 },
-            { angle: 270, label: AngleKey.LEFT_270, angleKey: AngleKey.LEFT_270 }
+            { angle: 90, label: '90°', angleKey: AngleKey.RIGHT_90 },
+            { angle: 180, label: '180°', angleKey: AngleKey.BACK_180 },
+            { angle: 270, label: '270°', angleKey: AngleKey.LEFT_270 }
         ];
 
         // 角度label到角度值的映射
         const ANGLE_LABEL_MAP = {
-            // 新格式 (angleKey)
-            [AngleKey.RIGHT_90]: { angle: 90, angleKey: AngleKey.RIGHT_90 },
-            [AngleKey.BACK_180]: { angle: 180, angleKey: AngleKey.BACK_180 },
-            [AngleKey.LEFT_270]: { angle: 270, angleKey: AngleKey.LEFT_270 },
+            // 纯角度格式 (主要格式)
+            '90°': { angle: 90, angleKey: AngleKey.RIGHT_90 },
+            '180°': { angle: 180, angleKey: AngleKey.BACK_180 },
+            '270°': { angle: 270, angleKey: AngleKey.LEFT_270 },
             // 英文格式
             'right': { angle: 90, angleKey: AngleKey.RIGHT_90 },
             'back': { angle: 180, angleKey: AngleKey.BACK_180 },
@@ -3420,11 +3420,7 @@
                 return;
             }
 
-            const angles = [
-                { angle: 90, label: '右侧 (90°)', angleKey: 'right' },
-                { angle: 180, label: '背面 (180°)', angleKey: 'back' },
-                { angle: 270, label: '左侧 (270°)', angleKey: 'left' }
-            ];
+            const angles = ANGLES_CONFIG;
 
             btn.disabled = true;
             btn.classList.add('disabled');

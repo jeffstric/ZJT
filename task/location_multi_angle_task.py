@@ -131,17 +131,34 @@ def _update_reference_images_to_staging(task: LocationMultiAngleTask, generated_
             except:
                 existing_refs = []
 
-        # 用 URL 作为唯一标识，避免重复
-        existing_urls = {img.get('url') for img in existing_refs if img.get('url')}
+        # 用 angle 作为唯一标识，相同角度则覆盖
+        existing_by_angle = {img.get('angle'): idx for idx, img in enumerate(existing_refs) if img.get('angle')}
         added_count = 0
-        for new_img in generated_images:
-            if new_img.get('url') not in existing_urls:
-                existing_refs.append(new_img)
-                existing_urls.add(new_img.get('url'))
-                added_count += 1
-                logger.info(f"添加新图片到暂存区: angle={new_img.get('angle')}, url={new_img.get('url')}")
+        updated_count = 0
 
-        if added_count == 0:
+        for new_img in generated_images:
+            angle_key = new_img.get('angle')
+            if not angle_key:
+                # 如果没有 angle 键，用 URL 追加
+                existing_refs.append(new_img)
+                added_count += 1
+                logger.info(f"添加新图片到暂存区（无angle标识）: url={new_img.get('url')}")
+                continue
+
+            if angle_key in existing_by_angle:
+                # 相同角度，覆盖已有图片
+                idx = existing_by_angle[angle_key]
+                existing_refs[idx] = new_img
+                updated_count += 1
+                logger.info(f"覆盖已有角度图片: angle={angle_key}, 新url={new_img.get('url')}")
+            else:
+                # 新角度，追加
+                existing_refs.append(new_img)
+                existing_by_angle[angle_key] = len(existing_refs) - 1
+                added_count += 1
+                logger.info(f"添加新图片到暂存区: angle={angle_key}, url={new_img.get('url')}")
+
+        if added_count == 0 and updated_count == 0:
             logger.warning(f"没有新图片需要添加到暂存区（可能已存在）")
             return True
 
@@ -154,7 +171,7 @@ def _update_reference_images_to_staging(task: LocationMultiAngleTask, generated_
         success = file_manager.save_json_content(task.user_id, task.world_id, "locations", filename, existing_data)
 
         if success:
-            logger.info(f"✓ 已成功更新场景 {task.location_name} 的 reference_images 到暂存区（新增 {added_count} 张）")
+            logger.info(f"✓ 已成功更新场景 {task.location_name} 的 reference_images 到暂存区（新增 {added_count} 张，覆盖 {updated_count} 张）")
         else:
             logger.error(f"✗ 保存场景 {task.location_name} 暂存区失败")
 
