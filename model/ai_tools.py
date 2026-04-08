@@ -9,6 +9,7 @@ from config.constant import (
     AI_TOOL_STATUS_PROCESSING
 )
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 

@@ -69,7 +69,8 @@ class CDNUtil:
         try:
             storage, enabled = CDNUtil._get_cdn_storage()
             if enabled:
-                return storage.get_public_url(mapping.cloud_path)
+                # 私有 bucket 需要生成带签名的临时 URL，有效期 28 小时
+                return storage.get_download_url(mapping.cloud_path, expires=100800)
         except Exception as e:
             logger.error(f"获取 CDN URL 失败: {e}")
 

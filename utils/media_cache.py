@@ -273,39 +273,6 @@ class MediaCacheManager:
             relative_path = file_path.relative_to(self.root_dir)
             local_url = f"/{relative_path.as_posix()}"
 
-            # 创建映射记录并尝试上传云端
-            local_path_str = relative_path.as_posix()
-            if self.upload_to_cloud:
-                try:
-                    from model.media_file_mapping import MediaFileMappingModel
-
-                    # 创建映射记录（初始状态为 syncing）
-                    MediaFileMappingModel.create(
-                        user_id=None,
-                        local_path=local_path_str,
-                        cloud_path=None,
-                        policy_code=MediaFilePolicy.MEDIA_CACHE,
-                        entity_type=MediaFileEntity.CACHE,
-                        source_id=task_id,
-                        media_type=media_type,
-                        original_url=url,
-                        file_size=file_size
-                    )
-
-                    # 上传到云端
-                    if self._storage:
-                        cloud_path = await self._upload_to_cloud(file_path, local_path_str, media_type)
-                        if cloud_path:
-                            # 更新映射记录
-                            MediaFileMappingModel.update_cloud_path(local_path_str, cloud_path)
-                        else:
-                            # 上传失败，更新状态为 active（本地已有）
-                            MediaFileMappingModel.update_status(local_path_str, 'active')
-                    else:
-                        # 没有云端存储，更新状态为 active
-                        MediaFileMappingModel.update_status(local_path_str, 'active')
-                except Exception as e:
-                    logger.error(f"创建映射记录或上传云端失败: {e}")
 
             logger.info(f"媒体文件缓存成功: {local_url}")
             return local_url
@@ -382,63 +349,6 @@ class MediaCacheManager:
             # 生成本地URL（相对于项目根目录）
             relative_path = file_path.relative_to(self.root_dir)
             local_url = f"/{relative_path.as_posix()}"
-
-            # 创建映射记录并尝试上传云端
-            local_path_str = relative_path.as_posix()
-            if self.upload_to_cloud:
-                try:
-                    from model.media_file_mapping import MediaFileMappingModel
-
-                    # 创建映射记录（初始状态为 syncing）
-                    MediaFileMappingModel.create(
-                        user_id=None,
-                        local_path=local_path_str,
-                        cloud_path=None,
-                        policy_code=MediaFilePolicy.MEDIA_CACHE,
-                        entity_type=MediaFileEntity.CACHE,
-                        source_id=task_id,
-                        media_type=media_type,
-                        original_url=None,
-                        file_size=file_size
-                    )
-
-                    # 上传到云端（同步执行，因为是同步方法中调用）
-                    if self._storage:
-                        def _sync_upload():
-                            """在独立事件循环中执行异步上传"""
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            try:
-                                return loop.run_until_complete(
-                                    self._upload_to_cloud(file_path, local_path_str, media_type)
-                                )
-                            finally:
-                                loop.close()
-
-                        def _upload_with_callback():
-                            """执行上传并更新映射状态"""
-                            cloud_path = _sync_upload()
-                            if cloud_path:
-                                MediaFileMappingModel.update_cloud_path(local_path_str, cloud_path)
-                            else:
-                                MediaFileMappingModel.update_status(local_path_str, 'active')
-
-                        try:
-                            loop = asyncio.get_event_loop()
-                            if loop.is_running():
-                                # 如果已经在事件循环中，在独立线程中执行以避免嵌套事件循环
-                                loop.run_in_executor(None, _upload_with_callback)
-                            else:
-                                _upload_with_callback()
-                        except Exception as upload_error:
-                            logger.error(f"上传到云端失败: {upload_error}")
-                            MediaFileMappingModel.update_status(local_path_str, 'active')
-                    else:
-                        # 没有云端存储，更新状态为 active
-                        MediaFileMappingModel.update_status(local_path_str, 'active')
-
-                except Exception as e:
-                    logger.error(f"创建映射记录失败: {e}")
 
             logger.info(f"data URL 缓存成功: {local_url}")
             return local_url
