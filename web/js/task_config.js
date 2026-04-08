@@ -336,15 +336,16 @@
     return categoryTasks.map(task => {
       // 提取简短的模型值（去掉 _image_to_video, _text_to_image 等后缀）
       const shortKey = task.key.replace(/_image_to_video|_text_to_video|_text_to_image|_image_edit/g, '');
-      const power = typeof task.computing_power === 'object' 
-        ? Object.values(task.computing_power)[0] 
+      const power = typeof task.computing_power === 'object'
+        ? Object.values(task.computing_power)[0]
         : task.computing_power;
       return {
         value: shortKey,
         label: `${task.name} (${power}算力)`,
         taskType: task.id,
         computingPower: task.computing_power,
-        key: task.key
+        key: task.key,
+        supportsGridImage: task.supports_grid_image || false
       };
     });
   }

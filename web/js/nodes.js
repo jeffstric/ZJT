@@ -1496,7 +1496,6 @@
             });
           } else {
             shotGroupGridModelEl.innerHTML += `
-              <option value="gemini-2.5-flash-image-preview">标准版 (4宫格)</option>
               <option value="gemini-3-pro-4grid">加强版4宫格</option>
               <option value="gemini-3-pro-image-preview">加强版9宫格</option>
             `;
@@ -5127,6 +5126,8 @@
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
           options.forEach(opt => {
+            // 过滤掉不支持宫格生图的模型
+            if (!opt.supportsGridImage) return;
             const optEl = document.createElement('option');
             optEl.value = opt.value;
             optEl.textContent = opt.label;
@@ -5134,7 +5135,6 @@
           });
         } else {
           gridModelSelect.innerHTML += `
-            <option value="gemini">标准版 (4宫格)</option>
             <option value="gemini_pro">加强版 (9宫格)</option>
             <option value="seedream-5.0">Seedream 5.0</option>
           `;
@@ -7001,6 +7001,8 @@
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
           options.forEach(opt => {
+            // 过滤掉不支持宫格生图的模型
+            if (!opt.supportsGridImage) return;
             const optEl = document.createElement('option');
             optEl.value = opt.value;
             optEl.textContent = opt.label;
@@ -7008,7 +7010,6 @@
           });
         } else {
           gridModelSelect.innerHTML += `
-            <option value="gemini">标准版 (4宫格)</option>
             <option value="gemini_pro">加强版 (9宫格)</option>
             <option value="seedream-5.0">Seedream 5.0</option>
           `;

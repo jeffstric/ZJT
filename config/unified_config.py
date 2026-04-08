@@ -854,6 +854,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='1K',
         sort_order=10,
+        supports_grid_image=False, 
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.GEMINI_3_PRO_IMAGE,
