@@ -152,3 +152,63 @@ class CDNUtil:
             logger.warning(f"刷新 CDN URL 失败: {e}")
 
         return None
+
+    @staticmethod
+    def trigger_cdn_upload(mapping_id: int, local_path: str):
+        """
+        触发 CDN 上传（异步）
+
+        在独立线程中执行上传，避免阻塞主流程
+
+        Args:
+            mapping_id: media_file_mapping 记录 ID
+            local_path: 本地文件相对路径
+        """
+        import concurrent.futures
+
+        def _async_upload():
+            try:
+                storage, enabled = CDNUtil._get_cdn_storage()
+
+                if not enabled:
+                    logger.info(f"CDN 未启用，跳过上传: {local_path}")
+                    MediaFileMappingModel.update_status(local_path, 'active')
+                    return
+
+                # 获取项目根目录
+                import os
+                from pathlib import Path
+                root_dir = Path(__file__).parent.parent
+                file_path = root_dir / local_path
+
+                if not os.path.exists(file_path):
+                    logger.error(f"本地文件不存在: {file_path}")
+                    MediaFileMappingModel.update_status(local_path, 'active')
+                    return
+
+                # 上传文件
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(storage.upload_file(local_path, str(file_path)))
+                finally:
+                    loop.close()
+
+                if result.success:
+                    MediaFileMappingModel.update_cloud_path(local_path, local_path)
+                    logger.info(f"CDN 上传成功: {local_path}")
+                else:
+                    MediaFileMappingModel.update_status(local_path, 'active')
+                    logger.warning(f"CDN 上传失败: {result.error}")
+
+            except Exception as e:
+                logger.error(f"CDN 上传异常: {e}")
+                try:
+                    MediaFileMappingModel.update_status(local_path, 'active')
+                except:
+                    pass
+
+        # 在线程池中执行
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            executor.submit(_async_upload)

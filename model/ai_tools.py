@@ -392,7 +392,8 @@ class AIToolsModel:
                 )
 
                 # 触发异步 CDN 上传
-                MediaFileMappingModel.trigger_cdn_upload(mapping_id, local_path)
+                from utils.cdn_util import CDNUtil
+                CDNUtil.trigger_cdn_upload(mapping_id, local_path)
 
                 media_mapping_id = mapping_id
                 logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
@@ -517,7 +518,8 @@ class AIToolsModel:
                 )
 
                 # 触发异步 CDN 上传
-                MediaFileMappingModel.trigger_cdn_upload(mapping_id, local_path)
+                from utils.cdn_util import CDNUtil
+                CDNUtil.trigger_cdn_upload(mapping_id, local_path)
 
                 media_mapping_id = mapping_id
                 logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")

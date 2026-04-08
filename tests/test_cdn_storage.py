@@ -19,10 +19,10 @@ class TestCDNUtilMethods(unittest.TestCase):
         """测试 CDN 未启用时 trigger_cdn_upload 不会抛出异常"""
         mock_get_config.return_value = False
 
-        from model.media_file_mapping import MediaFileMappingModel
+        from utils.cdn_util import CDNUtil
 
         try:
-            MediaFileMappingModel.trigger_cdn_upload(1, 'upload/test.jpg')
+            CDNUtil.trigger_cdn_upload(1, 'upload/test.jpg')
         except Exception as e:
             self.fail(f"trigger_cdn_upload raised exception: {e}")
 

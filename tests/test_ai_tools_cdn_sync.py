@@ -31,7 +31,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
         self.assertEqual(result, 1)  # update 返回 affected_rows
 
     @patch('model.media_file_mapping.MediaFileMappingModel.create')
-    @patch('model.media_file_mapping.MediaFileMappingModel.trigger_cdn_upload')
+    @patch('utils.cdn_util.CDNUtil.trigger_cdn_upload')
     @patch('model.ai_tools.AIToolsModel.update')
     @patch('model.ai_tools.AIToolsModel.get_by_id')
     def test_update_with_cdn_sync_creates_mapping(
@@ -80,7 +80,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
         mock_update.assert_not_called()
 
     @patch('model.media_file_mapping.MediaFileMappingModel.create')
-    @patch('model.media_file_mapping.MediaFileMappingModel.trigger_cdn_upload')
+    @patch('utils.cdn_util.CDNUtil.trigger_cdn_upload')
     @patch('model.ai_tools.AIToolsModel.update')
     @patch('model.ai_tools.AIToolsModel.get_by_id')
     def test_update_with_cdn_sync_image_type_detection(
@@ -141,7 +141,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
             mock_get_by_project_id.assert_called_once_with('proj_123')
 
     @patch('model.media_file_mapping.MediaFileMappingModel.create')
-    @patch('model.media_file_mapping.MediaFileMappingModel.trigger_cdn_upload')
+    @patch('utils.cdn_util.CDNUtil.trigger_cdn_upload')
     @patch('model.ai_tools.AIToolsModel.update_by_project_id')
     @patch('model.ai_tools.AIToolsModel.get_by_project_id')
     def test_update_by_project_id_with_cdn_sync_creates_mapping(

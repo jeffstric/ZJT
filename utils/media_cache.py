@@ -46,10 +46,10 @@ class MediaCacheManager:
         """初始化云端存储"""
         try:
             from utils.file_storage.qiniu_storage import QiniuFileStorage
-            access_key = get_dynamic_config_value("file_storage.qiniu.access_key")
-            secret_key = get_dynamic_config_value("file_storage.qiniu.secret_key")
-            bucket_name = get_dynamic_config_value("file_storage.qiniu.bucket_name")
-            cdn_domain = get_dynamic_config_value("file_storage.qiniu.cdn_domain")
+            access_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "access_key")
+            secret_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "secret_key")
+            bucket_name = get_dynamic_config_value("file_storage", "qiniu_long_term", "bucket_name")
+            cdn_domain = get_dynamic_config_value("file_storage", "qiniu_long_term", "cdn_domain")
 
             if access_key and secret_key and bucket_name and cdn_domain:
                 self._storage = QiniuFileStorage(
@@ -64,38 +64,6 @@ class MediaCacheManager:
         except Exception as e:
             logger.error(f"初始化云端存储失败: {e}")
             self._storage = None
-
-    async def _upload_to_cloud(self, local_path: Path, relative_path: str, media_type: str) -> Optional[str]:
-        """
-        上传本地文件到云端
-
-        Args:
-            local_path: 本地文件路径
-            relative_path: 相对路径（用于生成cloud_key）
-            media_type: 媒体类型
-
-        Returns:
-            云端路径，失败返回None
-        """
-        if not self._storage:
-            return None
-
-        try:
-            # 使用相对路径作为云端key，避免文件名冲突
-            cloud_key = f"{self.cloud_prefix}/{relative_path}"
-
-            # 上传文件
-            result = await self._storage.upload_file(cloud_key, str(local_path))
-
-            if result.success:
-                logger.info(f"文件上传云端成功: {cloud_key}")
-                return cloud_key
-            else:
-                logger.error(f"文件上传云端失败: {result.error}")
-                return None
-        except Exception as e:
-            logger.error(f"上传到云端异常: {e}")
-            return None
 
     async def _delete_from_cloud_async(self, cloud_path: str) -> bool:
         """

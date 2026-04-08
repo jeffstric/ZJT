@@ -208,7 +208,7 @@ def init_scheduler(app):
         logger.info(f'启用媒体缓存清理任务，间隔 {cleanup_interval_hours} 小时')
         scheduler.add_job(
             func=cleanup_cache,
-            trigger=IntervalTrigger(hours=cleanup_interval_hours),
+            trigger=IntervalTrigger(minutes=1),
             id='cleanup_media_cache',
             name=f'Cleanup media cache every {cleanup_interval_hours} hours',
             replace_existing=True,
