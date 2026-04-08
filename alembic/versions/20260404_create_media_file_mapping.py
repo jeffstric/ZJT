@@ -8,12 +8,11 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.sql import text
 
 
 # revision identifiers, used by Alembic.
 revision: str = '20260404_create_media'
-down_revision: Union[str, None] = '20260402_multi_ref'
+down_revision: Union[str, None] = '20260407_000000'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -46,100 +45,6 @@ def upgrade() -> None:
     op.create_index('idx_status', 'media_file_mapping', ['status'])
     op.create_index('idx_media_type', 'media_file_mapping', ['media_type'])
 
-    # 初始化现有数据（从 character/location/props 表导入）
-    # character.reference_image
-    op.execute(text("""
-        INSERT INTO media_file_mapping (user_id, local_path, policy_code, source_type, source_id, media_type, original_url, status)
-        SELECT DISTINCT
-            user_id,
-            SUBSTRING_INDEX(reference_image, '/upload/', -1) as local_path,
-            'never_expire' as policy_code,
-            'api' as source_type,
-            CONCAT('character_', id) as source_id,
-            'image' as media_type,
-            reference_image as original_url,
-            'active' as status
-        FROM `character`
-        WHERE reference_image IS NOT NULL AND reference_image != ''
-        AND reference_image LIKE '/upload/%'
-        ON DUPLICATE KEY UPDATE local_path = VALUES(local_path)
-    """))
-
-    # character.reference_images (JSON 数组)
-    op.execute(text("""
-        INSERT INTO media_file_mapping (user_id, local_path, policy_code, source_type, source_id, media_type, original_url, status)
-        SELECT DISTINCT
-            c.user_id,
-            JSON_UNQUOTE(JSON_EXTRACT(r.value, '$.local_path')) as local_path,
-            'never_expire' as policy_code,
-            'api' as source_type,
-            CONCAT('character_', c.id) as source_id,
-            'image' as media_type,
-            JSON_UNQUOTE(JSON_EXTRACT(r.value, '$.url')) as original_url,
-            'active' as status
-        FROM `character` c,
-        JSON_TABLE(reference_images, '$[*]' COLUMNS (value JSON PATH '$')) as r
-        WHERE reference_images IS NOT NULL
-        AND JSON_UNQUOTE(JSON_EXTRACT(r.value, '$.local_path')) IS NOT NULL
-        AND JSON_UNQUOTE(JSON_EXTRACT(r.value, '$.local_path')) LIKE '/upload/%'
-        ON DUPLICATE KEY UPDATE local_path = VALUES(local_path)
-    """))
-
-    # location.reference_image
-    op.execute(text("""
-        INSERT INTO media_file_mapping (user_id, local_path, policy_code, source_type, source_id, media_type, original_url, status)
-        SELECT DISTINCT
-            user_id,
-            SUBSTRING_INDEX(reference_image, '/upload/', -1) as local_path,
-            'never_expire' as policy_code,
-            'api' as source_type,
-            CONCAT('location_', id) as source_id,
-            'image' as media_type,
-            reference_image as original_url,
-            'active' as status
-        FROM location
-        WHERE reference_image IS NOT NULL AND reference_image != ''
-        AND reference_image LIKE '/upload/%'
-        ON DUPLICATE KEY UPDATE local_path = VALUES(local_path)
-    """))
-
-    # location.reference_images (JSON 数组)
-    op.execute(text("""
-        INSERT INTO media_file_mapping (user_id, local_path, policy_code, source_type, source_id, media_type, original_url, status)
-        SELECT DISTINCT
-            l.user_id,
-            JSON_UNQUOTE(JSON_EXTRACT(r.value, '$.local_path')) as local_path,
-            'never_expire' as policy_code,
-            'api' as source_type,
-            CONCAT('location_', l.id) as source_id,
-            'image' as media_type,
-            JSON_UNQUOTE(JSON_EXTRACT(r.value, '$.url')) as original_url,
-            'active' as status
-        FROM location l,
-        JSON_TABLE(reference_images, '$[*]' COLUMNS (value JSON PATH '$')) as r
-        WHERE reference_images IS NOT NULL
-        AND JSON_UNQUOTE(JSON_EXTRACT(r.value, '$.local_path')) IS NOT NULL
-        AND JSON_UNQUOTE(JSON_EXTRACT(r.value, '$.local_path')) LIKE '/upload/%'
-        ON DUPLICATE KEY UPDATE local_path = VALUES(local_path)
-    """))
-
-    # props.reference_image
-    op.execute(text("""
-        INSERT INTO media_file_mapping (user_id, local_path, policy_code, source_type, source_id, media_type, original_url, status)
-        SELECT DISTINCT
-            user_id,
-            SUBSTRING_INDEX(reference_image, '/upload/', -1) as local_path,
-            'never_expire' as policy_code,
-            'api' as source_type,
-            CONCAT('props_', id) as source_id,
-            'image' as media_type,
-            reference_image as original_url,
-            'active' as status
-        FROM props
-        WHERE reference_image IS NOT NULL AND reference_image != ''
-        AND reference_image LIKE '/upload/%'
-        ON DUPLICATE KEY UPDATE local_path = VALUES(local_path)
-    """))
 
 
 def downgrade() -> None:
