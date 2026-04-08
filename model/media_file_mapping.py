@@ -384,37 +384,6 @@ class MediaFileMappingModel:
             raise
 
     @staticmethod
-    def _get_cdn_storage():
-        """
-        获取 CDN 存储实例（使用 file_storage.qiniu_long_term 配置）
-
-        Returns:
-            tuple: (storage, enabled) - (QiniuFileStorage实例或None, 是否启用)
-        """
-        from config.config_util import get_dynamic_config_value
-        from utils.file_storage.qiniu_storage import QiniuFileStorage
-
-        auto_upload = get_dynamic_config_value("server", "auto_upload_to_cdn", default=False)
-        if not auto_upload:
-            return None, False
-
-        access_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "access_key")
-        secret_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "secret_key")
-        bucket_name = get_dynamic_config_value("file_storage", "qiniu_long_term", "bucket_name")
-        cdn_domain = get_dynamic_config_value("file_storage", "qiniu_long_term", "cdn_domain")
-
-        if not (access_key and secret_key and bucket_name and cdn_domain):
-            raise ValueError("server.auto_upload_to_cdn=true 但 file_storage.qiniu_long_term 配置不完整")
-
-        storage = QiniuFileStorage(
-            access_key=access_key,
-            secret_key=secret_key,
-            bucket_name=bucket_name,
-            cdn_domain=cdn_domain
-        )
-        return storage, True
-
-    @staticmethod
     def trigger_cdn_upload(mapping_id: int, local_path: str):
         """
         触发 CDN 上传（异步）
@@ -429,7 +398,8 @@ class MediaFileMappingModel:
 
         def _async_upload():
             try:
-                storage, enabled = MediaFileMappingModel._get_cdn_storage()
+                from utils.cdn_util import CDNUtil
+                storage, enabled = CDNUtil._get_cdn_storage()
 
                 if not enabled:
                     logger.info(f"CDN 未启用，跳过上传: {local_path}")
@@ -473,27 +443,3 @@ class MediaFileMappingModel:
         # 在线程池中执行
         with concurrent.futures.ThreadPoolExecutor() as executor:
             executor.submit(_async_upload)
-
-    @staticmethod
-    def get_cdn_url(mapping_id: int) -> Optional[str]:
-        """
-        获取 CDN URL
-
-        Args:
-            mapping_id: media_file_mapping 记录 ID
-
-        Returns:
-            CDN 公开访问 URL，如果未上传完成返回 None
-        """
-        mapping = MediaFileMappingModel.get_by_id(mapping_id)
-        if not mapping or not mapping.cloud_path:
-            return None
-
-        try:
-            storage, enabled = MediaFileMappingModel._get_cdn_storage()
-            if enabled:
-                return storage.get_public_url(mapping.cloud_path)
-        except Exception as e:
-            logger.error(f"获取 CDN URL 失败: {e}")
-
-        return None

@@ -1339,33 +1339,34 @@ async def get_status(
             reason_payload = None
 
             # Update database based on status
-            if status == 2:  # Success
-                media_url = task_record.result_url
-                cdn_ready = False
+            if status == AI_TOOL_STATUS_COMPLETED:  # Success
+                from utils.cdn_util import CDNUtil, CDNStatus
 
-                # 检查 CDN 上传状态
-                if task_record.media_mapping_id:
-                    try:
-                        from model.media_file_mapping import MediaFileMappingModel
-                        cdn_url = MediaFileMappingModel.get_cdn_url(task_record.media_mapping_id)
-                        if cdn_url:
-                            media_url = cdn_url
-                            cdn_ready = True
-                    except Exception as e:
-                        logger.error(f"获取 CDN URL 失败: {e}")
+                media_url, cdn_status = CDNUtil.get_media_url(
+                    task_record.media_mapping_id,
+                    task_record.result_url
+                )
 
-                if cdn_ready or not task_record.media_mapping_id:
-                    # CDN 已完成或无需 CDN，返回成功
+                if cdn_status == CDNStatus.READY:
+                    # CDN 已完成，返回成功
                     status_str = "SUCCESS"
                     if media_url:
                         results_payload = [{
                             "file_url": media_url,
                             "task_cost_time": task_cost_time
                         }]
-                else:
-                    # CDN 未完成，返回等待状态
+                elif cdn_status == CDNStatus.PENDING:
+                    # CDN 还在处理中，返回等待状态
                     status_str = "RUNNING"
                     logger.info(f"任务 {ai_tool_id} CDN 未完成，等待中")
+                else:
+                    # CDN 未启用或获取失败，使用本地 URL
+                    status_str = "SUCCESS"
+                    if media_url:
+                        results_payload = [{
+                            "file_url": media_url,
+                            "task_cost_time": task_cost_time
+                        }]
 
             elif status == -1:  # Failed
                 status_str = "FAILED"
@@ -4526,18 +4527,34 @@ async def poll_workflow_node_status(
                 try:
                     ai_tool = AIToolsModel.get_by_id(project_id)
                     if ai_tool:
-                        # 状态为完成(status==2)且有结果URL
-                        if ai_tool.status == 2 and ai_tool.result_url:
+                        # 状态为完成且有结果URL
+                        if ai_tool.status == AI_TOOL_STATUS_COMPLETED and ai_tool.result_url:
+                            from utils.cdn_util import CDNUtil, CDNStatus
+
+                            file_url, cdn_status = CDNUtil.get_media_url(
+                                ai_tool.media_mapping_id,
+                                ai_tool.result_url
+                            )
+
+                            if cdn_status == CDNStatus.READY:
+                                node_status = AI_TOOL_STATUS_COMPLETED
+                            elif cdn_status == CDNStatus.PENDING:
+                                # CDN 还在处理中，返回 RUNNING 等待
+                                node_status = AI_TOOL_STATUS_PROCESSING
+                            else:
+                                # CDN 未启用或获取失败，使用本地 URL
+                                node_status = AI_TOOL_STATUS_COMPLETED
+
                             updated_nodes.append({
                                 'node_id': node.get('id'),
                                 'node_type': node_type,
                                 'project_id': project_id,
-                                'url': ai_tool.result_url,
-                                'status': ai_tool.status,
+                                'url': file_url,
+                                'status': node_status,
                                 'message': None
                             })
-                        # 状态为失败(status==-1)
-                        elif ai_tool.status == -1:
+                        # 状态为失败
+                        elif ai_tool.status == AI_TOOL_STATUS_FAILED:
                             updated_nodes.append({
                                 'node_id': node.get('id'),
                                 'node_type': node_type,
