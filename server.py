@@ -2439,6 +2439,7 @@ async def get_ai_tools_history(
     page_size: int = Query(20, ge=1, le=100, description="Page size"),
     type: Optional[int] = Query(None, description="Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)"),
     types: Optional[str] = Query(None, description="Multiple tool types filter, comma-separated (e.g., '3,10,11,12')"),
+    has_image_path: Optional[bool] = Query(None, description="Filter by image_path presence: true=图片编辑, false=文生图"),
     auth_token: Optional[str] = Query(None, description="Auth token for computing power refund")
 ):
     """
@@ -2576,7 +2577,8 @@ async def get_ai_tools_history(
                 page_size=page_size,
                 order_by='create_time',
                 order_direction='DESC',
-                type_list=type_list_param
+                type_list=type_list_param,
+                has_image_path=has_image_path
             )
         elif type in type_mapping:
             result = AIToolsModel.list_by_user(
@@ -2585,7 +2587,8 @@ async def get_ai_tools_history(
                 page_size=page_size,
                 order_by='create_time',
                 order_direction='DESC',
-                type_list=type_mapping[type]
+                type_list=type_mapping[type],
+                has_image_path=has_image_path
             )
         else:
             result = AIToolsModel.list_by_user(
@@ -2594,7 +2597,8 @@ async def get_ai_tools_history(
                 page_size=page_size,
                 order_by='create_time',
                 order_direction='DESC',
-                type=type
+                type=type,
+                has_image_path=has_image_path
             )
         
         return JSONResponse(
