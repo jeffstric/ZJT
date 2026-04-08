@@ -347,6 +347,37 @@ class MediaFileMappingModel:
             raise
 
     @staticmethod
+    def _get_cdn_storage():
+        """
+        获取 CDN 存储实例（使用 file_storage.qiniu_long_term 配置）
+
+        Returns:
+            tuple: (storage, enabled) - (QiniuFileStorage实例或None, 是否启用)
+        """
+        from config.config_util import get_dynamic_config_value
+        from utils.file_storage.qiniu_storage import QiniuFileStorage
+
+        auto_upload = get_dynamic_config_value("server", "auto_upload_to_cdn", default=False)
+        if not auto_upload:
+            return None, False
+
+        access_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "access_key")
+        secret_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "secret_key")
+        bucket_name = get_dynamic_config_value("file_storage", "qiniu_long_term", "bucket_name")
+        cdn_domain = get_dynamic_config_value("file_storage", "qiniu_long_term", "cdn_domain")
+
+        if not (access_key and secret_key and bucket_name and cdn_domain):
+            raise ValueError("server.auto_upload_to_cdn=true 但 file_storage.qiniu_long_term 配置不完整")
+
+        storage = QiniuFileStorage(
+            access_key=access_key,
+            secret_key=secret_key,
+            bucket_name=bucket_name,
+            cdn_domain=cdn_domain
+        )
+        return storage, True
+
+    @staticmethod
     def trigger_cdn_upload(mapping_id: int, local_path: str):
         """
         触发 CDN 上传（异步）
@@ -361,26 +392,40 @@ class MediaFileMappingModel:
 
         def _async_upload():
             try:
-                from utils.cdn_storage import get_cdn_storage
-                cdn = get_cdn_storage()
+                storage, enabled = MediaFileMappingModel._get_cdn_storage()
 
-                if not cdn.is_enabled():
+                if not enabled:
                     logger.info(f"CDN 未启用，跳过上传: {local_path}")
                     MediaFileMappingModel.update_status(local_path, 'active')
                     return
 
-                # 上传文件
-                cdn_url = cdn.upload_local_file_sync(local_path)
+                # 获取项目根目录
+                import os
+                from pathlib import Path
+                root_dir = Path(__file__).parent.parent
+                file_path = root_dir / local_path
 
-                if cdn_url:
-                    # 获取 cloud_key 并更新
-                    prefix = cdn._get_cdn_prefix()
-                    cloud_key = f"{prefix}/{local_path}"
-                    MediaFileMappingModel.update_cloud_path(local_path, cloud_key)
-                    logger.info(f"CDN 上传成功: {local_path} -> {cloud_key}")
+                if not os.path.exists(file_path):
+                    logger.error(f"本地文件不存在: {file_path}")
+                    MediaFileMappingModel.update_status(local_path, 'active')
+                    return
+
+                # 上传文件
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(storage.upload_file(local_path, str(file_path)))
+                finally:
+                    loop.close()
+
+                if result.success:
+                    MediaFileMappingModel.update_cloud_path(local_path, local_path)
+                    logger.info(f"CDN 上传成功: {local_path}")
                 else:
                     MediaFileMappingModel.update_status(local_path, 'active')
-                    logger.warning(f"CDN 上传失败，保持本地路径: {local_path}")
+                    logger.warning(f"CDN 上传失败: {result.error}")
+
             except Exception as e:
                 logger.error(f"CDN 上传异常: {e}")
                 try:
@@ -408,10 +453,9 @@ class MediaFileMappingModel:
             return None
 
         try:
-            from utils.cdn_storage import get_cdn_storage
-            cdn = get_cdn_storage()
-            if cdn.is_enabled():
-                return cdn.get_public_url(mapping.cloud_path)
+            storage, enabled = MediaFileMappingModel._get_cdn_storage()
+            if enabled:
+                return storage.get_public_url(mapping.cloud_path)
         except Exception as e:
             logger.error(f"获取 CDN URL 失败: {e}")
 
