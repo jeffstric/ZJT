@@ -21,7 +21,7 @@ server:
     enabled: false
     certfile: "secret/xxx.pem"
     keyfile: "secret/xxx.key"
-    auto_upload_to_cdn: false  # AI Tools 生成结果是否自动上传到 CDN（需要配置 file_storage.qiniu_long_term）
+  auto_upload_to_cdn: false  # AI Tools 生成结果是否自动上传到 CDN（需要配置 file_storage.qiniu_long_term）
   # 网站底部信息配置
   footer:
     copyright: "© 2026 智剧通 AI短剧制作平台 | 所有权利保留"  # 版权信息
