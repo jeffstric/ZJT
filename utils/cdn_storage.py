@@ -16,34 +16,41 @@ class CDNStorageManager:
     """CDN 存储管理器"""
 
     def __init__(self):
-        self.enabled = get_dynamic_config_value("cdn_storage", "enabled", default=False)
-        self.provider = get_dynamic_config_value("cdn_storage", "provider", default="qiniu")
+        # 检查是否启用 auto_upload_to_cdn
+        self.auto_upload = get_dynamic_config_value("server", "auto_upload_to_cdn", default=False)
+
+        # 获取 qiniu_long_term 配置
+        access_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "access_key")
+        secret_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "secret_key")
+        bucket_name = get_dynamic_config_value("file_storage", "qiniu_long_term", "bucket_name")
+        cdn_domain = get_dynamic_config_value("file_storage", "qiniu_long_term", "cdn_domain")
+
+        # 必须配置完整才能启用
+        if not (access_key and secret_key and bucket_name and cdn_domain):
+            if self.auto_upload:
+                raise ValueError("server.auto_upload_to_cdn=true 但 file_storage.qiniu_long_term 配置不完整")
+            self.enabled = False
+            self._storage = None
+            return
+
+        self.enabled = self.auto_upload
         self._storage = None
 
-        if self.enabled and self.provider == "qiniu":
-            self._init_qiniu_storage()
+        if self.enabled:
+            self._init_qiniu_storage(access_key, secret_key, bucket_name, cdn_domain)
 
-    def _init_qiniu_storage(self):
+    def _init_qiniu_storage(self, access_key: str, secret_key: str, bucket_name: str, cdn_domain: str):
         """初始化七牛云存储"""
         try:
             from utils.file_storage.qiniu_storage import QiniuFileStorage
 
-            access_key = get_dynamic_config_value("cdn_storage", "access_key")
-            secret_key = get_dynamic_config_value("cdn_storage", "secret_key")
-            bucket_name = get_dynamic_config_value("cdn_storage", "bucket_name")
-            cdn_domain = get_dynamic_config_value("cdn_storage", "cdn_domain")
-
-            if access_key and secret_key and bucket_name and cdn_domain:
-                self._storage = QiniuFileStorage(
-                    access_key=access_key,
-                    secret_key=secret_key,
-                    bucket_name=bucket_name,
-                    cdn_domain=cdn_domain
-                )
-                logger.info("CDN 存储初始化成功")
-            else:
-                logger.warning("CDN 七牛云配置不完整")
-                self._storage = None
+            self._storage = QiniuFileStorage(
+                access_key=access_key,
+                secret_key=secret_key,
+                bucket_name=bucket_name,
+                cdn_domain=cdn_domain
+            )
+            logger.info("CDN 存储初始化成功")
         except Exception as e:
             logger.error(f"初始化 CDN 存储失败: {e}")
             self._storage = None
@@ -54,7 +61,7 @@ class CDNStorageManager:
 
     def _get_cdn_prefix(self) -> str:
         """获取 CDN 路径前缀"""
-        return get_dynamic_config_value("cdn_storage", "prefix", default="ai_tools")
+        return ""
 
     async def upload_local_file(self, local_path: str) -> Optional[str]:
         """
@@ -78,9 +85,8 @@ class CDNStorageManager:
                 logger.error(f"本地文件不存在: {file_path}")
                 return None
 
-            # 生成 CDN key
-            prefix = self._get_cdn_prefix()
-            cdn_key = f"{prefix}/{local_path}"
+            # CDN key 直接使用 local_path
+            cdn_key = local_path
 
             # 上传文件
             result = await self._storage.upload_file(cdn_key, str(file_path))
