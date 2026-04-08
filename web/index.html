@@ -3016,9 +3016,10 @@
                 <div v-if="item.reference_images || item.image_path" style="margin-top: 8px;">
                   <span style="font-size: 13px; color: var(--muted);">参考图片:</span>
                   <div style="display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
-                    <img v-for="(img, idx) in (item.reference_images ? JSON.parse(item.reference_images) : (item.image_path ? item.image_path.split(',') : []))" :key="idx"
-                         :src="img" style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); cursor: pointer;"
-                         @click="window.open(img, '_blank')" />
+                    <template v-for="(img, idx) in (item.reference_images ? JSON.parse(item.reference_images) : (item.image_path ? item.image_path.split(',') : []))" :key="idx">
+                      <img v-if="img" :src="img" style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); cursor: pointer;"
+                           @click="window.open(img, '_blank')" />
+                    </template>
                   </div>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
