@@ -39,6 +39,8 @@ class AITool:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
+        # 延迟导入避免循环依赖
+        from config.unified_config import get_implementation_name
         return {
             'id': self.id,
             'prompt': self.prompt,
@@ -58,7 +60,8 @@ class AITool:
             'completed_time': self.completed_time.isoformat() if self.completed_time else None,
             'extra_config': self.extra_config,
             'reference_images': self.reference_images,
-            'implementation': self.implementation
+            'implementation': self.implementation,
+            'implementation_name': get_implementation_name(self.implementation)
         }
 
 
