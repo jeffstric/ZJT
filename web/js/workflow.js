@@ -720,6 +720,63 @@
         console.error('Load error:', error);
         showToast('加载工作流失败', 'error');
       }
+
+      // ========== 自动创建剧本节点功能 ==========
+      const urlParamsForAutoCreate = new URLSearchParams(window.location.search);
+      const autoLoadScript = urlParamsForAutoCreate.get('auto_load_script') === 'true';
+
+      if (autoLoadScript) {
+        setTimeout(async () => {
+          await checkAndAutoCreateScriptNode();
+        }, 100);
+      }
+    }
+
+    // ========== 自动创建剧本节点 ==========
+    /**
+     * 检查并自动创建剧本节点
+     */
+    async function checkAndAutoCreateScriptNode() {
+      // 检查是否已有剧本节点
+      const hasScriptNode = state.nodes.some(n => n.type === 'script');
+      if (hasScriptNode) {
+        console.log('[自动创建剧本节点] 工作流已有剧本节点，跳过');
+        return;
+      }
+
+      console.log('[自动创建剧本节点] 开始自动创建剧本节点');
+
+      // 创建剧本节点
+      const viewportPos = getViewportNodePosition();
+      const nodeId = createScriptNode({
+        x: viewportPos.x,
+        y: viewportPos.y
+      });
+
+      // 延迟触发加载按钮，确保 DOM 已渲染
+      setTimeout(() => {
+        triggerScriptLoadButton(nodeId);
+      }, 300);
+    }
+
+    /**
+     * 触发剧本节点的加载按钮
+     * @param {number} nodeId - 节点ID
+     */
+    function triggerScriptLoadButton(nodeId) {
+      const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+      if (!el) {
+        console.error('[触发加载按钮] 未找到节点DOM');
+        return;
+      }
+
+      const loadBtn = el.querySelector('.script-load-btn');
+      if (loadBtn) {
+        console.log('[触发加载按钮] 模拟点击加载剧本按钮');
+        loadBtn.click();
+      } else {
+        console.error('[触发加载按钮] 未找到加载按钮');
+      }
     }
 
     // 迁移旧版相机参数 (yaw/pitch/dolly → horizontal_angle/vertical_angle/zoom)

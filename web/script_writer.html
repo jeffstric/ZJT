@@ -4676,6 +4676,8 @@
                 if (currentWorldId) {
                     url += `&from_world_id=${currentWorldId}`;
                 }
+                // 传递 auto_load_script 参数，让工作流自动打开剧本选择框
+                url += `&auto_load_script=true`;
                 window.location.href = url;
             } else {
                 // 没有WORKFLOW_ID，跳转到工作流列表
