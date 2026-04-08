@@ -1,7 +1,7 @@
 """create_agent_tasks_and_messages_tables
 
 Revision ID: 20260408_agent_tasks
-Revises: 20260401_zjt_expire_field
+Revises: 20260401_add_api_token_idx
 Create Date: 2026-04-08 11:00:00.000000+08:00
 
 Create agent_tasks and agent_task_messages tables for cross-process task sharing
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '20260408_agent_tasks'
-down_revision: Union[str, None] = '20260401_zjt_expire_field'
+down_revision: Union[str, None] = '20260401_add_api_token_idx'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

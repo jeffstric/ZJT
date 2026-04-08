@@ -1746,6 +1746,12 @@
                             updateStatus(`执行中: ${data.step || ''}`);
                         } else if (data.type === 'done') {
                             eventSource.close();
+                            // 显示 done 消息中的结果内容
+                            if (data.result && data.result.result) {
+                                fullText += data.result.result + '\n\n';
+                                contentDiv.innerHTML = renderMarkdown(fullText);
+                                scrollToBottom();
+                            }
                             updateStatus('完成');
                             isProcessing = false;
                             const sendBtn = document.getElementById('send-btn');
