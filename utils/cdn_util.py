@@ -110,3 +110,45 @@ class CDNUtil:
         except Exception as e:
             logger.error(f"获取 CDN URL 失败: {e}")
             return local_url, CDNStatus.ERROR
+
+    @staticmethod
+    def refresh_url_if_needed(url: str) -> Optional[str]:
+        """
+        检查 URL 是否需要刷新签名，如果是则返回新签名的 URL
+
+        Args:
+            url: 原始 CDN URL（可能已过期）
+
+        Returns:
+            新签名的 URL 或 None（不需要刷新或刷新失败）
+        """
+        from urllib.parse import urlparse
+        from model.media_file_mapping import MediaFileMappingModel
+        from config.config_util import get_dynamic_config_value
+
+        try:
+            # 检查是否启用了 auto_upload_to_cdn
+            auto_upload = get_dynamic_config_value("server", "auto_upload_to_cdn", default=False)
+            if not auto_upload:
+                return None
+
+            parsed = urlparse(url)
+            # 检查 URL host 是否匹配配置的 CDN domain
+            cdn_domain = get_dynamic_config_value("file_storage", "qiniu_long_term", "cdn_domain", default="")
+            qiniu_domain = get_dynamic_config_value("file_storage", "qiniu", "cdn_domain", default="")
+            valid_hosts = {cdn_domain, qiniu_domain} - {""}
+
+            if parsed.netloc not in valid_hosts:
+                return None
+
+            # 提取 cloud_path 并查询 media_file_mapping
+            cloud_path = parsed.path.lstrip("/")
+            mapping = MediaFileMappingModel.get_by_local_path(cloud_path)
+
+            if mapping and mapping.cloud_path:
+                # 重新生成签名 URL，有效期 28 小时
+                return CDNUtil.get_cdn_url(mapping.id)
+        except Exception as e:
+            logger.warning(f"刷新 CDN URL 失败: {e}")
+
+        return None

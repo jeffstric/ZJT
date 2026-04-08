@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Header
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -447,19 +447,27 @@ async def download_image(
 @require_permission("file:proxy_image")
 async def proxy_image(request: Request, url: str = Query(..., description="Image URL to proxy")):
     """
-    Proxy image requests to avoid CORS issues in Electron
+    Proxy image requests to avoid CORS issues in Electron.
+    如果 cloud_path 在 media_file_mapping 中存在，会自动重新授权（刷新签名 URL）。
     """
+    # 检查是否需要刷新签名
+    from utils.cdn_util import CDNUtil
+    new_url = CDNUtil.refresh_url_if_needed(url)
+    if new_url:
+        return RedirectResponse(url=new_url, status_code=302)
+
+    # 回退：直接代理请求
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url)
             response.raise_for_status()
-            
+
             # Get content type
             content_type = response.headers.get('content-type', 'image/png')
-            
+
             # Return content as streaming response
             content_stream = BytesIO(response.content)
-            
+
             return StreamingResponse(
                 content_stream,
                 media_type=content_type,
