@@ -259,6 +259,19 @@ def init_scheduler(app):
         coalesce=True
     )
 
+    # Agent任务清理（清理24小时前的已完成任务和消息）
+    logger.info('启用Agent任务清理任务，每6小时执行一次')
+    from task.agent_task_cleanup import cleanup_agent_tasks
+    scheduler.add_job(
+        func=cleanup_agent_tasks,
+        trigger=IntervalTrigger(hours=6),  # 每6小时执行一次
+        id='cleanup_agent_tasks',
+        name='Cleanup old agent tasks every 6 hours',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
     # 启动调度器
     scheduler.start()
     logger.info("定时任务启动成功")

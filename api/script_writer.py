@@ -1708,61 +1708,87 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 @router.get('/task/{task_id}/stream')
 @require_permission("agent_task:stream")
 async def stream_task_messages(request: Request, task_id: str):
-    """SSE流式获取任务消息"""
-    # 检查任务是否存在
-    task = task_manager.get_task(task_id)
-    if not task:
+    """SSE流式获取任务消息（统一使用数据库轮询，支持跨进程）"""
+    from model.agent_task_messages import AgentTaskMessagesModel
+    from model.agent_tasks import AgentTasksModel
+
+    # 检查任务是否存在（从数据库，支持跨 worker）
+    if not task_manager.task_exists(task_id):
         return JSONResponse({
             'success': False,
             'error': '任务不存在'
         }, status_code=404)
-    
+
     async def event_generator():
         try:
             logger.info(f"[SSE-STREAM] Starting SSE stream for task {task_id}")
             heartbeat_counter = 0
             message_count = 0
-            
+            last_message_id = 0  # 用于追踪已读取的消息
+
+            # 立即发送连接确认消息
+            yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id}, ensure_ascii=False)}\n\n"
+
             while True:
+                messages_to_send = []
+
+                # 统一从数据库轮询消息（避免 worker 切换导致消息丢失）
                 try:
-                    # 从任务的消息队列获取消息（超时5秒）
-                    logger.debug(f"[SSE-STREAM] Waiting for message from queue (timeout=5s)...")
-                    msg = await asyncio.to_thread(task.message_queue.get, timeout=5)
+                    db_messages = await asyncio.to_thread(
+                        AgentTaskMessagesModel.get_messages_after,
+                        task_id, last_message_id, 50
+                    )
+                    for db_msg in db_messages:
+                        messages_to_send.append(db_msg.to_dict())
+                        last_message_id = max(last_message_id, db_msg.id)
+                except Exception as e:
+                    logger.error(f"[SSE-STREAM] Failed to poll messages from database: {e}")
+
+                # 发送消息
+                for msg in messages_to_send:
                     message_count += 1
-                    logger.info(f"[SSE-STREAM] Got message #{message_count}, type: {msg.get('type')}, role: {msg.get('role', 'N/A')}")
+                    msg_type = msg.get('type', 'unknown')
+                    logger.info(f"[SSE-STREAM] Got message #{message_count}, type: {msg_type}")
                     if msg.get('content'):
                         logger.info(f"[SSE-STREAM] Message content preview: {str(msg.get('content'))[:100]}...")
-                    
+
                     yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-                    logger.info(f"[SSE-STREAM] Message #{message_count} sent to client")
-                    
+
                     # 如果是完成或错误消息，结束流
-                    if msg.get('type') in ['done', 'error']:
-                        logger.info(f"[SSE-STREAM] Stream ending, type: {msg.get('type')}")
-                        break
-                    
+                    if msg_type in ['done', 'error']:
+                        logger.info(f"[SSE-STREAM] Stream ending, type: {msg_type}")
+                        return
+
                     heartbeat_counter = 0
-                    
-                except:
-                    # 超时，发送心跳
+
+                # 没有消息时的处理
+                if not messages_to_send:
                     heartbeat_counter += 1
-                    if heartbeat_counter >= 6:
-                        logger.debug(f"[SSE-STREAM] Sending heartbeat")
+
+                    # 每9秒发送心跳
+                    if heartbeat_counter >= 3:
                         yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.now().isoformat()}, ensure_ascii=False)}\n\n"
                         heartbeat_counter = 0
-                    
-                    # 检查任务状态
-                    if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-                        logger.info(f"[SSE-STREAM] Task status changed to {task.status.value}, ending stream")
-                        yield f"data: {json.dumps({'type': 'done', 'status': task.status.value}, ensure_ascii=False)}\n\n"
-                        break
-            
+
+                    # 检查任务状态（从数据库）
+                    try:
+                        db_task = await asyncio.to_thread(AgentTasksModel.get_by_task_id, task_id)
+                        if db_task and db_task.status in ['completed', 'failed', 'cancelled']:
+                            logger.info(f"[SSE-STREAM] Task status changed to {db_task.status}, ending stream")
+                            yield f"data: {json.dumps({'type': 'done', 'status': db_task.status}, ensure_ascii=False)}\n\n"
+                            return
+                    except Exception as e:
+                        logger.error(f"[SSE-STREAM] Failed to check task status: {e}")
+
+                # 短暂等待后继续轮询（避免频繁查询数据库）
+                await asyncio.sleep(0.3)
+
             logger.info(f"[SSE-STREAM] Stream completed, sent {message_count} messages")
-                    
+
         except Exception as e:
             logger.error(f"[SSE-STREAM] Stream error: {e}", exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",

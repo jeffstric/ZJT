@@ -8,6 +8,8 @@ import uuid
 import logging
 import os
 from config.constant import FilePathConstants
+from model.agent_tasks import AgentTasksModel, AgentTaskEntity
+from model.agent_task_messages import AgentTaskMessagesModel
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +194,8 @@ class TaskManager:
         logger.info("TaskManager initialized")
     
     def create_task(
-        self, 
-        session_id: str, 
+        self,
+        session_id: str,
         user_message: str,
         user_id: str,
         world_id: str,
@@ -223,25 +225,95 @@ class TaskManager:
         task = AgentTask(
             task_id=task_id,
             session_id=session_id,
-            user_message=actual_message,  # 使用处理后的消息
+            user_message=actual_message,
             user_id=user_id,
             world_id=world_id,
             auth_token=auth_token,
             vendor_id=vendor_id,
             model_id=model_id
         )
-        
+
+        # 写入数据库（唯一数据源，跨进程共享）
+        try:
+            AgentTasksModel.create(
+                task_id=task_id,
+                session_id=session_id,
+                user_id=user_id,
+                world_id=world_id,
+                user_message=actual_message,
+                auth_token=auth_token,
+                vendor_id=vendor_id,
+                model_id=model_id,
+                status='pending'
+            )
+        except Exception as e:
+            logger.error(f"Failed to save task to database: {e}")
+            raise
+
+        # 保存到内存（仅用于后台线程执行，不作为查询缓存）
+        # 注意：内存中的 task 对象包含 message_queue，用于线程间通信
         with self._lock:
             self.tasks[task_id] = task
-        
+
         logger.info(f"Created task {task_id} for session {session_id}")
         return task_id
     
     def get_task(self, task_id: str) -> Optional[AgentTask]:
-        """获取任务"""
-        with self._lock:
-            return self.tasks.get(task_id)
+        """
+        获取任务（统一从数据库获取，确保数据一致性）
+        
+        注意：不使用内存缓存，避免多 worker 环境下的数据不一致问题。
+        内存中的 task 对象仅用于后台线程执行，不用于状态查询。
+        """
+        # 统一从数据库获取（确保跨 worker 数据一致）
+        try:
+            db_task = AgentTasksModel.get_by_task_id(task_id)
+            if db_task:
+                # 转换为 AgentTask 对象
+                task = AgentTask(
+                    task_id=db_task.task_id,
+                    session_id=db_task.session_id,
+                    user_message=db_task.user_message,
+                    user_id=db_task.user_id,
+                    world_id=db_task.world_id,
+                    auth_token=db_task.auth_token,
+                    vendor_id=db_task.vendor_id,
+                    model_id=db_task.model_id,
+                    status=TaskStatus(db_task.status),
+                    progress=db_task.progress,
+                    current_step=db_task.current_step,
+                    error=db_task.error,
+                    result=db_task.result
+                )
+                task.created_at = db_task.created_at
+                task.started_at = db_task.started_at
+                task.completed_at = db_task.completed_at
+                return task
+        except Exception as e:
+            logger.error(f"Failed to get task from database: {e}")
+
+        return None
+
+    def task_exists(self, task_id: str) -> bool:
+        """检查任务是否存在（数据库）"""
+        try:
+            db_task = AgentTasksModel.get_by_task_id(task_id)
+            return db_task is not None
+        except Exception as e:
+            logger.error(f"Failed to check task existence: {e}")
+            return False
     
+    def push_message(self, task_id: str, message_type: str, content: Dict[str, Any]):
+        """推送消息到数据库（跨进程共享，SSE 统一从数据库轮询）"""
+        try:
+            AgentTaskMessagesModel.create(
+                task_id=task_id,
+                message_type=message_type,
+                content=content
+            )
+        except Exception as e:
+            logger.error(f"Failed to push message to database: {e}")
+
     def start_task(self, task: AgentTask, pm_agent, session_data: Dict[str, Any], on_complete=None):
         """在后台线程中启动任务"""
         logger.warning(f"[DEBUG] start_task 被调用: task_id={task.task_id}, pm_agent={pm_agent.agent_id if pm_agent else 'None'}")
@@ -252,49 +324,81 @@ class TaskManager:
                 task.status = TaskStatus.RUNNING
                 task.started_at = datetime.now()
                 logger.info(f"Starting task {task.task_id}")
-                
-                task.message_queue.put({
-                    "type": "status",
-                    "status": "running",
-                    "message": "任务开始执行"
+
+                # 更新数据库状态
+                try:
+                    AgentTasksModel.update_status(
+                        task_id=task.task_id,
+                        status='running',
+                        started_at=task.started_at
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to update task status in database: {e}")
+
+                # 推送消息到数据库和内存队列
+                self.push_message(task.task_id, 'status', {
+                    'status': 'running',
+                    'message': '任务开始执行'
                 })
-                
+
                 logger.warning(f"[DEBUG] 准备调用 pm_agent.execute()")
                 result = pm_agent.execute(task, session_data)
                 logger.warning(f"[DEBUG] pm_agent.execute() 执行完成")
-                
+
                 task.status = TaskStatus.COMPLETED
                 task.completed_at = datetime.now()
                 task.result = result
-                
-                task.message_queue.put({
-                    "type": "done",
-                    "status": "completed",
-                    "result": result
+
+                # 更新数据库状态
+                try:
+                    AgentTasksModel.update_status(
+                        task_id=task.task_id,
+                        status='completed',
+                        completed_at=task.completed_at,
+                        result=result
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to update task status in database: {e}")
+
+                # 推送完成消息
+                self.push_message(task.task_id, 'done', {
+                    'status': 'completed',
+                    'result': result
                 })
-                
+
                 logger.info(f"Task {task.task_id} completed successfully")
-                
+
                 # 调用完成回调
                 if on_complete:
                     try:
                         on_complete(result)
                     except Exception as e:
                         logger.error(f"on_complete callback failed: {e}", exc_info=True)
-                
+
             except Exception as e:
                 task.status = TaskStatus.FAILED
                 task.completed_at = datetime.now()
                 task.error = str(e)
-                
-                task.message_queue.put({
-                    "type": "error",
-                    "status": "failed",
-                    "error": str(e)
+
+                # 更新数据库状态
+                try:
+                    AgentTasksModel.update_status(
+                        task_id=task.task_id,
+                        status='failed',
+                        completed_at=task.completed_at,
+                        error=str(e)
+                    )
+                except Exception as db_e:
+                    logger.error(f"Failed to update task status in database: {db_e}")
+
+                # 推送错误消息
+                self.push_message(task.task_id, 'error', {
+                    'status': 'failed',
+                    'error': str(e)
                 })
-                
+
                 logger.error(f"Task {task.task_id} failed: {e}", exc_info=True)
-        
+
         thread = threading.Thread(target=run_task, daemon=True)
         with self._lock:
             self.task_threads[task.task_id] = thread
@@ -402,20 +506,30 @@ class TaskManager:
         return True
     
     def cleanup_old_tasks(self, max_age_hours: int = 24):
-        """清理旧任务"""
+        """清理旧任务（内存和数据库）"""
         now = datetime.now()
         to_remove = []
-        
+
+        # 清理内存中的旧任务
         with self._lock:
             for task_id, task in self.tasks.items():
                 age = (now - task.created_at).total_seconds() / 3600
                 if age > max_age_hours and task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
                     to_remove.append(task_id)
-            
+
             for task_id in to_remove:
                 del self.tasks[task_id]
                 if task_id in self.task_threads:
                     del self.task_threads[task_id]
-        
+
         if to_remove:
-            logger.info(f"Cleaned up {len(to_remove)} old tasks")
+            logger.info(f"Cleaned up {len(to_remove)} old tasks from memory")
+
+        # 清理数据库中的旧任务和消息
+        try:
+            deleted_tasks = AgentTasksModel.delete_old_tasks(max_age_hours)
+            deleted_messages = AgentTaskMessagesModel.delete_old_messages(max_age_hours)
+            if deleted_tasks > 0 or deleted_messages > 0:
+                logger.info(f"Cleaned up {deleted_tasks} tasks and {deleted_messages} messages from database")
+        except Exception as e:
+            logger.error(f"Failed to cleanup old tasks from database: {e}")
