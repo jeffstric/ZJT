@@ -555,10 +555,20 @@ class UnifiedConfigRegistry:
             TaskProvider.LOCAL: '本地',
         }
 
+        # 检查 runninghub 是否已配置（延迟导入以避免循环导入）
+        runninghub_configured = False
+        try:
+            from config.config_util import get_dynamic_config_value
+            runninghub_api_key = get_dynamic_config_value("runninghub", "api_key", default="")
+            runninghub_configured = bool(runninghub_api_key)
+        except Exception:
+            pass
+
         return {
             'tasks': tasks,
             'categories': categories,
             'providers': providers,
+            'runninghub_configured': runninghub_configured,
         }
 
     @classmethod

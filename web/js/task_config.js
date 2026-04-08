@@ -402,34 +402,39 @@
     reload: reloadConfigs,
     isLoaded: isConfigLoaded,
     onLoaded: onConfigLoaded,
-    
+
     // 获取配置
     getAllTasks,
     getTaskById,
     getTaskByKey,
     getTaskIdByKey,
     getTasksByCategory,
-    
+
     // 获取选项
     getDurationOptions,
     getRatioOptions,
     getSizeOptions,
-    
+
     // 获取默认值
     getDefaultDuration,
     getDefaultRatio,
     getDefaultSize,
-    
+
     // 算力
     getComputingPower,
-    
+
+    // RunningHub 配置状态
+    isRunningHubConfigured() {
+      return taskConfigCache?.runninghub_configured ?? false;
+    },
+
     // 兼容旧格式
     getVideoModelDurationOptions,
     getModelConfigs,
     getTaskComputingPowerConfig,
     getTaskTypeIdsByCategory,
     getTaskTypeConfig,
-    
+
     // 动态渲染
     getModelOptionsForCategory,
     getCategories,

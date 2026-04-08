@@ -427,8 +427,27 @@ function createCameraControlNode(opts){
   }
 
   // ========== 生成图片 ==========
+  // 检测 runninghub 配置状态，禁用/启用生成图片按钮
+  if(window.TaskConfig) {
+    const isConfigured = window.TaskConfig.isRunningHubConfigured();
+    if(!isConfigured) {
+      generateBtn.disabled = true;
+      generateBtn.title = '该功能依赖runninghub接口，请配置密钥';
+      generateBtn.textContent = '生成图片(未配置)';
+      statusEl.style.display = 'block';
+      statusEl.style.color = '#ef4444';
+      statusEl.textContent = '该功能依赖runninghub接口，请配置密钥';
+    }
+  }
+
   generateBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
+
+    // 0. 检查 runninghub 配置
+    if(window.TaskConfig && !window.TaskConfig.isRunningHubConfigured()) {
+      showToast('该功能依赖runninghub接口，请配置密钥', 'error');
+      return;
+    }
 
     // 1. 验证源图片
     const conn = state.connections.find(c => c.to === id);
