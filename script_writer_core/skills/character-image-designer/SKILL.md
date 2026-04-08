@@ -73,19 +73,19 @@ ENDIF
   "shots": [
     {
       "shot_number": "",
-      "prompt_text": "角色1的完整提示词"
+      "prompt_text": "角色1的三视角提示词"
     },
     {
       "shot_number": "",
-      "prompt_text": "角色2的完整提示词"
+      "prompt_text": "角色2的三视角提示词"
     },
     {
       "shot_number": "",
-      "prompt_text": "角色3的完整提示词"
+      "prompt_text": "角色3的三视角提示词"
     },
     {
       "shot_number": "",
-      "prompt_text": "角色4的完整提示词"
+      "prompt_text": "角色4的三视角提示词"
     }
   ]
 }
@@ -106,9 +106,15 @@ ENDIF
 
 **⚠️ 重要说明：**
 - **AI无需手动调用切分工具** - 后端代码会自动处理4宫格图像的切分和保存
+- 每个格子中只包含单个角色的三视角图（正面、侧面、后面）
+- 如果角色数量不是4的倍数，最后一批可以少于4个
+
+**⚠️ 重要说明：**
+- **AI无需手动调用切分工具** - 后端代码会自动处理4宫格图像的切分和保存
 - 如果角色数量不是4的倍数，最后一批可以少于4个
 - 同一批次的4个角色会保持一致的视觉风格
 - 切分后的图像会自动保存到角色的 `reference_image` 字段
+- 每个格子中只包含单个角色的三视角图（正面、侧面、后面）
 
 ## 🔴 防止图片中出现文字（Seedream文字抑制规则 - 强制执行）
 
@@ -216,9 +222,8 @@ ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs,
 - 习惯性表情和姿态
 - 气质类型（如：威严、温和、阴郁、活泼）
 
-**服装描述（必须包含多套）：**
+**服装描述（只需一套日常服装）：**
 - 日常服装：材质、颜色、款式、层次
-- 正式/战斗服装：特殊场合的穿着
 - 服装细节：纽扣、腰带、袖口、花纹图案
 
 **配饰与道具：**
@@ -260,12 +265,12 @@ else:
 # 生成提示词后，必须进行以下验证
 if template_type == "REALISTIC_PHOTOGRAPHY":
     # 写实风格提示词必须包含的关键词
-    required_keywords = ["photography portfolio", "photograph", "studio lighting"]
+    required_keywords = ["photography portfolio", "front angle", "side profile", "back view"]
     forbidden_keywords = ["anime", "reference sheet", "grid paper", "borders"]
     
     # 检查是否包含必需关键词
-    if not any(keyword in prompt for keyword in required_keywords):
-        raise Error("❌ 写实风格提示词缺少必需的摄影术语！")
+    if not all(keyword in prompt for keyword in ["front angle", "side profile", "back view"]):
+        raise Error("❌ 写实风格提示词缺少必需的三视角描述！")
     
     # 检查是否包含禁止关键词
     if any(keyword in prompt for keyword in forbidden_keywords):
@@ -275,10 +280,10 @@ if template_type == "REALISTIC_PHOTOGRAPHY":
 
 elif template_type == "ANIME_REFERENCE":
     # 动漫风格提示词必须包含的关键词
-    required_keywords = ["reference sheet"]
+    required_keywords = ["reference sheet", "front view", "side profile", "back view"]
     
-    if not any(keyword in prompt for keyword in required_keywords):
-        raise Error("❌ 动漫风格提示词缺少必需的设定图术语！")
+    if not all(keyword in prompt for keyword in ["front view", "side profile", "back view"]):
+        raise Error("❌ 动漫风格提示词缺少必需的三视角描述！")
     
     print("✅ 动漫风格提示词验证通过")
 ```
@@ -308,57 +313,24 @@ else:
 
 | 元素 | 📷 写实风格用词 | 📸 动漫风格用词 |
 |------|---------------|---------------|
-| 整体描述 | "professional cinematic photography portfolio" | "character design reference sheet" |
-| 背景 | "neutral gray backdrop", "studio lighting" | "beige grid paper background" |
-| 边框 | 无边框或"clean layout" | "rounded red rectangular borders" |
-| 全身图 | "Full Body Portraits", "high-resolution photographs" | "Main Character Views", "illustrations" |
-| 配饰展示 | "Detail Shots", "close-up photographs" | "Color Palette & Accessories", "small illustrations" |
-| 服装 | "Wardrobe Collection", "photographed from angles" | "Outfit Designs", "shown in views" |
-| 动作 | "Action Photography", "dynamic shots capturing" | "Action Poses", "dynamic sketches showing" |
-| 表情 | "Portrait Series", "headshot photographs" | "Expressions", "headshots displaying" |
+| 整体描述 | "professional cinematic photography portfolio" | "character turnaround reference sheet" |
+| 背景 | "neutral gray backdrop", "studio lighting" | "clean neutral background" |
+| 图像类型 | "high-resolution photographs" | "full-body illustrations" |
 
 ---
 
 ### 📷 写实风格模板（用于写实、照片、真实风格）
 
-**⚠️ 关键区别**：写实风格**不使用** "reference sheet"、"grid paper"、"borders" 等动漫设定图术语，而是使用摄影和电影术语。
-
 ```
-[画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. This is a multi-angle photo shoot layout showing the SAME person from three camera angles arranged side by side: front-facing, side profile, and back view. The three-angle full body turnaround is the PRIMARY and LARGEST section of this portfolio.
-
-Full Body Portraits (PRIMARY section, occupying the largest area): Three high-resolution photographs arranged in a horizontal row from left to right showing [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色] in all three shots with identical appearance. Physical characteristics consistent across all three photos: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Facial expression: [基于性格的默认表情].
-
-Detail Shots: Close-up photographs of key accessories and personal items arranged on a clean surface: [配饰1名称和详细外观], [配饰2名称和详细外观], [重要道具名称、材质、颜色、状态描述], [其他随身物品的细节]. Color reference swatches visible: [列出5-8个主要颜色].
-
-Wardrobe Collection: Additional full-body photographs showing alternate outfits. First outfit: [角色名] wearing [第一套替代服装的详细描述，包括场合、款式、颜色、配饰], photographed from front, side, and back angles. Second outfit: [角色名] in [第二套替代服装的详细描述，如正式场合/战斗装备/休闲装等], also shown from multiple angles.
-
-Action Photography: Dynamic shots capturing characteristic movements and poses. First pose: [基于角色身份/职业的标志性动作描述，包含姿态细节和动作感]. Second pose: [基于角色性格的动作，如战斗姿态、思考姿态、奔跑姿态等的摄影描述]. Third pose: [日常习惯性动作或特殊技能展示的动态抓拍].
-
-Portrait Series: A collection of 6 headshot photographs showing different facial expressions: neutral/contemplative expression with slightly furrowed brow and thoughtful gaze, genuine smile with warm eyes and relaxed features, intense concentration with narrowed eyes and focused look, concerned expression with worried frown and tense features, surprised look with raised eyebrows and wide eyes, determined expression with firm jaw and steady gaze.
-
-CRITICAL REMINDER: The three-angle full body turnaround (front/side/back) is the CORE of this portfolio. All three photos MUST be present in the main section showing the same person from front, side, and back. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+[画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. Three high-resolution full-body photographs arranged in a horizontal row from left to right: [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色] in all three shots with identical appearance. Physical characteristics: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Facial expression: [基于性格的默认表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 ---
 
 ### 📸 动漫风格模板（用于动漫、二次元、卡通）
 
-**⚠️ 关键区别**：动漫风格**使用** "reference sheet"、"grid paper"、"borders" 等动漫设定图术语。
-
 ```
-[画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet (showing the same character from multiple angles) for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a beige grid paper background. This is a multi-view turnaround sheet showing the SAME character from front, side, and back angles. The layout is divided into several organized sections with rounded red rectangular borders. The MAIN and LARGEST section displays the full-body three-view turnaround.
-
-Main Character Views (Left, the LARGEST and PRIMARY section): Three full body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色]. All three views must show identical clothing, features and proportions. Physical features: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Expression shows [基于性格的默认表情].
-
-Color Palette & Accessories (Top Left): A small section showing color swatches ([列出5-8个主要颜色，如：black for hair, amber for eyes, dark blue for robe, gold for trim, brown for belt]) and small illustrations of key accessories: [配饰1名称和简述], [配饰2名称和简述], [重要道具名称、外观和状态描述], [其他随身物品].
-
-Outfit Designs (Top Right): Alternate costumes shown in front, side, and back views. Outfit 1: [角色名] in [第一套替代服装的详细描述，包括场合、款式、颜色、配饰]. Outfit 2: [角色名] in [第二套替代服装的详细描述，如正式场合/战斗装备/休闲装等].
-
-Action Poses (Middle Right): Dynamic sketches showing characteristic movements. Pose 1: [基于角色身份/职业的标志性动作，如挥剑、施法、读书等，包含姿态细节]. Pose 2: [基于角色性格的动作，如战斗姿态、思考姿态、奔跑姿态等]. Pose 3: [日常习惯性动作或特殊技能展示].
-
-Expressions (Bottom Right): A row of 5-6 headshots displaying various facial expressions based on character personality: [表情1，如neutral/calm], [表情2，如happy/smiling], [表情3，如angry/fierce], [表情4，如sad/melancholic], [表情5，如surprised/shocked], [表情6，如determined/focused或其他符合角色性格的表情].
-
-CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) is the CORE and LARGEST section of this reference sheet. All three views of the SAME character MUST be clearly visible and equally sized in the main section. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+[画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a clean neutral background. Three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [详细的日常服装描述，包括上衣款式、下装、鞋子、材质、颜色]. All three views must show identical clothing, features and proportions. Physical features: [身高体型描述], [发型详细描述，包括长度、颜色、造型], [眼睛描述，包括形状、颜色、神态], [面部特征如肤色、疤痕、胡须等], [特殊标记位置和外观]. Expression shows [基于性格的默认表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 #### 3.3 画风信息整合规则
@@ -422,22 +394,8 @@ CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) 
 **以下是动漫风格的样例（仅供参考）：**
 
 ```
-Japanese anime style, Ancient Chinese setting, Warm earthy color palette. A character turnaround reference sheet (showing the same character from multiple angles) for Chen Feng (陈风) from The Scholar's Journey, set on a clean neutral background. This is a multi-view turnaround sheet showing the SAME character from front, side, and back angles. The layout is divided into several organized sections with clear, subtle dividers. The MAIN and LARGEST section displays the full-body three-view turnaround.
-
-Main Character Views (Left, the LARGEST and PRIMARY section): Three full body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character Chen Feng wearing traditional Chinese scholar robes in deep navy blue with intricate golden thread embroidery along the sleeves and collar, a black silk sash around the waist, dark brown leather boots, and a small jade pendant hanging from his belt. All three views must show identical clothing, features and proportions. Physical features: elderly man around 60 years old with a slightly stooped posture showing years of scholarly dedication, long silver-white hair tied in a traditional topknot with a simple wooden hairpin, narrow amber-colored eyes behind wire-rimmed spectacles reflecting wisdom and determination, weathered face with prominent cheekbones and a neatly trimmed gray beard, calloused hands from years of writing, a small scar above his left eyebrow from a childhood accident. Expression shows calm determination mixed with underlying worry about his cracked scholar's token.
-
-Color Palette & Accessories (Top Left): A small section showing color swatches (deep navy blue for robes, golden yellow for embroidery, silver-white for hair, amber for eyes, jade green for pendant, dark brown for boots, weathered bronze for spectacles, ivory white for the cracked token) and small illustrations of key accessories: wire-rimmed bronze spectacles with thin chains, circular jade pendant with carved dragon motif, wooden hairpin with simple geometric patterns, leather-bound scroll case with brass fittings, the cracked scholar's token showing visible stress fractures and faded inscriptions, a worn leather pouch containing writing brushes and ink stones.
-
-Outfit Designs (Top Right): Alternate costumes shown in front, side, and back views. Outfit 1: Chen Feng in formal court attire including an elaborate dark purple silk robe with wide sleeves decorated with cloud and mountain patterns in gold thread, a ceremonial black cap with jade ornaments, white inner robes visible at collar and cuffs, and formal black court shoes with upturned toes. Outfit 2: Chen Feng in travel gear including a practical brown hemp robe with reinforced shoulders and hem, a wide-brimmed straw hat for sun protection, sturdy walking boots with metal studs, a large traveling pack with rolled sleeping mat, and a walking staff carved with protective symbols.
-
-Action Poses (Middle Right): Dynamic sketches showing characteristic scholarly movements. Pose 1: Chen Feng in a teaching gesture with one hand raised, index finger pointing upward while explaining a complex concept, his other hand holding an open scroll, body leaning slightly forward with engaged expression and eyes focused on unseen students. Pose 2: Chen Feng in deep contemplation, sitting cross-legged with the cracked token held carefully in both hands, head tilted downward, brow furrowed in concentration as he examines the damage and considers its implications. Pose 3: Chen Feng in a moment of realization, standing with both hands pressed together in front of his chest, eyes wide with sudden understanding, mouth slightly open as if about to speak an important insight.
-
-Expressions (Bottom Right): A row of 6 headshots displaying various facial expressions based on his scholarly and worried personality: neutral/contemplative with slightly furrowed brow and thoughtful gaze, gentle smile while teaching with warm eyes and relaxed features, intense concentration with narrowed eyes and tight lips while studying, deep concern with worried frown and tense jaw while examining the token, surprised revelation with raised eyebrows and wide eyes upon discovering something important, determined resolve with firm set mouth and steady gaze when facing difficult decisions.
-
-CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) is the CORE and LARGEST section of this reference sheet. All three views of the SAME character MUST be clearly visible and equally sized in the main section. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+Japanese anime style, Ancient Chinese setting, Warm earthy color palette. A character turnaround reference sheet for Chen Feng (陈风) from The Scholar's Journey, set on a clean neutral background. Three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character Chen Feng wearing traditional Chinese scholar robes in deep navy blue with intricate golden thread embroidery along the sleeves and collar, a black silk sash around the waist, dark brown leather boots, and a small jade pendant hanging from his belt. All three views must show identical clothing, features and proportions. Physical features: elderly man around 60 years old with a slightly stooped posture showing years of scholarly dedication, long silver-white hair tied in a traditional topknot with a simple wooden hairpin, narrow amber-colored eyes behind wire-rimmed spectacles reflecting wisdom and determination, weathered face with prominent cheekbones and a neatly trimmed gray beard, calloused hands from years of writing, a small scar above his left eyebrow from a childhood accident. Expression shows calm determination mixed with underlying worry. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
-
-**要求：生成的提示词必须比上述样例更加详细，每个区域的描述应该包含更多具体细节。**
 
 #### 3.4 图像生成调用
 
@@ -490,7 +448,7 @@ CRITICAL REMINDER: The three-view turnaround (front view, side view, back view) 
   - 自动构建4宫格JSON格式
   - 自动添加 `image_size="4k"` 参数生成高分辨率图像
   - 自动轮询等待图像生成完成（最多10分钟）
-  - 自动下载并切分4宫格图像为4个独立图像
+  - 自动下载并切分4宫格图像为4个独立图像（每个图像包含角色的三视角图）
   - 自动更新每个角色的 `reference_image` 字段
 - **返回结果**：
   ```json
@@ -625,28 +583,24 @@ if not result.get("success"):
 
 ## 提示词模板说明
 
-### 必须保持的5个视觉区域（缺一不可）
+### 只需生成三视角图
 
-| 区域 | 位置 | 必须包含内容 | 最低要求 |
-|-----|------|-------------|----------|
-| **Main Character Views** | 左侧 | 正面、侧面、背面全身图 | 服装细节+外貌特征+表情 |
-| **Color Palette & Accessories** | 左上 | 颜色色块+配饰道具插图 | 5-8个颜色+3-5个配饰 |
-| **Outfit Designs** | 右上 | 替代服装的三视图 | 至少2套不同服装 |
-| **Action Poses** | 右中 | 动态姿势草图 | 至少2-3个动作 |
-| **Expressions** | 右下 | 头像表情排列 | 至少5种表情 |
+简化后的提示词只需要包含角色的三视角图（正面、侧面、后面），无需其他额外区域。
 
-### 角色特征到区域的详细映射
+| 视角 | 描述要点 |
+|-----|----------|
+| **正面** | 面向镜头，展示面部表情和服装正面 |
+| **侧面** | 90度侧身，展示侧脸轮廓和服装侧边 |
+| **后面** | 背对镜头，展示背部细节和服装背面 |
 
-| 角色信息 | 映射到的区域 | 描述要点 |
-|---------|-------------|----------|
-| 外貌（发型、眼睛、身材） | Main Character Views | 必须在三视图中清晰可见 |
-| 肤色、发色、服装色 | Color Palette | 列出具体颜色名称和用途 |
-| 日常服装 | Main Character Views | 作为默认展示服装 |
-| 正式/战斗服装 | Outfit Designs | 展示不同场合的穿着 |
-| 性格特点 | Expressions | 转化为5-6种面部表情 |
-| 职业/身份 | Action Poses | 转化为标志性动作姿势 |
-| 随身道具 | Color Palette & Accessories | 单独绘制道具插图 |
-| 特殊标记 | Main Character Views | 在描述中明确位置 |
+### 角色特征描述要点
+
+| 角色信息 | 描述要点 |
+|---------|----------|
+| 外貌（发型、眼睛、身材） | 在三个视角中都清晰可见 |
+| 服装细节 | 正面、侧面、后面三处都需描述一致 |
+| 特殊标记（胎记、纹身等） | 在描述中明确位置（如背部、左手臂等） |
+| 配饰和道具 | 在正面或侧面描述中体现 |
 
 ## 注意事项
 1. **处理条件限制（最重要）** - 仅处理同时满足以下两个条件的角色：
@@ -661,8 +615,8 @@ if not result.get("success"):
    - 在提示词最开头用明确的英文描述画风（如：Photorealistic style / Japanese anime style）
    - **绝对禁止**：要求写实却生成漫画风格，或要求漫画却生成写实风格
    - 所有角色必须使用完全相同的画风描述，确保整体视觉一致性
-4. **区域完整性** - 每个提示词必须包含全部5个区域，生成前检查是否遗漏
-5. **描述详细度** - 每个区域的描述不少于20个单词，越详细效果越好
+4. **三视角完整性** - 每个提示词必须包含正面、侧面、背面三个视角的描述
+5. **描述详细度** - 三个视角的描述应详细，包含服装、外貌特征、特殊标记等
 6. **角色名称一致性** - 确保所有函数调用中的角色名称完全一致
 7. **任务冲突避免** - 必须检查任务状态，避免重复提交
 8. **错误处理** - 妥善处理角色不存在、任务冲突等异常情况
