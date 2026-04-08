@@ -2684,36 +2684,6 @@ async def upload_reference_image(
         # 返回URL
         url = f"{server_host.rstrip('/')}/{upload_dir}/{filename}"
 
-        # 创建媒体文件映射记录
-        try:
-            from model.media_file_mapping import MediaFileMappingModel
-            from config.media_file_policy import MediaFilePolicy
-
-            # 获取文件大小
-            file_size = os.path.getsize(file_path)
-
-            # 确定 source_id
-            item_type_map = {1: 'character', 2: 'location', 3: 'props'}
-            item_type_str = item_type_map.get(item_type, 'unknown')
-            source_id = f"{world_id}_{item_type_str}_{user_id}"
-
-            # local_path 是相对于 upload 目录的路径
-            local_path = f"{upload_dir}/{filename}"
-
-            MediaFileMappingModel.create(
-                user_id=int(user_id) if user_id else None,
-                local_path=local_path,
-                cloud_path=None,
-                policy_code=MediaFilePolicy.NEVER_EXPIRE,
-                source_type='api',
-                source_id=source_id,
-                media_type='image',
-                original_url=None,
-                file_size=file_size
-            )
-        except Exception as mapping_error:
-            logger.error(f'创建媒体文件映射记录失败: {mapping_error}')
-
         logger.info(f'图片上传成功: {url}')
 
         return JSONResponse({

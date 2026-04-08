@@ -372,8 +372,10 @@ class AIToolsModel:
 
                 local_path = result_url.lstrip("/")
 
-                # 判断媒体类型
-                media_type = 'image' if any(result_url.lower().endswith(ext) for ext in ['.jpg', '.png', '.jpeg', '.gif', '.webp']) else 'video'
+                # 判断媒体类型（MIME type）
+                from utils.mime_type import get_mime_type_from_extension
+                ext = os.path.splitext(result_url)[1].lower()
+                media_type = get_mime_type_from_extension(ext)
 
                 # 创建映射记录
                 mapping_id = MediaFileMappingModel.create(
@@ -495,8 +497,10 @@ class AIToolsModel:
 
                 local_path = result_url.lstrip("/")
 
-                # 判断媒体类型
-                media_type = 'image' if any(result_url.lower().endswith(ext) for ext in ['.jpg', '.png', '.jpeg', '.gif', '.webp']) else 'video'
+                # 判断媒体类型（MIME type）
+                from utils.mime_type import get_mime_type_from_extension
+                ext = os.path.splitext(result_url)[1].lower()
+                media_type = get_mime_type_from_extension(ext)
 
                 # 创建映射记录
                 mapping_id = MediaFileMappingModel.create(

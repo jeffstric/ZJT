@@ -16,11 +16,8 @@ from .verify_codes import VerifyCodesModel, VerifyCode
 from .login_log import LoginLogModel, LoginLog
 from .token_log import TokenLogModel, TokenLog
 from .grid_image_tasks import GridImageTasksModel, GridImageTask, GridImageTaskStatus
-<<<<<<< HEAD
 from .location_multi_angle_tasks import LocationMultiAngleTasksModel, LocationMultiAngleTask, LocationMultiAngleTaskStatus
-=======
 from .media_file_mapping import MediaFileMappingModel, MediaFileMapping
->>>>>>> 743705c (实现了 pollstatus，在图片和视频生成完毕后，自动获取cdn图床地址的功能)
 
 __all__ = [
     'AIToolsModel',
