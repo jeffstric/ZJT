@@ -6144,6 +6144,27 @@
     mounted() {
       // Extract auth_token from URL query parameters at app level
       const urlParams = new URLSearchParams(window.location.search);
+      
+      // 优先处理 login=1 参数（通常表示认证过期需要重新登录）
+      if (urlParams.get('login') === '1') {
+        // 清除可能已过期的本地认证信息
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('phone');
+        localStorage.removeItem('user_id');
+        localStorage.removeItem('invite_code');
+        
+        // 处理登录后跳转的目标路径（仅允许路径，不允许完整URL）
+        const redirectUrl = urlParams.get('redirect_url');
+        if (redirectUrl) {
+          // 验证是否为有效的路径（不包含协议和域名）
+          if (!redirectUrl.includes('://') && !redirectUrl.includes('//')) {
+            // 确保路径以 / 开头
+            const targetPath = redirectUrl.startsWith('/') ? redirectUrl : '/' + redirectUrl;
+            localStorage.setItem('redirect_after_login', targetPath);
+          }
+        }
+      }
+      
       this.authToken = urlParams.get('auth_token') || '';
       this.userPhone = urlParams.get('phone') || '';
       this.userId = urlParams.get('user_id') || '';
@@ -6196,20 +6217,8 @@
       }
       
       // 方式2: 通过URL参数触发登录框（支持跨域跳转）
-      // 复用前面已声明的 urlParams 变量
       if (urlParams.get('login') === '1' && !this.authToken) {
         this.showLoginModal = true;
-        
-        // 处理登录后跳转的目标路径（仅允许路径，不允许完整URL）
-        const redirectUrl = urlParams.get('redirect_url');
-        if (redirectUrl) {
-          // 验证是否为有效的路径（不包含协议和域名）
-          if (!redirectUrl.includes('://') && !redirectUrl.includes('//')) {
-            // 确保路径以 / 开头
-            const targetPath = redirectUrl.startsWith('/') ? redirectUrl : '/' + redirectUrl;
-            localStorage.setItem('redirect_after_login', targetPath);
-          }
-        }
       }
       
       // Load terms of service
