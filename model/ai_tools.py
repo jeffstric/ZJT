@@ -40,7 +40,10 @@ class AITool:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # 延迟导入避免循环依赖
-        from config.unified_config import get_implementation_name
+        from config.unified_config import get_implementation_name, UnifiedConfigRegistry
+        # 获取模型名称
+        task_config = UnifiedConfigRegistry.get_by_id(self.type)
+        model_name = task_config.name if task_config else None
         return {
             'id': self.id,
             'prompt': self.prompt,
@@ -61,7 +64,8 @@ class AITool:
             'extra_config': self.extra_config,
             'reference_images': self.reference_images,
             'implementation': self.implementation,
-            'implementation_name': get_implementation_name(self.implementation)
+            'implementation_name': get_implementation_name(self.implementation),
+            'model_name': model_name
         }
 
 
