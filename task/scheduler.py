@@ -157,7 +157,7 @@ def init_scheduler(app):
     logger.info('启用视频生成任务')
     scheduler.add_job(
         func=task_with_app_video,
-        trigger=IntervalTrigger(seconds=11),
+        trigger=IntervalTrigger(seconds=5),
         id='generate_video',
         name='Generate video every 11 seconds',
         replace_existing=True,
@@ -168,7 +168,7 @@ def init_scheduler(app):
     logger.info('启用音频生成任务')
     scheduler.add_job(
         func=task_with_app_audio,
-        trigger=IntervalTrigger(seconds=7),
+        trigger=IntervalTrigger(seconds=13),
         id='generate_audio',
         name='Generate audio every 7 seconds',
         replace_existing=True,
@@ -241,6 +241,20 @@ def init_scheduler(app):
         trigger=IntervalTrigger(seconds=10),  # 每10秒执行一次
         id='process_grid_image_tasks',
         name='Process grid image tasks every 10 seconds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
+    # 场景多角度生图任务处理
+    logger.info('启用场景多角度生图任务处理')
+    from task.location_multi_angle_task import process_pending_location_multi_angle_tasks
+
+    scheduler.add_job(
+        func=process_pending_location_multi_angle_tasks,
+        trigger=IntervalTrigger(seconds=17),  # 每17秒执行一次
+        id='process_location_multi_angle_tasks',
+        name='Process location multi-angle tasks every 17 seconds',
         replace_existing=True,
         max_instances=1,
         coalesce=True

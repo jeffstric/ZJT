@@ -13,9 +13,9 @@ function updateCameraPreview(canvasEl, camera) {
   const width = canvasEl.width;
   const height = canvasEl.height;
   
-  const yaw = camera.yaw ?? 0;
-  const dolly = camera.dolly ?? 0;
-  const pitch = camera.pitch ?? 0;
+  const yaw = camera.horizontal_angle ?? 0;
+  const dolly = camera.zoom ?? 5.0;
+  const pitch = camera.vertical_angle ?? 0;
   
   ctx.clearRect(0, 0, width, height);
   
@@ -162,8 +162,8 @@ function drawLabels(ctx, yaw, pitch, width, height) {
   const labelX = -width / 2 + 8;
   const labelY = -height / 2 + 8;
   
-  ctx.fillText(`左右: ${yaw.toFixed(0)}°`, labelX, labelY);
-  ctx.fillText(`俯仰: ${pitch.toFixed(0)}°`, labelX, labelY + 14);
+  ctx.fillText(`水平: ${yaw.toFixed(0)}°`, labelX, labelY);
+  ctx.fillText(`垂直: ${pitch.toFixed(0)}°`, labelX, labelY + 14);
 }
 
 if (typeof window !== 'undefined') {

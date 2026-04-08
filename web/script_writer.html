@@ -12,6 +12,8 @@
     <!-- Vue.js 和 Axios -->
     <script src="js/vue.global.prod.js"></script>
     <script src="js/axios.min.js"></script>
+    <!-- 任务配置模块 -->
+    <script src="/js/task_config.js"></script>
 </head>
 <body>
     <!-- 左侧导览条 - 悬浮模式 -->
@@ -625,6 +627,19 @@
                                 <img class="preview-thumbnail" alt="预览">
                                 <button type="button" class="preview-remove-btn" onclick="removeImagePreview('char-image')">×</button>
                             </div>
+                            <!-- 多服装参考图区域 -->
+                            <div style="margin-top: 12px;">
+                                <label class="form-label" style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+                                    多服装/造型参考图
+                                    <span style="font-size: 11px; color: #6b7280; font-weight: normal;">（可选）</span>
+                                </label>
+                                <div id="char-multi-image-list" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 20px;"></div>
+                                <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                                    <input type="text" id="char-multi-image-label" class="form-input" placeholder="标签，如：晚礼服" style="flex: 0 0 100px;">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="triggerCharMultiImageUpload()">上传图片</button>
+                                    <input type="file" id="char-multi-image-file" accept="image/*" style="display: none;" onchange="handleCharMultiImageUpload(event)">
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -666,6 +681,38 @@
                             <div id="loc-image-preview" class="image-preview-box" style="display: none;">
                                 <img class="preview-thumbnail" alt="预览">
                                 <button type="button" class="preview-remove-btn" onclick="removeImagePreview('loc-image')">×</button>
+                            </div>
+                            <!-- 多角度参考图区域 -->
+                            <div style="margin-top: 12px;">
+                                <label class="form-label" style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+                                    多角度参考图
+                                    <span style="font-size: 11px; color: #6b7280; font-weight: normal;">（可选）</span>
+                                </label>
+                                <div id="loc-multi-image-list" style="display: flex; flex-wrap: wrap; gap: 8px; min-height: 20px;"></div>
+                                <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                                    <select id="loc-multi-image-angle" class="form-input" style="flex: 0 0 90px;">
+                                        <option value="front">正面</option>
+                                        <option value="back">背面</option>
+                                        <option value="left">左侧</option>
+                                        <option value="right">右侧</option>
+                                        <option value="custom">自定义</option>
+                                    </select>
+                                    <input type="text" id="loc-multi-image-label" class="form-input" placeholder="标签，如：正门" style="flex: 0 0 100px;">
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="triggerLocMultiImageUpload()">上传图片</button>
+                                    <input type="file" id="loc-multi-image-file" accept="image/*" style="display: none;" onchange="handleLocMultiImageUpload(event)">
+                                </div>
+                                <!-- 生成多角度图按钮 -->
+                                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #e5e7eb;">
+                                    <button type="button" class="btn btn-primary" id="generate-loc-multi-angle-btn" onclick="generateLocMultiAngleImages()" style="background: #8b5cf6;">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
+                                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                                            <circle cx="8.5" cy="8.5" r="1.5"/>
+                                            <polyline points="21 15 16 10 5 21"/>
+                                        </svg>
+                                        生成多角度图（90°, 180°, 270°）
+                                    </button>
+                                    <span id="generate-multi-angle-status" style="margin-left: 10px; font-size: 12px; color: #6b7280;"></span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -890,7 +937,24 @@
                 </button>
             </div>
             <div class="modal-body" style="text-align: center; padding: 20px;">
-                <img id="preview-image" class="full-preview-image" alt="参考图片" style="max-width: 100%; max-height: 70vh; border-radius: 8px;">
+                <!-- 主图区域 -->
+                <div id="main-preview-container" style="margin-bottom: 15px;">
+                    <img id="preview-image" class="full-preview-image" alt="参考图片" style="max-width: 100%; max-height: 55vh; border-radius: 8px;">
+                </div>
+                <!-- 生成多角度图按钮（仅场景显示） -->
+                <div id="preview-generate-section" style="display: none; margin-bottom: 15px; padding-top: 10px; border-top: 1px dashed #e5e7eb;">
+                    <button type="button" class="btn btn-primary" id="preview-generate-multi-angle-btn" onclick="generatePreviewMultiAngleImages()" style="background: #8b5cf6;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5"/>
+                            <polyline points="21 15 16 10 5 21"/>
+                        </svg>
+                        生成多角度图（90°, 180°, 270°）
+                    </button>
+                    <span id="preview-generate-status" style="margin-left: 10px; font-size: 12px; color: #6b7280;"></span>
+                </div>
+                <!-- 缩略图网格 -->
+                <div id="image-preview-thumbnails" style="display: flex; justify-content: center; flex-wrap: wrap; gap: 10px;"></div>
             </div>
         </div>
     </div>
@@ -906,7 +970,44 @@
         const WORKFLOW_ID = urlParams.get('workflow_id')
         // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
         const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
-        
+
+        // 角度常量类 - 统一管理多角度图片的角度定义
+        const AngleKey = {
+            RIGHT_90: 'right',
+            BACK_180: 'back',
+            LEFT_270: 'left'
+        };
+
+        // 角度配置列表 - 用于生成多角度图片
+        const ANGLES_CONFIG = [
+            { angle: 90, label: '90°', angleKey: AngleKey.RIGHT_90 },
+            { angle: 180, label: '180°', angleKey: AngleKey.BACK_180 },
+            { angle: 270, label: '270°', angleKey: AngleKey.LEFT_270 }
+        ];
+
+        // 角度label到角度值的映射
+        const ANGLE_LABEL_MAP = {
+            // 纯角度格式 (主要格式)
+            '90°': { angle: 90, angleKey: AngleKey.RIGHT_90 },
+            '180°': { angle: 180, angleKey: AngleKey.BACK_180 },
+            '270°': { angle: 270, angleKey: AngleKey.LEFT_270 },
+            // 英文格式
+            'right': { angle: 90, angleKey: AngleKey.RIGHT_90 },
+            'back': { angle: 180, angleKey: AngleKey.BACK_180 },
+            'left': { angle: 270, angleKey: AngleKey.LEFT_270 },
+            // 纯数字
+            '90': { angle: 90, angleKey: AngleKey.RIGHT_90 },
+            '180': { angle: 180, angleKey: AngleKey.BACK_180 },
+            '270': { angle: 270, angleKey: AngleKey.LEFT_270 },
+            // 旧格式兼容
+            '右侧 (90°)': { angle: 90, angleKey: AngleKey.RIGHT_90 },
+            '背面 (180°)': { angle: 180, angleKey: AngleKey.BACK_180 },
+            '左侧 (270°)': { angle: 270, angleKey: AngleKey.LEFT_270 },
+            '右侧': { angle: 90, angleKey: AngleKey.RIGHT_90 },
+            '背面': { angle: 180, angleKey: AngleKey.BACK_180 },
+            '左侧': { angle: 270, angleKey: AngleKey.LEFT_270 }
+        };
+
         const LOGIN_URL = window.location.origin + '/?login=1&redirect_url=video-workflow-list';
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
@@ -1027,6 +1128,12 @@
             await loadTextToImageModels();
             await loadComputingPower();
             await loadUserWorlds();
+            // 加载任务配置（用于多角度图生成）
+            if (window.TaskConfig) {
+                await window.TaskConfig.load();
+                // 检测 runninghub 配置状态，禁用/启用生成多角度图按钮
+                checkRunningHubForMultiAngle();
+            }
 
             initCarousel();
             
@@ -2743,12 +2850,21 @@
             document.getElementById('char-behavior').value = data.behavior || '';
             document.getElementById('char-other').value = data.other_info || '';
             document.getElementById('char-image').value = data.reference_image || '';
-            
+
             // 如果有图片，显示预览
             if (data.reference_image) {
                 showImagePreview('char-image', data.reference_image);
             } else {
                 removeImagePreview('char-image');
+            }
+
+            // 填充多服装参考图
+            const multiImageList = document.getElementById('char-multi-image-list');
+            multiImageList.innerHTML = '';
+            if (data.reference_images && Array.isArray(data.reference_images)) {
+                data.reference_images.forEach(img => {
+                    addCharMultiImageItem(multiImageList, img.label || '服装', img.url, img.id);
+                });
             }
         }
 
@@ -2759,13 +2875,115 @@
             document.getElementById('loc-parent').value = data.parent_id || '';
             document.getElementById('loc-description').value = data.description || '';
             document.getElementById('loc-image').value = data.reference_image || '';
-            
+
             // 如果有图片，显示预览
             if (data.reference_image) {
                 showImagePreview('loc-image', data.reference_image);
             } else {
                 removeImagePreview('loc-image');
             }
+
+            // 填充多角度参考图
+            const multiImageList = document.getElementById('loc-multi-image-list');
+            multiImageList.innerHTML = '';
+            if (data.reference_images && Array.isArray(data.reference_images)) {
+                data.reference_images.forEach(img => {
+                    addLocMultiImageItem(multiImageList, img.label || img.angle || '正面', img.url, img.angle || 'front', img.id);
+                });
+            }
+
+            // 如果切换到的场景不是正在生成的场景，清除生成状态
+            const statusSpan = document.getElementById('generate-multi-angle-status');
+            const btn = document.getElementById('generate-loc-multi-angle-btn');
+            if (generatingLocationName && generatingLocationName !== data.name) {
+                if (statusSpan) statusSpan.textContent = '';
+                if (btn) {
+                    btn.disabled = false;
+                    btn.classList.remove('disabled');
+                }
+            }
+        }
+
+        // 触发场景多角度图片上传
+        function triggerLocMultiImageUpload() {
+            const fileInput = document.getElementById('loc-multi-image-file');
+            fileInput.click();
+        }
+
+        // 处理场景多角度图片上传
+        async function handleLocMultiImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // 验证文件类型
+            if (!file.type.startsWith('image/')) {
+                showError('请选择图片文件');
+                event.target.value = '';
+                return;
+            }
+
+            // 验证文件大小 (10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                showError('图片大小不能超过10MB');
+                event.target.value = '';
+                return;
+            }
+
+            const angleSelect = document.getElementById('loc-multi-image-angle');
+            const labelInput = document.getElementById('loc-multi-image-label');
+            const list = document.getElementById('loc-multi-image-list');
+            const angle = angleSelect.value;
+            const label = labelInput.value.trim() || angleSelect.options[angleSelect.selectedIndex].text;
+
+            showInfo('正在上传图片...');
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', USER_ID);
+            formData.append('world_id', WORLD_ID);
+            formData.append('item_type', 2); // 2=location
+            formData.append('auth_token', AUTH_TOKEN);
+
+            try {
+                const response = await fetch('/api/upload-image', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    addLocMultiImageItem(list, label, data.url, angle, undefined);
+                    labelInput.value = '';
+                    showSuccess('图片上传成功');
+                } else {
+                    showError('上传失败: ' + data.error);
+                }
+            } catch (error) {
+                showError('上传失败: ' + error.message);
+            }
+
+            event.target.value = '';
+        }
+
+        function addLocMultiImageItem(container, label, url, angle, imgId) {
+            const wrapper = document.createElement('div');
+            wrapper.dataset.multiLocImage = '';
+            wrapper.dataset.id = imgId || '';
+            wrapper.dataset.label = label;
+            wrapper.dataset.angle = angle;
+            wrapper.dataset.url = url;
+            wrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+            wrapper.innerHTML = `
+                <img src="${url}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'" />
+                <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+                <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
+            `;
+            wrapper.querySelector('button').addEventListener('click', () => wrapper.remove());
+            container.appendChild(wrapper);
         }
 
         function showPropEditor(fileName, data) {
@@ -2805,6 +3023,50 @@
             currentEditFile = { fileType: '', fileName: '' };
         }
 
+        // 多图预览全局状态
+        let previewImages = [];  // 当前预览的多图列表
+        let previewImageIndex = 0;  // 当前显示的图片索引
+        let previewImageFileType = '';  // 当前预览的文件类型
+        let previewImageFileName = '';  // 当前预览的文件名
+        let previewMainImage = '';  // 预览弹窗中场景的主图
+        let previewDescription = '';  // 预览弹窗中场景的描述
+        let previewLocationName = '';  // 预览弹窗中场景的名称
+
+        function selectPreviewImage(index) {
+            previewImageIndex = index;
+            document.getElementById('preview-image').src = previewImages[index].url;
+            renderImageThumbnails();
+        }
+
+        function renderImageThumbnails() {
+            const container = document.getElementById('image-preview-thumbnails');
+            container.innerHTML = '';
+            previewImages.forEach((img, idx) => {
+                const item = document.createElement('div');
+                item.className = 'thumbnail-item' + (idx === previewImageIndex ? ' active' : '');
+                item.dataset.index = idx;
+                item.onclick = () => selectPreviewImage(idx);
+
+                // 非主图且是场景类型，显示单独生成按钮
+                const showGenerateBtn = idx > 0 && previewImageFileType === 'locations';
+
+                item.innerHTML = `
+                    <img src="${img.url}" alt="${img.label}">
+                    <div class="thumbnail-label">${img.label}</div>
+                    ${showGenerateBtn ? `<button class="thumbnail-generate-btn" data-index="${idx}" onclick="event.stopPropagation(); regeneratePreviewSingleAngle(${idx})">生成</button>` : ''}
+                `;
+                container.appendChild(item);
+            });
+
+            // 显示/隐藏生成多角度按钮区域
+            const generateSection = document.getElementById('preview-generate-section');
+            if (previewImageFileType === 'locations' && previewMainImage) {
+                generateSection.style.display = 'block';
+            } else {
+                generateSection.style.display = 'none';
+            }
+        }
+
         async function previewItemImage(fileType, fileName) {
             try {
                 const apiMap = {
@@ -2812,17 +3074,17 @@
                     'locations': '/api/locations-files',
                     'props': '/api/props-files'
                 };
-                
+
                 const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
                 const data = await response.json();
-                
+
                 if (checkTokenExpired(data, response)) {
                     return;
                 }
-                
+
                 if (data.success) {
                     let jsonData = data.character?.json_data || data.location?.json_data || data.prop?.json_data || {};
-                    
+
                     if (!jsonData || Object.keys(jsonData).length === 0) {
                         const content = data.character?.content || data.location?.content || data.prop?.content || '';
                         try {
@@ -2836,22 +3098,67 @@
                             return;
                         }
                     }
-                    
-                    const referenceImage = jsonData.reference_image;
-                    
-                    if (!referenceImage || referenceImage.trim() === '') {
+
+                    // 收集所有图片
+                    previewImages = [];
+                    previewImageFileType = fileType;
+                    previewImageFileName = fileName;
+
+                    // 存储场景信息（用于生成多角度图）
+                    if (fileType === 'locations') {
+                        previewMainImage = jsonData.reference_image || '';
+                        previewDescription = jsonData.description || '';
+                        previewLocationName = fileName;
+                    } else {
+                        previewMainImage = '';
+                        previewDescription = '';
+                        previewLocationName = '';
+                    }
+
+                    // 主图
+                    if (jsonData.reference_image && jsonData.reference_image.trim() !== '') {
+                        previewImages.push({ url: jsonData.reference_image, label: '主图' });
+                    }
+
+                    // 多角度/多服装参考图（场景和角色）
+                    if (fileType === 'locations' && jsonData.reference_images && Array.isArray(jsonData.reference_images)) {
+                        jsonData.reference_images.forEach(img => {
+                            if (img.url && img.url.trim() !== '') {
+                                previewImages.push({
+                                    url: img.url,
+                                    label: img.label || img.angle || '角度图'
+                                });
+                            }
+                        });
+                    } else if (fileType === 'characters' && jsonData.reference_images && Array.isArray(jsonData.reference_images)) {
+                        jsonData.reference_images.forEach((img, idx) => {
+                            if (img.url && img.url.trim() !== '') {
+                                previewImages.push({
+                                    url: img.url,
+                                    label: img.label || `服装${idx + 1}`
+                                });
+                            }
+                        });
+                    }
+
+                    if (previewImages.length === 0) {
                         showInfo('该项目暂无参考图');
                         return;
                     }
-                    
+
                     // 显示图片预览弹窗
                     const typeNames = {
                         'characters': '角色',
                         'locations': '场景',
                         'props': '道具'
                     };
+                    previewImageIndex = 0;
                     document.getElementById('image-preview-title').textContent = `${typeNames[fileType]}参考图 - ${fileName}`;
-                    document.getElementById('preview-image').src = referenceImage;
+                    document.getElementById('preview-image').src = previewImages[0].url;
+
+                    // 渲染缩略图网格
+                    renderImageThumbnails();
+
                     document.getElementById('image-preview-modal').classList.add('show');
                 } else {
                     showError('获取数据失败: ' + (data.error || '未知错误'));
@@ -2863,6 +3170,555 @@
 
         function closeImagePreviewModal() {
             document.getElementById('image-preview-modal').classList.remove('show');
+        }
+
+        // 生成场景多角度图片（90°, 180°, 270°）
+        // 多角度生图任务轮询状态
+        let multiAnglePollInterval = null;
+        let generatingLocationName = null;  // 当前正在生成的场景名称
+
+        // 检测 runninghub 配置状态，禁用/启用生成多角度图按钮
+        function checkRunningHubForMultiAngle() {
+            const btn = document.getElementById('generate-loc-multi-angle-btn');
+            const statusSpan = document.getElementById('generate-multi-angle-status');
+            if (!btn) return;
+
+            const isConfigured = window.TaskConfig && window.TaskConfig.isRunningHubConfigured();
+            if (!isConfigured) {
+                btn.disabled = true;
+                btn.title = '该功能依赖runninghub接口，请配置密钥';
+                btn.classList.add('disabled');
+                if (statusSpan) {
+                    statusSpan.textContent = '该功能依赖runninghub接口，请配置密钥';
+                    statusSpan.style.color = '#ef4444';
+                }
+            }
+        }
+
+        async function generateLocMultiAngleImages() {
+            const btn = document.getElementById('generate-loc-multi-angle-btn');
+            const statusSpan = document.getElementById('generate-multi-angle-status');
+
+            // 获取当前场景的主图和描述
+            const mainImage = document.getElementById('loc-image').value.trim();
+            const locationDesc = document.getElementById('loc-description').value.trim();
+            const locationName = document.getElementById('loc-name').value.trim();
+
+            if (!mainImage) {
+                showError('请先上传主图');
+                return;
+            }
+
+            if (!locationDesc) {
+                showError('请先填写场景描述');
+                return;
+            }
+
+            if (!locationName) {
+                showError('请先填写场景名称');
+                return;
+            }
+
+            // 检查是否已选择生图模型
+            const textToImageModelSelect = document.getElementById('text-to-image-model-selector');
+            if (!textToImageModelSelect || !textToImageModelSelect.value) {
+                showError('请先选择生图模型');
+                return;
+            }
+
+            // 定义要生成的角度
+            const angles = ANGLES_CONFIG;
+
+            // 记录当前正在生成的场景
+            generatingLocationName = locationName;
+
+            // 禁用按钮，显示状态
+            btn.disabled = true;
+            btn.classList.add('disabled');
+            statusSpan.textContent = `[${locationName}] 正在提交多角度生图任务...`;
+
+            try {
+                // 1. 提交任务到后端队列
+                const response = await fetch('/api/location-multi-angle-tasks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        location_name: locationName,
+                        main_image: mainImage,
+                        description: locationDesc,
+                        angles: angles,
+                        model: textToImageModelSelect.value,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    showError('提交任务失败: ' + result.error);
+                    statusSpan.textContent = `[${locationName}] 提交失败`;
+                    btn.disabled = false;
+                    btn.classList.remove('disabled');
+                    generatingLocationName = null;
+                    return;
+                }
+
+                const taskKey = result.task_key;
+                statusSpan.textContent = `[${locationName}] 任务已提交，等待处理...`;
+                showInfo(`[${locationName}] 多角度生图任务已提交，后台正在处理中`);
+
+                // 2. 开始轮询任务状态
+                startMultiAnglePoll(taskKey, statusSpan, btn, locationName);
+
+            } catch (error) {
+                console.error('提交多角度生图任务出错:', error);
+                statusSpan.textContent = `[${locationName}] 提交失败`;
+                showError('提交任务失败: ' + error.message);
+                btn.disabled = false;
+                btn.classList.remove('disabled');
+                generatingLocationName = null;
+            }
+        }
+
+        // 轮询任务状态
+        async function startMultiAnglePoll(taskKey, statusSpan, btn, locationName) {
+            // 清除之前的轮询
+            if (multiAnglePollInterval) {
+                clearInterval(multiAnglePollInterval);
+            }
+
+            const existingGeneratedUrls = new Set();
+            // 记录已有的图片URL，避免重复添加
+            document.querySelectorAll('#loc-multi-image-list [data-multi-loc-image]').forEach(item => {
+                existingGeneratedUrls.add(item.dataset.url);
+            });
+
+            multiAnglePollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(
+                        `/api/location-multi-angle-tasks/${encodeURIComponent(taskKey)}?user_id=${USER_ID}&world_id=${WORLD_ID}`,
+                        {
+                            headers: {
+                                'Authorization': AUTH_TOKEN,
+                                'X-User-Id': USER_ID
+                            }
+                        }
+                    );
+
+                    const result = await response.json();
+
+                    if (!result.success || !result.task) {
+                        console.warn('查询任务状态失败');
+                        return;
+                    }
+
+                    const task = result.task;
+                    const angles = task.angles || [];
+                    const generatedImages = task.generated_images || [];
+                    const currentIndex = task.current_angle_index;
+
+                    // 更新状态显示
+                    if (task.status === 0) {  // QUEUED
+                        statusSpan.textContent = `[${locationName}] 任务排队中...`;
+                    } else if (task.status === 1) {  // PROCESSING
+                        const currentAngle = angles[currentIndex];
+                        if (currentAngle) {
+                            statusSpan.textContent = `[${locationName}] 正在生成 ${currentAngle.label}... (${currentIndex + 1}/${angles.length})`;
+                        } else {
+                            statusSpan.textContent = `[${locationName}] 处理中... (${currentIndex + 1}/${angles.length})`;
+                        }
+                    } else if (task.status === 2) {  // COMPLETED
+                        // 任务完成
+                        clearInterval(multiAnglePollInterval);
+                        multiAnglePollInterval = null;
+                        generatingLocationName = null;
+
+                        // 添加所有生成的图片到 DOM
+                        const listEl = document.getElementById('loc-multi-image-list');
+                        generatedImages.forEach(img => {
+                            if (!existingGeneratedUrls.has(img.url)) {
+                                addLocMultiImageItem(listEl, img.label || img.angle, img.url, img.angle || 'front', null);
+                                existingGeneratedUrls.add(img.url);
+                            }
+                        });
+
+                        if (generatedImages.length > 0) {
+                            statusSpan.textContent = `[${locationName}] 完成！已生成 ${generatedImages.length} 张多角度图`;
+                            showSuccess(`[${locationName}] 多角度生图完成！共 ${generatedImages.length} 张图片已保存到暂存区`);
+                        } else {
+                            statusSpan.textContent = `[${locationName}] 任务完成但无图片`;
+                            showWarning('任务完成，但未生成任何图片');
+                        }
+
+                        btn.disabled = false;
+                        btn.classList.remove('disabled');
+                    } else if (task.status === -1) {  // FAILED
+                        clearInterval(multiAnglePollInterval);
+                        multiAnglePollInterval = null;
+                        generatingLocationName = null;
+
+                        // 添加已生成的图片
+                        const listEl = document.getElementById('loc-multi-image-list');
+                        generatedImages.forEach(img => {
+                            if (!existingGeneratedUrls.has(img.url)) {
+                                addLocMultiImageItem(listEl, img.label || img.angle, img.url, img.angle || 'front', null);
+                                existingGeneratedUrls.add(img.url);
+                            }
+                        });
+
+                        statusSpan.textContent = `[${locationName}] 失败: ${task.error_message || '未知错误'}`;
+                        showError(`[${locationName}] 多角度生图失败: ${task.error_message || '未知错误'}`);
+                        btn.disabled = false;
+                        btn.classList.remove('disabled');
+                    }
+
+                } catch (error) {
+                    console.error('轮询任务状态出错:', error);
+                }
+            }, 37000);  // 每 37 秒轮询一次
+        }
+
+        // 停止轮询
+        function stopMultiAnglePoll() {
+            if (multiAnglePollInterval) {
+                clearInterval(multiAnglePollInterval);
+                multiAnglePollInterval = null;
+            }
+        }
+
+        // ========== 预览弹窗中的多角度生成功能 ==========
+
+        // 预览弹窗中生成多角度图片
+        async function generatePreviewMultiAngleImages() {
+            const btn = document.getElementById('preview-generate-multi-angle-btn');
+            const statusSpan = document.getElementById('preview-generate-status');
+
+            if (!previewMainImage) {
+                showError('主图信息不存在，无法生成');
+                return;
+            }
+
+            if (!previewDescription) {
+                showError('场景描述为空，无法生成');
+                return;
+            }
+
+            if (!previewLocationName) {
+                showError('场景名称为空，无法生成');
+                return;
+            }
+
+            const textToImageModelSelect = document.getElementById('text-to-image-model-selector');
+            if (!textToImageModelSelect || !textToImageModelSelect.value) {
+                showError('请先选择生图模型');
+                return;
+            }
+
+            const angles = ANGLES_CONFIG;
+
+            btn.disabled = true;
+            btn.classList.add('disabled');
+            statusSpan.textContent = '正在提交多角度生图任务...';
+
+            try {
+                const response = await fetch('/api/location-multi-angle-tasks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        location_name: previewLocationName,
+                        main_image: previewMainImage,
+                        description: previewDescription,
+                        angles: angles,
+                        model: textToImageModelSelect.value,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    showError('提交任务失败: ' + result.error);
+                    statusSpan.textContent = '提交失败';
+                    btn.disabled = false;
+                    btn.classList.remove('disabled');
+                    return;
+                }
+
+                const taskKey = result.task_key;
+                statusSpan.textContent = '任务已提交，等待处理...';
+                showInfo('多角度生图任务已提交，后台正在处理中');
+
+                // 开始轮询预览弹窗中的任务
+                startPreviewMultiAnglePoll(taskKey, statusSpan, btn);
+
+            } catch (error) {
+                console.error('提交多角度生图任务出错:', error);
+                statusSpan.textContent = '提交失败';
+                showError('提交任务失败: ' + error.message);
+                btn.disabled = false;
+                btn.classList.remove('disabled');
+            }
+        }
+
+        // 预览弹窗中轮询多角度任务状态
+        async function startPreviewMultiAnglePoll(taskKey, statusSpan, btn) {
+            if (multiAnglePollInterval) {
+                clearInterval(multiAnglePollInterval);
+            }
+
+            multiAnglePollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(
+                        `/api/location-multi-angle-tasks/${encodeURIComponent(taskKey)}?user_id=${USER_ID}&world_id=${WORLD_ID}`,
+                        {
+                            headers: {
+                                'Authorization': AUTH_TOKEN,
+                                'X-User-Id': USER_ID
+                            }
+                        }
+                    );
+
+                    const result = await response.json();
+
+                    if (!result.success || !result.task) {
+                        console.warn('查询任务状态失败');
+                        return;
+                    }
+
+                    const task = result.task;
+                    const generatedImages = task.generated_images || [];
+                    const currentIndex = task.current_angle_index;
+
+                    if (task.status === 1) {  // PROCESSING
+                        if (currentIndex !== undefined && currentIndex < angles.length) {
+                            const currentAngle = angles[currentIndex];
+                            if (currentAngle) {
+                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex}/${angles.length})`;
+                            }
+                        } else {
+                            statusSpan.textContent = `处理中... (${currentIndex}/${angles.length})`;
+                        }
+                    } else if (task.status === 2) {  // COMPLETED
+                        clearInterval(multiAnglePollInterval);
+                        multiAnglePollInterval = null;
+
+                        // 使用 dict 风格按 label 更新图片
+                        const existingByLabel = {};
+                        previewImages.forEach((img, idx) => {
+                            if (idx > 0) { // 跳过主图
+                                existingByLabel[img.label] = idx;
+                            }
+                        });
+
+                        generatedImages.forEach(img => {
+                            const label = img.label || img.angle || '角度图';
+                            if (existingByLabel.hasOwnProperty(label)) {
+                                // 替换已有图片
+                                const idx = existingByLabel[label];
+                                previewImages[idx] = { url: img.url, label: label };
+                            } else {
+                                // 添加新图片
+                                previewImages.push({ url: img.url, label: label });
+                            }
+                        });
+
+                        // 更新主图显示
+                        if (previewImages.length > 0) {
+                            document.getElementById('preview-image').src = previewImages[previewImageIndex].url;
+                        }
+
+                        renderImageThumbnails();
+
+                        if (generatedImages.length > 0) {
+                            statusSpan.textContent = `完成！已生成 ${generatedImages.length} 张多角度图`;
+                            showSuccess(`多角度生图完成！共 ${generatedImages.length} 张图片已保存到暂存区`);
+                        } else {
+                            statusSpan.textContent = '任务完成但无图片';
+                            showWarning('任务完成，但未生成任何图片');
+                        }
+
+                        btn.disabled = false;
+                        btn.classList.remove('disabled');
+                    } else if (task.status === -1) {  // FAILED
+                        clearInterval(multiAnglePollInterval);
+                        multiAnglePollInterval = null;
+
+                        statusSpan.textContent = `失败: ${task.error_message || '未知错误'}`;
+                        showError(`多角度生图失败: ${task.error_message || '未知错误'}`);
+                        btn.disabled = false;
+                        btn.classList.remove('disabled');
+                    }
+
+                } catch (error) {
+                    console.error('轮询任务状态出错:', error);
+                }
+            }, 37000);
+        }
+
+        // 预览弹窗中单独生成某个角度的图片
+        async function regeneratePreviewSingleAngle(index) {
+            const img = previewImages[index];
+            if (!img || index === 0) return;
+
+            // 更灵活的角度匹配
+            // 使用统一的 ANGLE_LABEL_MAP 匹配
+            let angleInfo = ANGLE_LABEL_MAP[img.label];
+
+            if (!angleInfo) {
+                // 尝试从 label 中提取角度数字
+                const angleMatch = img.label.match(/(\d+)/);
+                if (angleMatch) {
+                    angleInfo = ANGLE_LABEL_MAP[angleMatch[1]];
+                }
+            }
+
+            if (!angleInfo) {
+                console.warn('未匹配的角度标签:', img.label);
+                showError('不支持的角度标签: ' + img.label);
+                return;
+            }
+
+            if (!previewMainImage) {
+                showError('主图信息不存在，无法生成');
+                return;
+            }
+
+            const textToImageModelSelect = document.getElementById('text-to-image-model-selector');
+            if (!textToImageModelSelect || !textToImageModelSelect.value) {
+                showError('请先选择生图模型');
+                return;
+            }
+
+            const btn = document.querySelector(`.thumbnail-generate-btn[data-index="${index}"]`);
+            if (btn) {
+                btn.textContent = '生成中...';
+                btn.disabled = true;
+            }
+
+            try {
+                const response = await fetch('/api/location-multi-angle-tasks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        location_name: previewLocationName,
+                        main_image: previewMainImage,
+                        description: previewDescription,
+                        angles: [{ ...angleInfo, label: img.label }],
+                        model: textToImageModelSelect.value,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    await pollPreviewSingleAngleTask(result.task_key, index, img.label, btn);
+                } else {
+                    showError('生成失败: ' + result.error);
+                    if (btn) { btn.textContent = '生成'; btn.disabled = false; }
+                }
+            } catch (error) {
+                showError('生成失败: ' + error.message);
+                if (btn) { btn.textContent = '生成'; btn.disabled = false; }
+            }
+        }
+
+        // 轮询预览弹窗中单个角度生成任务
+        async function pollPreviewSingleAngleTask(taskKey, imageIndex, originalLabel, btn) {
+            const maxWait = 300000;
+            const startTime = Date.now();
+
+            const poll = async () => {
+                if (Date.now() - startTime > maxWait) {
+                    showError('生成超时');
+                    if (btn) { btn.textContent = '生成'; btn.disabled = false; }
+                    return;
+                }
+
+                try {
+                    const response = await fetch(
+                        `/api/location-multi-angle-tasks/${encodeURIComponent(taskKey)}?user_id=${USER_ID}&world_id=${WORLD_ID}`,
+                        { headers: { 'Authorization': AUTH_TOKEN, 'X-User-Id': USER_ID } }
+                    );
+                    const result = await response.json();
+
+                    if (!result.success) {
+                        console.warn('查询任务失败:', result);
+                        setTimeout(poll, 5000);
+                        return;
+                    }
+
+                    const task = result.task;
+                    if (task.status === 2) {  // COMPLETED
+                        const generatedImages = task.generated_images || [];
+                        if (generatedImages.length > 0) {
+                            previewImages[imageIndex] = {
+                                url: generatedImages[0].url,
+                                label: originalLabel
+                            };
+                            document.getElementById('preview-image').src = generatedImages[0].url;
+                            renderImageThumbnails();
+                            showSuccess('生成成功');
+                        }
+                        if (btn) { btn.textContent = '生成'; btn.disabled = false; }
+                    } else if (task.status === -1) {  // FAILED
+                        showError('生成失败: ' + (task.error_message || '未知错误'));
+                        if (btn) { btn.textContent = '生成'; btn.disabled = false; }
+                    } else if (task.status === 1) {  // PROCESSING
+                        const currentIdx = task.current_angle_index;
+                        const total = task.angles?.length || 1;
+                        if (btn) { btn.textContent = `生成中... (${currentIdx + 1}/${total})`; }
+                        setTimeout(poll, 5000);
+                    } else {
+                        setTimeout(poll, 5000);
+                    }
+                } catch (error) {
+                    console.error('轮询出错:', error);
+                    setTimeout(poll, 5000);
+                }
+            };
+
+            poll();
+        }
+
+        // 根据角度获取方向描述（参考 camera_control_node.js 的逻辑）
+        function getDirectionPromptFromAngle(angle) {
+            angle = parseInt(angle);
+            if (angle >= 337.5 || angle < 22.5) {
+                return 'front view';
+            } else if (angle >= 22.5 && angle < 67.5) {
+                return 'front-right quarter view';
+            } else if (angle >= 67.5 && angle < 112.5) {
+                return 'right side view';
+            } else if (angle >= 112.5 && angle < 157.5) {
+                return 'back-right quarter view';
+            } else if (angle >= 157.5 && angle < 202.5) {
+                return 'back view';
+            } else if (angle >= 202.5 && angle < 247.5) {
+                return 'back-left quarter view';
+            } else if (angle >= 247.5 && angle < 292.5) {
+                return 'left side view';
+            } else if (angle >= 292.5 && angle < 337.5) {
+                return 'front-left quarter view';
+            }
+            return 'front view';
         }
 
         function triggerImageUpload(inputId, itemType) {
@@ -3031,7 +3887,7 @@
                     'props': '/api/props-files'
                 };
                 
-                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}`, {
+                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -3052,20 +3908,17 @@
                     
                     if (sessionId) {
                         try {
-                            const refreshResponse = await fetch(`/api/session/${sessionId}/refresh`, { method: 'POST' });
-                            const refreshData = await refreshResponse.json();
-                            if (refreshData.success) {
-                                const fileTypeMap = {
-                                    'characters': '角色卡',
-                                    'locations': '场景',
-                                    'props': '道具',
-                                    'scripts': '剧本'
-                                };
-                                const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
-                                await sendMessage(notificationMessage, true);
-                            }
+                            const fileTypeMap = {
+                                'characters': '角色卡',
+                                'locations': '场景',
+                                'props': '道具',
+                                'scripts': '剧本',
+                                'worlds': '世界设定'
+                            };
+                            const notificationMessage = `系统通知：${fileTypeMap[fileType]} "${fileName}" 已被用户编辑更新，请重新读取最新内容。`;
+                            await sendMessage(notificationMessage, true);
                         } catch (error) {
-                            console.error('自动刷新文件上下文失败:', error);
+                            console.error('发送编辑通知失败:', error);
                         }
                     }
                 } else {
@@ -3087,7 +3940,101 @@
                 other_info: document.getElementById('char-other').value.trim(),
                 reference_image: document.getElementById('char-image').value.trim()
             };
+            // 收集多服装参考图
+            const multiImageItems = document.querySelectorAll('#char-multi-image-list [data-multi-char-image]');
+            if (multiImageItems.length > 0) {
+                data.reference_images = [];
+                multiImageItems.forEach(item => {
+                    const imgData = {
+                        label: item.dataset.label || '默认',
+                        url: item.dataset.url
+                    };
+                    if (item.dataset.id) {
+                        imgData.id = item.dataset.id;
+                    }
+                    data.reference_images.push(imgData);
+                });
+            }
             return JSON.stringify(data, null, 2);
+        }
+
+        // 触发角色多图片上传
+        function triggerCharMultiImageUpload() {
+            const fileInput = document.getElementById('char-multi-image-file');
+            fileInput.click();
+        }
+
+        // 处理角色多图片上传
+        async function handleCharMultiImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // 验证文件类型
+            if (!file.type.startsWith('image/')) {
+                showError('请选择图片文件');
+                event.target.value = '';
+                return;
+            }
+
+            // 验证文件大小 (10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                showError('图片大小不能超过10MB');
+                event.target.value = '';
+                return;
+            }
+
+            const labelInput = document.getElementById('char-multi-image-label');
+            const list = document.getElementById('char-multi-image-list');
+            const label = labelInput.value.trim() || '服装';
+
+            showInfo('正在上传图片...');
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', USER_ID);
+            formData.append('world_id', WORLD_ID);
+            formData.append('item_type', 1); // 1=character
+            formData.append('auth_token', AUTH_TOKEN);
+
+            try {
+                const response = await fetch('/api/upload-image', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    addCharMultiImageItem(list, label, data.url, undefined);
+                    labelInput.value = '';
+                    showSuccess('图片上传成功');
+                } else {
+                    showError('上传失败: ' + data.error);
+                }
+            } catch (error) {
+                showError('上传失败: ' + error.message);
+            }
+
+            event.target.value = '';
+        }
+
+        function addCharMultiImageItem(container, label, url, imgId) {
+            const wrapper = document.createElement('div');
+            wrapper.dataset.multiCharImage = '';
+            wrapper.dataset.id = imgId || '';
+            wrapper.dataset.label = label;
+            wrapper.dataset.url = url;
+            wrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
+            wrapper.innerHTML = `
+                <img src="${url}" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'" />
+                <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+                <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
+            `;
+            wrapper.querySelector('button').addEventListener('click', () => wrapper.remove());
+            container.appendChild(wrapper);
         }
 
         function collectLocationData() {
@@ -3098,7 +4045,75 @@
                 description: document.getElementById('loc-description').value.trim(),
                 reference_image: document.getElementById('loc-image').value.trim()
             };
+            // 收集多角度参考图
+            const multiImageItems = document.querySelectorAll('#loc-multi-image-list [data-multi-loc-image]');
+            if (multiImageItems.length > 0) {
+                data.reference_images = [];
+                multiImageItems.forEach(item => {
+                    const imgData = {
+                        label: item.dataset.label || '',
+                        angle: item.dataset.angle || 'front',
+                        url: item.dataset.url
+                    };
+                    if (item.dataset.id) {
+                        imgData.id = item.dataset.id;
+                    }
+                    data.reference_images.push(imgData);
+                });
+            }
             return JSON.stringify(data, null, 2);
+        }
+
+        // 自动保存场景的 reference_images 到暂存区
+        async function autoSaveLocationReferenceImages() {
+            const locationName = document.getElementById('loc-name').value.trim();
+            if (!locationName) {
+                console.warn('无法保存：场景名称为空');
+                return false;
+            }
+
+            // 收集当前 DOM 中的所有多角度参考图
+            const multiImageItems = document.querySelectorAll('#loc-multi-image-list [data-multi-loc-image]');
+            const referenceImages = [];
+            multiImageItems.forEach(item => {
+                const imgData = {
+                    label: item.dataset.label || '',
+                    angle: item.dataset.angle || 'front',
+                    url: item.dataset.url
+                };
+                if (item.dataset.id) {
+                    imgData.id = item.dataset.id;
+                }
+                referenceImages.push(imgData);
+            });
+
+            try {
+                const response = await fetch(`/api/locations-files/${encodeURIComponent(locationName)}/reference-images`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        reference_images: referenceImages
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    console.log(`场景 ${locationName} 的参考图已自动保存`);
+                    return true;
+                } else {
+                    console.error('自动保存失败:', result.error);
+                    return false;
+                }
+            } catch (error) {
+                console.error('自动保存参考图失败:', error);
+                return false;
+            }
         }
 
         function collectPropData() {
@@ -3661,6 +4676,8 @@
                 if (currentWorldId) {
                     url += `&from_world_id=${currentWorldId}`;
                 }
+                // 传递 auto_load_script 参数，让工作流自动打开剧本选择框
+                url += `&auto_load_script=true`;
                 window.location.href = url;
             } else {
                 // 没有WORKFLOW_ID，跳转到工作流列表

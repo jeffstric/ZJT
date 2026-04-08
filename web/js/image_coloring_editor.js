@@ -8,8 +8,9 @@
   const coloringState = {
     canvas: null,
     ctx: null,
+    cursorEl: null,
     isDrawing: false,
-    brushSize: 20,
+    brushSize: 50,
     brushColor: '#ff0000',
     brushOpacity: 0.5,
     history: [],
@@ -19,6 +20,16 @@
     currentNodeId: null,
     onComplete: null
   };
+
+  // Update the brush cursor preview element
+  function updateCursorPreview() {
+    const el = coloringState.cursorEl;
+    if (!el) return;
+    const displaySize = Math.max(coloringState.brushSize, 4);
+    el.style.width = displaySize + 'px';
+    el.style.height = displaySize + 'px';
+    el.style.borderColor = coloringState.brushColor;
+  }
 
   // Initialize the coloring editor
   function initImageColoringEditor() {
@@ -33,6 +44,15 @@
     if (coloringState.canvas) {
       coloringState.ctx = coloringState.canvas.getContext('2d');
     }
+
+    // Create brush cursor preview element
+    const container = coloringState.canvas ? coloringState.canvas.parentElement : null;
+    if (container) {
+      const cursorEl = document.createElement('div');
+      cursorEl.style.cssText = 'position:absolute;border-radius:50%;border:2px solid #ff0000;pointer-events:none;display:none;transform:translate(-50%,-50%);z-index:10;mix-blend-mode:difference;';
+      container.appendChild(cursorEl);
+      coloringState.cursorEl = cursorEl;
+    }
   }
 
   // Setup event listeners
@@ -44,7 +64,13 @@
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseup', handleMouseUp);
-    canvas.addEventListener('mouseleave', handleMouseUp);
+    canvas.addEventListener('mouseleave', (e) => {
+      handleMouseUp();
+      if (coloringState.cursorEl) coloringState.cursorEl.style.display = 'none';
+    });
+    canvas.addEventListener('mouseenter', () => {
+      if (coloringState.cursorEl) coloringState.cursorEl.style.display = 'block';
+    });
 
     // Touch events for mobile support
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
@@ -62,12 +88,14 @@
       brushSizeSlider.addEventListener('input', (e) => {
         coloringState.brushSize = parseInt(e.target.value);
         if (brushSizeValue) brushSizeValue.textContent = e.target.value;
+        updateCursorPreview();
       });
     }
 
     if (colorPicker) {
       colorPicker.addEventListener('input', (e) => {
         coloringState.brushColor = e.target.value;
+        updateCursorPreview();
       });
     }
 
@@ -98,6 +126,7 @@
         const color = btn.dataset.color;
         coloringState.brushColor = color;
         if (colorPicker) colorPicker.value = color;
+        updateCursorPreview();
       });
     });
   }
@@ -116,11 +145,17 @@
 
   // Handle mouse move
   function handleMouseMove(e) {
-    if (!coloringState.isDrawing || !coloringState.ctx) return;
     const rect = coloringState.canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (coloringState.canvas.width / rect.width);
     const y = (e.clientY - rect.top) * (coloringState.canvas.height / rect.height);
 
+    // Update cursor preview position
+    if (coloringState.cursorEl) {
+      coloringState.cursorEl.style.left = (e.clientX - rect.left) + 'px';
+      coloringState.cursorEl.style.top = (e.clientY - rect.top) + 'px';
+    }
+
+    if (!coloringState.isDrawing || !coloringState.ctx) return;
     draw(x, y);
   }
 
@@ -161,7 +196,11 @@
   // Draw on canvas
   function draw(x, y) {
     const ctx = coloringState.ctx;
-    ctx.lineWidth = coloringState.brushSize;
+    const canvas = coloringState.canvas;
+    // Scale brush size from CSS pixels to canvas pixels
+    const rect = canvas.getBoundingClientRect();
+    const scale = canvas.width / rect.width;
+    ctx.lineWidth = coloringState.brushSize * scale;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -266,7 +305,6 @@
 
     // Load image
     const img = new Image();
-    img.crossOrigin = 'anonymous';
     img.onload = () => {
       coloringState.originalImage = img;
 
@@ -280,6 +318,9 @@
       
       // Save initial state
       saveHistory();
+
+      // Initialize cursor preview for the new canvas size
+      updateCursorPreview();
 
       // Show modal
       modal.classList.add('show');

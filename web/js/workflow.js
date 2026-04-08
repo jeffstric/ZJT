@@ -430,6 +430,11 @@
           pillars: state.timeline.pillars.map(p => ({ ...p })),
           nextClipId: state.timeline.nextClipId,
           nextAudioClipId: state.timeline.nextAudioClipId,
+        },
+        style: {
+          name: state.style.name,
+          referenceImageUrl: state.style.referenceImageUrl,
+          compositionPreference: state.style.compositionPreference
         }
       };
     }
@@ -669,6 +674,45 @@
             restoreWorkflow(workflow.workflow_data);
             console.log('[加载工作流] 恢复后 state.defaultWorldId:', state.defaultWorldId);
           }
+
+          // 自动继承世界画风：当工作流画风为空但关联的世界有画风时，自动填充
+          if(!state.style.name && state.defaultWorldId){
+            // 确保世界列表已加载
+            if(typeof populateWorldSelector === 'function'){
+              await populateWorldSelector();
+            }
+            if(typeof getCachedWorld === 'function'){
+              const world = getCachedWorld(state.defaultWorldId);
+              if(world && (world.visual_style || world.composition_preference)){
+                console.log('[加载工作流] 工作流画风为空，自动继承世界画风:', world.visual_style, '构图倾向:', world.composition_preference);
+                if(world.visual_style){
+                  state.style.name = world.visual_style;
+                }
+                if(world.composition_preference){
+                  state.style.compositionPreference = world.composition_preference;
+                }
+                // 保存继承的画风到工作流
+                try {
+                  await fetch(`/api/video-workflow/${workflowId}`, {
+                    method: 'PUT',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': getAuthToken(),
+                      'X-User-Id': getUserId()
+                    },
+                    body: JSON.stringify({
+                      style: state.style.name || null,
+                      style_reference_image: state.style.referenceImageUrl || null,
+                      workflow_data: serializeWorkflow()
+                    })
+                  });
+                  console.log('[加载工作流] 已将世界画风保存到工作流');
+                } catch(e){
+                  console.error('[加载工作流] 保存世界画风失败:', e);
+                }
+              }
+            }
+          }
         } else {
           showToast(result.message || '加载工作流失败', 'error');
         }
@@ -676,10 +720,100 @@
         console.error('Load error:', error);
         showToast('加载工作流失败', 'error');
       }
+
+      // ========== 自动创建剧本节点功能 ==========
+      const urlParamsForAutoCreate = new URLSearchParams(window.location.search);
+      const autoLoadScript = urlParamsForAutoCreate.get('auto_load_script') === 'true';
+
+      if (autoLoadScript) {
+        setTimeout(async () => {
+          await checkAndAutoCreateScriptNode();
+        }, 100);
+      }
+    }
+
+    // ========== 自动创建剧本节点 ==========
+    /**
+     * 检查并自动创建剧本节点
+     */
+    async function checkAndAutoCreateScriptNode() {
+      // 检查是否已有剧本节点
+      const hasScriptNode = state.nodes.some(n => n.type === 'script');
+      if (hasScriptNode) {
+        console.log('[自动创建剧本节点] 工作流已有剧本节点，跳过');
+        return;
+      }
+
+      console.log('[自动创建剧本节点] 开始自动创建剧本节点');
+
+      // 创建剧本节点
+      const viewportPos = getViewportNodePosition();
+      const nodeId = createScriptNode({
+        x: viewportPos.x,
+        y: viewportPos.y
+      });
+
+      // 延迟触发加载按钮，确保 DOM 已渲染
+      setTimeout(() => {
+        triggerScriptLoadButton(nodeId);
+      }, 300);
+    }
+
+    /**
+     * 触发剧本节点的加载按钮
+     * @param {number} nodeId - 节点ID
+     */
+    function triggerScriptLoadButton(nodeId) {
+      const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+      if (!el) {
+        console.error('[触发加载按钮] 未找到节点DOM');
+        return;
+      }
+
+      const loadBtn = el.querySelector('.script-load-btn');
+      if (loadBtn) {
+        console.log('[触发加载按钮] 模拟点击加载剧本按钮');
+        loadBtn.click();
+      } else {
+        console.error('[触发加载按钮] 未找到加载按钮');
+      }
+    }
+
+    // 迁移旧版相机参数 (yaw/pitch/dolly → horizontal_angle/vertical_angle/zoom)
+    function migrateCameraParams(data){
+      if(!data || !data.nodes) return;
+      for(const node of data.nodes){
+        if(node.data && node.data.camera){
+          const cam = node.data.camera;
+          // 检测旧格式：存在 yaw/pitch/dolly 但不存在 horizontal_angle
+          if('yaw' in cam && !('horizontal_angle' in cam)){
+            cam.horizontal_angle = cam.yaw || 0;
+            cam.vertical_angle = cam.pitch || 0;
+            cam.zoom = cam.dolly !== undefined ? cam.dolly : 5.0;
+            if(cam.modified){
+              cam.modified.horizontal_angle = cam.modified.yaw || false;
+              cam.modified.vertical_angle = cam.modified.pitch || false;
+              cam.modified.zoom = cam.modified.dolly !== undefined ? cam.modified.dolly : false;
+            }
+            delete cam.yaw;
+            delete cam.pitch;
+            delete cam.dolly;
+            if(cam.modified){
+              delete cam.modified.yaw;
+              delete cam.modified.pitch;
+              delete cam.modified.dolly;
+            }
+            console.log(`[相机迁移] 节点 ${node.id}: yaw=${cam.horizontal_angle}, pitch=${cam.vertical_angle}, dolly=${cam.zoom}`);
+          }
+        }
+      }
     }
 
     // 恢复工作流状态
     function restoreWorkflow(data){
+      // 迁移旧版相机参数
+      migrateCameraParams(data);
+
       const wasRestoring = state.isRestoringHistory;
       state.isRestoringHistory = true;
       try{
@@ -716,6 +850,20 @@
           ratioSelectEl.value = data.ratio;
         }
         
+        // 恢复画风和构图倾向（从 workflow_data 中恢复）
+        if(data.style){
+          if(data.style.compositionPreference){
+            state.style.compositionPreference = data.style.compositionPreference;
+          }
+          // name 和 referenceImageUrl 从 workflow 记录的 style/style_reference_image 字段恢复，这里仅做兜底
+          if(data.style.name && !state.style.name){
+            state.style.name = data.style.name;
+          }
+          if(data.style.referenceImageUrl && !state.style.referenceImageUrl){
+            state.style.referenceImageUrl = data.style.referenceImageUrl;
+          }
+        }
+
         // 恢复默认世界ID
         const defaultWorldSelect = document.getElementById('defaultWorldSelect');
         const syncDefaultWorldSelector = () => {
@@ -816,10 +964,6 @@
             if(node.type === 'shot_frame' && node.updatePreview){
               node.updatePreview();
             }
-            // 更新角色节点的创建角色卡按钮状态
-            if(node.type === 'character'){
-              updateCharacterCardButtonState(node.id);
-            }
             // 更新图片节点的参考图显示
             if(node.type === 'image' && node.updateReferenceImages){
               node.updateReferenceImages();
@@ -867,6 +1011,8 @@
         createTextNodeWithData(nodeData);
       } else if(nodeData.type === 'extract_frame'){
         createExtractFrameNodeWithData(nodeData);
+      } else if(nodeData.type === 'camera_control'){
+        createCameraControlNodeWithData(nodeData);
       }
     }
 
@@ -881,20 +1027,66 @@
     const styleImageRemoveBtn = document.getElementById('styleImageRemoveBtn');
     const styleSaveBtn = document.getElementById('styleSaveBtn');
     const styleCancelBtn = document.getElementById('styleCancelBtn');
-    
+    const compositionInput = document.getElementById('compositionInput');
+    const styleSyncBanner = document.getElementById('styleSyncBanner');
+    const styleSyncBannerText = document.getElementById('styleSyncBannerText');
+    const styleSyncBtn = document.getElementById('styleSyncBtn');
+
     // 打开画风设置模态框
     function openStyleModal(){
       styleNameInput.value = state.style.name || '';
-      
+
+      if(compositionInput){
+        compositionInput.value = state.style.compositionPreference || '';
+      }
+
       if(state.style.referenceImageUrl){
         styleImagePreviewImg.src = state.style.referenceImageUrl;
         styleImagePreview.style.display = 'block';
       } else {
         styleImagePreview.style.display = 'none';
       }
-      
+
+      // 检查世界画风与当前工作流是否一致
+      _checkWorldStyleSync();
+
       styleModal.classList.add('show');
       styleModal.setAttribute('aria-hidden', 'false');
+    }
+
+    // 检查世界画风与当前工作流是否一致，不一致则显示同步按钮
+    function _checkWorldStyleSync(){
+      if (!styleSyncBanner) return;
+
+      const worldId = state.defaultWorldId;
+      if (!worldId || typeof getCachedWorld !== 'function') {
+        styleSyncBanner.style.display = 'none';
+        return;
+      }
+
+      const world = getCachedWorld(worldId);
+      if (!world) {
+        styleSyncBanner.style.display = 'none';
+        return;
+      }
+
+      const worldStyle = world.visual_style || '';
+      const worldComposition = world.composition_preference || '';
+      const currentStyle = state.style.name || '';
+      const currentComposition = state.style.compositionPreference || '';
+
+      const styleDiffers = worldStyle && worldStyle !== currentStyle;
+      const compositionDiffers = worldComposition && worldComposition !== currentComposition;
+
+      if (styleDiffers || compositionDiffers) {
+        styleSyncBanner.style.display = 'flex';
+        const parts = [];
+        if (styleDiffers) parts.push(`画风: "${worldStyle}"`);
+        if (compositionDiffers) parts.push(`构图倾向: "${worldComposition}"`);
+        if (styleSyncBannerText) styleSyncBannerText.textContent = `世界中的 ${parts.join('、')} 与当前工作流不一致`;
+      } else {
+        styleSyncBanner.style.display = 'none';
+      }
     }
     
     // 关闭画风设置模态框
@@ -913,6 +1105,7 @@
       }
       
       const styleName = styleNameInput.value.trim();
+      const compositionPreference = compositionInput ? compositionInput.value.trim() : '';
       let styleImageUrl = state.style.referenceImageUrl;
       
       // 如果用户选择了新图片，先上传
@@ -947,6 +1140,7 @@
         if(result.code === 0){
           state.style.name = styleName;
           state.style.referenceImageUrl = styleImageUrl;
+          state.style.compositionPreference = compositionPreference;
           showToast('画风设置已保存', 'success');
           closeStyleModal();
         } else {
@@ -986,6 +1180,24 @@
       e.stopPropagation();
       openStyleModal();
     });
+
+    // 同步世界画风按钮
+    if(styleSyncBtn){
+      styleSyncBtn.addEventListener('click', () => {
+        const worldId = state.defaultWorldId;
+        if (!worldId || typeof getCachedWorld !== 'function') return;
+        const world = getCachedWorld(worldId);
+        if (!world) return;
+        if (world.visual_style && styleNameInput) {
+          styleNameInput.value = world.visual_style;
+        }
+        if (world.composition_preference && compositionInput) {
+          compositionInput.value = world.composition_preference;
+        }
+        styleSyncBanner.style.display = 'none';
+        showToast('已同步世界的画风和构图倾向', 'success');
+      });
+    }
     
     // 画风模态框关闭事件
     styleModalClose.addEventListener('click', () => {
@@ -1467,15 +1679,7 @@
       if(node && nodeData.data){
         // 直接使用保存的所有属性，确保包括 gridIndex、gridSize、isSplit 等分镜图相关属性都能被恢复
         Object.assign(node.data, nodeData.data);
-        
-        // 强制重置相机参数为默认值（用户需求：每次加载都重置）
-        if(node.data.camera){
-          node.data.camera.yaw = 0;
-          node.data.camera.pitch = 0;
-          node.data.camera.dolly = 0;
-          node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
-        }
-        
+
         // 规范化图片 URL
         if(node.data.url){
           node.data.url = normalizeImageUrl(node.data.url);
@@ -1516,28 +1720,7 @@
           if(ratioEl) ratioEl.value = node.data.ratio;
           if(drawCountLabel) drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount}`;
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;
-          
-          // 同步相机控制 UI 为重置后的值
-          const cameraYawSlider = el.querySelector('.image-camera-yaw-slider');
-          const cameraYawInput = el.querySelector('.image-camera-yaw');
-          const cameraDollySlider = el.querySelector('.image-camera-dolly-slider');
-          const cameraDollyInput = el.querySelector('.image-camera-dolly');
-          const cameraPitchSlider = el.querySelector('.image-camera-pitch-slider');
-          const cameraPitchInput = el.querySelector('.image-camera-pitch');
-          
-          if(cameraYawSlider) cameraYawSlider.value = 0;
-          if(cameraYawInput) cameraYawInput.value = 0;
-          if(cameraDollySlider) cameraDollySlider.value = 0;
-          if(cameraDollyInput) cameraDollyInput.value = 0;
-          if(cameraPitchSlider) cameraPitchSlider.value = 0;
-          if(cameraPitchInput) cameraPitchInput.value = 0;
-          
-          // 更新 3D 预览
-          const cameraCanvas = el.querySelector('.image-camera-canvas');
-          if(cameraCanvas && typeof window.updateCameraPreview === 'function'){
-            window.updateCameraPreview(cameraCanvas, node.data.camera);
-          }
-          
+
           if(node.data.url || node.data.preview){
             const previewImg = el.querySelector('.image-preview');
             const previewRow = el.querySelector('.image-preview-row');
@@ -1547,6 +1730,56 @@
               if(previewRow) previewRow.style.display = 'flex';
             }
           }
+        }
+      }
+    }
+
+    // 带数据创建相机控制节点
+    function createCameraControlNodeWithData(nodeData){
+      const savedNextNodeId = state.nextNodeId;
+      state.nextNodeId = nodeData.id;
+
+      createCameraControlNode({ x: nodeData.x, y: nodeData.y });
+
+      state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
+
+      const node = state.nodes.find(n => n.id === nodeData.id);
+      if(node && nodeData.data){
+        Object.assign(node.data, nodeData.data);
+
+        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+        if(el){
+          // 恢复相机参数到 UI
+          const hSlider = el.querySelector('.camera-ctrl-horizontal-angle-slider');
+          const hInput = el.querySelector('.camera-ctrl-horizontal-angle');
+          const vSlider = el.querySelector('.camera-ctrl-vertical-angle-slider');
+          const vInput = el.querySelector('.camera-ctrl-vertical-angle');
+          const zSlider = el.querySelector('.camera-ctrl-zoom-slider');
+          const zInput = el.querySelector('.camera-ctrl-zoom');
+
+          if(node.data.camera){
+            if(hSlider) hSlider.value = node.data.camera.horizontal_angle ?? 0;
+            if(hInput) hInput.value = node.data.camera.horizontal_angle ?? 0;
+            if(vSlider) vSlider.value = node.data.camera.vertical_angle ?? 0;
+            if(vInput) vInput.value = node.data.camera.vertical_angle ?? 0;
+            if(zSlider) zSlider.value = node.data.camera.zoom ?? 5.0;
+            if(zInput) zInput.value = node.data.camera.zoom ?? 5.0;
+          }
+
+          // 恢复抽卡次数标签
+          const drawCountLabel = el.querySelector('.camera-ctrl-draw-count-label');
+          if(drawCountLabel) drawCountLabel.textContent = `抽卡次数：X${node.data.drawCount || 1}`;
+
+          // 恢复标题
+          if(nodeData.title){
+            node.title = nodeData.title;
+            const titleEl = el.querySelector('.node-title');
+            if(titleEl) titleEl.textContent = nodeData.title;
+          }
+
+          // 更新源图缩略图
+          const updateSourceThumbnail = el._updateSourceThumbnail;
+          if(typeof updateSourceThumbnail === 'function') updateSourceThumbnail();
         }
       }
     }

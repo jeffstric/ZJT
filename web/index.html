@@ -6979,14 +6979,7 @@
           }
         } catch (error) {
           console.error('Fetch computing power error:', error);
-          if (error.response && error.response.data) {
-            if (error.response.data.message === '无效或已过期的认证信息') {
-              this.computingPower = null;
-              alert('登录过期，请重新登录');
-            } else {
-              this.computingPower = 0;
-            }
-          } else {
+          if (!this.handleAuthError(error)) {
             this.computingPower = 0;
           }
         }
@@ -7231,9 +7224,7 @@
           }
         } catch (error) {
           console.error('Error fetching recharge packages:', error);
-          if (error.response?.status === 401) {
-            alert('登录已过期，请重新登录');
-          }
+          this.handleAuthError(error);
         } finally {
           this.rechargePackagesLoading = false;
         }
