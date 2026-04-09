@@ -286,6 +286,19 @@ def init_scheduler(app):
         coalesce=True
     )
 
+    # RunningHub槽位清理（清理超过2小时仍处于处理中的槽位）
+    logger.info('启用RunningHub槽位清理任务，每30分钟执行一次')
+    from task.runninghub_slots_cleanup import cleanup_runninghub_slots
+    scheduler.add_job(
+        func=cleanup_runninghub_slots,
+        trigger=IntervalTrigger(minutes=30),  # 每30分钟执行一次
+        id='cleanup_runninghub_slots',
+        name='Cleanup stale RunningHub slots every 30 minutes',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
     # 启动调度器
     scheduler.start()
     logger.info("定时任务启动成功")

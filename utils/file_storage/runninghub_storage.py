@@ -267,3 +267,19 @@ class RunningHubFileStorage(BaseFileStorage):
             str: 传入的 key
         """
         return key
+
+    async def delete(self, key: str) -> bool:
+        """
+        删除存储中的文件
+
+        注意：RunningHub 媒体服务器的文件会自动过期，无需手动删除
+        此方法仅为满足抽象基类要求
+
+        Args:
+            key: 文件标识（fileName）
+
+        Returns:
+            bool: 始终返回 True
+        """
+        self._log("info", f"RunningHub 文件删除请求（跳过）: {key}")
+        return True

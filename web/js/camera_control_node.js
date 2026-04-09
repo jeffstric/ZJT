@@ -428,16 +428,30 @@ function createCameraControlNode(opts){
 
   // ========== 生成图片 ==========
   // 检测 runninghub 配置状态，禁用/启用生成图片按钮
-  if(window.TaskConfig) {
-    const isConfigured = window.TaskConfig.isRunningHubConfigured();
-    if(!isConfigured) {
-      generateBtn.disabled = true;
-      generateBtn.title = '该功能依赖runninghub接口，请配置密钥';
-      generateBtn.textContent = '生成图片(未配置)';
-      statusEl.style.display = 'block';
-      statusEl.style.color = '#ef4444';
-      statusEl.textContent = '该功能依赖runninghub接口，请配置密钥';
+  function updateRunningHubBtnStatus() {
+    if(window.TaskConfig) {
+      const isConfigured = window.TaskConfig.isRunningHubConfigured();
+      if(!isConfigured) {
+        generateBtn.disabled = true;
+        generateBtn.title = '该功能依赖runninghub接口，请配置密钥';
+        generateBtn.textContent = '生成图片(未配置)';
+        statusEl.style.display = 'block';
+        statusEl.style.color = '#ef4444';
+        statusEl.textContent = '该功能依赖runninghub接口，请配置密钥';
+      } else {
+        generateBtn.disabled = false;
+        generateBtn.title = '';
+        generateBtn.textContent = '生成图片';
+        statusEl.style.display = 'none';
+        statusEl.textContent = '';
+      }
     }
+  }
+
+  updateRunningHubBtnStatus();
+
+  if(window.TaskConfig && window.TaskConfig.onLoaded) {
+    window.TaskConfig.onLoaded(() => updateRunningHubBtnStatus());
   }
 
   generateBtn.addEventListener('click', async (e) => {

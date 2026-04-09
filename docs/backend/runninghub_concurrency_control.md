@@ -213,19 +213,24 @@ print(f"Cleaned {cleaned_count} stale slots")
        host: "https://www.runninghub.cn"
        api_key: "xxx"
        max_concurrent_slots: 3  # RunningHub 最大并发槽位数量
+       slot_timeout_minutes: 120  # 槽位超时时间（分钟），默认2小时
      ```
    - 建议：根据 RunningHub 实际并发限制调整（通常为3）
    - 注意：修改配置后需要重启服务生效
 
-2. **延迟时间**：默认30秒
+2. **槽位超时时间**：默认120分钟（2小时）
+   - 配置文件：`config.yml` 中的 `runninghub.slot_timeout_minutes`
+   - 超时后，系统自动将槽位状态设置为已完成，释放占用
+
+3. **延迟时间**：默认30秒
    - 位置：`process_task_with_retry` 函数中的 `delay_seconds = 30`
    - 建议：根据任务处理速度调整，太短会频繁查询，太长会影响响应速度
 
-3. **TASK_QUEUE_MAXED 重试延迟**：默认60秒
+4. **TASK_QUEUE_MAXED 重试延迟**：默认60秒
    - 位置：`_submit_new_task` 函数中的 `timedelta(seconds=60)`
    - 建议：根据 RunningHub 服务端队列恢复速度调整
 
-4. **调度间隔**：默认11秒
+5. **调度间隔**：默认11秒
    - 位置：`task/scheduler.py` 中的 `IntervalTrigger(seconds=11)`
    - 建议：不要设置太短，避免频繁查询数据库
 
@@ -245,8 +250,11 @@ print(f"Cleaned {cleaned_count} stale slots")
    mysql -u username -p database_name < model/sql/migrations/2026-01-09-15-17_create_runninghub_slots.sql
    ```
 
-2. **槽位清理**：建议定期清理超时槽位，避免槽位泄漏
-   - 可以添加定时任务每小时执行一次 `cleanup_stale_slots()`
+2. **槽位清理**：系统已内置定时清理任务
+   - 定时任务 `cleanup_runninghub_slots` 每30分钟执行一次
+   - 默认清理超过2小时（120分钟）仍处于处理中的槽位
+   - 超时时间可通过配置文件调整：`runninghub.slot_timeout_minutes`
+   - 代码位置：`task/runninghub_slots_cleanup.py`
 
 3. **监控告警**：建议监控槽位使用率，如果长期满载可能需要优化或增加资源
 

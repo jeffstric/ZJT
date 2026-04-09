@@ -393,17 +393,22 @@ class MediaCacheManager:
                             relative_path = file_path.relative_to(self.root_dir)
                             local_path_str = relative_path.as_posix()
 
-                            # 同步删除云端文件
+                            # Sync delete cloud file
                             if self.upload_to_cloud:
                                 try:
                                     from model.media_file_mapping import MediaFileMappingModel
                                     record = MediaFileMappingModel.get_by_local_path(local_path_str)
-                                    if record and record.cloud_path:
-                                        self._delete_from_cloud(record.cloud_path)
-                                    # 删除映射记录
-                                    MediaFileMappingModel.delete_by_local_path(local_path_str)
+                                    if record:
+                                        # Clear ai_tools reference before deleting mapping
+                                        if record.id:
+                                            MediaFileMappingModel.clear_ai_tools_reference(record.id)
+                                        # Delete cloud file
+                                        if record.cloud_path:
+                                            self._delete_from_cloud(record.cloud_path)
+                                        # Delete mapping record
+                                        MediaFileMappingModel.delete_by_local_path(local_path_str)
                                 except Exception as e:
-                                    logger.error(f"删除云端文件或映射记录失败: {e}")
+                                    logger.error(f"Delete cloud file or mapping record failed: {e}")
 
                             # 删除本地文件
                             file_path.unlink()
@@ -483,12 +488,17 @@ class MediaCacheManager:
                     try:
                         from model.media_file_mapping import MediaFileMappingModel
                         record = MediaFileMappingModel.get_by_local_path(local_path_str)
-                        if record and record.cloud_path:
-                            self._delete_from_cloud(record.cloud_path)
-                        # 删除映射记录
-                        MediaFileMappingModel.delete_by_local_path(local_path_str)
+                        if record:
+                            # Clear ai_tools reference before deleting mapping
+                            if record.id:
+                                MediaFileMappingModel.clear_ai_tools_reference(record.id)
+                            # Delete cloud file
+                            if record.cloud_path:
+                                self._delete_from_cloud(record.cloud_path)
+                            # Delete mapping record
+                            MediaFileMappingModel.delete_by_local_path(local_path_str)
                     except Exception as e:
-                        logger.error(f"删除云端文件或映射记录失败: {e}")
+                        logger.error(f"Delete cloud file or mapping record failed: {e}")
 
                 # 删除本地文件
                 file_path.unlink()

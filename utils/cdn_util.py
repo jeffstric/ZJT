@@ -167,6 +167,7 @@ class CDNUtil:
         import concurrent.futures
 
         def _async_upload():
+            from model.media_file_mapping import MediaFileMappingModel
             try:
                 storage, enabled = CDNUtil._get_cdn_storage()
 
