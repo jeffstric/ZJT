@@ -326,7 +326,7 @@ class SyncTaskExecutor:
 
         if result.success:
             # 任务成功
-            AIToolsModel.update(
+            AIToolsModel.update_with_cdn_sync(
                 task_id,
                 result_url=result.result_url,
                 status=AI_TOOL_STATUS_COMPLETED

@@ -19,6 +19,7 @@ server:
     enabled: false
     certfile: "secret/xxx.pem"
     keyfile: "secret/xxx.key"
+  auto_upload_to_cdn: false
   footer:
     copyright: "© 2026 智剧通 AI短剧制作平台 | 所有权利保留"
     icp_number: ""
@@ -122,6 +123,18 @@ media_cache:
   max_size_gb: 10
   cleanup_on_startup: true
   cleanup_interval_hours: 24
+
+file_storage:
+  qiniu:
+    access_key: ""
+    secret_key: ""
+    bucket_name: ""
+    cdn_domain: ""
+  qiniu_long_term:
+    access_key: ""
+    secret_key: ""
+    bucket_name: ""
+    cdn_domain: ""
 
 zjt:
   token: ""

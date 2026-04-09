@@ -42,6 +42,7 @@ class LocationMultiAngleTask:
         self.updated_at = kwargs.get('updated_at')
         self.completed_at = kwargs.get('completed_at')
         self.failed_at = kwargs.get('failed_at')
+        self.current_angle_retry_count = kwargs.get('current_angle_retry_count', 0)
 
     def get_angles_list(self) -> List[Dict[str, Any]]:
         """获取角度列表"""
@@ -82,7 +83,8 @@ class LocationMultiAngleTask:
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
-            'failed_at': self.failed_at.isoformat() if self.failed_at else None
+            'failed_at': self.failed_at.isoformat() if self.failed_at else None,
+            'current_angle_retry_count': self.current_angle_retry_count
         }
 
 
@@ -235,7 +237,8 @@ class LocationMultiAngleTasksModel:
         current_angle_index: int = None,
         generated_images: List[Dict[str, Any]] = None,
         error_message: str = None,
-        ai_tool_task_id: int = None
+        ai_tool_task_id: int = None,
+        current_angle_retry_count: int = None
     ) -> int:
         """
         更新任务状态
@@ -247,6 +250,7 @@ class LocationMultiAngleTasksModel:
             generated_images: 已生成的图片列表
             error_message: 错误信息
             ai_tool_task_id: 关联的AI工具任务ID
+            current_angle_retry_count: 当前角度重试次数
 
         Returns:
             影响的行数
@@ -269,6 +273,10 @@ class LocationMultiAngleTasksModel:
         if ai_tool_task_id is not None:
             update_fields.append("ai_tool_task_id = %s")
             params.append(ai_tool_task_id)
+
+        if current_angle_retry_count is not None:
+            update_fields.append("current_angle_retry_count = %s")
+            params.append(current_angle_retry_count)
 
         # 根据状态设置完成/失败时间
         if status == LocationMultiAngleTaskStatus.COMPLETED:

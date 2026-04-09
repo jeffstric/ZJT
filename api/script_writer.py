@@ -2677,15 +2677,15 @@ async def upload_reference_image(
         # 保存文件
         with open(file_path, 'wb') as f:
             f.write(content)
-        
+
         # 获取服务器地址
         server_host = get_config()["server"]["host"]
-        
+
         # 返回URL
         url = f"{server_host.rstrip('/')}/{upload_dir}/{filename}"
-        
+
         logger.info(f'图片上传成功: {url}')
-        
+
         return JSONResponse({
             'success': True,
             'url': url

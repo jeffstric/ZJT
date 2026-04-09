@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Header
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -447,19 +447,27 @@ async def download_image(
 @require_permission("file:proxy_image")
 async def proxy_image(request: Request, url: str = Query(..., description="Image URL to proxy")):
     """
-    Proxy image requests to avoid CORS issues in Electron
+    Proxy image requests to avoid CORS issues in Electron.
+    如果 cloud_path 在 media_file_mapping 中存在，会自动重新授权（刷新签名 URL）。
     """
+    # 检查是否需要刷新签名
+    from utils.cdn_util import CDNUtil
+    new_url = CDNUtil.refresh_url_if_needed(url)
+    if new_url:
+        return RedirectResponse(url=new_url, status_code=302)
+
+    # 回退：直接代理请求
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(url)
             response.raise_for_status()
-            
+
             # Get content type
             content_type = response.headers.get('content-type', 'image/png')
-            
+
             # Return content as streaming response
             content_stream = BytesIO(response.content)
-            
+
             return StreamingResponse(
                 content_stream,
                 media_type=content_type,
@@ -1339,14 +1347,34 @@ async def get_status(
             reason_payload = None
 
             # Update database based on status
-            if status == 2:  # Success
-                status_str = "SUCCESS"
-                media_url = task_record.result_url
-                if media_url:
-                    results_payload = [{
-                        "file_url": media_url,
-                        "task_cost_time": task_cost_time
-                    }]
+            if status == AI_TOOL_STATUS_COMPLETED:  # Success
+                from utils.cdn_util import CDNUtil, CDNStatus
+
+                media_url, cdn_status = CDNUtil.get_media_url(
+                    task_record.media_mapping_id,
+                    task_record.result_url
+                )
+
+                if cdn_status == CDNStatus.READY:
+                    # CDN 已完成，返回成功
+                    status_str = "SUCCESS"
+                    if media_url:
+                        results_payload = [{
+                            "file_url": media_url,
+                            "task_cost_time": task_cost_time
+                        }]
+                elif cdn_status == CDNStatus.PENDING:
+                    # CDN 还在处理中，返回等待状态
+                    status_str = "RUNNING"
+                    logger.info(f"任务 {ai_tool_id} CDN 未完成，等待中")
+                else:
+                    # CDN 未启用或获取失败，使用本地 URL
+                    status_str = "SUCCESS"
+                    if media_url:
+                        results_payload = [{
+                            "file_url": media_url,
+                            "task_cost_time": task_cost_time
+                        }]
 
             elif status == -1:  # Failed
                 status_str = "FAILED"
@@ -4507,18 +4535,34 @@ async def poll_workflow_node_status(
                 try:
                     ai_tool = AIToolsModel.get_by_id(project_id)
                     if ai_tool:
-                        # 状态为完成(status==2)且有结果URL
-                        if ai_tool.status == 2 and ai_tool.result_url:
+                        # 状态为完成且有结果URL
+                        if ai_tool.status == AI_TOOL_STATUS_COMPLETED and ai_tool.result_url:
+                            from utils.cdn_util import CDNUtil, CDNStatus
+
+                            file_url, cdn_status = CDNUtil.get_media_url(
+                                ai_tool.media_mapping_id,
+                                ai_tool.result_url
+                            )
+
+                            if cdn_status == CDNStatus.READY:
+                                node_status = AI_TOOL_STATUS_COMPLETED
+                            elif cdn_status == CDNStatus.PENDING:
+                                # CDN 还在处理中，返回 RUNNING 等待
+                                node_status = AI_TOOL_STATUS_PROCESSING
+                            else:
+                                # CDN 未启用或获取失败，使用本地 URL
+                                node_status = AI_TOOL_STATUS_COMPLETED
+
                             updated_nodes.append({
                                 'node_id': node.get('id'),
                                 'node_type': node_type,
                                 'project_id': project_id,
-                                'url': ai_tool.result_url,
-                                'status': ai_tool.status,
+                                'url': file_url,
+                                'status': node_status,
                                 'message': None
                             })
-                        # 状态为失败(status==-1)
-                        elif ai_tool.status == -1:
+                        # 状态为失败
+                        elif ai_tool.status == AI_TOOL_STATUS_FAILED:
                             updated_nodes.append({
                                 'node_id': node.get('id'),
                                 'node_type': node_type,
@@ -4591,7 +4635,7 @@ async def upload_workflow_asset(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        
+
         # 验证文件类型
         content_type = file.content_type or ""
         if not (content_type.startswith("image/") or content_type.startswith("video/") or content_type.startswith("audio/")):
@@ -4599,11 +4643,11 @@ async def upload_workflow_asset(
                 status_code=400,
                 content={"code": -1, "message": "仅支持图片、视频或音频文件"}
             )
-        
+
         # 保存文件并获取URL（用户隔离目录）
         request_host = str(request.base_url).rstrip("/")
         file_url = await asyncio.to_thread(_save_user_asset, file, user_id, "workflow", request_host)
-        
+
         return JSONResponse({
             "code": 0,
             "message": "上传成功",
@@ -6030,7 +6074,7 @@ async def create_character(
             reference_images=reference_images_list if reference_images_list else None,
             default_voice=voice_path
         )
-        
+
         character = CharacterModel.get_by_id(character_id)
         
         return JSONResponse(
@@ -6531,7 +6575,7 @@ async def create_location(
             reference_image=image_path,
             reference_images=reference_images_list if reference_images_list else None
         )
-        
+
         location = LocationModel.get_by_id(location_id)
         
         return JSONResponse(
@@ -7221,7 +7265,7 @@ async def create_props(
                 f.write(content_data)
             
             image_path = f"{SERVER_HOST}/upload/props/{filename}"
-        
+
         props_id = PropsModel.create(
             world_id=world_id,
             name=name.strip(),
@@ -7230,9 +7274,9 @@ async def create_props(
             other_info=other_info.strip() if other_info else None,
             reference_image=image_path
         )
-        
+
         props = PropsModel.get_by_id(props_id)
-        
+
         return JSONResponse(
             status_code=200,
             content={

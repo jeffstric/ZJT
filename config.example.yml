@@ -21,6 +21,7 @@ server:
     enabled: false
     certfile: "secret/xxx.pem"
     keyfile: "secret/xxx.key"
+  auto_upload_to_cdn: false  # AI Tools 生成结果是否自动上传到 CDN（需要配置 file_storage.qiniu_long_term）
   # 网站底部信息配置
   footer:
     copyright: "© 2026 智剧通 AI短剧制作平台 | 所有权利保留"  # 版权信息
@@ -193,6 +194,12 @@ file_storage:
     secret_key: "HD3mwsOHnr5uSjPRTyvIWDrmwCEfOUlwQiT5HhNft9TB"  # 七牛云 Secret Key
     bucket_name: "jeffstric"  # 存储空间名称
     cdn_domain: "cdn.perseids.cn"  # CDN 加速域名  绑定CDN加速域名图文教程文档，您可以参考：https://developer.qiniu.com/fusion/manual/4939/the-domain-name-to-access 需要注意您要绑定工信部备案的域名。
+  # 长期存储配置（用于 AI Tools 结果自动同步到 CDN）
+  qiniu_long_term:
+    access_key: ""  # 七牛云 Access Key
+    secret_key: ""  # 七牛云 Secret Key
+    bucket_name: ""  # 存储空间名称
+    cdn_domain: ""  # CDN 加速域名
 
 image:
   enable_download: true

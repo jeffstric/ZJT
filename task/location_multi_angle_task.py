@@ -303,7 +303,8 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
                         task_key,
                         LocationMultiAngleTaskStatus.PROCESSING,
                         current_angle_index=current_index,
-                        ai_tool_task_id=0  # 清除
+                        ai_tool_task_id=0,  # 清除
+                        current_angle_retry_count=0  # 重置重试计数
                     )
 
                     if current_index >= len(angles):
@@ -390,11 +391,12 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
 
                 if project_id:
                     logger.info(f"已提交 {label} 生成任务，project_id={project_id}")
-                    # 记录 ai_tool_task_id，等待下次调度检查
+                    # 记录 ai_tool_task_id，等待下次调度检查，重置重试计数
                     LocationMultiAngleTasksModel.update_status(
                         task_key,
                         LocationMultiAngleTaskStatus.PROCESSING,
-                        ai_tool_task_id=project_id
+                        ai_tool_task_id=project_id,
+                        current_angle_retry_count=0
                     )
                     return {'success': True, 'submitted': True, 'project_id': project_id}
                 else:
@@ -407,6 +409,30 @@ def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
 
         except Exception as e:
             logger.error(f"提交角度 {angle} 时发生异常: {e}")
+            # 提交失败，重试计数 +1
+            retry_count = (task.current_angle_retry_count or 0) + 1
+            if retry_count >= 3:
+                # 超过最大重试次数，跳到下一个角度
+                logger.warning(f"角度 {label} 重试 {retry_count} 次失败，跳过")
+                current_index += 1
+                LocationMultiAngleTasksModel.update_status(
+                    task_key,
+                    LocationMultiAngleTaskStatus.PROCESSING,
+                    current_angle_index=current_index,
+                    ai_tool_task_id=0,
+                    current_angle_retry_count=0,
+                    error_message=f'角度 {label} 提交失败（已重试{retry_count}次）: {str(e)}'
+                )
+            else:
+                # 未超过最大重试次数，保留当前角度，重试
+                logger.info(f"角度 {label} 提交失败，第 {retry_count} 次重试")
+                LocationMultiAngleTasksModel.update_status(
+                    task_key,
+                    LocationMultiAngleTaskStatus.PROCESSING,
+                    ai_tool_task_id=0,
+                    current_angle_retry_count=retry_count,
+                    error_message=f'角度 {label} 提交失败，第 {retry_count} 次重试: {str(e)}'
+                )
             return {'success': False, 'error': str(e)}
 
     except Exception as e:

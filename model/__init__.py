@@ -17,6 +17,7 @@ from .login_log import LoginLogModel, LoginLog
 from .token_log import TokenLogModel, TokenLog
 from .grid_image_tasks import GridImageTasksModel, GridImageTask, GridImageTaskStatus
 from .location_multi_angle_tasks import LocationMultiAngleTasksModel, LocationMultiAngleTask, LocationMultiAngleTaskStatus
+from .media_file_mapping import MediaFileMappingModel, MediaFileMapping
 
 __all__ = [
     'AIToolsModel',
@@ -55,4 +56,6 @@ __all__ = [
     'LocationMultiAngleTasksModel',
     'LocationMultiAngleTask',
     'LocationMultiAngleTaskStatus',
+    'MediaFileMappingModel',
+    'MediaFileMapping',
 ]
