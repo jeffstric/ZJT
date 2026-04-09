@@ -9,6 +9,7 @@ from config.constant import (
     AI_TOOL_STATUS_PROCESSING
 )
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ class AITool:
         self.extra_config = kwargs.get('extra_config')
         self.reference_images = kwargs.get('reference_images')
         self.implementation = kwargs.get('implementation')
+        self.media_mapping_id = kwargs.get('media_mapping_id')
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -65,7 +67,8 @@ class AITool:
             'reference_images': self.reference_images,
             'implementation': self.implementation,
             'implementation_name': get_implementation_name(self.implementation),
-            'model_name': model_name
+            'model_name': model_name,
+            'media_mapping_id': self.media_mapping_id
         }
 
 
@@ -305,7 +308,7 @@ class AIToolsModel:
         # Build update fields
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'implementation'
+            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'implementation', 'media_mapping_id'
         ]
         
         update_fields = []
@@ -330,7 +333,92 @@ class AIToolsModel:
         except Exception as e:
             logger.error(f"Failed to update AI tool record {record_id}: {e}")
             raise
-    
+
+    @staticmethod
+    def update_with_cdn_sync(
+        record_id: int,
+        result_url: Optional[str] = None,
+        **kwargs
+    ) -> int:
+        """
+        更新 AI 工具记录，并创建 media_file_mapping 触发 CDN 上传
+
+        - result_url 保持本地路径不变
+        - 创建 media_file_mapping 记录用于 CDN 上传
+        - CDN 上传由 MediaFileMappingModel 后台异步处理
+
+        Args:
+            record_id: Record ID
+            result_url: 结果 URL（如果有）
+            **kwargs: 其他要更新的字段
+
+        Returns:
+            Number of affected rows
+        """
+        # 检查是否已经有 media_mapping_id
+        existing = AIToolsModel.get_by_id(record_id)
+        if existing and existing.media_mapping_id:
+            logger.info(f"record_id={record_id} 已有 media_mapping_id={existing.media_mapping_id}，跳过创建")
+            if result_url is not None:
+                kwargs['result_url'] = result_url
+            return AIToolsModel.update(record_id, **kwargs)
+
+        media_mapping_id = None
+
+        # 如果 result_url 是本地路径，创建 media_file_mapping 记录
+        if result_url and result_url.startswith("/upload/"):
+            try:
+                from model.media_file_mapping import MediaFileMappingModel, MediaFileEntity
+                from config.media_file_policy import MediaFilePolicy
+
+                local_path = result_url.lstrip("/")
+
+                # 判断媒体类型（MIME type）
+                from utils.mime_type import get_mime_type_from_extension
+                ext = os.path.splitext(result_url)[1].lower()
+                media_type = get_mime_type_from_extension(ext)
+
+                # 获取文件大小
+                file_size = None
+                try:
+                    if os.path.exists(local_path):
+                        file_size = os.path.getsize(local_path)
+                except Exception as e:
+                    logger.warning(f"无法获取文件 {local_path} 的大小: {e}")
+
+                # 创建映射记录
+                mapping_id = MediaFileMappingModel.create(
+                    user_id=kwargs.get('user_id'),
+                    local_path=local_path,
+                    cloud_path=None,
+                    policy_code=MediaFilePolicy.MEDIA_CACHE,
+                    entity_type=MediaFileEntity.AI_TOOLS,
+                    source_id=record_id,
+                    media_type=media_type,
+                    original_url=None,
+                    file_size=file_size
+                )
+
+                # 触发异步 CDN 上传
+                from utils.cdn_util import CDNUtil
+                CDNUtil.trigger_cdn_upload(mapping_id, local_path)
+
+                media_mapping_id = mapping_id
+                logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
+
+            except Exception as e:
+                logger.error(f"创建 media_file_mapping 失败: {e}")
+
+        # 更新 ai_tools 记录
+        if media_mapping_id is not None:
+            kwargs['media_mapping_id'] = media_mapping_id
+
+        # result_url 保持本地路径不变
+        if result_url is not None:
+            kwargs['result_url'] = result_url
+
+        return AIToolsModel.update(record_id, **kwargs)
+
     @staticmethod
     def update_by_project_id(
         project_id: str,
@@ -373,7 +461,98 @@ class AIToolsModel:
         except Exception as e:
             logger.error(f"Failed to update AI tool record by project_id {project_id}: {e}")
             raise
-    
+
+    @staticmethod
+    def update_by_project_id_with_cdn_sync(
+        project_id: str,
+        result_url: Optional[str] = None,
+        **kwargs
+    ) -> int:
+        """
+        更新 AI 工具记录（按 project_id），并创建 media_file_mapping 触发 CDN 上传
+
+        - result_url 保持本地路径不变
+        - 创建 media_file_mapping 记录用于 CDN 上传
+        - CDN 上传由 MediaFileMappingModel 后台异步处理
+
+        Args:
+            project_id: Project ID
+            result_url: 结果 URL（如果有）
+            **kwargs: 其他要更新的字段
+
+        Returns:
+            Number of affected rows
+        """
+        # 先查询获取 record_id
+        tool = AIToolsModel.get_by_project_id(project_id)
+        if not tool:
+            logger.warning(f"未找到 project_id={project_id} 的 ai_tools 记录")
+            return 0
+
+        # 如果已经有 media_mapping_id，不再重复创建
+        if tool.media_mapping_id:
+            logger.info(f"project_id={project_id} 已有 media_mapping_id={tool.media_mapping_id}，跳过创建")
+            if result_url is not None:
+                kwargs['result_url'] = result_url
+            return AIToolsModel.update_by_project_id(project_id, **kwargs)
+
+        record_id = tool.id
+        media_mapping_id = None
+
+        # 如果 result_url 是本地路径，创建 media_file_mapping 记录
+        if result_url and result_url.startswith("/upload/"):
+            try:
+                from model.media_file_mapping import MediaFileMappingModel, MediaFileEntity
+                from config.media_file_policy import MediaFilePolicy
+
+                local_path = result_url.lstrip("/")
+
+                # 判断媒体类型（MIME type）
+                from utils.mime_type import get_mime_type_from_extension
+                ext = os.path.splitext(result_url)[1].lower()
+                media_type = get_mime_type_from_extension(ext)
+
+                # 获取文件大小
+                file_size = None
+                try:
+                    if os.path.exists(local_path):
+                        file_size = os.path.getsize(local_path)
+                except Exception as e:
+                    logger.warning(f"无法获取文件 {local_path} 的大小: {e}")
+
+                # 创建映射记录
+                mapping_id = MediaFileMappingModel.create(
+                    user_id=kwargs.get('user_id') or tool.user_id,
+                    local_path=local_path,
+                    cloud_path=None,
+                    policy_code=MediaFilePolicy.MEDIA_CACHE,
+                    entity_type=MediaFileEntity.AI_TOOLS,
+                    source_id=record_id,
+                    media_type=media_type,
+                    original_url=None,
+                    file_size=file_size
+                )
+
+                # 触发异步 CDN 上传
+                from utils.cdn_util import CDNUtil
+                CDNUtil.trigger_cdn_upload(mapping_id, local_path)
+
+                media_mapping_id = mapping_id
+                logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
+
+            except Exception as e:
+                logger.error(f"创建 media_file_mapping 失败: {e}")
+
+        # 更新 ai_tools 记录
+        if media_mapping_id is not None:
+            kwargs['media_mapping_id'] = media_mapping_id
+
+        # result_url 保持本地路径不变
+        if result_url is not None:
+            kwargs['result_url'] = result_url
+
+        return AIToolsModel.update_by_project_id(project_id, **kwargs)
+
     @staticmethod
     def delete(record_id: int) -> int:
         """

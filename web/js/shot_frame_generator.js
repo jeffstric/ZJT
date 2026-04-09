@@ -1,58 +1,11 @@
-// 将相机参数转换为提示词
-function convertCameraToPrompt(camera) {
-  if (!camera) return '';
-  
-  const parts = [];
-  
-  // 检查是否有 modified 标记（向后兼容：如果没有 modified 对象，则生成所有参数的提示词）
-  const hasModifiedTracking = camera.modified && typeof camera.modified === 'object';
-  
-  // Yaw 转换（0度为正面，负值为左侧，正值为右侧）
-  // 用户的"Camera Move Right" (+Yaw) = 相机在右侧 = 看到人物左脸 = 人物面向左
-  // 用户的"Camera Move Left" (-Yaw) = 相机在左侧 = 看到人物右脸 = 人物面向右
-  const yaw = camera.yaw ?? 0;
-  const yawModified = hasModifiedTracking ? camera.modified.yaw : true;
-  
-  if (yawModified) {
-    if (yaw <= -75) parts.push('正侧面轮廓视图，人物面朝右 (Profile View, Facing Right)');
-    else if (yaw > -75 && yaw <= -45) parts.push('侧面视图，人物面朝右 (Side View, Facing Right)');
-    else if (yaw > -45 && yaw <= -5) parts.push('四分之三侧面视图，人物面朝右 (3/4 View, Facing Right)');
-    else if (yaw > -5 && yaw < 5) parts.push('正面视图 (Front View)');
-    else if (yaw >= 5 && yaw < 45) parts.push('四分之三侧面视图，人物面朝左 (3/4 View, Facing Left)');
-    else if (yaw >= 45 && yaw < 75) parts.push('侧面视图，人物面朝左 (Side View, Facing Left)');
-    else if (yaw >= 75) parts.push('正侧面轮廓视图，人物面朝左 (Profile View, Facing Left)');
-  }
-  
-  // Dolly 转换 - 景别
-  const dolly = camera.dolly ?? 0;
-  const dollyModified = hasModifiedTracking ? camera.modified.dolly : true;
-  
-  if (dollyModified) {
-    if (dolly >= 0 && dolly < 2) parts.push('极远景 (Extreme Long Shot)');
-    else if (dolly >= 2 && dolly < 4) parts.push('远景 (Long Shot)');
-    else if (dolly >= 4 && dolly < 6) parts.push('中景 (Medium Shot)');
-    else if (dolly >= 6 && dolly < 8) parts.push('近景 (Close-up)');
-    else if (dolly >= 8 && dolly <= 10) parts.push('特写 (Extreme Close-up)');
-  }
-  
-  // Pitch 转换 - 拍摄角度
-  const pitch = camera.pitch ?? 0;
-  const pitchModified = hasModifiedTracking ? camera.modified.pitch : true;
-  
-  if (pitchModified) {
-    // 细化垂直角度控制提示词
-    // Pitch < 0: 相机位置在下方，向上仰视 (Low Angle)
-    // Pitch > 0: 相机位置在上方，向下俯视 (High Angle)
-    if (pitch <= -45) parts.push('极低角度仰视，蚂蚁视角 (Extreme Low Angle, Worm\'s-eye view, Looking up)');
-    else if (pitch > -45 && pitch <= -25) parts.push('低角度仰视，从下方拍摄 (Low Angle, Looking up from below)');
-    else if (pitch > -25 && pitch <= -10) parts.push('略微仰视 (Slight Low Angle, Camera slightly below eye level)');
-    else if (pitch > -10 && pitch < 10) parts.push('水平视线 (Eye Level Shot)');
-    else if (pitch >= 10 && pitch < 25) parts.push('略微俯视 (Slight High Angle, Camera slightly above eye level)');
-    else if (pitch >= 25 && pitch < 45) parts.push('高角度俯视，从上方拍摄 (High Angle, Looking down from above)');
-    else if (pitch >= 45) parts.push('极高角度俯视，上帝视角 (Extreme High Angle, Overhead View, Bird\'s-eye view)');
-  }
-  
-  return parts.join('，');
+// 将相机参数转换为多角度 API 参数
+function convertCameraToQwenMultiAngleParams(camera) {
+  if (!camera) return null;
+  return {
+    horizontal_angle: camera.horizontal_angle ?? 0,
+    vertical_angle: camera.vertical_angle ?? 0,
+    zoom: camera.zoom ?? 5.0
+  };
 }
 
 // 移除不存在角色的【【】】标记
@@ -144,11 +97,16 @@ async function generateShotFrameImage(nodeId, node){
                 const matchedChar = characters.find(c => c.name === characterName) || characters[0];
                 console.log(`[角色匹配] 最终匹配角色:`, matchedChar.name, '参考图:', matchedChar.reference_image);
                 
-                if(matchedChar && matchedChar.reference_image){
-                  // 直接收集参考图 URL
-                  referenceImageUrls.push(matchedChar.reference_image);
-                  promptSuffix.push(`图${imageIndex}是${characterName}`);
+                // 检查用户是否为该角色选择了特定图片
+                const userSelectedCharUrl = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[characterName]);
+                const charRefUrl = userSelectedCharUrl || (matchedChar && matchedChar.reference_image);
+                if(charRefUrl){
+                  referenceImageUrls.push(charRefUrl);
+                  const labelDesc = userSelectedCharUrl && userSelectedCharUrl !== matchedChar?.reference_image
+                    ? `的${(node.data.selectedCharRefImageLabels && node.data.selectedCharRefImageLabels[characterName]) || '已选择'}` : '';
+                  promptSuffix.push(`图${imageIndex}是${characterName}${labelDesc}`);
                   imageIndex++;
+                  console.log(`[角色匹配] 成功添加角色参考图: ${characterName}${labelDesc ? '(' + labelDesc + ')' : '(主图)'}`);
                 }
               } else {
                 missingCharacters.add(characterName);
@@ -176,15 +134,20 @@ async function generateShotFrameImage(nodeId, node){
     // 3. 添加场景参考图（从 node.data.refScene + state.worldLocations 获取）
     if(node.data.refScene && node.data.refScene.id){
       const loc = (state.worldLocations || []).find(l => l.id === node.data.refScene.id);
-      const refImage = (loc && loc.reference_image) || node.data.refScene.pic || '';
-      if(refImage){
-        referenceImageUrls.push(refImage);
+      const mainRefImage = (loc && loc.reference_image) || node.data.refScene.pic || '';
+
+      // 优先使用用户选择的特定图片，否则使用主图
+      const sceneRefUrl = node.data.selectedSceneRefUrl || mainRefImage;
+      if(sceneRefUrl){
+        referenceImageUrls.push(sceneRefUrl);
         const locationName = (loc && loc.name) || node.data.refScene.name || '场景';
-        promptSuffix.push(`图${imageIndex}是${locationName}所在地点`);
+        const isCustomSelection = node.data.selectedSceneRefUrl && node.data.selectedSceneRefUrl !== mainRefImage;
+        const angleLabel = isCustomSelection ? (node.data.selectedSceneRefLabel || '已选择角度') : '';
+        promptSuffix.push(`图${imageIndex}是${locationName}所在地点${angleLabel ? '(' + angleLabel + ')' : ''}`);
         imageIndex++;
-        console.log(`[场景匹配] 成功添加场景参考图: ${locationName}`);
+        console.log(`[场景匹配] 成功添加场景参考图: ${locationName}${isCustomSelection ? '(已选特定角度)' : '(主图)'}`);
       } else {
-        console.warn(`[场景匹配] 场景“${node.data.refScene.name}”无参考图`);
+        console.warn(`[场景匹配] 场景”${node.data.refScene.name}”无参考图`);
       }
     }
     
@@ -216,16 +179,25 @@ async function generateShotFrameImage(nodeId, node){
       finalPrompt = `${imagePrompt}\n\n${promptSuffix.join('，')}。`;
     }
     
-    // 4.5. 添加相机视角描述（从连接的图片节点读取）
+    // 4.5. 添加相机视角描述（从连接的图片节点或相机控制节点读取，使用多角度 API）
     const connectedImageNode = state.connections
       .filter(c => c.from === nodeId)
       .map(c => state.nodes.find(n => n.id === c.to))
       .find(n => n && n.type === 'image');
-    
+
+    let cameraParams = null;
+    // 优先从图片节点的旧 camera 数据读取（兼容旧工作流）
     if(connectedImageNode && connectedImageNode.data.camera){
-      const cameraDesc = convertCameraToPrompt(connectedImageNode.data.camera);
-      if(cameraDesc){
-        finalPrompt = `${finalPrompt}\n\n视角描述：${cameraDesc}`;
+      cameraParams = convertCameraToQwenMultiAngleParams(connectedImageNode.data.camera);
+    }
+    // 其次查找连接到该图片节点的 camera_control 节点
+    if(!cameraParams && connectedImageNode){
+      const cameraCtrlNode = state.nodes.find(n => {
+        if(n.type !== 'camera_control') return false;
+        return state.connections.some(c => c.from === connectedImageNode.id && c.to === n.id);
+      });
+      if(cameraCtrlNode && cameraCtrlNode.data.camera){
+        cameraParams = convertCameraToQwenMultiAngleParams(cameraCtrlNode.data.camera);
       }
     }
     
@@ -233,81 +205,116 @@ async function generateShotFrameImage(nodeId, node){
     if(state.style && state.style.name){
       finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
     }
-    
-    // 5. 确定使用哪个API（图片编辑或文生图）
+
+    // 4.7. 添加构图倾向
+    if(state.style && state.style.compositionPreference){
+      finalPrompt = `${finalPrompt}\n构图倾向：${state.style.compositionPreference}`;
+    }
+
+    // 5. 确定使用哪个API（图片编辑、多角度或文生图）
     const userId = localStorage.getItem('user_id');
     const authToken = localStorage.getItem('auth_token') || '';
     const canvasRatio = state.ratio || '16:9';
     const ratio = canvasRatio;
-    
+
     let res;
-    if(referenceImageUrls.length === 0){
-      // 没有参考图，使用文生图API
+    if(cameraParams && referenceImageUrls.length > 0){
+      // 有相机参数且有参考图，使用多角度 API
       generateBtn.textContent = '生成中...';
-      showToast('未找到参考图，使用文生图模式生成...', 'info');
-      
+      showToast(`找到${referenceImageUrls.length}张参考图，使用多角度模式生成...`, 'info');
+
       const form = new FormData();
+      form.append('ref_image_urls', referenceImageUrls.join(','));
       form.append('prompt', finalPrompt);
-      form.append('aspect_ratio', ratio);
+      form.append('ratio', ratio);
       form.append('count', node.data.drawCount || 1);
-      
-      // 根据 model 获取 task_id
-      const modelKey = node.data.model || 'gemini-2.5-pro-image-preview';
-      const taskId = TaskConfig.getTaskIdByKey(modelKey, 'text_to_image');
-      if(!taskId){
-        throw new Error(`未找到模型 ${modelKey} 对应的任务配置`);
+
+      // 使用多角度 API 的 task_id
+      const multiAngleTaskId = TaskConfig.getTaskIdByKey('qwen-multi-angle', 'image_edit');
+      if(!multiAngleTaskId){
+        throw new Error('未找到多角度图片编辑的任务配置');
       }
-      form.append('task_id', taskId);
-      
+      form.append('task_id', multiAngleTaskId);
+      form.append('extra_config', JSON.stringify(cameraParams));
+
       if(userId){
         form.append('user_id', userId);
       }
       if(authToken){
         form.append('auth_token', authToken);
       }
-      
+
+      res = await fetch('/api/image-edit', {
+        method: 'POST',
+        body: form
+      });
+    } else if(referenceImageUrls.length === 0){
+      // 没有参考图，使用文生图API
+      generateBtn.textContent = '生成中...';
+      showToast('未找到参考图，使用文生图模式生成...', 'info');
+
+      const form = new FormData();
+      form.append('prompt', finalPrompt);
+      form.append('aspect_ratio', ratio);
+      form.append('count', node.data.drawCount || 1);
+
+      // 根据 model 获取 task_id
+      const modelKey = node.data.model || 'gemini-2.5-flash-image-preview';
+      const taskId = TaskConfig.getTaskIdByKey(modelKey, 'text_to_image');
+      if(!taskId){
+        throw new Error(`未找到模型 ${modelKey} 对应的任务配置`);
+      }
+      form.append('task_id', taskId);
+
+      if(userId){
+        form.append('user_id', userId);
+      }
+      if(authToken){
+        form.append('auth_token', authToken);
+      }
+
       res = await fetch('/api/text-to-image', {
         method: 'POST',
         body: form
       });
     } else {
-      // 有参考图，使用图片编辑API
-      // 5.5. 限制参考图数量不超过5个
-      const MAX_REFERENCE_IMAGES = 5;
+      // 有参考图但无相机参数，使用普通图片编辑API
+      // 5.5. 根据模型限制参考图数量
+      const modelKey2 = node.data.model || 'gemini-2.5-flash-image-preview';
+      const MAX_REFERENCE_IMAGES = modelKey2 === 'nano-banana' ? 5 : 14;
       if(referenceImageUrls.length > MAX_REFERENCE_IMAGES){
         console.warn(`参考图数量 ${referenceImageUrls.length} 超过限制 ${MAX_REFERENCE_IMAGES}，将只使用前 ${MAX_REFERENCE_IMAGES} 张`);
         referenceImageUrls.splice(MAX_REFERENCE_IMAGES);
         promptSuffix.splice(MAX_REFERENCE_IMAGES);
         showToast(`参考图数量超过${MAX_REFERENCE_IMAGES}张，已自动限制为${MAX_REFERENCE_IMAGES}张`, 'warning');
       }
-      
+
       generateBtn.textContent = '生成中...';
       showToast(`找到${referenceImageUrls.length}张参考图，开始生成...`, 'info');
-      
+
       const form = new FormData();
-      
+
       // 直接传递参考图 URL 列表
       form.append('ref_image_urls', referenceImageUrls.join(','));
-      
+
       form.append('prompt', finalPrompt);
       form.append('ratio', ratio);
       form.append('count', node.data.drawCount || 1);
-      
-      // 根据 model 获取 task_id
-      const modelKey2 = node.data.model || 'gemini-2.5-pro-image-preview';
+
+      // 根据 model 获取 task_id（modelKey2 已在上面声明）
       const taskId2 = TaskConfig.getTaskIdByKey(modelKey2, 'image_edit');
       if(!taskId2){
         throw new Error(`未找到模型 ${modelKey2} 对应的任务配置`);
       }
       form.append('task_id', taskId2);
-      
+
       if(userId){
         form.append('user_id', userId);
       }
       if(authToken){
         form.append('auth_token', authToken);
       }
-      
+
       res = await fetch('/api/image-edit', {
         method: 'POST',
         body: form

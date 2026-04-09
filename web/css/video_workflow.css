@@ -2280,7 +2280,7 @@ textarea:focus{ border-color: var(--primary); }
   display: block;
   max-width: 100%;
   max-height: 500px;
-  cursor: crosshair;
+  cursor: none;
 }
 .coloring-tools{
   display: flex;

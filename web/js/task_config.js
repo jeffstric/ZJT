@@ -137,9 +137,10 @@
    */
   function getTasksByCategory(category) {
     const tasks = getAllTasks();
-    return tasks.filter(t => 
-      t.category === category || 
-      (t.categories && t.categories.includes(category))
+    return tasks.filter(t =>
+      !t.hidden &&
+      (t.category === category ||
+       (t.categories && t.categories.includes(category)))
     );
   }
 
@@ -327,19 +328,24 @@
    * @returns {Array} [{ value, label, taskType, computingPower, key }, ...]
    */
   function getModelOptionsForCategory(category) {
-    const tasks = getTasksByCategory(category);
-    return tasks.map(task => {
+    const tasks = getAllTasks().filter(t => !t.hidden);
+    const categoryTasks = tasks.filter(t =>
+      t.category === category ||
+      (t.categories && t.categories.includes(category))
+    );
+    return categoryTasks.map(task => {
       // 提取简短的模型值（去掉 _image_to_video, _text_to_image 等后缀）
       const shortKey = task.key.replace(/_image_to_video|_text_to_video|_text_to_image|_image_edit/g, '');
-      const power = typeof task.computing_power === 'object' 
-        ? Object.values(task.computing_power)[0] 
+      const power = typeof task.computing_power === 'object'
+        ? Object.values(task.computing_power)[0]
         : task.computing_power;
       return {
         value: shortKey,
         label: `${task.name} (${power}算力)`,
         taskType: task.id,
         computingPower: task.computing_power,
-        key: task.key
+        key: task.key,
+        supportsGridImage: task.supports_grid_image || false
       };
     });
   }
@@ -397,34 +403,39 @@
     reload: reloadConfigs,
     isLoaded: isConfigLoaded,
     onLoaded: onConfigLoaded,
-    
+
     // 获取配置
     getAllTasks,
     getTaskById,
     getTaskByKey,
     getTaskIdByKey,
     getTasksByCategory,
-    
+
     // 获取选项
     getDurationOptions,
     getRatioOptions,
     getSizeOptions,
-    
+
     // 获取默认值
     getDefaultDuration,
     getDefaultRatio,
     getDefaultSize,
-    
+
     // 算力
     getComputingPower,
-    
+
+    // RunningHub 配置状态
+    isRunningHubConfigured() {
+      return taskConfigCache?.runninghub_configured ?? false;
+    },
+
     // 兼容旧格式
     getVideoModelDurationOptions,
     getModelConfigs,
     getTaskComputingPowerConfig,
     getTaskTypeIdsByCategory,
     getTaskTypeConfig,
-    
+
     // 动态渲染
     getModelOptionsForCategory,
     getCategories,

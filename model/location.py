@@ -1,6 +1,7 @@
 """
 Location Model - Database operations for location table
 """
+import json
 from typing import List, Optional, Dict, Any
 from .database import execute_query, execute_update, execute_insert
 from config.constant import Edition
@@ -18,6 +19,7 @@ class Location:
         self.name = kwargs.get('name')
         self.parent_id = kwargs.get('parent_id')
         self.reference_image = kwargs.get('reference_image')
+        self.reference_images = kwargs.get('reference_images')
         self.description = kwargs.get('description')
         self.user_id = kwargs.get('user_id')
         self.create_time = kwargs.get('create_time')
@@ -25,12 +27,20 @@ class Location:
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
+        reference_images = self.reference_images
+        if isinstance(reference_images, str):
+            try:
+                reference_images = json.loads(reference_images)
+            except:
+                pass
+
         return {
             'id': self.id,
             'world_id': self.world_id,
             'name': self.name,
             'parent_id': self.parent_id,
             'reference_image': self.reference_image,
+            'reference_images': reference_images,
             'description': self.description,
             'user_id': self.user_id,
             'create_time': self.create_time.isoformat() if self.create_time else None,
@@ -61,28 +71,31 @@ class LocationModel:
         user_id: int,
         parent_id: Optional[int] = None,
         reference_image: Optional[str] = None,
+        reference_images: Optional[List[Dict]] = None,
         description: Optional[str] = None
     ) -> int:
         """
         Create a new location record
-        
+
         Args:
             world_id: World ID
             name: Location name
             user_id: User ID
             parent_id: Parent location ID (optional)
             reference_image: Reference image path (optional)
+            reference_images: Multiple reference images list (optional)
             description: Location description (optional)
-        
+
         Returns:
             Inserted record ID
         """
+        reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
         sql = """
-            INSERT INTO location 
-            (world_id, name, user_id, parent_id, reference_image, description)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO location
+            (world_id, name, user_id, parent_id, reference_image, reference_images, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
-        params = (world_id, name, user_id, parent_id, reference_image, description)
+        params = (world_id, name, user_id, parent_id, reference_image, reference_images_str, description)
         
         try:
             record_id = execute_insert(sql, params)
@@ -99,26 +112,29 @@ class LocationModel:
         user_id: int,
         parent_id: Optional[int] = None,
         reference_image: Optional[str] = None,
+        reference_images: Optional[List[Dict]] = None,
         description: Optional[str] = None
     ) -> int:
         """
         Create a new location record or update if exists (based on world_id, name unique constraint)
         Uses INSERT ... ON DUPLICATE KEY UPDATE to handle race conditions
-        
+
         Returns:
             Record ID (inserted or existing)
         """
+        reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
         sql = """
-            INSERT INTO location 
-            (world_id, name, user_id, parent_id, reference_image, description)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE 
+            INSERT INTO location
+            (world_id, name, user_id, parent_id, reference_image, reference_images, description)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
                 parent_id = VALUES(parent_id),
                 reference_image = VALUES(reference_image),
+                reference_images = VALUES(reference_images),
                 description = VALUES(description),
                 user_id = VALUES(user_id)
         """
-        params = (world_id, name, user_id, parent_id, reference_image, description)
+        params = (world_id, name, user_id, parent_id, reference_image, reference_images_str, description)
         
         try:
             record_id = execute_insert(sql, params)
@@ -355,13 +371,15 @@ class LocationModel:
         Returns:
             Number of affected rows
         """
-        allowed_fields = ['world_id', 'name', 'parent_id', 'reference_image', 'description']
+        allowed_fields = ['world_id', 'name', 'parent_id', 'reference_image', 'reference_images', 'description']
         
         update_fields = []
         params = []
         
         for field, value in kwargs.items():
             if field in allowed_fields:
+                if field == 'reference_images' and isinstance(value, list):
+                    value = json.dumps(value, ensure_ascii=False)
                 update_fields.append(f"{field} = %s")
                 params.append(value)
         

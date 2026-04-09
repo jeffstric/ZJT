@@ -2366,11 +2366,94 @@ body {
     max-height: 90vh;
 }
 
+.image-preview-dialog .modal-body {
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
 .full-preview-image {
     max-width: 100%;
-    max-height: 70vh;
+    max-height: 55vh;
     border-radius: 8px;
     box-shadow: var(--shadow-lg);
+}
+
+/* 缩略图网格 */
+#image-preview-thumbnails {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.thumbnail-item {
+    width: 80px;
+    text-align: center;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.2s, transform 0.2s;
+}
+
+.thumbnail-item:hover {
+    opacity: 1;
+    transform: scale(1.05);
+}
+
+.thumbnail-item.active {
+    opacity: 1;
+}
+
+.thumbnail-item img {
+    width: 70px;
+    height: 70px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 2px solid transparent;
+}
+
+.thumbnail-item.active img {
+    border-color: #007bff;
+}
+
+.thumbnail-label {
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
+    white-space: nowrap;
+}
+
+/* 缩略图生成按钮 */
+.thumbnail-item {
+    position: relative;
+}
+
+.thumbnail-generate-btn {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #8b5cf6;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.thumbnail-item:hover .thumbnail-generate-btn {
+    opacity: 1;
+}
+
+.thumbnail-generate-btn:hover {
+    background: #7c3aed;
+}
+
+.thumbnail-generate-btn:disabled {
+    background: #a78bfa;
+    cursor: not-allowed;
 }
 
 /* 图片上传容器 */
