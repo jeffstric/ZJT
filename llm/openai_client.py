@@ -118,7 +118,12 @@ class OpenAIClient(BaseLLMClient):
                     "input_token": completion.usage.prompt_tokens or 0,
                     "output_token": completion.usage.completion_tokens or 0,
                     "total_token": completion.usage.total_tokens or 0,
+                    "cache_read_token": 0
                 }
+                # Qwen/OpenAI: prompt_tokens_details.cached_tokens
+                if hasattr(completion.usage, 'prompt_tokens_details') and completion.usage.prompt_tokens_details:
+                    if hasattr(completion.usage.prompt_tokens_details, 'cached_tokens'):
+                        usage_info["cache_read_token"] = completion.usage.prompt_tokens_details.cached_tokens or 0
 
             logger.info(f"OpenAI API response: content_length={len(content)}, tool_calls={len(tool_calls) if tool_calls else 0}")
 
