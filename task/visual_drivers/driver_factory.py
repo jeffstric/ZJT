@@ -2,7 +2,7 @@
 视频驱动工厂类
 根据驱动类型或驱动名称创建相应的驱动实例
 """
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, Union
 import logging
 from .base_video_driver import BaseVideoDriver
 from .exceptions import DriverConfigError
@@ -50,6 +50,9 @@ class VideoDriverFactory:
         cls._registered_drivers[driver_name] = driver_class
         logger.debug(f"Registered video driver: {driver_name} -> {driver_class.__name__}")
     
+    # 存储最近一次创建驱动失败的原因（用于返回更友好的错误信息）
+    _last_create_error: Optional[Dict[str, Any]] = None
+
     @classmethod
     def create_driver_by_type(cls, driver_type: int, user_id: Optional[int] = None) -> Optional[BaseVideoDriver]:
         """
@@ -67,22 +70,37 @@ class VideoDriverFactory:
             2. 业务驱动名称 -> 实现驱动名称（通过 DRIVER_IMPLEMENTATION_MAPPING 或用户偏好）
             3. 实现驱动名称 -> 驱动类实例（通过 _registered_drivers）
         """
+        # 清除上次错误
+        cls._last_create_error = None
+
         # 从统一配置获取任务配置
         config = UnifiedConfigRegistry.get_by_id(driver_type)
         if not config:
             logger.error(f"Unsupported driver type: {driver_type}")
             logger.info(f"Supported types: {[c.id for c in UnifiedConfigRegistry.get_all()]}")
+            cls._last_create_error = {
+                "reason": "UNSUPPORTED_TYPE",
+                "message": f"不支持的任务类型: {driver_type}"
+            }
             return None
 
         business_driver_name = config.driver_name
         if not business_driver_name:
             logger.error(f"No driver configured for task type: {driver_type}")
+            cls._last_create_error = {
+                "reason": "NO_DRIVER",
+                "message": f"任务类型 {driver_type} 未配置驱动"
+            }
             return None
 
         # 获取实现驱动名称（考虑用户偏好）和驱动参数
         implementation_driver_name, driver_params = cls._get_implementation_for_user(driver_type, user_id, config)
         if not implementation_driver_name:
             logger.error(f"No implementation configured for business driver: {business_driver_name}")
+            cls._last_create_error = {
+                "reason": "NO_IMPLEMENTATION",
+                "message": f"驱动 {business_driver_name} 未配置实现方"
+            }
             return None
 
         # 第三层：根据实现驱动名称获取驱动类
@@ -90,6 +108,10 @@ class VideoDriverFactory:
         if not driver_class:
             logger.error(f"Driver implementation not registered: {implementation_driver_name}")
             logger.info(f"Registered implementations: {list(cls._registered_drivers.keys())}")
+            cls._last_create_error = {
+                "reason": "NOT_REGISTERED",
+                "message": f"驱动 {implementation_driver_name} 未注册"
+            }
             return None
 
         # 创建驱动实例
@@ -100,10 +122,33 @@ class VideoDriverFactory:
         except DriverConfigError as e:
             logger.warning(f"Driver {implementation_driver_name} 配置不完整: {e.message}")
             logger.info(f"缺少配置: {', '.join(e.missing_configs)}")
+            cls._last_create_error = {
+                "reason": "CONFIG_MISSING",
+                "message": f"驱动配置不完整，缺少: {', '.join(e.missing_configs)}",
+                "missing_configs": e.missing_configs
+            }
             return None
         except Exception as e:
             logger.error(f"Failed to create driver instance for {implementation_driver_name}: {str(e)}")
+            cls._last_create_error = {
+                "reason": "CREATE_FAILED",
+                "message": f"驱动创建失败: {str(e)}"
+            }
             return None
+
+    @classmethod
+    def get_last_create_error(cls) -> Optional[Dict[str, Any]]:
+        """
+        获取最近一次创建驱动失败的详细原因
+
+        Returns:
+            Dict 包含:
+                - reason: 错误类型 (UNSUPPORTED_TYPE, NO_DRIVER, NO_IMPLEMENTATION, NOT_REGISTERED, CONFIG_MISSING, CREATE_FAILED)
+                - message: 用户友好的错误信息
+                - missing_configs: 缺少的配置项列表（仅 CONFIG_MISSING 时存在）
+            如果没有错误则返回 None
+        """
+        return cls._last_create_error
 
     @classmethod
     def get_implementation_for_user(cls, task_type: int, user_id: Optional[int] = None) -> Optional[str]:

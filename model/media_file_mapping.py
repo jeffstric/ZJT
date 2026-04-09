@@ -382,3 +382,46 @@ class MediaFileMappingModel:
         except Exception as e:
             logger.error(f"Failed to get media_file_mapping by entity_type={entity_type}, source_id={source_id}: {e}")
             raise
+
+    @staticmethod
+    def is_referenced(mapping_id: int) -> bool:
+        """
+        Check if a media_file_mapping record is referenced by ai_tools table
+
+        Args:
+            mapping_id: Media file mapping ID
+
+        Returns:
+            True if referenced, False otherwise
+        """
+        sql = "SELECT COUNT(*) as cnt FROM ai_tools WHERE media_mapping_id = %s"
+
+        try:
+            result = execute_query(sql, (mapping_id,), fetch_one=True)
+            return result['cnt'] > 0 if result else False
+        except Exception as e:
+            logger.error(f"Failed to check reference for mapping_id {mapping_id}: {e}")
+            raise
+
+    @staticmethod
+    def clear_ai_tools_reference(mapping_id: int) -> int:
+        """
+        Clear ai_tools table reference to a media_file_mapping record
+        Sets media_mapping_id to NULL for all ai_tools records referencing this mapping
+
+        Args:
+            mapping_id: Media file mapping ID
+
+        Returns:
+            Number of affected rows
+        """
+        sql = "UPDATE ai_tools SET media_mapping_id = NULL WHERE media_mapping_id = %s"
+
+        try:
+            affected_rows = execute_update(sql, (mapping_id,))
+            if affected_rows > 0:
+                logger.info(f"Cleared ai_tools reference to mapping_id {mapping_id}, affected rows: {affected_rows}")
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to clear ai_tools reference for mapping_id {mapping_id}: {e}")
+            raise

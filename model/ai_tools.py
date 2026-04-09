@@ -378,6 +378,14 @@ class AIToolsModel:
                 ext = os.path.splitext(result_url)[1].lower()
                 media_type = get_mime_type_from_extension(ext)
 
+                # 获取文件大小
+                file_size = None
+                try:
+                    if os.path.exists(local_path):
+                        file_size = os.path.getsize(local_path)
+                except Exception as e:
+                    logger.warning(f"无法获取文件 {local_path} 的大小: {e}")
+
                 # 创建映射记录
                 mapping_id = MediaFileMappingModel.create(
                     user_id=kwargs.get('user_id'),
@@ -388,7 +396,7 @@ class AIToolsModel:
                     source_id=record_id,
                     media_type=media_type,
                     original_url=None,
-                    file_size=None
+                    file_size=file_size
                 )
 
                 # 触发异步 CDN 上传
@@ -504,6 +512,14 @@ class AIToolsModel:
                 ext = os.path.splitext(result_url)[1].lower()
                 media_type = get_mime_type_from_extension(ext)
 
+                # 获取文件大小
+                file_size = None
+                try:
+                    if os.path.exists(local_path):
+                        file_size = os.path.getsize(local_path)
+                except Exception as e:
+                    logger.warning(f"无法获取文件 {local_path} 的大小: {e}")
+
                 # 创建映射记录
                 mapping_id = MediaFileMappingModel.create(
                     user_id=kwargs.get('user_id') or tool.user_id,
@@ -514,7 +530,7 @@ class AIToolsModel:
                     source_id=record_id,
                     media_type=media_type,
                     original_url=None,
-                    file_size=None
+                    file_size=file_size
                 )
 
                 # 触发异步 CDN 上传
