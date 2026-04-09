@@ -20,7 +20,8 @@ def calculate_computing_power_from_tokens(
     cache_creation: int,
     user_id: int,
     vendor_id: int,
-    model_id: int
+    model_id: int,
+    raw_input_token: int = 0
 ) -> tuple:
     """
     根据token计算需要扣除的算力
@@ -36,17 +37,21 @@ def calculate_computing_power_from_tokens(
         user_id: 用户ID
         vendor_id: 供应商ID
         model_id: 模型ID
+        raw_input_token: 原始输入token数，用于分段计费选择
 
     Returns:
         (需要扣除的算力, 备注)
     """
-    # 获取供应商模型配置
+    # 获取供应商模型配置（支持分段计费）
     vendor_model = None
     if vendor_id > 0 and model_id > 0:
         try:
-            vendor_model = VendorModelModel.get_by_vendor_model(vendor_id, model_id)
+            # 使用 raw_input_token 选择合适的计费档位
+            vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
+                vendor_id, model_id, raw_input_token
+            )
         except Exception as e:
-            logger.error(f"获取供应商模型配置失败(vendor:{vendor_id}, model:{model_id}): {e}")
+            logger.error(f"获取供应商模型配置失败(vendor:{vendor_id}, model:{model_id}, raw_input:{raw_input_token}): {e}")
 
     if not vendor_model:
         logger.warning(f"用户 {user_id} 缺少供应商模型配置，无法计算算力")
@@ -137,7 +142,8 @@ def process_token_logs():
                 cache_creation=token_log.cache_creation or 0,
                 user_id=token_log.user_id,
                 vendor_id=token_log.vendor_id or 0,
-                model_id=token_log.model_id or 0
+                model_id=token_log.model_id or 0,
+                raw_input_token=token_log.raw_input_token or 0
             )
 
             # 如果扣减为0，只标记为已处理，不生成算力日志
