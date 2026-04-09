@@ -5,7 +5,7 @@ from .base_agent import BaseAgent
 from .expert_agent import ExpertAgent
 from .summarizer import ConversationSummarizer
 from .task_manager import TaskManager, AgentTask
-from llm.gemini_client import get_gemini_client
+from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 import json
@@ -31,9 +31,6 @@ class PMAgent(BaseAgent):
         max_total_failures: int = 7
     ):
         agent_id = f"pm_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # 使用公共的 Gemini 客户端
-        self.gemini_client = get_gemini_client()
 
         # 初始化技能加载器
         self.skill_loader = SkillLoader()
@@ -204,8 +201,8 @@ class PMAgent(BaseAgent):
                 # 获取工具定义
                 tool_definitions = self._get_tool_definitions()
 
-                # 使用公共的 Gemini 客户端调用 API
-                response = self.gemini_client.call_api(
+                # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
+                response = get_llm_client(self.model).call_api(
                     model=self.model,
                     messages=messages,
                     tools=tool_definitions,

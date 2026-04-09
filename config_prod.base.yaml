@@ -83,7 +83,6 @@ llm:
   qwen:
     api_key: ""
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    model: "qwen-plus"
   google:
     api_key: ""
     gemini_base_url: "https://api.jiekou.ai"
