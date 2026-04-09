@@ -81,6 +81,7 @@ class BaseLLMClient(ABC):
                     "output_token": output_token,
                     "cache_creation": 0,
                     "cache_read": usage.get("cache_read_token", 0),
+                    "raw_input_token": input_token,
                     "model_id": model_id,
                     "vendor_id": vendor_id
                 }
