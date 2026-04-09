@@ -7,7 +7,7 @@ import logging
 from model.computing_power import ComputingPowerModel
 from model.computing_power_log import ComputingPowerLogModel
 from model.token_log import TokenLogModel
-from model.uncalculated_token import UncalculatedTokenModel
+from model.uncalculated_power import UncalculatedPowerModel
 from model.vendor_model import VendorModelModel
 
 logger = logging.getLogger(__name__)
@@ -24,51 +24,22 @@ def calculate_computing_power_from_tokens(
 ) -> tuple:
     """
     根据token计算需要扣除的算力
-    
+
+    使用 1/100 算力为最小刻度，累积到 uncalculated_power 表。
+    累积满 100（即 1 算力）时扣减。
+
     Args:
         input_token: 输入token数
         output_token: 输出token数
         cache_read: 缓存读取数
-        cache_creation: 缓存创建数
+        cache_creation: 缓存创建数（暂未使用）
         user_id: 用户ID
         vendor_id: 供应商ID
         model_id: 模型ID
-        
+
     Returns:
         (需要扣除的算力, 备注)
     """
-    # 保存原始token值
-    original_input = input_token
-    original_output = output_token
-    original_cache = cache_read
-    
-    # 获取未计算token
-    uncalculated_input = 0
-    uncalculated_output = 0
-    uncalculated_cache_read = 0
-    uncalculated_token = None
-    
-    try:
-        uncalculated_token = UncalculatedTokenModel.get_by_user_id(user_id)
-    except Exception as e:
-        logger.error(f"获取用户 {user_id} 未计算token失败: {e}")
-    
-    if uncalculated_token:
-        if uncalculated_token.uncalculated_input_token is not None:
-            uncalculated_input = uncalculated_token.uncalculated_input_token
-            input_token += uncalculated_token.uncalculated_input_token
-        if uncalculated_token.uncalculated_output_token is not None:
-            uncalculated_output = uncalculated_token.uncalculated_output_token
-            output_token += uncalculated_token.uncalculated_output_token
-        if uncalculated_token.uncalculated_cache_read is not None:
-            uncalculated_cache_read = uncalculated_token.uncalculated_cache_read
-            cache_read += uncalculated_token.uncalculated_cache_read
-    
-    # 计算聚合后的token值
-    aggregated_input = input_token
-    aggregated_output = output_token
-    aggregated_cache = cache_read
-    
     # 获取供应商模型配置
     vendor_model = None
     if vendor_id > 0 and model_id > 0:
@@ -76,11 +47,11 @@ def calculate_computing_power_from_tokens(
             vendor_model = VendorModelModel.get_by_vendor_model(vendor_id, model_id)
         except Exception as e:
             logger.error(f"获取供应商模型配置失败(vendor:{vendor_id}, model:{model_id}): {e}")
-    
+
     if not vendor_model:
         logger.warning(f"用户 {user_id} 缺少供应商模型配置，无法计算算力")
         return 0, ""
-    
+
     # 验证阈值配置
     if not vendor_model.input_token_threshold or vendor_model.input_token_threshold <= 0:
         logger.warning(f"供应商模型缺少有效输入token阈值(vendor:{vendor_id}, model:{model_id})")
@@ -91,43 +62,51 @@ def calculate_computing_power_from_tokens(
     if not vendor_model.cache_read_threshold or vendor_model.cache_read_threshold <= 0:
         logger.warning(f"供应商模型缺少有效缓存读取阈值(vendor:{vendor_id}, model:{model_id})")
         return 0, ""
-    
-    # 计算扣除算力和剩余token
-    remaining_input = input_token % vendor_model.input_token_threshold
-    deduct_input = input_token // vendor_model.input_token_threshold
-    
-    remaining_output = output_token % vendor_model.output_token_threshold
-    deduct_output = output_token // vendor_model.output_token_threshold
-    
-    remaining_cache = cache_read % vendor_model.cache_read_threshold
-    deduct_cache = cache_read // vendor_model.cache_read_threshold
-    
-    total_deduct = deduct_input + deduct_output + deduct_cache
-    
-    # 更新或创建未计算token记录
-    update_needed = (uncalculated_token is not None or 
-                     remaining_input != 0 or remaining_output != 0 or remaining_cache != 0)
-    
-    if update_needed:
-        try:
-            if uncalculated_token:
-                UncalculatedTokenModel.update(user_id, remaining_input, remaining_output, remaining_cache)
-            else:
-                if remaining_input != 0 or remaining_output != 0 or remaining_cache != 0:
-                    UncalculatedTokenModel.create(user_id, remaining_input, remaining_output, remaining_cache)
-        except Exception as e:
-            logger.error(f"更新/创建用户 {user_id} 未计算token失败: {e}")
-    
+
+    # 计算本次 token_log 的算力成本（浮点）
+    cost_power = (
+        input_token / vendor_model.input_token_threshold
+        + output_token / vendor_model.output_token_threshold
+        + cache_read / vendor_model.cache_read_threshold
+    )
+    cost_hundredths = round(cost_power * 100)
+
+    # 获取已有的未扣减算力
+    existing_power = 0
+    uncalculated = None
+    try:
+        uncalculated = UncalculatedPowerModel.get_by_user_id(user_id)
+        if uncalculated:
+            existing_power = uncalculated.accumulated_power
+    except Exception as e:
+        logger.error(f"获取用户 {user_id} 未扣减算力失败: {e}")
+
+    # 聚合
+    total = existing_power + cost_hundredths
+
+    # 计算扣减
+    deduct_count = total // 100
+    remainder = total % 100
+
+    # 存储剩余到 uncalculated_power
+    try:
+        if remainder > 0 or uncalculated:
+            UncalculatedPowerModel.upsert(user_id, remainder)
+    except Exception as e:
+        logger.error(f"更新用户 {user_id} 未扣减算力失败: {e}")
+
     # 构建详细note
     note = (
-        f"原始token(输入:{original_input}, 输出:{original_output}, 缓存读取:{original_cache}) | "
-        f"未计算token(输入:{uncalculated_input}, 输出:{uncalculated_output}, 缓存读取:{uncalculated_cache_read}) | "
-        f"聚合后token(输入:{aggregated_input}, 输出:{aggregated_output}, 缓存读取:{aggregated_cache}) | "
-        f"剩余token(输入:{remaining_input}, 输出:{remaining_output}, 缓存读取:{remaining_cache})"
+        f"token(输入:{input_token}, 输出:{output_token}, 缓存读取:{cache_read}) | "
+        f"阈值(输入:{vendor_model.input_token_threshold}, 输出:{vendor_model.output_token_threshold}, "
+        f"缓存读取:{vendor_model.cache_read_threshold}) | "
+        f"本次算力成本:{cost_power:.4f}({cost_hundredths}百分位) | "
+        f"已有累积:{existing_power}百分位 → 总计:{total}百分位 | "
+        f"扣减:{deduct_count}算力, 剩余:{remainder}百分位"
     )
     logger.info(note)
-    
-    return total_deduct, note
+
+    return deduct_count, note
 
 
 def process_token_logs():
