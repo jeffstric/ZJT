@@ -44,14 +44,6 @@ def upgrade() -> None:
             VALUES ('prod', 'llm.qwen.base_url', 'https://dashscope.aliyuncs.com/compatible-mode/v1', 'string', 'Qwen API 基础URL', 1, 0)
         """))
 
-    # llm.qwen.model
-    result = conn.execute(text("SELECT COUNT(*) FROM system_config WHERE config_key = 'llm.qwen.model'"))
-    if result.scalar() == 0:
-        op.execute(text("""
-            INSERT INTO system_config (env, config_key, config_value, value_type, description, editable, is_sensitive)
-            VALUES ('prod', 'llm.qwen.model', 'qwen-plus', 'string', 'Qwen 默认模型名称', 1, 0)
-        """))
-
 
 def downgrade() -> None:
     """

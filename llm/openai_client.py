@@ -35,7 +35,7 @@ class OpenAIClient(BaseLLMClient):
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict]] = None,
         temperature: float = 0.7,
-        max_tokens: int = 65536,
+        max_tokens: int = 64000,
         auth_token: str = None,
         vendor_id: int = None,
         model_id: int = None

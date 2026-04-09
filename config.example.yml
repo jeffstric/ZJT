@@ -129,7 +129,6 @@ llm:
   qwen:
     api_key: "sk-f3694dd0XXXX"
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    model: "qwen-plus"
   google:
     api_key: "sk_xxxxx"
     gemini_base_url: "https://api.jiekou.ai"

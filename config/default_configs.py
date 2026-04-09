@@ -391,15 +391,6 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False,
         'quick_config': True
     },
-    {
-        'key': 'llm.qwen.model',
-        'value_type': 'string',
-        'description': 'Qwen 默认模型名称',
-        'editable': True,
-        'is_sensitive': False,
-        'quick_config': True
-    },
-
     # ==================== 七牛云存储配置 ====================
     {
         'key': 'file_storage.qiniu.access_key',
