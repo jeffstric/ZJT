@@ -2132,7 +2132,24 @@
                     return;
                 }
 
-                data.models.forEach(model => {
+                // 按指定顺序排序模型：qwen3.5 > qwen3.6 > flash 3.0 > flash 3.5 > gemini-3-flash > gemini-3.1-flash-lite > 其他
+                const sortOrder = ['qwen3.5', 'qwen3.6', 'flash-3.0', 'flash-3.5', 'flash', 'gemini-3-flash', 'gemini-3.1-flash-lite'];
+                const sortedModels = [...data.models].sort((a, b) => {
+                    const nameA = (a.model_name || a.name || '').toLowerCase();
+                    const nameB = (b.model_name || b.name || '').toLowerCase();
+                    // 使用 startsWith 精确匹配，避免 gemini-3.1-flash-lite 被 gemini-3-flash 错误匹配
+                    const indexA = sortOrder.findIndex(k => nameA.startsWith(k.toLowerCase()));
+                    const indexB = sortOrder.findIndex(k => nameB.startsWith(k.toLowerCase()));
+                    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                    if (indexA !== -1) return -1;
+                    if (indexB !== -1) return 1;
+                    return 0;
+                });
+
+                // 记录排序后的第一个作为默认选中
+                let firstEnabledModel = null;
+
+                sortedModels.forEach(model => {
                     const option = document.createElement('option');
                     // 兼容后端返回的 model_name 或 name 字段
                     const modelName = model.model_name || model.name || '';
