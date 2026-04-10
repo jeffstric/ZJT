@@ -5072,8 +5072,11 @@
         
         videoModelSelect.innerHTML = '';
         
+        // 从后端配置获取第一个视频模型作为默认值
+        let firstVideoModelValue = 'wan22';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+          if(options.length > 0) firstVideoModelValue = options[0].value;
           options.forEach(opt => {
             const optEl = document.createElement('option');
             optEl.value = opt.value;
@@ -5098,14 +5101,14 @@
           });
         }
         
-        // 恢复之前的选择
-        const currentValue = node.data.videoModel || 'wan22';
+        // 恢复之前的选择，默认使用后端配置的第一个模型（与分镜组节点和图生图片节点一致）
+        const currentValue = node.data.videoModel || firstVideoModelValue;
         const selectedOption = videoModelSelect.querySelector(`option[value="${currentValue}"]`);
         if(selectedOption) {
           videoModelSelect.value = currentValue;
         } else {
-          videoModelSelect.value = 'wan22';
-          node.data.videoModel = 'wan22';
+          videoModelSelect.value = firstVideoModelValue;
+          node.data.videoModel = firstVideoModelValue;
         }
       }
       

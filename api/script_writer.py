@@ -2812,3 +2812,35 @@ async def delete_staging_file(
             'success': False,
             'error': f'删除失败: {str(e)}'
         }, status_code=500)
+
+
+# ==================== 配置检查 API ====================
+@router.get("/config/check")
+async def check_configs(
+    keys: str = QueryParam(..., description="配置键列表，逗号分隔，如 'llm.qwen.api_key,runninghub.api_key'"),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    检查配置是否已配置（value 非空）
+
+    用于前端判断某些功能是否可用（如 qwen 模型需要配置 api_key 才能选择）
+    """
+    # 验证token
+    token = authorization.replace('Bearer ', '') if authorization else None
+    if not token:
+        return JSONResponse({"success": False, "error": "未授权"}, status_code=401)
+
+    key_list = [k.strip() for k in keys.split(',')]
+    results = {}
+
+    for key in key_list:
+        parts = key.split('.')
+        if len(parts) >= 2:
+            section = parts[0]
+            sub_keys = parts[1:]
+            value = get_dynamic_config_value(section, *sub_keys, default="")
+            results[key] = bool(value and value.strip())
+        else:
+            results[key] = False
+
+    return {"success": True, "results": results}
