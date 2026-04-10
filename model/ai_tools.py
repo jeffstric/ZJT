@@ -329,7 +329,7 @@ class AIToolsModel:
         """
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images'
+            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'media_mapping_id'
         ]
         
         update_fields = []
