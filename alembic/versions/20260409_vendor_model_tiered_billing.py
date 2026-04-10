@@ -57,40 +57,48 @@ def upgrade() -> None:
         if set(uc.get('column_names', [])) == {'vendor_id', 'model_id'}:
             op.drop_constraint(uc['name'], 'vendor_model', type_='unique')
 
-    # 4. 更新现有 gemini-3.1-pro-preview (vendor_id=1, model_id=2) 为高档
+    # 4. 更新现有 gemini-3.1-pro-preview (jiekou) 为高档
     op.execute("""
-        UPDATE vendor_model
-        SET input_token_threshold = 1500,
-            out_token_threshold = 340,
-            cache_read_threshold = 15000,
-            raw_token_threshold = NULL
-        WHERE vendor_id = 1 AND model_id = 2
+        UPDATE vendor_model vm
+        JOIN vendor v ON vm.vendor_id = v.id
+        JOIN model m ON vm.model_id = m.id
+        SET vm.input_token_threshold = 1500,
+            vm.out_token_threshold = 340,
+            vm.cache_read_threshold = 15000,
+            vm.raw_token_threshold = NULL
+        WHERE v.vendor_name = 'jiekou' AND m.model_name = 'gemini-3.1-pro-preview'
     """)
 
     # 5. 插入 gemini-3.1-pro-preview 低档记录（≤204K tokens）
     op.execute("""
         INSERT INTO vendor_model
             (vendor_id, model_id, input_token_threshold, out_token_threshold, cache_read_threshold, raw_token_threshold)
-        VALUES
-            (1, 2, 3000, 510, 30000, 204800)
+        SELECT v.id, m.id, 3000, 510, 30000, 204800
+        FROM vendor v, model m
+        WHERE v.vendor_name = 'jiekou' AND m.model_name = 'gemini-3.1-pro-preview'
     """)
 
 
 def downgrade() -> None:
     # 删除低档记录
     op.execute("""
-        DELETE FROM vendor_model
-        WHERE vendor_id = 1 AND model_id = 2 AND raw_token_threshold = 204800
+        DELETE vm FROM vendor_model vm
+        JOIN vendor v ON vm.vendor_id = v.id
+        JOIN model m ON vm.model_id = m.id
+        WHERE v.vendor_name = 'jiekou' AND m.model_name = 'gemini-3.1-pro-preview'
+          AND vm.raw_token_threshold = 204800
     """)
 
     # 恢复原始阈值
     op.execute("""
-        UPDATE vendor_model
-        SET input_token_threshold = 1500,
-            out_token_threshold = 340,
-            cache_read_threshold = 15000,
-            raw_token_threshold = NULL
-        WHERE vendor_id = 1 AND model_id = 2
+        UPDATE vendor_model vm
+        JOIN vendor v ON vm.vendor_id = v.id
+        JOIN model m ON vm.model_id = m.id
+        SET vm.input_token_threshold = 1500,
+            vm.out_token_threshold = 340,
+            vm.cache_read_threshold = 15000,
+            vm.raw_token_threshold = NULL
+        WHERE v.vendor_name = 'jiekou' AND m.model_name = 'gemini-3.1-pro-preview'
     """)
 
     # 恢复唯一约束

@@ -151,7 +151,7 @@ class VendorModelModel:
                FROM vendor_model
                WHERE vendor_id = %s AND model_id = %s 
                  AND (raw_token_threshold >= %s OR raw_token_threshold IS NULL)
-               ORDER BY raw_token_threshold ASC
+               ORDER BY raw_token_threshold IS NULL, raw_token_threshold ASC
                LIMIT 1"""
         try:
             row = execute_query(sql, (vendor_id, model_id, raw_input_token), fetch_one=True)

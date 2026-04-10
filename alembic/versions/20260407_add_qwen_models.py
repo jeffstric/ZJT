@@ -20,6 +20,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # 添加 aliyun vendor
+    op.execute(text("""
+        INSERT INTO `vendor` (vendor_name, created_at, note)
+        VALUES ('aliyun', NOW(), '阿里云 - 通义千问')
+    """))
+
     # 添加 qwen3.5-plus 模型
     op.execute(text("""
         INSERT INTO `model` (model_name, created_at, note)
@@ -32,22 +38,31 @@ def upgrade() -> None:
         VALUES ('qwen3.6-plus', NOW(), 'Qwen 3.6 Plus - 阿里通义千问3.6 Plus版')
     """))
 
-    # 关联到 vendor (假设 vendor_id=1 是 jiekou)
-    # qwen3.5-plus (model_id=3)
+    # 关联到 aliyun vendor，使用子查询获取正确的 vendor_id 和 model_id
+    # qwen3.5-plus
     op.execute(text("""
         INSERT INTO `vendor_model` (vendor_id, model_id, created_at, input_token_threshold, out_token_threshold, cache_read_threshold)
-        VALUES (1, 3, NOW(), 11000, 1800, 112000)
+        SELECT v.id, m.id, NOW(), 11000, 1800, 112000
+        FROM `vendor` v, `model` m
+        WHERE v.vendor_name = 'aliyun' AND m.model_name = 'qwen3.5-plus'
     """))
 
-    # qwen3.6-plus (model_id=4)
+    # qwen3.6-plus
     op.execute(text("""
         INSERT INTO `vendor_model` (vendor_id, model_id, created_at, input_token_threshold, out_token_threshold, cache_read_threshold)
-        VALUES (1, 4, NOW(), 11000, 1800, 112000)
+        SELECT v.id, m.id, NOW(), 11000, 1800, 112000
+        FROM `vendor` v, `model` m
+        WHERE v.vendor_name = 'aliyun' AND m.model_name = 'qwen3.6-plus'
     """))
 
 
 def downgrade() -> None:
-    # 删除 vendor_model 关联
-    op.execute(text("DELETE FROM `vendor_model` WHERE model_id IN (3, 4)"))
+    # 删除 vendor_model 关联（通过子查询获取 model_id）
+    op.execute(text("""
+        DELETE FROM `vendor_model`
+        WHERE model_id IN (SELECT id FROM `model` WHERE model_name IN ('qwen3.5-plus', 'qwen3.6-plus'))
+    """))
     # 删除 model
     op.execute(text("DELETE FROM `model` WHERE model_name IN ('qwen3.5-plus', 'qwen3.6-plus')"))
+    # 删除 aliyun vendor
+    op.execute(text("DELETE FROM `vendor` WHERE vendor_name = 'aliyun'"))
