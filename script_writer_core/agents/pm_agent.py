@@ -349,9 +349,14 @@ class PMAgent(BaseAgent):
         # 获取技能列表
         skill_names = expert_config["skills"]
 
+        # 使用用户选择的模型（self.model）而非配置文件中的硬编码模型
+        # 这样当用户切换模型时，Expert Agent 也会使用新模型
+        expert_model = self.model if self.model else expert_config["model"]
+        logger.info(f"{self.agent_id}: Expert {skill_name} 使用模型: {expert_model}")
+
         expert = ExpertAgent(
             skill_names=skill_names,
-            model=expert_config["model"],
+            model=expert_model,
             allowed_tools=expert_config["allowed_tools"],
             context_from_pm=context,
             file_manager=self.file_manager,

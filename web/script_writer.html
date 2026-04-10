@@ -1795,6 +1795,7 @@
                     body: JSON.stringify({
                         message,
                         auth_token: AUTH_TOKEN,
+                        model: selector?.value || '',
                         model_id: modelId
                     }),
                     signal: controller.signal

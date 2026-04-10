@@ -625,6 +625,7 @@ class SessionCreateRequest(BaseModel):
 class TaskCreateRequest(BaseModel):
     message: str
     auth_token: str = ""
+    model: Optional[str] = None
     model_id: Optional[int] = None
     vendor_id: int = 1
 
@@ -1611,8 +1612,8 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
         if not is_valid:
             return JSONResponse(error_response, status_code=401)
         
-        # 检查 model_id - 优先使用会话中保存的 model_id，如果没有则使用请求中的 model_id
-        model_id = session.model_id if hasattr(session, 'model_id') and session.model_id is not None else task_request.model_id
+        # 检查 model_id - 优先使用请求中的 model_id（前端最新选择），其次使用会话中的
+        model_id = task_request.model_id if task_request.model_id is not None else (session.model_id if hasattr(session, 'model_id') else None)
         if not model_id:
             return JSONResponse({
                 'success': False,
@@ -1626,6 +1627,16 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'success': False,
                 'error': 'model_id 必须为数字'
             }, status_code=400)
+        
+        # 强制同步模型到 pm_agent：确保切换模型后实际使用正确的 LLM client
+        # 前端传来的 model 是最新的用户选择，优先使用
+        request_model = task_request.model
+        if request_model and hasattr(session, 'pm_agent') and session.pm_agent:
+            if session.pm_agent.model != request_model:
+                logger.info(f'模型同步: pm_agent.model 从 "{session.pm_agent.model}" 切换为 "{request_model}"')
+                session.pm_agent.model = request_model
+                session.model = request_model
+                session.model_id = model_id
         
         # 检查算力是否充足
         if auth_token:
