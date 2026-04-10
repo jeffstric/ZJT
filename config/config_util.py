@@ -296,7 +296,7 @@ def get_dynamic_config_value(*keys, default: Any = None) -> Any:
     try:
         from model.system_config import SystemConfigModel
         config = SystemConfigModel.get_by_key(env, config_key)
-        if config:
+        if config and config.config_value is not None and config.config_value != '':
             value = config.get_typed_value()
             # 更新缓存
             _dynamic_config_cache[cache_key] = {
