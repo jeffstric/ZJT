@@ -5,7 +5,7 @@
 - qwen3.6-plus: 2个档位 (0-256K, >256K)
 
 Revision ID: 20260409_qwen_tiered
-Revises: 20260409_tiered_billing
+Revises: 20260407_llm_qwen_config
 Create Date: 2026-04-09
 """
 from typing import Sequence, Union
@@ -17,7 +17,7 @@ from sqlalchemy.sql import text
 
 # revision identifiers, used by Alembic.
 revision: str = '20260409_qwen_tiered'
-down_revision: Union[str, None] = '20260409_tiered_billing'
+down_revision: Union[str, None] = '20260407_llm_qwen_config'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

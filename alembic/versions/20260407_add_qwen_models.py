@@ -1,7 +1,7 @@
 """add qwen3.5-plus and qwen3.6-plus models
 
 Revision ID: 20260407_qwen_models
-Revises: 20260402_multi_ref
+Revises: 20260409_tiered_billing
 Create Date: 2026-04-07
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.sql import text
 
 # revision identifiers, used by Alembic.
 revision: str = '20260407_qwen_models'
-down_revision: Union[str, None] = '20260402_multi_ref'
+down_revision: Union[str, None] = '20260409_tiered_billing'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
