@@ -35,6 +35,68 @@
     
     // ============ 宫格提示词生成 ============
 
+    // 根据 gridModel 和 gridLayout 用户偏好，计算最终的 gridSize / gridLayout / finalModel
+    function resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel) {
+      let gridSize, gridLayout, finalModel;
+
+      // 如果用户明确选择了宫格类型，以用户选择为准
+      if(gridLayoutPref === '4') {
+        gridSize = 4;
+        gridLayout = '2x2';
+      } else if(gridLayoutPref === '9') {
+        gridSize = 9;
+        gridLayout = '3x3';
+      }
+
+      if(gridModel === 'auto') {
+        // 智能模式
+        if(gridLayoutPref === '4') {
+          finalModel = forceEnhancedModel ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image-preview';
+        } else if(gridLayoutPref === '9') {
+          finalModel = 'gemini-3-pro-image-preview';
+        } else {
+          // auto: 根据分镜数量和参考图片数量自动选择
+          if(shotCount <= 5 && !forceEnhancedModel) {
+            gridSize = 4;
+            gridLayout = '2x2';
+            finalModel = 'gemini-2.5-flash-image-preview';
+          } else {
+            gridSize = 9;
+            gridLayout = '3x3';
+            finalModel = 'gemini-3-pro-image-preview';
+          }
+        }
+      } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
+        // 标准版（但如果参考图超过5张则强制升级）
+        if(!gridLayoutPref || gridLayoutPref === 'auto') {
+          gridSize = 4;
+          gridLayout = '2x2';
+        }
+        finalModel = gridModel;
+      } else if(gridModel === 'gemini-3-pro-4grid') {
+        if(!gridLayoutPref || gridLayoutPref === 'auto') {
+          gridSize = 4;
+          gridLayout = '2x2';
+        }
+        finalModel = 'gemini-3-pro-image-preview';
+      } else if(gridModel === 'gemini-3-pro-image-preview') {
+        if(!gridLayoutPref || gridLayoutPref === 'auto') {
+          gridSize = 9;
+          gridLayout = '3x3';
+        }
+        finalModel = gridModel;
+      } else {
+        // 用户选择了其他模型（如 Seedream）
+        if(!gridLayoutPref || gridLayoutPref === 'auto') {
+          gridSize = 9;
+          gridLayout = '3x3';
+        }
+        finalModel = gridModel;
+      }
+
+      return { gridSize, gridLayout, finalModel };
+    }
+
     function buildGridPrompt(batchNodes, startIdx, gridLayout, gridSize) {
       const artStyleName = (state.style && state.style.name) ? state.style.name : '';
       const aspectRatio = state.ratio || '16:9';
@@ -176,10 +238,16 @@
                 if (result.code === 0 && result.data && Array.isArray(result.data.data) && result.data.data.length > 0) {
                   const matchedChar = result.data.data.find(c => c.name === characterName) || result.data.data[0];
                   if (matchedChar && matchedChar.reference_image) {
-                    referenceImageUrls.push(matchedChar.reference_image);
-                    promptSuffix.push(`图${imageIndex}是${characterName}`);
+                    // 优先使用用户为该角色选择的特定图片，否则使用主图
+                    const userSelectedUrl = (shotNode.data.selectedCharRefImages && shotNode.data.selectedCharRefImages[characterName]);
+                    const charRefUrl = userSelectedUrl || matchedChar.reference_image;
+                    referenceImageUrls.push(charRefUrl);
+                    const labelSuffix = userSelectedUrl && userSelectedUrl !== matchedChar.reference_image
+                      ? `的${(shotNode.data.selectedCharRefImageLabels && shotNode.data.selectedCharRefImageLabels[characterName]) || '已选择'}`
+                      : '';
+                    promptSuffix.push(`图${imageIndex}是${characterName}${labelSuffix}`);
                     imageIndex++;
-                    console.log(`[宫格生图] 收集角色参考图URL: ${characterName}`);
+                    console.log(`[宫格生图] 收集角色参考图URL: ${characterName}${labelSuffix ? '(' + labelSuffix + ')' : '(主图)'}`);
                   }
                 }
               }
@@ -201,12 +269,20 @@
             });
             if (response.ok) {
               const result = await response.json();
-              if (result.code === 0 && result.data && result.data.reference_image) {
-                referenceImageUrls.push(result.data.reference_image);
-                const locationName = result.data.name || shotData.location_name || '场景';
-                promptSuffix.push(`图${imageIndex}是${locationName}`);
-                imageIndex++;
-                console.log(`[宫格生图] 收集场景参考图URL: ${locationName}`);
+              if (result.code === 0 && result.data) {
+                const locData = result.data;
+                // 优先使用用户选择的特定图片，否则使用主图
+                const mainSceneRef = locData.reference_image;
+                const sceneRefUrl = shotNode.data.selectedSceneRefUrl || mainSceneRef;
+                if (sceneRefUrl) {
+                  referenceImageUrls.push(sceneRefUrl);
+                  const locationName = locData.name || shotData.location_name || '场景';
+                  const isCustom = shotNode.data.selectedSceneRefUrl && shotNode.data.selectedSceneRefUrl !== mainSceneRef;
+                  const angleSuffix = isCustom ? (shotNode.data.selectedSceneRefLabel || '已选角度') : '';
+                  promptSuffix.push(`图${imageIndex}是${locationName}${angleSuffix ? '(' + angleSuffix + ')' : ''}`);
+                  imageIndex++;
+                  console.log(`[宫格生图] 收集场景参考图URL: ${locationName}${isCustom ? '(已选特定角度)' : '(主图)'}`);
+                }
               }
             }
           } catch (error) {
@@ -376,11 +452,6 @@
               renderImageConnections();
               renderFirstFrameConnections();
               renderVideoConnections();
-              
-              // 如果连接涉及角色节点，更新角色卡按钮状态
-              if(fromNode.type === 'character'){
-                updateCharacterCardButtonState(state.connecting.fromId);
-              }
             }
           }
         }
@@ -1306,6 +1377,14 @@
             <div class="label">宫格生图模型</div>
             <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
           </div>
+          <div class="field field-collapsible">
+            <div class="label">宫格类型</div>
+            <select class="shot-group-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="auto">自动选择</option>
+              <option value="4">4宫格 (2x2)</option>
+              <option value="9">9宫格 (3x3)</option>
+            </select>
+          </div>
           <div class="field field-collapsible btn-row">
             <button class="mini-btn gen-btn-green shot-group-grid-btn" type="button" style="width: 100%;">宫格生图</button>
           </div>
@@ -1417,7 +1496,6 @@
             });
           } else {
             shotGroupGridModelEl.innerHTML += `
-              <option value="gemini-2.5-flash-image-preview">标准版 (4宫格)</option>
               <option value="gemini-3-pro-4grid">加强版4宫格</option>
               <option value="gemini-3-pro-image-preview">加强版9宫格</option>
             `;
@@ -1431,6 +1509,18 @@
           applyDriverStatusToSelect(shotGroupGridModelEl);
           shotGroupGridModelEl.addEventListener('change', () => {
             node.data.gridModel = shotGroupGridModelEl.value;
+          });
+        }
+
+        // 宫格类型选择器
+        const shotGroupGridLayoutEl = nodeBody.querySelector('.shot-group-grid-layout');
+        if(shotGroupGridLayoutEl) {
+          if(!node.data.gridLayout){
+            node.data.gridLayout = 'auto';
+          }
+          shotGroupGridLayoutEl.value = node.data.gridLayout;
+          shotGroupGridLayoutEl.addEventListener('change', () => {
+            node.data.gridLayout = shotGroupGridLayoutEl.value;
           });
         }
 
@@ -2184,10 +2274,6 @@
         const toNode = state.nodes.find(n => n.id === conn.to);
         
         // 如果删除的连接涉及角色节点，更新角色卡按钮状态
-        if(fromNode && fromNode.type === 'character' && typeof updateCharacterCardButtonState === 'function'){
-          updateCharacterCardButtonState(conn.from);
-        }
-        
         // 如果是分镜节点连接到图片节点，或图片节点连接到分镜节点
         if(fromNode && fromNode.type === 'shot_frame' && fromNode.updatePreview){
           fromNode.updatePreview();
@@ -3963,12 +4049,6 @@
           model: defaultImageModel,
           drawCount: 1,
           project_id: null,
-          camera: {
-            yaw: 0,
-            dolly: 0,
-            pitch: 0,
-            modified: { yaw: false, dolly: false, pitch: false }
-          }
         }
       };
       state.nodes.push(node);
@@ -4028,64 +4108,8 @@
               <option value="4:3">横屏 (4:3)</option>
             </select>
           </div>
-          <div class="field field-collapsible camera-control-section">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div class="label" style="margin: 0;">相机控制</div>
-              <button class="mini-btn camera-control-toggle-btn" type="button" style="font-size: 11px; padding: 4px 8px;">展开</button>
-            </div>
-            <div class="camera-control-content" style="display: none; flex-direction: column; gap: 12px; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; margin-top: 4px;">
-              <div class="camera-param-row" data-param="yaw">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <label style="font-size: 11px; font-weight: 600; color: #374151;">左右旋转 (Yaw)</label>
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="number" class="camera-input image-camera-yaw" value="0" min="-90" max="90" step="1" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
-                    <span style="font-size: 11px; color: #6b7280;">°</span>
-                    <button type="button" class="camera-reset-btn image-camera-reset-yaw" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
-                  </div>
-                </div>
-                <input type="range" class="camera-slider image-camera-yaw-slider" min="-90" max="90" step="1" value="0" style="width: 100%;" />
-                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
-                  <span>-90° (左侧)</span>
-                  <span>0° (正面)</span>
-                  <span>+90° (右侧)</span>
-                </div>
-              </div>
-              <div class="camera-param-row" data-param="dolly">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <label style="font-size: 11px; font-weight: 600; color: #374151;">镜头距离 (Dolly)</label>
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="number" class="camera-input image-camera-dolly" value="0" min="0" max="10" step="0.5" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
-                    <button type="button" class="camera-reset-btn image-camera-reset-dolly" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
-                  </div>
-                </div>
-                <input type="range" class="camera-slider image-camera-dolly-slider" min="0" max="10" step="0.5" value="0" style="width: 100%;" />
-                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
-                  <span>0 (远景)</span>
-                  <span>5 (中景)</span>
-                  <span>10 (特写)</span>
-                </div>
-              </div>
-              <div class="camera-param-row" data-param="pitch">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <label style="font-size: 11px; font-weight: 600; color: #374151;">垂直角度 (Pitch)</label>
-                  <div style="display: flex; align-items: center; gap: 6px;">
-                    <input type="number" class="camera-input image-camera-pitch" value="0" min="-60" max="60" step="1" style="width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 11px; text-align: center;" />
-                    <span style="font-size: 11px; color: #6b7280;">°</span>
-                    <button type="button" class="camera-reset-btn image-camera-reset-pitch" style="padding: 4px 8px; font-size: 10px; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #6b7280; cursor: pointer;">重置</button>
-                  </div>
-                </div>
-                <input type="range" class="camera-slider image-camera-pitch-slider" min="-60" max="60" step="1" value="0" style="width: 100%;" />
-                <div style="display: flex; justify-content: space-between; font-size: 10px; color: #9ca3af; margin-top: 2px;">
-                  <span>-60° (仰视)</span>
-                  <span>0° (平视)</span>
-                  <span>+60° (俯视)</span>
-                </div>
-              </div>
-              <div style="margin-top: 8px;">
-                <label style="display: block; font-size: 11px; font-weight: 600; color: #374151; margin-bottom: 6px;">3D 预览</label>
-                <canvas class="camera-preview-canvas image-camera-canvas" width="200" height="150" style="width: 100%; max-width: 200px; height: 150px; border: 1px solid #e5e7eb; border-radius: 4px; background: #ffffff;"></canvas>
-              </div>
-            </div>
+          <div class="field field-collapsible">
+            <button class="mini-btn image-camera-control-btn" type="button" style="width:100%;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;">相机控制</button>
           </div>
           <div class="field field-collapsible">
             <div class="btn-row" style="display: flex; gap: 8px;">
@@ -4321,6 +4345,7 @@
       const genMenu = el.querySelector('.gen-menu');
       const confirmFieldEl = el.querySelector('.image-confirm-field');
       const confirmShotBtn = el.querySelector('.image-confirm-shot-btn');
+      const cameraControlBtn = el.querySelector('.image-camera-control-btn');
 
       // 动态填充图片模型选项（从 TaskConfig 获取）
       let firstImageModelValue = 'gemini';
@@ -4432,7 +4457,9 @@
           const imageUrl = node.data.url || node.data.preview;
           
           if(window.imageColoringEditor && window.imageColoringEditor.open){
-            window.imageColoringEditor.open(imageUrl, id, async (result) => {
+            // Use proxied URL to avoid cross-origin canvas taint
+            const safeImageUrl = (typeof proxyImageUrl === 'function') ? proxyImageUrl(imageUrl) : imageUrl;
+            window.imageColoringEditor.open(safeImageUrl, id, async (result) => {
               try {
                 coloringBtn.disabled = true;
                 statusEl.style.display = 'block';
@@ -4598,11 +4625,7 @@
           return;
         }
         
-        // 检查是否有相机参数修改
-        const hasCameraModifications = node.data.camera && node.data.camera.modified && 
-          (node.data.camera.modified.yaw || node.data.camera.modified.dolly || node.data.camera.modified.pitch);
-        
-        if(!node.data.prompt && !hasCameraModifications){
+        if(!node.data.prompt){
           statusEl.style.display = 'block';
           statusEl.style.color = '#dc2626';
           statusEl.textContent = '请先输入编辑提示词或调整相机参数';
@@ -4621,15 +4644,7 @@
           }
 
           let finalPrompt = node.data.prompt || '';
-          
-          // 添加相机视角描述
-          if(node.data.camera && typeof convertCameraToPrompt === 'function'){
-            const cameraDesc = convertCameraToPrompt(node.data.camera);
-            if(cameraDesc){
-              finalPrompt = `${finalPrompt}\n\n视角描述：${cameraDesc}`;
-            }
-          }
-          
+
           if(state.style && state.style.name){
             finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
           }
@@ -4826,163 +4841,33 @@
         }
       });
 
-      // 相机控制事件绑定
-      const cameraYawSlider = el.querySelector('.image-camera-yaw-slider');
-      const cameraYawInput = el.querySelector('.image-camera-yaw');
-      const cameraYawReset = el.querySelector('.image-camera-reset-yaw');
-      const cameraDollySlider = el.querySelector('.image-camera-dolly-slider');
-      const cameraDollyInput = el.querySelector('.image-camera-dolly');
-      const cameraDollyReset = el.querySelector('.image-camera-reset-dolly');
-      const cameraPitchSlider = el.querySelector('.image-camera-pitch-slider');
-      const cameraPitchInput = el.querySelector('.image-camera-pitch');
-      const cameraPitchReset = el.querySelector('.image-camera-reset-pitch');
-      const cameraCanvas = el.querySelector('.image-camera-canvas');
-      const cameraControlToggleBtn = el.querySelector('.camera-control-toggle-btn');
-      const cameraControlContent = el.querySelector('.camera-control-content');
-      
-      // 初始化相机数据（强制重置为默认值）
-      node.data.camera = { 
-        yaw: 0, 
-        dolly: 0, 
-        pitch: 0,
-        modified: { yaw: false, dolly: false, pitch: false }
-      };
-      
-      // 从数据恢复相机参数
-      if(cameraYawSlider) cameraYawSlider.value = node.data.camera.yaw ?? 0;
-      if(cameraYawInput) cameraYawInput.value = node.data.camera.yaw ?? 0;
-      if(cameraDollySlider) cameraDollySlider.value = node.data.camera.dolly ?? 0;
-      if(cameraDollyInput) cameraDollyInput.value = node.data.camera.dolly ?? 0;
-      if(cameraPitchSlider) cameraPitchSlider.value = node.data.camera.pitch ?? 0;
-      if(cameraPitchInput) cameraPitchInput.value = node.data.camera.pitch ?? 0;
-      
-      function updateImageCameraPreview(){
-        if(cameraCanvas && typeof window.updateCameraPreview === 'function'){
-          window.updateCameraPreview(cameraCanvas, node.data.camera);
-        }
-      }
-      
-      // 相机控制折叠切换
-      if(cameraControlToggleBtn && cameraControlContent){
-        cameraControlToggleBtn.addEventListener('click', (e) => {
+      // 相机控制按钮：自动创建相机控制节点并连接
+      if(cameraControlBtn){
+        cameraControlBtn?.addEventListener('click', (e) => {
           e.stopPropagation();
-          const isHidden = cameraControlContent.style.display === 'none';
-          if(isHidden){
-            cameraControlContent.style.display = 'flex';
-            cameraControlToggleBtn.textContent = '收起';
-            // 展开时更新预览
-            updateImageCameraPreview();
-          } else {
-            cameraControlContent.style.display = 'none';
-            cameraControlToggleBtn.textContent = '展开';
+          if(!node.data.url && !node.data.preview){
+            showToast('请先上传或生成图片', 'warning');
+            return;
           }
+          const cameraNodeId = createCameraControlNode({
+            x: node.x + 380,
+            y: node.y,
+            checkCollision: true
+          });
+          // 自动连接: image → camera_control
+          state.connections.push({
+            id: state.nextConnId++,
+            from: node.id,
+            to: cameraNodeId
+          });
+          renderConnections();
+          renderImageConnections();
+          renderFirstFrameConnections();
+          renderMinimap();
+          showToast('已创建相机控制节点', 'success');
+          try{ autoSaveWorkflow(); } catch(err){}
         });
       }
-
-      // Yaw 滑块和输入框
-      if(cameraYawSlider){
-        cameraYawSlider.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
-          node.data.camera.yaw = value;
-          node.data.camera.modified.yaw = true;
-          if(cameraYawInput) cameraYawInput.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraYawInput){
-        cameraYawInput.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
-          node.data.camera.yaw = value;
-          node.data.camera.modified.yaw = true;
-          if(cameraYawSlider) cameraYawSlider.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraYawReset){
-        cameraYawReset.addEventListener('click', (e) => {
-          e.stopPropagation();
-          node.data.camera.yaw = 0;
-          node.data.camera.modified.yaw = false;
-          if(cameraYawSlider) cameraYawSlider.value = 0;
-          if(cameraYawInput) cameraYawInput.value = 0;
-          updateImageCameraPreview();
-        });
-      }
-      
-      // Dolly 滑块和输入框
-      if(cameraDollySlider){
-        cameraDollySlider.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
-          node.data.camera.dolly = value;
-          node.data.camera.modified.dolly = true;
-          if(cameraDollyInput) cameraDollyInput.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraDollyInput){
-        cameraDollyInput.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
-          node.data.camera.dolly = value;
-          node.data.camera.modified.dolly = true;
-          if(cameraDollySlider) cameraDollySlider.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraDollyReset){
-        cameraDollyReset.addEventListener('click', (e) => {
-          e.stopPropagation();
-          node.data.camera.dolly = 0;
-          node.data.camera.modified.dolly = false;
-          if(cameraDollySlider) cameraDollySlider.value = 0;
-          if(cameraDollyInput) cameraDollyInput.value = 0;
-          updateImageCameraPreview();
-        });
-      }
-      
-      // Pitch 滑块和输入框
-      if(cameraPitchSlider){
-        cameraPitchSlider.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
-          node.data.camera.pitch = value;
-          node.data.camera.modified.pitch = true;
-          if(cameraPitchInput) cameraPitchInput.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraPitchInput){
-        cameraPitchInput.addEventListener('input', (e) => {
-          const value = parseFloat(e.target.value);
-          if(!node.data.camera) node.data.camera = { yaw: 0, dolly: 0, pitch: 0, modified: { yaw: false, dolly: false, pitch: false } };
-          if(!node.data.camera.modified) node.data.camera.modified = { yaw: false, dolly: false, pitch: false };
-          node.data.camera.pitch = value;
-          node.data.camera.modified.pitch = true;
-          if(cameraPitchSlider) cameraPitchSlider.value = value;
-          updateImageCameraPreview();
-        });
-      }
-      if(cameraPitchReset){
-        cameraPitchReset.addEventListener('click', (e) => {
-          e.stopPropagation();
-          node.data.camera.pitch = 0;
-          node.data.camera.modified.pitch = false;
-          if(cameraPitchSlider) cameraPitchSlider.value = 0;
-          if(cameraPitchInput) cameraPitchInput.value = 0;
-          updateImageCameraPreview();
-        });
-      }
-      
-      // 初始化预览
-      updateImageCameraPreview();
 
       // 暴露更新函数给节点对象
       node.updateReferenceImages = updateReferenceImages;
@@ -5121,6 +5006,14 @@
             <select class="script-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
           </div>
           <div class="field field-collapsible">
+            <div class="label">宫格类型</div>
+            <select class="script-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="auto">自动选择</option>
+              <option value="4">4宫格 (2x2)</option>
+              <option value="9">9宫格 (3x3)</option>
+            </select>
+          </div>
+          <div class="field field-collapsible">
             <button class="gen-btn gen-btn-green script-split-grid-btn" type="button" style="border-radius: 10px; width: 100%;">拆分分镜组 + 宫格生图</button>
             <div class="gen-meta script-grid-status" style="display:none; margin-top: 8px;"></div>
           </div>
@@ -5233,6 +5126,8 @@
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
           options.forEach(opt => {
+            // 过滤掉不支持宫格生图的模型
+            if (!opt.supportsGridImage) return;
             const optEl = document.createElement('option');
             optEl.value = opt.value;
             optEl.textContent = opt.label;
@@ -5240,7 +5135,6 @@
           });
         } else {
           gridModelSelect.innerHTML += `
-            <option value="gemini">标准版 (4宫格)</option>
             <option value="gemini_pro">加强版 (9宫格)</option>
             <option value="seedream-5.0">Seedream 5.0</option>
           `;
@@ -5373,6 +5267,18 @@
       gridModelSelect.addEventListener('change', () => {
         node.data.gridModel = gridModelSelect.value;
       });
+
+      // 宫格类型选择监听
+      const gridLayoutSelect = el.querySelector('.script-grid-layout');
+      if(!node.data.gridLayout){
+        node.data.gridLayout = 'auto';
+      }
+      if(gridLayoutSelect){
+        gridLayoutSelect.value = node.data.gridLayout;
+        gridLayoutSelect.addEventListener('change', () => {
+          node.data.gridLayout = gridLayoutSelect.value;
+        });
+      }
 
       // 文本框输入监听
       textareaEl.addEventListener('input', () => {
@@ -5650,47 +5556,16 @@
               }
 
               const gridModel = node.data.gridModel || 'auto';
-              let gridSize, gridLayout, finalModel;
-              
+              const gridLayoutPref = node.data.gridLayout || 'auto';
+
               // 如果参考图片超过5张，必须使用增强版模型（支持13张参考图）
               const forceEnhancedModel = referenceImageUrls.length > 5;
               if(forceEnhancedModel) {
                 console.log(`[宫格生图] 参考图片数量(${referenceImageUrls.length})超过5张，强制使用增强版模型`);
               }
-              
-              if(gridModel === 'auto') {
-                // 智能模式：根据分镜数量和参考图片数量自动选择
-                if(shotCount <= 5 && !forceEnhancedModel) {
-                  gridSize = 4;
-                  gridLayout = '2x2';
-                  finalModel = 'gemini-2.5-flash-image-preview';
-                } else {
-                  gridSize = 9;
-                  gridLayout = '3x3';
-                  finalModel = 'gemini-3-pro-image-preview';
-                }
-              } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
-                // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
-                gridSize = 4;
-                gridLayout = '2x2';
-                finalModel = gridModel;
-              } else if(gridModel === 'gemini-3-pro-4grid') {
-                // 加强版4宫格：4宫格但使用加强版模型
-                gridSize = 4;
-                gridLayout = '2x2';
-                finalModel = 'gemini-3-pro-image-preview';
-              } else if(gridModel === 'gemini-3-pro-image-preview') {
-                // 加强版9宫格
-                gridSize = 9;
-                gridLayout = '3x3';
-                finalModel = gridModel;
-              } else {
-                // 用户选择了其他模型（如 Seedream），直接使用用户选择
-                gridSize = 9;
-                gridLayout = '3x3';
-                finalModel = gridModel;
-              }
-              
+
+              const { gridSize, gridLayout, finalModel } = resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel);
+
               // 限制参考图片数量（标准版最多5张，增强版最多13张）
               const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;
               if(referenceImageUrls.length > maxRefImages) {
@@ -6077,46 +5952,15 @@
           }
 
           const gridModel = node.data.gridModel || 'auto';
-          let gridSize, gridLayout, finalModel;
-          
+          const gridLayoutPref = node.data.gridLayout || 'auto';
+
           // 如果参考图片超过5张，必须使用增强版模型（支持13张参考图）
           const forceEnhancedModel = referenceImageUrls.length > 5;
           if(forceEnhancedModel) {
             console.log(`[宫格生图] 参考图片数量(${referenceImageUrls.length})超过5张，强制使用增强版模型`);
           }
-          
-          if(gridModel === 'auto') {
-            // 智能模式：根据分镜数量和参考图片数量自动选择
-            if(shotCount <= 5 && !forceEnhancedModel) {
-              gridSize = 4;
-              gridLayout = '2x2';
-              finalModel = 'gemini-2.5-flash-image-preview';
-            } else {
-              gridSize = 9;
-              gridLayout = '3x3';
-              finalModel = 'gemini-3-pro-image-preview';
-            }
-          } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
-            // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = gridModel;
-          } else if(gridModel === 'gemini-3-pro-4grid') {
-            // 加强版4宫格：4宫格但使用加强版模型
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = 'gemini-3-pro-image-preview';
-          } else if(gridModel === 'gemini-3-pro-image-preview') {
-            // 加强版9宫格
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = gridModel;
-          } else {
-            // 用户选择了其他模型（如 Seedream），直接使用用户选择
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = gridModel;
-          }
+
+          const { gridSize, gridLayout, finalModel } = resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel);
 
           // 限制参考图片数量（标准版最多5张，增强版最多10张）
           const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 10 : 5;
@@ -6562,40 +6406,11 @@
           
           // 决定宫格大小和模型
           const gridModel = node.data.gridModel || 'auto';
-          let gridSize, gridLayout, finalModel;
-          
+          const gridLayoutPref = node.data.gridLayout || 'auto';
           const forceEnhancedModel = referenceImageUrls.length > 5;
-          
-          if(gridModel === 'auto') {
-            if(shotCount <= 5 && !forceEnhancedModel) {
-              gridSize = 4;
-              gridLayout = '2x2';
-              finalModel = 'gemini-2.5-flash-image-preview';
-            } else {
-              gridSize = 9;
-              gridLayout = '3x3';
-              finalModel = 'gemini-3-pro-image-preview';
-            }
-          } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = gridModel;
-          } else if(gridModel === 'gemini-3-pro-4grid') {
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = 'gemini-3-pro-image-preview';
-          } else if(gridModel === 'gemini-3-pro-image-preview') {
-            // 加强版9宫格
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = gridModel;
-          } else {
-            // 用户选择了其他模型（如 Seedream），直接使用用户选择
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = gridModel;
-          }
-          
+
+          const { gridSize, gridLayout, finalModel } = resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel);
+
           // 限制参考图片数量
           const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;
           if(referenceImageUrls.length > maxRefImages) {
@@ -7004,6 +6819,14 @@
             <div class="label">宫格生图模型</div>
             <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
           </div>
+          <div class="field field-collapsible">
+            <div class="label">宫格类型</div>
+            <select class="shot-group-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+              <option value="auto">自动选择</option>
+              <option value="4">4宫格 (2x2)</option>
+              <option value="9">9宫格 (3x3)</option>
+            </select>
+          </div>
           <div class="field field-collapsible btn-row">
             <button class="mini-btn gen-btn-green shot-group-grid-btn" type="button" style="width: 100%;">宫格生图</button>
           </div>
@@ -7178,6 +7001,8 @@
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
           options.forEach(opt => {
+            // 过滤掉不支持宫格生图的模型
+            if (!opt.supportsGridImage) return;
             const optEl = document.createElement('option');
             optEl.value = opt.value;
             optEl.textContent = opt.label;
@@ -7185,7 +7010,6 @@
           });
         } else {
           gridModelSelect.innerHTML += `
-            <option value="gemini">标准版 (4宫格)</option>
             <option value="gemini_pro">加强版 (9宫格)</option>
             <option value="seedream-5.0">Seedream 5.0</option>
           `;
@@ -7204,7 +7028,19 @@
           node.data.gridModel = gridModelSelect.value;
         });
       }
-      
+
+      // 初始化宫格类型选择（默认自动）
+      const gridLayoutSelect = el.querySelector('.shot-group-grid-layout');
+      if(!node.data.gridLayout){
+        node.data.gridLayout = 'auto';
+      }
+      if(gridLayoutSelect){
+        gridLayoutSelect.value = node.data.gridLayout;
+        gridLayoutSelect.addEventListener('change', () => {
+          node.data.gridLayout = gridLayoutSelect.value;
+        });
+      }
+
       // 宫格生图按钮点击事件
       if(gridBtn){
         gridBtn.addEventListener('click', (e) => {
@@ -7470,46 +7306,15 @@
         }
         
         const gridModel = shotGroupNode.data.gridModel || 'auto';
-        let gridSize, gridLayout, finalModel;
-        
+        const gridLayoutPref = shotGroupNode.data.gridLayout || 'auto';
+
         // 如果参考图片超过5张，必须使用增强版模型（支持13张参考图）
         const forceEnhancedModel = referenceImageUrls.length > 5;
         if(forceEnhancedModel) {
           console.log(`[宫格生图] 参考图片数量(${referenceImageUrls.length})超过5张，强制使用增强版模型`);
         }
-        
-        if(gridModel === 'auto') {
-          // 智能模式：根据分镜数量和参考图片数量自动选择
-          if(shotCount <= 5 && !forceEnhancedModel) {
-            gridSize = 4;
-            gridLayout = '2x2';
-            finalModel = 'gemini-2.5-flash-image-preview';
-          } else {
-            gridSize = 9;
-            gridLayout = '3x3';
-            finalModel = 'gemini-3-pro-image-preview';
-          }
-        } else if(gridModel === 'gemini-2.5-flash-image-preview' && !forceEnhancedModel) {
-          // 标准版：固定4宫格（但如果参考图超过5张则强制升级）
-          gridSize = 4;
-          gridLayout = '2x2';
-          finalModel = gridModel;
-        } else if(gridModel === 'gemini-3-pro-4grid') {
-          // 加强版4宫格：4宫格但使用加强版模型
-          gridSize = 4;
-          gridLayout = '2x2';
-          finalModel = 'gemini-3-pro-image-preview';
-        } else if(gridModel === 'gemini-3-pro-image-preview') {
-          // 加强版9宫格
-          gridSize = 9;
-          gridLayout = '3x3';
-          finalModel = gridModel;
-        } else {
-          // 用户选择了其他模型（如 Seedream），直接使用用户选择
-          gridSize = 9;
-          gridLayout = '3x3';
-          finalModel = gridModel;
-        }
+
+        const { gridSize, gridLayout, finalModel } = resolveGridConfig(gridModel, gridLayoutPref, shotCount, forceEnhancedModel);
 
         // 限制参考图片数量（标准版最多5张，增强版最多13张）
         const maxRefImages = finalModel === 'gemini-3-pro-image-preview' ? 13 : 5;
@@ -8303,13 +8108,18 @@
       function renderSceneTags() {
         sceneTagsEl.innerHTML = '';
         if(node.data.refScene && node.data.refScene.name) {
+          const loc = (state.worldLocations || []).find(l => l.id === node.data.refScene.id);
+          const hasMultiImages = loc && loc.reference_images && Array.isArray(loc.reference_images) && loc.reference_images.length > 0;
+          const selectedSceneUrl = node.data.selectedSceneRefUrl;
           const tag = document.createElement('span');
           tag.className = 'shot-ref-tag scene';
-          tag.title = node.data.refScene.name;
-          tag.innerHTML = `${escapeHtml(node.data.refScene.name)}<span class="ref-tag-remove" title="移除">×</span>`;
+          tag.title = node.data.refScene.name + (selectedSceneUrl ? '（已选特定角度）' : '（使用主图）');
+          tag.innerHTML = `${escapeHtml(node.data.refScene.name)}${selectedSceneUrl ? ' ✓' : ''}<span class="ref-tag-remove" title="移除">×</span>`;
           tag.querySelector('.ref-tag-remove').addEventListener('click', (e) => {
             e.stopPropagation();
             node.data.refScene = null;
+            node.data.selectedSceneRefUrl = null;
+            node.data.selectedSceneRefLabel = null;
             renderSceneTags();
             try{ autoSaveWorkflow(); } catch(e){}
           });
@@ -8318,6 +8128,20 @@
             showSceneDropdown();
           });
           sceneTagsEl.appendChild(tag);
+          // 如果有多张参考图，显示角度选择按钮
+          if(hasMultiImages || (loc && loc.reference_image)) {
+            const selBtn = document.createElement('button');
+            selBtn.className = 'scene-ref-img-btn';
+            selBtn.type = 'button';
+            selBtn.title = '选择角度';
+            selBtn.textContent = '📷';
+            selBtn.style.cssText = 'background: none; border: none; cursor: pointer; font-size: 10px; padding: 0 2px; vertical-align: middle;';
+            selBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              showSceneImageSelector(loc);
+            });
+            sceneTagsEl.appendChild(selBtn);
+          }
         } else {
           const addBtn = document.createElement('button');
           addBtn.className = 'shot-ref-add-btn';
@@ -8329,6 +8153,73 @@
           });
           sceneTagsEl.appendChild(addBtn);
         }
+      }
+
+      // 显示场景角度选择下拉
+      function showSceneImageSelector(loc) {
+        closeRefDropdowns();
+        const dropdown = document.createElement('div');
+        dropdown.className = 'shot-ref-dropdown scene-img-dropdown';
+        dropdown.style.cssText = 'min-width: 200px; max-height: 280px; overflow-y: auto;';
+
+        const options = [];
+        if(loc.reference_image) {
+          options.push({ url: loc.reference_image, label: '正面（主图）', angle: 'front', isMain: true });
+        }
+        if(loc.reference_images && Array.isArray(loc.reference_images)) {
+          loc.reference_images.forEach(img => {
+            if(img.url && (!loc.reference_image || img.url !== loc.reference_image)) {
+              const label = img.label || img.angle || '其他';
+              options.push({ url: img.url, label: label, angle: img.angle || 'custom', isMain: false });
+            }
+          });
+        }
+
+        if(options.length === 0) {
+          const noImg = document.createElement('div');
+          noImg.className = 'shot-ref-dropdown-item';
+          noImg.textContent = '无参考图';
+          dropdown.appendChild(noImg);
+        } else {
+          const mainItem = document.createElement('div');
+          mainItem.className = 'shot-ref-dropdown-item';
+          if(!node.data.selectedSceneRefUrl) mainItem.classList.add('selected');
+          mainItem.innerHTML = `使用主图`;
+          mainItem.addEventListener('click', (e) => {
+            e.stopPropagation();
+            node.data.selectedSceneRefUrl = null;
+            node.data.selectedSceneRefLabel = null;
+            renderSceneTags();
+            closeRefDropdowns();
+            try{ autoSaveWorkflow(); } catch(e){}
+          });
+          dropdown.appendChild(mainItem);
+
+          options.filter(o => !o.isMain).forEach(opt => {
+            const item = document.createElement('div');
+            item.className = 'shot-ref-dropdown-item';
+            if(node.data.selectedSceneRefUrl === opt.url) item.classList.add('selected');
+            item.innerHTML = `<img src="${opt.url}" style="width:16px;height:16px;object-fit:cover;border-radius:2px;margin-right:6px;vertical-align:middle;">${opt.label}${opt.angle !== 'custom' ? '(' + opt.angle + ')' : ''}`;
+            item.addEventListener('click', (e) => {
+              e.stopPropagation();
+              node.data.selectedSceneRefUrl = opt.url;
+              node.data.selectedSceneRefLabel = opt.label;
+              renderSceneTags();
+              closeRefDropdowns();
+              try{ autoSaveWorkflow(); } catch(e){}
+            });
+            dropdown.appendChild(item);
+          });
+        }
+
+        refSectionEl.appendChild(dropdown);
+        const closeHandler = (e) => {
+          if(!dropdown.contains(e.target) && !e.target.classList.contains('scene-ref-img-btn')) {
+            dropdown.remove();
+            document.removeEventListener('click', closeHandler, true);
+          }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler, true), 0);
       }
 
       // 显示场景选择下拉
@@ -8463,19 +8354,115 @@
           validChars.forEach(name => {
             const wc = worldChars.find(c => c.name === name);
             const hasImage = wc && wc.reference_image;
+            const hasMultiImages = wc && wc.reference_images && Array.isArray(wc.reference_images) && wc.reference_images.length > 0;
+            const selectedUrl = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[name]);
             const tag = document.createElement('span');
             tag.className = 'shot-ref-tag character';
-            if(!hasImage) {
+            if(!hasImage && !hasMultiImages) {
               tag.style.cssText = 'border-color: #ef4444; color: #ef4444; background: #fef2f2;';
               tag.title = `${name}（该角色没有参考图片）`;
               tag.textContent = name + ' ⚠';
             } else {
-              tag.title = name;
-              tag.textContent = name;
+              tag.title = name + (selectedUrl ? '（已选特定图片）' : '（使用主图）');
+              tag.textContent = selectedUrl ? name + ' ✓' : name;
+              // 如果有多张参考图，显示选择按钮
+              if(hasMultiImages || (wc.reference_images && wc.reference_images.length > 0) || (wc.reference_image)) {
+                const selBtn = document.createElement('button');
+                selBtn.className = 'char-ref-img-btn';
+                selBtn.type = 'button';
+                selBtn.title = '选择参考图';
+                selBtn.textContent = '📷';
+                selBtn.style.cssText = 'background: none; border: none; cursor: pointer; font-size: 10px; padding: 0 2px; vertical-align: middle;';
+                selBtn.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  showCharImageSelector(wc, name);
+                });
+                tag.appendChild(selBtn);
+              }
             }
             charTagsEl.appendChild(tag);
           });
         }
+      }
+
+      // 显示角色参考图选择下拉
+      function showCharImageSelector(wc, charName) {
+        closeRefDropdowns();
+        const dropdown = document.createElement('div');
+        dropdown.className = 'shot-ref-dropdown char-img-dropdown';
+        dropdown.style.cssText = 'min-width: 200px; max-height: 280px; overflow-y: auto;';
+
+        // 构建图片选项列表：主图 + reference_images
+        const options = [];
+        if(wc.reference_image) {
+          options.push({ url: wc.reference_image, label: '默认主图', isMain: true });
+        }
+        if(wc.reference_images && Array.isArray(wc.reference_images)) {
+          wc.reference_images.forEach(img => {
+            if(img.url && img.url !== wc.reference_image) {
+              options.push({ url: img.url, label: img.label || '其他', isMain: false });
+            }
+          });
+        }
+
+        if(options.length === 0) {
+          const noImg = document.createElement('div');
+          noImg.className = 'shot-ref-dropdown-item';
+          noImg.textContent = '无参考图';
+          dropdown.appendChild(noImg);
+        } else {
+          // 使用主图选项
+          const mainOpt = options.find(o => o.isMain);
+          const otherOpts = options.filter(o => !o.isMain);
+          if(mainOpt) {
+            const mainItem = document.createElement('div');
+            mainItem.className = 'shot-ref-dropdown-item';
+            const currentSelected = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[charName]);
+            if(!currentSelected || currentSelected === mainOpt.url) {
+              mainItem.classList.add('selected');
+            }
+            mainItem.innerHTML = `<img src="${mainOpt.url}" style="width:16px;height:16px;object-fit:cover;border-radius:2px;margin-right:6px;vertical-align:middle;">主图（默认）`;
+            mainItem.addEventListener('click', (e) => {
+              e.stopPropagation();
+              if(!node.data.selectedCharRefImages) node.data.selectedCharRefImages = {};
+              delete node.data.selectedCharRefImages[charName];
+              if(node.data.selectedCharRefImageLabels) delete node.data.selectedCharRefImageLabels[charName];
+              renderCharTags();
+              closeRefDropdowns();
+              try{ autoSaveWorkflow(); } catch(e){}
+            });
+            dropdown.appendChild(mainItem);
+          }
+          otherOpts.forEach(opt => {
+            const item = document.createElement('div');
+            item.className = 'shot-ref-dropdown-item';
+            const currentSelected = (node.data.selectedCharRefImages && node.data.selectedCharRefImages[charName]);
+            if(currentSelected === opt.url) {
+              item.classList.add('selected');
+            }
+            item.innerHTML = `<img src="${opt.url}" style="width:16px;height:16px;object-fit:cover;border-radius:2px;margin-right:6px;vertical-align:middle;">${opt.label}`;
+            item.addEventListener('click', (e) => {
+              e.stopPropagation();
+              if(!node.data.selectedCharRefImages) node.data.selectedCharRefImages = {};
+              if(!node.data.selectedCharRefImageLabels) node.data.selectedCharRefImageLabels = {};
+              node.data.selectedCharRefImages[charName] = opt.url;
+              node.data.selectedCharRefImageLabels[charName] = opt.label;
+              renderCharTags();
+              closeRefDropdowns();
+              try{ autoSaveWorkflow(); } catch(e){}
+            });
+            dropdown.appendChild(item);
+          });
+        }
+
+        refSectionEl.appendChild(dropdown);
+        const closeHandler = (e) => {
+          if(!dropdown.contains(e.target) && !e.target.classList.contains('char-ref-img-btn')) {
+            dropdown.remove();
+            document.removeEventListener('click', closeHandler, true);
+          }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler, true), 0);
       }
 
       // 触发全部引用匹配并渲染

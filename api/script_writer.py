@@ -103,6 +103,7 @@ tool_executor = ToolExecutor(file_manager=file_manager)
 
 # 设置 mcp_tool 的全局 file_manager
 from script_writer_core.mcp_tool import set_file_manager
+from script_writer_core.mcp_tool import _sanitize_filename
 set_file_manager(file_manager)
 
 # 设置 mcp_tool 的生图模型获取函数
@@ -1242,7 +1243,8 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                         behavior = char_data.get('behavior')
                         other_info = char_data.get('other_info')
                         reference_image = char_data.get('reference_image')
-                        
+                        reference_images = char_data.get('reference_images')
+
                         # 使用 create_or_update 避免并发竞态导致的重复创建
                         CharacterModel.create_or_update(
                             world_id=world_id,
@@ -1254,7 +1256,8 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                             personality=personality,
                             behavior=behavior,
                             other_info=other_info,
-                            reference_image=reference_image
+                            reference_image=reference_image,
+                            reference_images=reference_images
                         )
                         results['characters']['success'] += 1
                         results['total'] += 1
@@ -1318,7 +1321,8 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                         parent_id_raw = loc_data.get('parent_id')
                         description = loc_data.get('description')
                         reference_image = loc_data.get('reference_image')
-                        
+                        reference_images = loc_data.get('reference_images')
+
                         # 处理 parent_id：必须是整数或 None
                         parent_id = None
                         if parent_id_raw is not None:
@@ -1326,7 +1330,7 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                                 parent_id = int(parent_id_raw) if parent_id_raw else None
                             except (ValueError, TypeError):
                                 parent_id = None
-                        
+
                         # 使用 create_or_update 避免并发竞态导致的重复创建
                         LocationModel.create_or_update(
                             world_id=world_id,
@@ -1334,6 +1338,7 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                             user_id=user_id,
                             parent_id=parent_id,
                             reference_image=reference_image,
+                            reference_images=reference_images,
                             description=description
                         )
                         results['locations']['success'] += 1
@@ -1708,61 +1713,87 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
 @router.get('/task/{task_id}/stream')
 @require_permission("agent_task:stream")
 async def stream_task_messages(request: Request, task_id: str):
-    """SSE流式获取任务消息"""
-    # 检查任务是否存在
-    task = task_manager.get_task(task_id)
-    if not task:
+    """SSE流式获取任务消息（统一使用数据库轮询，支持跨进程）"""
+    from model.agent_task_messages import AgentTaskMessagesModel
+    from model.agent_tasks import AgentTasksModel
+
+    # 检查任务是否存在（从数据库，支持跨 worker）
+    if not task_manager.task_exists(task_id):
         return JSONResponse({
             'success': False,
             'error': '任务不存在'
         }, status_code=404)
-    
+
     async def event_generator():
         try:
             logger.info(f"[SSE-STREAM] Starting SSE stream for task {task_id}")
             heartbeat_counter = 0
             message_count = 0
-            
+            last_message_id = 0  # 用于追踪已读取的消息
+
+            # 立即发送连接确认消息
+            yield f"data: {json.dumps({'type': 'connected', 'task_id': task_id}, ensure_ascii=False)}\n\n"
+
             while True:
+                messages_to_send = []
+
+                # 统一从数据库轮询消息（避免 worker 切换导致消息丢失）
                 try:
-                    # 从任务的消息队列获取消息（超时5秒）
-                    logger.debug(f"[SSE-STREAM] Waiting for message from queue (timeout=5s)...")
-                    msg = await asyncio.to_thread(task.message_queue.get, timeout=5)
+                    db_messages = await asyncio.to_thread(
+                        AgentTaskMessagesModel.get_messages_after,
+                        task_id, last_message_id, 50
+                    )
+                    for db_msg in db_messages:
+                        messages_to_send.append(db_msg.to_dict())
+                        last_message_id = max(last_message_id, db_msg.id)
+                except Exception as e:
+                    logger.error(f"[SSE-STREAM] Failed to poll messages from database: {e}")
+
+                # 发送消息
+                for msg in messages_to_send:
                     message_count += 1
-                    logger.info(f"[SSE-STREAM] Got message #{message_count}, type: {msg.get('type')}, role: {msg.get('role', 'N/A')}")
+                    msg_type = msg.get('type', 'unknown')
+                    logger.info(f"[SSE-STREAM] Got message #{message_count}, type: {msg_type}")
                     if msg.get('content'):
                         logger.info(f"[SSE-STREAM] Message content preview: {str(msg.get('content'))[:100]}...")
-                    
+
                     yield f"data: {json.dumps(msg, ensure_ascii=False)}\n\n"
-                    logger.info(f"[SSE-STREAM] Message #{message_count} sent to client")
-                    
+
                     # 如果是完成或错误消息，结束流
-                    if msg.get('type') in ['done', 'error']:
-                        logger.info(f"[SSE-STREAM] Stream ending, type: {msg.get('type')}")
-                        break
-                    
+                    if msg_type in ['done', 'error']:
+                        logger.info(f"[SSE-STREAM] Stream ending, type: {msg_type}")
+                        return
+
                     heartbeat_counter = 0
-                    
-                except:
-                    # 超时，发送心跳
+
+                # 没有消息时的处理
+                if not messages_to_send:
                     heartbeat_counter += 1
-                    if heartbeat_counter >= 6:
-                        logger.debug(f"[SSE-STREAM] Sending heartbeat")
+
+                    # 每9秒发送心跳
+                    if heartbeat_counter >= 3:
                         yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': datetime.now().isoformat()}, ensure_ascii=False)}\n\n"
                         heartbeat_counter = 0
-                    
-                    # 检查任务状态
-                    if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-                        logger.info(f"[SSE-STREAM] Task status changed to {task.status.value}, ending stream")
-                        yield f"data: {json.dumps({'type': 'done', 'status': task.status.value}, ensure_ascii=False)}\n\n"
-                        break
-            
+
+                    # 检查任务状态（从数据库）
+                    try:
+                        db_task = await asyncio.to_thread(AgentTasksModel.get_by_task_id, task_id)
+                        if db_task and db_task.status in ['completed', 'failed', 'cancelled']:
+                            logger.info(f"[SSE-STREAM] Task status changed to {db_task.status}, ending stream")
+                            yield f"data: {json.dumps({'type': 'done', 'status': db_task.status}, ensure_ascii=False)}\n\n"
+                            return
+                    except Exception as e:
+                        logger.error(f"[SSE-STREAM] Failed to check task status: {e}")
+
+                # 短暂等待后继续轮询（避免频繁查询数据库）
+                await asyncio.sleep(0.3)
+
             logger.info(f"[SSE-STREAM] Stream completed, sent {message_count} messages")
-                    
+
         except Exception as e:
             logger.error(f"[SSE-STREAM] Stream error: {e}", exc_info=True)
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
-    
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -2139,6 +2170,237 @@ async def save_location(request: Request, location_name: str, file_request: File
             'error': str(e)
         }, status_code=500)
 
+@router.patch('/locations-files/{location_name}/reference-images')
+@require_permission("location:update")
+async def update_location_reference_images(
+    request: Request,
+    location_name: str
+):
+    """
+    更新场景的多角度参考图（reference_images 字段）
+    仅更新 reference_images，不影响其他字段
+    """
+    try:
+        body = await request.json()
+        user_id = body.get('user_id')
+        world_id = body.get('world_id')
+        reference_images = body.get('reference_images')
+
+        if not user_id or not world_id:
+            return JSONResponse({
+                'success': False,
+                'error': 'user_id 和 world_id 是必填字段'
+            }, status_code=400)
+
+        if reference_images is None:
+            return JSONResponse({
+                'success': False,
+                'error': 'reference_images 不能为空'
+            }, status_code=400)
+
+        # 生成安全的文件名
+        safe_name = _sanitize_filename(location_name)
+        filename = f"location_{safe_name}.json"
+        file_path = file_manager.get_content_file_path(user_id, world_id, "locations", filename)
+
+        # 检查文件是否存在
+        if not os.path.exists(file_path):
+            return JSONResponse({
+                'success': False,
+                'error': f'场景 "{location_name}" 不存在'
+            }, status_code=404)
+
+        # 读取现有数据
+        with open(file_path, 'r', encoding='utf-8') as f:
+            existing_data = json.load(f)
+
+        # 更新 reference_images 字段
+        existing_data['reference_images'] = reference_images
+        existing_data['updated_at'] = datetime.now().isoformat()
+
+        # 保存更新后的数据
+        success = file_manager.save_json_content(user_id, world_id, "locations", filename, existing_data)
+
+        if not success:
+            return JSONResponse({
+                'success': False,
+                'error': '保存场景参考图失败'
+            }, status_code=500)
+
+        # 同时更新数据库记录
+        try:
+            loc_record = LocationModel.get_by_name(int(world_id), location_name)
+            if loc_record:
+                LocationModel.update(
+                    record_id=loc_record.id,
+                    reference_images=reference_images
+                )
+        except Exception as db_err:
+            logger.warning(f'更新数据库参考图失败（不影响文件保存）: {db_err}')
+
+        return JSONResponse({
+            'success': True,
+            'message': f'场景 "{location_name}" 的参考图已更新',
+            'reference_images': reference_images
+        })
+
+    except Exception as e:
+        logger.error(f'更新场景参考图失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+# ==================== 场景多角度生图任务接口 ====================
+
+class LocationMultiAngleTaskRequest(BaseModel):
+    user_id: str
+    world_id: str
+    location_name: str
+    main_image: str
+    description: Optional[str] = None
+    angles: List[Dict[str, Any]]  # [{angle: 90, label: '右侧 (90°)', angleKey: 'right'}, ...]
+    model: Optional[str] = None
+    auth_token: Optional[str] = None
+
+
+@router.post('/location-multi-angle-tasks')
+@require_permission("location:create")
+async def create_location_multi_angle_task(
+    request: Request,
+    task_request: LocationMultiAngleTaskRequest
+):
+    """
+    创建场景多角度生图任务
+    任务会在后台队列中处理，用户可以稍后查询任务状态
+    """
+    try:
+        import uuid
+        from model import LocationMultiAngleTasksModel
+
+        # 检查是否存在正在执行中的任务
+        running_task = LocationMultiAngleTasksModel.has_running_task(
+            user_id=task_request.user_id,
+            world_id=task_request.world_id,
+            location_name=task_request.location_name
+        )
+
+        if running_task:
+            return JSONResponse({
+                'success': False,
+                'error': '该场景存在正在执行中的多角度生成任务，请等待当前任务完成后再操作',
+                'task_key': running_task.task_key,
+                'task_status': running_task.status
+            }, status_code=400)
+
+        # 生成唯一任务键
+        task_key = f"loc_multi_{uuid.uuid4().hex[:12]}"
+
+        # 创建任务记录
+        task_id = LocationMultiAngleTasksModel.create(
+            task_key=task_key,
+            location_name=task_request.location_name,
+            user_id=task_request.user_id,
+            world_id=task_request.world_id,
+            main_image=task_request.main_image,
+            description=task_request.description,
+            angles=task_request.angles,
+            model=task_request.model,
+            auth_token=task_request.auth_token
+        )
+
+        logger.info(f"创建场景多角度生图任务: {task_key}, location={task_request.location_name}, angles={len(task_request.angles)}")
+
+        return JSONResponse({
+            'success': True,
+            'task_key': task_key,
+            'task_id': task_id,
+            'message': f'已创建多角度生图任务，{len(task_request.angles)} 个角度等待生成'
+        })
+
+    except Exception as e:
+        logger.error(f'创建场景多角度生图任务失败: {str(e)}')
+        import traceback
+        logger.error(traceback.format_exc())
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+@router.get('/location-multi-angle-tasks/{task_key}')
+@require_permission("location:view")
+async def get_location_multi_angle_task(
+    request: Request,
+    task_key: str,
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...)
+):
+    """
+    获取场景多角度生图任务状态
+    """
+    try:
+        from model import LocationMultiAngleTasksModel, LocationMultiAngleTaskStatus
+
+        task = LocationMultiAngleTasksModel.get_by_task_key(task_key)
+
+        if not task:
+            return JSONResponse({
+                'success': False,
+                'error': '任务不存在'
+            }, status_code=404)
+
+        # 验证权限
+        if task.user_id != user_id or task.world_id != world_id:
+            return JSONResponse({
+                'success': False,
+                'error': '无权访问该任务'
+            }, status_code=403)
+
+        return JSONResponse({
+            'success': True,
+            'task': task.to_dict()
+        })
+
+    except Exception as e:
+        logger.error(f'获取任务状态失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+@router.get('/location-multi-angle-tasks')
+@require_permission("location:list")
+async def list_location_multi_angle_tasks(
+    request: Request,
+    user_id: str = QueryParam(...),
+    world_id: str = QueryParam(...),
+    limit: int = QueryParam(50)
+):
+    """
+    获取用户的场景多角度生图任务列表
+    """
+    try:
+        from model import LocationMultiAngleTasksModel
+
+        tasks = LocationMultiAngleTasksModel.get_user_tasks(user_id, world_id, limit)
+
+        return JSONResponse({
+            'success': True,
+            'tasks': [task.to_dict() for task in tasks],
+            'count': len(tasks)
+        })
+
+    except Exception as e:
+        logger.error(f'获取任务列表失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
 # 道具管理接口
 
 @router.get('/props-files')
@@ -2415,15 +2677,15 @@ async def upload_reference_image(
         # 保存文件
         with open(file_path, 'wb') as f:
             f.write(content)
-        
+
         # 获取服务器地址
         server_host = get_config()["server"]["host"]
-        
+
         # 返回URL
         url = f"{server_host.rstrip('/')}/{upload_dir}/{filename}"
-        
+
         logger.info(f'图片上传成功: {url}')
-        
+
         return JSONResponse({
             'success': True,
             'url': url

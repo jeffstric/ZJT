@@ -2694,6 +2694,7 @@
               page: this.historyPage,
               page_size: 20,
               types: typesStr,
+              has_image_path: true,
               auth_token: authToken || undefined
             }
           });
@@ -3010,6 +3011,17 @@
                   <span v-else-if="item.type == 4">类型: 高清放大</span>
                   <span>比例: {{ getRatioLabel(item.ratio) }}</span>
                   <span>创建时间: {{ item.create_time ? new Date(item.create_time).toLocaleString('zh-CN') : '未知' }}</span>
+                  <span v-if="item.model_name">模型: {{ item.model_name }}</span>
+                  <span v-if="item.implementation_name">驱动: {{ item.implementation_name }}</span>
+                </div>
+                <div v-if="item.reference_images || item.image_path" style="margin-top: 8px;">
+                  <span style="font-size: 13px; color: var(--muted);">参考图片:</span>
+                  <div style="display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
+                    <template v-for="(img, idx) in (item.reference_images ? JSON.parse(item.reference_images) : (item.image_path ? item.image_path.split(',') : []))" :key="idx">
+                      <img v-if="img" :src="img" style="width: 60px; height: 60px; object-fit: cover; border-radius: 4px; border: 1px solid var(--border); cursor: pointer;"
+                           @click="window.open(img, '_blank')" />
+                    </template>
+                  </div>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
@@ -6132,6 +6144,27 @@
     mounted() {
       // Extract auth_token from URL query parameters at app level
       const urlParams = new URLSearchParams(window.location.search);
+      
+      // 优先处理 login=1 参数（通常表示认证过期需要重新登录）
+      if (urlParams.get('login') === '1') {
+        // 清除可能已过期的本地认证信息
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('phone');
+        localStorage.removeItem('user_id');
+        localStorage.removeItem('invite_code');
+        
+        // 处理登录后跳转的目标路径（仅允许路径，不允许完整URL）
+        const redirectUrl = urlParams.get('redirect_url');
+        if (redirectUrl) {
+          // 验证是否为有效的路径（不包含协议和域名）
+          if (!redirectUrl.includes('://') && !redirectUrl.includes('//')) {
+            // 确保路径以 / 开头
+            const targetPath = redirectUrl.startsWith('/') ? redirectUrl : '/' + redirectUrl;
+            localStorage.setItem('redirect_after_login', targetPath);
+          }
+        }
+      }
+      
       this.authToken = urlParams.get('auth_token') || '';
       this.userPhone = urlParams.get('phone') || '';
       this.userId = urlParams.get('user_id') || '';
@@ -6184,20 +6217,8 @@
       }
       
       // 方式2: 通过URL参数触发登录框（支持跨域跳转）
-      // 复用前面已声明的 urlParams 变量
       if (urlParams.get('login') === '1' && !this.authToken) {
         this.showLoginModal = true;
-        
-        // 处理登录后跳转的目标路径（仅允许路径，不允许完整URL）
-        const redirectUrl = urlParams.get('redirect_url');
-        if (redirectUrl) {
-          // 验证是否为有效的路径（不包含协议和域名）
-          if (!redirectUrl.includes('://') && !redirectUrl.includes('//')) {
-            // 确保路径以 / 开头
-            const targetPath = redirectUrl.startsWith('/') ? redirectUrl : '/' + redirectUrl;
-            localStorage.setItem('redirect_after_login', targetPath);
-          }
-        }
       }
       
       // Load terms of service
@@ -6967,14 +6988,7 @@
           }
         } catch (error) {
           console.error('Fetch computing power error:', error);
-          if (error.response && error.response.data) {
-            if (error.response.data.message === '无效或已过期的认证信息') {
-              this.computingPower = null;
-              alert('登录过期，请重新登录');
-            } else {
-              this.computingPower = 0;
-            }
-          } else {
+          if (!this.handleAuthError(error)) {
             this.computingPower = 0;
           }
         }
@@ -7219,9 +7233,7 @@
           }
         } catch (error) {
           console.error('Error fetching recharge packages:', error);
-          if (error.response?.status === 401) {
-            alert('登录已过期，请重新登录');
-          }
+          this.handleAuthError(error);
         } finally {
           this.rechargePackagesLoading = false;
         }

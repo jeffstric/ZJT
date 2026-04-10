@@ -53,6 +53,7 @@ def try_map_url_to_local_file(url: str, config: Dict[str, Any], project_root: st
 
         # 检查域名是否匹配（包括端口）
         if server_netloc != url_netloc:
+            logger.warning(f"[图片上传诊断] URL域名不匹配: url_netloc={url_netloc}, config_server_netloc={server_netloc}, url={url}")
             return None
 
         # URL路径映射到本地文件
@@ -345,43 +346,43 @@ async def compress_and_upload_image(
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """
     压缩图片并上传/保存到可访问位置
-    
+
     处理流程：
     1. 解析 URL 到本地路径
     2. 检查图片大小
     3. 如需要，压缩图片到临时目录
     4. 保存到可访问目录并返回新 URL
-    
+
     Args:
         image_url: 图片 URL 或本地路径
         config: 配置字典
         max_size_mb: 最大文件大小（MB）
         is_local: 是否为本地环境（需要上传到 CDN）
         project_root: 项目根目录
-    
+
     Returns:
         (success, new_url, error_message)
     """
     temp_downloaded_file = None
     compressed_file = None
-    
+
     try:
         # 1. 解析 URL 到本地路径
         local_path = await resolve_url_to_local_file(image_url, config, project_root)
         if not local_path:
             return False, None, f"无法解析图片 URL: {image_url}"
-        
+
         # 记录下载的临时文件用于清理
         if not is_local_file_path(image_url) and not try_map_url_to_local_file(image_url, config, project_root):
             temp_downloaded_file = local_path
-        
+
         # 2. 检查图片大小
         img_size_mb = get_image_size_mb(local_path)
         if img_size_mb is None:
             return False, None, f"无法获取图片大小: {local_path}"
-        
+
         file_to_upload = local_path
-        
+
         # 3. 如果超过限制，压缩图片
         if img_size_mb > max_size_mb:
             logger.info(f"图片 {image_url} 大小 {img_size_mb:.2f} MB 超过 {max_size_mb} MB 限制，开始压缩")
@@ -395,7 +396,7 @@ async def compress_and_upload_image(
             ext = os.path.splitext(local_path)[1] or ".jpg"
             compressed_filename = f"compressed_{timestamp}_{unique_id}{ext}"
             compressed_path = str(temp_dir / compressed_filename)
-            
+
             # 执行压缩
             success, output_path, error = compress_image_to_limit(
                 local_path,
@@ -459,14 +460,14 @@ def compress_and_upload_image_sync(
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """
     同步方式压缩图片并上传/保存到可访问位置
-    
+
     Args:
         image_url: 图片 URL 或本地路径
         config: 配置字典
         max_size_mb: 最大文件大小（MB）
         is_local: 是否为本地环境
         project_root: 项目根目录
-    
+
     Returns:
         (success, new_url, error_message)
     """

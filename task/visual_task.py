@@ -182,12 +182,25 @@ async def _submit_new_task(ai_tool):
         driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
 
         if not driver:
-            logger.error(f"Unsupported driver type: {ai_tool_type}")
+            # 获取详细的错误原因
+            create_error = VideoDriverFactory.get_last_create_error()
+            if create_error:
+                error_message = create_error.get("message", f"不支持的任务类型: {ai_tool_type}")
+                logger.error(f"Failed to create driver for type {ai_tool_type}: {error_message}")
+            else:
+                error_message = f"不支持的任务类型: {ai_tool_type}"
+                logger.error(f"Unsupported driver type: {ai_tool_type}")
             # 更新任务状态为失败
-            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=f"不支持的任务类型: {ai_tool_type}")
+            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error_message)
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
+            # 释放 RunningHub 槽位（如果是 RunningHub 任务且已获取槽位）
+            if ai_tool_type in RUNNINGHUB_TASK_TYPES:
+                task = TasksModel.get_by_task_id(task_id)
+                if task:
+                    RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
+                    logger.info(f"Released RunningHub slot for failed driver creation, task {task_id}")
             # 退还算力
-            _refund_computing_power(ai_tool, f"不支持的任务类型: {ai_tool_type}")
+            _refund_computing_power(ai_tool, error_message)
             return False
 
         # 记录 implementation 到 ai_tools 表（使用 driver.driver_name 确保是实际使用的 implementation）
@@ -276,7 +289,7 @@ async def _submit_new_task(ai_tool):
                 logger.info(f"Sync task media cached: {result_url} -> {final_url}")
 
             from datetime import datetime
-            AIToolsModel.update(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
+            AIToolsModel.update_with_cdn_sync(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
             logger.info(f"Sync task {task_id} completed with result: {final_url}")
             return True
@@ -351,12 +364,28 @@ async def _check_task_status(ai_tool):
     try:
         # 1. 根据任务类型创建对应的驱动实例（传递 user_id 以应用用户偏好）
         driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
-        
+
         if not driver:
-            logger.error(f"Unsupported driver type: {ai_tool_type}")
+            # 获取详细的错误原因
+            create_error = VideoDriverFactory.get_last_create_error()
+            if create_error:
+                error_message = create_error.get("message", f"不支持的任务类型: {ai_tool_type}")
+                logger.error(f"Failed to create driver for type {ai_tool_type}: {error_message}")
+            else:
+                error_message = f"不支持的任务类型: {ai_tool_type}"
+                logger.error(f"Unsupported driver type: {ai_tool_type}")
             # 更新任务状态为失败
-            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=f"不支持的任务类型: {ai_tool_type}")
+            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error_message)
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
+            # 释放 RunningHub 槽位（如果是 RunningHub 任务）
+            if ai_tool_type in RUNNINGHUB_TASK_TYPES:
+                if project_id:
+                    RunningHubSlotsModel.release_slot_by_project_id(project_id)
+                else:
+                    task = TasksModel.get_by_task_id(task_id)
+                    if task:
+                        RunningHubSlotsModel.release_slot_by_task_table_id(task.id)
+                logger.info(f"Released RunningHub slot for failed driver creation in check_status, task {task_id}")
             return True  # 返回 True 表示任务已完成（失败）
         
         logger.info(f"Checking status for task {task_id} using driver: {driver.driver_name}")
@@ -435,7 +464,7 @@ async def _handle_task_success(project_id, task_id, media_url):
         logger.info(f"Media cached: {media_url} -> {final_url}")
         
         from datetime import datetime
-        AIToolsModel.update_by_project_id(
+        AIToolsModel.update_by_project_id_with_cdn_sync(
             project_id=project_id,
             result_url=final_url,
             status=AI_TOOL_STATUS_COMPLETED,

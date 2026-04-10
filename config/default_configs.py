@@ -39,7 +39,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
-    
+
     # ==================== 前端配置 ====================
     {
         'key': 'frontend.debug_password',
@@ -403,7 +403,37 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
-    
+
+    # ==================== 七牛云长期存储配置（AI Tools 结果同步到 CDN）====================
+    {
+        'key': 'file_storage.qiniu_long_term.access_key',
+        'value_type': 'string',
+        'description': '七牛云长期存储 Access Key',
+        'editable': True,
+        'is_sensitive': True
+    },
+    {
+        'key': 'file_storage.qiniu_long_term.secret_key',
+        'value_type': 'string',
+        'description': '七牛云长期存储 Secret Key',
+        'editable': True,
+        'is_sensitive': True
+    },
+    {
+        'key': 'file_storage.qiniu_long_term.bucket_name',
+        'value_type': 'string',
+        'description': '七牛云长期存储空间名称',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'file_storage.qiniu_long_term.cdn_domain',
+        'value_type': 'string',
+        'description': '七牛云长期存储 CDN 加速域名',
+        'editable': True,
+        'is_sensitive': False
+    },
+
     # ==================== Sentry 配置 ====================
     {
         'key': 'sentry.dsn',
@@ -463,6 +493,8 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
+
+    # ==================== CDN 存储配置（AI Tools 专用，已迁移到 file_storage.qiniu_long_term）====================
 
     # ==================== 同步任务进程池配置 ====================
     {

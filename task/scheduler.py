@@ -157,7 +157,7 @@ def init_scheduler(app):
     logger.info('启用视频生成任务')
     scheduler.add_job(
         func=task_with_app_video,
-        trigger=IntervalTrigger(seconds=11),
+        trigger=IntervalTrigger(seconds=5),
         id='generate_video',
         name='Generate video every 11 seconds',
         replace_existing=True,
@@ -168,7 +168,7 @@ def init_scheduler(app):
     logger.info('启用音频生成任务')
     scheduler.add_job(
         func=task_with_app_audio,
-        trigger=IntervalTrigger(seconds=7),
+        trigger=IntervalTrigger(seconds=13),
         id='generate_audio',
         name='Generate audio every 7 seconds',
         replace_existing=True,
@@ -246,6 +246,20 @@ def init_scheduler(app):
         coalesce=True
     )
 
+    # 场景多角度生图任务处理
+    logger.info('启用场景多角度生图任务处理')
+    from task.location_multi_angle_task import process_pending_location_multi_angle_tasks
+
+    scheduler.add_job(
+        func=process_pending_location_multi_angle_tasks,
+        trigger=IntervalTrigger(seconds=17),  # 每17秒执行一次
+        id='process_location_multi_angle_tasks',
+        name='Process location multi-angle tasks every 17 seconds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
     # 实现方统计缓存刷新任务
     logger.info('启用实现方统计缓存刷新任务，每1小时执行一次')
     from task.stats_cache_task import refresh_implementation_stats_cache
@@ -254,6 +268,32 @@ def init_scheduler(app):
         trigger=IntervalTrigger(hours=1),  # 每1小时执行一次
         id='refresh_implementation_stats_cache',
         name='Refresh implementation stats cache every 1 hour',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
+    # Agent任务清理（清理24小时前的已完成任务和消息）
+    logger.info('启用Agent任务清理任务，每6小时执行一次')
+    from task.agent_task_cleanup import cleanup_agent_tasks
+    scheduler.add_job(
+        func=cleanup_agent_tasks,
+        trigger=IntervalTrigger(hours=6),  # 每6小时执行一次
+        id='cleanup_agent_tasks',
+        name='Cleanup old agent tasks every 6 hours',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
+    # RunningHub槽位清理（清理超过2小时仍处于处理中的槽位）
+    logger.info('启用RunningHub槽位清理任务，每30分钟执行一次')
+    from task.runninghub_slots_cleanup import cleanup_runninghub_slots
+    scheduler.add_job(
+        func=cleanup_runninghub_slots,
+        trigger=IntervalTrigger(minutes=30),  # 每30分钟执行一次
+        id='cleanup_runninghub_slots',
+        name='Cleanup stale RunningHub slots every 30 minutes',
         replace_existing=True,
         max_instances=1,
         coalesce=True

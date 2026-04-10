@@ -127,6 +127,14 @@
               </svg>
               <span class="add-menu-text">图片</span>
             </div>
+            <div class="add-menu-item" id="menuAddCameraControl">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+                <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="2"/>
+                <circle cx="12" cy="12" r="1.5" fill="currentColor"/>
+              </svg>
+              <span class="add-menu-text">相机控制</span>
+            </div>
             <div class="add-menu-item" id="menuAddScript">
               <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <path d="M9 5H7C5.89543 5 5 5.89543 5 7V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V7C19 5.89543 18.1046 5 17 5H15" stroke="currentColor" stroke-width="2"/>
@@ -306,6 +314,13 @@
               <option value="美漫:DC风">
             </datalist>
           </div>
+          <!-- 同步世界画风提示条 -->
+          <div id="styleSyncBanner" style="display: none; padding: 10px 14px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; gap: 10px; align-items: center;">
+            <div style="flex: 1; font-size: 13px; color: #1e40af;">
+              <span id="styleSyncBannerText">世界的画风与当前工作流不一致</span>
+            </div>
+            <button type="button" id="styleSyncBtn" style="padding: 6px 14px; background: #3b82f6; color: #ffffff; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; white-space: nowrap; font-weight: 500;">同步世界画风</button>
+          </div>
           <div class="field">
             <label class="label" style="color: #0f172a;">参考图</label>
             <input type="file" id="styleImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
@@ -313,6 +328,11 @@
               <img id="styleImagePreviewImg" style="max-width: 100%; max-height: 200px; border-radius: 8px; border: 1px solid #e5e7eb; object-fit: contain;" />
               <button type="button" id="styleImageRemoveBtn" style="margin-top: 8px; padding: 6px 12px; background: #f3f4f6; color: #111827; border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; cursor: pointer;">移除图片</button>
             </div>
+          </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">构图倾向</label>
+            <input type="text" id="compositionInput" placeholder="如：三分法、对称构图、黄金螺旋等" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
+            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">构图倾向将附加到图片生成的提示词中</div>
           </div>
         </div>
       </div>
@@ -430,7 +450,7 @@
           </div>
           <div class="field-row media-field-row">
             <div class="field">
-              <label class="label" style="color: #0f172a;">参考图</label>
+              <label class="label" style="color: #0f172a;">参考图（主图）</label>
               <input type="file" id="createCharacterImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
             </div>
             <div class="field">
@@ -443,6 +463,21 @@
                 <audio id="createCharacterVoicePreviewAudio" controls style="width: 100%; max-height: 40px;"></audio>
               </div>
               <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
+            </div>
+          </div>
+          <!-- 多服装参考图 -->
+          <div class="field" style="margin-top: 8px;">
+            <label class="label" style="color: #0f172a; display: flex; align-items: center; gap: 8px;">
+              多服装参考图
+              <span style="font-size: 11px; color: #6b7280; font-weight: normal;">（可选，上传不同服装/造型的参考图）</span>
+            </label>
+            <div id="createCharacterMultiImages" style="display: flex; flex-direction: column; gap: 8px;">
+              <div id="createCharacterMultiImageList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="file" id="createCharacterMultiImageFile" accept="image/*" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
+                <input type="text" id="createCharacterMultiImageLabel" placeholder="标签，如：晚礼服" style="width: 120px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;" />
+                <button type="button" id="createCharacterMultiImageAddBtn" style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;">添加</button>
+              </div>
             </div>
           </div>
         </div>
@@ -481,8 +516,30 @@
             </div>
           </div>
           <div class="field">
-            <label class="label" style="color: #0f172a;">参考图</label>
+            <label class="label" style="color: #0f172a;">参考图（主图）</label>
             <input type="file" id="createLocationImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+          <!-- 多角度参考图 -->
+          <div class="field" style="margin-top: 8px;">
+            <label class="label" style="color: #0f172a; display: flex; align-items: center; gap: 8px;">
+              多角度参考图
+              <span style="font-size: 11px; color: #6b7280; font-weight: normal;">（可选，上传不同角度的参考图）</span>
+            </label>
+            <div id="createLocationMultiImages" style="display: flex; flex-direction: column; gap: 8px;">
+              <div id="createLocationMultiImageList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="file" id="createLocationMultiImageFile" accept="image/*" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
+                <select id="createLocationMultiImageAngle" style="width: 90px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px; outline: none;">
+                  <option value="front">正面</option>
+                  <option value="back">背面</option>
+                  <option value="left">左侧</option>
+                  <option value="right">右侧</option>
+                  <option value="custom">自定义</option>
+                </select>
+                <input type="text" id="createLocationMultiImageLabel" placeholder="标签" style="width: 80px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;" />
+                <button type="button" id="createLocationMultiImageAddBtn" style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;">添加</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -523,6 +580,28 @@
           <div class="field">
             <label class="label" style="color: #0f172a;">参考图</label>
             <input type="file" id="editLocationImageInput" accept="image/*" style="width: 100%; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font-size: 13px;" />
+          </div>
+          <!-- 多角度参考图 -->
+          <div class="field" style="margin-top: 8px;">
+            <label class="label" style="color: #0f172a; display: flex; align-items: center; gap: 8px;">
+              多角度参考图
+              <span style="font-size: 11px; color: #6b7280; font-weight: normal;">（可选，上传不同角度的参考图）</span>
+            </label>
+            <div id="editLocationMultiImages" style="display: flex; flex-direction: column; gap: 12px;">
+              <div id="editLocationMultiImageList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+              <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                <input type="file" id="editLocationMultiImageFile" accept="image/*" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
+                <select id="editLocationMultiImageAngle" style="width: 90px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px; outline: none;">
+                  <option value="front">正面</option>
+                  <option value="back">背面</option>
+                  <option value="left">左侧</option>
+                  <option value="right">右侧</option>
+                  <option value="custom">自定义</option>
+                </select>
+                <input type="text" id="editLocationMultiImageLabel" placeholder="标签" style="width: 80px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;" />
+                <button type="button" id="editLocationMultiImageAddBtn" style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;">添加</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -757,10 +836,20 @@
               <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
             </div>
           </div>
-          <div class="field">
-            <label class="label" style="color: #0f172a;">Sora角色卡ID</label>
-            <input type="text" id="editCharacterSoraCharacterInput" placeholder="自动生成或手动输入..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" />
-            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">点击"创建sora角色卡"按钮自动创建，或手动输入已有的角色卡ID</div>
+          <!-- 多服装参考图 -->
+          <div class="field" style="margin-top: 8px;">
+            <label class="label" style="color: #0f172a; display: flex; align-items: center; gap: 8px;">
+              多服装参考图
+              <span style="font-size: 11px; color: #6b7280; font-weight: normal;">（可选，上传不同服装/造型的参考图）</span>
+            </label>
+            <div id="editCharacterMultiImages" style="display: flex; flex-direction: column; gap: 12px;">
+              <div id="editCharacterMultiImageList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+              <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                <input type="file" id="editCharacterMultiImageFile" accept="image/*" style="flex: 1; background: #f9fafb; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; font-size: 12px;" />
+                <input type="text" id="editCharacterMultiImageLabel" placeholder="标签，如：晚礼服" style="width: 120px; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 10px; font-size: 12px; outline: none;" />
+                <button type="button" id="editCharacterMultiImageAddBtn" style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;">添加</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -814,9 +903,9 @@
           <div class="coloring-tools">
             <div class="field" style="flex: 1;">
               <label class="label" style="color: #0f172a;">画笔大小</label>
-              <input type="range" id="coloringBrushSize" min="5" max="50" value="20" style="width: 100%;" />
+              <input type="range" id="coloringBrushSize" min="20" max="200" value="50" style="width: 100%;" />
               <div style="text-align: center; font-size: 12px; color: #6b7280; margin-top: 4px;">
-                <span id="coloringBrushSizeValue">20</span>px
+                <span id="coloringBrushSizeValue">50</span>px
               </div>
             </div>
             <div class="field" style="flex: 1;">
@@ -988,6 +1077,7 @@
   <script src="/js/text_to_speech_node.js"></script>
   <script src="/js/dialogue_group_node.js"></script>
   <script src="/js/camera_3d_preview.js"></script>
+  <script src="/js/camera_control_node.js"></script>
   <script src="/js/shot_frame_generator.js"></script>
   <script src="/js/video_prompt_suffix.js"></script>
   <script src="/js/shot_frame_video_generator.js"></script>

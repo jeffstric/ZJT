@@ -70,16 +70,34 @@ function getCachedWorld(worldId) {
 function handleWorldSelectionChange(worldId) {
   const parsedWorldId = worldId ? parseInt(worldId, 10) : null;
   state.defaultWorldId = Number.isNaN(parsedWorldId) ? null : parsedWorldId;
-  
+
   console.log('[世界选择] worldId参数:', worldId, '解析后的ID:', parsedWorldId, '最终state.defaultWorldId:', state.defaultWorldId);
-  
+
   // Update visual state
   updateWorldSelectorState();
-  
+
   // Persist default world to workflow
   const workflowId = typeof getWorkflowIdFromUrl === 'function' ? getWorkflowIdFromUrl() : null;
   if (workflowId && typeof saveDefaultWorld === 'function') {
     saveDefaultWorld(workflowId, state.defaultWorldId);
+  }
+
+  // 新建工作流（画风为空）时，自动继承世界的画风和构图倾向
+  if (parsedWorldId && !state.style.name) {
+    const world = getCachedWorld(parsedWorldId);
+    if (world && (world.visual_style || world.composition_preference)) {
+      console.log('[世界选择] 工作流画风为空，自动继承世界画风:', world.visual_style, '构图倾向:', world.composition_preference);
+      if (world.visual_style) {
+        state.style.name = world.visual_style;
+      }
+      if (world.composition_preference) {
+        state.style.compositionPreference = world.composition_preference;
+      }
+      // 异步保存画风到工作流
+      if (workflowId) {
+        _saveWorldStyleToWorkflow(workflowId);
+      }
+    }
   }
 }
 
@@ -107,6 +125,34 @@ async function saveDefaultWorld(workflowId, worldId) {
     }
   } catch (error) {
     console.error('Error saving default world:', error);
+  }
+}
+
+// 将世界的画风和构图倾向保存到工作流
+async function _saveWorldStyleToWorkflow(workflowId) {
+  try {
+    const response = await fetch(`/api/video-workflow/${workflowId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': getAuthToken(),
+        'X-User-Id': getUserId()
+      },
+      body: JSON.stringify({
+        style: state.style.name || null,
+        style_reference_image: state.style.referenceImageUrl || null,
+        workflow_data: typeof serializeWorkflow === 'function' ? serializeWorkflow() : null
+      })
+    });
+
+    const result = await response.json();
+    if (result.code === 0) {
+      console.log('[世界画风] 已将世界画风同步到工作流');
+    } else {
+      console.warn('[世界画风] 同步失败:', result.message);
+    }
+  } catch (error) {
+    console.error('[世界画风] 同步出错:', error);
   }
 }
 

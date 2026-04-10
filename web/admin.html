@@ -720,7 +720,7 @@
                             <p class="form-hint">📖 获取方式：
                                 <a href="javascript:void(0)" @click="showJiekouTip" style="color: #3b82f6;">jiekou</a> | 
                                 <a href="https://ai.comfly.chat/register?aff=d3Mx98625" target="_blank" style="color: #3b82f6;">comfly</a> | 
-                                <a href="https://yunwu.ai/register?aff=hE0h" target="_blank" style="color: #3b82f6;">yunwu</a>
+                                <a href="https://yw.perseids.cn/register?aff=hE0h" target="_blank" style="color: #3b82f6;">ywapi</a>
                             </p>
                         </div>
                         <div class="form-group">
@@ -792,11 +792,11 @@
                         <!-- Site 2 -->
                         <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
                             <label>站点2名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.name" placeholder="如：yunwu" :disabled="isCommunityEdition">
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.name" placeholder="如：ywapi" :disabled="isCommunityEdition">
                         </div>
                         <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
                             <label>站点2 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.baseUrl" placeholder="https://yunwu.ai" :disabled="isCommunityEdition">
+                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.baseUrl" placeholder="https://yw.perseids.cn" :disabled="isCommunityEdition">
                         </div>
                         <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
                             <label>站点2 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>

@@ -142,8 +142,10 @@ class TestRunner:
             'tests.test_ai_tools_crud',
             'tests.test_ai_audio_crud',
             'tests.test_chat_sessions_crud',
+            'tests.test_character_reference_images',
             'tests.test_implementation_stats',
             'tests.test_location_crud',
+            'tests.test_location_reference_images',
             'tests.test_payment_orders_crud',
             'tests.test_props_crud',
             'tests.test_runninghub_slots_crud',
@@ -205,6 +207,7 @@ class TestRunner:
             'tests.test_image_upload_utils',
             'tests.test_media_cache_temp',
             'tests.test_auth_service',
+            'tests.test_qwen_multi_angle_driver',
         ]
 
         all_passed = True

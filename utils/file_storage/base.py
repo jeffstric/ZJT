@@ -95,6 +95,19 @@ class BaseFileStorage(ABC):
         """
         pass
 
+    @abstractmethod
+    async def delete(self, key: str) -> bool:
+        """
+        删除存储中的文件
+
+        Args:
+            key: 文件在存储中的唯一标识
+
+        Returns:
+            bool: 删除是否成功
+        """
+        pass
+
     def generate_key(self, prefix: str, filename: str) -> str:
         """
         生成存储key
