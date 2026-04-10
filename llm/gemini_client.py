@@ -56,6 +56,13 @@ logger = logging.getLogger(__name__)
 llm_logger = setup_llm_logger()
 
 
+def _mask_api_key(api_key: str) -> str:
+    """对 API 密钥进行掩码处理"""
+    if not api_key or len(api_key) < 8:
+        return "***"
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
 class GeminiClient(BaseLLMClient):
     """Gemini 原生 API 客户端"""
 
@@ -313,8 +320,16 @@ class GeminiClient(BaseLLMClient):
         }
 
         url = self._build_url(model)
-        llm_logger.info(f"Gemini API URL: {url}")
-        llm_logger.info(f"Gemini API contents count: {len(gemini_payload.get('contents', []))}")
+        
+        llm_logger.info("="*80)
+        llm_logger.info("GEMINI API REQUEST:")
+        llm_logger.info(f"  Model: {model}")
+        llm_logger.info(f"  URL: {url}")
+        llm_logger.info(f"  API Key: {_mask_api_key(self.api_key)}")
+        llm_logger.info(f"  Contents count: {len(gemini_payload.get('contents', []))}")
+        llm_logger.info(f"  Max tokens: {max_tokens}")
+        if tools:
+            llm_logger.info(f"  Tools count: {len(tools)}")
 
         payload_str = json.dumps(gemini_payload, ensure_ascii=False, indent=2)
 
