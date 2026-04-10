@@ -29,13 +29,13 @@ def upgrade() -> None:
     # 添加 qwen3.5-plus 模型
     op.execute(text("""
         INSERT INTO `model` (model_name, created_at, note)
-        VALUES ('qwen3.5-plus', NOW(), 'Qwen 3.5 Plus - 阿里通义千问3.5 Plus版')
+        VALUES ('qwen3.5-plus', NOW(), 'Qwen 3.5 Plus')
     """))
 
     # 添加 qwen3.6-plus 模型
     op.execute(text("""
         INSERT INTO `model` (model_name, created_at, note)
-        VALUES ('qwen3.6-plus', NOW(), 'Qwen 3.6 Plus - 阿里通义千问3.6 Plus版')
+        VALUES ('qwen3.6-plus', NOW(), 'Qwen 3.6 Plus')
     """))
 
     # 关联到 aliyun vendor，使用子查询获取正确的 vendor_id 和 model_id
