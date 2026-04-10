@@ -708,6 +708,43 @@
                         </div>
                     </div>
 
+                    <!-- Qwen 配置组 -->
+                    <div class="config-group">
+                        <div class="config-group-header">
+                            <h4>Qwen 配置</h4>
+                            <span class="config-group-desc">📋 影响服务：剧本创作、AI对话、剧本拆分（与 Google/Gemini 并列可选）</span>
+                        </div>
+                        <div class="form-group">
+                            <label>API Key <span style="color: red;">*</span></label>
+                            <input type="text" v-model="quickConfigModal.qwen.apiKey" placeholder="请输入 Qwen API Key">
+                            <p class="form-hint">📖 获取方式：<a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" style="color: #3b82f6;">阿里云百炼控制台</a></p>
+                        </div>
+                        <div class="form-group">
+                            <label>Base URL (可选)</label>
+                            <input type="text" v-model="quickConfigModal.qwen.baseUrl" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
+                            <p class="form-hint">📖 可使用第三方代理服务，留空使用默认值</p>
+                        </div>
+                        <div class="form-group">
+                            <button
+                                class="action-btn primary"
+                                @click="testQwenConnection"
+                                :disabled="quickConfigModal.testLoading || !quickConfigModal.qwen.apiKey"
+                            >
+                                {{ quickConfigModal.testLoading ? '测试中...' : '🔗 测试连接' }}
+                            </button>
+                            <span v-if="quickConfigModal.testResult" :style="{ color: quickConfigModal.testResult.success ? '#22c55e' : '#ef4444', marginLeft: '10px' }">
+                                {{ quickConfigModal.testResult.message }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- 二选一提示 -->
+                    <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
+                        <p style="margin: 0; color: #92400e; font-size: 13px;">
+                            <strong>💡 提示：</strong>Qwen 与 Google/Gemini 为并列选项，<strong>二选一</strong>即可，无需同时配置
+                        </p>
+                    </div>
+
                     <!-- Google 配置组 -->
                     <div class="config-group">
                         <div class="config-group-header">
@@ -718,8 +755,8 @@
                             <label>API Key <span style="color: red;">*</span></label>
                             <input type="text" v-model="quickConfigModal.google.apiKey" placeholder="请输入 Google API Key">
                             <p class="form-hint">📖 获取方式：
-                                <a href="javascript:void(0)" @click="showJiekouTip" style="color: #3b82f6;">jiekou</a> | 
-                                <a href="https://ai.comfly.chat/register?aff=d3Mx98625" target="_blank" style="color: #3b82f6;">comfly</a> | 
+                                <a href="javascript:void(0)" @click="showJiekouTip" style="color: #3b82f6;">jiekou</a> |
+                                <a href="https://ai.comfly.chat/register?aff=d3Mx98625" target="_blank" style="color: #3b82f6;">comfly</a> |
                                 <a href="https://yw.perseids.cn/register?aff=hE0h" target="_blank" style="color: #3b82f6;">ywapi</a>
                             </p>
                         </div>
@@ -729,9 +766,9 @@
                             <p class="form-hint">📖 可使用第三方代理服务，留空使用默认值</p>
                         </div>
                         <div class="form-group">
-                            <button 
-                                class="action-btn primary" 
-                                @click="testGoogleConnection" 
+                            <button
+                                class="action-btn primary"
+                                @click="testGoogleConnection"
                                 :disabled="quickConfigModal.testLoading || !quickConfigModal.google.apiKey"
                             >
                                 {{ quickConfigModal.testLoading ? '测试中...' : '🔗 测试连接' }}
@@ -759,7 +796,7 @@
                     <div class="config-group">
                         <div class="config-group-header">
                             <h4>RunningHub 配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
-                            <span class="config-group-desc">📋 影响服务：LTX2.0视频、Wan2.2视频、数字人合成</span>
+                            <span class="config-group-desc">📋 影响服务：LTX2.0视频、Wan2.2视频、数字人合成、相机多角度控制</span>
                         </div>
                         <div class="form-group">
                             <label>API Key</label>

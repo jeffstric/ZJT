@@ -24,6 +24,7 @@ class TokenLog:
         self.output_token = kwargs.get('output_token')
         self.cache_read = kwargs.get('cache_read')
         self.cache_creation = kwargs.get('cache_creation')
+        self.raw_input_token = kwargs.get('raw_input_token')
         self.vendor_id = kwargs.get('vendor_id')
         self.model_id = kwargs.get('model_id')
         self.status = kwargs.get('status', 0)
@@ -53,6 +54,7 @@ class TokenLogModel:
         output_token: Optional[int] = None,
         cache_read: Optional[int] = None,
         cache_creation: Optional[int] = None,
+        raw_input_token: Optional[int] = None,
         vendor_id: Optional[int] = None,
         model_id: Optional[int] = None,
         note: Optional[str] = None,
@@ -63,14 +65,14 @@ class TokenLogModel:
         对应Go的models.CreateTokenLog
         """
         sql = """
-            INSERT INTO token_log (input_token, output_token, cache_read, cache_creation, 
-                                   vendor_id, model_id, user_id, note, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO token_log (input_token, output_token, cache_read, cache_creation,
+                                   raw_input_token, vendor_id, model_id, user_id, note, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         try:
             log_id = execute_insert(sql, (
                 input_token, output_token, cache_read, cache_creation,
-                vendor_id, model_id, user_id, note, status
+                raw_input_token, vendor_id, model_id, user_id, note, status
             ))
             logger.info(f"Created token log with ID: {log_id}")
             return log_id

@@ -783,6 +783,11 @@ class TestGoogleRequest(BaseModel):
     base_url: Optional[str] = None
 
 
+class TestQwenRequest(BaseModel):
+    api_key: str
+    base_url: Optional[str] = None
+
+
 @router.post("/config/test-google")
 async def admin_test_google_connection(
     request: TestGoogleRequest,
@@ -901,6 +906,118 @@ async def admin_test_google_connection(
         }
     except Exception as e:
         logger.error(f"Failed to test Google connection: {e}")
+        return {
+            "code": 1,
+            "message": f"连接失败: {str(e)}",
+            "data": {"success": False, "error": str(e)}
+        }
+
+
+@router.post("/config/test-qwen")
+async def admin_test_qwen_connection(
+    request: TestQwenRequest,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    测试 Qwen API 连接
+    通过发送一个简单的请求验证 API Key 有效性
+    """
+    admin = await require_admin(auth_token)
+
+    if not request.api_key:
+        raise HTTPException(status_code=400, detail="API Key 不能为空")
+
+    # 构建请求 URL
+    base_url = request.base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    base_url = base_url.rstrip("/")
+
+    # 测试模型
+    test_model = "qwen-plus"
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {request.api_key}"
+    }
+
+    # 构建最简单的测试请求
+    test_payload = {
+        "model": test_model,
+        "messages": [
+            {"role": "user", "content": "Hi"}
+        ],
+        "max_tokens": 10,
+        "temperature": 0.1
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            url = f"{base_url}/chat/completions"
+
+            try:
+                response = await client.post(url, headers=headers, json=test_payload)
+
+                if response.status_code == 200:
+                    try:
+                        resp_json = response.json()
+                        if "choices" in resp_json and resp_json["choices"]:
+                            return {
+                                "code": 0,
+                                "message": "连接成功",
+                                "data": {
+                                    "success": True,
+                                    "model": test_model
+                                }
+                            }
+                        else:
+                            error_msg = resp_json.get("error", {}).get("message", "响应无效")
+                            return {
+                                "code": 1,
+                                "message": f"API 返回错误: {error_msg}",
+                                "data": {"success": False, "error": error_msg}
+                            }
+                    except Exception:
+                        return {
+                            "code": 1,
+                            "message": "响应解析失败",
+                            "data": {"success": False, "error": "Response parse failed"}
+                        }
+
+                elif response.status_code in [401, 403]:
+                    error_type = "无效或未授权" if response.status_code == 401 else "权限不足或已被禁用"
+                    return {
+                        "code": 1,
+                        "message": f"API Key {error_type}",
+                        "data": {"success": False, "error": f"HTTP {response.status_code}"}
+                    }
+
+                else:
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get("error", {}).get("message", f"HTTP {response.status_code}")
+                    except Exception:
+                        error_msg = f"HTTP {response.status_code}"
+
+                    return {
+                        "code": 1,
+                        "message": f"连接失败: {error_msg}",
+                        "data": {"success": False, "error": error_msg}
+                    }
+
+            except httpx.TimeoutException:
+                return {
+                    "code": 1,
+                    "message": "连接超时，请检查网络或 Base URL",
+                    "data": {"success": False, "error": "Timeout"}
+                }
+            except Exception as e:
+                return {
+                    "code": 1,
+                    "message": f"连接失败: {str(e)}",
+                    "data": {"success": False, "error": str(e)}
+                }
+
+    except Exception as e:
+        logger.error(f"Failed to test Qwen connection: {e}")
         return {
             "code": 1,
             "message": f"连接失败: {str(e)}",

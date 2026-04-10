@@ -3,7 +3,7 @@ from config.config_util import get_config_value
 
 API_KEY = get_config_value('llm', 'qwen', 'api_key', default='')
 BASE_URL = get_config_value('llm', 'qwen', 'base_url', default="https://dashscope.aliyuncs.com/compatible-mode/v1")
-DEFAULT_MODEL = get_config_value('llm', 'qwen', 'model', default="qwen-plus")
+DEFAULT_MODEL = "qwen-plus"
 
 
 def call_qwen_chat(messages, model=None, temperature=0.7, max_tokens=None):

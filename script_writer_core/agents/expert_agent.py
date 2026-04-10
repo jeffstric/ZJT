@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from .base_agent import BaseAgent
 from .history_manager import ExpertHistoryManager
-from llm.gemini_client import get_gemini_client
+from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 
@@ -32,8 +32,6 @@ class ExpertAgent(BaseAgent):
         primary_skill = skill_names[0] if skill_names else "unknown"
         agent_id = f"expert_{primary_skill}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        # 使用公共的 Gemini 客户端
-        self.gemini_client = get_gemini_client()
         
         # 初始化技能加载器
         self.skill_loader = SkillLoader()
@@ -159,8 +157,8 @@ class ExpertAgent(BaseAgent):
             iteration += 1
             
             try:
-                # 使用公共的 Gemini 客户端调用 API
-                response = self.gemini_client.call_api(
+                # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
+                response = get_llm_client(self.model).call_api(
                     model=self.model,
                     messages=self._format_messages_for_api(),
                     tools=self._get_tool_definitions(),

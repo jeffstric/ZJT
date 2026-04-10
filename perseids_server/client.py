@@ -126,6 +126,7 @@ def make_perseids_request(endpoint=None, data=None, method='POST', headers=None)
                 output_token=payload.get('output_token'),
                 cache_read=payload.get('cache_read'),
                 cache_creation=payload.get('cache_creation'),
+                raw_input_token=payload.get('raw_input_token'),
                 vendor_id=payload.get('vendor_id'),
                 model_id=payload.get('model_id'),
                 note=payload.get('note')
