@@ -442,6 +442,7 @@ class AuthService:
         output_token: Optional[int] = None,
         cache_read: Optional[int] = None,
         cache_creation: Optional[int] = None,
+        raw_input_token: Optional[int] = None,
         vendor_id: Optional[int] = None,
         model_id: Optional[int] = None,
         note: Optional[str] = None
@@ -449,28 +450,29 @@ class AuthService:
         """
         创建token日志
         对应Go的CreateTokenLog
-        
+
         Args:
             user_id: 用户ID
             input_token: 输入token数
             output_token: 输出token数
             cache_read: 缓存读取数
             cache_creation: 缓存创建数
+            raw_input_token: API原始返回的输入token数
             vendor_id: 供应商ID（必填）
             model_id: 模型ID（必填）
             note: 备注
-            
+
         Returns:
             创建结果
         """
         from model.token_log import TokenLogModel
-        
+
         # 校验必填项
         if vendor_id is None:
             return {"success": False, "message": "vendor_id为必填项"}
         if model_id is None:
             return {"success": False, "message": "model_id为必填项"}
-        
+
         try:
             TokenLogModel.create(
                 user_id=user_id,
@@ -478,6 +480,7 @@ class AuthService:
                 output_token=output_token,
                 cache_read=cache_read,
                 cache_creation=cache_creation,
+                raw_input_token=raw_input_token,
                 vendor_id=vendor_id,
                 model_id=model_id,
                 note=note

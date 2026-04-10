@@ -5,7 +5,7 @@ from .base_agent import BaseAgent
 from .expert_agent import ExpertAgent
 from .summarizer import ConversationSummarizer
 from .task_manager import TaskManager, AgentTask
-from llm.gemini_client import get_gemini_client
+from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
 import json
@@ -31,9 +31,6 @@ class PMAgent(BaseAgent):
         max_total_failures: int = 7
     ):
         agent_id = f"pm_agent_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # 使用公共的 Gemini 客户端
-        self.gemini_client = get_gemini_client()
 
         # 初始化技能加载器
         self.skill_loader = SkillLoader()
@@ -204,8 +201,8 @@ class PMAgent(BaseAgent):
                 # 获取工具定义
                 tool_definitions = self._get_tool_definitions()
 
-                # 使用公共的 Gemini 客户端调用 API
-                response = self.gemini_client.call_api(
+                # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
+                response = get_llm_client(self.model).call_api(
                     model=self.model,
                     messages=messages,
                     tools=tool_definitions,
@@ -352,9 +349,14 @@ class PMAgent(BaseAgent):
         # 获取技能列表
         skill_names = expert_config["skills"]
 
+        # 使用用户选择的模型（self.model）而非配置文件中的硬编码模型
+        # 这样当用户切换模型时，Expert Agent 也会使用新模型
+        expert_model = self.model if self.model else expert_config["model"]
+        logger.info(f"{self.agent_id}: Expert {skill_name} 使用模型: {expert_model}")
+
         expert = ExpertAgent(
             skill_names=skill_names,
-            model=expert_config["model"],
+            model=expert_model,
             allowed_tools=expert_config["allowed_tools"],
             context_from_pm=context,
             file_manager=self.file_manager,

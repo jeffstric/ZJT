@@ -6,6 +6,7 @@ from .summarizer import ConversationSummarizer
 from .history_manager import ExpertHistoryManager
 from .tool_executor import ToolExecutor
 from llm.gemini_client import GeminiClient, get_gemini_client
+from llm.llm_client_factory import LLMClientFactory, get_llm_client
 
 __all__ = [
     'BaseAgent',
@@ -20,4 +21,6 @@ __all__ = [
     'ToolExecutor',
     'GeminiClient',
     'get_gemini_client',
+    'LLMClientFactory',
+    'get_llm_client',
 ]

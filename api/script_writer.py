@@ -625,6 +625,7 @@ class SessionCreateRequest(BaseModel):
 class TaskCreateRequest(BaseModel):
     message: str
     auth_token: str = ""
+    model: Optional[str] = None
     model_id: Optional[int] = None
     vendor_id: int = 1
 
@@ -1611,8 +1612,8 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
         if not is_valid:
             return JSONResponse(error_response, status_code=401)
         
-        # 检查 model_id - 优先使用会话中保存的 model_id，如果没有则使用请求中的 model_id
-        model_id = session.model_id if hasattr(session, 'model_id') and session.model_id is not None else task_request.model_id
+        # 检查 model_id - 优先使用请求中的 model_id（前端最新选择），其次使用会话中的
+        model_id = task_request.model_id if task_request.model_id is not None else (session.model_id if hasattr(session, 'model_id') else None)
         if not model_id:
             return JSONResponse({
                 'success': False,
@@ -1626,6 +1627,16 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'success': False,
                 'error': 'model_id 必须为数字'
             }, status_code=400)
+        
+        # 强制同步模型到 pm_agent：确保切换模型后实际使用正确的 LLM client
+        # 前端传来的 model 是最新的用户选择，优先使用
+        request_model = task_request.model
+        if request_model and hasattr(session, 'pm_agent') and session.pm_agent:
+            if session.pm_agent.model != request_model:
+                logger.info(f'模型同步: pm_agent.model 从 "{session.pm_agent.model}" 切换为 "{request_model}"')
+                session.pm_agent.model = request_model
+                session.model = request_model
+                session.model_id = model_id
         
         # 检查算力是否充足
         if auth_token:
@@ -2812,3 +2823,35 @@ async def delete_staging_file(
             'success': False,
             'error': f'删除失败: {str(e)}'
         }, status_code=500)
+
+
+# ==================== 配置检查 API ====================
+@router.get("/config/check")
+async def check_configs(
+    keys: str = QueryParam(..., description="配置键列表，逗号分隔，如 'llm.qwen.api_key,runninghub.api_key'"),
+    authorization: Optional[str] = Header(None)
+):
+    """
+    检查配置是否已配置（value 非空）
+
+    用于前端判断某些功能是否可用（如 qwen 模型需要配置 api_key 才能选择）
+    """
+    # 验证token
+    token = authorization.replace('Bearer ', '') if authorization else None
+    if not token:
+        return JSONResponse({"success": False, "error": "未授权"}, status_code=401)
+
+    key_list = [k.strip() for k in keys.split(',')]
+    results = {}
+
+    for key in key_list:
+        parts = key.split('.')
+        if len(parts) >= 2:
+            section = parts[0]
+            sub_keys = parts[1:]
+            value = get_dynamic_config_value(section, *sub_keys, default="")
+            results[key] = bool(value and value.strip())
+        else:
+            results[key] = False
+
+    return {"success": True, "results": results}
