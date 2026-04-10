@@ -1,7 +1,7 @@
 """add qwen3.5-plus and qwen3.6-plus models
 
 Revision ID: 20260407_qwen_models
-Revises: 20260402_multi_ref
+Revises: 20260409_tiered_billing
 Create Date: 2026-04-07
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.sql import text
 
 # revision identifiers, used by Alembic.
 revision: str = '20260407_qwen_models'
-down_revision: Union[str, None] = '20260402_multi_ref'
+down_revision: Union[str, None] = '20260409_tiered_billing'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -29,13 +29,13 @@ def upgrade() -> None:
     # 添加 qwen3.5-plus 模型
     op.execute(text("""
         INSERT INTO `model` (model_name, created_at, note)
-        VALUES ('qwen3.5-plus', NOW(), 'Qwen 3.5 Plus - 阿里通义千问3.5 Plus版')
+        VALUES ('qwen3.5-plus', NOW(), '')
     """))
 
     # 添加 qwen3.6-plus 模型
     op.execute(text("""
         INSERT INTO `model` (model_name, created_at, note)
-        VALUES ('qwen3.6-plus', NOW(), 'Qwen 3.6 Plus - 阿里通义千问3.6 Plus版')
+        VALUES ('qwen3.6-plus', NOW(), '')
     """))
 
     # 关联到 aliyun vendor，使用子查询获取正确的 vendor_id 和 model_id

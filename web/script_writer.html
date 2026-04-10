@@ -1795,6 +1795,7 @@
                     body: JSON.stringify({
                         message,
                         auth_token: AUTH_TOKEN,
+                        model: selector?.value || '',
                         model_id: modelId
                     }),
                     signal: controller.signal
@@ -2132,7 +2133,24 @@
                     return;
                 }
 
-                data.models.forEach(model => {
+                // 按指定顺序排序模型：qwen3.5 > qwen3.6 > flash 3.0 > flash 3.5 > gemini-3-flash > gemini-3.1-flash-lite > 其他
+                const sortOrder = ['qwen3.5', 'qwen3.6', 'flash-3.0', 'flash-3.5', 'flash', 'gemini-3-flash', 'gemini-3.1-flash-lite'];
+                const sortedModels = [...data.models].sort((a, b) => {
+                    const nameA = (a.model_name || a.name || '').toLowerCase();
+                    const nameB = (b.model_name || b.name || '').toLowerCase();
+                    // 使用 startsWith 精确匹配，避免 gemini-3.1-flash-lite 被 gemini-3-flash 错误匹配
+                    const indexA = sortOrder.findIndex(k => nameA.startsWith(k.toLowerCase()));
+                    const indexB = sortOrder.findIndex(k => nameB.startsWith(k.toLowerCase()));
+                    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+                    if (indexA !== -1) return -1;
+                    if (indexB !== -1) return 1;
+                    return 0;
+                });
+
+                // 记录排序后的第一个作为默认选中
+                let firstEnabledModel = null;
+
+                sortedModels.forEach(model => {
                     const option = document.createElement('option');
                     // 兼容后端返回的 model_name 或 name 字段
                     const modelName = model.model_name || model.name || '';
@@ -2146,15 +2164,125 @@
                         option.dataset.modelId = modelId;
                     }
                     option.dataset.recommended = model.recommended ? 'true' : 'false';
-                    if (model.recommended) option.selected = true;
+                    // 记录第一个启用的模型作为默认
+                    if (!option.disabled && !firstEnabledModel) {
+                        firstEnabledModel = option;
+                    }
                     selector.appendChild(option);
                 });
+
+                // 设置默认选中第一个启用的模型
+                if (firstEnabledModel) {
+                    firstEnabledModel.selected = true;
+                }
                 
                 updateModelTooltip();
+
+                // 检查 Qwen API Key 配置并过滤模型
+                await checkQwenApiKeyConfig();
+                filterModelsByConfig();
+                // 确保选中的模型可用，否则自动切换
+                ensureValidModelSelected();
             } catch (error) {
                 console.error('加载模型列表失败:', error);
                 showError('加载模型列表失败，请稍后重试');
             }
+        }
+
+        // ==================== Qwen 配置检查 ====================
+        // 配置检查结果缓存
+        let qwenConfigChecked = false;
+        let isQwenConfigured = false;
+
+        /**
+         * 检查 Qwen API Key 是否已配置
+         */
+        async function checkQwenApiKeyConfig() {
+            try {
+                const response = await fetch('/api/config/check?keys=llm.qwen.api_key', {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
+                const data = await response.json();
+                if (data.success) {
+                    isQwenConfigured = data.results['llm.qwen.api_key'] || false;
+                    qwenConfigChecked = true;
+                    console.log(`[Qwen配置检查] llm.qwen.api_key 配置状态: ${isQwenConfigured}`);
+                }
+            } catch (error) {
+                console.error('检查 Qwen 配置失败:', error);
+                isQwenConfigured = false;
+                qwenConfigChecked = true;
+            }
+        }
+
+        /**
+         * 根据配置状态过滤模型选项
+         * qwen3.5 和 qwen3.6 系列模型需要配置 api_key 才能选择
+         */
+        function filterModelsByConfig() {
+            if (!qwenConfigChecked) return;
+
+            const selector = document.getElementById('model-selector');
+            if (!selector) return;
+
+            const options = selector.querySelectorAll('option');
+
+            options.forEach(option => {
+                const modelName = option.value || option.textContent;
+                // 检查是否是 qwen3.5 或 qwen3.6 系列模型
+                if (modelName && (modelName.includes('qwen3.5') || modelName.includes('qwen3.6'))) {
+                    if (!isQwenConfigured) {
+                        option.disabled = true;
+                        option.title = '请先在配置中设置 Qwen API Key';
+                        console.log(`[模型过滤] 禁用模型: ${modelName}`);
+                    } else {
+                        option.disabled = false;
+                        option.title = '';
+                    }
+                }
+            });
+        }
+
+        /**
+         * 确保当前选中的模型可用
+         * 如果选中了 disabled 的模型，自动切换到第一个可用模型
+         * 如果所有模型都不可用，将 select 设为红色提醒用户
+         */
+        function ensureValidModelSelected() {
+            const selector = document.getElementById('model-selector');
+            if (!selector) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            // 当前选中项可用，清除红色样式
+            if (selectedOption && !selectedOption.disabled) {
+                selector.style.borderColor = '';
+                selector.title = '选择 AI 模型';
+                updateModelTooltip();
+                return;
+            }
+
+            // 当前选中项被禁用，尝试切换到第一个可用模型
+            let firstEnabled = null;
+            for (let i = 0; i < selector.options.length; i++) {
+                if (!selector.options[i].disabled && selector.options[i].value) {
+                    firstEnabled = i;
+                    break;
+                }
+            }
+
+            if (firstEnabled !== null) {
+                selector.selectedIndex = firstEnabled;
+                selector.style.borderColor = '';
+                selector.title = '选择 AI 模型';
+                console.log(`[模型自动切换] 切换到可用模型: ${selector.options[firstEnabled].value}`);
+            } else {
+                // 所有模型都不可用，设为红色提醒
+                selector.style.borderColor = '#ff4444';
+                selector.style.boxShadow = '0 0 0 1px #ff4444';
+                selector.title = '所有模型均不可用，请检查配置';
+                console.warn('[模型自动切换] 所有模型均不可用');
+            }
+            updateModelTooltip();
         }
 
         function updateModelTooltip() {
@@ -2164,8 +2292,11 @@
             const selectedOption = selector.options[selector.selectedIndex];
             if (!selectedOption) return;
 
-            // 非 gemini-3-flash-preview 显示红色
-            if (selectedOption.value !== 'gemini-3-flash-preview') {
+            // 免费模型（gemini-3-flash-preview、qwen3.5、qwen3.6）显示正常颜色，其他显示红色提示需要配置
+            const isFreeModel = selectedOption.value === 'gemini-3-flash-preview' ||
+                selectedOption.value.includes('qwen3.5') ||
+                selectedOption.value.includes('qwen3.6');
+            if (!isFreeModel) {
                 selector.style.color = '#ff6b6b';
             } else {
                 selector.style.color = '';
@@ -2205,6 +2336,7 @@
             icon.title = `生图模型: ${modelName}`;
         }
 
+
         async function changeModel() {
             if (!sessionId) {
                 showError('请先创建会话');
@@ -2214,48 +2346,6 @@
             const selectedOption = selector.options[selector.selectedIndex];
             const model = selector.value;
             const modelId = selectedOption?.dataset?.modelId;
-
-            // 非 gemini-3-flash-preview 的模型都需要提示
-            if (model !== 'gemini-3-flash-preview') {
-                let warningMessage = '';
-
-                if (model === 'gemini-3.1-pro-preview') {
-                    warningMessage = (
-                        '⚠️ 模型算力提醒\n\n' +
-                        '您选择的是 gemini-3.1-pro-preview 模型。\n\n' +
-                        '该模型的算力消耗是 gemini-3-flash-preview 的 7 倍左右，价格较贵。\n\n' +
-                        '是否继续使用当前选择的模型？'
-                    );
-                } else if (model === 'gemini-3.1-flash-lite-preview') {
-                    warningMessage = (
-                        '⚠️ 模型能力提醒\n\n' +
-                        '您选择的是 gemini-3.1-flash-lite-preview 模型。\n\n' +
-                        '该模型价格较低，但可能在复杂任务上不够聪明。\n\n' +
-                        '是否继续使用当前选择的模型？'
-                    );
-                } else {
-                    warningMessage = (
-                        '⚠️ 模型切换提醒\n\n' +
-                        '您选择的是 ' + model + ' 模型。\n\n' +
-                        '推荐使用 gemini-3-flash-preview 以获得最佳性价比。\n\n' +
-                        '是否继续使用当前选择的模型？'
-                    );
-                }
-
-                const confirmed = confirm(warningMessage);
-
-                if (!confirmed) {
-                    // 用户取消，恢复到推荐模型
-                    for (let i = 0; i < selector.options.length; i++) {
-                        if (selector.options[i].dataset.recommended === 'true') {
-                            selector.selectedIndex = i;
-                            break;
-                        }
-                    }
-                    updateModelTooltip();
-                    return;
-                }
-            }
 
             updateModelTooltip();
             updateLlmModelIcon();

@@ -110,6 +110,12 @@ class SessionStorage:
             text_to_image_model_id=entity.text_to_image_model_id
         )
 
+        # 同步生图模型配置到内存（解决页面刷新/服务重启后配置丢失问题）
+        if entity.text_to_image_model_id is not None:
+            from api.script_writer import set_text_to_image_model_id
+            set_text_to_image_model_id(entity.user_id, entity.world_id, entity.text_to_image_model_id)
+            logger.info(f"[Session Load] Synced text_to_image_model_id={entity.text_to_image_model_id} to memory config for user={entity.user_id}, world={entity.world_id}")
+
         # Restore conversation history
         # PM Agent 在初始化时会自动添加系统提示到 conversation_history
         # 数据库中只保存了用户和助手的对话（不包括 system 消息）

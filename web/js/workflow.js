@@ -757,6 +757,73 @@
       setTimeout(() => {
         triggerScriptLoadButton(nodeId);
       }, 300);
+
+      // 延迟刷新节点模型，确保剧本解析创建分镜组节点已完成
+      setTimeout(() => {
+        // 等待 TaskConfig 加载完成后刷新模型
+        if (window.TaskConfig && window.TaskConfig.isLoaded()) {
+          refreshShotGroupNodesModels();
+        } else if (window.TaskConfig) {
+          window.TaskConfig.onLoaded(() => {
+            refreshShotGroupNodesModels();
+          });
+        }
+      }, 800);
+    }
+
+    /**
+     * 刷新所有分镜组节点的生图模型和生视频模型选择器
+     */
+    function refreshShotGroupNodesModels() {
+      const shotGroupNodes = state.nodes.filter(n => n.type === 'shot_group');
+      shotGroupNodes.forEach(node => {
+        const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+        if (!el) return;
+
+        const modelEl = el.querySelector('.shot-group-model');
+        const videoModelEl = el.querySelector('.shot-group-video-model');
+
+        // 刷新生图模型
+        if (modelEl && window.TaskConfig) {
+          const imageOptions = window.TaskConfig.getModelOptionsForCategory('image_edit');
+          if (imageOptions.length > 0) {
+            modelEl.innerHTML = '';
+            imageOptions.forEach(opt => {
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              if (opt.value === node.data.model) optEl.selected = true;
+              modelEl.appendChild(optEl);
+            });
+            // 如果当前值不在选项中，更新为第一个选项
+            if (!imageOptions.find(o => o.value === node.data.model)) {
+              node.data.model = imageOptions[0].value;
+              modelEl.value = node.data.model;
+            }
+          }
+        }
+
+        // 刷新生视频模型
+        if (videoModelEl && window.TaskConfig) {
+          const videoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+          if (videoOptions.length > 0) {
+            videoModelEl.innerHTML = '';
+            videoOptions.forEach(opt => {
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              if (opt.value === node.data.videoModel) optEl.selected = true;
+              videoModelEl.appendChild(optEl);
+            });
+            // 如果当前值不在选项中，更新为第一个选项
+            if (!videoOptions.find(o => o.value === node.data.videoModel)) {
+              node.data.videoModel = videoOptions[0].value;
+              videoModelEl.value = node.data.videoModel;
+            }
+          }
+        }
+      });
+      console.log('[刷新模型] 已刷新所有分镜组节点的模型选择器');
     }
 
     /**

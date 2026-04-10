@@ -29,7 +29,6 @@ def upgrade() -> None:
                   nullable=True),
         sa.PrimaryKeyConstraint('id'),
         mysql_charset='utf8mb4',
-        mysql_collation='utf8mb4_0900_ai_ci',
         mysql_comment='未扣减算力累积表',
     )
     op.create_index('idx_user_id', 'uncalculated_power', ['user_id'], unique=True)

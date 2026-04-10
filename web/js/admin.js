@@ -110,6 +110,8 @@ const AdminApp = {
                 loading: false,
                 testLoading: false,
                 testResult: null,
+                // 用于跟踪原始值，检测用户是否修改了配置（包含清空操作）
+                originalValues: {},
                 duomi: {
                     token: ''
                 },
@@ -1038,17 +1040,19 @@ const AdminApp = {
         async openQuickConfigModal() {
             this.quickConfigModal.show = true;
             this.quickConfigModal.testResult = null;
-            
+            // 清空原始值跟踪
+            this.quickConfigModal.originalValues = {};
+
             // 从后端获取快速配置项列表并加载现有配置值
             try {
                 // 获取快速配置项列表
                 const quickConfigsResp = await axios.get('/api/admin/config/quick-configs', {
                     headers: { 'Authorization': `Bearer ${this.authToken}` }
                 });
-                
+
                 if (quickConfigsResp.data.code === 0) {
                     const configs = quickConfigsResp.data.data.configs || [];
-                    
+
                     // 根据配置项列表加载现有值
                     for (const config of configs) {
                         try {
@@ -1056,9 +1060,11 @@ const AdminApp = {
                                 headers: { 'Authorization': `Bearer ${this.authToken}` },
                                 params: { key: config.key }
                             });
-                            
+
                             if (response.data.code === 0) {
                                 const value = response.data.data.config_value || '';
+                                // 保存原始值用于变更检测（支持清空操作）
+                                this.quickConfigModal.originalValues[config.key] = value;
                                 // 根据 key 映射到对应的表单字段
                                 if (config.key === 'duomi.token') {
                                     this.quickConfigModal.duomi.token = value;
@@ -1066,6 +1072,10 @@ const AdminApp = {
                                     this.quickConfigModal.google.apiKey = value;
                                 } else if (config.key === 'llm.google.gemini_base_url') {
                                     this.quickConfigModal.google.baseUrl = value;
+                                } else if (config.key === 'llm.qwen.api_key') {
+                                    this.quickConfigModal.qwen.apiKey = value;
+                                } else if (config.key === 'llm.qwen.base_url') {
+                                    this.quickConfigModal.qwen.baseUrl = value;
                                 } else if (config.key === 'runninghub.api_key') {
                                     this.quickConfigModal.runninghub.apiKey = value;
                                 } else if (config.key === 'vidu.token') {
@@ -1124,6 +1134,8 @@ const AdminApp = {
             this.quickConfigModal.duomi.token = '';
             this.quickConfigModal.google.apiKey = '';
             this.quickConfigModal.google.baseUrl = '';
+            this.quickConfigModal.qwen.apiKey = '';
+            this.quickConfigModal.qwen.baseUrl = '';
             this.quickConfigModal.runninghub.apiKey = '';
             this.quickConfigModal.vidu.token = '';
             this.quickConfigModal.volcengine.apiKey = '';
@@ -1225,45 +1237,41 @@ const AdminApp = {
 
         // 提交快速配置
         async submitQuickConfig() {
-            // 构建配置列表
+            // 构建配置列表 - 通过与原始值对比，支持清空操作
             const configs = [];
-            
-            if (this.quickConfigModal.duomi.token) {
-                configs.push({ key: 'duomi.token', value: this.quickConfigModal.duomi.token.trim() });
-            }
-            if (this.quickConfigModal.google.apiKey) {
-                configs.push({ key: 'llm.google.api_key', value: this.quickConfigModal.google.apiKey.trim() });
-            }
-            if (this.quickConfigModal.google.baseUrl) {
-                configs.push({ key: 'llm.google.gemini_base_url', value: this.quickConfigModal.google.baseUrl.trim() });
-            }
-            if (this.quickConfigModal.qwen.apiKey) {
-                configs.push({ key: 'llm.qwen.api_key', value: this.quickConfigModal.qwen.apiKey.trim() });
-            }
-            if (this.quickConfigModal.qwen.baseUrl) {
-                configs.push({ key: 'llm.qwen.base_url', value: this.quickConfigModal.qwen.baseUrl.trim() });
-            }
-            if (this.quickConfigModal.runninghub.apiKey) {
-                configs.push({ key: 'runninghub.api_key', value: this.quickConfigModal.runninghub.apiKey.trim() });
-            }
-            if (this.quickConfigModal.vidu.token) {
-                configs.push({ key: 'vidu.token', value: this.quickConfigModal.vidu.token.trim() });
-            }
-            if (this.quickConfigModal.volcengine.apiKey) {
-                configs.push({ key: 'volcengine.api_key', value: this.quickConfigModal.volcengine.apiKey.trim() });
-            }
+            const origValues = this.quickConfigModal.originalValues || {};
+
+            // Helper function to add config only if value changed
+            const addIfChanged = (key, currentValue) => {
+                const trimmedValue = currentValue ? currentValue.trim() : '';
+                const originalValue = origValues[key] || '';
+                if (trimmedValue !== originalValue) {
+                    configs.push({ key, value: trimmedValue });
+                }
+            };
+
+            // 检测所有配置项的变化（包含清空操作）
+            addIfChanged('duomi.token', this.quickConfigModal.duomi.token);
+            addIfChanged('llm.google.api_key', this.quickConfigModal.google.apiKey);
+            addIfChanged('llm.google.gemini_base_url', this.quickConfigModal.google.baseUrl);
+            addIfChanged('llm.qwen.api_key', this.quickConfigModal.qwen.apiKey);
+            addIfChanged('llm.qwen.base_url', this.quickConfigModal.qwen.baseUrl);
+            addIfChanged('runninghub.api_key', this.quickConfigModal.runninghub.apiKey);
+            addIfChanged('vidu.token', this.quickConfigModal.vidu.token);
+            addIfChanged('volcengine.api_key', this.quickConfigModal.volcengine.apiKey);
 
             const allowedSites = this.isCommunityEdition ? [1] : [1, 2, 3, 4, 5];
 
             for (const siteNum of allowedSites) {
                 const site = this.quickConfigModal.apiAggregator[`site${siteNum}`];
-                if (site.name) configs.push({ key: `api_aggregator.site_${siteNum}.name`, value: site.name.trim() });
-                if (site.baseUrl) configs.push({ key: `api_aggregator.site_${siteNum}.base_url`, value: site.baseUrl.trim() });
-                if (site.apiKey) configs.push({ key: `api_aggregator.site_${siteNum}.api_key`, value: site.apiKey.trim() });
+                addIfChanged(`api_aggregator.site_${siteNum}.name`, site.name);
+                addIfChanged(`api_aggregator.site_${siteNum}.base_url`, site.baseUrl);
+                addIfChanged(`api_aggregator.site_${siteNum}.api_key`, site.apiKey);
             }
 
             if (configs.length === 0) {
-                this.showToast('请至少填写一项配置', 'error');
+                this.showToast('配置未发生变化', 'success');
+                this.closeQuickConfigModal();
                 return;
             }
             
