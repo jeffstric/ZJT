@@ -6903,8 +6903,8 @@
               </div>
               <div class="field field-always-visible" style="margin-top: 10px;">
                 <div style="display: flex; flex-direction: column; gap: 8px;">
-                  <div class="gen-container shot-group-merge-container">
-                    <button class="gen-btn gen-btn-main shot-group-generate-video-btn" type="button" style="background: #22c55e; color: white; padding: 10px;" title="将多个分镜合并为一个视频生成，节省算力（仅 kling/veo3/sora2 支持）">合并生成视频</button>
+                  <div class="gen-container shot-group-merge-container" style="width: 100%;">
+                    <button class="gen-btn gen-btn-main shot-group-generate-video-btn" type="button" style="background: #22c55e; color: white; padding: 10px; flex: 1;" title="将多个分镜合并为一个视频生成，节省算力（仅 kling/veo3/sora2 支持）">合并生成视频</button>
                     <button class="gen-btn gen-btn-caret shot-group-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
                     <div class="gen-menu shot-group-video-menu">
                       <div class="gen-item" data-count="1">X1</div>
