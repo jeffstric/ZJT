@@ -4922,116 +4922,122 @@
           <div class="node-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M9 5H7C5.89543 5 5 5.89543 5 7V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V7C19 5.89543 18.1046 5 17 5H15"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>剧本 ${scriptId}</div>
           <button class="icon-btn" title="删除">×</button>
         </div>
-        <div class="node-body">
-          <div class="field field-always-visible script-info-field" style="display:none;">
-            <div class="gen-meta script-name"></div>
-            <div class="gen-meta script-length"></div>
-            <span class="script-char-count" style="color: #666; font-size: 12px;">0/30000</span>
-          </div>
-          <div class="field field-collapsible">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div class="label" style="margin: 0;">输入剧本内容</div>
-              <button class="mini-btn script-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="放大编辑">⤢</button>
+        <div class="node-body script-node-body">
+          <!-- 第1部分：剧本内容 -->
+          <div class="script-section">
+            <div class="script-section-header">
+              <span class="script-section-number">1</span>
+              <span class="script-section-title">剧本内容</span>
             </div>
-            <textarea class="script-textarea" rows="6" maxlength="30000" placeholder="在此输入剧本内容，或上传文件（最多30000字符）"></textarea>
+            <div class="field field-always-visible script-info-field" style="display:none;">
+              <div class="gen-meta script-name"></div>
+              <div class="gen-meta script-length"></div>
+            </div>
+            <div class="field field-always-visible">
+              <div style="display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-bottom: 4px;">
+                <span class="script-char-count" style="color: #666; font-size: 12px;">0/30000</span>
+                <button class="mini-btn script-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="放大编辑">⤢</button>
+              </div>
+              <textarea class="script-textarea" rows="16" maxlength="30000" placeholder="在此输入剧本内容，或上传文件（最多30000字符）"></textarea>
+            </div>
+            <div class="field field-always-visible" style="margin-top: auto; padding-top: 8px;">
+              <div style="display: flex; gap: 6px;">
+                <button class="gen-btn gen-btn-white script-upload-btn" type="button" style="border-radius: 8px; flex: 1; padding: 7px 0; font-size: 12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>上传</button>
+                <button class="gen-btn gen-btn-green script-load-btn" type="button" style="border-radius: 8px; flex: 1; padding: 7px 0; font-size: 12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>加载</button>
+              </div>
+              <input class="script-file" type="file" accept=".txt,.md" style="display:none;" />
+            </div>
+            <div class="field field-always-visible script-warning-field" style="display:none;">
+              <div class="gen-meta" style="color: #f59e0b;">文件内容超过30000字符，已自动截取前30000字符。建议将剧本分段处理。</div>
+            </div>
           </div>
-          <div class="field field-collapsible">
-            <div class="label">或上传剧本文件</div>
-            <input class="script-file" type="file" accept=".txt,.md" />
+
+          <!-- 第2部分：参数配置 -->
+          <div class="script-section">
+            <div class="script-section-header">
+              <span class="script-section-number">2</span>
+              <span class="script-section-title">参数配置</span>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">镜头组时长</div>
+              <select class="script-duration-select" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                <option value="5">5秒</option>
+                <option value="8">8秒</option>
+                <option value="10">10秒</option>
+                <option value="15" selected>15秒</option>
+              </select>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">宫格生图模型</div>
+              <select class="script-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">宫格类型</div>
+              <select class="script-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                <option value="auto">自动选择</option>
+                <option value="4">4宫格 (2x2)</option>
+                <option value="9">9宫格 (3x3)</option>
+              </select>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">视频生成模型</div>
+              <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">输出语言</div>
+              <select class="script-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                <option value="">中文（默认）</option>
+                <option value="English">English</option>
+                <option value="Deutsch">Deutsch</option>
+                <option value="Français">Français</option>
+                <option value="Русский">Русский</option>
+                <option value="__custom__">自定义语言...</option>
+              </select>
+              <input type="text" class="script-language-custom" placeholder="或输入自定义语言..." style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
+            </div>
+            <div class="script-checkbox-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                <input type="checkbox" class="script-force-medium-shot" style="cursor: pointer;" checked />
+                <span>对话禁止全景</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                <input type="checkbox" class="script-no-bg-music" style="cursor: pointer;" checked />
+                <span>不生成背景音乐</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
+                <span>拆分多人对话镜头</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                <input type="checkbox" class="script-narration-as-dialogue" style="cursor: pointer;" />
+                <span>解说剧（仅旁白说话）</span>
+              </label>
+            </div>
           </div>
-          <div class="field field-collapsible">
-            <div class="label">或从已保存剧本中选择</div>
-            <button class="gen-btn script-load-btn" type="button" style="border-radius: 8px; width: 100%; background: #10b981; padding: 8px;">加载剧本</button>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">镜头组最长时长</div>
-            <select class="script-duration-select" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-              <option value="5">5秒</option>
-              <option value="8">8秒</option>
-              <option value="10">10秒</option>
-              <option value="15" selected>15秒</option>
-            </select>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">每个镜头组内所有镜头的总时长不超过此值</div>
-          </div>
-          <div class="field field-collapsible">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-              <input type="checkbox" class="script-force-medium-shot" style="cursor: pointer;" checked />
-              <span>对话禁止全景</span>
-            </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">对话镜头自动选择近景或中景，避免sora全景对话效果不佳</div>
-          </div>
-          <div class="field field-collapsible">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-              <input type="checkbox" class="script-no-bg-music" style="cursor: pointer;" checked />
-              <span>不生成背景音乐</span>
-            </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">方便后期调音</div>
-          </div>
-          <div class="field field-collapsible">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-              <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
-              <span>拆分多人对话镜头</span>
-            </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将多人对话镜头拆分为单人对话镜头</div>
-          </div>
-          <div class="field field-collapsible">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-              <input type="checkbox" class="script-narration-as-dialogue" style="cursor: pointer;" />
-              <span>解说剧（仅旁白说话）</span>
-            </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将有角色对话的剧本转换为仅旁白解说的剧本格式</div>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">输出语言</div>
-            <select class="script-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-              <option value="">中文（默认）</option>
-              <option value="English">English</option>
-              <option value="Deutsch">Deutsch</option>
-              <option value="Français">Français</option>
-              <option value="Русский">Русский</option>
-              <option value="__custom__">自定义语言...</option>
-            </select>
-            <input type="text" class="script-language-custom" placeholder="或输入自定义语言..." style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">解析结果的文本输出语言</div>
-          </div>
-          <div class="field field-always-visible script-warning-field" style="display:none;">
-            <div class="gen-meta" style="color: #f59e0b;">文件内容超过30000字符，已自动截取前30000字符。建议将剧本分段处理。</div>
-          </div>
-          <div class="field field-collapsible">
-            <button class="gen-btn gen-btn-white script-split-btn" type="button" style="border-radius: 10px; width: 100%;" disabled>拆分镜组</button>
-            <div class="gen-meta script-status" style="display:none; margin-top: 8px;"></div>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">宫格生图模型</div>
-            <select class="script-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">宫格类型</div>
-            <select class="script-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-              <option value="auto">自动选择</option>
-              <option value="4">4宫格 (2x2)</option>
-              <option value="9">9宫格 (3x3)</option>
-            </select>
-          </div>
-          <div class="field field-collapsible">
-            <button class="gen-btn gen-btn-green script-split-grid-btn" type="button" style="border-radius: 10px; width: 100%;">拆分分镜组 + 宫格生图</button>
-            <div class="gen-meta script-grid-status" style="display:none; margin-top: 8px;"></div>
-          </div>
-          <div class="field field-collapsible">
-            <button class="gen-btn gen-btn-white script-grid-only-btn" type="button" style="border-radius: 10px; width: 100%;">宫格生图</button>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">已有分镜组和分镜时，仅生成宫格图片</div>
-            <div class="gen-meta script-grid-only-status" style="display:none; margin-top: 8px;"></div>
-          </div>
-          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
-          <div class="field field-collapsible">
-            <div class="label">视频生成模型</div>
-            <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">为整个剧本设置默认视频生成模型，分镜可单独设置覆盖</div>
-          </div>
-          <div class="field field-collapsible">
-            <button class="gen-btn gen-btn-blue script-batch-generate-btn" type="button" style="border-radius: 10px; width: 100%; background: #3b82f6; color: white;">逐个生成视频</button>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">为整个剧本的所有分镜生成视频，支持所有模型但可能浪费时长</div>
-            <div class="gen-meta script-batch-status" style="display:none; margin-top: 8px;"></div>
+
+          <!-- 第3部分：执行操作 -->
+          <div class="script-section script-section-actions">
+            <div class="script-section-header">
+              <span class="script-section-number">3</span>
+              <span class="script-section-title">执行操作</span>
+            </div>
+            <div class="field field-always-visible">
+              <div style="display: flex; gap: 6px;">
+                <button class="gen-btn gen-btn-white script-split-btn" type="button" style="border-radius: 8px; flex: 1; padding: 18px 0;" disabled>拆分镜组</button>
+                <button class="gen-btn gen-btn-white script-grid-only-btn" type="button" style="border-radius: 8px; flex: 1; padding: 18px 0;">宫格生图</button>
+              </div>
+              <div class="gen-meta script-status" style="display:none; margin-top: 6px;"></div>
+              <div class="gen-meta script-grid-only-status" style="display:none; margin-top: 6px;"></div>
+            </div>
+            <div class="field field-always-visible">
+              <button class="gen-btn gen-btn-green script-split-grid-btn" type="button" style="border-radius: 8px; width: 100%; padding: 18px 0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>拆分分镜组 + 宫格生图</button>
+              <div class="gen-meta script-grid-status" style="display:none; margin-top: 6px;"></div>
+            </div>
+            <div class="field field-always-visible">
+              <button class="gen-btn gen-btn-blue script-batch-generate-btn" type="button" style="border-radius: 8px; width: 100%; background: #3b82f6; color: white; padding: 18px 0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>逐个生成视频</button>
+              <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">支持所有模型，逐个生成可能浪费时长</div>
+              <div class="gen-meta script-batch-status" style="display:none; margin-top: 6px;"></div>
+            </div>
           </div>
         </div>
       `;
@@ -5065,7 +5071,13 @@
       const gridOnlyStatusEl = el.querySelector('.script-grid-only-status');
       const batchGenerateBtn = el.querySelector('.script-batch-generate-btn');
       const batchStatusEl = el.querySelector('.script-batch-status');
-      
+      const uploadBtn = el.querySelector('.script-upload-btn');
+
+      // 上传按钮点击时触发隐藏的文件输入框
+      if(uploadBtn && fileEl) {
+        uploadBtn.addEventListener('click', () => fileEl.click());
+      }
+
       // 动态填充视频模型选项
       function populateScriptVideoModelOptions() {
         if(!videoModelSelect) return;
@@ -5364,6 +5376,7 @@
         }
 
         splitBtn.disabled = true;
+        splitGridBtn.disabled = true;
         statusEl.style.display = 'block';
         statusEl.style.color = '#666';
         statusEl.textContent = node.data.narrationAsDialogue ? '正在将剧本转换为解说剧格式，再解析分镜...' : '正在调用LLM解析剧本...';
@@ -5471,6 +5484,7 @@
           showToast('剧本解析失败', 'error');
         } finally {
           splitBtn.disabled = false;
+          splitGridBtn.disabled = false;
         }
       });
 
@@ -5484,11 +5498,18 @@
       
       splitGridBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+
+        if(splitGridBtn.disabled) return;
+        splitGridBtn.disabled = true;
+        splitBtn.disabled = true;
+
         console.log('[宫格生图] 按钮被点击');
         
         if(!node.data.scriptContent) {
           console.log('[宫格生图] 没有剧本内容');
           showToast('请先上传剧本文件', 'error');
+          splitGridBtn.disabled = false;
+          splitBtn.disabled = false;
           return;
         }
 
@@ -5515,6 +5536,8 @@
           
           if(shotGroupsWithFrames.length > 0) {
             showToast('已有分镜组和分镜节点，请勿重复点击', 'warning');
+            splitGridBtn.disabled = false;
+            splitBtn.disabled = false;
             return;
           }
           
@@ -5555,6 +5578,8 @@
                 gridStatusEl.style.color = '#f59e0b';
                 gridStatusEl.textContent = '只有1个分镜，无需宫格生图';
                 showToast('只有1个分镜，无需宫格生图', 'warning');
+                splitGridBtn.disabled = false;
+                splitBtn.disabled = false;
                 return;
               }
 
@@ -5597,6 +5622,8 @@
               if(!await showConfirmModal(confirmMsg, { title: '宫格生图确认', confirmText: '开始生成' })) {
                 gridStatusEl.style.color = '#666';
                 gridStatusEl.textContent = '已取消';
+                splitGridBtn.disabled = false;
+                splitBtn.disabled = false;
                 return;
               }
 
@@ -5814,6 +5841,9 @@
               gridStatusEl.style.color = '#dc2626';
               gridStatusEl.textContent = '失败: ' + (error.message || '未知错误');
               showToast('宫格生图失败: ' + (error.message || '未知错误'), 'error');
+            } finally {
+              splitGridBtn.disabled = false;
+              splitBtn.disabled = false;
             }
             return;
           }
@@ -5822,6 +5852,8 @@
         if(!state.defaultWorldId){
           const confirmed = await showConfirmModal('尚未在左上角选择世界，无法自动匹配场景和角色。确认继续拆分分镜图吗？', { title: '提示' });
           if(!confirmed){
+            splitGridBtn.disabled = false;
+            splitBtn.disabled = false;
             return;
           }
         }
@@ -6220,6 +6252,9 @@
           gridStatusEl.style.color = '#dc2626';
           gridStatusEl.textContent = '失败: ' + (error.message || '未知错误');
           showToast('宫格生图失败: ' + (error.message || '未知错误'), 'error');
+        } finally {
+          splitGridBtn.disabled = false;
+          splitBtn.disabled = false;
         }
       });
 
