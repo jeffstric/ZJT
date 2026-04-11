@@ -7595,10 +7595,15 @@
       });
 
       const createdNodeIds = [];
-      // 横向排列：shot_frame 在 shot_group 右侧，x 固定（offsetX），y 纵向堆叠
-      const offsetX = 480;  // DEFAULT_NODE_WIDTH(320) + COLUMN_GAP(120) + BASE_PADDING_X(80) ≈ 480，接近 autoArrange 的 startX
-      // 新节点从已有节点下方开始排列
-      let nextY = existingShotIds.size > 0 ? maxExistingY + 280 : shotGroupNode.y;
+      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
+      const offsetX = 480;  // DEFAULT_NODE_WIDTH(320) + COLUMN_GAP(120) + BASE_PADDING_X(80) ≈ 480
+      // shot_group 已在 DOM 中，获取其实际渲染高度
+      const shotGroupEl = canvasEl.querySelector(`.node[data-node-id="${shotGroupNodeId}"]`);
+      const shotGroupHeight = shotGroupEl ? (shotGroupEl.offsetHeight || 220) : 220;
+      // 第一个 shot_frame 从 shot_group 下方开始（shotGroupHeight + CLUSTER_GAP_Y=120）
+      // 已有节点则从 maxExistingY 下方开始，每次加 ROW_HEIGHT=300（DEFAULT_NODE_HEIGHT + ROW_GAP）
+      const ROW_HEIGHT = 300;
+      let nextY = existingShotIds.size > 0 ? maxExistingY + ROW_HEIGHT : shotGroupNode.y + shotGroupHeight + 120;
       let skippedCount = 0;
       
       // 从第一个镜头获取场景信息（所有镜头使用同一个场景）
@@ -7634,7 +7639,7 @@
           checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += 280;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) - 20
+        nextY += ROW_HEIGHT;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) = 300
 
         // 创建从分镜组到分镜图节点的连接
         state.connections.push({
@@ -7699,9 +7704,13 @@
       console.log(`[宫格生图] 需要生成的分镜总数: ${shots.length}`);
 
       const createdNodeIds = [];
-      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠
-      const offsetX = 480;  // DEFAULT_NODE_WIDTH(320) + COLUMN_GAP(120) + BASE_PADDING_X(80) ≈ 480
-      let nextY = existingShotIds.size > 0 ? maxExistingY + 280 : shotGroupNode.y;
+      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
+      const offsetX = 480;
+      // shot_group 已在 DOM 中，获取其实际渲染高度
+      const shotGroupEl = canvasEl.querySelector(`.node[data-node-id="${shotGroupNodeId}"]`);
+      const shotGroupHeight = shotGroupEl ? (shotGroupEl.offsetHeight || 220) : 220;
+      const ROW_HEIGHT = 300;
+      let nextY = existingShotIds.size > 0 ? maxExistingY + ROW_HEIGHT : shotGroupNode.y + shotGroupHeight + 120;
       
       const firstShot = shots[0];
       const locationInfo = [];
@@ -7737,7 +7746,7 @@
           checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += 280;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) - 20
+        nextY += ROW_HEIGHT;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) = 300
 
         state.connections.push({
           id: state.nextConnId++,
