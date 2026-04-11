@@ -5433,7 +5433,7 @@
                 // shot_group 实际高度取决于 shots 数量（每shot约80px+header约120px），安全估算 shot_count * 100
                 const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
                 const shotGroupNodeId = createShotGroupNode({
-                  x: node.x + 600,  // 加大偏移：script右侧留足间隙
+                  x: node.x + 800,  // 加大偏移：script右侧留足间隙
                   y: node.y + cumulativeY,
                   shotGroupData: shotGroup,
                   scriptData: result.data
@@ -7597,7 +7597,7 @@
 
       const createdNodeIds = [];
       // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
-      const offsetX = 1200;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
+      const offsetX = 1400;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
       const ROW_HEIGHT = 600;  // 增大纵向间隔，确保 shot_frame 之间不重叠
       let nextY;
       if (existingShotIds.size > 0) {
@@ -7710,7 +7710,7 @@
 
       const createdNodeIds = [];
       // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
-      const offsetX = 1200;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
+      const offsetX = 1400;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
       const ROW_HEIGHT = 600;  // 增大纵向间隔，确保 shot_frame 之间不重叠
       let nextY;
       if (existingShotIds.size > 0) {
