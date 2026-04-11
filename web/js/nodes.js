@@ -5917,7 +5917,7 @@
           const createdShotGroupNodes = [];
           let cumulativeY = 0;
           result.data.shot_groups.forEach((shotGroup, index) => {
-            const offsetX = 400;
+            const offsetX = 800;
             const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
             const shotGroupNodeId = createShotGroupNode({
               x: node.x + offsetX,
@@ -5926,7 +5926,7 @@
               scriptData: result.data
             });
             cumulativeY += shotCount * 700;
-            
+
             if(shotGroupNodeId) {
               state.connections.push({
                 id: state.nextConnId++,
