@@ -5430,6 +5430,7 @@
               let cumulativeY = 0;
               result.data.shot_groups.forEach((shotGroup, index) => {
                 // 横向排列：shot_group 在 script 右侧，x 固定，y 纵向堆叠
+                // shot_group 高度 ≈ shot_count * 70px(每shot) + 100px(header+padding)，用 shot_count * 100 估算
                 const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
                 const shotGroupNodeId = createShotGroupNode({
                   x: node.x + 480,  // scriptColumnWidth(320) + SCRIPT_COLUMN_GAP(80) + BASE_PADDING_X(80) ≈ 480
@@ -5437,7 +5438,7 @@
                   shotGroupData: shotGroup,
                   scriptData: result.data
                 });
-                cumulativeY += shotCount * 300;
+                cumulativeY += shotCount * 100;  // 每个分镜约 100px 高度估算
                 
                 // 创建从剧本节点到分镜组节点的连线
                 if(shotGroupNodeId) {
@@ -7596,14 +7597,21 @@
 
       const createdNodeIds = [];
       // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
-      const offsetX = 480;  // DEFAULT_NODE_WIDTH(320) + COLUMN_GAP(120) + BASE_PADDING_X(80) ≈ 480
-      // shot_group 已在 DOM 中，获取其实际渲染高度
-      const shotGroupEl = canvasEl.querySelector(`.node[data-node-id="${shotGroupNodeId}"]`);
-      const shotGroupHeight = shotGroupEl ? (shotGroupEl.offsetHeight || 220) : 220;
-      // 第一个 shot_frame 从 shot_group 下方开始（shotGroupHeight + CLUSTER_GAP_Y=120）
-      // 已有节点则从 maxExistingY 下方开始，每次加 ROW_HEIGHT=300（DEFAULT_NODE_HEIGHT + ROW_GAP）
-      const ROW_HEIGHT = 300;
-      let nextY = existingShotIds.size > 0 ? maxExistingY + ROW_HEIGHT : shotGroupNode.y + shotGroupHeight + 120;
+      // shot_group 可横向扩展(width>300)，shot_frame 需要足够 X 偏移避免重叠
+      const offsetX = 800;  // 增大偏移，避免 shot_group 宽度扩展后与 shot_frame 重叠
+      const ROW_HEIGHT = 400;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) + 余量
+      // shot_group 已在 DOM 中，等待一帧后获取精确渲染高度（刚 append 时可能不准确）
+      let shotGroupHeight = 400;  // 临时估算值，等待 rAF 后更新
+      let nextY;
+      if (existingShotIds.size > 0) {
+        nextY = maxExistingY + ROW_HEIGHT;
+      } else {
+        // 第一个 shot_frame 放在 shot_group 下方足够远处
+        // shot_group 高度 ≈ shot_count * 70px + header ≈ 400-800px
+        const shotCount = (shotGroupNode.data.shots || []).length;
+        shotGroupHeight = shotCount * 70 + 150;  // 每 shot 约 70px + header(≈150px)
+        nextY = shotGroupNode.y + shotGroupHeight + 150;
+      }
       let skippedCount = 0;
       
       // 从第一个镜头获取场景信息（所有镜头使用同一个场景）
@@ -7639,7 +7647,7 @@
           checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += ROW_HEIGHT;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) = 300
+        nextY += ROW_HEIGHT;  // 400px，避免 shot_frame 之间重叠
 
         // 创建从分镜组到分镜图节点的连接
         state.connections.push({
@@ -7705,12 +7713,17 @@
 
       const createdNodeIds = [];
       // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
-      const offsetX = 480;
-      // shot_group 已在 DOM 中，获取其实际渲染高度
-      const shotGroupEl = canvasEl.querySelector(`.node[data-node-id="${shotGroupNodeId}"]`);
-      const shotGroupHeight = shotGroupEl ? (shotGroupEl.offsetHeight || 220) : 220;
-      const ROW_HEIGHT = 300;
-      let nextY = existingShotIds.size > 0 ? maxExistingY + ROW_HEIGHT : shotGroupNode.y + shotGroupHeight + 120;
+      const offsetX = 800;  // 增大偏移，避免 shot_group 宽度扩展后与 shot_frame 重叠
+      const ROW_HEIGHT = 400;
+      let nextY;
+      if (existingShotIds.size > 0) {
+        nextY = maxExistingY + ROW_HEIGHT;
+      } else {
+        // 第一个 shot_frame 放在 shot_group 下方
+        const shotCount = (shotGroupNode.data.shots || []).length;
+        const shotGroupHeight = shotCount * 70 + 150;
+        nextY = shotGroupNode.y + shotGroupHeight + 150;
+      }
       
       const firstShot = shots[0];
       const locationInfo = [];
@@ -7746,7 +7759,7 @@
           checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += ROW_HEIGHT;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) = 300
+        nextY += ROW_HEIGHT;  // 400px，避免 shot_frame 之间重叠
 
         state.connections.push({
           id: state.nextConnId++,
