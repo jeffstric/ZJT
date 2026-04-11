@@ -261,8 +261,15 @@
       canvasContainer.style.cursor = 'grab';
     });
 
+    // 在拖动/平移/选择期间全局阻止文本选中
+    document.addEventListener('selectstart', (e) => {
+      if(state.panning || state.placing || state.selecting || state.connecting || state.drag){
+        e.preventDefault();
+      }
+    });
+
     canvasContainer.addEventListener('mousedown', (e) => {
-      if(e.target === canvasEl || e.target === canvasContainer || e.target === canvasWorld){
+      if(e.target === canvasEl || e.target === canvasContainer || e.target === canvasWorld || e.target.closest('#connectionsSvg')){
         // 选择模式：开始绘制选择框
         if(state.selectionMode){
           const containerRect = canvasContainer.getBoundingClientRect();
