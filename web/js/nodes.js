@@ -5429,15 +5429,15 @@
               const createdShotGroupNodes = [];
               let cumulativeY = 0;
               result.data.shot_groups.forEach((shotGroup, index) => {
-                const offsetX = 400;
+                // 横向排列：shot_group 在 script 右侧，x 固定，y 纵向堆叠
                 const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
                 const shotGroupNodeId = createShotGroupNode({
-                  x: node.x + offsetX,
+                  x: node.x + 480,  // scriptColumnWidth(320) + SCRIPT_COLUMN_GAP(80) + BASE_PADDING_X(80) ≈ 480
                   y: node.y + cumulativeY,
                   shotGroupData: shotGroup,
                   scriptData: result.data
                 });
-                cumulativeY += shotCount * 700;
+                cumulativeY += shotCount * 300;
                 
                 // 创建从剧本节点到分镜组节点的连线
                 if(shotGroupNodeId) {
@@ -7595,9 +7595,10 @@
       });
 
       const createdNodeIds = [];
-      const offsetX = 400;
+      // 横向排列：shot_frame 在 shot_group 右侧，x 固定（offsetX），y 纵向堆叠
+      const offsetX = 480;  // DEFAULT_NODE_WIDTH(320) + COLUMN_GAP(120) + BASE_PADDING_X(80) ≈ 480，接近 autoArrange 的 startX
       // 新节点从已有节点下方开始排列
-      let nextY = existingShotIds.size > 0 ? maxExistingY + 700 : shotGroupNode.y;
+      let nextY = existingShotIds.size > 0 ? maxExistingY + 280 : shotGroupNode.y;
       let skippedCount = 0;
       
       // 从第一个镜头获取场景信息（所有镜头使用同一个场景）
@@ -7630,10 +7631,10 @@
           y: nextY,
           shotData: shotDataWithLocation,
           model: shotGroupNode.data.model,
-          checkCollision: true
+          checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += 700;
+        nextY += 280;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) - 20
 
         // 创建从分镜组到分镜图节点的连接
         state.connections.push({
@@ -7698,8 +7699,9 @@
       console.log(`[宫格生图] 需要生成的分镜总数: ${shots.length}`);
 
       const createdNodeIds = [];
-      const offsetX = 400;
-      let nextY = existingShotIds.size > 0 ? maxExistingY + 700 : shotGroupNode.y;
+      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠
+      const offsetX = 480;  // DEFAULT_NODE_WIDTH(320) + COLUMN_GAP(120) + BASE_PADDING_X(80) ≈ 480
+      let nextY = existingShotIds.size > 0 ? maxExistingY + 280 : shotGroupNode.y;
       
       const firstShot = shots[0];
       const locationInfo = [];
@@ -7732,10 +7734,10 @@
           y: nextY,
           shotData: shotDataWithLocation,
           model: shotGroupNode.data.model,
-          checkCollision: true
+          checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += 700;
+        nextY += 280;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) - 20
 
         state.connections.push({
           id: state.nextConnId++,
