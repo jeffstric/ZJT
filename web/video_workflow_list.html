@@ -972,32 +972,62 @@
 
     async function handleSubmit(event) {
       if (event) event.preventDefault();
-      
-      const result = await createWorkflowData();
-      if (result) {
-        showToast(result.isEdit ? '更新成功' : '创建成功', 'success');
-        closeModal();
-        loadWorkflows();
+
+      // 禁用按钮防止重复提交
+      const btns = document.querySelectorAll('#workflowForm .modal-actions .btn');
+      const originalTexts = [];
+      btns.forEach((btn, i) => {
+        originalTexts[i] = btn.textContent;
+        btn.disabled = true;
+      });
+
+      try {
+        const result = await createWorkflowData();
+        if (result) {
+          showToast(result.isEdit ? '更新成功' : '创建成功', 'success');
+          closeModal();
+          loadWorkflows();
+        }
+      } finally {
+        btns.forEach((btn, i) => {
+          btn.disabled = false;
+          if (originalTexts[i]) btn.textContent = originalTexts[i];
+        });
       }
     }
 
     async function handleSubmitAndGoScript(event) {
       if (event) event.preventDefault();
-      
-      // 先获取世界ID，因为createWorkflowData后表单可能被清空
-      const worldId = document.getElementById('workflowWorld').value;
-      
-      const result = await createWorkflowData();
-      if (result && result.workflowId) {
-        showToast('创建成功，正在跳转...', 'success');
-        closeModal();
-        // 跳转到剧本创作系统
-        const userId = getUserId();
-        let url = `/script-writer?workflow_id=${result.workflowId}&user_id=${encodeURIComponent(userId)}`;
-        if (worldId) {
-          url += `&world_id=${worldId}`;
+
+      // 禁用按钮防止重复提交
+      const btns = document.querySelectorAll('#workflowForm .modal-actions .btn');
+      const originalTexts = [];
+      btns.forEach((btn, i) => {
+        originalTexts[i] = btn.textContent;
+        btn.disabled = true;
+      });
+
+      try {
+        // 先获取世界ID，因为createWorkflowData后表单可能被清空
+        const worldId = document.getElementById('workflowWorld').value;
+
+        const result = await createWorkflowData();
+        if (result && result.workflowId) {
+          showToast('创建成功，正在跳转...', 'success');
+          closeModal();
+          // 跳转到剧本创作系统
+          const userId = getUserId();
+          let url = `/script-writer?workflow_id=${result.workflowId}&user_id=${encodeURIComponent(userId)}`;
+          if (worldId) {
+            url += `&world_id=${worldId}`;
+          }
+          window.location.href = url;
         }
-        window.location.href = url;
+      } finally {
+        btns.forEach((btn, i) => {
+          btn.disabled = false;
+          if (originalTexts[i]) btn.textContent = originalTexts[i];
+        });
       }
     }
 
