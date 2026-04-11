@@ -2113,6 +2113,15 @@ textarea:focus{ border-color: var(--primary); }
 .timeline-expand-btn:hover {
   opacity: 0.9;
 }
+@keyframes timeline-btn-flash {
+  0%   { background: var(--primary); box-shadow: 0 2px 8px rgba(34,197,94,0.4); }
+  25%  { background: #f59e0b;        box-shadow: 0 2px 12px rgba(245,158,11,0.6); }
+  75%  { background: #f59e0b;        box-shadow: 0 2px 12px rgba(245,158,11,0.6); }
+  100% { background: var(--primary); box-shadow: 0 2px 8px rgba(34,197,94,0.4); }
+}
+.timeline-expand-btn.flashing {
+  animation: timeline-btn-flash 1s ease;
+}
 .canvas-container.timeline-visible {
   padding-bottom: 280px;
 }
@@ -2752,4 +2761,88 @@ textarea:focus{ border-color: var(--primary); }
 .shell {
   margin-left: 0;
   transition: margin-left 0.3s ease;
+}
+
+/* ============ 剧本节点分区样式 - 横向排列 ============ */
+.node:has(.script-node-body) {
+  width: auto;
+  min-width: 340px;
+  max-width: 960px;
+}
+
+.script-node-body {
+  display: flex;
+  flex-direction: row;
+  gap: 0;
+  align-items: stretch;
+}
+
+.script-section {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.script-section + .script-section {
+  border-left: 1px solid #e5e7eb;
+}
+
+.script-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.script-section-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.script-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.script-checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+/* 禁用剧本节点的折叠功能 - 所有字段始终可见 */
+.node:has(.script-node-body) .field-collapsible {
+  max-height: 500px;
+  overflow: visible;
+  opacity: 1;
+  gap: 6px !important;
+}
+
+/* 第3部分：按钮纵向均匀分布 */
+.script-section-actions .script-section-header {
+  flex-shrink: 0;
+}
+
+.script-section-actions > .field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }

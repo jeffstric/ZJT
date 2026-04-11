@@ -4922,116 +4922,122 @@
           <div class="node-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M9 5H7C5.89543 5 5 5.89543 5 7V19C5 20.1046 5.89543 21 7 21H17C18.1046 21 19 20.1046 19 19V7C19 5.89543 18.1046 5 17 5H15"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>剧本 ${scriptId}</div>
           <button class="icon-btn" title="删除">×</button>
         </div>
-        <div class="node-body">
-          <div class="field field-always-visible script-info-field" style="display:none;">
-            <div class="gen-meta script-name"></div>
-            <div class="gen-meta script-length"></div>
-            <span class="script-char-count" style="color: #666; font-size: 12px;">0/30000</span>
-          </div>
-          <div class="field field-collapsible">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div class="label" style="margin: 0;">输入剧本内容</div>
-              <button class="mini-btn script-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="放大编辑">⤢</button>
+        <div class="node-body script-node-body">
+          <!-- 第1部分：剧本内容 -->
+          <div class="script-section">
+            <div class="script-section-header">
+              <span class="script-section-number">1</span>
+              <span class="script-section-title">剧本内容</span>
             </div>
-            <textarea class="script-textarea" rows="6" maxlength="30000" placeholder="在此输入剧本内容，或上传文件（最多30000字符）"></textarea>
+            <div class="field field-always-visible script-info-field" style="display:none;">
+              <div class="gen-meta script-name"></div>
+              <div class="gen-meta script-length"></div>
+            </div>
+            <div class="field field-always-visible">
+              <div style="display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-bottom: 4px;">
+                <span class="script-char-count" style="color: #666; font-size: 12px;">0/30000</span>
+                <button class="mini-btn script-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="放大编辑">⤢</button>
+              </div>
+              <textarea class="script-textarea" rows="16" maxlength="30000" placeholder="在此输入剧本内容，或上传文件（最多30000字符）"></textarea>
+            </div>
+            <div class="field field-always-visible" style="margin-top: auto; padding-top: 8px;">
+              <div style="display: flex; gap: 6px;">
+                <button class="gen-btn gen-btn-white script-upload-btn" type="button" style="border-radius: 8px; flex: 1; padding: 7px 0; font-size: 12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>上传</button>
+                <button class="gen-btn gen-btn-green script-load-btn" type="button" style="border-radius: 8px; flex: 1; padding: 7px 0; font-size: 12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>加载</button>
+              </div>
+              <input class="script-file" type="file" accept=".txt,.md" style="display:none;" />
+            </div>
+            <div class="field field-always-visible script-warning-field" style="display:none;">
+              <div class="gen-meta" style="color: #f59e0b;">文件内容超过30000字符，已自动截取前30000字符。建议将剧本分段处理。</div>
+            </div>
           </div>
-          <div class="field field-collapsible">
-            <div class="label">或上传剧本文件</div>
-            <input class="script-file" type="file" accept=".txt,.md" />
+
+          <!-- 第2部分：参数配置 -->
+          <div class="script-section">
+            <div class="script-section-header">
+              <span class="script-section-number">2</span>
+              <span class="script-section-title">参数配置</span>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">镜头组时长</div>
+              <select class="script-duration-select" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                <option value="5">5秒</option>
+                <option value="8">8秒</option>
+                <option value="10">10秒</option>
+                <option value="15" selected>15秒</option>
+              </select>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">宫格生图模型</div>
+              <select class="script-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">宫格类型</div>
+              <select class="script-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                <option value="auto">自动选择</option>
+                <option value="4">4宫格 (2x2)</option>
+                <option value="9">9宫格 (3x3)</option>
+              </select>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">视频生成模型</div>
+              <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+            </div>
+            <div class="field field-always-visible">
+              <div class="label">输出语言</div>
+              <select class="script-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                <option value="">中文（默认）</option>
+                <option value="English">English</option>
+                <option value="Deutsch">Deutsch</option>
+                <option value="Français">Français</option>
+                <option value="Русский">Русский</option>
+                <option value="__custom__">自定义语言...</option>
+              </select>
+              <input type="text" class="script-language-custom" placeholder="或输入自定义语言..." style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
+            </div>
+            <div class="script-checkbox-group">
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                <input type="checkbox" class="script-force-medium-shot" style="cursor: pointer;" checked />
+                <span>对话禁止全景</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                <input type="checkbox" class="script-no-bg-music" style="cursor: pointer;" checked />
+                <span>不生成背景音乐</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
+                <span>拆分多人对话镜头</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                <input type="checkbox" class="script-narration-as-dialogue" style="cursor: pointer;" />
+                <span>解说剧（仅旁白说话）</span>
+              </label>
+            </div>
           </div>
-          <div class="field field-collapsible">
-            <div class="label">或从已保存剧本中选择</div>
-            <button class="gen-btn script-load-btn" type="button" style="border-radius: 8px; width: 100%; background: #10b981; padding: 8px;">加载剧本</button>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">镜头组最长时长</div>
-            <select class="script-duration-select" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-              <option value="5">5秒</option>
-              <option value="8">8秒</option>
-              <option value="10">10秒</option>
-              <option value="15" selected>15秒</option>
-            </select>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">每个镜头组内所有镜头的总时长不超过此值</div>
-          </div>
-          <div class="field field-collapsible">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-              <input type="checkbox" class="script-force-medium-shot" style="cursor: pointer;" checked />
-              <span>对话禁止全景</span>
-            </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">对话镜头自动选择近景或中景，避免sora全景对话效果不佳</div>
-          </div>
-          <div class="field field-collapsible">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-              <input type="checkbox" class="script-no-bg-music" style="cursor: pointer;" checked />
-              <span>不生成背景音乐</span>
-            </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">方便后期调音</div>
-          </div>
-          <div class="field field-collapsible">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-              <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
-              <span>拆分多人对话镜头</span>
-            </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将多人对话镜头拆分为单人对话镜头</div>
-          </div>
-          <div class="field field-collapsible">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-              <input type="checkbox" class="script-narration-as-dialogue" style="cursor: pointer;" />
-              <span>解说剧（仅旁白说话）</span>
-            </label>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">将有角色对话的剧本转换为仅旁白解说的剧本格式</div>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">输出语言</div>
-            <select class="script-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-              <option value="">中文（默认）</option>
-              <option value="English">English</option>
-              <option value="Deutsch">Deutsch</option>
-              <option value="Français">Français</option>
-              <option value="Русский">Русский</option>
-              <option value="__custom__">自定义语言...</option>
-            </select>
-            <input type="text" class="script-language-custom" placeholder="或输入自定义语言..." style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">解析结果的文本输出语言</div>
-          </div>
-          <div class="field field-always-visible script-warning-field" style="display:none;">
-            <div class="gen-meta" style="color: #f59e0b;">文件内容超过30000字符，已自动截取前30000字符。建议将剧本分段处理。</div>
-          </div>
-          <div class="field field-collapsible">
-            <button class="gen-btn gen-btn-white script-split-btn" type="button" style="border-radius: 10px; width: 100%;" disabled>拆分镜组</button>
-            <div class="gen-meta script-status" style="display:none; margin-top: 8px;"></div>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">宫格生图模型</div>
-            <select class="script-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">宫格类型</div>
-            <select class="script-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-              <option value="auto">自动选择</option>
-              <option value="4">4宫格 (2x2)</option>
-              <option value="9">9宫格 (3x3)</option>
-            </select>
-          </div>
-          <div class="field field-collapsible">
-            <button class="gen-btn gen-btn-green script-split-grid-btn" type="button" style="border-radius: 10px; width: 100%;">拆分分镜组 + 宫格生图</button>
-            <div class="gen-meta script-grid-status" style="display:none; margin-top: 8px;"></div>
-          </div>
-          <div class="field field-collapsible">
-            <button class="gen-btn gen-btn-white script-grid-only-btn" type="button" style="border-radius: 10px; width: 100%;">宫格生图</button>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">已有分镜组和分镜时，仅生成宫格图片</div>
-            <div class="gen-meta script-grid-only-status" style="display:none; margin-top: 8px;"></div>
-          </div>
-          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
-          <div class="field field-collapsible">
-            <div class="label">视频生成模型</div>
-            <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">为整个剧本设置默认视频生成模型，分镜可单独设置覆盖</div>
-          </div>
-          <div class="field field-collapsible">
-            <button class="gen-btn gen-btn-blue script-batch-generate-btn" type="button" style="border-radius: 10px; width: 100%; background: #3b82f6; color: white;">逐个生成视频</button>
-            <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">为整个剧本的所有分镜生成视频，支持所有模型但可能浪费时长</div>
-            <div class="gen-meta script-batch-status" style="display:none; margin-top: 8px;"></div>
+
+          <!-- 第3部分：执行操作 -->
+          <div class="script-section script-section-actions">
+            <div class="script-section-header">
+              <span class="script-section-number">3</span>
+              <span class="script-section-title">执行操作</span>
+            </div>
+            <div class="field field-always-visible">
+              <div style="display: flex; gap: 6px;">
+                <button class="gen-btn gen-btn-white script-split-btn" type="button" style="border-radius: 8px; flex: 1; padding: 18px 0;" disabled>拆分镜组</button>
+                <button class="gen-btn gen-btn-white script-grid-only-btn" type="button" style="border-radius: 8px; flex: 1; padding: 18px 0;">宫格生图</button>
+              </div>
+              <div class="gen-meta script-status" style="display:none; margin-top: 6px;"></div>
+              <div class="gen-meta script-grid-only-status" style="display:none; margin-top: 6px;"></div>
+            </div>
+            <div class="field field-always-visible">
+              <button class="gen-btn gen-btn-green script-split-grid-btn" type="button" style="border-radius: 8px; width: 100%; padding: 18px 0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>拆分分镜组 + 宫格生图</button>
+              <div class="gen-meta script-grid-status" style="display:none; margin-top: 6px;"></div>
+            </div>
+            <div class="field field-always-visible">
+              <button class="gen-btn gen-btn-blue script-batch-generate-btn" type="button" style="border-radius: 8px; width: 100%; background: #3b82f6; color: white; padding: 18px 0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>逐个生成视频</button>
+              <div class="gen-meta" style="margin-top: 4px; font-size: 11px; color: #666;">支持所有模型，逐个生成可能浪费时长</div>
+              <div class="gen-meta script-batch-status" style="display:none; margin-top: 6px;"></div>
+            </div>
           </div>
         </div>
       `;
@@ -5065,7 +5071,13 @@
       const gridOnlyStatusEl = el.querySelector('.script-grid-only-status');
       const batchGenerateBtn = el.querySelector('.script-batch-generate-btn');
       const batchStatusEl = el.querySelector('.script-batch-status');
-      
+      const uploadBtn = el.querySelector('.script-upload-btn');
+
+      // 上传按钮点击时触发隐藏的文件输入框
+      if(uploadBtn && fileEl) {
+        uploadBtn.addEventListener('click', () => fileEl.click());
+      }
+
       // 动态填充视频模型选项
       function populateScriptVideoModelOptions() {
         if(!videoModelSelect) return;
@@ -5364,6 +5376,7 @@
         }
 
         splitBtn.disabled = true;
+        splitGridBtn.disabled = true;
         statusEl.style.display = 'block';
         statusEl.style.color = '#666';
         statusEl.textContent = node.data.narrationAsDialogue ? '正在将剧本转换为解说剧格式，再解析分镜...' : '正在调用LLM解析剧本...';
@@ -5416,15 +5429,16 @@
               const createdShotGroupNodes = [];
               let cumulativeY = 0;
               result.data.shot_groups.forEach((shotGroup, index) => {
-                const offsetX = 400;
+                // 横向排列：shot_group 在 script 右侧，x 固定，y 纵向堆叠
+                // shot_group 实际高度取决于 shots 数量（每shot约80px+header约120px），安全估算 shot_count * 100
                 const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
                 const shotGroupNodeId = createShotGroupNode({
-                  x: node.x + offsetX,
+                  x: node.x + 800,  // script右侧 + 2/3 shot_group宽度(200px)，留足间隙
                   y: node.y + cumulativeY,
                   shotGroupData: shotGroup,
                   scriptData: result.data
                 });
-                cumulativeY += shotCount * 700;
+                cumulativeY += shotCount * 150;  // 每个分镜约 150px 高度估算
                 
                 // 创建从剧本节点到分镜组节点的连线
                 if(shotGroupNodeId) {
@@ -5437,9 +5451,9 @@
                 }
               });
               
-              // 自动显示时间轴（即使还没有片段）
-              state.timeline.visible = true;
+              // 渲染时间轴（创建柱子结构），不自动展开
               renderTimeline();
+              if (!state.timeline.visible) flashExpandButton();
               
               renderConnections();
               renderImageConnections();
@@ -5471,6 +5485,7 @@
           showToast('剧本解析失败', 'error');
         } finally {
           splitBtn.disabled = false;
+          splitGridBtn.disabled = false;
         }
       });
 
@@ -5484,11 +5499,18 @@
       
       splitGridBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+
+        if(splitGridBtn.disabled) return;
+        splitGridBtn.disabled = true;
+        splitBtn.disabled = true;
+
         console.log('[宫格生图] 按钮被点击');
         
         if(!node.data.scriptContent) {
           console.log('[宫格生图] 没有剧本内容');
           showToast('请先上传剧本文件', 'error');
+          splitGridBtn.disabled = false;
+          splitBtn.disabled = false;
           return;
         }
 
@@ -5515,6 +5537,8 @@
           
           if(shotGroupsWithFrames.length > 0) {
             showToast('已有分镜组和分镜节点，请勿重复点击', 'warning');
+            splitGridBtn.disabled = false;
+            splitBtn.disabled = false;
             return;
           }
           
@@ -5555,6 +5579,8 @@
                 gridStatusEl.style.color = '#f59e0b';
                 gridStatusEl.textContent = '只有1个分镜，无需宫格生图';
                 showToast('只有1个分镜，无需宫格生图', 'warning');
+                splitGridBtn.disabled = false;
+                splitBtn.disabled = false;
                 return;
               }
 
@@ -5597,6 +5623,8 @@
               if(!await showConfirmModal(confirmMsg, { title: '宫格生图确认', confirmText: '开始生成' })) {
                 gridStatusEl.style.color = '#666';
                 gridStatusEl.textContent = '已取消';
+                splitGridBtn.disabled = false;
+                splitBtn.disabled = false;
                 return;
               }
 
@@ -5814,6 +5842,9 @@
               gridStatusEl.style.color = '#dc2626';
               gridStatusEl.textContent = '失败: ' + (error.message || '未知错误');
               showToast('宫格生图失败: ' + (error.message || '未知错误'), 'error');
+            } finally {
+              splitGridBtn.disabled = false;
+              splitBtn.disabled = false;
             }
             return;
           }
@@ -5822,6 +5853,8 @@
         if(!state.defaultWorldId){
           const confirmed = await showConfirmModal('尚未在左上角选择世界，无法自动匹配场景和角色。确认继续拆分分镜图吗？', { title: '提示' });
           if(!confirmed){
+            splitGridBtn.disabled = false;
+            splitBtn.disabled = false;
             return;
           }
         }
@@ -5884,7 +5917,7 @@
           const createdShotGroupNodes = [];
           let cumulativeY = 0;
           result.data.shot_groups.forEach((shotGroup, index) => {
-            const offsetX = 400;
+            const offsetX = 800;
             const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
             const shotGroupNodeId = createShotGroupNode({
               x: node.x + offsetX,
@@ -5893,7 +5926,7 @@
               scriptData: result.data
             });
             cumulativeY += shotCount * 700;
-            
+
             if(shotGroupNodeId) {
               state.connections.push({
                 id: state.nextConnId++,
@@ -5904,9 +5937,9 @@
             }
           });
 
-          // 自动显示时间轴
-          state.timeline.visible = true;
+          // 渲染时间轴（创建柱子结构），不自动展开
           renderTimeline();
+          if (!state.timeline.visible) flashExpandButton();
           
           renderConnections();
           renderImageConnections();
@@ -6220,6 +6253,9 @@
           gridStatusEl.style.color = '#dc2626';
           gridStatusEl.textContent = '失败: ' + (error.message || '未知错误');
           showToast('宫格生图失败: ' + (error.message || '未知错误'), 'error');
+        } finally {
+          splitGridBtn.disabled = false;
+          splitBtn.disabled = false;
         }
       });
 
@@ -6773,7 +6809,7 @@
       el.dataset.nodeId = String(id);
       el.style.left = node.x + 'px';
       el.style.top = node.y + 'px';
-      el.style.width = '360px';
+      // 不设固定宽度，由CSS .node:has(.script-node-body) 控制
 
       // 构建分镜列表HTML
       const shotsHtml = node.data.shots.map((shot, idx) => {
@@ -6795,90 +6831,106 @@
           <button class="icon-btn" title="删除">×</button>
         </div>
         <div class="node-body">
-          <div class="field field-always-visible">
-            <div class="label">分镜组: ${escapeHtml(node.data.groupId || node.data.group_id)}</div>
-            <div class="gen-meta">共 ${node.data.shots.length} 个分镜</div>
-          </div>
-          <div class="field field-always-visible" style="max-height: 200px; overflow-y: auto;">
-            ${shotsHtml}
-          </div>
-          <div class="field field-always-visible">
-            <div class="shot-grid-preview-label" style="font-size: 11px; color: #666; margin-bottom: 4px;">分镜预览（0个分镜）</div>
-            <div class="shot-grid-preview-container grid-2x2">
-              <div style="padding: 16px; text-align: center; color: #666; font-size: 11px; grid-column: 1/-1;">暂无分镜节点</div>
-            </div>
-            <div class="grid-merge-status"></div>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">分镜模型</div>
-            <select class="shot-group-model"></select>
-          </div>
-          <div class="field field-collapsible btn-row">
-            <button class="mini-btn secondary shot-group-detail-btn" type="button" style="flex: 1;">查看/编辑</button>
-            <button class="mini-btn gen-btn-white shot-group-generate-btn" type="button">生成分镜</button>
-          </div>
-          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
-          <div class="field field-collapsible">
-            <div class="label">宫格生图模型</div>
-            <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">宫格类型</div>
-            <select class="shot-group-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-              <option value="auto">自动选择</option>
-              <option value="4">4宫格 (2x2)</option>
-              <option value="9">9宫格 (3x3)</option>
-            </select>
-          </div>
-          <div class="field field-collapsible btn-row">
-            <button class="mini-btn gen-btn-green shot-group-grid-btn" type="button" style="width: 100%;">宫格生图</button>
-          </div>
-          <div class="gen-meta shot-group-grid-status" style="display:none; margin-top: 8px;"></div>
-          <hr style="margin: 12px 0; border: none; border-top: 1px solid #e5e7eb;">
-          <div class="field field-collapsible">
-            <div class="label">视频模型</div>
-            <select class="shot-group-video-model"></select>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">视频时长</div>
-            <select class="shot-group-video-duration">
-              <option value="5" selected>5秒</option>
-              <option value="10">10秒</option>
-            </select>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label" style="font-size: 11px; color: #6b7280; margin-bottom: 4px;">视频生成方式</div>
-            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start; flex-wrap: wrap;">
-              <div class="gen-container shot-group-merge-container">
-                <button class="gen-btn gen-btn-main shot-group-generate-video-btn" type="button" style="background: #22c55e; color: white;" title="将多个分镜合并为一个视频生成，节省算力（仅 kling/veo3/sora2 支持）">合并生成视频</button>
-                <button class="gen-btn gen-btn-caret shot-group-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
-                <div class="gen-menu shot-group-video-menu">
-                  <div class="gen-item" data-count="1">X1</div>
-                  <div class="gen-item" data-count="2">X2</div>
-                  <div class="gen-item" data-count="3">X3</div>
-                  <div class="gen-item" data-count="4">X4</div>
-                </div>
+          <div class="script-node-body">
+            <!-- 第1列: 分镜详情 -->
+            <div class="script-section">
+              <div class="script-section-header">
+                <div class="script-section-number">1</div>
+                <div class="script-section-title">分镜详情</div>
               </div>
-              <button class="gen-btn gen-btn-main shot-group-batch-generate-btn" type="button" style="background: #3b82f6; color: white;" title="每个分镜独立生成视频，支持所有模型但可能浪费时长">逐个生成视频</button>
-            </div>
-            <div class="shot-group-generation-tips" style="margin-top: 8px; padding: 8px; background: #f9fafb; border-radius: 6px; font-size: 10px; color: #6b7280; line-height: 1.5;">
-              <div style="display: flex; gap: 12px;">
-                <div style="flex: 1;">
-                  <span style="color: #22c55e; font-weight: bold;">合并生成：</span>多个分镜合并为一个视频，节省算力（仅部分模型支持）
-                </div>
-                <div style="flex: 1;">
-                  <span style="color: #3b82f6; font-weight: bold;">逐个生成：</span>每个分镜独立生成，支持所有模型但可能浪费时长
-                </div>
+              <div class="field field-always-visible">
+                <div class="label">分镜组: ${escapeHtml(node.data.groupId || node.data.group_id)}</div>
+                <div class="gen-meta">共 ${node.data.shots.length} 个分镜</div>
+              </div>
+              <div class="field field-always-visible" style="flex: 1; max-height: 300px; overflow-y: auto;">
+                ${shotsHtml}
+              </div>
+              <div class="field field-always-visible btn-row" style="margin-top: 12px;">
+                <button class="mini-btn secondary shot-group-detail-btn" type="button" style="flex: 1; padding: 9px 12px;">查看/编辑</button>
+                <button class="mini-btn gen-btn-white shot-group-generate-btn" type="button" style="padding: 9px 12px;">生成分镜</button>
               </div>
             </div>
-            <div class="gen-meta shot-group-video-draw-count-label"></div>
-            <div class="shot-group-computing-power" style="margin-top: 6px; padding: 6px; border-radius: 6px;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="color: #9ca3af; font-size: 11px;">算力消耗：</span>
-                <span class="shot-group-computing-power-value" style="color: #60a5fa; font-weight: bold; font-size: 12px;">0 算力</span>
+            <!-- 第2列: 分镜预览与生成 -->
+            <div class="script-section">
+              <div class="script-section-header">
+                <div class="script-section-number">2</div>
+                <div class="script-section-title">分镜预览与生成</div>
               </div>
-              <div class="shot-group-computing-power-detail" style="margin-top: 2px; font-size: 10px; color: #6b7280;">
-                单个 0 算力 × 1 个 = 0 算力
+              <div class="field field-always-visible">
+                <div class="shot-grid-preview-label" style="font-size: 11px; color: #666; margin-bottom: 4px;">分镜预览（0个分镜）</div>
+                <div class="shot-grid-preview-container grid-2x2">
+                  <div style="padding: 16px; text-align: center; color: #666; font-size: 11px; grid-column: 1/-1;">暂无分镜节点</div>
+                </div>
+                <div class="grid-merge-status"></div>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label">分镜模型</div>
+                <select class="shot-group-model"></select>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label">宫格生图模型</div>
+                <select class="shot-group-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label">宫格类型</div>
+                <select class="shot-group-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                  <option value="auto">自动选择</option>
+                  <option value="4">4宫格 (2x2)</option>
+                  <option value="9">9宫格 (3x3)</option>
+                </select>
+              </div>
+              <div class="field field-always-visible btn-row" style="margin-top: 12px;">
+                <button class="mini-btn gen-btn-green shot-group-grid-btn" type="button" style="width: 100%; padding: 9px 12px;">宫格生图</button>
+              </div>
+              <div class="gen-meta shot-group-grid-status" style="display:none; margin-top: 8px;"></div>
+            </div>
+            <!-- 第3列: 视频生成 -->
+            <div class="script-section" style="background: #f9fafb;">
+              <div class="script-section-header">
+                <div class="script-section-number">3</div>
+                <div class="script-section-title">视频生成</div>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label">视频模型</div>
+                <select class="shot-group-video-model"></select>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label">视频时长</div>
+                <select class="shot-group-video-duration">
+                  <option value="5" selected>5秒</option>
+                  <option value="10">10秒</option>
+                </select>
+              </div>
+              <div class="field field-always-visible" style="margin-top: 10px;">
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <div class="gen-container shot-group-merge-container" style="width: 100%;">
+                    <button class="gen-btn gen-btn-main shot-group-generate-video-btn" type="button" style="background: #22c55e; color: white; padding: 10px; flex: 1;" title="将多个分镜合并为一个视频生成，节省算力（仅 kling/veo3/sora2 支持）">合并生成视频</button>
+                    <button class="gen-btn gen-btn-caret shot-group-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
+                    <div class="gen-menu shot-group-video-menu">
+                      <div class="gen-item" data-count="1">X1</div>
+                      <div class="gen-item" data-count="2">X2</div>
+                      <div class="gen-item" data-count="3">X3</div>
+                      <div class="gen-item" data-count="4">X4</div>
+                    </div>
+                  </div>
+                  <button class="gen-btn gen-btn-main shot-group-batch-generate-btn" type="button" style="background: #3b82f6; color: white; padding: 10px;" title="每个分镜独立生成视频，支持所有模型但可能浪费时长">逐个生成视频</button>
+                </div>
+              </div>
+              <div style="font-size: 10px; color: #9ca3af; line-height: 1.4; margin-top: 4px;">
+                <span style="color: #10b981;">● 合并生成</span>：多个分镜合并为一个视频，节省算力<br>
+                <span style="color: #3b82f6;">● 逐个生成</span>：每个分镜独立生成，支持所有模型
+              </div>
+              <div style="margin-top: auto; padding-top: 12px; border-top: 1px dashed #e5e7eb;">
+                <div class="gen-meta shot-group-video-draw-count-label"></div>
+                <div class="shot-group-computing-power" style="padding: 6px; border-radius: 6px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #9ca3af; font-size: 11px;">算力消耗：</span>
+                    <span class="shot-group-computing-power-value" style="color: #3b82f6; font-weight: bold; font-size: 12px;">0 算力</span>
+                  </div>
+                  <div class="shot-group-computing-power-detail" style="margin-top: 2px; font-size: 10px; color: #6b7280; text-align: right;">
+                    单个 0 算力 × 1 个 = 0 算力
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -7544,9 +7596,19 @@
       });
 
       const createdNodeIds = [];
-      const offsetX = 400;
-      // 新节点从已有节点下方开始排列
-      let nextY = existingShotIds.size > 0 ? maxExistingY + 700 : shotGroupNode.y;
+      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
+      const offsetX = 1200;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
+      const ROW_HEIGHT = 600;  // 增大纵向间隔，确保 shot_frame 之间不重叠
+      let nextY;
+      if (existingShotIds.size > 0) {
+        nextY = maxExistingY + ROW_HEIGHT;
+      } else {
+        // 第一个 shot_frame 放在 shot_group 下方足够远处
+        // shot_group 实际高度 ≈ shot_count * 80px + header(约120px)，用 shot_count * 100 + 200 估算
+        const shotCount = (shotGroupNode.data.shots || []).length;
+        const shotGroupHeight = shotCount * 100 + 200;  // 每 shot 约 100px + header ≈ 200px
+        nextY = shotGroupNode.y + shotGroupHeight + 300;  // shot_group 下方 300px 处开始
+      }
       let skippedCount = 0;
       
       // 从第一个镜头获取场景信息（所有镜头使用同一个场景）
@@ -7579,10 +7641,10 @@
           y: nextY,
           shotData: shotDataWithLocation,
           model: shotGroupNode.data.model,
-          checkCollision: true
+          checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += 700;
+        nextY += ROW_HEIGHT;  // 600px，避免 shot_frame 之间重叠
 
         // 创建从分镜组到分镜图节点的连接
         state.connections.push({
@@ -7647,8 +7709,18 @@
       console.log(`[宫格生图] 需要生成的分镜总数: ${shots.length}`);
 
       const createdNodeIds = [];
-      const offsetX = 400;
-      let nextY = existingShotIds.size > 0 ? maxExistingY + 700 : shotGroupNode.y;
+      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
+      const offsetX = 1200;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
+      const ROW_HEIGHT = 600;  // 增大纵向间隔，确保 shot_frame 之间不重叠
+      let nextY;
+      if (existingShotIds.size > 0) {
+        nextY = maxExistingY + ROW_HEIGHT;
+      } else {
+        // 第一个 shot_frame 放在 shot_group 下方足够远处
+        const shotCount = (shotGroupNode.data.shots || []).length;
+        const shotGroupHeight = shotCount * 100 + 200;
+        nextY = shotGroupNode.y + shotGroupHeight + 300;  // shot_group 下方 300px 处开始
+      }
       
       const firstShot = shots[0];
       const locationInfo = [];
@@ -7681,10 +7753,10 @@
           y: nextY,
           shotData: shotDataWithLocation,
           model: shotGroupNode.data.model,
-          checkCollision: true
+          checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += 700;
+        nextY += ROW_HEIGHT;  // 600px，避免 shot_frame 之间重叠
 
         state.connections.push({
           id: state.nextConnId++,
@@ -7741,9 +7813,9 @@
       let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
       let y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
 
-      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
+      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置（优先向右/下扩展）
       if (opts && opts.checkCollision) {
-        const avail = findNearestAvailablePosition(x, y, 320, 220);
+        const avail = findPositionRightward(x, y, 320, 220);
         x = avail.x;
         y = Math.max(MIN_NODE_Y, avail.y);
       }
@@ -7833,7 +7905,7 @@
       el.dataset.nodeId = String(id);
       el.style.left = node.x + 'px';
       el.style.top = node.y + 'px';
-      el.style.width = '340px';
+      // 不设固定宽度，由CSS .node:has(.script-node-body) 控制
 
       el.innerHTML = `
         <div class="port input" title="输入（连接分镜组节点）"></div>
@@ -7843,108 +7915,133 @@
           <button class="icon-btn" title="删除">×</button>
         </div>
         <div class="node-body">
-          <div class="field field-always-visible">
-            <div class="gen-meta">${escapeHtml(node.data.description)}</div>
-            <div class="gen-meta" style="margin-top: 4px;">时长: ${node.data.duration}秒 | ${escapeHtml(node.data.shotType)} | ${escapeHtml(node.data.cameraMovement)}</div>
-          </div>
-          <div class="field field-always-visible shot-frame-preview-field" style="position: relative;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-              <div class="label" style="margin: 0;">视频首帧</div>
-              <div class="gen-container shot-frame-image-selector-container" style="display: none;">
-                <button class="mini-btn shot-frame-image-selector-btn" type="button" style="font-size: 11px; padding: 4px 8px; background: white; color: #333; border: 1px solid #ddd;">选择图片</button>
-                <button class="gen-btn-caret" type="button" aria-label="选择图片" style="font-size: 11px; padding: 4px 6px;">▾</button>
-                <div class="gen-menu shot-frame-image-menu"></div>
+          <div class="script-node-body">
+            <!-- 第1列: 基础信息 -->
+            <div class="script-section">
+              <div class="script-section-header">
+                <div class="script-section-number">1</div>
+                <div class="script-section-title">基础信息</div>
               </div>
-            </div>
-            <div class="port first-frame-port" title="连接图片节点（视频首帧）"></div>
-            <img class="shot-frame-preview-image" src="${node.data.previewImageUrl || ''}" style="max-width: 100%; max-height: 220px; object-fit: contain; border-radius: 6px; cursor: pointer; display: ${node.data.previewImageUrl ? 'block' : 'none'};" />
-          </div>
-          <div class="field field-always-visible shot-frame-image-field" style="display:${node.data.imageUrl ? 'block' : 'none'};">
-            <img class="shot-frame-image" src="${node.data.imageUrl}" style="max-width: 100%; max-height: 220px; object-fit: contain; border-radius: 6px; cursor: pointer;" />
-          </div>
-          <div class="field field-collapsible">
-            <div class="shot-ref-section" style="position: relative;">
-              <div class="shot-ref-row">
-                <span class="shot-ref-label">场景</span>
-                <div class="shot-ref-tags shot-ref-scene-tags"></div>
+              <div class="field field-always-visible">
+                <div style="font-size: 13px; font-weight: 600; color: var(--text);">${escapeHtml(node.data.description)}</div>
+                <div class="gen-meta" style="margin-top: 4px;">时长: ${node.data.duration}秒 | ${escapeHtml(node.data.shotType)} | ${escapeHtml(node.data.cameraMovement)}</div>
               </div>
-              <div class="shot-ref-row">
-                <span class="shot-ref-label">道具</span>
-                <div class="shot-ref-tags shot-ref-prop-tags"></div>
-              </div>
-              <div class="shot-ref-row">
-                <span class="shot-ref-label">角色</span>
-                <div class="shot-ref-tags shot-ref-char-tags"></div>
-              </div>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div class="label" style="margin: 0;">图片提示词</div>
-              <span style="font-size: 10px; color: #9ca3af;">点击编辑 | 按 / 选择角色</span>
-            </div>
-            <textarea class="shot-frame-image-prompt" rows="3" readonly style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; resize: none; cursor: pointer; background: #fafafa;">${escapeHtml(node.data.imagePrompt)}</textarea>
-          </div>
-          <div class="field field-collapsible">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <div class="label" style="margin: 0;">视频提示词</div>
-              <button class="mini-btn secondary reduce-violation-btn" type="button" style="font-size: 11px; padding: 4px 8px;">视频生成失败，请点此次按钮</button>
-            </div>
-            <textarea class="shot-frame-video-prompt" rows="3" readonly style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; resize: none; cursor: pointer; background: #fafafa;">${escapeHtml(node.data.videoPromptText || node.data.videoPrompt)}</textarea>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">分镜模型</div>
-            <select class="shot-frame-model"></select>
-          </div>
-          <div class="field field-collapsible">
-            <div class="btn-row" style="display: flex; gap: 8px; justify-content: space-between; align-items: center;">
-              <div class="gen-container">
-                <button class="gen-btn gen-btn-main shot-frame-generate-btn" type="button">生成分镜图</button>
-                <button class="gen-btn gen-btn-caret shot-frame-caret" type="button" aria-label="选择抽卡次数">▾</button>
-                <div class="gen-menu shot-frame-menu">
-                  <div class="gen-item" data-count="1">X1</div>
-                  <div class="gen-item" data-count="2">X2</div>
-                  <div class="gen-item" data-count="3">X3</div>
-                  <div class="gen-item" data-count="4">X4</div>
+              <div class="field field-always-visible">
+                <div class="shot-ref-section" style="position: relative;">
+                  <div class="shot-ref-row">
+                    <span class="shot-ref-label">场景</span>
+                    <div class="shot-ref-tags shot-ref-scene-tags"></div>
+                  </div>
+                  <div class="shot-ref-row">
+                    <span class="shot-ref-label">道具</span>
+                    <div class="shot-ref-tags shot-ref-prop-tags"></div>
+                  </div>
+                  <div class="shot-ref-row">
+                    <span class="shot-ref-label">角色</span>
+                    <div class="shot-ref-tags shot-ref-char-tags"></div>
+                  </div>
                 </div>
               </div>
-              <button class="gen-btn shot-frame-generate-dialogue-btn" type="button" style="background: #22c55e; color: white;" disabled>生成对话音频</button>
+              <div class="field field-always-visible">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <div class="label" style="margin: 0;">视频首帧</div>
+                  <div class="gen-container shot-frame-image-selector-container" style="display: none;">
+                    <button class="mini-btn shot-frame-image-selector-btn" type="button" style="font-size: 11px; padding: 4px 8px; background: white; color: #333; border: 1px solid #ddd;">选择图片</button>
+                    <button class="gen-btn-caret" type="button" aria-label="选择图片" style="font-size: 11px; padding: 4px 6px;">▾</button>
+                    <div class="gen-menu shot-frame-image-menu"></div>
+                  </div>
+                </div>
+                <div class="port first-frame-port" title="连接图片节点（视频首帧）"></div>
+                <div class="shot-frame-preview-field" style="position: relative;">
+                  <img class="shot-frame-preview-image" src="${node.data.previewImageUrl || ''}" style="max-width: 100%; max-height: 160px; object-fit: contain; border-radius: 6px; cursor: pointer; display: ${node.data.previewImageUrl ? 'block' : 'none'};" />
+                </div>
+              </div>
+              <div class="field field-always-visible shot-frame-image-field" style="display:${node.data.imageUrl ? 'flex' : 'none'};">
+                <img class="shot-frame-image" src="${node.data.imageUrl}" style="max-width: 100%; max-height: 160px; object-fit: contain; border-radius: 6px; cursor: pointer;" />
+              </div>
+              <button class="gen-btn shot-frame-generate-dialogue-btn" type="button" style="background: #3b82f6; color: white; width: 100%; padding: 8px; border-radius: 6px; margin-top: auto;" disabled>生成对话音频</button>
             </div>
-            <div class="gen-meta shot-frame-draw-count-label"></div>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">视频模型</div>
-            <select class="shot-frame-video-model"></select>
-          </div>
-          <div class="field field-collapsible">
-            <div class="label">视频时长</div>
-            <select class="shot-frame-video-duration">
-              <option value="5" selected>5秒</option>
-              <option value="10">10秒</option>
-            </select>
-          </div>
-          <div class="field field-collapsible">
-            <div class="btn-row" style="display: flex; gap: 8px; justify-content: flex-start;">
-              <div class="gen-container">
-                <button class="gen-btn gen-btn-main shot-frame-generate-video-btn" type="button" style="background: #22c55e; color: white;">生成视频</button>
-                <button class="gen-btn gen-btn-caret shot-frame-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
-                <div class="gen-menu shot-frame-video-menu">
-                  <div class="gen-item" data-count="1">X1</div>
-                  <div class="gen-item" data-count="2">X2</div>
-                  <div class="gen-item" data-count="3">X3</div>
-                  <div class="gen-item" data-count="4">X4</div>
+            <!-- 第2列: 提示词编辑 -->
+            <div class="script-section" style="background: #fcfcfc;">
+              <div class="script-section-header">
+                <div class="script-section-number">2</div>
+                <div class="script-section-title">提示词编辑</div>
+              </div>
+              <div class="field field-always-visible" style="flex: 1; display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <div class="label" style="margin: 0;">图片提示词</div>
+                  <span style="font-size: 10px; color: #9ca3af;">点击编辑 | 按 / 选择角色</span>
+                </div>
+                <textarea class="shot-frame-image-prompt" rows="3" readonly style="width: 100%; flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; resize: none; cursor: pointer; background: #fafafa; line-height: 1.4;">${escapeHtml(node.data.imagePrompt)}</textarea>
+              </div>
+              <div class="field field-always-visible" style="flex: 1; display: flex; flex-direction: column;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <div class="label" style="margin: 0;">视频提示词</div>
+                  <button class="mini-btn secondary reduce-violation-btn" type="button" style="font-size: 11px; padding: 4px 8px;">视频生成失败，请点此次按钮</button>
+                </div>
+                <textarea class="shot-frame-video-prompt" rows="3" readonly style="width: 100%; flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 12px; resize: none; cursor: pointer; background: #fafafa; line-height: 1.4;">${escapeHtml(node.data.videoPromptText || node.data.videoPrompt)}</textarea>
+              </div>
+            </div>
+            <!-- 第3列: 模型与生成 -->
+            <div class="script-section" style="background: #f9fafb;">
+              <div class="script-section-header">
+                <div class="script-section-number">3</div>
+                <div class="script-section-title">模型与生成</div>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label">分镜模型</div>
+                <select class="shot-frame-model"></select>
+              </div>
+              <div class="field field-always-visible" style="margin-bottom: 4px; margin-top: 12px;">
+                <div class="gen-container" style="width: 100%;">
+                  <button class="gen-btn gen-btn-main shot-frame-generate-btn" type="button" style="flex: 1; padding: 10px;">生成分镜图</button>
+                  <button class="gen-btn gen-btn-caret shot-frame-caret" type="button" aria-label="选择抽卡次数">▾</button>
+                  <div class="gen-menu shot-frame-menu">
+                    <div class="gen-item" data-count="1">X1</div>
+                    <div class="gen-item" data-count="2">X2</div>
+                    <div class="gen-item" data-count="3">X3</div>
+                    <div class="gen-item" data-count="4">X4</div>
+                  </div>
+                </div>
+                <div class="gen-meta shot-frame-draw-count-label"></div>
+              </div>
+              <div class="field field-always-visible" style="margin-top: 8px;">
+                <div class="label">视频模型</div>
+                <select class="shot-frame-video-model"></select>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label">视频时长</div>
+                <select class="shot-frame-video-duration">
+                  <option value="5" selected>5秒</option>
+                  <option value="10">10秒</option>
+                </select>
+              </div>
+              <div class="field field-always-visible" style="margin-top: 12px;">
+                <div class="gen-container" style="width: 100%;">
+                  <button class="gen-btn gen-btn-main shot-frame-generate-video-btn" type="button" style="background: #22c55e; color: white; flex: 1; padding: 10px;">生成视频</button>
+                  <button class="gen-btn gen-btn-caret shot-frame-video-caret" type="button" aria-label="选择抽卡次数">▾</button>
+                  <div class="gen-menu shot-frame-video-menu">
+                    <div class="gen-item" data-count="1">X1</div>
+                    <div class="gen-item" data-count="2">X2</div>
+                    <div class="gen-item" data-count="3">X3</div>
+                    <div class="gen-item" data-count="4">X4</div>
+                  </div>
+                </div>
+                <div class="gen-meta shot-frame-video-draw-count-label"></div>
+              </div>
+              <div class="shot-frame-video-error" style="display: none; margin-top: 8px; padding: 8px; background: #fee; border: 1px solid #fcc; border-radius: 6px; color: #c33; font-size: 12px; word-break: break-word;"></div>
+              <div style="margin-top: auto; padding-top: 12px; border-top: 1px dashed #e5e7eb;">
+                <div class="shot-frame-computing-power" style="padding: 6px; border-radius: 6px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color: #9ca3af; font-size: 11px;">算力消耗：</span>
+                    <span class="shot-frame-computing-power-value" style="color: #3b82f6; font-weight: bold; font-size: 12px;">0 算力</span>
+                  </div>
+                  <div class="shot-frame-computing-power-detail" style="margin-top: 2px; font-size: 10px; color: #6b7280; text-align: right;">
+                    单个 0 算力 × 1 个 = 0 算力
+                  </div>
                 </div>
               </div>
             </div>
-            <div class="gen-meta shot-frame-video-draw-count-label"></div>
-            <div class="shot-frame-computing-power" style="margin-top: 6px; padding: 6px; border-radius: 6px;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="color: #9ca3af; font-size: 11px;">算力消耗：</span>
-                <span class="shot-frame-computing-power-value" style="color: #60a5fa; font-weight: bold; font-size: 12px;">0 算力</span>
-              </div>
-              <div class="shot-frame-computing-power-detail" style="margin-top: 2px; font-size: 10px; color: #6b7280;">
-                单个 0 算力 × 1 个 = 0 算力
-              </div>
-            </div>
-            <div class="shot-frame-video-error" style="display: none; margin-top: 8px; padding: 8px; background: #fee; border: 1px solid #fcc; border-radius: 6px; color: #c33; font-size: 12px; word-break: break-word;"></div>
           </div>
         </div>
       `;
