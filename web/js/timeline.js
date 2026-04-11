@@ -370,9 +370,9 @@
       
       state.timeline.clips.push(clip);
       addClipToPillar(pillar, clip.id, 'video');
-      state.timeline.visible = true;
-      
+
       renderTimeline();
+      if (!state.timeline.visible) flashExpandButton();
       showToast(`已添加到时间轴 - 镜头${pillar.shotNumber}`, 'success');
       try{ autoSaveWorkflow(); } catch(e){}
     }
@@ -436,6 +436,18 @@
       try{ autoSaveWorkflow(); } catch(e){}
     }
     
+    // 时间轴展开按钮黄色闪烁提示
+    function flashExpandButton() {
+      const expandBtn = document.getElementById('timelineExpandBtn');
+      if (!expandBtn || expandBtn.style.display === 'none') return;
+      expandBtn.classList.remove('flashing');
+      void expandBtn.offsetWidth; // 强制 reflow，重启动画
+      expandBtn.classList.add('flashing');
+      expandBtn.addEventListener('animationend', () => {
+        expandBtn.classList.remove('flashing');
+      }, { once: true });
+    }
+
     // 渲染时间轴
     function renderTimeline() {
       const container = document.getElementById('timelineContainer');
@@ -1790,9 +1802,9 @@
       
       state.timeline.audioClips.push(clip);
       addClipToPillar(pillar, clip.id, 'audio');
-      state.timeline.visible = true;
-      
+
       renderTimeline();
+      if (!state.timeline.visible) flashExpandButton();
       showToast(`已添加音频到时间轴 - 镜头${pillar.shotNumber}`, 'success');
       try{ autoSaveWorkflow(); } catch(e){}
     }

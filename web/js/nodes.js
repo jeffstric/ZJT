@@ -5437,9 +5437,9 @@
                 }
               });
               
-              // 自动显示时间轴（即使还没有片段）
-              state.timeline.visible = true;
+              // 渲染时间轴（创建柱子结构），不自动展开
               renderTimeline();
+              if (!state.timeline.visible) flashExpandButton();
               
               renderConnections();
               renderImageConnections();
@@ -5904,9 +5904,9 @@
             }
           });
 
-          // 自动显示时间轴
-          state.timeline.visible = true;
+          // 渲染时间轴（创建柱子结构），不自动展开
           renderTimeline();
+          if (!state.timeline.visible) flashExpandButton();
           
           renderConnections();
           renderImageConnections();
