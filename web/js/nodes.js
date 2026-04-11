@@ -7741,9 +7741,9 @@
       let x = opts && typeof opts.x === 'number' ? opts.x : viewportPos.x;
       let y = Math.max(MIN_NODE_Y, opts && typeof opts.y === 'number' ? opts.y : viewportPos.y);
 
-      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置
+      // 如果启用了碰撞检测，则自动寻找最近的无重叠位置（优先向右/下扩展）
       if (opts && opts.checkCollision) {
-        const avail = findNearestAvailablePosition(x, y, 320, 220);
+        const avail = findPositionRightward(x, y, 320, 220);
         x = avail.x;
         y = Math.max(MIN_NODE_Y, avail.y);
       }

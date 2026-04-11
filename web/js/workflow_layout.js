@@ -493,7 +493,56 @@
     return true;
   }
 
-  function findNearestAvailablePosition(x, y, width, height, excludeNodeId) {
+  function findNearestAvailablePosition(x, y, width, height, excludeNodeId, directions) {
+    const w = width || DEFAULT_NODE_WIDTH;
+    const h = height || DEFAULT_NODE_HEIGHT;
+
+    if (isPositionAvailable(x, y, w, h, excludeNodeId)) {
+      return { x, y, found: true };
+    }
+
+    const maxIterations = 1000;
+    const dirs = directions && directions.length > 0
+      ? directions
+      : [
+          { dx: 1, dy: 0 },
+          { dx: 0, dy: 1 },
+          { dx: -1, dy: 0 },
+          { dx: 0, dy: -1 },
+        ];
+
+    let stepX = 0, stepY = 0;
+    let dirIndex = 0;
+    let stepsInDir = 0;
+    let layer = 1;
+
+    for (let i = 0; i < maxIterations; i++) {
+      const candidateX = x + stepX;
+      const candidateY = y + stepY;
+
+      if (isPositionAvailable(candidateX, candidateY, w, h, excludeNodeId)) {
+        return { x: candidateX, y: candidateY, found: true };
+      }
+
+      stepsInDir++;
+      if (stepsInDir === layer) {
+        stepsInDir = 0;
+        dirIndex = (dirIndex + 1) % dirs.length;
+        if (dirIndex === 0 || (dirs.length === 2 && dirIndex === 0)) layer++;
+      }
+
+      const dir = dirs[dirIndex];
+      stepX += dir.dx * COLUMN_GAP;
+      stepY += dir.dy * ROW_GAP;
+    }
+
+    return { x, y, found: false };
+  }
+
+  /**
+   * 只向右和向下扩展的碰撞检测——适合分镜节点这种"应当在父节点右侧"的情况
+   */
+  function findPositionRightward(x, y, width, height, excludeNodeId) {
     const w = width || DEFAULT_NODE_WIDTH;
     const h = height || DEFAULT_NODE_HEIGHT;
 
@@ -503,10 +552,8 @@
 
     const maxIterations = 1000;
     const directions = [
-      { dx: 1, dy: 0 },
-      { dx: 0, dy: 1 },
-      { dx: -1, dy: 0 },
-      { dx: 0, dy: -1 },
+      { dx: 1, dy: 0 },  // 右（优先）
+      { dx: 0, dy: 1 },  // 下（其次）
     ];
 
     let stepX = 0, stepY = 0;
@@ -525,8 +572,8 @@
       stepsInDir++;
       if (stepsInDir === layer) {
         stepsInDir = 0;
-        dirIndex = (dirIndex + 1) % 4;
-        if (dirIndex % 2 === 0) layer++;
+        dirIndex = (dirIndex + 1) % 2;
+        if (dirIndex === 0) layer++;
       }
 
       const dir = directions[dirIndex];
@@ -538,5 +585,6 @@
   }
 
   window.findNearestAvailablePosition = findNearestAvailablePosition;
+  window.findPositionRightward = findPositionRightward;
   window.isPositionAvailable = isPositionAvailable;
 })();
