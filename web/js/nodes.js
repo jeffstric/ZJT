@@ -5430,15 +5430,15 @@
               let cumulativeY = 0;
               result.data.shot_groups.forEach((shotGroup, index) => {
                 // 横向排列：shot_group 在 script 右侧，x 固定，y 纵向堆叠
-                // shot_group 高度 ≈ shot_count * 70px(每shot) + 100px(header+padding)，用 shot_count * 100 估算
+                // shot_group 实际高度取决于 shots 数量（每shot约80px+header约120px），安全估算 shot_count * 100
                 const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
                 const shotGroupNodeId = createShotGroupNode({
-                  x: node.x + 480,  // scriptColumnWidth(320) + SCRIPT_COLUMN_GAP(80) + BASE_PADDING_X(80) ≈ 480
+                  x: node.x + 600,  // 加大偏移：script右侧留足间隙
                   y: node.y + cumulativeY,
                   shotGroupData: shotGroup,
                   scriptData: result.data
                 });
-                cumulativeY += shotCount * 100;  // 每个分镜约 100px 高度估算
+                cumulativeY += shotCount * 150;  // 每个分镜约 150px 高度估算
                 
                 // 创建从剧本节点到分镜组节点的连线
                 if(shotGroupNodeId) {
@@ -7597,20 +7597,17 @@
 
       const createdNodeIds = [];
       // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
-      // shot_group 可横向扩展(width>300)，shot_frame 需要足够 X 偏移避免重叠
-      const offsetX = 800;  // 增大偏移，避免 shot_group 宽度扩展后与 shot_frame 重叠
-      const ROW_HEIGHT = 400;  // DEFAULT_NODE_HEIGHT(220) + ROW_GAP(80) + 余量
-      // shot_group 已在 DOM 中，等待一帧后获取精确渲染高度（刚 append 时可能不准确）
-      let shotGroupHeight = 400;  // 临时估算值，等待 rAF 后更新
+      const offsetX = 1200;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
+      const ROW_HEIGHT = 600;  // 增大纵向间隔，确保 shot_frame 之间不重叠
       let nextY;
       if (existingShotIds.size > 0) {
         nextY = maxExistingY + ROW_HEIGHT;
       } else {
         // 第一个 shot_frame 放在 shot_group 下方足够远处
-        // shot_group 高度 ≈ shot_count * 70px + header ≈ 400-800px
+        // shot_group 实际高度 ≈ shot_count * 80px + header(约120px)，用 shot_count * 100 + 200 估算
         const shotCount = (shotGroupNode.data.shots || []).length;
-        shotGroupHeight = shotCount * 70 + 150;  // 每 shot 约 70px + header(≈150px)
-        nextY = shotGroupNode.y + shotGroupHeight + 150;
+        const shotGroupHeight = shotCount * 100 + 200;  // 每 shot 约 100px + header ≈ 200px
+        nextY = shotGroupNode.y + shotGroupHeight + 300;  // shot_group 下方 300px 处开始
       }
       let skippedCount = 0;
       
@@ -7647,7 +7644,7 @@
           checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += ROW_HEIGHT;  // 400px，避免 shot_frame 之间重叠
+        nextY += ROW_HEIGHT;  // 600px，避免 shot_frame 之间重叠
 
         // 创建从分镜组到分镜图节点的连接
         state.connections.push({
@@ -7713,16 +7710,16 @@
 
       const createdNodeIds = [];
       // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
-      const offsetX = 800;  // 增大偏移，避免 shot_group 宽度扩展后与 shot_frame 重叠
-      const ROW_HEIGHT = 400;
+      const offsetX = 1200;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
+      const ROW_HEIGHT = 600;  // 增大纵向间隔，确保 shot_frame 之间不重叠
       let nextY;
       if (existingShotIds.size > 0) {
         nextY = maxExistingY + ROW_HEIGHT;
       } else {
-        // 第一个 shot_frame 放在 shot_group 下方
+        // 第一个 shot_frame 放在 shot_group 下方足够远处
         const shotCount = (shotGroupNode.data.shots || []).length;
-        const shotGroupHeight = shotCount * 70 + 150;
-        nextY = shotGroupNode.y + shotGroupHeight + 150;
+        const shotGroupHeight = shotCount * 100 + 200;
+        nextY = shotGroupNode.y + shotGroupHeight + 300;  // shot_group 下方 300px 处开始
       }
       
       const firstShot = shots[0];
@@ -7759,7 +7756,7 @@
           checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += ROW_HEIGHT;  // 400px，避免 shot_frame 之间重叠
+        nextY += ROW_HEIGHT;  // 600px，避免 shot_frame 之间重叠
 
         state.connections.push({
           id: state.nextConnId++,
