@@ -5427,18 +5427,20 @@
               });
               
               const createdShotGroupNodes = [];
+              const SPLIT_NODE_GAP_Y = 120; // 分镜组节点之间的Y轴间距，与自动排列保持一致
               let cumulativeY = 0;
               result.data.shot_groups.forEach((shotGroup, index) => {
                 // 横向排列：shot_group 在 script 右侧，x 固定，y 纵向堆叠
-                // shot_group 实际高度取决于 shots 数量（每shot约80px+header约120px），安全估算 shot_count * 100
-                const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
                 const shotGroupNodeId = createShotGroupNode({
                   x: node.x + 800,  // script右侧 + 2/3 shot_group宽度(200px)，留足间隙
                   y: node.y + cumulativeY,
                   shotGroupData: shotGroup,
                   scriptData: result.data
                 });
-                cumulativeY += shotCount * 150;  // 每个分镜约 150px 高度估算
+                // 获取实际渲染高度，避免估算不准导致节点堆叠
+                const shotGroupEl = canvasEl.querySelector(`.node[data-node-id="${shotGroupNodeId}"]`);
+                const actualHeight = shotGroupEl ? shotGroupEl.offsetHeight : 300;
+                cumulativeY += actualHeight + SPLIT_NODE_GAP_Y;
                 
                 // 创建从剧本节点到分镜组节点的连线
                 if(shotGroupNodeId) {
@@ -7596,20 +7598,10 @@
       });
 
       const createdNodeIds = [];
-      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
-      const offsetX = 1200;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
-      const ROW_HEIGHT = 600;  // 增大纵向间隔，确保 shot_frame 之间不重叠
-      let nextY;
-      if (existingShotIds.size > 0) {
-        nextY = maxExistingY + ROW_HEIGHT;
-      } else {
-        // 第一个 shot_frame 放在 shot_group 下方足够远处
-        // shot_group 实际高度 ≈ shot_count * 80px + header(约120px)，用 shot_count * 100 + 200 估算
-        const shotCount = (shotGroupNode.data.shots || []).length;
-        const shotGroupHeight = shotCount * 100 + 200;  // 每 shot 约 100px + header ≈ 200px
-        nextY = shotGroupNode.y + shotGroupHeight + 300;  // shot_group 下方 300px 处开始
-      }
-      let skippedCount = 0;
+      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠
+      const offsetX = 1200;
+      const SHOT_FRAME_GAP_Y = 120;  // 分镜节点之间的Y轴间距，与自动排列保持一致
+      const targetX = shotGroupNode.x + offsetX;
       
       // 从第一个镜头获取场景信息（所有镜头使用同一个场景）
       const firstShot = shots[0];
@@ -7622,36 +7614,69 @@
         });
       }
 
+      // 第一步：创建所有分镜节点（先放在临时Y位置）
+      let skippedCount = 0;
       shots.forEach((shot) => {
-        // 检查该分镜是否已有对应的分镜节点
         if(existingShotIds.has(shot.shot_id)){
           skippedCount++;
           return;
         }
         
-        // 为每个镜头添加场景信息和scriptData
         const shotDataWithLocation = {
           ...shot,
           allLocationInfo: locationInfo,
-          scriptData: shotGroupNode.data.scriptData  // 传递scriptData以便获取道具信息
+          scriptData: shotGroupNode.data.scriptData
         };
         
         const shotFrameNodeId = createShotFrameNode({
-          x: shotGroupNode.x + offsetX,
-          y: nextY,
+          x: targetX,
+          y: 0,  // 临时位置，后面会重新定位
           shotData: shotDataWithLocation,
           model: shotGroupNode.data.model,
-          checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
+          checkCollision: false
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += ROW_HEIGHT;  // 600px，避免 shot_frame 之间重叠
 
-        // 创建从分镜组到分镜图节点的连接
         state.connections.push({
           id: state.nextConnId++,
           from: shotGroupNodeId,
           to: shotFrameNodeId
         });
+      });
+      
+      // 第二步：测量实际高度并重新定位（使用 setTimeout 确保布局完成）
+      // 扫描同一X列所有已有（非本次创建的）shot_frame 节点的最大底部位置
+      const newNodeIdSet = new Set(createdNodeIds);
+      let globalMaxBottom = shotGroupNode.y;
+      state.nodes.forEach(n => {
+        if(n.type === 'shot_frame' && !newNodeIdSet.has(n.id) && Math.abs(n.x - targetX) < 200) {
+          const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
+          const h = el ? el.offsetHeight : 500;
+          const bottom = n.y + h;
+          if(bottom > globalMaxBottom) globalMaxBottom = bottom;
+        }
+      });
+      
+      let nextY = globalMaxBottom > shotGroupNode.y
+        ? globalMaxBottom + SHOT_FRAME_GAP_Y
+        : shotGroupNode.y;
+      
+      // 强制浏览器完成布局
+      void document.body.offsetHeight;
+      
+      // 按顺序重新定位每个新创建的节点
+      createdNodeIds.forEach(nodeId => {
+        const node = state.nodes.find(n => n.id === nodeId);
+        if(!node) return;
+        node.y = Math.max(MIN_NODE_Y, nextY);
+        const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+        if(el) {
+          el.style.top = node.y + 'px';
+          const actualHeight = el.offsetHeight;
+          nextY = node.y + actualHeight + SHOT_FRAME_GAP_Y;
+        } else {
+          nextY += 600 + SHOT_FRAME_GAP_Y;
+        }
       });
 
       renderConnections();
@@ -7709,18 +7734,10 @@
       console.log(`[宫格生图] 需要生成的分镜总数: ${shots.length}`);
 
       const createdNodeIds = [];
-      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠在 shot_group 下方
-      const offsetX = 1200;  // 大幅增大偏移，确保 shot_frame 在 shot_group 右侧足够远处
-      const ROW_HEIGHT = 600;  // 增大纵向间隔，确保 shot_frame 之间不重叠
-      let nextY;
-      if (existingShotIds.size > 0) {
-        nextY = maxExistingY + ROW_HEIGHT;
-      } else {
-        // 第一个 shot_frame 放在 shot_group 下方足够远处
-        const shotCount = (shotGroupNode.data.shots || []).length;
-        const shotGroupHeight = shotCount * 100 + 200;
-        nextY = shotGroupNode.y + shotGroupHeight + 300;  // shot_group 下方 300px 处开始
-      }
+      // 横向排列：shot_frame 在 shot_group 右侧，x 固定，y 纵向堆叠
+      const offsetX = 1200;
+      const SHOT_FRAME_GAP_Y = 120;  // 分镜节点之间的Y轴间距，与自动排列保持一致
+      const targetX = shotGroupNode.x + offsetX;
       
       const firstShot = shots[0];
       const locationInfo = [];
@@ -7732,6 +7749,7 @@
         });
       }
 
+      // 第一步：创建所有分镜节点（先放在临时Y位置）
       let skippedCount = 0;
       shots.forEach((shot) => {
         if(existingShotIds.has(shot.shot_id)){
@@ -7740,8 +7758,6 @@
           return;
         }
         
-        console.log(`[宫格生图] 创建新分镜节点: ${shot.shot_id}`);
-        
         const shotDataWithLocation = {
           ...shot,
           allLocationInfo: locationInfo,
@@ -7749,20 +7765,55 @@
         };
         
         const shotFrameNodeId = createShotFrameNode({
-          x: shotGroupNode.x + offsetX,
-          y: nextY,
+          x: targetX,
+          y: 0,  // 临时位置，后面会重新定位
           shotData: shotDataWithLocation,
           model: shotGroupNode.data.model,
-          checkCollision: false  // 关闭碰撞检测，使用固定偏移量避免位置混乱
+          checkCollision: false
         });
         createdNodeIds.push(shotFrameNodeId);
-        nextY += ROW_HEIGHT;  // 600px，避免 shot_frame 之间重叠
 
         state.connections.push({
           id: state.nextConnId++,
           from: shotGroupNodeId,
           to: shotFrameNodeId
         });
+      });
+      
+      // 第二步：等待浏览器完成布局后，测量实际高度并重新定位
+      // 使用 requestAnimationFrame 确保 DOM 完成渲染
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      
+      // 扫描同一X列所有已有（非本次创建的）shot_frame 节点的最大底部位置
+      const newNodeIdSet = new Set(createdNodeIds);
+      let globalMaxBottom = shotGroupNode.y;
+      state.nodes.forEach(n => {
+        if(n.type === 'shot_frame' && !newNodeIdSet.has(n.id) && Math.abs(n.x - targetX) < 200) {
+          const el = canvasEl.querySelector(`.node[data-node-id="${n.id}"]`);
+          const h = el ? el.offsetHeight : 500;
+          const bottom = n.y + h;
+          if(bottom > globalMaxBottom) globalMaxBottom = bottom;
+        }
+      });
+      
+      let nextY = globalMaxBottom > shotGroupNode.y
+        ? globalMaxBottom + SHOT_FRAME_GAP_Y
+        : shotGroupNode.y;
+      
+      // 按顺序重新定位每个新创建的节点
+      createdNodeIds.forEach(nodeId => {
+        const node = state.nodes.find(n => n.id === nodeId);
+        if(!node) return;
+        node.y = Math.max(MIN_NODE_Y, nextY);
+        const el = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+        if(el) {
+          el.style.top = node.y + 'px';
+          const actualHeight = el.offsetHeight;
+          console.log(`[分镜布局] nodeId=${nodeId} offsetHeight=${actualHeight} y=${node.y}`);
+          nextY = node.y + actualHeight + SHOT_FRAME_GAP_Y;
+        } else {
+          nextY += 600 + SHOT_FRAME_GAP_Y;
+        }
       });
       
       console.log(`[宫格生图] 生成完成 - 新建: ${createdNodeIds.length}, 跳过: ${skippedCount}`);
