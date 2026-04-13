@@ -8,6 +8,7 @@ from config.constant import (
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_PROCESSING
 )
+from config.config_util import get_config
 import logging
 import os
 
@@ -366,7 +367,7 @@ class AIToolsModel:
         media_mapping_id = None
 
         # 检查是否启用 CDN 上传
-        enable_cdn = get_dynamic_config_value("server", "auto_upload_to_cdn", default=False)
+        enable_cdn = get_config().get("server", {}).get("auto_upload_to_cdn", False)
 
         # 只有启用 CDN 上传时，才创建 media_file_mapping 记录
         if enable_cdn and result_url and result_url.startswith("/upload/"):
@@ -505,7 +506,7 @@ class AIToolsModel:
         media_mapping_id = None
 
         # 检查是否启用 CDN 上传
-        enable_cdn = get_dynamic_config_value("server", "auto_upload_to_cdn", default=False)
+        enable_cdn = get_config().get("server", {}).get("auto_upload_to_cdn", False)
 
         # 只有启用 CDN 上传时，才创建 media_file_mapping 记录
         if enable_cdn and result_url and result_url.startswith("/upload/"):
