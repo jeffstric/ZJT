@@ -1551,12 +1551,9 @@ async def ai_app_run_image(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图生视频任务")
         
         image_to_video_type = task_id
-        # 根据时长获取算力
-        if isinstance(task_config.computing_power, dict):
-            computing_power = task_config.computing_power.get(duration_seconds, list(task_config.computing_power.values())[0])
-        else:
-            computing_power = task_config.computing_power if task_config else 0
-        
+        # 根据时长获取算力（优先任务配置，回退到实现方配置）
+        computing_power = task_config.get_computing_power(duration=duration_seconds)
+
         # 验证 image_mode 参数
         valid_image_modes = ['first_last_frame', 'multi_reference', 'first_last_with_ref']
         if image_mode not in valid_image_modes:

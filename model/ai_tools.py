@@ -8,6 +8,7 @@ from config.constant import (
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_PROCESSING
 )
+from config.config_util import get_config
 import logging
 import os
 
@@ -365,8 +366,11 @@ class AIToolsModel:
 
         media_mapping_id = None
 
-        # 如果 result_url 是本地路径，创建 media_file_mapping 记录
-        if result_url and result_url.startswith("/upload/"):
+        # 检查是否启用 CDN 上传
+        enable_cdn = get_config().get("server", {}).get("auto_upload_to_cdn", False)
+
+        # 只有启用 CDN 上传时，才创建 media_file_mapping 记录
+        if enable_cdn and result_url and result_url.startswith("/upload/"):
             try:
                 from model.media_file_mapping import MediaFileMappingModel, MediaFileEntity
                 from config.media_file_policy import MediaFilePolicy
@@ -403,11 +407,13 @@ class AIToolsModel:
                 from utils.cdn_util import CDNUtil
                 CDNUtil.trigger_cdn_upload(mapping_id, local_path)
 
-                media_mapping_id = mapping_id
-                logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
-
             except Exception as e:
                 logger.error(f"创建 media_file_mapping 失败: {e}")
+                # 异常时 media_mapping_id 保持为 None，不创建映射记录
+            else:
+                # 只有完全成功时才设置 media_mapping_id
+                media_mapping_id = mapping_id
+                logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
 
         # 更新 ai_tools 记录
         if media_mapping_id is not None:
@@ -436,7 +442,7 @@ class AIToolsModel:
         """
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images'
+            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'media_mapping_id'
         ]
         
         update_fields = []
@@ -499,8 +505,11 @@ class AIToolsModel:
         record_id = tool.id
         media_mapping_id = None
 
-        # 如果 result_url 是本地路径，创建 media_file_mapping 记录
-        if result_url and result_url.startswith("/upload/"):
+        # 检查是否启用 CDN 上传
+        enable_cdn = get_config().get("server", {}).get("auto_upload_to_cdn", False)
+
+        # 只有启用 CDN 上传时，才创建 media_file_mapping 记录
+        if enable_cdn and result_url and result_url.startswith("/upload/"):
             try:
                 from model.media_file_mapping import MediaFileMappingModel, MediaFileEntity
                 from config.media_file_policy import MediaFilePolicy
@@ -537,11 +546,13 @@ class AIToolsModel:
                 from utils.cdn_util import CDNUtil
                 CDNUtil.trigger_cdn_upload(mapping_id, local_path)
 
-                media_mapping_id = mapping_id
-                logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
-
             except Exception as e:
                 logger.error(f"创建 media_file_mapping 失败: {e}")
+                # 异常时 media_mapping_id 保持为 None，不创建映射记录
+            else:
+                # 只有完全成功时才设置 media_mapping_id
+                media_mapping_id = mapping_id
+                logger.info(f"创建 media_file_mapping 记录 {mapping_id} 用于 ai_tools {record_id}")
 
         # 更新 ai_tools 记录
         if media_mapping_id is not None:
