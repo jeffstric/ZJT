@@ -515,7 +515,7 @@ class TestRunner:
         if not self.check_environment():
             return 1
 
-        # 步骤 2: CDN 专项测试（跳过数据库连接测试）
+        # 步骤 2: CDN 专项测试（独立运行，不受 only 标志影响）
         if self.args.only_cdn:
             self.run_cdn_tests()
             return_code = self.print_summary()
@@ -523,33 +523,41 @@ class TestRunner:
             print("\n测试执行完成！")
             return return_code
 
-        # 步骤 3: 数据库连接测试
-        if not self.args.crud_only and not self.args.driver_only:
+        # 检查是否设置了任何 only 标志
+        has_only_flag = any([
+            self.args.crud_only,
+            self.args.driver_only,
+            self.args.utils_only,
+            self.args.config_only
+        ])
+
+        # 步骤 3: 数据库连接测试（只有没有任何 only 标志时才运行）
+        if not has_only_flag:
             if not self.run_db_connection_test():
                 if self.args.failfast:
                     self.print_failed_tests()
                     return 1
 
         # 步骤 4: CRUD 测试
-        if not self.args.driver_only and not self.args.utils_only:
+        if self.args.crud_only or not has_only_flag:
             self.run_crud_tests()
 
         # 步骤 5: 工具函数测试
-        if not self.args.crud_only and not self.args.driver_only:
+        if self.args.utils_only or not has_only_flag:
             self.run_utils_tests()
 
         # 步骤 6: 驱动测试
-        if not self.args.crud_only and not self.args.utils_only and not self.args.config_only:
+        if self.args.driver_only or not has_only_flag:
             self.run_driver_tests()
 
         # 步骤 7: 配置测试
-        if not self.args.crud_only and not self.args.driver_only:
+        if self.args.config_only or not has_only_flag:
             self.run_config_tests()
 
-        # 步骤 7: 输出摘要
+        # 步骤 8: 输出摘要
         return_code = self.print_summary()
 
-        # 步骤 8: 输出失败测试详情
+        # 步骤 9: 输出失败测试详情
         self.print_failed_tests()
 
         print("\n测试执行完成！")
