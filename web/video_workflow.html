@@ -1174,22 +1174,39 @@
 
       try {
         const authToken = localStorage.getItem('auth_token');
+        const userId = localStorage.getItem('user_id');
+
+        // 获取用户 IP
+        let paymentIp = '0.0.0.0';
+        try {
+          const ipResponse = await fetch('https://api.ipify.org?format=json');
+          const ipData = await ipResponse.json();
+          paymentIp = ipData.ip || '0.0.0.0';
+        } catch (e) {
+          console.error('获取用户IP失败:', e);
+        }
+
         const response = await fetch('/api/recharge/wechat-pay', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            user_id: parseInt(userId, 10) || 0,
             package_id: packageId,
-            auth_token: authToken
+            auth_token: authToken,
+            is_wechat_browser: false,
+            payment_ip: paymentIp
           })
         });
 
         const data = await response.json();
         if (data.code_url) {
+          // 使用 QR Server API 将 weixin:// 协议转换为二维码图片
+          const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
           body.innerHTML = `
             <div style="text-align: center;">
               <div style="font-weight: 600; font-size: 14px; margin-bottom: 16px;">请使用微信扫码完成支付</div>
               <div style="background: #fff; padding: 12px; border-radius: 12px; display: inline-block;">
-                <img src="${data.code_url}" alt="微信支付二维码" style="width: 200px; height: 200px;" />
+                <img src="${qrCodeUrl}" alt="微信支付二维码" style="width: 200px; height: 200px;" />
               </div>
               <div style="font-size: 12px; color: #6b7280; margin-top: 16px; line-height: 1.6;">
                 请打开微信"扫一扫"完成支付<br/>
