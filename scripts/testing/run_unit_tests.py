@@ -495,6 +495,13 @@ class TestRunner:
 
 
 def main():
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%H:%M:%S'
+    )
+
     parser = argparse.ArgumentParser(description='单元测试一键执行脚本')
     parser.add_argument('--crud-only', action='store_true', help='只执行 CRUD 测试')
     parser.add_argument('--driver-only', action='store_true', help='只执行驱动测试')
