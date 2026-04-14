@@ -706,3 +706,33 @@ class UsersModel:
         except Exception as e:
             logger.error(f"Failed to set zjt_token_expire_at for user {user_id}: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `users` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `phone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `password_hash` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` tinyint NOT NULL DEFAULT '1' COMMENT '用户状态：1-正常，0-禁用',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `serial_number` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '序列号',
+  `secret_key` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `role` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '角色',
+  `terms_agreed` tinyint NOT NULL DEFAULT '0' COMMENT '同意条款（0-不同意，1-同意）',
+  `invite_code` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '邀请码',
+  `inviter_id` int DEFAULT NULL COMMENT '邀请人id',
+  `first_recharge` tinyint DEFAULT '0' COMMENT '是否首次充值',
+  `implementation_preferences` json DEFAULT NULL COMMENT '用户实现方偏好配置',
+  `active_preference_group` int DEFAULT NULL COMMENT '当前激活的偏好组',
+  `api_token` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '用户API Token（智剧通接口授权）',
+  `zjt_token_enabled` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否启用智剧通Token（0-未启用，1-已启用）',
+  `zjt_token_expire_at` datetime DEFAULT NULL COMMENT '智剧通Token过期时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `idx_phone` (`phone`) USING BTREE,
+  UNIQUE KEY `idx_serial_number` (`serial_number`) USING BTREE,
+  UNIQUE KEY `idx_api_token` (`api_token`),
+  KEY `invite_code` (`invite_code`) USING BTREE,
+  KEY `inviter_id` (`inviter_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表'
+"""

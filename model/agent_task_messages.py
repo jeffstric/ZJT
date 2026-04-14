@@ -190,3 +190,17 @@ class AgentTaskMessagesModel:
         except Exception as e:
             logger.error(f"Failed to delete old messages: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `agent_task_messages` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Primary key, used for ordering',
+  `task_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Associated task ID',
+  `message_type` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'message' COMMENT 'Message type: message/progress/done/error/status/heartbeat/connected',
+  `content` longtext COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Message content (JSON)',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time',
+  PRIMARY KEY (`id`),
+  KEY `idx_task_id` (`task_id`),
+  KEY `idx_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Task stream messages for SSE polling'
+"""

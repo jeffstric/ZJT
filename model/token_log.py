@@ -171,3 +171,23 @@ class TokenLogModel:
         except Exception as e:
             logger.error(f"Failed to update token log status: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `token_log` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `input_token` int DEFAULT NULL COMMENT '输入token',
+  `output_token` int DEFAULT NULL COMMENT '输出token',
+  `cache_read` int DEFAULT NULL COMMENT '缓存读取',
+  `cache_creation` int DEFAULT NULL COMMENT '缓存创建',
+  `vendor_id` int DEFAULT NULL COMMENT '供应商id',
+  `model_id` int DEFAULT NULL COMMENT '模型id',
+  `user_id` int NOT NULL COMMENT '用户id',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '备注',
+  `status` tinyint DEFAULT '0' COMMENT '状态（0-未扣除，1-已处理）',
+  `raw_input_token` int DEFAULT NULL COMMENT 'API原始输入token',
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_token_log_status_created` (`status`,`created_at`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+"""

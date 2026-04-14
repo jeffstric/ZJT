@@ -238,3 +238,30 @@ class AgentTasksModel:
         except Exception as e:
             logger.error(f"Failed to delete old tasks: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `agent_tasks` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+  `task_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'UUID task identifier',
+  `session_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Associated session ID',
+  `user_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'User ID',
+  `world_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'World ID',
+  `user_message` longtext COLLATE utf8mb4_unicode_ci COMMENT 'User message content',
+  `auth_token` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Authentication token',
+  `vendor_id` int DEFAULT NULL COMMENT 'Vendor ID',
+  `model_id` int DEFAULT NULL COMMENT 'Model ID',
+  `status` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending' COMMENT 'Task status: pending/running/waiting_human/completed/failed/cancelled',
+  `progress` float NOT NULL DEFAULT '0' COMMENT 'Task progress 0-1',
+  `current_step` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT '' COMMENT 'Current step description',
+  `result` longtext COLLATE utf8mb4_unicode_ci COMMENT 'Task result (JSON)',
+  `error` text COLLATE utf8mb4_unicode_ci COMMENT 'Error message if failed',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Task creation time',
+  `started_at` datetime DEFAULT NULL COMMENT 'Task start time',
+  `completed_at` datetime DEFAULT NULL COMMENT 'Task completion time',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_task_id` (`task_id`),
+  KEY `idx_session_id` (`session_id`),
+  KEY `idx_user_world` (`user_id`,`world_id`)
+) ENGINE=InnoDB
+"""

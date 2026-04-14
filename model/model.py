@@ -98,3 +98,14 @@ class ModelModel:
         except Exception as e:
             logger.error(f"Failed to delete model {model_id}: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `model` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `model_name` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '模型名称',
+  `created_at` datetime DEFAULT NULL,
+  `note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '其他信息',
+  PRIMARY KEY (`id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC COMMENT='模型表';
+"""

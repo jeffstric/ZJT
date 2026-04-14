@@ -183,6 +183,7 @@ class ComputingPowerLogModel:
             logger.error(f"Failed to check transaction exists: {e}")
             raise
 
+
     @staticmethod
     def count_monthly_active_users(year: int, month: int) -> int:
         """
@@ -221,3 +222,24 @@ class ComputingPowerLogModel:
         except Exception as e:
             logger.error(f"Failed to count monthly active users: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `computing_power_log` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `computing_power` int DEFAULT NULL,
+  `behavior` enum('increase','deduct') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  `user_id` int NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `transaction_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `from` int DEFAULT NULL,
+  `to` int DEFAULT NULL,
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_user_created` (`user_id`,`created_at`) USING BTREE,
+  KEY `idx_behavior_created` (`behavior`,`created_at`) USING BTREE,
+  KEY `idx_user_behavior_note` (`user_id`,`behavior`,`note`(100)) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+"""
+
