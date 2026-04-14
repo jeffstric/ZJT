@@ -1007,9 +1007,29 @@
   <!-- 算力日志弹窗 -->
   <div class="modal-overlay" id="computingPowerLogsModal" aria-hidden="true" onclick="if(event.target === this){ this.classList.remove('active'); }">
     <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 700px; height: 85vh; overflow: hidden; display: flex; flex-direction: column; position: relative;">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 48px 12px 16px; border-bottom: 1px solid #e5e7eb;">
+        <div style="font-size: 16px; font-weight: 600; color: #0f172a;">算力日志</div>
+        <button type="button" id="rechargePowerBtn" class="mini-btn" style="background: #16a34a; color: #ffffff;padding:10px" onclick="handleRechargeClick()">算力充值</button>
+      </div>
       <button type="button" class="modal-close" aria-label="关闭" onclick="document.getElementById('computingPowerLogsModal').classList.remove('active')" style="position: absolute; top: 12px; right: 12px; z-index: 10;">×</button>
       <div style="flex: 1; overflow: hidden; min-height: 0;">
         <iframe id="computingPowerLogsIframe" style="width: 100%; height: 100%; border: none; border-radius: 12px;"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!-- 算力充值弹窗 -->
+  <div class="modal-overlay" id="rechargePowerModal" aria-hidden="true" onclick="if(event.target === this){ closeRechargeModal(); }">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 500px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;">算力充值</div>
+        <button class="modal-close" id="rechargeModalClose" type="button" aria-label="关闭" onclick="closeRechargeModal()">×</button>
+      </div>
+      <div class="modal-body" id="rechargeModalBody" style="background: #ffffff; padding: 20px; max-height: 60vh; overflow-y: auto;">
+        <div id="rechargeLoading" style="text-align: center; padding: 40px;">
+          <div class="loading-spinner"></div>
+          <p style="margin-top: 16px; color: #6b7280;">加载套餐中...</p>
+        </div>
       </div>
     </div>
   </div>
@@ -1067,6 +1087,131 @@
       // 显示弹窗
       modal.classList.add('active');
       modal.setAttribute('aria-hidden', 'false');
+    }
+
+    // 打开算力充值弹窗
+    async function handleRechargeClick() {
+      // 检查是否本地模式
+      try {
+        const response = await fetch('/api/system/server-config');
+        const data = await response.json();
+        if (data.data && data.data.is_local) {
+          alert('只有云端环境才能开启二维码支付。本地模式下，管理员用户请进入后台增加算力，非管理员用户请通知管理员。');
+          return;
+        }
+      } catch (e) {
+        console.error('获取配置失败:', e);
+      }
+
+      // 显示充值弹窗
+      const modal = document.getElementById('rechargePowerModal');
+      modal.classList.add('active');
+      modal.setAttribute('aria-hidden', 'false');
+
+      // 加载充值套餐
+      loadRechargePackages();
+    }
+
+    // 关闭充值弹窗
+    function closeRechargeModal() {
+      const modal = document.getElementById('rechargePowerModal');
+      modal.classList.remove('active');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+
+    // 加载充值套餐
+    async function loadRechargePackages() {
+      const body = document.getElementById('rechargeModalBody');
+      body.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><p style="margin-top: 16px; color: #6b7280;">加载套餐中...</p></div>';
+
+      try {
+        const authToken = localStorage.getItem('auth_token');
+        const response = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(authToken)}`);
+        const data = await response.json();
+
+        if (data.packages && data.packages.length > 0) {
+          let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+          data.packages.forEach(pkg => {
+            html += `
+              <div class="package-item" onclick="selectRechargePackage(${pkg.package_id}, '${pkg.description}', ${pkg.computing_power}, ${pkg.price})" style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <div style="font-weight: 600; color: #0f172a;">${pkg.description}</div>
+                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${pkg.computing_power} 算力</div>
+                  </div>
+                  <div style="text-align: right;">
+                    <div style="font-size: 20px; font-weight: 600; color: #ef4444;">¥${pkg.price}</div>
+                    <div style="font-size: 11px; color: #9ca3af;">${(pkg.price / pkg.computing_power * 100).toFixed(2)}元/百算力</div>
+                  </div>
+                </div>
+              </div>
+            `;
+          });
+          html += '</div>';
+          body.innerHTML = html;
+        } else {
+          body.innerHTML = '<div style="text-align: center; padding: 40px; color: #6b7280;">暂无可用套餐</div>';
+        }
+      } catch (e) {
+        console.error('加载充值套餐失败:', e);
+        body.innerHTML = '<div style="text-align: center; padding: 40px; color: #ef4444;">加载失败，请重试</div>';
+      }
+    }
+
+    // 选择充值套餐
+    async function selectRechargePackage(packageId, description, computingPower, price) {
+      const body = document.getElementById('rechargeModalBody');
+      body.innerHTML = `
+        <div style="text-align: center; margin-bottom: 20px;">
+          <div style="font-size: 16px; font-weight: 600; color: #0f172a;">${description}</div>
+          <div style="font-size: 14px; color: #6b7280; margin-top: 8px;">${computingPower} 算力 - ¥${price}</div>
+        </div>
+        <div id="rechargeQrCode" style="text-align: center; padding: 20px;">
+          <div class="loading-spinner"></div>
+          <p style="margin-top: 16px; color: #6b7280;">正在生成支付二维码...</p>
+        </div>
+      `;
+
+      try {
+        const authToken = localStorage.getItem('auth_token');
+        const response = await fetch('/api/recharge/wechat-pay', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            package_id: packageId,
+            auth_token: authToken
+          })
+        });
+
+        const data = await response.json();
+        if (data.code_url) {
+          body.innerHTML = `
+            <div style="text-align: center;">
+              <div style="font-weight: 600; font-size: 14px; margin-bottom: 16px;">请使用微信扫码完成支付</div>
+              <div style="background: #fff; padding: 12px; border-radius: 12px; display: inline-block;">
+                <img src="${data.code_url}" alt="微信支付二维码" style="width: 200px; height: 200px;" />
+              </div>
+              <div style="font-size: 12px; color: #6b7280; margin-top: 16px; line-height: 1.6;">
+                请打开微信"扫一扫"完成支付<br/>
+                如果已支付，请稍等片刻系统会自动到账
+              </div>
+              <div style="margin-top: 16px;">
+                <button class="mini-btn secondary" onclick="loadRechargePackages()">返回选择套餐</button>
+              </div>
+            </div>
+          `;
+        } else {
+          throw new Error(data.error || '创建支付订单失败');
+        }
+      } catch (e) {
+        console.error('创建支付订单失败:', e);
+        body.innerHTML = `
+          <div style="text-align: center; padding: 20px;">
+            <p style="color: #ef4444; margin-bottom: 16px;">${e.message}</p>
+            <button class="mini-btn secondary" onclick="loadRechargePackages()">返回选择套餐</button>
+          </div>
+        `;
+      }
     }
   </script>
 
