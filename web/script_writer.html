@@ -4585,7 +4585,8 @@
             body.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><p style="margin-top: 16px; color: #6b7280;">加载套餐中...</p></div>';
 
             try {
-                const response = await fetch('/api/recharge/packages');
+                const authToken = localStorage.getItem('auth_token') || '';
+                const response = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(authToken)}`);
                 const data = await response.json();
 
                 if (data.packages && data.packages.length > 0) {
