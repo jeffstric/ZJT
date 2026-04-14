@@ -366,6 +366,13 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.VEO3_DUOMI_V1, Veo3DuomiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Veo3DuomiV1Driver: {e}")
+
+    try:
+        from .veo3_yunwu_v1_driver import Veo3YunwuV1Driver
+        # 注册 VEO3 云雾供应商 v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.VEO3_YUNWU_V1, Veo3YunwuV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Veo3YunwuV1Driver: {e}")
     
     # 注册 API 聚合器站点驱动（仅在配置存在时注册）
     try:
