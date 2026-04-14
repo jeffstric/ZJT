@@ -912,14 +912,38 @@
         <div class="modal-dialog large" style="width: 90%; max-width: 1200px; height: 85vh;">
             <div class="modal-header">
                 <h3 class="modal-title">⚡ 算力日志</h3>
-                <button class="modal-close-btn" onclick="closeComputingPowerLogsModal()">
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-primary btn-sm" onclick="handleRechargeClick()">算力充值</button>
+                    <button class="modal-close-btn" onclick="closeComputingPowerLogsModal()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body" style="padding: 0; height: calc(100% - 60px); overflow: hidden;">
+                <iframe id="computing-power-logs-iframe" style="width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <!-- 算力充值弹窗 -->
+    <div id="recharge-power-modal" class="modal">
+        <div class="modal-overlay" onclick="closeRechargeModal()"></div>
+        <div class="modal-dialog" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3 class="modal-title">⚡ 算力充值</h3>
+                <button class="modal-close-btn" onclick="closeRechargeModal()">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 6L6 18M6 6l12 12"/>
                     </svg>
                 </button>
             </div>
-            <div class="modal-body" style="padding: 0; height: calc(100% - 60px); overflow: hidden;">
-                <iframe id="computing-power-logs-iframe" style="width: 100%; height: 100%; border: none;"></iframe>
+            <div class="modal-body" id="rechargeModalBody" style="max-height: 60vh; overflow-y: auto;">
+                <div style="text-align: center; padding: 40px;">
+                    <div class="loading-spinner"></div>
+                    <p style="margin-top: 16px; color: #6b7280;">加载套餐中...</p>
+                </div>
             </div>
         </div>
     </div>
@@ -4525,6 +4549,128 @@
             iframe.src = '';
             
             modal.classList.remove('show');
+        }
+
+        // 打开算力充值弹窗
+        async function handleRechargeClick() {
+            // 检查是否本地模式
+            try {
+                const response = await fetch('/api/system/server-config');
+                const data = await response.json();
+                if (data.data && data.data.is_local) {
+                    alert('只有云端环境才能开启二维码支付。本地模式下，管理员用户请进入后台增加算力，非管理员用户请通知管理员。');
+                    return;
+                }
+            } catch (e) {
+                console.error('获取配置失败:', e);
+            }
+
+            // 显示充值弹窗
+            const modal = document.getElementById('recharge-power-modal');
+            modal.classList.add('show');
+
+            // 加载充值套餐
+            loadRechargePackages();
+        }
+
+        // 关闭充值弹窗
+        function closeRechargeModal() {
+            const modal = document.getElementById('recharge-power-modal');
+            modal.classList.remove('show');
+        }
+
+        // 加载充值套餐
+        async function loadRechargePackages() {
+            const body = document.getElementById('rechargeModalBody');
+            body.innerHTML = '<div style="text-align: center; padding: 40px;"><div class="loading-spinner"></div><p style="margin-top: 16px; color: #6b7280;">加载套餐中...</p></div>';
+
+            try {
+                const authToken = localStorage.getItem('auth_token') || '';
+                const response = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(authToken)}`);
+                const data = await response.json();
+
+                if (data.packages && data.packages.length > 0) {
+                    let html = '<div style="display: flex; flex-direction: column; gap: 12px;">';
+                    data.packages.forEach(pkg => {
+                        html += `
+                            <div class="package-item" onclick="selectRechargePackage(${pkg.package_id}, '${pkg.description}', ${pkg.computing_power}, ${pkg.price})" style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; cursor: pointer; transition: all 0.2s;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div>
+                                        <div style="font-weight: 600; color: #0f172a;">${pkg.description}</div>
+                                        <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">${pkg.computing_power} 算力</div>
+                                    </div>
+                                    <div style="text-align: right;">
+                                        <div style="font-size: 20px; font-weight: 600; color: #ef4444;">¥${pkg.price}</div>
+                                        <div style="font-size: 11px; color: #9ca3af;">${(pkg.price / pkg.computing_power * 100).toFixed(2)}元/百算力</div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    body.innerHTML = html;
+                } else {
+                    body.innerHTML = '<div style="text-align: center; padding: 40px; color: #6b7280;">暂无可用套餐</div>';
+                }
+            } catch (e) {
+                console.error('加载充值套餐失败:', e);
+                body.innerHTML = '<div style="text-align: center; padding: 40px; color: #ef4444;">加载失败，请重试</div>';
+            }
+        }
+
+        // 选择充值套餐
+        async function selectRechargePackage(packageId, description, computingPower, price) {
+            const body = document.getElementById('rechargeModalBody');
+            body.innerHTML = `
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <div style="font-size: 16px; font-weight: 600; color: #0f172a;">${description}</div>
+                    <div style="font-size: 14px; color: #6b7280; margin-top: 8px;">${computingPower} 算力 - ¥${price}</div>
+                </div>
+                <div id="rechargeQrCode" style="text-align: center; padding: 20px;">
+                    <div class="loading-spinner"></div>
+                    <p style="margin-top: 16px; color: #6b7280;">正在生成支付二维码...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch('/api/recharge/wechat-pay', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        package_id: packageId,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+
+                const data = await response.json();
+                if (data.code_url) {
+                    body.innerHTML = `
+                        <div style="text-align: center;">
+                            <div style="font-weight: 600; font-size: 14px; margin-bottom: 16px;">请使用微信扫码完成支付</div>
+                            <div style="background: #fff; padding: 12px; border-radius: 12px; display: inline-block;">
+                                <img src="${data.code_url}" alt="微信支付二维码" style="width: 200px; height: 200px;" />
+                            </div>
+                            <div style="font-size: 12px; color: #6b7280; margin-top: 16px; line-height: 1.6;">
+                                请打开微信"扫一扫"完成支付<br/>
+                                如果已支付，请稍等片刻系统会自动到账
+                            </div>
+                            <div style="margin-top: 16px;">
+                                <button class="btn btn-secondary" onclick="loadRechargePackages()">返回选择套餐</button>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    throw new Error(data.error || '创建支付订单失败');
+                }
+            } catch (e) {
+                console.error('创建支付订单失败:', e);
+                body.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: #ef4444; margin-bottom: 16px;">${e.message}</p>
+                        <button class="btn btn-secondary" onclick="loadRechargePackages()">返回选择套餐</button>
+                    </div>
+                `;
+            }
         }
 
         async function saveEditedWorld() {

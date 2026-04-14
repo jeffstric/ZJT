@@ -19,7 +19,13 @@ const AdminApp = {
             dashboard: {
                 totalUsers: 0,
                 activeWorkflows3d: 0,
-                loading: true
+                loading: true,
+                monthlyActiveUsers: {
+                    count: null,
+                    year: null,
+                    month: null,
+                    loading: false
+                }
             },
             
             // 用户列表
@@ -392,7 +398,7 @@ const AdminApp = {
                 const response = await axios.get('/api/admin/dashboard', {
                     headers: { 'Authorization': `Bearer ${this.authToken}` }
                 });
-                
+
                 if (response.data.code === 0) {
                     this.dashboard.totalUsers = response.data.data.total_users;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
@@ -404,7 +410,28 @@ const AdminApp = {
                 this.dashboard.loading = false;
             }
         },
-        
+
+        // 加载月活跃用户
+        async loadMonthlyActiveUsers() {
+            this.dashboard.monthlyActiveUsers.loading = true;
+            try {
+                const response = await axios.get('/api/admin/dashboard/monthly-active-users', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    this.dashboard.monthlyActiveUsers.count = response.data.data.active_user_count;
+                    this.dashboard.monthlyActiveUsers.year = response.data.data.year;
+                    this.dashboard.monthlyActiveUsers.month = response.data.data.month;
+                }
+            } catch (error) {
+                console.error('Load monthly active users failed:', error);
+                this.showToast('查询月活跃用户失败', 'error');
+            } finally {
+                this.dashboard.monthlyActiveUsers.loading = false;
+            }
+        },
+
         // 加载用户列表
         async loadUsers() {
             this.users.loading = true;

@@ -94,6 +94,25 @@
                         <div class="stat-card-label">3天活跃工作流</div>
                         <div class="stat-card-value success">{{ dashboard.activeWorkflows3d }}</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="stat-card-label">月活跃用户</div>
+                        <div class="stat-card-value" :class="dashboard.monthlyActiveUsers?.count != null ? 'success' : ''">
+                            {{ dashboard.monthlyActiveUsers?.count ?? '-' }}
+                        </div>
+                        <div class="stat-card-actions" style="margin-top: 8px;">
+                            <button
+                                class="action-btn primary"
+                                @click="loadMonthlyActiveUsers"
+                                :disabled="dashboard.monthlyActiveUsers.loading"
+                                style="font-size: 12px; padding: 4px 12px;"
+                            >
+                                {{ dashboard.monthlyActiveUsers.loading ? '查询中...' : '查询本月' }}
+                            </button>
+                            <span v-if="dashboard.monthlyActiveUsers?.year && dashboard.monthlyActiveUsers?.month" style="font-size: 11px; color: #64748b; margin-left: 8px;">
+                                ({{ dashboard.monthlyActiveUsers.year }}年{{ dashboard.monthlyActiveUsers.month }}月)
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </section>
 
