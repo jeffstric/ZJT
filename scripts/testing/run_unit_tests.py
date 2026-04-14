@@ -32,7 +32,8 @@ sys.path.insert(0, project_root)
 
 APP_DIR = project_root
 
-from tests.db_test_config import get_test_db_config
+from tests.base.db_test_config import get_test_db_config
+from scripts.testing.test_discovery import discover_tests_by_category, get_all_categories, get_category_display_name
 
 
 class TestRunner:
@@ -42,10 +43,16 @@ class TestRunner:
         self.args = args
         self.test_results = {
             'db_connection': {'passed': 0, 'failed': 0, 'errors': 0},
+            'cdn': {'passed': 0, 'failed': 0, 'errors': 0},
             'crud': {'passed': 0, 'failed': 0, 'errors': 0},
             'driver': {'passed': 0, 'failed': 0, 'errors': 0},
             'utils': {'passed': 0, 'failed': 0, 'errors': 0},
             'config': {'passed': 0, 'failed': 0, 'errors': 0},
+            'auth': {'passed': 0, 'failed': 0, 'errors': 0},
+            'reference_images': {'passed': 0, 'failed': 0, 'errors': 0},
+            'stats': {'passed': 0, 'failed': 0, 'errors': 0},
+            'drivers': {'passed': 0, 'failed': 0, 'errors': 0},
+            'driver_integration': {'passed': 0, 'failed': 0, 'errors': 0},
             'total': {'passed': 0, 'failed': 0, 'errors': 0}
         }
         # 收集所有失败测试的详细信息
@@ -58,7 +65,7 @@ class TestRunner:
         print("=" * 60)
         
         # 检查配置文件
-        from tests.db_test_config import get_unit_test_config_path
+        from tests.base.db_test_config import get_unit_test_config_path
         config_unit_path = os.path.join(APP_DIR, get_unit_test_config_path())
         if not os.path.exists(config_unit_path):
             print(f"[WARNING] {get_unit_test_config_path()} 不存在，将使用环境变量或默认值")
@@ -131,47 +138,42 @@ class TestRunner:
             return False
         finally:
             print()
-    
-    def run_crud_tests(self):
-        """执行所有 CRUD 测试"""
-        print("=" * 60)
-        print("步骤 3: CRUD 测试")
-        print("=" * 60)
 
-        crud_test_files = [
-            'tests.test_ai_tools_crud',
-            'tests.test_ai_tools_cdn_integration',
-            'tests.test_ai_audio_crud',
-            'tests.test_chat_sessions_crud',
-            'tests.test_character_reference_images',
-            'tests.test_implementation_stats',
-            'tests.test_location_crud',
-            'tests.test_location_reference_images',
-            'tests.test_payment_orders_crud',
-            'tests.test_props_crud',
-            'tests.test_runninghub_slots_crud',
-            'tests.test_script_crud',
-            'tests.test_tasks_crud',
-            'tests.test_video_workflow_crud',
-            'tests.test_world_crud',
-        ]
+    def _discover_and_run(self, category: str):
+        """
+        发现并运行指定分类的测试。
 
-        all_passed = True
-        for test_module in crud_test_files:
+        Args:
+            category: 测试分类 (cdn, crud, utils, config, drivers, driver_integration, auth, reference_images, stats)
+
+        Returns:
+            (passed, failed, errors) 元组
+        """
+        test_modules = discover_tests_by_category(category)
+
+        passed = failed = errors = 0
+        for test_module in test_modules:
             try:
+                # 检查文件是否存在
+                file_path = test_module.replace('.', '/') + '.py'
+                full_path = os.path.join(APP_DIR, file_path)
+                if not os.path.exists(full_path):
+                    print(f"[SKIP] {test_module} (文件不存在)")
+                    continue
+
                 print(f"\n执行: {test_module}")
                 suite = unittest.TestLoader().loadTestsFromName(test_module)
                 runner = unittest.TextTestRunner(verbosity=1)
                 result = runner.run(suite)
 
-                self.test_results['crud']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
-                self.test_results['crud']['failed'] += len(result.failures)
-                self.test_results['crud']['errors'] += len(result.errors)
+                passed += result.testsRun - len(result.failures) - len(result.errors)
+                failed += len(result.failures)
+                errors += len(result.errors)
 
                 # 收集失败信息
                 for test, traceback_str in result.failures:
                     self.failed_tests.append({
-                        'category': 'crud',
+                        'category': category,
                         'module': test_module,
                         'test': str(test),
                         'type': 'failure',
@@ -179,261 +181,147 @@ class TestRunner:
                     })
                 for test, traceback_str in result.errors:
                     self.failed_tests.append({
-                        'category': 'crud',
+                        'category': category,
                         'module': test_module,
                         'test': str(test),
                         'type': 'error',
                         'traceback': traceback_str
                     })
 
-                if not result.wasSuccessful():
-                    all_passed = False
-                    if self.args.failfast:
-                        break
+                if not result.wasSuccessful() and self.args.failfast:
+                    break
 
             except Exception as e:
                 print(f"[ERROR] 执行 {test_module} 失败: {e}")
-                all_passed = False
+                errors += 1
+
+        return passed, failed, errors
+    
+    def run_crud_tests(self):
+        """执行 CRUD 测试"""
+        print("=" * 60)
+        print("CRUD 测试")
+        print("=" * 60)
+
+        passed, failed, errors = self._discover_and_run('crud')
+        self.test_results['crud']['passed'] = passed
+        self.test_results['crud']['failed'] = failed
+        self.test_results['crud']['errors'] = errors
 
         print()
-        return all_passed
+        return errors == 0 and failed == 0
 
     def run_cdn_tests(self):
         """执行 CDN 相关测试"""
         print("=" * 60)
-        print("步骤 3: CDN 专项测试")
+        print("CDN 专项测试")
         print("=" * 60)
 
-        cdn_test_files = [
-            'tests.test_ai_tools_cdn_integration',
-            'tests.test_cdn_storage',
-        ]
-
-        all_passed = True
-        for test_module in cdn_test_files:
-            try:
-                print(f"\n执行: {test_module}")
-                suite = unittest.TestLoader().loadTestsFromName(test_module)
-                runner = unittest.TextTestRunner(verbosity=1)
-                result = runner.run(suite)
-
-                self.test_results['crud']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
-                self.test_results['crud']['failed'] += len(result.failures)
-                self.test_results['crud']['errors'] += len(result.errors)
-
-                # 收集失败信息
-                for test, traceback_str in result.failures:
-                    self.failed_tests.append({
-                        'category': 'crud',
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'failure',
-                        'traceback': traceback_str
-                    })
-                for test, traceback_str in result.errors:
-                    self.failed_tests.append({
-                        'category': 'crud',
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'error',
-                        'traceback': traceback_str
-                    })
-
-                if not result.wasSuccessful():
-                    all_passed = False
-                    if self.args.failfast:
-                        break
-
-            except Exception as e:
-                print(f"[ERROR] 执行 {test_module} 失败: {e}")
-                all_passed = False
+        passed, failed, errors = self._discover_and_run('cdn')
+        self.test_results['cdn']['passed'] = passed
+        self.test_results['cdn']['failed'] = failed
+        self.test_results['cdn']['errors'] = errors
 
         print()
-        return all_passed
+        return errors == 0 and failed == 0
 
     def run_utils_tests(self):
         """执行工具函数测试"""
         print("=" * 60)
-        print("步骤 4: 工具函数测试")
+        print("工具函数测试")
         print("=" * 60)
 
-        utils_test_files = [
-            'tests.test_image_upload_utils',
-            'tests.test_media_cache_temp',
-            'tests.test_auth_service',
-            'tests.test_qwen_multi_angle_driver',
-        ]
-
-        all_passed = True
-        for test_module in utils_test_files:
-            try:
-                print(f"\n执行: {test_module}")
-                suite = unittest.TestLoader().loadTestsFromName(test_module)
-                runner = unittest.TextTestRunner(verbosity=1)
-                result = runner.run(suite)
-
-                self.test_results['utils']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
-                self.test_results['utils']['failed'] += len(result.failures)
-                self.test_results['utils']['errors'] += len(result.errors)
-
-                # 收集失败信息
-                for test, traceback_str in result.failures:
-                    self.failed_tests.append({
-                        'category': 'utils',
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'failure',
-                        'traceback': traceback_str
-                    })
-                for test, traceback_str in result.errors:
-                    self.failed_tests.append({
-                        'category': 'utils',
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'error',
-                        'traceback': traceback_str
-                    })
-
-                if not result.wasSuccessful():
-                    all_passed = False
-                    if self.args.failfast:
-                        break
-
-            except Exception as e:
-                print(f"[ERROR] 执行 {test_module} 失败: {e}")
-                all_passed = False
+        passed, failed, errors = self._discover_and_run('utils')
+        self.test_results['utils']['passed'] = passed
+        self.test_results['utils']['failed'] = failed
+        self.test_results['utils']['errors'] = errors
 
         print()
-        return all_passed
+        return errors == 0 and failed == 0
     
     def run_driver_tests(self):
-        """执行所有驱动集成测试"""
+        """执行驱动集成测试"""
         print("=" * 60)
-        print("步骤 4: 驱动集成测试")
+        print("驱动集成测试")
         print("=" * 60)
 
-        driver_test_files = [
-            'tests.driver_integration.test_digital_human_driver_with_db',
-            'tests.driver_integration.test_sora2_driver_with_db',
-            'tests.driver_integration.test_ltx2_driver_with_db',
-            'tests.driver_integration.test_ltx2_3_driver_with_db',
-            'tests.driver_integration.test_vidu_driver_with_db',
-            'tests.driver_integration.test_wan22_driver_with_db',
-            'tests.driver_integration.test_kling_driver_with_db',
-            'tests.driver_integration.test_veo3_driver_with_db',
-            'tests.driver_integration.test_gemini_driver_with_db',
-            'tests.driver_integration.test_seedream_driver_with_db',
-            'tests.driver_integration.test_vidu_q2_driver_with_db',
-        ]
-
-        all_passed = True
-        for test_module in driver_test_files:
-            try:
-                # 检查文件是否存在
-                file_path = test_module.replace('.', '/') + '.py'
-                full_path = os.path.join(APP_DIR, file_path)
-                if not os.path.exists(full_path):
-                    print(f"[SKIP] {test_module} (文件不存在)")
-                    continue
-
-                print(f"\n执行: {test_module}")
-                suite = unittest.TestLoader().loadTestsFromName(test_module)
-                runner = unittest.TextTestRunner(verbosity=1)
-                result = runner.run(suite)
-
-                self.test_results['driver']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
-                self.test_results['driver']['failed'] += len(result.failures)
-                self.test_results['driver']['errors'] += len(result.errors)
-
-                # 收集失败信息
-                for test, traceback_str in result.failures:
-                    self.failed_tests.append({
-                        'category': 'driver',
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'failure',
-                        'traceback': traceback_str
-                    })
-                for test, traceback_str in result.errors:
-                    self.failed_tests.append({
-                        'category': 'driver',
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'error',
-                        'traceback': traceback_str
-                    })
-
-                if not result.wasSuccessful():
-                    all_passed = False
-                    if self.args.failfast:
-                        break
-
-            except Exception as e:
-                print(f"[ERROR] 执行 {test_module} 失败: {e}")
-                all_passed = False
+        passed, failed, errors = self._discover_and_run('driver_integration')
+        self.test_results['driver']['passed'] = passed
+        self.test_results['driver']['failed'] = failed
+        self.test_results['driver']['errors'] = errors
 
         print()
-        return all_passed
+        return errors == 0 and failed == 0
 
     def run_config_tests(self):
         """执行配置相关测试"""
         print("=" * 60)
-        print("步骤 5: 配置测试")
+        print("配置测试")
         print("=" * 60)
 
-        config_test_files = [
-            'tests.test_implementation_config',
-            'tests.test_unified_config_frontend',
-        ]
-
-        all_passed = True
-        for test_module in config_test_files:
-            try:
-                # 检查文件是否存在
-                file_path = test_module.replace('.', '/') + '.py'
-                full_path = os.path.join(APP_DIR, file_path)
-                if not os.path.exists(full_path):
-                    print(f"[SKIP] {test_module} (文件不存在)")
-                    continue
-
-                print(f"\n执行: {test_module}")
-                suite = unittest.TestLoader().loadTestsFromName(test_module)
-                runner = unittest.TextTestRunner(verbosity=1)
-                result = runner.run(suite)
-
-                self.test_results['config']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
-                self.test_results['config']['failed'] += len(result.failures)
-                self.test_results['config']['errors'] += len(result.errors)
-
-                # 收集失败信息
-                for test, traceback_str in result.failures:
-                    self.failed_tests.append({
-                        'category': 'config',
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'failure',
-                        'traceback': traceback_str
-                    })
-                for test, traceback_str in result.errors:
-                    self.failed_tests.append({
-                        'category': 'config',
-                        'module': test_module,
-                        'test': str(test),
-                        'type': 'error',
-                        'traceback': traceback_str
-                    })
-
-                if not result.wasSuccessful():
-                    all_passed = False
-                    if self.args.failfast:
-                        break
-
-            except Exception as e:
-                print(f"[ERROR] 执行 {test_module} 失败: {e}")
-                all_passed = False
+        passed, failed, errors = self._discover_and_run('config')
+        self.test_results['config']['passed'] = passed
+        self.test_results['config']['failed'] = failed
+        self.test_results['config']['errors'] = errors
 
         print()
-        return all_passed
+        return errors == 0 and failed == 0
+
+    def run_auth_tests(self):
+        """执行认证测试"""
+        print("=" * 60)
+        print("认证测试")
+        print("=" * 60)
+
+        passed, failed, errors = self._discover_and_run('auth')
+        self.test_results['auth']['passed'] = passed
+        self.test_results['auth']['failed'] = failed
+        self.test_results['auth']['errors'] = errors
+
+        print()
+        return errors == 0 and failed == 0
+
+    def run_reference_images_tests(self):
+        """执行引用图片测试"""
+        print("=" * 60)
+        print("引用图片测试")
+        print("=" * 60)
+
+        passed, failed, errors = self._discover_and_run('reference_images')
+        self.test_results['reference_images']['passed'] = passed
+        self.test_results['reference_images']['failed'] = failed
+        self.test_results['reference_images']['errors'] = errors
+
+        print()
+        return errors == 0 and failed == 0
+
+    def run_stats_tests(self):
+        """执行统计测试"""
+        print("=" * 60)
+        print("统计测试")
+        print("=" * 60)
+
+        passed, failed, errors = self._discover_and_run('stats')
+        self.test_results['stats']['passed'] = passed
+        self.test_results['stats']['failed'] = failed
+        self.test_results['stats']['errors'] = errors
+
+        print()
+        return errors == 0 and failed == 0
+
+    def run_drivers_tests(self):
+        """执行驱动单元测试"""
+        print("=" * 60)
+        print("驱动单元测试")
+        print("=" * 60)
+
+        passed, failed, errors = self._discover_and_run('drivers')
+        self.test_results['drivers']['passed'] = passed
+        self.test_results['drivers']['failed'] = failed
+        self.test_results['drivers']['errors'] = errors
+
+        print()
+        return errors == 0 and failed == 0
 
     def print_summary(self):
         """打印测试摘要"""
@@ -442,14 +330,19 @@ class TestRunner:
         print("=" * 60)
 
         # 计算总数
-        for category in ['db_connection', 'crud', 'driver', 'utils', 'config']:
+        for category in ['db_connection', 'cdn', 'crud', 'driver', 'utils', 'config', 'auth', 'reference_images', 'stats', 'drivers', 'driver_integration']:
             for key in ['passed', 'failed', 'errors']:
                 self.test_results['total'][key] += self.test_results[category][key]
 
-        print(f"数据库连接测试: "
+        print(f"数据库连接测试:   "
               f"通过 {self.test_results['db_connection']['passed']}, "
               f"失败 {self.test_results['db_connection']['failed']}, "
               f"错误 {self.test_results['db_connection']['errors']}")
+
+        print(f"CDN 测试:        "
+              f"通过 {self.test_results['cdn']['passed']}, "
+              f"失败 {self.test_results['cdn']['failed']}, "
+              f"错误 {self.test_results['cdn']['errors']}")
 
         print(f"CRUD 测试:       "
               f"通过 {self.test_results['crud']['passed']}, "
@@ -466,10 +359,30 @@ class TestRunner:
               f"失败 {self.test_results['utils']['failed']}, "
               f"错误 {self.test_results['utils']['errors']}")
 
-        print(f"配置测试:       "
+        print(f"配置测试:        "
               f"通过 {self.test_results['config']['passed']}, "
               f"失败 {self.test_results['config']['failed']}, "
               f"错误 {self.test_results['config']['errors']}")
+
+        print(f"认证测试:        "
+              f"通过 {self.test_results['auth']['passed']}, "
+              f"失败 {self.test_results['auth']['failed']}, "
+              f"错误 {self.test_results['auth']['errors']}")
+
+        print(f"引用图片测试:    "
+              f"通过 {self.test_results['reference_images']['passed']}, "
+              f"失败 {self.test_results['reference_images']['failed']}, "
+              f"错误 {self.test_results['reference_images']['errors']}")
+
+        print(f"统计测试:        "
+              f"通过 {self.test_results['stats']['passed']}, "
+              f"失败 {self.test_results['stats']['failed']}, "
+              f"错误 {self.test_results['stats']['errors']}")
+
+        print(f"驱动单元测试:    "
+              f"通过 {self.test_results['drivers']['passed']}, "
+              f"失败 {self.test_results['drivers']['failed']}, "
+              f"错误 {self.test_results['drivers']['errors']}")
 
         print("-" * 60)
         print(f"总计:            "
@@ -515,21 +428,23 @@ class TestRunner:
         if not self.check_environment():
             return 1
 
-        # 步骤 2: CDN 专项测试（独立运行，不受 only 标志影响）
-        if self.args.only_cdn:
-            self.run_cdn_tests()
-            return_code = self.print_summary()
-            self.print_failed_tests()
-            print("\n测试执行完成！")
-            return return_code
-
         # 检查是否设置了任何 only 标志
         has_only_flag = any([
             self.args.crud_only,
             self.args.driver_only,
             self.args.utils_only,
-            self.args.config_only
+            self.args.config_only,
+            self.args.only_cdn,
+            self.args.auth_only,
+            self.args.reference_images_only,
+            self.args.stats_only,
+            self.args.drivers_only,
+            self.args.driver_integration_only,
         ])
+
+        # 步骤 2: CDN 专项测试
+        if self.args.only_cdn or not has_only_flag:
+            self.run_cdn_tests()
 
         # 步骤 3: 数据库连接测试（只有没有任何 only 标志时才运行）
         if not has_only_flag:
@@ -546,18 +461,35 @@ class TestRunner:
         if self.args.utils_only or not has_only_flag:
             self.run_utils_tests()
 
-        # 步骤 6: 驱动测试
-        if self.args.driver_only or not has_only_flag:
+        # 步骤 6: 驱动集成测试
+        # 注意: --driver-only 是 --driver-integration-only 的别名（向后兼容）
+        if self.args.driver_integration_only or self.args.driver_only or not has_only_flag:
             self.run_driver_tests()
 
         # 步骤 7: 配置测试
         if self.args.config_only or not has_only_flag:
             self.run_config_tests()
 
-        # 步骤 8: 输出摘要
+        # 步骤 8: 认证测试
+        if self.args.auth_only or not has_only_flag:
+            self.run_auth_tests()
+
+        # 步骤 9: 引用图片测试
+        if self.args.reference_images_only or not has_only_flag:
+            self.run_reference_images_tests()
+
+        # 步骤 10: 统计测试
+        if self.args.stats_only or not has_only_flag:
+            self.run_stats_tests()
+
+        # 步骤 11: 驱动单元测试
+        if self.args.drivers_only or not has_only_flag:
+            self.run_drivers_tests()
+
+        # 步骤 12: 输出摘要
         return_code = self.print_summary()
 
-        # 步骤 9: 输出失败测试详情
+        # 步骤 13: 输出失败测试详情
         self.print_failed_tests()
 
         print("\n测试执行完成！")
@@ -577,7 +509,7 @@ def main():
     os.environ['comfyui_env'] = 'unit'
 
     # 设置 DB_* 环境变量，使 model.database.DB_CONFIG 指向测试库（双重保障）
-    from tests.db_test_config import TEST_DB_CONFIG
+    from tests.base.db_test_config import TEST_DB_CONFIG
     os.environ['DB_HOST'] = TEST_DB_CONFIG['host']
     os.environ['DB_PORT'] = str(TEST_DB_CONFIG['port'])
     os.environ['DB_USER'] = TEST_DB_CONFIG['user']
@@ -589,10 +521,15 @@ def main():
 
     parser = argparse.ArgumentParser(description='单元测试一键执行脚本')
     parser.add_argument('--crud-only', action='store_true', help='只执行 CRUD 测试')
-    parser.add_argument('--driver-only', action='store_true', help='只执行驱动测试')
+    parser.add_argument('--driver-only', action='store_true', help='只执行驱动测试（已废弃，使用 --driver-integration-only）')
+    parser.add_argument('--driver-integration-only', action='store_true', help='只执行驱动集成测试')
+    parser.add_argument('--drivers-only', action='store_true', help='只执行驱动单元测试（无 DB）')
     parser.add_argument('--utils-only', action='store_true', help='只执行工具函数测试')
     parser.add_argument('--config-only', action='store_true', help='只执行配置测试')
     parser.add_argument('--only-cdn', action='store_true', help='只执行 CDN 相关测试')
+    parser.add_argument('--auth-only', action='store_true', help='只执行认证测试')
+    parser.add_argument('--reference-images-only', action='store_true', help='只执行引用图片测试')
+    parser.add_argument('--stats-only', action='store_true', help='只执行统计测试')
     parser.add_argument('--verbose', '-v', action='store_true', help='显示详细输出')
     parser.add_argument('--failfast', '-x', action='store_true', help='遇到失败立即停止')
     parser.add_argument('--coverage', action='store_true', help='生成覆盖率报告')

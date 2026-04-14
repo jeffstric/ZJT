@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 sys.modules['utils.sentry_util'] = MagicMock()
 
-from tests.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
+from tests.base.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
 from task.visual_drivers.vidu_default_driver import ViduDefaultDriver
 from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
 

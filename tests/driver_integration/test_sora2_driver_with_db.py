@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 sys.modules['duomi_api_requset'] = MagicMock()
 sys.modules['utils.sentry_util'] = MagicMock()
 
-from tests.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
+from tests.base.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
 from task.visual_drivers.sora2_duomi_v1_driver import Sora2DuomiV1Driver
 from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
 

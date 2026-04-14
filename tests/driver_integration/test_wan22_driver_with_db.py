@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 sys.modules['utils.sentry_util'] = MagicMock()
 sys.modules['utils.file_storage'] = MagicMock()
 
-from tests.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
+from tests.base.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
 from task.visual_drivers.wan22_runninghub_v1_driver import Wan22RunninghubV1Driver
 from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
 
