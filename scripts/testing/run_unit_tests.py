@@ -502,6 +502,21 @@ def main():
         datefmt='%H:%M:%S'
     )
 
+    # 设置 comfyui_env=unit，使 config_util.get_config_path() 返回 config_unit.yml
+    # 必须在 model.database 等模块被导入之前设置，因为 DB_CONFIG 在模块加载时读取配置
+    os.environ['comfyui_env'] = 'unit'
+
+    # 设置 DB_* 环境变量，使 model.database.DB_CONFIG 指向测试库（双重保障）
+    from tests.db_test_config import TEST_DB_CONFIG
+    os.environ['DB_HOST'] = TEST_DB_CONFIG['host']
+    os.environ['DB_PORT'] = str(TEST_DB_CONFIG['port'])
+    os.environ['DB_USER'] = TEST_DB_CONFIG['user']
+    os.environ['DB_PASSWORD'] = TEST_DB_CONFIG['password']
+    os.environ['DB_NAME'] = TEST_DB_CONFIG['database']
+    logging.getLogger(__name__).info(
+        f"测试环境已设置: comfyui_env=unit, DB={TEST_DB_CONFIG['database']}@{TEST_DB_CONFIG['host']}"
+    )
+
     parser = argparse.ArgumentParser(description='单元测试一键执行脚本')
     parser.add_argument('--crud-only', action='store_true', help='只执行 CRUD 测试')
     parser.add_argument('--driver-only', action='store_true', help='只执行驱动测试')
