@@ -146,10 +146,8 @@ main() {
     log_info "启动应用服务..."
     log_info "========================================"
 
-    # 测试环境模式
+    # 测试环境模式（迁移由 base_db_test.py 自动处理）
     if [ "$comfyui_env" = "unit" ]; then
-        log_info "测试环境：执行数据库迁移..."
-        bash /app/scripts/testing/run_migrations.sh
         # 执行传入的命令（如 python3 scripts/testing/run_unit_tests.py）
         exec "$@"
     else

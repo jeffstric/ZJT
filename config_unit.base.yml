@@ -93,7 +93,7 @@ llm:
     model: ""
 
 vidu:
-  token: ""
+  token: "test"
 
 yunwu:
   api_key: ""
