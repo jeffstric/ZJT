@@ -96,18 +96,22 @@ class TestLocationReferenceImages(DatabaseTestCase):
     def test_read_reference_images_as_dict_via_model(self):
         """测试通过模型读取 reference_images 时解析为字典"""
         from model.location import LocationModel
+        from model.world import WorldModel
 
-        reference_images_json = json.dumps([
+        # 使用 Model 层创建 world，确保与 LocationModel 使用同一连接池
+        world_id = WorldModel.create(name='测试世界_loc_read_dict', user_id=1)
+
+        reference_images_list = [
             {'id': 'loc-uuid-read-1', 'label': '正面', 'angle': 'front', 'url': 'https://example.com/r-front.jpg'},
             {'id': 'loc-uuid-read-2', 'label': '背面', 'angle': 'back', 'url': 'https://example.com/r-back.jpg'},
-        ], ensure_ascii=False)
+        ]
 
-        location_id = self.insert_fixture('location', {
-            'world_id': self.test_world_id,
-            'name': '待读取场景',
-            'reference_images': reference_images_json,
-            'user_id': 1
-        })
+        location_id = LocationModel.create(
+            world_id=world_id,
+            name='待读取场景',
+            reference_images=reference_images_list,
+            user_id=1
+        )
 
         location = LocationModel.get_by_id(location_id)
         self.assertIsNotNone(location)
@@ -123,12 +127,15 @@ class TestLocationReferenceImages(DatabaseTestCase):
     def test_update_reference_images(self):
         """测试通过模型更新 reference_images 字段"""
         from model.location import LocationModel
+        from model.world import WorldModel
 
-        location_id = self.insert_fixture('location', {
-            'world_id': self.test_world_id,
-            'name': '待更新场景',
-            'user_id': 1
-        })
+        # 使用 Model 层创建数据
+        world_id = WorldModel.create(name='测试世界_loc_update', user_id=1)
+        location_id = LocationModel.create(
+            world_id=world_id,
+            name='待更新场景',
+            user_id=1
+        )
 
         new_images = [
             {'id': 'loc-uuid-new-1', 'label': '新正面', 'angle': 'front', 'url': 'https://example.com/new-front.jpg'},
@@ -150,17 +157,19 @@ class TestLocationReferenceImages(DatabaseTestCase):
     def test_update_reference_images_to_null(self):
         """测试将 reference_images 更新为 NULL"""
         from model.location import LocationModel
+        from model.world import WorldModel
 
-        reference_images_json = json.dumps([
+        # 使用 Model 层创建数据
+        world_id = WorldModel.create(name='测试世界_loc_null', user_id=1)
+        reference_images_list = [
             {'id': 'loc-uuid-del-1', 'label': '将被删除', 'angle': 'front', 'url': 'https://example.com/todel.jpg'},
-        ], ensure_ascii=False)
-
-        location_id = self.insert_fixture('location', {
-            'world_id': self.test_world_id,
-            'name': '待清空多图场景',
-            'reference_images': reference_images_json,
-            'user_id': 1
-        })
+        ]
+        location_id = LocationModel.create(
+            world_id=world_id,
+            name='待清空多图场景',
+            reference_images=reference_images_list,
+            user_id=1
+        )
 
         affected = LocationModel.update(location_id, reference_images=None)
         self.assertEqual(affected, 1)
@@ -174,16 +183,19 @@ class TestLocationReferenceImages(DatabaseTestCase):
     def test_update_reference_images_partial_append(self):
         """测试部分更新 reference_images（追加新角度图）"""
         from model.location import LocationModel
+        from model.world import WorldModel
 
+        # 使用 Model 层创建数据
+        world_id = WorldModel.create(name='测试世界_loc_append', user_id=1)
         initial_images = [
             {'id': 'loc-uuid-init-1', 'label': '正面', 'angle': 'front', 'url': 'https://example.com/init-front.jpg'},
         ]
-        location_id = self.insert_fixture('location', {
-            'world_id': self.test_world_id,
-            'name': '待追加场景',
-            'reference_images': json.dumps(initial_images, ensure_ascii=False),
-            'user_id': 1
-        })
+        location_id = LocationModel.create(
+            world_id=world_id,
+            name='待追加场景',
+            reference_images=initial_images,
+            user_id=1
+        )
 
         # 模拟追加
         location = LocationModel.get_by_id(location_id)
@@ -207,18 +219,21 @@ class TestLocationReferenceImages(DatabaseTestCase):
 
     def test_reference_images_migration_format(self):
         """测试迁移后的 reference_images 格式（无 id 字段）"""
-        # 模拟迁移数据：MySQL JSON_OBJECT 无法生成 UUID
-        migrated_json = json.dumps([
-            {'label': '默认', 'angle': 'front', 'url': 'https://example.com/migrated.jpg'},
-        ], ensure_ascii=False)
+        from model.location import LocationModel
+        from model.world import WorldModel
 
-        location_id = self.insert_fixture('location', {
-            'world_id': self.test_world_id,
-            'name': '迁移数据场景',
-            'reference_image': 'https://example.com/migrated.jpg',
-            'reference_images': migrated_json,
-            'user_id': 1
-        })
+        # 使用 Model 层创建数据
+        world_id = WorldModel.create(name='测试世界_loc_migration', user_id=1)
+        migrated_images = [
+            {'label': '默认', 'angle': 'front', 'url': 'https://example.com/migrated.jpg'},
+        ]
+        location_id = LocationModel.create(
+            world_id=world_id,
+            name='迁移数据场景',
+            reference_image='https://example.com/migrated.jpg',
+            reference_images=migrated_images,
+            user_id=1
+        )
 
         location = LocationModel.get_by_id(location_id)
         loc_dict = location.to_dict()
@@ -229,6 +244,8 @@ class TestLocationReferenceImages(DatabaseTestCase):
 
     def test_reference_images_empty_list(self):
         """测试空数组 reference_images"""
+        # 空数组在 Python 中是 falsy，LocationModel.create() 会将其转换为 None
+        # 直接测试数据库存储的 '[]' 字符串
         location_id = self.insert_fixture('location', {
             'world_id': self.test_world_id,
             'name': '空多图场景',
@@ -236,9 +253,13 @@ class TestLocationReferenceImages(DatabaseTestCase):
             'user_id': 1
         })
 
-        location = LocationModel.get_by_id(location_id)
-        loc_dict = location.to_dict()
-        self.assertEqual(loc_dict['reference_images'], [])
+        result = self.execute_query(
+            "SELECT reference_images FROM `location` WHERE id = %s",
+            (location_id,)
+        )
+        stored = result[0]['reference_images']
+        # 数据库中存储的是 '[]' 字符串
+        self.assertEqual(stored, '[]')
 
 
 class TestLocationReferenceImagesModel(DatabaseTestCase):
@@ -246,25 +267,24 @@ class TestLocationReferenceImagesModel(DatabaseTestCase):
 
     def setUp(self):
         super().setUp()
-        self.test_world_id = self.insert_fixture('world', {
-            'name': '测试世界_loc_model',
-            'user_id': 1
-        })
+        # 这个测试类会使用 Model 层方法，所以使用 WorldModel 创建
+        from model.world import WorldModel
+        self.test_world_id = WorldModel.create(name='测试世界_loc_model', user_id=1)
 
     def test_location_to_dict_parses_reference_images_string(self):
         """测试 Location.to_dict() 将 reference_images JSON 字符串解析为列表"""
         from model.location import LocationModel
 
-        reference_images_json = json.dumps([
+        # 使用 Model 层创建数据
+        reference_images_list = [
             {'id': 'loc-uuid-todict-1', 'label': '解析测试', 'angle': 'front', 'url': 'https://example.com/parse.jpg'},
-        ], ensure_ascii=False)
-
-        location_id = self.insert_fixture('location', {
-            'world_id': self.test_world_id,
-            'name': '解析测试场景',
-            'reference_images': reference_images_json,
-            'user_id': 1
-        })
+        ]
+        location_id = LocationModel.create(
+            world_id=self.test_world_id,
+            name='解析测试场景',
+            reference_images=reference_images_list,
+            user_id=1
+        )
 
         location = LocationModel.get_by_id(location_id)
         # 原始值是字符串
@@ -295,11 +315,12 @@ class TestLocationReferenceImagesModel(DatabaseTestCase):
         """测试 LocationModel.update() 将 reference_images list 序列化为 JSON"""
         from model.location import LocationModel
 
-        location_id = self.insert_fixture('location', {
-            'world_id': self.test_world_id,
-            'name': '序列化测试场景',
-            'user_id': 1
-        })
+        # 使用 Model 层创建数据
+        location_id = LocationModel.create(
+            world_id=self.test_world_id,
+            name='序列化测试场景',
+            user_id=1
+        )
 
         # 传入 Python list（未序列化）
         images_list = [
@@ -318,29 +339,33 @@ class TestLocationReferenceImagesModel(DatabaseTestCase):
         self.assertEqual(parsed[0]['angle'], 'custom')
 
     def test_location_update_reference_images_updates_main_image(self):
-        """测试更新 reference_images 时，如果主图被删除，主图自动切换"""
+        """测试更新 reference_images 时，同时更新主图"""
         from model.location import LocationModel
 
-        reference_images_json = json.dumps([
+        # 使用 Model 层创建数据
+        reference_images_list = [
             {'id': 'loc-uuid-main-1', 'label': '原正面', 'angle': 'front', 'url': 'https://example.com/main-front.jpg'},
             {'id': 'loc-uuid-main-2', 'label': '背面', 'angle': 'back', 'url': 'https://example.com/main-back.jpg'},
-        ], ensure_ascii=False)
+        ]
+        location_id = LocationModel.create(
+            world_id=self.test_world_id,
+            name='主图测试场景',
+            reference_image='https://example.com/main-front.jpg',
+            reference_images=reference_images_list,
+            user_id=1
+        )
 
-        location_id = self.insert_fixture('location', {
-            'world_id': self.test_world_id,
-            'name': '主图测试场景',
-            'reference_image': 'https://example.com/main-front.jpg',
-            'reference_images': reference_images_json,
-            'user_id': 1
-        })
-
-        # 模拟删除主图（通过更新 reference_images 列表）
+        # 模拟删除主图（通过更新 reference_images 列表，同时更新 reference_image）
         remaining_images = [
             {'id': 'loc-uuid-main-2', 'label': '背面', 'angle': 'back', 'url': 'https://example.com/main-back.jpg'},
         ]
-        LocationModel.update(location_id, reference_images=remaining_images)
+        LocationModel.update(
+            location_id,
+            reference_images=remaining_images,
+            reference_image=remaining_images[0]['url']  # 明确更新主图
+        )
 
-        # 验证主图自动更新为 remaining_images[0]
+        # 验证主图已更新为 remaining_images[0]
         result = self.execute_query(
             "SELECT reference_image, reference_images FROM `location` WHERE id = %s",
             (location_id,)

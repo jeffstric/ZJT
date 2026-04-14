@@ -195,6 +195,47 @@ class DatabaseTestCase(unittest.TestCase):
     1. setUpClass: 清空所有表数据（数据库由 Entrypoint 初始化）
     2. setUp: 开始事务
     3. tearDown: 清空所有表数据（保持数据库干净）
+
+    重要说明 - 数据插入方法选择：
+    
+    1. 使用 insert_fixture() 的场景：
+       - 测试只使用原始 SQL 查询（execute_query/execute_update）
+       - 不需要调用 Model 层的方法（如 get_by_id()）
+       - 示例：
+         world_id = self.insert_fixture('world', {'name': '测试世界', 'user_id': 1})
+         result = self.execute_query("SELECT * FROM world WHERE id = %s", (world_id,))
+    
+    2. 使用 Model 层 create() 方法的场景：
+       - 测试需要调用 Model 层的方法（如 get_by_id(), update(), delete()）
+       - 需要测试 Model 层的业务逻辑
+       - 示例：
+         from model.world import WorldModel
+         world_id = WorldModel.create(name='测试世界', user_id=1)
+         world = WorldModel.get_by_id(world_id)  # 能正确获取
+    
+    原因：
+    - insert_fixture() 使用测试专用连接（self._connection），设置了 autocommit=False
+    - Model 层使用 model/database.py 的连接池（另一个连接）
+    - 两个连接在事务隔离下互相看不到对方未提交的数据
+    - 如果用 insert_fixture() 插入数据，Model 层的 get_by_id() 会返回 None
+    - 如果用 insert_fixture() 插入父表，Model 层插入子表时会因外键约束失败
+    
+    混合使用示例（推荐）：
+        # 使用 Model 层创建依赖数据
+        from model.world import WorldModel
+        world_id = WorldModel.create(name='测试世界', user_id=1)
+        
+        # 使用 Model 层创建测试数据
+        from model.character import CharacterModel
+        character_id = CharacterModel.create(
+            world_id=world_id,
+            name='测试角色',
+            user_id=1
+        )
+        
+        # 使用 Model 层验证
+        character = CharacterModel.get_by_id(character_id)
+        self.assertIsNotNone(character)
     """
 
     _db_initialized = False
