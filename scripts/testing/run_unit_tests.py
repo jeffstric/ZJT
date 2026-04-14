@@ -140,6 +140,7 @@ class TestRunner:
 
         crud_test_files = [
             'tests.test_ai_tools_crud',
+            'tests.test_ai_tools_cdn_integration',
             'tests.test_ai_audio_crud',
             'tests.test_chat_sessions_crud',
             'tests.test_character_reference_images',
@@ -196,7 +197,60 @@ class TestRunner:
 
         print()
         return all_passed
-    
+
+    def run_cdn_tests(self):
+        """执行 CDN 相关测试"""
+        print("=" * 60)
+        print("步骤 3: CDN 专项测试")
+        print("=" * 60)
+
+        cdn_test_files = [
+            'tests.test_ai_tools_cdn_integration',
+            'tests.test_cdn_storage',
+        ]
+
+        all_passed = True
+        for test_module in cdn_test_files:
+            try:
+                print(f"\n执行: {test_module}")
+                suite = unittest.TestLoader().loadTestsFromName(test_module)
+                runner = unittest.TextTestRunner(verbosity=1)
+                result = runner.run(suite)
+
+                self.test_results['crud']['passed'] += result.testsRun - len(result.failures) - len(result.errors)
+                self.test_results['crud']['failed'] += len(result.failures)
+                self.test_results['crud']['errors'] += len(result.errors)
+
+                # 收集失败信息
+                for test, traceback_str in result.failures:
+                    self.failed_tests.append({
+                        'category': 'crud',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'failure',
+                        'traceback': traceback_str
+                    })
+                for test, traceback_str in result.errors:
+                    self.failed_tests.append({
+                        'category': 'crud',
+                        'module': test_module,
+                        'test': str(test),
+                        'type': 'error',
+                        'traceback': traceback_str
+                    })
+
+                if not result.wasSuccessful():
+                    all_passed = False
+                    if self.args.failfast:
+                        break
+
+            except Exception as e:
+                print(f"[ERROR] 执行 {test_module} 失败: {e}")
+                all_passed = False
+
+        print()
+        return all_passed
+
     def run_utils_tests(self):
         """执行工具函数测试"""
         print("=" * 60)
@@ -461,26 +515,34 @@ class TestRunner:
         if not self.check_environment():
             return 1
 
-        # 步骤 2: 数据库连接测试
+        # 步骤 2: CDN 专项测试（跳过数据库连接测试）
+        if self.args.only_cdn:
+            self.run_cdn_tests()
+            return_code = self.print_summary()
+            self.print_failed_tests()
+            print("\n测试执行完成！")
+            return return_code
+
+        # 步骤 3: 数据库连接测试
         if not self.args.crud_only and not self.args.driver_only:
             if not self.run_db_connection_test():
                 if self.args.failfast:
                     self.print_failed_tests()
                     return 1
 
-        # 步骤 3: CRUD 测试
+        # 步骤 4: CRUD 测试
         if not self.args.driver_only and not self.args.utils_only:
             self.run_crud_tests()
 
-        # 步骤 4: 工具函数测试
+        # 步骤 5: 工具函数测试
         if not self.args.crud_only and not self.args.driver_only:
             self.run_utils_tests()
 
-        # 步骤 5: 驱动测试
+        # 步骤 6: 驱动测试
         if not self.args.crud_only and not self.args.utils_only and not self.args.config_only:
             self.run_driver_tests()
 
-        # 步骤 6: 配置测试
+        # 步骤 7: 配置测试
         if not self.args.crud_only and not self.args.driver_only:
             self.run_config_tests()
 
@@ -522,6 +584,7 @@ def main():
     parser.add_argument('--driver-only', action='store_true', help='只执行驱动测试')
     parser.add_argument('--utils-only', action='store_true', help='只执行工具函数测试')
     parser.add_argument('--config-only', action='store_true', help='只执行配置测试')
+    parser.add_argument('--only-cdn', action='store_true', help='只执行 CDN 相关测试')
     parser.add_argument('--verbose', '-v', action='store_true', help='显示详细输出')
     parser.add_argument('--failfast', '-x', action='store_true', help='遇到失败立即停止')
     parser.add_argument('--coverage', action='store_true', help='生成覆盖率报告')
