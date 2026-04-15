@@ -508,6 +508,19 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     # Return URL that can be accessed via static file serving
     return f"{SERVER_HOST}/upload/temp/{date_str}/{filename}"
 
+def _get_request_host(request: Request) -> str:
+    """
+    获取请求的基础主机地址，正确处理反向代理场景。
+    当应用部署在 Nginx 等反向代理后面时，request.base_url 会是 http://，
+    但实际客户端访问的是 https://，通过 X-Forwarded-Proto 头来修正协议。
+    """
+    base = str(request.base_url).rstrip("/")
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").strip()
+    if forwarded_proto == "https" and base.startswith("http://"):
+        base = "https://" + base[7:]
+    return base
+
+
 def _save_user_asset(
     upload_file: UploadFile,
     user_id: int,
@@ -4645,7 +4658,7 @@ async def upload_workflow_asset(
             )
 
         # 保存文件并获取URL（用户隔离目录）
-        request_host = str(request.base_url).rstrip("/")
+        request_host = _get_request_host(request)
         file_url = await asyncio.to_thread(_save_user_asset, file, user_id, "workflow", request_host)
 
         return JSONResponse({
@@ -4694,7 +4707,7 @@ async def extract_video_frame(
                 content={"code": -1, "message": "必须提供视频文件或视频URL"}
             )
 
-        request_host = str(request.base_url).rstrip("/")
+        request_host = _get_request_host(request)
         temp_dir = os.path.join(UPLOAD_DIR, "temp", datetime.now().strftime("%Y%m%d"))
         os.makedirs(temp_dir, exist_ok=True)
 
