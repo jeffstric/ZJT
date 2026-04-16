@@ -329,9 +329,15 @@ class UnifiedTaskConfig:
                 # 获取算力（从数据库读取，使用 driver_key 查询）
                 try:
                     from model.implementation_power import ImplementationPowerModel
-                    impl_power = ImplementationPowerModel.get_power(impl_name, self.driver_name)
-                    if impl_power is not None:
-                        computing_power = impl_power
+                    power_configs = ImplementationPowerModel.get_all_powers_for_implementation(impl_name, self.driver_name)
+                    if power_configs:
+                        duration_powers = {k: v for k, v in power_configs.items() if k is not None}
+                        if duration_powers:
+                            computing_power = duration_powers
+                        elif None in power_configs:
+                            computing_power = power_configs[None]
+                        else:
+                            computing_power = impl_config.default_computing_power
                     else:
                         computing_power = impl_config.default_computing_power
                 except Exception:
