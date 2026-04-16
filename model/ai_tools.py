@@ -735,3 +735,35 @@ class AIToolsModel:
         except Exception as e:
             logger.error(f"Failed to get implementation stats: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `ai_tools` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `prompt` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '提示词',
+  `create_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  `image_path` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '图片路径',
+  `duration` tinyint DEFAULT NULL COMMENT '时长',
+  `ratio` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '视频模式（9:16, 16:9, 1:1 ,3:4, 4:3）',
+  `project_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '任务id',
+  `transaction_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '交易id',
+  `result_url` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '结果地址',
+  `user_id` int DEFAULT NULL COMMENT '用户id',
+  `type` tinyint DEFAULT NULL COMMENT '类型（1-图片编辑，2-ai视频生成，3-图片生成视频，4-图片高清）',
+  `status` tinyint DEFAULT NULL COMMENT '状态: 0-未处理, 1-正在处理, -1-处理失败, 2-处理完成',
+  `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '错误信息',
+  `image_size` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '图片尺寸（1k,2k.4k）',
+  `completed_time` datetime DEFAULT NULL COMMENT '完成时间',
+  `extra_config` text COMMENT '额外配置（JSON格式）',
+  `reference_images` text COMMENT '参考图URL列表，JSON数组格式，如["url1","url2"]',
+  `implementation` int unsigned NOT NULL DEFAULT '0' COMMENT '服务商实现ID，参考 DriverImplementationId',
+  `media_mapping_id` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_user_id_type_create_time` (`user_id`,`type`,`create_time`),
+  KEY `idx_user_id_create_time` (`user_id`,`create_time`),
+  KEY `idx_impl_type_status_create` (`implementation`,`type`,`status`,`create_time`),
+  KEY `idx_media_mapping_id` (`media_mapping_id`),
+  CONSTRAINT `fk_ai_tools_media_mapping_id` FOREIGN KEY (`media_mapping_id`) REFERENCES `media_file_mapping` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+"""

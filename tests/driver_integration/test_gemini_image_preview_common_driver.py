@@ -7,9 +7,11 @@ import sys
 from unittest.mock import patch, MagicMock
 
 sys.modules['utils.sentry_util'] = MagicMock()
+sys.modules['aiofiles'] = MagicMock()
+sys.modules['aiohttp'] = MagicMock()
 
-from tests.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
-from task.visual_drivers.gemini_image_preview_common_v1_driver import GeminiImagePreviewCommonV1Driver
+from tests.base.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
+from task.visual_drivers.gemini_image_preview_common_v1_driver import GeminiImagePreviewSite1V1Driver
 from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
 from config.unified_config import TaskTypeId
 
@@ -21,12 +23,13 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
         """测试前准备"""
         super().setUp()
         with patch('task.visual_drivers.gemini_image_preview_common_v1_driver.get_dynamic_config_value', side_effect=mock_get_dynamic_config_value):
-            self.driver = GeminiImagePreviewCommonV1Driver()
+            with patch.object(GeminiImagePreviewSite1V1Driver, '_validate_required'):
+                self.driver = GeminiImagePreviewSite1V1Driver()
 
     def test_driver_initialization(self):
         """测试驱动初始化"""
         self.assertIsNotNone(self.driver)
-        self.assertEqual(self.driver.driver_name, 'gemini_image_preview_common_v1')
+        self.assertEqual(self.driver.driver_name, 'gemini_common_site_1')
         self.assertEqual(self.driver.DEFAULT_MODEL, 'gemini-2.5-flash-image')
 
     def test_model_mapping(self):
@@ -58,9 +61,12 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
         tool = self.get_ai_tool_from_db(task_id)
         req = self.driver.build_create_request(tool)
 
-        # 验证 URL 包含正确的路径和 key 参数
+        # 验证 URL 包含正确的路径和 key 参数（使用 Bearer Token 认证）
         self.assertIn('/v1beta/models/gemini-3-pro-image-preview:generateContent', req['url'])
-        self.assertIn('key=', req['url'])
+
+        # 验证使用 Bearer Token 认证（不在 URL 中包含 key）
+        self.assertIn('Authorization', req['headers'])
+        self.assertIn('Bearer', req['headers']['Authorization'])
 
         # 验证 method
         self.assertEqual(req['method'], 'POST')
@@ -197,7 +203,7 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
                     "parts": [{
                         "inlineData": {
                             "mimeType": "image/png",
-                            "data": "base64_imagedata"
+                            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
                         }
                     }]
                 }
@@ -207,16 +213,19 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
         with patch.object(self.driver, '_request') as mock_req:
             mock_req.return_value = mock_response
 
-            result = self.driver.submit_task(tool)
+            # Mock 缓存保存（避免 base64 解码错误）
+            mock_cache_manager = MagicMock()
+            mock_cache_manager.save_data_url_to_cache.return_value = 'https://cdn.example.com/cached.png'
+            with patch('task.visual_drivers.gemini_image_preview_common_v1_driver.get_cache_manager', return_value=mock_cache_manager):
+                result = self.driver.submit_task(tool)
 
-            # 验证 _request 被调用
-            mock_req.assert_called_once()
+                # 验证 _request 被调用
+                mock_req.assert_called_once()
 
-            # 验证返回结果
-            self.assertTrue(result['success'])
-            self.assertTrue(result['sync_result'])
-            self.assertIn('result_url', result)
-            self.assertIn('data:image/png;base64,', result['result_url'])
+                # 验证返回结果
+                self.assertTrue(result['success'])
+                self.assertTrue(result.get('sync_mode'))
+                self.assertIn('result_url', result)
 
     def test_submit_task_with_old_format_response(self):
         """测试提交任务 - 兼容旧格式响应（下划线格式）"""
@@ -237,7 +246,7 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
                     "parts": [{
                         "inline_data": {
                             "mime_type": "image/png",
-                            "data": "base64_imagedata"
+                            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
                         }
                     }]
                 }
@@ -247,13 +256,16 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
         with patch.object(self.driver, '_request') as mock_req:
             mock_req.return_value = mock_response
 
-            result = self.driver.submit_task(tool)
+            # Mock 缓存保存（避免 base64 解码错误）
+            mock_cache_manager = MagicMock()
+            mock_cache_manager.save_data_url_to_cache.return_value = 'https://cdn.example.com/cached.png'
+            with patch('task.visual_drivers.gemini_image_preview_common_v1_driver.get_cache_manager', return_value=mock_cache_manager):
+                result = self.driver.submit_task(tool)
 
-            # 验证返回结果（应该兼容旧格式）
-            self.assertTrue(result['success'])
-            self.assertTrue(result['sync_result'])
-            self.assertIn('result_url', result)
-            self.assertIn('data:image/png;base64,', result['result_url'])
+                # 验证返回结果（应该兼容旧格式）
+                self.assertTrue(result['success'])
+                self.assertTrue(result.get('sync_mode'))
+                self.assertIn('result_url', result)
 
     def test_submit_task_with_image_input(self):
         """测试提交任务 - 带图片输入"""
@@ -275,7 +287,7 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
                     "parts": [{
                         "inlineData": {
                             "mimeType": "image/png",
-                            "data": "result_base64_data"
+                            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
                         }
                     }]
                 }
@@ -287,14 +299,18 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
             mock_download.return_value = (mock_base64, 'image/jpeg')
             mock_req.return_value = mock_response
 
-            result = self.driver.submit_task(tool)
+            # Mock 缓存保存
+            mock_cache_manager = MagicMock()
+            mock_cache_manager.save_data_url_to_cache.return_value = 'https://cdn.example.com/cached.png'
+            with patch('task.visual_drivers.gemini_image_preview_common_v1_driver.get_cache_manager', return_value=mock_cache_manager):
+                result = self.driver.submit_task(tool)
 
-            # 验证图片下载被调用
-            mock_download.assert_called_once()
+                # 验证图片下载被调用
+                mock_download.assert_called_once()
 
-            # 验证返回结果
-            self.assertTrue(result['success'])
-            self.assertTrue(result['sync_result'])
+                # 验证返回结果
+                self.assertTrue(result['success'])
+                self.assertTrue(result.get('sync_mode'))
 
     def test_submit_task_api_error(self):
         """测试提交任务 - API 错误"""

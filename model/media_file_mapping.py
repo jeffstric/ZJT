@@ -425,3 +425,28 @@ class MediaFileMappingModel:
         except Exception as e:
             logger.error(f"Failed to clear ai_tools reference for mapping_id {mapping_id}: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `media_file_mapping` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `user_id` int DEFAULT NULL COMMENT '用户ID',
+  `local_path` text NOT NULL COMMENT '本地文件相对路径',
+  `cloud_path` varchar(500) DEFAULT NULL COMMENT '云端存储路径',
+  `policy_code` varchar(50) NOT NULL COMMENT '策略代码',
+  `entity_type` int NOT NULL COMMENT '实体类型（枚举值）',
+  `source_id` int DEFAULT NULL COMMENT '实体ID',
+  `media_type` varchar(50) NOT NULL COMMENT '媒体类型（MIME type）',
+  `original_url` varchar(1000) DEFAULT NULL COMMENT '原始URL',
+  `file_size` bigint DEFAULT NULL COMMENT '文件大小',
+  `status` varchar(20) DEFAULT NULL COMMENT '状态',
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `entity_type` (`entity_type`,`source_id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_cloud_path` (`cloud_path`),
+  KEY `idx_entity` (`entity_type`,`source_id`),
+  KEY `idx_status` (`status`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+"""

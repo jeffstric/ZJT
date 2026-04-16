@@ -285,3 +285,23 @@ class SystemConfigModel:
             'page': page,
             'page_size': page_size
         }
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `system_config` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `env` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'dev' COMMENT '环境标识：dev/prod/test',
+  `config_key` varchar(256) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '配置键，点号分隔，如 task_queue.max_retry_count',
+  `config_value` text COLLATE utf8mb4_unicode_ci COMMENT '配置值',
+  `value_type` enum('string','int','float','bool','json') COLLATE utf8mb4_unicode_ci DEFAULT 'string' COMMENT '值类型',
+  `description` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '配置描述',
+  `editable` tinyint(1) DEFAULT '1' COMMENT '是否允许通过页面修改',
+  `is_sensitive` tinyint(1) DEFAULT '0' COMMENT '是否为敏感配置（token/密钥等），敏感配置历史记录不保存明文',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `updated_by` int DEFAULT NULL COMMENT '修改人 user_id',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_env_key` (`env`,`config_key`),
+  KEY `idx_env` (`env`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+"""

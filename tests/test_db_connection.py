@@ -3,7 +3,7 @@
 测试数据库连接、建表等基础功能
 """
 import unittest
-from tests.base_db_test import DatabaseTestCase
+from tests.base.base_db_test import DatabaseTestCase
 
 
 class TestDatabaseConnection(DatabaseTestCase):

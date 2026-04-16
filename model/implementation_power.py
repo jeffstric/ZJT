@@ -658,3 +658,25 @@ class ImplementationPowerModel:
             logger.info(f"Created implementation config: {implementation_name}/{driver_key}")
         except Exception as e:
             logger.warning(f"Failed to ensure config for {implementation_name}/{driver_key}: {e}")
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `implementation_power_config` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT '自增ID',
+  `implementation_name` varchar(100) NOT NULL COMMENT '实现方名称',
+  `driver_key` varchar(100) NOT NULL COMMENT 'DriverKey，用于分组排序',
+  `site_number` int DEFAULT NULL COMMENT '聚合站点编号(1-5)，非聚合站点为NULL',
+  `power_config` json DEFAULT NULL COMMENT '算力配置JSON，格式: {"5": 38, "10": 70} 或 {"fixed": 100}',
+  `sort_order` float NOT NULL DEFAULT '999999' COMMENT '排序顺序',
+  `enabled` tinyint(1) DEFAULT '1' COMMENT '是否启用(1=启用,0=禁用)',
+  `display_name` varchar(200) DEFAULT NULL COMMENT '显示名称',
+  `updated_by` int DEFAULT NULL COMMENT '更新人ID',
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_impl_driver` (`implementation_name`,`driver_key`),
+  KEY `idx_driver_key_sort_order` (`driver_key`,`sort_order`),
+  KEY `idx_implementation_name` (`implementation_name`),
+  KEY `idx_impl_name` (`implementation_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='实现方配置表';
+"""

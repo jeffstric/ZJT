@@ -11,8 +11,11 @@ import asyncio
 from unittest.mock import patch, MagicMock
 
 sys.modules['utils.sentry_util'] = MagicMock()
+sys.modules['aiofiles'] = MagicMock()
+sys.modules['aiohttp'] = MagicMock()
 
-from tests.base_video_driver_test import BaseVideoDriverTest
+import task.visual_drivers.seedream_volcengine_v1_driver  # noqa: F401 — 使 mock 路径可解析
+from tests.base.base_video_driver_test import BaseVideoDriverTest
 from task.visual_task import _submit_new_task, _refund_computing_power
 from model.ai_tools import AIToolsModel
 from model.tasks import TasksModel
@@ -46,15 +49,25 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
             prompt='测试提示词',
             status=AI_TOOL_STATUS_PENDING
         )
+        # 创建 Task 记录（_submit_new_task 需要 task 记录存在）
+        from config.constant import TASK_TYPE_GENERATE_VIDEO
+        self.create_test_task(TASK_TYPE_GENERATE_VIDEO, task_id)
         return task_id
 
     def test_refund_on_submit_user_error(self):
         """测试提交失败（用户错误）时算力返还"""
         task_id = self._create_seedream_task()
 
-        # Mock 驱动的 submit_task 返回失败（用户错误，不重试）
-        with patch('task.visual_drivers.seedream_volcengine_v1_driver.Seedream5VolcengineV1Driver.submit_task') as mock_submit:
-            mock_submit.return_value = {
+        # 创建 Mock 驱动实例
+        mock_driver = MagicMock()
+        mock_driver.driver_name = 'seedream5_volcengine_v1'
+
+        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
+        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
+            mock_create.return_value = mock_driver
+
+            # Mock 驱动的 submit_task 返回失败（用户错误，不重试）
+            mock_driver.submit_task.return_value = {
                 "success": False,
                 "error": "API 错误 [InvalidAPIKey]: Invalid API key provided",
                 "error_type": "USER",
@@ -98,9 +111,16 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         """测试提交失败（系统错误）时算力返还"""
         task_id = self._create_seedream_task()
 
-        # Mock 驱动的 submit_task 返回系统错误
-        with patch('task.visual_drivers.seedream_volcengine_v1_driver.Seedream5VolcengineV1Driver.submit_task') as mock_submit:
-            mock_submit.return_value = {
+        # 创建 Mock 驱动实例
+        mock_driver = MagicMock()
+        mock_driver.driver_name = 'seedream5_volcengine_v1'
+
+        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
+        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
+            mock_create.return_value = mock_driver
+
+            # Mock 驱动的 submit_task 返回系统错误
+            mock_driver.submit_task.return_value = {
                 "success": False,
                 "error": "服务异常，请联系技术支持",
                 "error_type": "SYSTEM",
@@ -127,9 +147,16 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         """测试提交异常时算力返还"""
         task_id = self._create_seedream_task()
 
-        # Mock 驱动的 submit_task 抛出异常
-        with patch('task.visual_drivers.seedream_volcengine_v1_driver.Seedream5VolcengineV1Driver.submit_task') as mock_submit:
-            mock_submit.side_effect = Exception("Network connection timeout")
+        # 创建 Mock 驱动实例
+        mock_driver = MagicMock()
+        mock_driver.driver_name = 'seedream5_volcengine_v1'
+
+        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
+        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
+            mock_create.return_value = mock_driver
+
+            # Mock 驱动的 submit_task 抛出异常
+            mock_driver.submit_task.side_effect = Exception("Network connection timeout")
 
             with patch('task.visual_task.make_perseids_request') as mock_perseids:
                 mock_perseids.return_value = (True, "success", {"token": "mock_token_123"})
@@ -151,9 +178,16 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         """测试需要重试的网络错误不触发算力返还"""
         task_id = self._create_seedream_task()
 
-        # Mock 驱动的 submit_task 返回需要重试的错误
-        with patch('task.visual_drivers.seedream_volcengine_v1_driver.Seedream5VolcengineV1Driver.submit_task') as mock_submit:
-            mock_submit.return_value = {
+        # 创建 Mock 驱动实例
+        mock_driver = MagicMock()
+        mock_driver.driver_name = 'seedream5_volcengine_v1'
+
+        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
+        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
+            mock_create.return_value = mock_driver
+
+            # Mock 驱动的 submit_task 返回需要重试的错误
+            mock_driver.submit_task.return_value = {
                 "success": False,
                 "error": "网络连接异常，请稍后重试",
                 "error_type": "USER",
@@ -204,9 +238,16 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         """测试提交成功时不触发返还（成功情况下不返还算力）"""
         task_id = self._create_seedream_task()
 
-        # Mock 驱动的 submit_task 返回成功
-        with patch('task.visual_drivers.seedream_volcengine_v1_driver.Seedream5VolcengineV1Driver.submit_task') as mock_submit:
-            mock_submit.return_value = {
+        # 创建 Mock 驱动实例
+        mock_driver = MagicMock()
+        mock_driver.driver_name = 'seedream5_volcengine_v1'
+
+        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
+        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
+            mock_create.return_value = mock_driver
+
+            # Mock 驱动的 submit_task 返回成功
+            mock_driver.submit_task.return_value = {
                 "success": True,
                 "sync_mode": True,
                 "result_url": "https://example.com/result.png"
@@ -217,7 +258,7 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
                 async def mock_download(*args):
                     return "https://cdn.example.com/cached.png"
 
-                with patch('task.visual_task.download_and_cache', side_effect=mock_download):
+                with patch('utils.media_cache.download_and_cache', side_effect=mock_download):
                     # 执行任务提交
                     ai_tool = AIToolsModel.get_by_id(task_id)
                     result = asyncio.run(_submit_new_task(ai_tool))

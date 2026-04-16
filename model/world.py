@@ -245,15 +245,15 @@ class WorldModel:
     def delete(record_id: int) -> int:
         """
         Delete world record by ID
-        
+
         Args:
             record_id: Record ID
-        
+
         Returns:
             Number of affected rows
         """
         sql = "DELETE FROM world WHERE id = %s"
-        
+
         try:
             affected_rows = execute_update(sql, (record_id,))
             logger.info(f"Deleted world record {record_id}, affected rows: {affected_rows}")
@@ -261,3 +261,25 @@ class WorldModel:
         except Exception as e:
             logger.error(f"Failed to delete world record {record_id}: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `world` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '世界名称',
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '世界描述',
+  `story_outline` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '故事大纲',
+  `visual_style` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '画面风格',
+  `era_environment` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '时代环境',
+  `color_language` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '色彩语言',
+  `composition_preference` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '构图倾向',
+  `user_id` int unsigned NOT NULL COMMENT '创建者用户ID',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `workspace_id` int DEFAULT NULL COMMENT '预留：所属工作空间ID',
+  PRIMARY KEY (`id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_create_time` (`create_time`),
+  KEY `idx_workspace` (`workspace_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='世界表';
+"""

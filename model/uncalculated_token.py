@@ -104,3 +104,18 @@ class UncalculatedTokenModel:
         except Exception as e:
             logger.error(f"Failed to delete uncalculated token for user {user_id}: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `uncalculated_token` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL COMMENT '用户id',
+  `uncalculated_input_token` int DEFAULT NULL COMMENT '未计算输入token',
+  `uncalculated_output_token` int DEFAULT NULL COMMENT '未计算输出token',
+  `uncalculated_cache_read` int DEFAULT NULL COMMENT '未计算缓存读取',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `user_id` (`user_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC COMMENT='未计算token表';
+"""

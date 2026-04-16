@@ -196,3 +196,22 @@ class SystemConfigHistoryModel:
         except Exception as e:
             logger.error(f"Failed to delete history for config_id {config_id}: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `system_config_history` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `config_id` int NOT NULL COMMENT '关联 system_config.id',
+  `env` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '环境标识',
+  `config_key` varchar(256) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '配置键',
+  `old_value` text COLLATE utf8mb4_unicode_ci COMMENT '旧值（敏感配置存储脱敏值）',
+  `new_value` text COLLATE utf8mb4_unicode_ci COMMENT '新值（敏感配置存储脱敏值）',
+  `value_type` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '值类型',
+  `is_sensitive` tinyint(1) DEFAULT '0' COMMENT '标记该条历史是否为敏感配置',
+  `updated_by` int DEFAULT NULL COMMENT '修改人 user_id',
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_config_id` (`config_id`),
+  KEY `idx_env_key` (`env`,`config_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统配置修改历史表';
+"""

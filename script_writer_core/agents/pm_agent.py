@@ -179,19 +179,17 @@ class PMAgent(BaseAgent):
             should_stop, reason = self.should_stop()
             if should_stop:
                 logger.info(f"{self.agent_id}: Stopping - {reason}")
-                task.message_queue.put({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": f"任务执行停止: {reason}"
+                self.task_manager.push_message(task.task_id, 'message', {
+                    'role': 'assistant',
+                    'content': f"任务执行停止: {reason}"
                 })
                 return f"任务执行停止: {reason}"
             
             logger.info(f"{self.agent_id}: PM Loop iteration {iteration}/{max_iterations}")
             
-            task.message_queue.put({
-                "type": "progress",
-                "progress": iteration / max_iterations,
-                "step": f"执行中 ({iteration}/{max_iterations})"
+            self.task_manager.push_message(task.task_id, 'progress', {
+                'progress': iteration / max_iterations,
+                'step': f"执行中 ({iteration}/{max_iterations})"
             })
             
             try:
@@ -222,10 +220,9 @@ class PMAgent(BaseAgent):
                     self.add_to_history("assistant", content)
                     logger.info(f"{self.agent_id}: conversation_history now has {len(self.conversation_history)} messages")
                     
-                    task.message_queue.put({
-                        "type": "message",
-                        "role": "assistant",
-                        "content": content
+                    self.task_manager.push_message(task.task_id, 'message', {
+                        'role': 'assistant',
+                        'content': content
                     })
                     
                     logger.info(f"{self.agent_id}: PM completed with response")
@@ -236,9 +233,8 @@ class PMAgent(BaseAgent):
                 self.total_failures += 1
                 self.consecutive_failures += 1
                 
-                task.message_queue.put({
-                    "type": "error",
-                    "error": str(e)
+                self.task_manager.push_message(task.task_id, 'error', {
+                    'error': str(e)
                 })
         
         logger.warning(f"{self.agent_id}: Max iterations reached")
@@ -335,10 +331,9 @@ class PMAgent(BaseAgent):
         
         logger.info(f"{self.agent_id}: Dispatching task to expert {skill_name}")
         
-        task.message_queue.put({
-            "type": "message",
-            "role": "assistant",
-            "content": f"正在调用专家 {skill_name} 执行任务..."
+        self.task_manager.push_message(task.task_id, 'message', {
+            'role': 'assistant',
+            'content': f"正在调用专家 {skill_name} 执行任务..."
         })
         
         expert_config = self.agents_config["expert_agents"][skill_name]
@@ -390,27 +385,24 @@ class PMAgent(BaseAgent):
             # 发送 expert 的完整响应内容到前端
             expert_response = result.get('result', '')
             if expert_response:
-                task.message_queue.put({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": expert_response
+                self.task_manager.push_message(task.task_id, 'message', {
+                    'role': 'assistant',
+                    'content': expert_response
                 })
             else:
                 # 如果没有响应内容，发送摘要
                 message_content = f"专家 {skill_name} 执行完成"
-                task.message_queue.put({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": message_content
+                self.task_manager.push_message(task.task_id, 'message', {
+                    'role': 'assistant',
+                    'content': message_content
                 })
         else:
             self.total_failures += 1
             self.consecutive_failures += 1
             
-            task.message_queue.put({
-                "type": "message",
-                "role": "assistant",
-                "content": f"专家 {skill_name} 执行失败: {result.get('error', '未知错误')}"
+            self.task_manager.push_message(task.task_id, 'message', {
+                'role': 'assistant',
+                'content': f"专家 {skill_name} 执行失败: {result.get('error', '未知错误')}"
             })
             
             logger.warning(f"{self.agent_id}: Expert {skill_name} failed")
