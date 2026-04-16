@@ -46,6 +46,7 @@ unit_tests:
   services:
     - name: docker:dind
       alias: docker
+      command: ["--registry-mirror=https://docker.1ms.run"]
 
   # 缓存配置（加速后续构建）
   cache:
