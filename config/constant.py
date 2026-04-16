@@ -165,8 +165,15 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     ],
     
     # VEO3 相关驱动
-    DriverKey.VEO3_IMAGE_TO_VIDEO: DriverImplementation.VEO3_DUOMI_V1,       # 使用多米供应商的 VEO3 v1 版本
-    
+    DriverKey.VEO3_IMAGE_TO_VIDEO: [
+        DriverImplementation.VEO3_DUOMI_V1,       # 使用多米供应商的 VEO3 v1 版本
+        DriverImplementation.VEO3_COMMON_SITE1_V1,  # 通用聚合站点 1
+        DriverImplementation.VEO3_COMMON_SITE2_V1,  # 通用聚合站点 2
+        DriverImplementation.VEO3_COMMON_SITE3_V1,  # 通用聚合站点 3
+        DriverImplementation.VEO3_COMMON_SITE4_V1,  # 通用聚合站点 4
+        DriverImplementation.VEO3_COMMON_SITE5_V1,  # 通用聚合站点 5
+    ],
+
     # RunningHub 相关驱动
     DriverKey.LTX2_IMAGE_TO_VIDEO: DriverImplementation.LTX2_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2 v1 版本
     DriverKey.LTX2_3_IMAGE_TO_VIDEO: DriverImplementation.LTX2_3_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 v1 版本
@@ -178,6 +185,11 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     
     # Seedream 相关驱动
     DriverKey.SEEDREAM_TEXT_TO_IMAGE: DriverImplementation.SEEDREAM5_VOLCENGINE_V1,  # 使用火山引擎 Seedream 5.0 v1 版本
+
+    # Seedance 相关驱动
+    DriverKey.SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_1_5_PRO_VOLCENGINE_V1,  # 使用火山引擎 Seedance 1.5 Pro
+    DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,  # 使用火山引擎 Seedance 2.0 Fast
+    DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,  # 使用火山引擎 Seedance 2.0
 }
 
 # 视频模型时长选项配置
