@@ -5209,6 +5209,8 @@ async def parse_script(
         split_multi_dialogue = body.get('split_multi_dialogue', False)
         narration_as_dialogue = body.get('narration_as_dialogue', False)
         language = body.get('language', '')
+        model = body.get('model', 'gemini-3-flash-preview')
+        model_id = body.get('model_id', '')
 
         if not script_content:
             return JSONResponse(
@@ -5254,7 +5256,7 @@ async def parse_script(
             script_content=script_content,
             max_group_duration=max_group_duration,
             world_id=world_id,
-            model='gemini-3-flash-preview',
+            model=model,
             temperature=0.5,
             force_medium_shot=force_medium_shot,
             no_bg_music=no_bg_music,
@@ -5263,7 +5265,7 @@ async def parse_script(
             language=language,
             auth_token=auth_token,
             vendor_id=1,
-            model_id=1
+            model_id=int(model_id) if model_id else 1
         )
         
         if not parsed_data:
