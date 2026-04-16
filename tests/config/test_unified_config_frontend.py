@@ -80,7 +80,7 @@ class TestGetFrontendConfig(unittest.TestCase):
         from config.unified_config import UnifiedConfigRegistry
 
         # Mock ImplementationPowerModel methods
-        mock_impl_power_model.get_power.return_value = 4
+        mock_impl_power_model.get_all_powers_for_implementation.return_value = {None: 4}
         mock_impl_power_model.get_config.return_value = {}
 
         # 获取默认配置（无偏好）作为基准
@@ -119,17 +119,17 @@ class TestGetFrontendConfig(unittest.TestCase):
 
         self.assertIsNotNone(updated_task)
         # 如果用户偏好的实现方算力获取成功，应该返回 4
-        mock_impl_power_model.get_power.assert_called()
+        mock_impl_power_model.get_all_powers_for_implementation.assert_called()
         self.assertEqual(updated_task.get('computing_power'), 4)
         self.assertEqual(updated_task.get('user_preferred_implementation'), 'gemini_duomi_v1')
 
     @patch('model.implementation_power.ImplementationPowerModel')
     def test_get_frontend_config_with_user_prefs_get_power_returns_none(self, mock_impl_power_model):
-        """测试用户偏好设置但算力获取返回None时保持默认"""
+        """测试用户偏好设置但算力获取返回空时保持默认"""
         from config.unified_config import UnifiedConfigRegistry
 
         # Mock ImplementationPowerModel methods
-        mock_impl_power_model.get_power.return_value = None
+        mock_impl_power_model.get_all_powers_for_implementation.return_value = {}
         mock_impl_power_model.get_config.return_value = {}
 
         # 获取默认配置（无偏好）作为基准
@@ -167,7 +167,7 @@ class TestGetFrontendConfig(unittest.TestCase):
                 break
 
         self.assertIsNotNone(updated_task)
-        # 算力应该保持默认值（因为 get_power 返回 None）
+        # 算力应该保持默认值（因为 DB 返回空配置）
         self.assertEqual(updated_task.get('computing_power'), default_power)
 
 
@@ -246,7 +246,7 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
         """测试偏好会更新匹配的任务"""
         from config.unified_config import UnifiedConfigRegistry
 
-        mock_impl_power_model.get_power.return_value = 8
+        mock_impl_power_model.get_all_powers_for_implementation.return_value = {None: 8}
 
         tasks = [
             {'key': 'gemini-2.5-flash-image-preview', 'computing_power': 2, 'driver_name': 'GEMINI_IMAGE_EDIT'},
@@ -261,7 +261,43 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['computing_power'], 8)
         self.assertEqual(result[0]['user_preferred_implementation'], 'gemini_duomi_v1')
-        mock_impl_power_model.get_power.assert_called_once_with('gemini_duomi_v1', 'gemini_image_edit')
+        mock_impl_power_model.get_all_powers_for_implementation.assert_called_once_with(
+            'gemini_duomi_v1', 'gemini_image_edit'
+        )
+
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_apply_user_preferences_duration_based_power(self, mock_impl_power_model):
+        """测试按时长计费的偏好实现方返回字典时取第一个值作为显示算力"""
+        from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
+
+        # 注册对应配置，否则 _apply_user_preferences_to_tasks 会跳过
+        config = UnifiedTaskConfig(
+            id=998,
+            key='seedance-task',
+            name='Seedance Task',
+            category='image_to_video',
+            provider='test',
+            driver_name='SEEDANCE_TEST'
+        )
+        UnifiedConfigRegistry.register(config)
+
+        mock_impl_power_model.get_all_powers_for_implementation.return_value = {5: 46, 10: 94}
+
+        tasks = [
+            {'key': 'seedance-task', 'computing_power': 2, 'driver_name': 'SEEDANCE_TEST'},
+        ]
+
+        user_prefs = {
+            'seedance-task': 'seedance_impl'
+        }
+
+        result = UnifiedConfigRegistry._apply_user_preferences_to_tasks(tasks, user_prefs)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['computing_power'], 46)
+        mock_impl_power_model.get_all_powers_for_implementation.assert_called_once_with(
+            'seedance_impl', 'SEEDANCE_TEST'
+        )
 
     @patch('model.implementation_power.ImplementationPowerModel')
     def test_apply_user_preferences_skips_non_matching_pref(self, mock_impl_power_model):
@@ -280,14 +316,14 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['computing_power'], 2)
-        mock_impl_power_model.get_power.assert_not_called()
+        mock_impl_power_model.get_all_powers_for_implementation.assert_not_called()
 
     @patch('model.implementation_power.ImplementationPowerModel')
     def test_apply_user_preferences_get_power_exception(self, mock_impl_power_model):
-        """测试 get_power 抛出异常时保持原算力"""
+        """测试 DB 查询抛出异常时保持原算力"""
         from config.unified_config import UnifiedConfigRegistry
 
-        mock_impl_power_model.get_power.side_effect = Exception("Database error")
+        mock_impl_power_model.get_all_powers_for_implementation.side_effect = Exception("Database error")
 
         tasks = [
             {'key': 'task1', 'computing_power': 5},

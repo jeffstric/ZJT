@@ -84,12 +84,13 @@ class ImplementationConfig:
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
 
-    def get_computing_power(self, duration: Optional[int] = None) -> int:
+    def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None) -> int:
         """
         获取算力（优先数据库配置，其次代码默认值）
 
         Args:
             duration: 时长（秒），用于按时长计费的实现方
+            driver_key: DriverKey，用于从数据库读取实现方算力配置
 
         Returns:
             算力值
@@ -97,9 +98,20 @@ class ImplementationConfig:
         # 尝试从数据库读取（支持管理员热更新）
         try:
             from model.implementation_power import ImplementationPowerModel
-            db_power = ImplementationPowerModel.get_power(self.name, duration)
-            if db_power is not None:
-                return db_power
+            if driver_key:
+                db_powers = ImplementationPowerModel.get_all_powers_for_implementation(self.name, driver_key)
+                if db_powers:
+                    if duration is not None and duration in db_powers:
+                        return db_powers[duration]
+                    if None in db_powers:
+                        return db_powers[None]
+                    if db_powers:
+                        return list(db_powers.values())[0]
+            else:
+                # 兼容旧调用：未传 driver_key 时按原来的行为
+                db_power = ImplementationPowerModel.get_power(self.name, duration)
+                if db_power is not None:
+                    return db_power
         except ImportError:
             pass
         except Exception:
@@ -244,7 +256,7 @@ class UnifiedTaskConfig:
         if not impl_config:
             return 0
 
-        return impl_config.get_computing_power(duration)
+        return impl_config.get_computing_power(duration, self.driver_name)
     
     def to_frontend_dict(self) -> Dict[str, Any]:
         """
@@ -329,9 +341,15 @@ class UnifiedTaskConfig:
                 # 获取算力（从数据库读取，使用 driver_key 查询）
                 try:
                     from model.implementation_power import ImplementationPowerModel
-                    impl_power = ImplementationPowerModel.get_power(impl_name, self.driver_name)
-                    if impl_power is not None:
-                        computing_power = impl_power
+                    power_configs = ImplementationPowerModel.get_all_powers_for_implementation(impl_name, self.driver_name)
+                    if power_configs:
+                        duration_powers = {k: v for k, v in power_configs.items() if k is not None}
+                        if duration_powers:
+                            computing_power = duration_powers
+                        elif None in power_configs:
+                            computing_power = power_configs[None]
+                        else:
+                            computing_power = impl_config.default_computing_power
                     else:
                         computing_power = impl_config.default_computing_power
                 except Exception:
@@ -603,8 +621,12 @@ class UnifiedConfigRegistry:
                 driver_name = config.driver_name if hasattr(config, 'driver_name') else None
 
                 try:
-                    impl_power = ImplementationPowerModel.get_power(user_pref_impl, driver_name)
-                    if impl_power is not None:
+                    db_powers = ImplementationPowerModel.get_all_powers_for_implementation(user_pref_impl, driver_name)
+                    if db_powers:
+                        if None in db_powers:
+                            impl_power = db_powers[None]
+                        else:
+                            impl_power = list(db_powers.values())[0]
                         task['computing_power'] = impl_power
                         task['user_preferred_implementation'] = user_pref_impl
                 except Exception as e:
@@ -650,6 +672,11 @@ class DriverImplementation:
 
     # VEO3
     VEO3_DUOMI_V1 = 'veo3_duomi_v1'
+    VEO3_COMMON_SITE1_V1 = 'veo3_common_site1_v1'
+    VEO3_COMMON_SITE2_V1 = 'veo3_common_site2_v1'
+    VEO3_COMMON_SITE3_V1 = 'veo3_common_site3_v1'
+    VEO3_COMMON_SITE4_V1 = 'veo3_common_site4_v1'
+    VEO3_COMMON_SITE5_V1 = 'veo3_common_site5_v1'
 
     # LTX2
     LTX2_RUNNINGHUB_V1 = 'ltx2_runninghub_v1'
@@ -702,6 +729,11 @@ class DriverImplementationId:
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 19
     SEEDANCE_2_0_VOLCENGINE_V1 = 20
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 21
+    VEO3_COMMON_SITE1_V1 = 22
+    VEO3_COMMON_SITE2_V1 = 23
+    VEO3_COMMON_SITE3_V1 = 24
+    VEO3_COMMON_SITE4_V1 = 25
+    VEO3_COMMON_SITE5_V1 = 26
 
 
 # implementation 字符串到 ID 的映射
@@ -727,6 +759,11 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_fast_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
     'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
+    'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
+    'veo3_common_site2_v1': DriverImplementationId.VEO3_COMMON_SITE2_V1,
+    'veo3_common_site3_v1': DriverImplementationId.VEO3_COMMON_SITE3_V1,
+    'veo3_common_site4_v1': DriverImplementationId.VEO3_COMMON_SITE4_V1,
+    'veo3_common_site5_v1': DriverImplementationId.VEO3_COMMON_SITE5_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1101,6 +1138,14 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.VEO3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.VEO3_DUOMI_V1,
+        implementations=[
+            DriverImplementation.VEO3_DUOMI_V1,
+            DriverImplementation.VEO3_COMMON_SITE1_V1,
+            DriverImplementation.VEO3_COMMON_SITE2_V1,
+            DriverImplementation.VEO3_COMMON_SITE3_V1,
+            DriverImplementation.VEO3_COMMON_SITE4_V1,
+            DriverImplementation.VEO3_COMMON_SITE5_V1,
+        ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[8],
         default_ratio='9:16',
@@ -1312,6 +1357,51 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='多米平台 VEO3 接口',
         sort_order=4000.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site1_v1',
+        display_name='聚合站点1',
+        driver_class='Veo3CommonSite1V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点1',
+        sort_order=4510.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site2_v1',
+        display_name='聚合站点2',
+        driver_class='Veo3CommonSite2V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点2',
+        sort_order=4520.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site3_v1',
+        display_name='聚合站点3',
+        driver_class='Veo3CommonSite3V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点3',
+        sort_order=4530.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site4_v1',
+        display_name='聚合站点4',
+        driver_class='Veo3CommonSite4V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点4',
+        sort_order=4540.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site5_v1',
+        display_name='聚合站点5',
+        driver_class='Veo3CommonSite5V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点5',
+        sort_order=4550.0
     ),
 
     # ==================== RunningHub 供应商 ====================
