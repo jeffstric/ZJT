@@ -650,7 +650,11 @@ class DriverImplementation:
 
     # VEO3
     VEO3_DUOMI_V1 = 'veo3_duomi_v1'
-    VEO3_YUNWU_V1 = 'veo3_yunwu_v1'
+    VEO3_COMMON_SITE1_V1 = 'veo3_common_site1_v1'
+    VEO3_COMMON_SITE2_V1 = 'veo3_common_site2_v1'
+    VEO3_COMMON_SITE3_V1 = 'veo3_common_site3_v1'
+    VEO3_COMMON_SITE4_V1 = 'veo3_common_site4_v1'
+    VEO3_COMMON_SITE5_V1 = 'veo3_common_site5_v1'
 
     # LTX2
     LTX2_RUNNINGHUB_V1 = 'ltx2_runninghub_v1'
@@ -703,7 +707,11 @@ class DriverImplementationId:
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 19
     SEEDANCE_2_0_VOLCENGINE_V1 = 20
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 21
-    VEO3_YUNWU_V1 = 22
+    VEO3_COMMON_SITE1_V1 = 22
+    VEO3_COMMON_SITE2_V1 = 23
+    VEO3_COMMON_SITE3_V1 = 24
+    VEO3_COMMON_SITE4_V1 = 25
+    VEO3_COMMON_SITE5_V1 = 26
 
 
 # implementation 字符串到 ID 的映射
@@ -729,7 +737,11 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_fast_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
     'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
-    'veo3_yunwu_v1': DriverImplementationId.VEO3_YUNWU_V1,
+    'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
+    'veo3_common_site2_v1': DriverImplementationId.VEO3_COMMON_SITE2_V1,
+    'veo3_common_site3_v1': DriverImplementationId.VEO3_COMMON_SITE3_V1,
+    'veo3_common_site4_v1': DriverImplementationId.VEO3_COMMON_SITE4_V1,
+    'veo3_common_site5_v1': DriverImplementationId.VEO3_COMMON_SITE5_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1104,7 +1116,14 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.VEO3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.VEO3_DUOMI_V1,
-        implementations=[DriverImplementation.VEO3_DUOMI_V1, DriverImplementation.VEO3_YUNWU_V1],
+        implementations=[
+            DriverImplementation.VEO3_DUOMI_V1,
+            DriverImplementation.VEO3_COMMON_SITE1_V1,
+            DriverImplementation.VEO3_COMMON_SITE2_V1,
+            DriverImplementation.VEO3_COMMON_SITE3_V1,
+            DriverImplementation.VEO3_COMMON_SITE4_V1,
+            DriverImplementation.VEO3_COMMON_SITE5_V1,
+        ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[8],
         default_ratio='9:16',
@@ -1318,13 +1337,49 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=4000.0
     ),
     ImplementationConfig(
-        name='veo3_yunwu_v1',
-        display_name='云雾',
-        driver_class='Veo3YunwuV1Driver',
+        name='veo3_common_site1_v1',
+        display_name='聚合站点1',
+        driver_class='Veo3CommonSite1V1Driver',
         default_computing_power=6,
         enabled=True,
-        description='云雾平台 VEO3 接口',
-        sort_order=4500.0
+        description='聚合站点1',
+        sort_order=4510.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site2_v1',
+        display_name='聚合站点2',
+        driver_class='Veo3CommonSite2V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点2',
+        sort_order=4520.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site3_v1',
+        display_name='聚合站点3',
+        driver_class='Veo3CommonSite3V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点3',
+        sort_order=4530.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site4_v1',
+        display_name='聚合站点4',
+        driver_class='Veo3CommonSite4V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点4',
+        sort_order=4540.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site5_v1',
+        display_name='聚合站点5',
+        driver_class='Veo3CommonSite5V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点5',
+        sort_order=4550.0
     ),
 
     # ==================== RunningHub 供应商 ====================

@@ -1,5 +1,6 @@
 """
-VEO3 云雾 (yunwu.ai) 供应商 v1 版本驱动实现
+VEO3 通用聚合站点 v1 版本驱动实现
+支持多个站点配置，使用基类+站点类的架构
 """
 from typing import Dict, Any, Optional
 import traceback
@@ -9,18 +10,35 @@ from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
 
 
-class Veo3YunwuV1Driver(BaseVideoDriver):
+class Veo3CommonV1Driver(BaseVideoDriver):
     """
-    VEO3 云雾 (yunwu.ai) 供应商 v1 版本驱动
+    VEO3 通用聚合站点 v1 版本驱动（基类）
     支持图生视频，使用 veo3-fast 模型
+
+    特点：
+    - 支持多个站点配置（通过 site_id 区分）
+    - 从 api_aggregator.{site_id} 加载配置
+    - 支持首尾帧和多参考图模式
+
+    注意：这是基类，不应该直接实例化，应该使用具体的站点类
     """
 
-    def __init__(self):
-        super().__init__(driver_name="veo3_yunwu_v1", driver_type=15)
+    def __init__(self, site_id: str):
+        """
+        初始化驱动（基类）
 
-        # 加载配置
-        self._api_key = get_dynamic_config_value("yunwu", "api_key", default="")
-        self._base_url = get_dynamic_config_value("yunwu", "base_url", default="https://yunwu.ai")
+        Args:
+            site_id: API 聚合站点ID（如 site_1, site_2, ... site_5）
+                     对应配置 api_aggregator.site_X
+        """
+        self._site_id = site_id
+        driver_name = f"veo3_common_{site_id}"
+        super().__init__(driver_name=driver_name, driver_type=15)
+
+        # 从 api_aggregator.{site_id} 加载配置
+        self._api_key = get_dynamic_config_value("api_aggregator", site_id, "api_key", default="")
+        self._base_url = get_dynamic_config_value("api_aggregator", site_id, "base_url", default="https://yunwu.ai")
+        self._site_name = get_dynamic_config_value("api_aggregator", site_id, "name", default=site_id)
         self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         # 是否为本地环境
@@ -28,7 +46,7 @@ class Veo3YunwuV1Driver(BaseVideoDriver):
         self._config = get_config()
 
         self._validate_required({
-            "云雾 API Key": self._api_key,
+            f"API Aggregator {site_id} API Key": self._api_key,
         })
 
     def _send_alert(self, alert_type: str, message: str, context: Optional[Dict[str, Any]] = None):
@@ -472,3 +490,40 @@ class Veo3YunwuV1Driver(BaseVideoDriver):
                 return content
 
         return None
+
+
+# ============ 具体站点实现类 ============
+
+class Veo3CommonSite1V1Driver(Veo3CommonV1Driver):
+    """VEO3 通用聚合 Site 1 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_1")
+
+
+class Veo3CommonSite2V1Driver(Veo3CommonV1Driver):
+    """VEO3 通用聚合 Site 2 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_2")
+
+
+class Veo3CommonSite3V1Driver(Veo3CommonV1Driver):
+    """VEO3 通用聚合 Site 3 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_3")
+
+
+class Veo3CommonSite4V1Driver(Veo3CommonV1Driver):
+    """VEO3 通用聚合 Site 4 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_4")
+
+
+class Veo3CommonSite5V1Driver(Veo3CommonV1Driver):
+    """VEO3 通用聚合 Site 5 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_5")
