@@ -121,7 +121,7 @@ unit_tests:
 
     # 获取测试结果
     - |
-      if docker cp zjt_test:/app/test-results.xml ./test-results.xml 2>/dev/null; then
+      if docker cp zjt_test:/app/test-results.xml ../test-results.xml 2>/dev/null; then
         echo "测试结果已保存"
       else
         echo "注意：无法获取 test-results.xml，查看上方日志了解测试情况"
