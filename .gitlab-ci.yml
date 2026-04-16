@@ -112,6 +112,9 @@ unit_tests:
         elapsed=$((elapsed + 10))
       done
 
+    # 获取容器退出码
+    - exit_code=$(docker inspect -f '{{.State.ExitCode}}' zjt_test 2>/dev/null || echo "1")
+
     # 显示测试日志
     - docker logs zjt_test || true
 
@@ -125,6 +128,14 @@ unit_tests:
 
     # 停止测试环境
     - docker-compose -f docker-compose-test.yml down -v || true
+
+    # 根据退出码决定 CI 结果
+    - |
+      echo "测试容器退出码: $exit_code"
+      if [ "$exit_code" != "0" ]; then
+        echo "测试失败！退出码: $exit_code"
+        exit 1
+      fi
 
   # 测试 artifacts
   artifacts:

@@ -323,6 +323,50 @@ class TestRunner:
         print()
         return errors == 0 and failed == 0
 
+    def generate_junit_xml(self):
+        """生成 JUnit XML 格式的测试报告供 GitLab CI 解析"""
+        import xml.etree.ElementTree as ET
+
+        testsuites = ET.Element('testsuites')
+
+        for category in ['db_connection', 'crud', 'driver', 'utils', 'config']:
+            results = self.test_results[category]
+            total = results['passed'] + results['failed'] + results['errors']
+
+            suite = ET.SubElement(testsuites, 'testsuite', {
+                'name': category,
+                'tests': str(total),
+                'failures': str(results['failed']),
+                'errors': str(results['errors']),
+            })
+
+            # 添加失败/错误的测试用例
+            for failed in self.failed_tests:
+                if failed['category'] != category:
+                    continue
+                testcase = ET.SubElement(suite, 'testcase', {
+                    'name': failed['test'],
+                    'classname': failed.get('module', category),
+                })
+                tag_name = 'failure' if failed['type'] == 'failure' else 'error'
+                detail = ET.SubElement(testcase, tag_name, {
+                    'message': failed['test'],
+                })
+                detail.text = failed['traceback']
+
+            # 添加通过的测试用例（占位名称）
+            passed_in_category = results['passed']
+            for i in range(passed_in_category):
+                ET.SubElement(suite, 'testcase', {
+                    'name': f'{category}.passed_{i + 1}',
+                    'classname': category,
+                })
+
+        tree = ET.ElementTree(testsuites)
+        output_path = os.path.join(APP_DIR, 'test-results.xml')
+        tree.write(output_path, encoding='unicode', xml_declaration=True)
+        print(f"[INFO] JUnit 测试报告已生成: {output_path}")
+
     def print_summary(self):
         """打印测试摘要"""
         print("=" * 60)
@@ -491,6 +535,11 @@ class TestRunner:
 
         # 步骤 13: 输出失败测试详情
         self.print_failed_tests()
+
+        
+        # 步骤 14: 生成 JUnit XML 报告
+        self.generate_junit_xml()
+
 
         print("\n测试执行完成！")
         return return_code
