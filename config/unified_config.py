@@ -621,8 +621,12 @@ class UnifiedConfigRegistry:
                 driver_name = config.driver_name if hasattr(config, 'driver_name') else None
 
                 try:
-                    impl_power = ImplementationPowerModel.get_power(user_pref_impl, driver_name)
-                    if impl_power is not None:
+                    db_powers = ImplementationPowerModel.get_all_powers_for_implementation(user_pref_impl, driver_name)
+                    if db_powers:
+                        if None in db_powers:
+                            impl_power = db_powers[None]
+                        else:
+                            impl_power = list(db_powers.values())[0]
                         task['computing_power'] = impl_power
                         task['user_preferred_implementation'] = user_pref_impl
                 except Exception as e:

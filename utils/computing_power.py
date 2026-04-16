@@ -50,13 +50,13 @@ def get_computing_power_for_task(
     if not impl_name:
         impl_name = config.implementation
 
-    # 3. 从实现方配置获取算力
+    # 3. 获取算力（优先任务配置的 computing_power 覆盖值，其次实现方配置）
     if impl_name:
-        impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
-        if impl_config:
-            return impl_config.get_computing_power(duration, config.driver_name)
+        power = config.get_computing_power(duration, implementation=impl_name)
+        if power:
+            return power
 
-    # 4. 回退到任务配置的算力（向后兼容）
+    # 4. 回退到任务配置的算力（向后兼容，无实现方时）
     return config.get_computing_power(duration, implementation=None)
 
 
