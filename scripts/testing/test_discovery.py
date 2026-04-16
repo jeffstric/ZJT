@@ -57,9 +57,9 @@ def discover_tests_by_category(category: str) -> List[str]:
             if '__pycache__' in filepath or '__init__' in filepath:
                 continue
 
-            # 转换为模块路径
+            # 转换为模块路径（统一处理 Windows 反斜杠）
             rel_path = os.path.relpath(filepath, TESTS_DIR)
-            module_parts = rel_path.replace('/', '.').replace('.py', '')
+            module_parts = rel_path.replace('\\', '/').replace('/', '.').replace('.py', '')
             module_name = f'tests.{module_parts}'
 
             discovered.append(module_name)
