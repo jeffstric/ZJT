@@ -13,7 +13,7 @@ from utils.image_upload_utils import upload_local_images_to_cdn_sync
 class Veo3CommonV1Driver(BaseVideoDriver):
     """
     VEO3 通用聚合站点 v1 版本驱动（基类）
-    支持图生视频，使用 veo3-fast 模型
+    支持图生视频，使用 veo3.1-fast 模型
 
     特点：
     - 支持多个站点配置（通过 site_id 区分）
@@ -180,7 +180,7 @@ class Veo3CommonV1Driver(BaseVideoDriver):
                 image_urls = cdn_urls
 
         payload = {
-            "model": "veo3-fast",
+            "model": "veo3.1-fast",
             "prompt": ai_tool.prompt,
             "enhance_prompt": True,
         }
@@ -209,8 +209,9 @@ class Veo3CommonV1Driver(BaseVideoDriver):
             Dict[str, Any]: 请求参数字典
         """
         return {
-            "url": f"{self._base_url}/v1/video/{project_id}",
+            "url": f"{self._base_url}/v1/video/query",
             "method": "GET",
+            "params": {"id": project_id},
             "json": None,
             "headers": {
                 "Authorization": f"Bearer {self._api_key}"
@@ -453,6 +454,13 @@ class Veo3CommonV1Driver(BaseVideoDriver):
         Returns:
             视频URL或None
         """
+        # 路径0: detail.video_url
+        detail = data.get("detail", {})
+        if isinstance(detail, dict):
+            url = detail.get("video_url")
+            if url:
+                return url
+
         # 路径1: output.video.url
         output = data.get("output", {})
         if isinstance(output, dict):
@@ -488,6 +496,11 @@ class Veo3CommonV1Driver(BaseVideoDriver):
             content = choices[0].get("message", {}).get("content", "")
             if content and (content.startswith("http://") or content.startswith("https://")):
                 return content
+
+        # 路径6: 根级别 video_url
+        url = data.get("video_url")
+        if url:
+            return url
 
         return None
 

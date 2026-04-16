@@ -27,11 +27,11 @@ def upgrade() -> None:
 
     # VEO3 通用聚合站点配置
     veo3_common_sites = [
-        ('veo3_common_site1_v1', 'VEO3_IMAGE_TO_VIDEO', 1, 4510.0, {'fixed': 6}),
-        ('veo3_common_site2_v1', 'VEO3_IMAGE_TO_VIDEO', 2, 4520.0, {'fixed': 6}),
-        ('veo3_common_site3_v1', 'VEO3_IMAGE_TO_VIDEO', 3, 4530.0, {'fixed': 6}),
-        ('veo3_common_site4_v1', 'VEO3_IMAGE_TO_VIDEO', 4, 4540.0, {'fixed': 6}),
-        ('veo3_common_site5_v1', 'VEO3_IMAGE_TO_VIDEO', 5, 4550.0, {'fixed': 6}),
+        ('veo3_common_site1_v1', 'veo3_image_to_video', 1, 4510.0, {'fixed': 6}),
+        ('veo3_common_site2_v1', 'veo3_image_to_video', 2, 4520.0, {'fixed': 6}),
+        ('veo3_common_site3_v1', 'veo3_image_to_video', 3, 4530.0, {'fixed': 6}),
+        ('veo3_common_site4_v1', 'veo3_image_to_video', 4, 4540.0, {'fixed': 6}),
+        ('veo3_common_site5_v1', 'veo3_image_to_video', 5, 4550.0, {'fixed': 6}),
     ]
 
     for impl_name, driver_key, site_number, sort_order, power_config in veo3_common_sites:
@@ -52,7 +52,7 @@ def upgrade() -> None:
     op.execute(text("""
         UPDATE implementation_power_config
         SET power_config = '{"fixed": 6}'
-        WHERE implementation_name = 'veo3_duomi_v1' AND driver_key = 'VEO3_IMAGE_TO_VIDEO'
+        WHERE implementation_name = 'veo3_duomi_v1' AND driver_key = 'veo3_image_to_video'
     """))
     logger.info("已更新 veo3_duomi_v1 的算力配置")
 
@@ -60,21 +60,21 @@ def upgrade() -> None:
     seedance_configs = [
         (
             'seedance_1_5_pro_volcengine_v1',
-            'SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO',
+            'seedance_1_5_pro_image_to_video',
             None,
             10500.0,
             {5: 46, 6: 56, 7: 66, 8: 76, 9: 85, 10: 94, 11: 103, 12: 112}
         ),
         (
             'seedance_2_0_fast_volcengine_v1',
-            'SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO',
+            'seedance_2_0_fast_image_to_video',
             None,
             10600.0,
             {5: 105, 6: 126, 7: 147, 8: 168, 9: 189, 10: 210, 11: 231, 12: 252, 13: 273, 14: 294, 15: 315}
         ),
         (
             'seedance_2_0_volcengine_v1',
-            'SEEDANCE_2_0_IMAGE_TO_VIDEO',
+            'seedance_2_0_image_to_video',
             None,
             10700.0,
             {5: 250, 6: 300, 7: 350, 8: 400, 9: 450, 10: 500, 11: 550, 12: 600, 13: 650, 14: 700, 15: 750}

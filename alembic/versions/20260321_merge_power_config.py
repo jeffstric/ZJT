@@ -51,25 +51,25 @@ def upgrade():
     # 从配置中读取 default_computing_power 并写入 power_config
     implementations = [
         # 多米供应商
-        ('sora2_duomi_v1', 'SORA2_IMAGE_TO_VIDEO', None, 1000.0, None),
-        ('kling_duomi_v1', 'KLING_IMAGE_TO_VIDEO', None, 2000.0, None),
-        ('gemini_duomi_v1', 'GEMINI_IMAGE_EDIT', None, 3000.0, None),
-        ('veo3_duomi_v1', 'VEO3_IMAGE_TO_VIDEO', None, 4000.0, None),
+        ('sora2_duomi_v1', 'sora2_image_to_video', None, 1000.0, None),
+        ('kling_duomi_v1', 'kling_image_to_video', None, 2000.0, None),
+        ('gemini_duomi_v1', 'gemini_image_edit', None, 3000.0, None),
+        ('veo3_duomi_v1', 'veo3_image_to_video', None, 4000.0, None),
         # RunningHub 供应商
-        ('ltx2_runninghub_v1', 'LTX2_IMAGE_TO_VIDEO', None, 5000.0, None),
-        ('wan22_runninghub_v1', 'WAN22_IMAGE_TO_VIDEO', None, 6000.0, None),
-        ('digital_human_runninghub_v1', 'DIGITAL_HUMAN', None, 7000.0, None),
+        ('ltx2_runninghub_v1', 'ltx2_image_to_video', None, 5000.0, None),
+        ('wan22_runninghub_v1', 'wan22_image_to_video', None, 6000.0, None),
+        ('digital_human_runninghub_v1', 'digital_human', None, 7000.0, None),
         # Vidu
-        ('vidu_default', 'VIDU_IMAGE_TO_VIDEO', None, 8000.0, None),
-        ('vidu_q2', 'VIDU_Q2_IMAGE_TO_VIDEO', None, 9000.0, None),
+        ('vidu_default', 'vidu_image_to_video', None, 8000.0, None),
+        ('vidu_q2', 'vidu_q2_image_to_video', None, 9000.0, None),
         # Seedream
-        ('seedream5_volcengine_v1', 'SEEDREAM_TEXT_TO_IMAGE', None, 10000.0, None),
+        ('seedream5_volcengine_v1', 'seedream_text_to_image', None, 10000.0, None),
         # API 聚合站
-        ('gemini_image_preview_site1_v1', 'GEMINI_IMAGE_PREVIEW', 1, 11000.0, None),
-        ('gemini_image_preview_site2_v1', 'GEMINI_IMAGE_PREVIEW', 2, 12000.0, None),
-        ('gemini_image_preview_site3_v1', 'GEMINI_IMAGE_PREVIEW', 3, 13000.0, None),
-        ('gemini_image_preview_site4_v1', 'GEMINI_IMAGE_PREVIEW', 4, 14000.0, None),
-        ('gemini_image_preview_site5_v1', 'GEMINI_IMAGE_PREVIEW', 5, 15000.0, None),
+        ('gemini_image_preview_site1_v1', 'gemini_image_preview', 1, 11000.0, None),
+        ('gemini_image_preview_site2_v1', 'gemini_image_preview', 2, 12000.0, None),
+        ('gemini_image_preview_site3_v1', 'gemini_image_preview', 3, 13000.0, None),
+        ('gemini_image_preview_site4_v1', 'gemini_image_preview', 4, 14000.0, None),
+        ('gemini_image_preview_site5_v1', 'gemini_image_preview', 5, 15000.0, None),
     ]
 
     logger.info(f"开始初始化 {len(implementations)} 个实现方配置...")

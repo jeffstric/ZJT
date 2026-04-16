@@ -4480,9 +4480,13 @@
                 </div>
                 <div v-if="item.image_path" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">
                   <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">输入图片:</div>
-                  <div style="display: flex; align-items: center; gap: 12px;">
-                    <img :src="item.image_path" style="max-width: 120px; max-height: 80px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border);" />
-                    <a :href="item.image_path" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">查看原图</a>
+                  <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <template v-for="(img, idx) in item.image_path.split(',')" :key="idx">
+                      <div v-if="img" style="display: flex; align-items: center; gap: 12px;">
+                        <img :src="img" style="max-width: 120px; max-height: 80px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border);" />
+                        <a :href="img" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">查看原图</a>
+                      </div>
+                    </template>
                   </div>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">

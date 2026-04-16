@@ -198,7 +198,7 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertEqual(result['headers']['Content-Type'], 'application/json')
 
         # 验证 payload
-        self.assertEqual(result['json']['model'], 'veo3-fast')
+        self.assertEqual(result['json']['model'], 'veo3.1-fast')
         self.assertEqual(result['json']['prompt'], '测试提示词')
         self.assertEqual(result['json']['enhance_prompt'], True)
         self.assertEqual(result['json']['images'], ['http://example.com/test.jpg'])
@@ -271,8 +271,9 @@ class TestBuildCheckQuery(unittest.TestCase):
         """检查查询请求结构"""
         result = self.driver.build_check_query('task_12345')
 
-        self.assertIn('/v1/video/task_12345', result['url'])
+        self.assertIn('/v1/video/query', result['url'])
         self.assertEqual(result['method'], 'GET')
+        self.assertEqual(result['params'], {'id': 'task_12345'})
         self.assertIsNone(result['json'])
         self.assertIn('Authorization', result['headers'])
 
@@ -280,7 +281,7 @@ class TestBuildCheckQuery(unittest.TestCase):
         """带 project_id 的查询"""
         result = self.driver.build_check_query('veo3_project_abc')
 
-        self.assertIn('veo3_project_abc', result['url'])
+        self.assertEqual(result['params'], {'id': 'veo3_project_abc'})
 
 
 class TestSubmitTask(unittest.TestCase):
@@ -411,6 +412,35 @@ class TestCheckStatus(unittest.TestCase):
         self.assertEqual(result['status'], 'SUCCESS')
         self.assertEqual(result['result_url'], 'https://example.com/result.mp4')
 
+    def test_check_status_completed_detail_video_url(self):
+        """任务完成状态 - detail.video_url 格式"""
+        self.driver._request = MagicMock(return_value={
+            "id": "task_123",
+            "status": "completed",
+            "detail": {
+                "status": "completed",
+                "video_url": "https://example.com/result.mp4"
+            }
+        })
+
+        result = self.driver.check_status('task_123')
+
+        self.assertEqual(result['status'], 'SUCCESS')
+        self.assertEqual(result['result_url'], 'https://example.com/result.mp4')
+
+    def test_check_status_completed_root_video_url(self):
+        """任务完成状态 - 根级别 video_url 格式"""
+        self.driver._request = MagicMock(return_value={
+            "id": "task_123",
+            "status": "completed",
+            "video_url": "https://example.com/result.mp4"
+        })
+
+        result = self.driver.check_status('task_123')
+
+        self.assertEqual(result['status'], 'SUCCESS')
+        self.assertEqual(result['result_url'], 'https://example.com/result.mp4')
+
     def test_check_status_failed(self):
         """任务失败状态"""
         self.driver._request = MagicMock(return_value={
@@ -475,12 +505,76 @@ class TestCheckStatus(unittest.TestCase):
         self.assertEqual(result['status'], 'FAILED')
         self.assertIn('未找到视频', result['error'])
 
+    def test_check_status_timeout_error(self):
+        """超时错误返回 RUNNING"""
+        self.driver._request = MagicMock(side_effect=TimeoutError('request timeout'))
+
+        result = self.driver.check_status('task_123')
+
+        self.assertEqual(result['status'], 'RUNNING')
+
+    def test_check_status_http_error(self):
+        """HTTP 错误（如 404）返回 FAILED"""
+        from requests import HTTPError
+        self.driver._request = MagicMock(side_effect=HTTPError('404 Client Error'))
+
+        result = self.driver.check_status('task_123')
+
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['error_type'], 'SYSTEM')
+
+    def test_check_status_empty_status_no_choices(self):
+        """status 为空且无 choices 时返回 RUNNING"""
+        self.driver._request = MagicMock(return_value={
+            "id": "task_123"
+        })
+
+        result = self.driver.check_status('task_123')
+
+        self.assertEqual(result['status'], 'RUNNING')
+
+    def test_check_status_choices_unfinished(self):
+        """choices 存在但 finish_reason 为空时返回 RUNNING"""
+        self.driver._request = MagicMock(return_value={
+            "id": "task_123",
+            "choices": [{"message": {"content": ""}, "finish_reason": ""}]
+        })
+
+        result = self.driver.check_status('task_123')
+
+        self.assertEqual(result['status'], 'RUNNING')
+
+    def test_check_status_request_called_with_params(self):
+        """验证 check_status 调用 _request 时传入正确的 query params"""
+        self.driver._request = MagicMock(return_value={
+            "id": "task_123",
+            "status": "processing"
+        })
+
+        self.driver.check_status('task_123')
+
+        self.driver._request.assert_called_once()
+        call_args = self.driver._request.call_args
+        self.assertIn('/v1/video/query', call_args.kwargs['url'])
+        self.assertEqual(call_args.kwargs['method'], 'GET')
+        self.assertEqual(call_args.kwargs['params'], {'id': 'task_123'})
+
 
 class TestExtractVideoUrl(unittest.TestCase):
     """测试 _extract_video_url 方法"""
 
     def setUp(self):
         self.driver = _create_common_driver()
+
+    def test_extract_from_detail_video_url(self):
+        """从 detail.video_url 提取"""
+        data = {
+            "detail": {
+                "video_url": "https://example.com/video0.mp4"
+            }
+        }
+        result = self.driver._extract_video_url(data)
+        self.assertEqual(result, "https://example.com/video0.mp4")
 
     def test_extract_from_output_video_url(self):
         """从 output.video.url 提取"""
@@ -530,11 +624,29 @@ class TestExtractVideoUrl(unittest.TestCase):
         result = self.driver._extract_video_url(data)
         self.assertEqual(result, "https://example.com/video5.mp4")
 
+    def test_extract_from_root_video_url(self):
+        """从根级别 video_url 提取"""
+        data = {
+            "video_url": "https://example.com/video6.mp4"
+        }
+        result = self.driver._extract_video_url(data)
+        self.assertEqual(result, "https://example.com/video6.mp4")
+
     def test_extract_returns_none_when_no_url(self):
         """无 URL 时返回 None"""
         data = {
             "output": {},
             "data": {}
+        }
+        result = self.driver._extract_video_url(data)
+        self.assertIsNone(result)
+
+    def test_extract_from_choices_non_url_content(self):
+        """choices.message.content 不是 URL 时返回 None"""
+        data = {
+            "choices": [{
+                "message": {"content": "some text not url"}
+            }]
         }
         result = self.driver._extract_video_url(data)
         self.assertIsNone(result)
