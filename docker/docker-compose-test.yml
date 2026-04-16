@@ -46,19 +46,17 @@ services:
     environment:
       # 环境配置
       comfyui_env: unit
-      # 测试数据库配置
-      # TEST_DB_* 用于 db_test_config.py 覆盖 config_unit.yml
-      TEST_DB_HOST: mysql_test
-      TEST_DB_PORT: 3306
-      TEST_DB_USER: root
-      TEST_DB_PASSWORD: root_test_pass
-      TEST_DB_NAME: zjt_unittest
-      # DB_* 用于 docker-entrypoint.sh 等待 MySQL 和 alembic 迁移
       DB_HOST: mysql_test
       DB_PORT: 3306
       DB_USER: root
       DB_PASSWORD: root_test_pass
       DB_NAME: zjt_unittest
+      # 测试数据库配置（用于测试框架，必须以 _test/_unittest 结尾）
+      TEST_DB_HOST: mysql_test
+      TEST_DB_PORT: 3306
+      TEST_DB_USER: root
+      TEST_DB_PASSWORD: root_test_pass
+      TEST_DB_NAME: zjt_unittest
       # 测试模式
       UNIT_TEST_CONFIG: config_unit.yml
       # 时区设置
