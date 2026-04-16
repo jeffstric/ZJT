@@ -54,7 +54,7 @@ def get_computing_power_for_task(
     if impl_name:
         impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
         if impl_config:
-            return impl_config.get_computing_power(duration)
+            return impl_config.get_computing_power(duration, config.driver_name)
 
     # 4. 回退到任务配置的算力（向后兼容）
     return config.get_computing_power(duration, implementation=None)
@@ -116,7 +116,7 @@ def get_computing_power_config_for_task(
             # 检查是否有数据库配置
             try:
                 from model.implementation_power import ImplementationPowerModel
-                db_powers = ImplementationPowerModel.get_all_powers_for_implementation(impl_name)
+                db_powers = ImplementationPowerModel.get_all_powers_for_implementation(impl_name, config.driver_name)
                 if db_powers:
                     return {
                         'computing_power': db_powers if len(db_powers) > 1 or None in db_powers else list(db_powers.values())[0],

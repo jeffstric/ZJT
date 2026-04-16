@@ -84,12 +84,13 @@ class ImplementationConfig:
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
 
-    def get_computing_power(self, duration: Optional[int] = None) -> int:
+    def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None) -> int:
         """
         获取算力（优先数据库配置，其次代码默认值）
 
         Args:
             duration: 时长（秒），用于按时长计费的实现方
+            driver_key: DriverKey，用于从数据库读取实现方算力配置
 
         Returns:
             算力值
@@ -97,9 +98,20 @@ class ImplementationConfig:
         # 尝试从数据库读取（支持管理员热更新）
         try:
             from model.implementation_power import ImplementationPowerModel
-            db_power = ImplementationPowerModel.get_power(self.name, duration)
-            if db_power is not None:
-                return db_power
+            if driver_key:
+                db_powers = ImplementationPowerModel.get_all_powers_for_implementation(self.name, driver_key)
+                if db_powers:
+                    if duration is not None and duration in db_powers:
+                        return db_powers[duration]
+                    if None in db_powers:
+                        return db_powers[None]
+                    if db_powers:
+                        return list(db_powers.values())[0]
+            else:
+                # 兼容旧调用：未传 driver_key 时按原来的行为
+                db_power = ImplementationPowerModel.get_power(self.name, duration)
+                if db_power is not None:
+                    return db_power
         except ImportError:
             pass
         except Exception:
@@ -244,7 +256,7 @@ class UnifiedTaskConfig:
         if not impl_config:
             return 0
 
-        return impl_config.get_computing_power(duration)
+        return impl_config.get_computing_power(duration, self.driver_name)
     
     def to_frontend_dict(self) -> Dict[str, Any]:
         """
