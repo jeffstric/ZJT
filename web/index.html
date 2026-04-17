@@ -784,8 +784,8 @@
     `,
     methods: {
       handleStartCreation() {
-        // 跳转到工作流列表页面并自动打开新建表单
-        window.location.href = '/video-workflow-list?action=create';
+        // 跳转到工作流列表页面并自动打开新建表单，加随机数防止缓存
+        window.location.href = '/video-workflow-list?action=create&_t=' + Date.now();
       },
       handleVideoWorkflowClick() {
         window.location.href = '/video-workflow-list';

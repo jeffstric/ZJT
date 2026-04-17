@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>视频工作流列表</title>
   <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
   <style>
@@ -561,11 +564,15 @@
           <input type="text" class="form-input" id="workflowName" required>
         </div>
         <div class="form-group">
-          <label class="form-label">描述</label>
-          <textarea class="form-input form-textarea" id="workflowDesc"></textarea>
+          <button type="button" class="btn btn-secondary btn-sm" id="toggleDescBtn" onclick="toggleDescSection()" style="width: 100%; justify-content: center;">展开填写描述</button>
+          <div id="descSection" style="display: none; margin-top: 12px;">
+            <label class="form-label">描述</label>
+            <textarea class="form-input form-textarea" id="workflowDesc"></textarea>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">世界</label>
+          <div style="font-size: 12px; color: var(--muted); margin-bottom: 6px;">世界是一个包裹角色、场景、道具还有剧本的盒子</div>
           <div style="display: flex; gap: 8px;">
             <select class="form-input" id="workflowWorld" style="flex: 1;">
               <option value="">选择世界（可选）</option>
@@ -573,7 +580,7 @@
             <button type="button" class="btn btn-secondary" onclick="openWorldModal()" style="white-space: nowrap;">新建世界</button>
           </div>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="styleFieldGroup">
           <label class="form-label">
             画风
             <a href="/image-style-guide" target="_blank" style="margin-left: 8px; font-size: 12px; color: #3b82f6; text-decoration: none; font-weight: normal; border-bottom: 1px solid transparent; transition: border-color 0.2s;" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='transparent'" title="查看画风说明">查看画风说明</a>
@@ -594,13 +601,6 @@
             <option value="赛博朋克风">
             <option value="美漫:DC风">
           </datalist>
-        </div>
-        <div class="form-group">
-          <label class="form-label">画风参考图</label>
-          <input type="file" class="form-input" id="workflowStyleImage" accept="image/*">
-          <div id="styleImagePreviewContainer" style="margin-top: 8px; display: none;">
-            <img id="styleImagePreviewImg" style="max-width: 100%; max-height: 120px; border-radius: 8px; border: 1px solid var(--border);">
-          </div>
         </div>
         <div class="form-group">
           <label class="form-label">状态</label>
@@ -629,8 +629,11 @@
           <input type="text" class="form-input" id="worldName" required>
         </div>
         <div class="form-group">
-          <label class="form-label">描述</label>
-          <textarea class="form-input form-textarea" id="worldDesc"></textarea>
+          <button type="button" class="btn btn-secondary btn-sm" id="toggleWorldDescBtn" onclick="toggleWorldDescSection()" style="width: 100%; justify-content: center;">展开填写描述</button>
+          <div id="worldDescSection" style="display: none; margin-top: 12px;">
+            <label class="form-label">描述</label>
+            <textarea class="form-input form-textarea" id="worldDesc"></textarea>
+          </div>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" onclick="closeWorldModal()">取消</button>
@@ -831,16 +834,17 @@
       window.location.href = `/video-workflow?id=${id}`;
     }
 
-    async function openCreateModal() {
+    async function openCreateModal(options = {}) {
       document.getElementById('modalTitle').textContent = '新建工作流';
       document.getElementById('workflowId').value = '';
       document.getElementById('workflowName').value = '';
       document.getElementById('workflowDesc').value = '';
       document.getElementById('workflowWorld').value = '';
       document.getElementById('workflowStyle').value = '';
-      document.getElementById('workflowStyleImage').value = '';
-      document.getElementById('styleImagePreviewContainer').style.display = 'none';
       document.getElementById('workflowStatus').value = '1';
+      document.getElementById('descSection').style.display = 'none';
+      document.getElementById('toggleDescBtn').textContent = '展开填写描述';
+      document.getElementById('styleFieldGroup').style.display = options.hideStyle ? 'none' : '';
       await loadWorlds();
       document.getElementById('createModal').classList.add('active');
     }
@@ -851,6 +855,8 @@
       document.getElementById('workflowName').value = name;
       document.getElementById('workflowDesc').value = desc;
       document.getElementById('workflowStatus').value = status;
+      document.getElementById('descSection').style.display = 'none';
+      document.getElementById('toggleDescBtn').textContent = '展开填写描述';
       
       await loadWorlds();
       
@@ -866,23 +872,28 @@
         if (result.code === 0 && result.data) {
           document.getElementById('workflowWorld').value = result.data.default_world_id || '';
           document.getElementById('workflowStyle').value = result.data.style || '';
-          if (result.data.style_reference_image) {
-            document.getElementById('styleImagePreviewImg').src = result.data.style_reference_image;
-            document.getElementById('styleImagePreviewContainer').style.display = 'block';
-          } else {
-            document.getElementById('styleImagePreviewContainer').style.display = 'none';
-          }
         }
       } catch (error) {
         console.error('Failed to load workflow details:', error);
       }
-      
-      document.getElementById('workflowStyleImage').value = '';
+
       document.getElementById('createModal').classList.add('active');
     }
 
     function closeModal() {
       document.getElementById('createModal').classList.remove('active');
+    }
+
+    function toggleDescSection() {
+      const section = document.getElementById('descSection');
+      const btn = document.getElementById('toggleDescBtn');
+      if (section.style.display === 'none') {
+        section.style.display = 'block';
+        btn.textContent = '收起描述';
+      } else {
+        section.style.display = 'none';
+        btn.textContent = '展开填写描述';
+      }
     }
 
     // 创建工作流的通用逻辑，返回创建的工作流ID
@@ -895,7 +906,6 @@
       const status = parseInt(document.getElementById('workflowStatus').value);
       const worldId = document.getElementById('workflowWorld').value;
       const style = document.getElementById('workflowStyle').value.trim();
-      const styleImageFile = document.getElementById('workflowStyleImage').files[0];
 
       if (!name) {
         showToast('请输入工作流名称', 'error');
@@ -903,43 +913,15 @@
       }
 
       const data = { name, description, status };
-      
+
       // Add world_id if provided
       if (worldId) {
         data.default_world_id = parseInt(worldId);
       }
-      
+
       // Add style if provided
       if (style) {
         data.style = style;
-      }
-      
-      // Upload style reference image if provided
-      if (styleImageFile) {
-        try {
-          const formData = new FormData();
-          formData.append('file', styleImageFile);
-          
-          const uploadResponse = await fetch('/api/video-workflow/upload', {
-            method: 'POST',
-            headers: {
-              'Authorization': getAuthToken(),
-              'X-User-Id': getUserId()
-            },
-            body: formData
-          });
-          
-          const uploadResult = await uploadResponse.json();
-          if (uploadResult.code === 0 && uploadResult.data && uploadResult.data.url) {
-            data.style_reference_image = uploadResult.data.url;
-          } else {
-            showToast('参考图上传失败', 'error');
-            return null;
-          }
-        } catch (error) {
-          showToast('参考图上传失败', 'error');
-          return null;
-        }
       }
 
       const isEdit = !!id;
@@ -1078,20 +1060,6 @@
     }
 
     // Style image preview
-    document.getElementById('workflowStyleImage').addEventListener('change', function(e) {
-      const file = e.target.files[0];
-      if (file) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-          document.getElementById('styleImagePreviewImg').src = e.target.result;
-          document.getElementById('styleImagePreviewContainer').style.display = 'block';
-        };
-        reader.readAsDataURL(file);
-      } else {
-        document.getElementById('styleImagePreviewContainer').style.display = 'none';
-      }
-    });
-
     async function loadWorlds() {
       if (!ensureLoggedIn()) return;
       
@@ -1129,11 +1097,25 @@
     function openWorldModal() {
       document.getElementById('worldName').value = '';
       document.getElementById('worldDesc').value = '';
+      document.getElementById('worldDescSection').style.display = 'none';
+      document.getElementById('toggleWorldDescBtn').textContent = '展开填写描述';
       document.getElementById('worldModal').classList.add('active');
     }
 
     function closeWorldModal() {
       document.getElementById('worldModal').classList.remove('active');
+    }
+
+    function toggleWorldDescSection() {
+      const section = document.getElementById('worldDescSection');
+      const btn = document.getElementById('toggleWorldDescBtn');
+      if (section.style.display === 'none') {
+        section.style.display = 'block';
+        btn.textContent = '收起描述';
+      } else {
+        section.style.display = 'none';
+        btn.textContent = '展开填写描述';
+      }
     }
 
     async function handleWorldSubmit(event) {
@@ -1214,9 +1196,12 @@
     // 检测URL参数，如果有action=create则自动打开新建表单
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('action') === 'create') {
+      // 提前隐藏画风字段，防止缓存导致JS未生效时字段仍显示
+      const styleFieldGroup = document.getElementById('styleFieldGroup');
+      if (styleFieldGroup) styleFieldGroup.style.display = 'none';
       // 延迟执行，确保页面加载完成
       setTimeout(() => {
-        openCreateModal();
+        openCreateModal({ hideStyle: true });
       }, 100);
       // 清除URL参数，避免刷新时重复弹出
       window.history.replaceState({}, document.title, window.location.pathname);
