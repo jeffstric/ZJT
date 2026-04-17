@@ -229,20 +229,25 @@ def _get_processed_html(file_path: str) -> bytes:
     with open(file_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
-    # 匹配 <script src="..."> 和 <link ... href="..."> 中引用的 .js 和 .css 文件
-    # 只匹配以 /js/ 或 /css/ 开头的本地引用
-    pattern = r'(<(?:script|link)[^>]*(?:src|href)=")(/(?:js|css)/[^"]+)(")'
+    # 检查是否启用了缓存失效功能
+    cache_bust_enabled = get_config_value("frontend", "cache_bust", "enabled", default=True)
 
-    def replace_with_version(match):
-        prefix = match.group(1)
-        path = match.group(2)
-        suffix = match.group(3)
-        # 如果已经有 v= 参数，先移除再添加新的
-        path = re.sub(r'\?v=[^"\']*', '', path)
-        return f'{prefix}{path}?v={STATIC_VERSION}{suffix}'
+    if cache_bust_enabled:
+        # 匹配 <script src="..."> 和 <link ... href="..."> 中引用的 .js 和 .css 文件
+        # 只匹配以 /js/ 或 /css/ 开头的本地引用
+        pattern = r'(<(?:script|link)[^>]*(?:src|href)=")(/(?:js|css)/[^"]+)(")'
 
-    result = re.sub(pattern, replace_with_version, content)
-    _PROCESSED_HTML_CACHE[file_path] = result.encode('utf-8')
+        def replace_with_version(match):
+            prefix = match.group(1)
+            path = match.group(2)
+            suffix = match.group(3)
+            # 如果已经有 v= 参数，先移除再添加新的
+            path = re.sub(r'\?v=[^"\']*', '', path)
+            return f'{prefix}{path}?v={STATIC_VERSION}{suffix}'
+
+        content = re.sub(pattern, replace_with_version, content)
+
+    _PROCESSED_HTML_CACHE[file_path] = content.encode('utf-8')
     return _PROCESSED_HTML_CACHE[file_path]
 
 
