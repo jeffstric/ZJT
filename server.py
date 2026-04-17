@@ -1845,6 +1845,79 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
         )
 
 
+@app.post('/api/user/checkin')
+@require_permission("computing:checkin")
+async def daily_checkin(request: Request, auth_token: str = Header(None, alias="Authorization")):
+    """执行每日签到，奖励算力"""
+    try:
+        if not auth_token:
+            return JSONResponse(status_code=401, content={'success': False, 'message': '未提供认证信息'})
+
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+
+        headers = {'Authorization': f'Bearer {auth_token}'}
+        success, message, response_data = await async_make_perseids_request(
+            endpoint='user/get_user_id_by_auth_token',
+            method='POST',
+            headers=headers
+        )
+        if not success:
+            return JSONResponse(status_code=401, content={'success': False, 'message': message or '认证失败'})
+
+        user_id = response_data.get('user_id')
+        if not user_id:
+            return JSONResponse(status_code=401, content={'success': False, 'message': '无效的用户信息'})
+
+        from services.checkin_service import CheckinService
+        result = await asyncio.to_thread(CheckinService.checkin, user_id)
+
+        if result['success']:
+            return JSONResponse(content=result)
+        else:
+            return JSONResponse(status_code=400, content=result)
+
+    except Exception as e:
+        logger.error(f'签到失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(status_code=500, content={'success': False, 'message': '服务器错误'})
+
+
+@app.get('/api/user/checkin/status')
+@require_permission("computing:checkin")
+async def get_checkin_status(request: Request, auth_token: str = Header(None, alias="Authorization")):
+    """获取用户今日签到状态"""
+    try:
+        if not auth_token:
+            return JSONResponse(status_code=401, content={'success': False, 'message': '未提供认证信息'})
+
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+
+        headers = {'Authorization': f'Bearer {auth_token}'}
+        success, message, response_data = await async_make_perseids_request(
+            endpoint='user/get_user_id_by_auth_token',
+            method='POST',
+            headers=headers
+        )
+        if not success:
+            return JSONResponse(status_code=401, content={'success': False, 'message': message or '认证失败'})
+
+        user_id = response_data.get('user_id')
+        if not user_id:
+            return JSONResponse(status_code=401, content={'success': False, 'message': '无效的用户信息'})
+
+        from services.checkin_service import CheckinService
+        result = await asyncio.to_thread(CheckinService.get_checkin_status, user_id)
+
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        logger.error(f'获取签到状态失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(status_code=500, content={'success': False, 'message': '服务器错误'})
+
+
 @app.get('/api/user/computing_power_logs')
 @require_permission("computing:view_logs")
 async def get_computing_power_logs(

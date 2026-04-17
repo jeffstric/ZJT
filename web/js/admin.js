@@ -210,6 +210,15 @@ const AdminApp = {
                 type: 'success'
             },
 
+            // 签到管理
+            checkin: {
+                enabled: false,
+                baseReward: 10,
+                streakBonusEnabled: false,
+                streakBonuses: [], // { days, reward }
+                loading: false
+            },
+
             isCommunityEdition: false
         };
     },
@@ -386,6 +395,8 @@ const AdminApp = {
                 this.loadUsers();
             } else if (page === 'config') {
                 this.loadConfigs();
+            } else if (page === 'checkin') {
+                this.loadCheckinConfig();
             } else if (page === 'implementations') {
                 this.loadImplementations();
             }
@@ -885,6 +896,100 @@ const AdminApp = {
             }
         },
         
+        // ==================== 签到管理方法 ====================
+
+        async loadCheckinConfig() {
+            this.checkin.loading = true;
+            try {
+                const keys = [
+                    'checkin.enabled',
+                    'checkin.base_reward',
+                    'checkin.streak_bonus_enabled',
+                    'checkin.streak_bonus_config'
+                ];
+                // 逐个获取配置（或者通过搜索接口）
+                const response = await axios.get('/api/admin/config', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                    params: { keyword: 'checkin.', page: 1, page_size: 50 }
+                });
+
+                if (response.data.code === 0) {
+                    const list = response.data.data.data || [];
+                    const map = {};
+                    list.forEach(item => { map[item.config_key] = item.config_value; });
+
+                    this.checkin.enabled = String(map['checkin.enabled']).toLowerCase() === 'true';
+                    this.checkin.baseReward = parseInt(map['checkin.base_reward'] || '10', 10);
+                    this.checkin.streakBonusEnabled = String(map['checkin.streak_bonus_enabled']).toLowerCase() === 'true';
+
+                    let streakConfig = map['checkin.streak_bonus_config'];
+                    if (streakConfig) {
+                        try {
+                            const parsed = typeof streakConfig === 'string' ? JSON.parse(streakConfig) : streakConfig;
+                            this.checkin.streakBonuses = Object.keys(parsed)
+                                .map(k => ({ days: parseInt(k, 10), reward: parseInt(parsed[k], 10) }))
+                                .sort((a, b) => a.days - b.days);
+                        } catch (e) {
+                            this.checkin.streakBonuses = [];
+                        }
+                    } else {
+                        this.checkin.streakBonuses = [];
+                    }
+                }
+            } catch (error) {
+                console.error('Load checkin config failed:', error);
+                this.showToast('加载签到配置失败', 'error');
+            } finally {
+                this.checkin.loading = false;
+            }
+        },
+
+        addStreakBonus() {
+            this.checkin.streakBonuses.push({ days: null, reward: null });
+        },
+
+        removeStreakBonus(index) {
+            this.checkin.streakBonuses.splice(index, 1);
+        },
+
+        async saveCheckinConfig() {
+            const configs = [];
+            configs.push({ key: 'checkin.enabled', value: this.checkin.enabled ? 'true' : 'false' });
+            configs.push({ key: 'checkin.base_reward', value: String(this.checkin.baseReward || 0) });
+            configs.push({ key: 'checkin.streak_bonus_enabled', value: this.checkin.streakBonusEnabled ? 'true' : 'false' });
+
+            const streakObj = {};
+            for (const item of this.checkin.streakBonuses) {
+                if (item.days && item.reward !== null && item.reward !== undefined) {
+                    streakObj[String(item.days)] = item.reward;
+                }
+            }
+            configs.push({ key: 'checkin.streak_bonus_config', value: JSON.stringify(streakObj) });
+
+            this.checkin.loading = true;
+            try {
+                const response = await axios.put('/api/admin/config/batch',
+                    { configs },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    const errors = response.data.data.errors || [];
+                    if (errors.length > 0) {
+                        this.showToast(`部分配置保存失败: ${errors.join(', ')}`, 'error');
+                    } else {
+                        this.showToast('签到配置保存成功', 'success');
+                    }
+                }
+            } catch (error) {
+                console.error('Save checkin config failed:', error);
+                const detail = error?.response?.data?.detail || '保存失败';
+                this.showToast(detail, 'error');
+            } finally {
+                this.checkin.loading = false;
+            }
+        },
+
         // 格式化配置值显示
         formatConfigValue(value) {
             if (value === null || value === undefined) return '-';
