@@ -16,6 +16,7 @@ class Model:
         self.id = kwargs.get('id')
         self.model_name = kwargs.get('model_name')
         self.context_window = kwargs.get('context_window')
+        self.supports_tools = kwargs.get('supports_tools', 1)
         self.created_at = kwargs.get('created_at')
         self.note = kwargs.get('note')
 
@@ -25,6 +26,7 @@ class Model:
             'id': self.id,
             'model_name': self.model_name,
             'context_window': self.context_window,
+            'supports_tools': self.supports_tools,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'note': self.note,
         }
@@ -34,11 +36,11 @@ class ModelModel:
     """Model database operations"""
     
     @staticmethod
-    def create(model_name: Optional[str] = None, context_window: Optional[int] = None, note: Optional[str] = None) -> int:
+    def create(model_name: Optional[str] = None, context_window: Optional[int] = None, supports_tools: int = 1, note: Optional[str] = None) -> int:
         """创建模型"""
-        sql = "INSERT INTO model (model_name, context_window, note) VALUES (%s, %s, %s)"
+        sql = "INSERT INTO model (model_name, context_window, supports_tools, note) VALUES (%s, %s, %s, %s)"
         try:
-            model_id = execute_insert(sql, (model_name, context_window, note))
+            model_id = execute_insert(sql, (model_name, context_window, supports_tools, note))
             logger.info(f"Created model with ID: {model_id}")
             return model_id
         except Exception as e:
@@ -48,7 +50,7 @@ class ModelModel:
     @staticmethod
     def get_by_id(model_id: int) -> Optional[Model]:
         """根据ID获取模型"""
-        sql = "SELECT id, model_name, context_window, created_at, note FROM model WHERE id = %s"
+        sql = "SELECT id, model_name, context_window, supports_tools, created_at, note FROM model WHERE id = %s"
         try:
             result = execute_query(sql, (model_id,), fetch_one=True)
             if result:
@@ -64,7 +66,7 @@ class ModelModel:
         获取所有模型（分页）
         对应Go的GetAllModels
         """
-        sql = "SELECT id, model_name, context_window, created_at, note FROM model ORDER BY created_at DESC"
+        sql = "SELECT id, model_name, context_window, supports_tools, created_at, note FROM model ORDER BY created_at DESC"
         params = []
 
         if limit > 0:
@@ -82,11 +84,11 @@ class ModelModel:
             raise
 
     @staticmethod
-    def update(model_id: int, model_name: Optional[str] = None, context_window: Optional[int] = None, note: Optional[str] = None) -> int:
+    def update(model_id: int, model_name: Optional[str] = None, context_window: Optional[int] = None, supports_tools: int = 1, note: Optional[str] = None) -> int:
         """更新模型"""
-        sql = "UPDATE model SET model_name = %s, context_window = %s, note = %s WHERE id = %s"
+        sql = "UPDATE model SET model_name = %s, context_window = %s, supports_tools = %s, note = %s WHERE id = %s"
         try:
-            return execute_update(sql, (model_name, context_window, note, model_id))
+            return execute_update(sql, (model_name, context_window, supports_tools, note, model_id))
         except Exception as e:
             logger.error(f"Failed to update model {model_id}: {e}")
             raise
@@ -107,6 +109,7 @@ CREATE TABLE IF NOT EXISTS `model` (
   `id` int NOT NULL AUTO_INCREMENT,
   `model_name` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '模型名称',
   `context_window` int DEFAULT NULL COMMENT '模型上下文窗口大小（token数）',
+  `supports_tools` tinyint(1) DEFAULT 1 COMMENT '是否支持 Tool Calling',
   `created_at` datetime DEFAULT NULL,
   `note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '其他信息',
   PRIMARY KEY (`id`) USING BTREE

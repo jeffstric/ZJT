@@ -242,12 +242,45 @@ async def validate_model(model: str, auth_token: str) -> tuple[bool, List[str], 
         remote_models = response_data.get('models', []) if isinstance(response_data, dict) else []
         for model_info in remote_models:
             valid_models.append(model_info.get('model_name'))
-        
+
+        # 添加阿里云 Qwen 模型（如果配置了 API Key）
+        try:
+            from config.config_util import get_dynamic_config_value
+            from model.model import ModelModel
+            from model.vendor_model import VendorModelModel
+            qwen_api_key = get_dynamic_config_value('llm', 'qwen', 'api_key', default='')
+            if qwen_api_key:
+                all_vendor_models = VendorModelModel.get_all()
+                qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == 2]))
+                for mid in qwen_model_ids:
+                    local_model = ModelModel.get_by_id(mid)
+                    if local_model and local_model.supports_tools:
+                        valid_models.append(local_model.model_name)
+        except Exception as e:
+            logger.warning(f"获取阿里云 Qwen 模型列表失败: {e}")
+
+        # 添加 Ollama 本地模型（如果启用）
+        try:
+            from config.config_util import get_dynamic_config_value
+            from model.model import ModelModel
+            from model.vendor_model import VendorModelModel
+            ollama_enabled = get_dynamic_config_value('llm', 'ollama', 'enabled', default=False)
+            if ollama_enabled:
+                ollama_vendor_models = VendorModelModel.get_all()
+                ollama_model_ids = [vm.model_id for vm in ollama_vendor_models if vm.vendor_id == 3]
+                for mid in ollama_model_ids:
+                    local_model = ModelModel.get_by_id(mid)
+                    if local_model and local_model.supports_tools:
+                        # Ollama 模型使用 ollama: 前缀
+                        valid_models.append(f"ollama:{local_model.model_name}")
+        except Exception as e:
+            logger.warning(f"获取 Ollama 模型列表失败: {e}")
+
         # 验证用户选择的模型是否在有效列表中
         if model not in valid_models:
             logger.warning(f"用户尝试设置无效模型: {model}, 有效模型列表: {valid_models}")
             return False, valid_models, f'模型 "{model}" 不存在或不可用'
-        
+
         return True, valid_models, None
         
     except Exception as e:
@@ -1082,29 +1115,45 @@ async def get_available_models(
     auth_token: Optional[str] = QueryParam(None),
     authorization: Optional[str] = Header(None)
 ):
-    """获取可用的 AI 模型列表"""
+    """获取可用的 AI 模型列表，根据 vendor 表分组"""
     try:
         # 从query参数或header获取token
         token = auth_token or (authorization.replace('Bearer ', '') if authorization else None)
-        
+
         if not token:
             return JSONResponse({
                 'success': False,
                 'error': '缺少 auth_token 参数'
             }, status_code=400)
-        
-        # 调用perseids服务获取模型列表
+
+        from config.config_util import get_dynamic_config_value
+        from model.model import ModelModel
+        from model.vendor import VendorDAO
+        from model.vendor_model import VendorModelModel
+
+        # 获取所有供应商信息
+        vendors = {v.id: v for v in VendorDAO.get_all()}
+        # 获取所有 vendor_model 关联
+        all_vendor_models = VendorModelModel.get_all()
+        # 按 model_id 分组，记录每个模型属于哪个 vendor
+        model_vendor_map = {}
+        for vm in all_vendor_models:
+            if vm.model_id not in model_vendor_map:
+                model_vendor_map[vm.model_id] = vm.vendor_id
+
+        models = []
+        added_model_ids = set()  # 用于去重
+
+        # 1. 从 Perseids 获取远程模型（vendor_id=1，jiekou）
         headers = {'Authorization': f'Bearer {token}'}
         success, message, response_data = await async_make_perseids_request(
             endpoint='user/models',
             method='GET',
             headers=headers
         )
-        
-        models = []
+
         if not success:
-            logger.info(f"获取模型列表失败: {message}")
-            # 检测 token 过期
+            logger.info(f"获取 Perseids 模型列表失败: {message}")
             if '无效或已过期' in message or 'token' in message.lower() or '认证' in message:
                 return JSONResponse({
                     'success': False,
@@ -1113,10 +1162,14 @@ async def get_available_models(
                     'token_expired': True
                 }, status_code=401)
         else:
-            logger.info(f"模型列表响应: {response_data}")
+            logger.info(f"Perseids 模型列表响应: {response_data}")
             remote_models = response_data.get('models', []) if isinstance(response_data, dict) else []
-            for idx, model_info in enumerate(remote_models):
+            for model_info in remote_models:
                 model_id = model_info.get('id')
+                if model_id in added_model_ids:
+                    continue
+                added_model_ids.add(model_id)
+
                 input_token_threshold = None
                 context_window = None
                 try:
@@ -1132,25 +1185,86 @@ async def get_available_models(
                     logger.warning(f"获取模型 {model_id} 的 vendor_model 失败: {vm_err}")
                 # 从本地 model 表获取上下文窗口配置
                 try:
-                    from model.model import ModelModel
                     local_model = ModelModel.get_by_id(int(model_id)) if model_id is not None else None
                     if local_model:
                         context_window = local_model.context_window
                 except Exception:
                     pass
+
+                # 获取供应商信息
+                vendor_id = model_vendor_map.get(model_id, 1)
+                vendor = vendors.get(vendor_id)
+                vendor_name = vendor.vendor_name if vendor else 'jiekou'
+
                 models.append({
                     'id': str(model_id),
+                    'model_id': model_id,
                     'name': model_info.get('model_name'),
                     'description': model_info.get('note') or '',
-                    'category': 'perseids',
+                    'vendor_id': vendor_id,
+                    'vendor_name': vendor_name,
                     'recommended': model_id == 1,
                     'input_token_threshold': input_token_threshold,
                     'context_window': context_window
                 })
 
+        # 2. 添加阿里云 Qwen 模型（vendor_id=2，如果配置了 API Key）
+        try:
+            qwen_api_key = get_dynamic_config_value('llm', 'qwen', 'api_key', default='')
+            if qwen_api_key:
+                qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == 2]))
+                vendor = vendors.get(2)
+                vendor_name = vendor.vendor_name if vendor else 'aliyun'
+                for model_id in qwen_model_ids:
+                    if model_id in added_model_ids:
+                        continue
+                    local_model = ModelModel.get_by_id(model_id)
+                    if local_model and local_model.supports_tools:
+                        added_model_ids.add(model_id)
+                        models.append({
+                            'id': str(model_id),
+                            'model_id': model_id,
+                            'name': local_model.model_name,
+                            'description': local_model.note or '',
+                            'vendor_id': 2,
+                            'vendor_name': vendor_name,
+                            'recommended': False,
+                            'context_window': local_model.context_window
+                        })
+                logger.info(f"添加了 {len([m for m in models if m.get('vendor_id') == 2])} 个阿里云 Qwen 模型")
+        except Exception as e:
+            logger.warning(f"获取阿里云 Qwen 模型列表失败: {e}")
+
+        # 3. 添加 Ollama 本地模型（vendor_id=3，如果启用）
+        try:
+            ollama_enabled = get_dynamic_config_value('llm', 'ollama', 'enabled', default=False)
+            if ollama_enabled:
+                ollama_model_ids = [vm.model_id for vm in all_vendor_models if vm.vendor_id == 3]
+                vendor = vendors.get(3)
+                vendor_name = vendor.vendor_name if vendor else 'ollama'
+                for model_id in ollama_model_ids:
+                    if model_id in added_model_ids:
+                        continue
+                    local_model = ModelModel.get_by_id(model_id)
+                    if local_model and local_model.supports_tools:
+                        added_model_ids.add(model_id)
+                        models.append({
+                            'id': f"ollama:{local_model.model_name}",
+                            'model_id': model_id,
+                            'name': local_model.model_name,
+                            'description': local_model.note or '',
+                            'vendor_id': 3,
+                            'vendor_name': vendor_name,
+                            'recommended': False,
+                            'context_window': local_model.context_window
+                        })
+                logger.info(f"添加了 {len(ollama_model_ids)} 个 Ollama 模型")
+        except Exception as e:
+            logger.warning(f"获取 Ollama 模型列表失败: {e}")
+
         if not models:
             models = []
-        
+
         return JSONResponse({
             'success': True,
             'models': models

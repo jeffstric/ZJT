@@ -8,6 +8,7 @@ from typing import Optional
 from .base_llm_client import BaseLLMClient
 from .gemini_client import GeminiClient, get_gemini_client
 from .openai_client import OpenAIClient, get_openai_client
+from .ollama_client import OllamaClient, get_ollama_client
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class LLMClientFactory:
         "qwen": "openai",
         "gpt": "openai",
         "claude": "openai",  # 未来的 Claude 支持
+        "ollama": "ollama",  # Ollama 本地模型
     }
 
     @classmethod
@@ -50,6 +52,9 @@ class LLMClientFactory:
                 elif driver == "openai":
                     logger.debug(f"模型 {model} 使用 OpenAI driver")
                     return get_openai_client()
+                elif driver == "ollama":
+                    logger.debug(f"模型 {model} 使用 Ollama driver")
+                    return get_ollama_client()
 
         # 默认使用 Gemini（兼容现有逻辑）
         logger.debug(f"模型 {model} 未匹配到特定 driver，使用默认 Gemini driver")
@@ -61,13 +66,15 @@ class LLMClientFactory:
         根据 driver 类型获取客户端
 
         Args:
-            driver_type: driver 类型（"gemini" 或 "openai"）
+            driver_type: driver 类型（"gemini"、"openai" 或 "ollama"）
 
         Returns:
             对应的 LLM 客户端实例
         """
         if driver_type == "openai":
             return get_openai_client()
+        elif driver_type == "ollama":
+            return get_ollama_client()
         else:
             return get_gemini_client()
 

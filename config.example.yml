@@ -132,6 +132,17 @@ llm:
   google:
     api_key: "sk_xxxxx"
     gemini_base_url: "https://api.jiekou.ai"
+  ollama:
+    enabled: false  # 是否启用 Ollama 本地模型
+    base_url: "http://localhost:11434"  # Ollama 服务地址
+    # 模型参数配置
+    temperature: 0.7  # 温度参数 (0.0-2.0)
+    top_p: 0.8  # 核采样概率 (0.0-1.0)
+    top_k: 20  # Top-K 采样
+    min_p: 0.0  # 最小概率阈值
+    presence_penalty: 1.5  # 存在惩罚
+    repetition_penalty: 1.0  # 重复惩罚
+    enable_thinking: false  # 是否启用思维链（部分模型支持）
 
 # TTS (Text-to-Speech) configuration
 tts:

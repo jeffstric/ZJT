@@ -1,7 +1,7 @@
 """Add context_window to model table
 
 Revision ID: 20260417_add_context_window_to_model
-Revises: 20260416_fix_driver_key_case
+Revises: 20260416_daily_checkin
 Create Date: 2026-04-17
 
 Add context_window field to model table for storing model context window size.
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
 revision: str = '20260417_ctx_window_model'
-down_revision: Union[str, None] = '20260416_fix_driver_key_case'
+down_revision: Union[str, None] = '20260416_daily_checkin'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -35,15 +35,10 @@ def upgrade() -> None:
     # These are approximate values for common models in the system.
     MODEL_CONTEXT_WINDOWS = {
         'gemini-3-flash-preview': 1048576,
-        'gemini-3-pro-preview': 2097152,
+        'gemini-3.1-pro-preview': 1048576,
         'gemini-3.1-flash-lite': 1048576,
-        'gemini-3.1-flash': 1048576,
-        'qwen3.5': 131072,
-        'qwen3.6': 131072,
-        'claude-3-5-sonnet': 200000,
-        'claude-3-5': 200000,
-        'gpt-4o': 128000,
-        'gpt-4': 128000,
+        'qwen3.5-plus': 991000,
+        'qwen3.6-plus': 991000,
     }
 
     for model_substring, ctx_window in MODEL_CONTEXT_WINDOWS.items():

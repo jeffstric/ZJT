@@ -2157,18 +2157,20 @@
                     return;
                 }
 
-                // 按指定顺序排序模型：qwen3.5 > qwen3.6 > flash 3.0 > flash 3.5 > gemini-3-flash > gemini-3.1-flash-lite > 其他
-                const sortOrder = ['qwen3.5', 'qwen3.6', 'flash-3.0', 'flash-3.5', 'flash', 'gemini-3-flash', 'gemini-3.1-flash-lite'];
-                const sortedModels = [...data.models].sort((a, b) => {
-                    const nameA = (a.model_name || a.name || '').toLowerCase();
-                    const nameB = (b.model_name || b.name || '').toLowerCase();
-                    // 使用 startsWith 精确匹配，避免 gemini-3.1-flash-lite 被 gemini-3-flash 错误匹配
-                    const indexA = sortOrder.findIndex(k => nameA.startsWith(k.toLowerCase()));
-                    const indexB = sortOrder.findIndex(k => nameB.startsWith(k.toLowerCase()));
-                    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-                    if (indexA !== -1) return -1;
-                    if (indexB !== -1) return 1;
-                    return 0;
+                // 按 vendor_name 分组，vendor_id 排序
+                const vendorGroups = {};
+                const vendorOrder = [];  // 保持 vendor 顺序
+                data.models.forEach(model => {
+                    const vendorId = model.vendor_id || 1;
+                    const vendorName = model.vendor_name || 'unknown';
+                    if (!vendorGroups[vendorId]) {
+                        vendorGroups[vendorId] = {
+                            vendorName: vendorName,
+                            models: []
+                        };
+                        vendorOrder.push(vendorId);
+                    }
+                    vendorGroups[vendorId].models.push(model);
                 });
 
                 // 计算 input_token_threshold 倍数（threshold 越小越贵，以最大的 threshold 为基准 x1）
@@ -2177,15 +2179,25 @@
                     .filter(v => v && v > 0);
                 const maxThreshold = validThresholds.length > 0 ? Math.max(...validThresholds) : null;
 
+                // 供应商图标映射
+                const vendorIcons = {
+                    'jiekou': '☁️',
+                    'aliyun': '🌐',
+                    'ollama': '🖥️'
+                };
+
                 // 记录排序后的第一个作为默认选中
                 let firstEnabledModel = null;
 
-                sortedModels.forEach(model => {
+                // 创建选项的辅助函数
+                const createModelOption = (model) => {
                     const option = document.createElement('option');
-                    // 兼容后端返回的 model_name 或 name 字段
                     const modelName = model.model_name || model.name || '';
                     const modelDesc = model.note || model.description || '';
-                    option.value = modelName;
+                    // 判断是否为 Ollama 模型：vendor_id=3 或 id 包含 "ollama:" 前缀
+                    const isOllama = model.vendor_id === 3 || String(model.id || '').startsWith('ollama:');
+                    // Ollama 模型使用带前缀的模型名，其他模型使用 model_name
+                    option.value = isOllama ? `ollama:${modelName}` : modelName;
                     option.dataset.conciseName = modelName;
 
                     let displayName = modelName;
@@ -2197,19 +2209,36 @@
                     option.textContent = modelDesc
                         ? `${displayName} - ${modelDesc}`
                         : displayName;
-                    const modelId = model.id ?? model.model_id ?? '';
-                    if (modelId) {
-                        option.dataset.modelId = modelId;
+                    // model_id 用于获取 context_window 等信息
+                    const dbModelId = model.model_id ?? '';
+                    if (dbModelId) {
+                        option.dataset.modelId = dbModelId;
                     }
                     if (model.context_window) {
                         option.dataset.contextWindow = model.context_window;
                     }
                     option.dataset.recommended = model.recommended ? 'true' : 'false';
-                    // 记录第一个启用的模型作为默认
-                    if (!option.disabled && !firstEnabledModel) {
-                        firstEnabledModel = option;
+                    option.dataset.vendorId = model.vendor_id || 1;
+                    option.dataset.vendorName = model.vendor_name || 'jiekou';
+                    return option;
+                };
+
+                // 按 vendor 分组添加模型
+                vendorOrder.forEach(vendorId => {
+                    const group = vendorGroups[vendorId];
+                    if (group.models.length > 0) {
+                        const optGroup = document.createElement('optgroup');
+                        const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
+                        optGroup.label = `${icon} ${group.vendorName}`;
+                        group.models.forEach(model => {
+                            const option = createModelOption(model);
+                            if (!option.disabled && !firstEnabledModel) {
+                                firstEnabledModel = option;
+                            }
+                            optGroup.appendChild(option);
+                        });
+                        selector.appendChild(optGroup);
                     }
-                    selector.appendChild(option);
                 });
 
                 // 设置默认选中第一个启用的模型
