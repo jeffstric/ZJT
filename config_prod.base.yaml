@@ -137,3 +137,14 @@ file_storage:
 
 zjt:
   token: ""
+
+# 每日签到配置
+checkin:
+  enabled: false                     # 是否启用每日签到功能
+  base_reward: 6                   # 每日签到基础奖励算力
+  streak_bonus_enabled: true        # 是否启用连续签到额外奖励
+  streak_bonus_config:              # 连续签到奖励配置，键为连续天数，值为额外奖励算力
+    3: 12
+    7: 18
+    14: 24
+    30: 30

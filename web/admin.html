@@ -54,6 +54,14 @@
                     </a>
                 </li>
                 <li>
+                    <a href="#" :class="{ active: currentPage === 'checkin' }" @click.prevent="switchPage('checkin')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                        <span>签到管理</span>
+                    </a>
+                </li>
+                <li>
                     <a href="#" :class="{ active: currentPage === 'implementations' }" @click.prevent="switchPage('implementations')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
@@ -71,6 +79,7 @@
                 <h2 v-if="currentPage === 'dashboard'">仪表盘</h2>
                 <h2 v-else-if="currentPage === 'users'">用户管理</h2>
                 <h2 v-else-if="currentPage === 'config'">系统配置</h2>
+                <h2 v-else-if="currentPage === 'checkin'">签到管理</h2>
                 <h2 v-else-if="currentPage === 'implementations'">实现方管理</h2>
                 
                 <div class="admin-user">
@@ -321,6 +330,60 @@
                         <span class="page-info">第 {{ config.page }} / {{ configTotalPages }} 页，共 {{ config.total }} 条</span>
                         <button class="page-btn" @click="goToConfigPage(config.page + 1)" :disabled="config.page >= configTotalPages">下一页</button>
                         <button class="page-btn" @click="goToConfigPage(configTotalPages)" :disabled="config.page >= configTotalPages">末页</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 签到管理页面 -->
+            <section v-if="currentPage === 'checkin'">
+                <div class="table-container" style="max-width: 800px;">
+                    <div class="table-header">
+                        <h3>签到配置</h3>
+                        <div class="table-actions">
+                            <button class="action-btn primary" @click="saveCheckinConfig" :disabled="checkin.loading">
+                                {{ checkin.loading ? '保存中...' : '保存配置' }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div v-if="checkin.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>加载中...</p>
+                    </div>
+
+                    <div v-else class="checkin-config-form">
+                        <div class="form-group">
+                            <label class="form-label"><input type="checkbox" v-model="checkin.enabled" /> 启用每日签到功能</label>
+                            <p class="form-hint">关闭后，用户将无法进行签到</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">基础奖励算力</label>
+                            <input type="number" class="filter-input" v-model.number="checkin.baseReward" min="0" style="width: 120px;" />
+                            <p class="form-hint">用户每日签到可获得的基础算力值</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label"><input type="checkbox" v-model="checkin.streakBonusEnabled" /> 启用连续签到额外奖励</label>
+                        </div>
+
+                        <div class="form-group" v-if="checkin.streakBonusEnabled">
+                            <label class="form-label">连续签到奖励配置</label>
+                            <div class="streak-bonus-table">
+                                <div class="streak-bonus-row header">
+                                    <span>连续天数</span>
+                                    <span>额外奖励</span>
+                                    <span>操作</span>
+                                </div>
+                                <div v-for="(item, index) in checkin.streakBonuses" :key="index" class="streak-bonus-row">
+                                    <input type="number" class="filter-input" v-model.number="item.days" min="1" placeholder="天数" />
+                                    <input type="number" class="filter-input" v-model.number="item.reward" min="0" placeholder="奖励" />
+                                    <button class="action-btn" @click="removeStreakBonus(index)">删除</button>
+                                </div>
+                                <button class="action-btn primary" @click="addStreakBonus" style="margin-top: 8px;">+ 添加奖励阶梯</button>
+                            </div>
+                            <p class="form-hint">格式示例：连续3天额外奖励5算力，连续7天额外奖励15算力</p>
+                        </div>
                     </div>
                 </div>
             </section>

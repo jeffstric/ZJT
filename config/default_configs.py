@@ -528,6 +528,36 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
+
+    # ==================== 每日签到配置 ====================
+    {
+        'key': 'checkin.enabled',
+        'value_type': 'bool',
+        'description': '是否启用每日签到功能',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'checkin.base_reward',
+        'value_type': 'int',
+        'description': '每日签到基础奖励算力值',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'checkin.streak_bonus_enabled',
+        'value_type': 'bool',
+        'description': '是否启用连续签到额外奖励',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'checkin.streak_bonus_config',
+        'value_type': 'json',
+        'description': '连续签到奖励配置，格式: {"3": 5, "7": 15, "14": 30, "30": 50}',
+        'editable': True,
+        'is_sensitive': False
+    },
 ]
 
 

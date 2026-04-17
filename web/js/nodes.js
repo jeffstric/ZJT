@@ -5088,49 +5088,63 @@
       // 动态填充视频模型选项
       function populateScriptVideoModelOptions() {
         if(!videoModelSelect) return;
-        
-        videoModelSelect.innerHTML = '';
-        
-        // 从后端配置获取第一个视频模型作为默认值
-        let firstVideoModelValue = 'wan22';
-        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
-          const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-          if(options.length > 0) firstVideoModelValue = options[0].value;
-          options.forEach(opt => {
-            const optEl = document.createElement('option');
-            optEl.value = opt.value;
-            optEl.textContent = opt.label;
-            videoModelSelect.appendChild(optEl);
-          });
-        } else {
-          // 回退：硬编码选项
-          const fallbackOptions = [
-            { value: 'wan22', label: 'Wan2.2' },
-            { value: 'sora2', label: 'Sora2' },
-            { value: 'ltx2', label: 'LTX2.0' },
-            { value: 'kling', label: '可灵' },
-            { value: 'vidu', label: 'Vidu' },
-            { value: 'veo3', label: 'VEO3.1' }
-          ];
-          fallbackOptions.forEach(opt => {
-            const optEl = document.createElement('option');
-            optEl.value = opt.value;
-            optEl.textContent = opt.label;
-            videoModelSelect.appendChild(optEl);
-          });
+
+        function renderOptions() {
+          if(!videoModelSelect) return;
+          videoModelSelect.innerHTML = '';
+
+          // 从后端配置获取第一个视频模型作为默认值
+          let firstVideoModelValue = 'wan22';
+          if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+            const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+            if(options.length > 0) firstVideoModelValue = options[0].value;
+            options.forEach(opt => {
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              videoModelSelect.appendChild(optEl);
+            });
+          } else {
+            // 回退：硬编码选项
+            const fallbackOptions = [
+              { value: 'wan22', label: 'Wan2.2' },
+              { value: 'sora2', label: 'Sora2' },
+              { value: 'ltx2', label: 'LTX2.0' },
+              { value: 'kling', label: '可灵' },
+              { value: 'vidu', label: 'Vidu' },
+              { value: 'veo3', label: 'VEO3.1' }
+            ];
+            fallbackOptions.forEach(opt => {
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              videoModelSelect.appendChild(optEl);
+            });
+          }
+
+          // 恢复之前的选择，默认使用后端配置的第一个模型（与分镜组节点和图生图片节点一致）
+          const currentValue = node.data.videoModel || firstVideoModelValue;
+          const selectedOption = videoModelSelect.querySelector(`option[value="${currentValue}"]`);
+          if(selectedOption) {
+            videoModelSelect.value = currentValue;
+          } else {
+            videoModelSelect.value = firstVideoModelValue;
+            node.data.videoModel = firstVideoModelValue;
+          }
         }
-        
-        // 恢复之前的选择，默认使用后端配置的第一个模型（与分镜组节点和图生图片节点一致）
-        const currentValue = node.data.videoModel || firstVideoModelValue;
-        const selectedOption = videoModelSelect.querySelector(`option[value="${currentValue}"]`);
-        if(selectedOption) {
-          videoModelSelect.value = currentValue;
+
+        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          renderOptions();
+        } else if(window.TaskConfig) {
+          videoModelSelect.innerHTML = '<option value="">加载中...</option>';
+          window.TaskConfig.onLoaded(() => {
+            renderOptions();
+          });
         } else {
-          videoModelSelect.value = firstVideoModelValue;
-          node.data.videoModel = firstVideoModelValue;
+          renderOptions();
         }
       }
-      
+
       // 初始化视频模型
       populateScriptVideoModelOptions();
       
@@ -5236,25 +5250,44 @@
       }
 
       // 动态填充宫格生图模型选项
-      if(gridModelSelect) {
-        gridModelSelect.innerHTML = '<option value="auto" selected>智能模式 (根据分镜数自动选择)</option>';
+      function populateScriptGridModelOptions() {
+        if(!gridModelSelect) return;
+
+        function renderOptions() {
+          if(!gridModelSelect) return;
+          gridModelSelect.innerHTML = '<option value="auto" selected>智能模式 (根据分镜数自动选择)</option>';
+          if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+            const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
+            options.forEach(opt => {
+              // 过滤掉不支持宫格生图的模型
+              if (!opt.supportsGridImage) return;
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              gridModelSelect.appendChild(optEl);
+            });
+          } else {
+            gridModelSelect.innerHTML += `
+              <option value="gemini_pro">加强版 (9宫格)</option>
+              <option value="seedream-5.0">Seedream 5.0</option>
+            `;
+          }
+        }
+
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
-          const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
-          options.forEach(opt => {
-            // 过滤掉不支持宫格生图的模型
-            if (!opt.supportsGridImage) return;
-            const optEl = document.createElement('option');
-            optEl.value = opt.value;
-            optEl.textContent = opt.label;
-            gridModelSelect.appendChild(optEl);
+          renderOptions();
+        } else if(window.TaskConfig) {
+          gridModelSelect.innerHTML = '<option value="auto" selected>智能模式 (根据分镜数自动选择)</option>';
+          window.TaskConfig.onLoaded(() => {
+            renderOptions();
           });
         } else {
-          gridModelSelect.innerHTML += `
-            <option value="gemini_pro">加强版 (9宫格)</option>
-            <option value="seedream-5.0">Seedream 5.0</option>
-          `;
+          renderOptions();
         }
       }
+
+      // 初始化宫格生图模型
+      populateScriptGridModelOptions();
       
       // 初始化节点数据中的最大时长和选项
       node.data.maxGroupDuration = 15;

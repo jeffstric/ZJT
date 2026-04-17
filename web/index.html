@@ -39,6 +39,14 @@
             <div class="user-info-wrapper">
               <span class="user-phone clickable" @click="openInviteModal" title="点击查看邀请码">{{ maskedPhone }}</span>
               <div class="computing-power-display">
+                <template v-if="checkinStatus.checkin_enabled">
+                  <button class="checkin-badge" v-if="!checkinStatus.checked_in_today" @click="performCheckin" :disabled="checkinLoading" title="点击签到领算力">
+                    签到
+                  </button>
+                  <span class="checkin-badge checked" v-else title="今日已签到">
+                    已签
+                  </span>
+                </template>
                 <span class="clickable" @click="openComputingPowerLogs" title="点击查看算力日志">
                   算力: <span class="computing-power-value">{{ computingPower !== null ? computingPower : '加载中...' }}</span>
                 </span>
@@ -71,6 +79,13 @@
     <button class="feedback-btn" @click="showFeedbackModal = true">
       💬 意见反馈
     </button>
+
+    <!-- 签到成功 Toast -->
+    <div class="checkin-toast" v-if="checkinToast.show" @click="checkinToast.show = false">
+      <div class="checkin-toast-title">签到成功 +{{ checkinToast.reward }} 算力</div>
+      <div class="checkin-toast-sub">已连续签到 {{ checkinToast.streak_days }} 天</div>
+      <div v-if="checkinToast.nextRewardText" class="checkin-toast-next">{{ checkinToast.nextRewardText }}</div>
+    </div>
 
     <!-- 意见反馈弹窗 -->
     <div class="modal-overlay" v-if="showFeedbackModal" @click.self="showFeedbackModal = false">
@@ -6144,6 +6159,11 @@
       apiTokenLoading: false,
       apiTokenError: '',
       apiTokenNewToken: '', // 仅在生成时显示一次
+      // 签到相关
+      checkinStatus: { checked_in_today: false, streak_days: 0, checkin_enabled: true, base_reward: 10, days_to_next_reward: null, next_reward_amount: null },
+      checkinLoading: false,
+      checkinToast: { show: false, reward: 0, streak_days: 0, nextRewardText: '' },
+      checkinToastTimer: null,
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -6211,6 +6231,7 @@
       if (this.authToken) {
         this.fetchComputingPower();
         this.fetchUserRole();
+        this.fetchCheckinStatus();
       }
       
       // 检查是否需要自动弹出登录窗口
@@ -6998,6 +7019,66 @@
         }
       },
       
+      async fetchCheckinStatus() {
+        if (!this.authToken) return;
+        try {
+          const response = await axios.get('/api/user/checkin/status', {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data.success) {
+            this.checkinStatus = response.data.data;
+          }
+        } catch (error) {
+          if (error.response && error.response.status === 403) {
+            this.checkinStatus.checkin_enabled = false;
+          }
+          console.error('Fetch checkin status error:', error);
+        }
+      },
+
+      async performCheckin() {
+        if (!this.authToken || this.checkinLoading) return;
+        this.checkinLoading = true;
+        try {
+          const response = await axios.post('/api/user/checkin', {}, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data.success) {
+            const data = response.data.data;
+            this.checkinStatus.checked_in_today = true;
+            this.checkinStatus.streak_days = data.streak_days;
+            // 刷新算力
+            this.fetchComputingPower();
+            // 显示 Toast
+            const nextRewardText = (this.checkinStatus.days_to_next_reward)
+              ? `再签${this.checkinStatus.days_to_next_reward}天领${this.checkinStatus.next_reward_amount}算力`
+              : '';
+            this.checkinToast = {
+              show: true,
+              reward: data.reward_amount,
+              streak_days: data.streak_days,
+              nextRewardText: nextRewardText
+            };
+            if (this.checkinToastTimer) clearTimeout(this.checkinToastTimer);
+            this.checkinToastTimer = setTimeout(() => {
+              this.checkinToast.show = false;
+            }, 3000);
+          } else {
+            alert(response.data.message || '签到失败');
+            if (response.data.data && response.data.data.checked_in_today) {
+              this.checkinStatus.checked_in_today = true;
+            }
+          }
+        } catch (error) {
+          console.error('Checkin error:', error);
+          if (!this.handleAuthError(error)) {
+            alert('签到请求失败，请稍后重试');
+          }
+        } finally {
+          this.checkinLoading = false;
+        }
+      },
+
       async fetchUserRole() {
         if (!this.authToken) {
           this.userRole = '';
