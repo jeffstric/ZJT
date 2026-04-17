@@ -163,7 +163,12 @@ upload:
 
 # Frontend debug mode
 frontend:
-  debug_password: "123"  # 前端 Debug 模式密码
+  debug_password: "123"
+  # 前端静态资源缓存失效开关
+  # enabled: true 时，HTML 中的 js/css 引用会自动添加 ?v={version_hash} 参数
+  # 用于上线后强制浏览器重新加载新版本的前端资源
+  cache_bust:
+    enabled: true  # 前端 Debug 模式密码
 
 # Workflow configuration
 workflow:
