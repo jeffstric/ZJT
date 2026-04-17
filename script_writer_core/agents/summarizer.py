@@ -90,9 +90,28 @@ Expert ({expert_name}) 对话记录：
         for msg in conversation:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
-            
+
             if isinstance(content, str):
                 lines.append(f"[{role}]: {content[:500]}")
+            elif isinstance(content, dict):
+                # 处理 PMAgent 中的 tool_calls 和 tool 结果格式
+                if "tool_calls" in content:
+                    tool_names = [
+                        tc.get("function", {}).get("name", "unknown")
+                        for tc in content["tool_calls"]
+                    ]
+                    lines.append(f"[{role}]: 调用工具 {', '.join(tool_names)}")
+                elif "tool_call_id" in content:
+                    tool_name = content.get("name", "unknown")
+                    tool_content = str(content.get("content", ""))[:500]
+                    lines.append(f"[{role}] (工具结果 {tool_name}): {tool_content}")
+                else:
+                    # 其他 dict 类型，尝试提取 text 或转为字符串
+                    text = content.get("text", "")
+                    if text:
+                        lines.append(f"[{role}]: {str(text)[:500]}")
+                    else:
+                        lines.append(f"[{role}]: {str(content)[:500]}")
             elif isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict):
@@ -102,7 +121,7 @@ Expert ({expert_name}) 对话记录：
                             tool_info = part.get("tool_use") or part.get("toolUse")
                             tool_name = tool_info.get("name", "unknown")
                             lines.append(f"[{role}]: 调用工具 {tool_name}")
-        
+
         return "\n".join(lines)
     
     def _create_fallback_summary(

@@ -1873,6 +1873,9 @@
                             }
                         } else if (data.type === 'progress') {
                             updateStatus(`执行中: ${data.step || ''}`);
+                        } else if (data.type === 'context_compression') {
+                            updateStatus('上下文已自动压缩，继续回复中...');
+                            console.log('[SSE] 上下文压缩事件:', data.reason);
                         } else if (data.type === 'done') {
                             eventSource.close();
                             // 显示 done 消息中的结果内容
@@ -2197,6 +2200,9 @@
                     const modelId = model.id ?? model.model_id ?? '';
                     if (modelId) {
                         option.dataset.modelId = modelId;
+                    }
+                    if (model.context_window) {
+                        option.dataset.contextWindow = model.context_window;
                     }
                     option.dataset.recommended = model.recommended ? 'true' : 'false';
                     // 记录第一个启用的模型作为默认

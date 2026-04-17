@@ -1118,6 +1118,7 @@ async def get_available_models(
             for idx, model_info in enumerate(remote_models):
                 model_id = model_info.get('id')
                 input_token_threshold = None
+                context_window = None
                 try:
                     if model_id:
                         vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
@@ -1129,16 +1130,24 @@ async def get_available_models(
                             input_token_threshold = vendor_model.input_token_threshold
                 except Exception as vm_err:
                     logger.warning(f"获取模型 {model_id} 的 vendor_model 失败: {vm_err}")
-
+                # 从本地 model 表获取上下文窗口配置
+                try:
+                    from model.model import ModelModel
+                    local_model = ModelModel.get_by_id(int(model_id)) if model_id is not None else None
+                    if local_model:
+                        context_window = local_model.context_window
+                except Exception:
+                    pass
                 models.append({
                     'id': str(model_id),
                     'name': model_info.get('model_name'),
                     'description': model_info.get('note') or '',
                     'category': 'perseids',
                     'recommended': model_id == 1,
-                    'input_token_threshold': input_token_threshold
+                    'input_token_threshold': input_token_threshold,
+                    'context_window': context_window
                 })
-        
+
         if not models:
             models = []
         
