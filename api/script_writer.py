@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
 from config.config_util import get_dynamic_config_value, get_config
+from model.vendor_model import VendorModelModel
 
 # ==================== 加载 API 配置 ====================
 def _load_api_config():
@@ -1115,12 +1116,27 @@ async def get_available_models(
             logger.info(f"模型列表响应: {response_data}")
             remote_models = response_data.get('models', []) if isinstance(response_data, dict) else []
             for idx, model_info in enumerate(remote_models):
+                model_id = model_info.get('id')
+                input_token_threshold = None
+                try:
+                    if model_id:
+                        vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
+                            vendor_id=1,
+                            model_id=int(model_id),
+                            raw_input_token=0
+                        )
+                        if vendor_model and vendor_model.input_token_threshold:
+                            input_token_threshold = vendor_model.input_token_threshold
+                except Exception as vm_err:
+                    logger.warning(f"获取模型 {model_id} 的 vendor_model 失败: {vm_err}")
+
                 models.append({
-                    'id': str(model_info.get('id')),
+                    'id': str(model_id),
                     'name': model_info.get('model_name'),
                     'description': model_info.get('note') or '',
                     'category': 'perseids',
-                    'recommended': model_info.get('id') == 1
+                    'recommended': model_id == 1,
+                    'input_token_threshold': input_token_threshold
                 })
         
         if not models:

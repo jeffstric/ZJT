@@ -89,9 +89,12 @@
                                 <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
                             </svg>
                         </div>
-                        <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型">
-                            <option value="">加载中...</option>
-                        </select>
+                        <div class="model-select-wrapper">
+                            <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型">
+                                <option value="">加载中...</option>
+                            </select>
+                            <div class="model-select-display" id="model-selector-display">加载中...</div>
+                        </div>
                     </div>
                     <div class="model-divider"></div>
                     <div class="model-selector-item">
@@ -301,10 +304,6 @@
                             <span id="status-text">就绪</span>
                         </span>
                         <span class="status-item">会话: <span id="session-id">未创建</span></span>
-                        <span class="token-stats">
-                            本次: <span id="current-tokens">0</span> tokens | 
-                            累计: <span id="total-tokens">0</span> tokens
-                        </span>
                     </div>
                 </div>
             </div>
@@ -1436,8 +1435,6 @@
                         </div>
                     `;
                     
-                    document.getElementById('current-tokens').textContent = '0';
-                    document.getElementById('total-tokens').textContent = '0';
                     
                     await createSession();
                     initCarousel();
@@ -2171,6 +2168,12 @@
                     return 0;
                 });
 
+                // 计算 input_token_threshold 倍数（threshold 越小越贵，以最大的 threshold 为基准 x1）
+                const validThresholds = sortedModels
+                    .map(m => m.input_token_threshold)
+                    .filter(v => v && v > 0);
+                const maxThreshold = validThresholds.length > 0 ? Math.max(...validThresholds) : null;
+
                 // 记录排序后的第一个作为默认选中
                 let firstEnabledModel = null;
 
@@ -2180,9 +2183,17 @@
                     const modelName = model.model_name || model.name || '';
                     const modelDesc = model.note || model.description || '';
                     option.value = modelName;
+                    option.dataset.conciseName = modelName;
+
+                    let displayName = modelName;
+                    if (maxThreshold && model.input_token_threshold && model.input_token_threshold > 0) {
+                        const multiplier = (maxThreshold / model.input_token_threshold).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+                        displayName = `${modelName} ${multiplier}算力倍率`;
+                    }
+
                     option.textContent = modelDesc
-                        ? `${modelName} - ${modelDesc}`
-                        : modelName;
+                        ? `${displayName} - ${modelDesc}`
+                        : displayName;
                     const modelId = model.id ?? model.model_id ?? '';
                     if (modelId) {
                         option.dataset.modelId = modelId;
@@ -2199,7 +2210,8 @@
                 if (firstEnabledModel) {
                     firstEnabledModel.selected = true;
                 }
-                
+
+                updateModelSelectorDisplay();
                 updateModelTooltip();
 
                 // 检查 Qwen API Key 配置并过滤模型
@@ -2309,6 +2321,25 @@
             updateModelTooltip();
         }
 
+        function updateModelSelectorDisplay() {
+            const selector = document.getElementById('model-selector');
+            const display = document.getElementById('model-selector-display');
+            if (!selector || !display) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) return;
+
+            const conciseName = selectedOption.dataset.conciseName || selectedOption.value || selectedOption.textContent;
+            display.textContent = conciseName;
+
+            // 同步颜色：如果 selector 被设置了特殊颜色，遮罩层也要同步
+            if (selector.style.color) {
+                display.style.color = selector.style.color;
+            } else {
+                display.style.color = '';
+            }
+        }
+
         function updateModelTooltip() {
             const selector = document.getElementById('model-selector');
             if (!selector) return;
@@ -2328,6 +2359,7 @@
 
             // 更新 LLM 模型图标的 hover 提示
             updateLlmModelIcon();
+            updateModelSelectorDisplay();
         }
 
         function updateLlmModelIcon() {
