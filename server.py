@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Header
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse, RedirectResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -15,6 +15,8 @@ import traceback
 import shutil
 import subprocess
 import tempfile
+import hashlib
+import re
 from datetime import datetime
 from typing import List, Optional, Any
 from urllib.parse import urlparse
@@ -190,6 +192,60 @@ def _ensure_world_access(world_id: int, user_id: int, action: str = Action.VIEW)
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(APP_DIR, "upload")
 CHECK_AUTH_TOKEN = True
+
+# 前端静态资源版本号 - 从 pyproject.toml 读取版本号并生成 hash
+# 上线时更新 pyproject.toml 中的 version 即可使浏览器缓存失效
+def _get_static_version() -> str:
+    """从 pyproject.toml 读取版本号并生成短 hash"""
+    pyproject_path = os.path.join(APP_DIR, "pyproject.toml")
+    try:
+        with open(pyproject_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # 使用正则提取 version = "x.y.z"
+        match = re.search(r'version\s*=\s*"([^"]+)"', content)
+        if match:
+            version = match.group(1)
+            # 生成 8 位 hash
+            hash_str = hashlib.md5(version.encode()).hexdigest()[:8]
+            return hash_str
+    except Exception as e:
+        logging.warning(f"无法读取 pyproject.toml 版本号: {e}")
+    return "00000000"
+
+STATIC_VERSION = _get_static_version()
+
+# 缓存已处理的 HTML 内容，避免每次请求都重新处理
+_PROCESSED_HTML_CACHE = {}
+
+
+def _get_processed_html(file_path: str) -> bytes:
+    """
+    获取处理后的 HTML 内容，带版本号的 js/css 引用。
+    结果会被缓存，服务器启动后只处理一次。
+    """
+    if file_path in _PROCESSED_HTML_CACHE:
+        return _PROCESSED_HTML_CACHE[file_path]
+
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    # 匹配 <script src="..."> 和 <link ... href="..."> 中引用的 .js 和 .css 文件
+    # 只匹配以 /js/ 或 /css/ 开头的本地引用
+    pattern = r'(<(?:script|link)[^>]*(?:src|href)=")(/(?:js|css)/[^"]+)(")'
+
+    def replace_with_version(match):
+        prefix = match.group(1)
+        path = match.group(2)
+        suffix = match.group(3)
+        # 如果已经有 v= 参数，先移除再添加新的
+        path = re.sub(r'\?v=[^"\']*', '', path)
+        return f'{prefix}{path}?v={STATIC_VERSION}{suffix}'
+
+    result = re.sub(pattern, replace_with_version, content)
+    _PROCESSED_HTML_CACHE[file_path] = result.encode('utf-8')
+    return _PROCESSED_HTML_CACHE[file_path]
+
+
 MP_VERIFY_FILENAME = "MP_verify_lXQewBFqjUipl3B8.txt"
 MP_VERIFY_ROUTE = "/MP_verify_lXQewBFqjUipl3B8.txt"
 
@@ -7978,28 +8034,32 @@ async def export_timeline_draft(
 async def serve_video_workflow_list():
     file_path = os.path.join(static_dir, "video_workflow_list.html")
     if os.path.isfile(file_path):
-        return FileResponse(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Video workflow list page not found")
 
 @app.get("/video-workflow")
 async def serve_video_workflow():
     file_path = os.path.join(static_dir, "video_workflow.html")
     if os.path.isfile(file_path):
-        return FileResponse(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Video workflow page not found")
 
 @app.get("/image-style-guide")
 async def serve_image_style_guide():
     file_path = os.path.join(static_dir, "image_style_guide.html")
     if os.path.isfile(file_path):
-        return FileResponse(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Image style guide page not found")
 
 @app.get("/script-writer")
 async def serve_script_writer():
     file_path = os.path.join(static_dir, "script_writer.html")
     if os.path.isfile(file_path):
-        return FileResponse(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Script writer page not found")
 
 @app.get(f"{MP_VERIFY_ROUTE}")
@@ -8083,28 +8143,31 @@ async def serve_spa(full_path: str):
     """
     Serve index.html for all routes to support Vue Router history mode.
     This allows refreshing on routes like /nanobanana-edit, /ai-video-gen, etc.
-    
+
     First tries to serve a static file if it exists, otherwise returns index.html.
     """
     # Skip API routes - let them be handled by their specific handlers
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API endpoint not found")
-    
+
     # Try to serve static file first
     file_path = os.path.join(static_dir, full_path)
     if os.path.isfile(file_path):
+        # 对于 js/css 文件，直接返回；对于其他文件也直接返回（不做处理）
         return FileResponse(file_path)
-    
+
     # 检查是否有对应的 .html 文件（支持 /admin -> admin.html）
     html_path = os.path.join(static_dir, f"{full_path}.html")
     if os.path.isfile(html_path):
-        return FileResponse(html_path)
+        content = _get_processed_html(html_path)
+        return Response(content=content, media_type="text/html")
 
     # Otherwise return index.html for SPA routing
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
-    
+        content = _get_processed_html(index_path)
+        return Response(content=content, media_type="text/html")
+
     raise HTTPException(status_code=404, detail="Frontend not found")
 
 
