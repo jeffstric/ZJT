@@ -1064,10 +1064,6 @@ body {
     }
 }
 
-.token-stats {
-    margin-left: auto;
-}
-
 /* World Sidebar - 覆盖层模式，独立于导览条 */
 .world-sidebar {
     position: fixed;

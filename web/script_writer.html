@@ -304,10 +304,6 @@
                             <span id="status-text">就绪</span>
                         </span>
                         <span class="status-item">会话: <span id="session-id">未创建</span></span>
-                        <span class="token-stats">
-                            本次: <span id="current-tokens">0</span> tokens | 
-                            累计: <span id="total-tokens">0</span> tokens
-                        </span>
                     </div>
                 </div>
             </div>
@@ -1439,8 +1435,6 @@
                         </div>
                     `;
                     
-                    document.getElementById('current-tokens').textContent = '0';
-                    document.getElementById('total-tokens').textContent = '0';
                     
                     await createSession();
                     initCarousel();
