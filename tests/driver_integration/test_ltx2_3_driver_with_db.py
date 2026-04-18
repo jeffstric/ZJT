@@ -16,7 +16,7 @@ sys.modules['requests'] = MagicMock()
 sys.modules['PIL'] = MagicMock()
 sys.modules['PIL.Image'] = MagicMock()
 
-from tests.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
+from tests.base.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
 from task.visual_drivers.ltx2_3_runninghub_v1_driver import Ltx2Dot3RunninghubV1Driver
 from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
 

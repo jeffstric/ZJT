@@ -454,3 +454,31 @@ class ChatSessionsModel:
         except Exception as e:
             logger.error(f"Failed to count active sessions: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `chat_sessions` (
+  `id` int NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+  `session_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'UUID session identifier',
+  `user_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'User ID',
+  `world_id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'World ID',
+  `auth_token` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Authentication token',
+  `model` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'gemini-3-flash-preview' COMMENT 'AI model name',
+  `model_id` int DEFAULT NULL COMMENT 'Model ID from vendor',
+  `text_to_image_model_id` int DEFAULT NULL COMMENT 'Text-to-image model task ID',
+  `conversation_history` longtext COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Serialized conversation history (JSON array)',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Session creation time',
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update time',
+  `expires_at` datetime DEFAULT NULL COMMENT 'Session expiration time (NULL = never expires)',
+  `total_input_tokens` int NOT NULL DEFAULT '0' COMMENT 'Total input tokens used',
+  `total_output_tokens` int NOT NULL DEFAULT '0' COMMENT 'Total output tokens used',
+  `total_cache_creation_tokens` int NOT NULL DEFAULT '0' COMMENT 'Total cache creation tokens',
+  `total_cache_read_tokens` int NOT NULL DEFAULT '0' COMMENT 'Total cache read tokens',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'Whether session is active (1=active, 0=inactive)',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_session_id` (`session_id`),
+  KEY `idx_user_world` (`user_id`,`world_id`),
+  KEY `idx_expires_at` (`expires_at`),
+  KEY `idx_updated_at` (`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Chat sessions table'
+"""

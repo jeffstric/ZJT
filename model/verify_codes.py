@@ -123,3 +123,19 @@ class VerifyCodesModel:
         except Exception as e:
             logger.error(f"Failed to delete expired verify codes: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `verify_codes` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `phone` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `code` varchar(6) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `expire_time` timestamp NOT NULL,
+  `used` tinyint(1) DEFAULT '0',
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_phone_type` (`phone`,`type`) USING BTREE,
+  KEY `idx_expire_time` (`expire_time`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+"""

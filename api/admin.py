@@ -10,6 +10,7 @@ import httpx
 from model.users import UsersModel, User
 from model.user_tokens import UserTokensModel
 from model.computing_power import ComputingPowerModel
+from model.computing_power_log import ComputingPowerLogModel
 from model.video_workflow import VideoWorkflowModel
 from model.system_config import SystemConfigModel
 from model.system_config_history import SystemConfigHistoryModel
@@ -74,6 +75,40 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
         }
     except Exception as e:
         logger.error(f"Failed to get admin dashboard data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dashboard/monthly-active-users")
+async def admin_monthly_active_users(
+    year: int = Query(None),
+    month: int = Query(None, ge=1, le=12),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    统计月活跃用户数（间隔超过3天且消耗算力的用户）
+    活跃用户定义：在指定月份内有至少2条算力消耗记录，且最早和最晚记录间隔>=3天
+    """
+    admin = await require_admin(auth_token)
+
+    # 默认使用当前年月
+    if year is None or month is None:
+        from datetime import datetime
+        now = datetime.now()
+        year = year or now.year
+        month = month or now.month
+
+    try:
+        count = ComputingPowerLogModel.count_monthly_active_users(year, month)
+        return {
+            "code": 0,
+            "data": {
+                "year": year,
+                "month": month,
+                "active_user_count": count
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get monthly active users: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

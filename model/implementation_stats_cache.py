@@ -121,3 +121,21 @@ class ImplementationStatsCacheModel:
         except Exception as e:
             logger.error(f"Failed to clear stats cache: {e}")
             return 0
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `implementation_stats_cache` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `type` int NOT NULL COMMENT '任务类型ID',
+  `impl_id` int NOT NULL COMMENT 'implementation ID',
+  `days` int NOT NULL COMMENT '统计天数',
+  `total_count` int NOT NULL DEFAULT '0',
+  `success_count` int NOT NULL DEFAULT '0',
+  `fail_count` int NOT NULL DEFAULT '0',
+  `success_rate` decimal(5,2) NOT NULL DEFAULT '0.00',
+  `avg_duration_ms` int NOT NULL DEFAULT '0',
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_type_impl_days` (`type`, `impl_id`, `days`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='实现统计缓存表';
+"""

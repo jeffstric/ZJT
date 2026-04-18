@@ -501,3 +501,28 @@ class LocationModel:
         except Exception as e:
             logger.error(f"Failed to get location tree for world {world_id}: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `location` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `world_id` int unsigned NOT NULL COMMENT '所属世界ID',
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '地点名称',
+  `parent_id` int unsigned DEFAULT NULL COMMENT '父级地点ID',
+  `reference_image` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '参考图片',
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '地点描述',
+  `user_id` int unsigned NOT NULL COMMENT '创建者用户ID',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  `reference_images` text COLLATE utf8mb4_unicode_ci COMMENT 'Multiple reference images JSON array',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_world_name` (`world_id`,`name`),
+  KEY `idx_world_id` (`world_id`),
+  KEY `idx_parent_id` (`parent_id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_name` (`name`),
+  KEY `idx_create_time` (`create_time`),
+  CONSTRAINT `fk_location_parent` FOREIGN KEY (`parent_id`) REFERENCES `location` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_location_world` FOREIGN KEY (`world_id`) REFERENCES `world` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='场景地点表';
+"""

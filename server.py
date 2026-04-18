@@ -508,6 +508,19 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     # Return URL that can be accessed via static file serving
     return f"{SERVER_HOST}/upload/temp/{date_str}/{filename}"
 
+def _get_request_host(request: Request) -> str:
+    """
+    获取请求的基础主机地址，正确处理反向代理场景。
+    当应用部署在 Nginx 等反向代理后面时，request.base_url 会是 http://，
+    但实际客户端访问的是 https://，通过 X-Forwarded-Proto 头来修正协议。
+    """
+    base = str(request.base_url).rstrip("/")
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").strip()
+    if forwarded_proto == "https" and base.startswith("http://"):
+        base = "https://" + base[7:]
+    return base
+
+
 def _save_user_asset(
     upload_file: UploadFile,
     user_id: int,
@@ -978,7 +991,7 @@ async def image_edit(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图片编辑任务")
         
         image_edit_type = task_id
-        computing_power = task_config.computing_power if task_config else 0
+        computing_power = task_config.get_computing_power() if task_config else 0
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
@@ -1114,8 +1127,8 @@ async def text_to_image(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生图任务")
         
         text_to_image_type = task_id
-        computing_power = task_config.computing_power if task_config else 0
-        
+        computing_power = task_config.get_computing_power() if task_config else 0
+
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             # Check computing power
@@ -1269,7 +1282,8 @@ async def runninghub_status(
                 #发起请求，增加算力
                 type = task_record.type
                 task_config = TaskTypeRegistry.get(type)
-                computing_power = task_config.computing_power if task_config else 0
+                # 使用任务记录中的时长来计算正确的算力（支持按时长计费的任务）
+                computing_power = task_config.get_computing_power(duration=task_record.duration) if task_config else 0
                 success, message, response_data = await async_make_perseids_request(
                     endpoint='user/calculate_computing_power',
                     method='POST',
@@ -1423,7 +1437,8 @@ async def ai_app_run(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生视频任务")
         
         text_to_video_type = task_id
-        computing_power = task_config.computing_power if task_config else 0
+        # 根据时长获取算力（优先任务配置，回退到实现方配置）
+        computing_power = task_config.get_computing_power(duration=duration_seconds)
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
@@ -2515,7 +2530,7 @@ async def get_ai_tools_history(
                             updated_count += 1
                             # 累计需要补回的算力
                             task_config = TaskTypeRegistry.get(task.type)
-                            computing_power = task_config.computing_power if task_config else 0
+                            computing_power = task_config.get_computing_power() if task_config else 0
                             total_refund_power += computing_power
                             logger.info(f"Upscale task {task.project_id} failed, will refund {computing_power} computing power")
                     
@@ -2846,7 +2861,7 @@ async def image_upscale(
         # Generate transaction ID
         transaction_id = str(uuid.uuid4())
         task_config = TaskTypeRegistry.get(TaskTypeId.IMAGE_ENHANCE)
-        computing_power = task_config.computing_power if task_config else 0
+        computing_power = task_config.get_computing_power()
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             # Check if computing power is sufficient
@@ -2978,7 +2993,7 @@ async def video_enhance(
         # Generate transaction ID
         transaction_id = str(uuid.uuid4())
         task_config = TaskTypeRegistry.get(TaskTypeId.VIDEO_ENHANCE)
-        computing_power = task_config.computing_power if task_config else 0
+        computing_power = task_config.get_computing_power()
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             # Check if computing power is sufficient
@@ -3401,7 +3416,7 @@ async def api_create_character(
         
         # 计算所需算力
         task_config = TaskTypeRegistry.get(TaskTypeId.CHARACTER_CARD)  # 创建角色卡
-        computing_power = task_config.computing_power if task_config else 0
+        computing_power = task_config.get_computing_power()
         
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -3542,7 +3557,7 @@ async def digital_human_generate(
         # Task type for digital human
         task_type = TaskTypeId.DIGITAL_HUMAN
         task_config = TaskTypeRegistry.get(task_type)
-        computing_power = task_config.computing_power if task_config else 0
+        computing_power = task_config.get_computing_power()
         
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -3835,7 +3850,8 @@ async def api_character_status(
                         if task_record.user_id != user_id_from_token:
                             raise HTTPException(status_code=400, detail="用户ID不匹配")
                         task_config = TaskTypeRegistry.get(task_record.type)
-                        computing_power = task_config.computing_power if task_config else 0
+                        # 使用任务记录中的时长来计算正确的算力扣减（支持按时长计费的任务）
+                        computing_power = task_config.get_computing_power(duration=task_record.duration) if task_config else 0
                         if computing_power > 0:
                             success, message, _ = await async_make_perseids_request(
                                 endpoint='user/calculate_computing_power',
@@ -4642,7 +4658,7 @@ async def upload_workflow_asset(
             )
 
         # 保存文件并获取URL（用户隔离目录）
-        request_host = str(request.base_url).rstrip("/")
+        request_host = _get_request_host(request)
         file_url = await asyncio.to_thread(_save_user_asset, file, user_id, "workflow", request_host)
 
         return JSONResponse({
@@ -4691,7 +4707,7 @@ async def extract_video_frame(
                 content={"code": -1, "message": "必须提供视频文件或视频URL"}
             )
 
-        request_host = str(request.base_url).rstrip("/")
+        request_host = _get_request_host(request)
         temp_dir = os.path.join(UPLOAD_DIR, "temp", datetime.now().strftime("%Y%m%d"))
         os.makedirs(temp_dir, exist_ok=True)
 
@@ -5193,6 +5209,8 @@ async def parse_script(
         split_multi_dialogue = body.get('split_multi_dialogue', False)
         narration_as_dialogue = body.get('narration_as_dialogue', False)
         language = body.get('language', '')
+        model = body.get('model', 'gemini-3-flash-preview')
+        model_id = body.get('model_id', '')
 
         if not script_content:
             return JSONResponse(
@@ -5238,7 +5256,7 @@ async def parse_script(
             script_content=script_content,
             max_group_duration=max_group_duration,
             world_id=world_id,
-            model='gemini-3-flash-preview',
+            model=model,
             temperature=0.5,
             force_medium_shot=force_medium_shot,
             no_bg_music=no_bg_music,
@@ -5247,7 +5265,7 @@ async def parse_script(
             language=language,
             auth_token=auth_token,
             vendor_id=1,
-            model_id=1
+            model_id=int(model_id) if model_id else 1
         )
         
         if not parsed_data:

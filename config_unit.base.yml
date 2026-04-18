@@ -4,6 +4,16 @@
 # config_unit.yml 中的配置会覆盖此文件中的值
 # =============================================================================
 
+# Database configuration (unit test)
+# 实际值由 DB_* 环境变量覆盖，此处仅提供占位避免 model.database 加载失败
+database:
+  host: "localhost"
+  port: 3306
+  user: "unit_test"
+  password: ""
+  database: "voice_replace_unittest"
+  charset: "utf8mb4"
+
 # Server configuration
 server:
   host: "http://localhost:9003"
@@ -83,7 +93,7 @@ llm:
     model: ""
 
 vidu:
-  token: ""
+  token: "test"
 
 yunwu:
   api_key: ""

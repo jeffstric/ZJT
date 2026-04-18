@@ -180,3 +180,17 @@ class ComputingPowerModel:
             # 不影响主流程，继续执行
         
         return (old_value, new_value)
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `computing_power` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `computing_power` int NOT NULL DEFAULT '0',
+  `expiration_time` datetime DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE KEY `user_id` (`user_id`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+"""

@@ -4980,6 +4980,12 @@
               </select>
             </div>
             <div class="field field-always-visible">
+              <div class="label">拆分模型</div>
+              <select class="script-split-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                <option value="">加载中...</option>
+              </select>
+            </div>
+            <div class="field field-always-visible">
               <div class="label">视频生成模型</div>
               <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
             </div>
@@ -5072,6 +5078,7 @@
       const batchGenerateBtn = el.querySelector('.script-batch-generate-btn');
       const batchStatusEl = el.querySelector('.script-batch-status');
       const uploadBtn = el.querySelector('.script-upload-btn');
+      const splitModelSelect = el.querySelector('.script-split-model');
 
       // 上传按钮点击时触发隐藏的文件输入框
       if(uploadBtn && fileEl) {
@@ -5134,7 +5141,100 @@
           console.log(`[剧本节点] 视频模型切换为: ${videoModelSelect.value}`);
         });
       }
-      
+
+      // 拆分模型：加载可用模型列表
+      async function populateScriptSplitModelOptions() {
+        if(!splitModelSelect) return;
+
+        // 如果已经加载过（全局缓存），直接使用
+        if(window._scriptSplitModels && window._scriptSplitModels.length > 0) {
+          renderSplitModelOptions(window._scriptSplitModels);
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/models', {
+            headers: {
+              'Authorization': getAuthToken()
+            }
+          });
+          const data = await response.json();
+
+          if(!data.success || !data.models || data.models.length === 0) {
+            // 加载失败时使用默认模型
+            if(splitModelSelect) {
+              splitModelSelect.innerHTML = '<option value="gemini-3-flash-preview">Gemini 3 Flash (默认)</option>';
+            }
+            return;
+          }
+
+          // 按指定顺序排序：qwen3.5 > qwen3.6 > flash-3.0 > flash-3.5 > gemini-3-flash > gemini-3.1-flash-lite > 其他
+          const sortOrder = ['qwen3.5', 'qwen3.6', 'flash-3.0', 'flash-3.5', 'flash', 'gemini-3-flash', 'gemini-3.1-flash-lite'];
+          const sortedModels = [...data.models].sort((a, b) => {
+            const nameA = (a.model_name || a.name || '').toLowerCase();
+            const nameB = (b.model_name || b.name || '').toLowerCase();
+            const indexA = sortOrder.findIndex(k => nameA.startsWith(k.toLowerCase()));
+            const indexB = sortOrder.findIndex(k => nameB.startsWith(k.toLowerCase()));
+            if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+            if (indexA !== -1) return -1;
+            if (indexB !== -1) return 1;
+            return 0;
+          });
+
+          // 缓存到全局变量
+          window._scriptSplitModels = sortedModels;
+          renderSplitModelOptions(sortedModels);
+
+        } catch (error) {
+          console.error('加载拆分模型列表失败:', error);
+          if(splitModelSelect) {
+            splitModelSelect.innerHTML = '<option value="gemini-3-flash-preview">Gemini 3 Flash (默认)</option>';
+          }
+        }
+      }
+
+      function renderSplitModelOptions(models) {
+        if(!splitModelSelect) return;
+        splitModelSelect.innerHTML = '';
+
+        let firstEnabled = null;
+        models.forEach(model => {
+          const option = document.createElement('option');
+          const modelName = model.model_name || model.name || '';
+          const modelDesc = model.note || model.description || '';
+          option.value = modelName;
+          option.textContent = modelDesc ? `${modelName} - ${modelDesc}` : modelName;
+          const modelId = model.id ?? model.model_id ?? '';
+          if(modelId) {
+            option.dataset.modelId = modelId;
+          }
+          if(!option.disabled && !firstEnabled) {
+            firstEnabled = option;
+          }
+          splitModelSelect.appendChild(option);
+        });
+
+        // 默认选中第一个
+        if(firstEnabled) {
+          firstEnabled.selected = true;
+          node.data.splitModel = firstEnabled.value;
+          node.data.splitModelId = firstEnabled.dataset.modelId || '';
+        }
+      }
+
+      // 初始化拆分模型
+      populateScriptSplitModelOptions();
+
+      // 拆分模型切换事件
+      if(splitModelSelect) {
+        splitModelSelect.addEventListener('change', () => {
+          const selected = splitModelSelect.options[splitModelSelect.selectedIndex];
+          node.data.splitModel = splitModelSelect.value;
+          node.data.splitModelId = selected.dataset.modelId || '';
+          console.log(`[剧本节点] 拆分模型切换为: ${splitModelSelect.value}, modelId: ${node.data.splitModelId}`);
+        });
+      }
+
       // 动态填充宫格生图模型选项
       if(gridModelSelect) {
         gridModelSelect.innerHTML = '<option value="auto" selected>智能模式 (根据分镜数自动选择)</option>';
@@ -5397,7 +5497,9 @@
               no_bg_music: node.data.noBgMusic || false,
               split_multi_dialogue: node.data.splitMultiDialogue || false,
               narration_as_dialogue: node.data.narrationAsDialogue || false,
-              language: node.data.language || ''
+              language: node.data.language || '',
+              model: node.data.splitModel || 'gemini-3-flash-preview',
+              model_id: node.data.splitModelId || ''
             })
           });
 
@@ -5882,7 +5984,9 @@
               no_bg_music: node.data.noBgMusic || false,
               split_multi_dialogue: node.data.splitMultiDialogue || false,
               narration_as_dialogue: node.data.narrationAsDialogue || false,
-              language: node.data.language || ''
+              language: node.data.language || '',
+              model: node.data.splitModel || 'gemini-3-flash-preview',
+              model_id: node.data.splitModelId || ''
             })
           });
 

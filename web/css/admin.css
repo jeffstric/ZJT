@@ -178,6 +178,10 @@ body {
     color: var(--admin-success);
 }
 
+.stat-card-actions {
+    margin-top: 8px;
+}
+
 /* 表格容器 */
 .table-container {
     background: var(--admin-card-bg);

@@ -341,15 +341,15 @@ class ScriptModel:
     def delete_by_world(world_id: int) -> int:
         """
         Delete all script records for a world
-        
+
         Args:
             world_id: World ID
-        
+
         Returns:
             Number of affected rows
         """
         sql = "DELETE FROM script WHERE world_id = %s"
-        
+
         try:
             affected_rows = execute_update(sql, (world_id,))
             logger.info(f"Deleted script records for world {world_id}, affected rows: {affected_rows}")
@@ -357,3 +357,23 @@ class ScriptModel:
         except Exception as e:
             logger.error(f"Failed to delete script records for world {world_id}: {e}")
             raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `script` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `world_id` int unsigned NOT NULL COMMENT '所属世界ID',
+  `user_id` int unsigned NOT NULL COMMENT '创建者用户ID',
+  `title` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '剧本标题',
+  `episode_number` int DEFAULT NULL COMMENT '计划第几集',
+  `content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '剧本内容',
+  `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_world_id` (`world_id`),
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_episode_number` (`episode_number`),
+  KEY `idx_create_time` (`create_time`),
+  CONSTRAINT `fk_script_world` FOREIGN KEY (`world_id`) REFERENCES `world` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='剧本表';
+"""

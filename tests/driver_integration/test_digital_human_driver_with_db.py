@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 
 sys.modules['utils.sentry_util'] = MagicMock()
 
-from tests.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
+from tests.base.base_video_driver_test import BaseVideoDriverTest, mock_get_dynamic_config_value
 from task.visual_drivers.digital_human_runninghub_v1_driver import DigitalHumanRunninghubV1Driver
 from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
 
@@ -24,7 +24,25 @@ class TestDigitalHumanRunninghubWithDB(BaseVideoDriverTest):
         # 使用统一的 mock 配置函数，从 config_unit.yml 获取配置
         with patch('task.visual_drivers.digital_human_runninghub_v1_driver.get_dynamic_config_value', side_effect=mock_get_dynamic_config_value):
             self.driver = DigitalHumanRunninghubV1Driver()
+        
+        # Mock RunningHubFileStorage.upload_file 方法，对公网URL直接返回原URL
+        async def mock_upload_file(key, file_path, content_type=None):
+            from utils.file_storage.base import UploadResult
+            # 简单判断：如果是 http/https 开头的URL，直接返回
+            if file_path.startswith('http://') or file_path.startswith('https://'):
+                return UploadResult(success=True, key=file_path, url=file_path)
+            # 其他情况返回 mock 的 storage_key
+            return UploadResult(success=True, key='storage_key_123', url='https://cdn.example.com/storage_key_123')
+        
+        self.upload_file_patcher = patch.object(
+            self.driver._storage, 'upload_file', side_effect=mock_upload_file
+        )
+        self.upload_file_patcher.start()
     
+    def tearDown(self):
+        """测试后清理"""
+        self.upload_file_patcher.stop()
+        super().tearDown()
     
     def test_driver_initialization(self):
         self.assertIsNotNone(self.driver)

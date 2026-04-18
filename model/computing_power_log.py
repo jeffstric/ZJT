@@ -182,3 +182,64 @@ class ComputingPowerLogModel:
         except Exception as e:
             logger.error(f"Failed to check transaction exists: {e}")
             raise
+
+
+    @staticmethod
+    def count_monthly_active_users(year: int, month: int) -> int:
+        """
+        统计月活跃用户数（间隔超过3天且消耗算力的用户）
+        活跃用户定义：在指定月份内有至少2条算力消耗记录，且最早和最晚记录间隔>=3天
+        """
+        # 计算月份范围
+        if month == 12:
+            start_date = f"{year}-12-01"
+            end_date = f"{year + 1}-01-01"
+        else:
+            start_date = f"{year}-{month:02d}-01"
+            next_month = month + 1
+            end_date = f"{year}-{next_month:02d}-01"
+
+        sql = """
+            WITH user_activity_range AS (
+                SELECT
+                    user_id,
+                    MIN(created_at) AS first_log,
+                    MAX(created_at) AS last_log,
+                    DATEDIFF(MAX(created_at), MIN(created_at)) AS active_days_span
+                FROM computing_power_log
+                WHERE created_at >= %s
+                  AND created_at < %s
+                GROUP BY user_id
+                HAVING COUNT(*) >= 2
+            )
+            SELECT COUNT(*) as active_user_count
+            FROM user_activity_range
+            WHERE active_days_span >= 3
+        """
+        try:
+            result = execute_query(sql, (start_date, end_date), fetch_one=True)
+            return result['active_user_count'] if result else 0
+        except Exception as e:
+            logger.error(f"Failed to count monthly active users: {e}")
+            raise
+
+
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `computing_power_log` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `computing_power` int DEFAULT NULL,
+  `behavior` enum('increase','deduct') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+  `user_id` int NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `transaction_id` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `from` int DEFAULT NULL,
+  `to` int DEFAULT NULL,
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_user_created` (`user_id`,`created_at`) USING BTREE,
+  KEY `idx_behavior_created` (`behavior`,`created_at`) USING BTREE,
+  KEY `idx_user_behavior_note` (`user_id`,`behavior`,`note`(100)) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+"""
+
