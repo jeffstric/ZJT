@@ -1763,7 +1763,8 @@ body {
 /* Toast Messages */
 .error-toast,
 .success-toast,
-.info-toast {
+.info-toast,
+.warning-toast {
     padding: 14px 18px;
     margin: 12px 0;
     border-radius: var(--radius-md);
@@ -1787,6 +1788,12 @@ body {
     background: #bee3f8;
     color: #2c5282;
     border-left: 4px solid #3182ce;
+}
+
+.warning-toast {
+    background: #fff3cd;
+    color: #856404;
+    border-left: 4px solid #ffc107;
 }
 
 /* Markdown Styles */

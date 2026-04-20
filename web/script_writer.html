@@ -2082,6 +2082,16 @@
             setTimeout(() => infoDiv.remove(), 3000);
         }
 
+        function showWarning(message) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const warningDiv = document.createElement('div');
+            warningDiv.className = 'warning-toast';
+            warningDiv.textContent = message;
+            messagesDiv.appendChild(warningDiv);
+            scrollToBottom();
+            setTimeout(() => warningDiv.remove(), 5000);
+        }
+
         async function loadComputingPower() {
             try {
                 const response = await fetch('/api/user/computing_power', {
@@ -2479,11 +2489,19 @@
             updateModelTooltip();
             updateLlmModelIcon();
 
+            // Ollama 模型检测和警告
+            const vendorId = parseInt(selectedOption?.dataset?.vendorId) || 1;
+            const isOllama = vendorId === 3 || (typeof model === 'string' && model.startsWith('ollama:'));
+
+            if (isOllama) {
+                showWarning('⚠️ 本地模型提示：Ollama 模型为本地运行，存在不稳定情况。推荐使用 qwen3.5-plus 模型以获得更好的体验。');
+            }
+
             if (!AUTH_TOKEN) {
                 showError('缺少认证信息，请重新登录');
                 return;
             }
-            
+
 
             try {
                 const response = await fetch(`/api/session/${sessionId}/model`, {
