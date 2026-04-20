@@ -2174,7 +2174,7 @@
                 });
 
                 // 计算 input_token_threshold 倍数（threshold 越小越贵，以最大的 threshold 为基准 x1）
-                const validThresholds = sortedModels
+                const validThresholds = data.models
                     .map(m => m.input_token_threshold)
                     .filter(v => v && v > 0);
                 const maxThreshold = validThresholds.length > 0 ? Math.max(...validThresholds) : null;

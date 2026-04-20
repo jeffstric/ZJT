@@ -230,6 +230,10 @@ body {
     color: var(--text-primary);
 }
 
+.model-select optgroup {
+    color: var(--text-primary);
+}
+
 /* Model select overlay for collapsed/expanded dual text */
 .model-select-wrapper {
     position: relative;
