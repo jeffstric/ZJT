@@ -40,33 +40,37 @@ def upgrade() -> None:
     """))
     logger.info("[Migration] Inserted Ollama model (id=1000, qwen3.6:35b-a3b)")
 
-    # 3. 插入 vendor_model 表 (vendor_id=3, model_id=1000)
+    # 3. 插入 vendor_model 表 (动态查询 vendor_id 和 model_id，避免硬编码)
     conn.execute(text("""
         INSERT INTO vendor_model (vendor_id, model_id, input_token_threshold, out_token_threshold, cache_read_threshold)
-        VALUES (3, 1000, 100000, 10000, 100000)
+        SELECT v.id, m.id, 100000, 10000, 100000
+        FROM vendor v, model m
+        WHERE v.vendor_name = 'ollama' AND m.model_name = 'qwen3.6:35b-a3b'
         ON DUPLICATE KEY UPDATE input_token_threshold = VALUES(input_token_threshold)
     """))
-    logger.info("[Migration] Inserted vendor_model relation (vendor_id=3, model_id=1000)")
+    logger.info("[Migration] Inserted vendor_model relation for Ollama (dynamic query)")
 
 
 def downgrade() -> None:
     """Remove Ollama vendor, model and vendor_model data"""
     conn = op.get_bind()
 
-    # 1. 删除 vendor_model 关联
+    # 1. 删除 vendor_model 关联 (动态查询，避免硬编码)
     conn.execute(text("""
-        DELETE FROM vendor_model WHERE vendor_id = 3 AND model_id = 1000
+        DELETE FROM vendor_model
+        WHERE vendor_id IN (SELECT id FROM vendor WHERE vendor_name = 'ollama')
+          AND model_id IN (SELECT id FROM model WHERE model_name = 'qwen3.6:35b-a3b')
     """))
-    logger.info("[Migration] Removed vendor_model relation (vendor_id=3, model_id=1000)")
+    logger.info("[Migration] Removed vendor_model relation for Ollama (dynamic query)")
 
     # 2. 删除 model
     conn.execute(text("""
-        DELETE FROM model WHERE id = 1000
+        DELETE FROM model WHERE model_name = 'qwen3.6:35b-a3b'
     """))
-    logger.info("[Migration] Removed Ollama model (id=1000)")
+    logger.info("[Migration] Removed Ollama model")
 
     # 3. 删除 vendor
     conn.execute(text("""
-        DELETE FROM vendor WHERE id = 3
+        DELETE FROM vendor WHERE vendor_name = 'ollama'
     """))
-    logger.info("[Migration] Removed Ollama vendor (id=3)")
+    logger.info("[Migration] Removed Ollama vendor")
