@@ -1221,6 +1221,20 @@ async def get_available_models(
                     local_model = ModelModel.get_by_id(model_id)
                     if local_model and local_model.supports_tools:
                         added_model_ids.add(model_id)
+
+                        # 查询 vendor_model 表获取费用倍率
+                        input_token_threshold = None
+                        try:
+                            vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
+                                vendor_id=2,
+                                model_id=model_id,
+                                raw_input_token=0
+                            )
+                            if vendor_model and vendor_model.input_token_threshold:
+                                input_token_threshold = vendor_model.input_token_threshold
+                        except Exception as vm_err:
+                            logger.warning(f"获取 Qwen 模型 {model_id} 的费用配置失败: {vm_err}")
+
                         models.append({
                             'id': str(model_id),
                             'model_id': model_id,
@@ -1229,6 +1243,7 @@ async def get_available_models(
                             'vendor_id': 2,
                             'vendor_name': vendor_name,
                             'recommended': False,
+                            'input_token_threshold': input_token_threshold,
                             'context_window': local_model.context_window
                         })
                 logger.info(f"添加了 {len([m for m in models if m.get('vendor_id') == 2])} 个阿里云 Qwen 模型")
@@ -1248,6 +1263,20 @@ async def get_available_models(
                     local_model = ModelModel.get_by_id(model_id)
                     if local_model and local_model.supports_tools:
                         added_model_ids.add(model_id)
+
+                        # 查询 vendor_model 表获取费用倍率
+                        input_token_threshold = None
+                        try:
+                            vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
+                                vendor_id=3,
+                                model_id=model_id,
+                                raw_input_token=0
+                            )
+                            if vendor_model and vendor_model.input_token_threshold:
+                                input_token_threshold = vendor_model.input_token_threshold
+                        except Exception as vm_err:
+                            logger.warning(f"获取 Ollama 模型 {model_id} 的费用配置失败: {vm_err}")
+
                         models.append({
                             'id': f"ollama:{local_model.model_name}",
                             'model_id': model_id,
@@ -1256,6 +1285,7 @@ async def get_available_models(
                             'vendor_id': 3,
                             'vendor_name': vendor_name,
                             'recommended': False,
+                            'input_token_threshold': input_token_threshold,
                             'context_window': local_model.context_window
                         })
                 logger.info(f"添加了 {len(ollama_model_ids)} 个 Ollama 模型")
