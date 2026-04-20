@@ -27,7 +27,9 @@ class ExpertAgent(BaseAgent):
         auth_token: str,
         tool_executor: Any,
         vendor_id: Optional[int] = None,
-        model_id: Optional[int] = None
+        model_id: Optional[int] = None,
+        enable_thinking: bool = False,
+        thinking_effort: str = "medium"
     ):
         # 使用第一个技能名称作为主要标识
         primary_skill = skill_names[0] if skill_names else "unknown"
@@ -55,6 +57,8 @@ class ExpertAgent(BaseAgent):
         self.tool_executor = tool_executor
         self.vendor_id = vendor_id
         self.model_id = model_id
+        self.enable_thinking = enable_thinking
+        self.thinking_effort = thinking_effort
         
         self.history_manager = ExpertHistoryManager(
             file_manager=file_manager,
@@ -178,7 +182,9 @@ class ExpertAgent(BaseAgent):
                     max_tokens=max_output_tokens,
                     auth_token=self.auth_token,
                     vendor_id=self.vendor_id,
-                    model_id=self.model_id
+                    model_id=self.model_id,
+                    enable_thinking=self.enable_thinking,
+                    thinking_effort=self.thinking_effort
                 )
                 
                 message = response.choices[0].message

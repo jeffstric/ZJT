@@ -1381,6 +1381,12 @@ body {
     margin: 0;
 }
 
+.sidebar-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
 .refresh-icon-btn {
     width: 32px;
     height: 32px;
@@ -1398,6 +1404,9 @@ body {
 .refresh-icon-btn:hover {
     background: var(--bg-light);
     color: var(--primary-color);
+}
+
+.refresh-icon-btn:hover svg {
     transform: rotate(180deg);
 }
 
@@ -1405,6 +1414,35 @@ body {
     width: 16px;
     height: 16px;
     transition: transform 0.3s ease;
+}
+
+.delete-icon-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.delete-icon-btn:hover {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+}
+
+.delete-icon-btn svg {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.2s ease;
+}
+
+.delete-icon-btn:hover svg {
+    transform: scale(1.1);
 }
 
 .file-tabs {
@@ -1861,6 +1899,10 @@ body {
     padding: 16px;
     margin: 12px 0;
     overflow-x: auto;
+    max-width: 100%;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
 .message-content pre code {

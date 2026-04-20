@@ -439,6 +439,8 @@ class LLMVendor:
     JIEKOU = 'jiekou'      # 接口供应商（Gemini 模型）
     ALIYUN = 'aliyun'      # 阿里云供应商（Qwen 模型）
     OLLAMA = 'ollama'      # 本地运行供应商（Ollama 模型）
+    VOLCENGINE = 'volcengine'  # 火山引擎供应商（Doubao 模型）
+    CLAUDE = 'claude'      # Claude 供应商（Anthropic 模型）
 
 
 class LLMModel:
@@ -454,3 +456,21 @@ class LLMModel:
 
     # Ollama 模型
     OLLAMA_QWEN_3_6_35B = 'qwen3.6:35b-a3b'
+
+    # Doubao 模型
+    DOUBAO_SEED_2_0_PRO = 'doubao-seed-2-0-pro'
+    DOUBAO_SEED_2_0_LITE = 'doubao-seed-2-0-lite'
+
+    # Claude 模型
+    CLAUDE_HAIKU_4_5 = 'claude-haiku-4-5'
+
+
+# 模型前缀 -> 供应商映射（用于 LLMClientFactory 路由）
+MODEL_PREFIX_VENDOR_MAP = {
+    'gemini': LLMVendor.JIEKOU,
+    'qwen': LLMVendor.ALIYUN,
+    'gpt': LLMVendor.ALIYUN,
+    'claude': LLMVendor.CLAUDE,
+    'ollama': LLMVendor.OLLAMA,
+    'doubao': LLMVendor.VOLCENGINE,
+}

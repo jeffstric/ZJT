@@ -196,17 +196,17 @@ class TestLLMClientFactory(unittest.TestCase):
         mock_get_ollama.assert_called_once()
         self.assertEqual(client, mock_client)
 
-    @patch('llm.llm_client_factory.get_openai_client')
-    def test_get_client_for_qwen_model(self, mock_get_openai):
-        """测试获取 Qwen 模型使用 OpenAI 客户端"""
+    @patch('llm.llm_client_factory.get_aliyun_openai_client')
+    def test_get_client_for_qwen_model(self, mock_get_aliyun):
+        """测试获取 Qwen 模型使用阿里云 OpenAI 客户端"""
         mock_client = MagicMock()
-        mock_get_openai.return_value = mock_client
+        mock_get_aliyun.return_value = mock_client
 
         from llm.llm_client_factory import LLMClientFactory
 
         client = LLMClientFactory.get_client("qwen3.5-plus")
 
-        mock_get_openai.assert_called_once()
+        mock_get_aliyun.assert_called_once()
         self.assertEqual(client, mock_client)
 
 

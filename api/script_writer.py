@@ -670,6 +670,8 @@ class TaskCreateRequest(BaseModel):
     model: Optional[str] = None
     model_id: Optional[int] = None
     vendor_id: int = 1
+    enable_thinking: bool = False
+    thinking_effort: str = "medium"
 
 class ModelChangeRequest(BaseModel):
     model: str
@@ -1221,7 +1223,8 @@ async def get_available_models(
                     'vendor_name': vendor_name,
                     'recommended': model_id == 1,
                     'input_token_threshold': input_token_threshold,
-                    'context_window': context_window
+                    'context_window': context_window,
+                    'supports_thinking': local_model.supports_thinking == 1 if local_model else False
                 })
 
         # 2. 添加阿里云 Qwen 模型（如果配置了 API Key）
@@ -1267,7 +1270,8 @@ async def get_available_models(
                             'vendor_name': vendor_name,
                             'recommended': False,
                             'input_token_threshold': input_token_threshold,
-                            'context_window': local_model.context_window
+                            'context_window': local_model.context_window,
+                            'supports_thinking': local_model.supports_thinking == 1
                         })
                 logger.info(f"添加了 {len([m for m in models if m.get('vendor_id') == 2])} 个阿里云 Qwen 模型")
         except Exception as e:
@@ -1316,11 +1320,60 @@ async def get_available_models(
                             'vendor_name': vendor_name,
                             'recommended': False,
                             'input_token_threshold': input_token_threshold,
-                            'context_window': local_model.context_window
+                            'context_window': local_model.context_window,
+                            'supports_thinking': local_model.supports_thinking == 1
                         })
                 logger.info(f"添加了 {len(ollama_model_ids)} 个 Ollama 模型")
         except Exception as e:
             logger.warning(f"获取 Ollama 模型列表失败: {e}")
+
+        # 4. 添加火山引擎 Doubao 模型（如果配置了 API Key）
+        try:
+            volcengine_api_key = get_dynamic_config_value('volcengine', 'api_key', default='')
+            if volcengine_api_key:
+                volcengine_vendor_id = get_vendor_id_by_name('volcengine')
+                if volcengine_vendor_id:
+                    volcengine_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == volcengine_vendor_id]))
+                    vendor = vendors.get(volcengine_vendor_id)
+                    vendor_name = vendor.vendor_name if vendor else 'volcengine'
+                else:
+                    volcengine_model_ids = []
+                    vendor_name = 'volcengine'
+
+                for model_id in volcengine_model_ids:
+                    if model_id in added_model_ids:
+                        continue
+                    local_model = ModelModel.get_by_id(model_id)
+                    if local_model and local_model.supports_tools:
+                        added_model_ids.add(model_id)
+
+                        input_token_threshold = None
+                        try:
+                            vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
+                                vendor_id=volcengine_vendor_id,
+                                model_id=model_id,
+                                raw_input_token=0
+                            )
+                            if vendor_model and vendor_model.input_token_threshold:
+                                input_token_threshold = vendor_model.input_token_threshold
+                        except Exception as vm_err:
+                            logger.warning(f"获取 Volcengine 模型 {model_id} 的费用配置失败: {vm_err}")
+
+                        models.append({
+                            'id': str(model_id),
+                            'model_id': model_id,
+                            'name': local_model.model_name,
+                            'description': local_model.note or '',
+                            'vendor_id': volcengine_vendor_id,
+                            'vendor_name': vendor_name,
+                            'recommended': False,
+                            'input_token_threshold': input_token_threshold,
+                            'context_window': local_model.context_window,
+                            'supports_thinking': local_model.supports_thinking == 1
+                        })
+                logger.info(f"添加了 {len([m for m in models if m.get('vendor_name') == 'volcengine'])} 个火山引擎 Doubao 模型")
+        except Exception as e:
+            logger.warning(f"获取火山引擎 Doubao 模型列表失败: {e}")
 
         if not models:
             models = []
@@ -1887,7 +1940,9 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             world_id=world_id,
             auth_token=auth_token,
             vendor_id=vendor_id,
-            model_id=model_id
+            model_id=model_id,
+            enable_thinking=task_request.enable_thinking,
+            thinking_effort=task_request.thinking_effort
         )
         
         # 获取任务对象

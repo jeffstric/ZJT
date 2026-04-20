@@ -50,10 +50,12 @@ class OllamaClient(BaseLLMClient):
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict]] = None,
         temperature: float = 0.7,
-        max_tokens: int = 64000,
+        max_tokens: int = 65536,
         auth_token: str = None,
         vendor_id: int = None,
-        model_id: int = None
+        model_id: int = None,
+        enable_thinking: bool = False,
+        thinking_effort: str = "medium"
     ) -> Any:
         """
         调用 Ollama 本地模型 API
@@ -104,8 +106,9 @@ class OllamaClient(BaseLLMClient):
                 extra_body["top_k"] = self.top_k
             if self.min_p is not None and self.min_p > 0:
                 extra_body["min_p"] = self.min_p
-            # 思维链配置
-            extra_body["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
+            # 思维链配置：优先使用外部传入的参数，否则使用全局配置
+            actual_thinking = enable_thinking or self.enable_thinking
+            extra_body["chat_template_kwargs"] = {"enable_thinking": actual_thinking}
             if extra_body:
                 kwargs["extra_body"] = extra_body
 

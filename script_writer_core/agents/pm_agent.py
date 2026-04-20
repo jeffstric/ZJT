@@ -234,7 +234,9 @@ class PMAgent(BaseAgent):
                     max_tokens=max_output_tokens,
                     auth_token=task.auth_token,
                     vendor_id=task.vendor_id,
-                    model_id=task.model_id
+                    model_id=task.model_id,
+                    enable_thinking=task.enable_thinking,
+                    thinking_effort=task.thinking_effort
                 )
 
                 # 更新最后一次 API 调用的真实 input token 数，用于后续压缩判断
@@ -315,12 +317,6 @@ class PMAgent(BaseAgent):
 
             self.add_to_history("tool", tool_history_entry)
 
-            # 如果是 call_agent 且有 expert_response，添加到历史以避免 LLM 重复生成
-            if tool_name == "call_agent" and result.get("success") and result.get("result"):
-                expert_response = result.get("result")
-                self.add_to_history("assistant", expert_response)
-                logger.info(f"{self.agent_id}: Added expert_response to history to prevent duplicate generation")
-
     def _execute_tool(
         self, 
         tool_name: str, 
@@ -398,7 +394,9 @@ class PMAgent(BaseAgent):
             auth_token=task.auth_token,
             tool_executor=self.tool_executor,
             vendor_id=task.vendor_id,
-            model_id=task.model_id
+            model_id=task.model_id,
+            enable_thinking=task.enable_thinking,
+            thinking_effort=task.thinking_effort
         )
 
         expert_task = {

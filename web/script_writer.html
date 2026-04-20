@@ -14,6 +14,45 @@
     <script src="js/axios.min.js"></script>
     <!-- 任务配置模块 -->
     <script src="/js/task_config.js"></script>
+    <style>
+        .thinking-toggle {
+            position: relative;
+            display: inline-block;
+            width: 32px;
+            height: 18px;
+            flex-shrink: 0;
+        }
+        .thinking-toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .thinking-toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--border-color, #ccc);
+            border-radius: 18px;
+            transition: .2s;
+        }
+        .thinking-toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            border-radius: 50%;
+            transition: .2s;
+        }
+        .thinking-toggle input:checked + .thinking-toggle-slider {
+            background-color: var(--accent-color, #4f46e5);
+        }
+        .thinking-toggle input:checked + .thinking-toggle-slider:before {
+            transform: translateX(14px);
+        }
+    </style>
 </head>
 <body>
     <!-- 左侧导览条 - 悬浮模式 -->
@@ -96,6 +135,18 @@
                             <div class="model-select-display" id="model-selector-display">加载中...</div>
                         </div>
                     </div>
+                    <div class="thinking-mode-wrapper" id="thinking-mode-wrapper" style="display: none; align-items: center; gap: 6px; margin-left: 8px;">
+                        <label class="thinking-toggle" title="思考模式：让模型先深度思考再回答，提高回答质量">
+                            <input type="checkbox" id="thinking-toggle" onchange="onThinkingToggleChange()">
+                            <span class="thinking-toggle-slider"></span>
+                        </label>
+                        <span class="thinking-label" onclick="document.getElementById('thinking-toggle').click()" style="cursor: pointer; font-size: 12px; color: var(--text-secondary); white-space: nowrap;">思考</span>
+                        <select id="thinking-effort" class="thinking-effort-select" onchange="onThinkingEffortChange()" style="display: none; font-size: 11px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                            <option value="low">低</option>
+                            <option value="medium" selected>中</option>
+                            <option value="high">高</option>
+                        </select>
+                    </div>
                     <div class="model-divider"></div>
                     <div class="model-selector-item">
                         <div class="model-icon image-model-icon" id="image-model-icon" title="生图模型">
@@ -117,10 +168,6 @@
                     <span class="power-icon">⚡</span>
                     <span class="power-value" id="power-value">--</span>
                 </div>
-                <button class="header-action-btn" onclick="newSession()">
-                    <span class="btn-icon">🗑️</span>
-                    <span class="btn-text">删除暂存，重置会话</span>
-                </button>
                 <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交数据">
                     <span class="btn-icon">💾</span>
                     <span class="btn-text">提交数据</span>
@@ -129,7 +176,7 @@
                     <label class="auto-submit-toggle" title="开启后每分钟自动提交">
                         <input type="checkbox" id="auto-submit-switch" onchange="toggleAutoSubmit()">
                         <span class="toggle-slider"></span>
-                        <span class="toggle-label">🔄 自动提交</span>
+                        <span class="toggle-label">自动</span>
                     </label>
                     <span id="auto-submit-countdown" class="auto-submit-countdown" style="display: none;"></span>
                 </div>
@@ -312,11 +359,23 @@
             <aside class="file-sidebar">
                 <div class="sidebar-header">
                     <h3 class="sidebar-title">📁 暂存文件管理</h3>
-                    <button class="refresh-icon-btn" onclick="refreshFiles()" title="刷新文件列表">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-                        </svg>
-                    </button>
+                    <div class="sidebar-header-actions">
+                        <button class="refresh-icon-btn" onclick="refreshFiles()" title="刷新文件列表">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="23 4 23 10 17 10"/>
+                                <polyline points="1 20 1 14 7 14"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                        </button>
+                        <button class="delete-icon-btn" onclick="newSession()" title="删除暂存，重置会话">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                <line x1="10" y1="11" x2="10" y2="17"/>
+                                <line x1="14" y1="11" x2="14" y2="17"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="file-tabs">
                     <button class="tab-btn active" onclick="switchFileTab('worlds')">
@@ -1637,23 +1696,9 @@
 
         function updateCountdownDisplay() {
             const countdownEl = document.getElementById('auto-submit-countdown');
-            const switchEl = document.getElementById('auto-submit-switch');
-            
-            if (!switchEl || !switchEl.checked || !nextSubmitTime) {
+            if (countdownEl) {
                 countdownEl.style.display = 'none';
-                return;
             }
-
-            const remaining = Math.max(0, nextSubmitTime - Date.now());
-            if (remaining <= 0) {
-                countdownEl.style.display = 'none';
-                return;
-            }
-
-            const minutes = Math.floor(remaining / 60000);
-            const seconds = Math.floor((remaining % 60000) / 1000);
-            countdownEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            countdownEl.style.display = 'inline';
         }
 
         function saveAutoSubmitSettings() {
@@ -1834,7 +1879,8 @@
                         message,
                         auth_token: AUTH_TOKEN,
                         model: selector?.value || '',
-                        model_id: modelId
+                        model_id: modelId,
+                        ...getThinkingParams()
                     }),
                     signal: controller.signal
                 });
@@ -2222,7 +2268,8 @@
                 const vendorIcons = {
                     'jiekou': '☁️',
                     'aliyun': '🌐',
-                    'ollama': '🖥️'
+                    'ollama': '🖥️',
+                    'volcengine': '🌋'
                 };
 
                 // 记录排序后的第一个作为默认选中
@@ -2266,6 +2313,7 @@
                     option.dataset.recommended = model.recommended ? 'true' : 'false';
                     option.dataset.vendorId = model.vendor_id || 1;
                     option.dataset.vendorName = model.vendor_name || 'jiekou';
+                    option.dataset.supportsThinking = model.supports_thinking ? 'true' : 'false';
                     return option;
                 };
 
@@ -2431,13 +2479,7 @@
 
             const conciseName = selectedOption.dataset.conciseName || selectedOption.value || selectedOption.textContent;
             display.textContent = conciseName;
-
-            // 同步颜色：如果 selector 被设置了特殊颜色，遮罩层也要同步
-            if (selector.style.color) {
-                display.style.color = selector.style.color;
-            } else {
-                display.style.color = '';
-            }
+            display.style.color = '';
         }
 
         function updateModelTooltip() {
@@ -2447,16 +2489,8 @@
             const selectedOption = selector.options[selector.selectedIndex];
             if (!selectedOption) return;
 
-            // 免费模型（gemini-3-flash-preview、qwen3.5、qwen3.6、qwen-plus）显示正常颜色，其他显示红色提示需要配置
-            const isFreeModel = selectedOption.value === 'gemini-3-flash-preview' ||
-                selectedOption.value.includes('qwen3.5') ||
-                selectedOption.value.includes('qwen3.6') ||
-                selectedOption.value.includes('qwen-plus');
-            if (!isFreeModel) {
-                selector.style.color = '#ff6b6b';
-            } else {
-                selector.style.color = '';
-            }
+            // 清除红色样式
+            selector.style.color = '';
 
             // 更新 LLM 模型图标的 hover 提示
             updateLlmModelIcon();
@@ -2476,6 +2510,63 @@
 
             const modelName = selectedOption.textContent;
             icon.title = `AI 模型: ${modelName}`;
+        }
+
+        // ==================== 思考模式 ====================
+        function updateThinkingModeUI() {
+            const selector = document.getElementById('model-selector');
+            const wrapper = document.getElementById('thinking-mode-wrapper');
+            if (!selector || !wrapper) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) {
+                wrapper.style.display = 'none';
+                return;
+            }
+
+            const supportsThinking = selectedOption.dataset.supportsThinking === 'true';
+            wrapper.style.display = supportsThinking ? 'flex' : 'none';
+
+            // 如果不支持思考模式，重置开关
+            if (!supportsThinking) {
+                const toggle = document.getElementById('thinking-toggle');
+                if (toggle) toggle.checked = false;
+                updateThinkingEffortVisibility();
+            }
+        }
+
+        function onThinkingToggleChange() {
+            updateThinkingEffortVisibility();
+        }
+
+        function updateThinkingEffortVisibility() {
+            const toggle = document.getElementById('thinking-toggle');
+            const effortSelect = document.getElementById('thinking-effort');
+            const selector = document.getElementById('model-selector');
+            if (!toggle || !effortSelect || !selector) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            const vendorName = selectedOption?.dataset?.vendorName || '';
+            const isDoubao = vendorName === 'volcengine' || (selectedOption?.value || '').startsWith('doubao');
+
+            // 只在开关打开且是 Doubao 模型时显示 effort 选择
+            effortSelect.style.display = (toggle.checked && isDoubao) ? 'inline-block' : 'none';
+        }
+
+        function onThinkingEffortChange() {
+            // effort 值已经通过 select 的 value 管理
+        }
+
+        function getThinkingParams() {
+            const toggle = document.getElementById('thinking-toggle');
+            const effortSelect = document.getElementById('thinking-effort');
+            if (!toggle || !toggle.checked) {
+                return { enable_thinking: false, thinking_effort: 'medium' };
+            }
+            return {
+                enable_thinking: true,
+                thinking_effort: effortSelect ? effortSelect.value : 'medium'
+            };
         }
 
         function updateImageModelIcon() {
@@ -2506,6 +2597,7 @@
 
             updateModelTooltip();
             updateLlmModelIcon();
+            updateThinkingModeUI();
 
             // Ollama 模型检测和警告
             const vendorName = selectedOption?.dataset?.vendorName || '';
@@ -2513,6 +2605,14 @@
 
             if (isOllama) {
                 showWarning('⚠️ 本地模型提示：Ollama 模型为本地运行，存在不稳定情况。推荐使用 ' + LLMModel.QWEN_3_5_PLUS + ' 模型以获得更好的体验。');
+            }
+
+            // 其他模型不推荐提示
+            const modelValue = model || '';
+            if (modelValue === LLMModel.GEMINI_3_1_PRO) {
+                showWarning('⚠️ 该模型价格较贵，推荐使用 ' + LLMModel.GEMINI_3_FLASH + ' 以获得更好的性价比。');
+            } else if (modelValue.includes('flash-lite')) {
+                showWarning('⚠️ 该模型实际表现不够智能，可能无法胜任复杂任务，谨慎选择。推荐使用 ' + LLMModel.GEMINI_3_FLASH + ' 以获得更好的效果。');
             }
 
             if (!AUTH_TOKEN) {

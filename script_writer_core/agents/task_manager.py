@@ -151,6 +151,8 @@ class AgentTask:
     auth_token: str
     vendor_id: int
     model_id: int
+    enable_thinking: bool = False
+    thinking_effort: str = "medium"
     status: TaskStatus = TaskStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
@@ -172,6 +174,8 @@ class AgentTask:
             "auth_token": self.auth_token,
             "vendor_id":self.vendor_id,
             "model_id":self.model_id,
+            "enable_thinking": self.enable_thinking,
+            "thinking_effort": self.thinking_effort,
             "status": self.status.value,
             "created_at": self.created_at.isoformat(),
             "started_at": self.started_at.isoformat() if self.started_at else None,
@@ -201,7 +205,9 @@ class TaskManager:
         world_id: str,
         auth_token: str,
         vendor_id: int,
-        model_id: int
+        model_id: int,
+        enable_thinking: bool = False,
+        thinking_effort: str = "medium"
     ) -> str:
         """创建新任务，返回 task_id"""
         # 处理长文本输入
@@ -230,7 +236,9 @@ class TaskManager:
             world_id=world_id,
             auth_token=auth_token,
             vendor_id=vendor_id,
-            model_id=model_id
+            model_id=model_id,
+            enable_thinking=enable_thinking,
+            thinking_effort=thinking_effort
         )
 
         # 写入数据库（唯一数据源，跨进程共享）
@@ -244,6 +252,8 @@ class TaskManager:
                 auth_token=auth_token,
                 vendor_id=vendor_id,
                 model_id=model_id,
+                enable_thinking=enable_thinking,
+                thinking_effort=thinking_effort,
                 status='pending'
             )
         except Exception as e:
@@ -261,7 +271,7 @@ class TaskManager:
     def get_task(self, task_id: str) -> Optional[AgentTask]:
         """
         获取任务（统一从数据库获取，确保数据一致性）
-        
+
         注意：不使用内存缓存，避免多 worker 环境下的数据不一致问题。
         内存中的 task 对象仅用于后台线程执行，不用于状态查询。
         """
@@ -279,6 +289,8 @@ class TaskManager:
                     auth_token=db_task.auth_token,
                     vendor_id=db_task.vendor_id,
                     model_id=db_task.model_id,
+                    enable_thinking=getattr(db_task, 'enable_thinking', False),
+                    thinking_effort=getattr(db_task, 'thinking_effort', 'medium'),
                     status=TaskStatus(db_task.status),
                     progress=db_task.progress,
                     current_step=db_task.current_step,

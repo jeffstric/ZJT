@@ -230,9 +230,7 @@ def _get_processed_html(file_path: str) -> bytes:
         content = f.read()
 
     # 检查是否启用了缓存失效功能
-    cache_bust_enabled = get_config_value("frontend", "cache_bust", "enabled", default=True)
-
-    if cache_bust_enabled:
+    if CACHE_BUST_ENABLED:
         # 匹配 <script src="..."> 和 <link ... href="..."> 中引用的 .js 和 .css 文件
         # 只匹配以 /js/ 或 /css/ 开头的本地引用
         pattern = r'(<(?:script|link)[^>]*(?:src|href)=")(/(?:js|css)/[^"]+)(")'
@@ -258,6 +256,8 @@ MP_VERIFY_ROUTE = "/MP_verify_lXQewBFqjUipl3B8.txt"
 # Load server configuration
 from config.config_util import get_config_value, get_dynamic_config_value
 
+# cache_bust 配置：控制是否给静态资源加版本号，关闭时对静态资源禁用浏览器缓存
+CACHE_BUST_ENABLED = get_config_value("frontend", "cache_bust", "enabled", default=True)
 
 # Choose appropriate host based on HTTPS configuration
 https_enabled = get_config_value("server", "https", "enabled", default=False)
@@ -8240,8 +8240,15 @@ async def serve_spa(full_path: str):
     # Try to serve static file first
     file_path = os.path.join(static_dir, full_path)
     if os.path.isfile(file_path):
-        # 对于 js/css 文件，直接返回；对于其他文件也直接返回（不做处理）
-        return FileResponse(file_path)
+        response = FileResponse(file_path)
+        # cache_bust 关闭时，对静态资源禁用浏览器缓存，确保改动立即生效
+        if not CACHE_BUST_ENABLED:
+            _, ext = os.path.splitext(full_path)
+            if ext in ('.js', '.css', '.html', '.json'):
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+        return response
 
     # 检查是否有对应的 .html 文件（支持 /admin -> admin.html）
     html_path = os.path.join(static_dir, f"{full_path}.html")

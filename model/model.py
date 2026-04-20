@@ -18,6 +18,7 @@ class Model:
         self.context_window = kwargs.get('context_window')
         self.supports_tools = kwargs.get('supports_tools', 1)
         self.max_output_tokens = kwargs.get('max_output_tokens', 64000)  # 默认 64000
+        self.supports_thinking = kwargs.get('supports_thinking', 0)
         self.created_at = kwargs.get('created_at')
         self.note = kwargs.get('note')
 
@@ -29,6 +30,7 @@ class Model:
             'context_window': self.context_window,
             'supports_tools': self.supports_tools,
             'max_output_tokens': self.max_output_tokens,
+            'supports_thinking': self.supports_thinking,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'note': self.note,
         }
@@ -52,7 +54,7 @@ class ModelModel:
     @staticmethod
     def get_by_id(model_id: int) -> Optional[Model]:
         """根据ID获取模型"""
-        sql = "SELECT id, model_name, context_window, supports_tools, max_output_tokens, created_at, note FROM model WHERE id = %s"
+        sql = "SELECT id, model_name, context_window, supports_tools, max_output_tokens, supports_thinking, created_at, note FROM model WHERE id = %s"
         try:
             result = execute_query(sql, (model_id,), fetch_one=True)
             if result:
@@ -68,7 +70,7 @@ class ModelModel:
         获取所有模型（分页）
         对应Go的GetAllModels
         """
-        sql = "SELECT id, model_name, context_window, supports_tools, max_output_tokens, created_at, note FROM model ORDER BY created_at DESC"
+        sql = "SELECT id, model_name, context_window, supports_tools, max_output_tokens, supports_thinking, created_at, note FROM model ORDER BY created_at DESC"
         params = []
 
         if limit > 0:
