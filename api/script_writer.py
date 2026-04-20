@@ -1141,6 +1141,13 @@ async def get_available_models(
             if vm.model_id not in model_vendor_map:
                 model_vendor_map[vm.model_id] = vm.vendor_id
 
+        # 辅助函数：根据 vendor_name 动态查询 vendor_id（避免硬编码）
+        def get_vendor_id_by_name(vendor_name):
+            for vendor_id, vendor in vendors.items():
+                if vendor.vendor_name == vendor_name:
+                    return vendor_id
+            return None
+
         models = []
         added_model_ids = set()  # 用于去重
 
@@ -1170,12 +1177,18 @@ async def get_available_models(
                     continue
                 added_model_ids.add(model_id)
 
+                # 获取供应商信息（从 model_vendor_map 动态查询，避免硬编码）
+                vendor_id = model_vendor_map.get(model_id, 1)
+                vendor = vendors.get(vendor_id)
+                vendor_name = vendor.vendor_name if vendor else 'jiekou'
+
                 input_token_threshold = None
                 context_window = None
                 try:
-                    if model_id:
+                    if model_id and vendor_id:
+                        # 使用动态查询的 vendor_id，而不是硬编码的 1
                         vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
-                            vendor_id=1,
+                            vendor_id=vendor_id,
                             model_id=int(model_id),
                             raw_input_token=0
                         )
@@ -1191,11 +1204,6 @@ async def get_available_models(
                 except Exception:
                     pass
 
-                # 获取供应商信息
-                vendor_id = model_vendor_map.get(model_id, 1)
-                vendor = vendors.get(vendor_id)
-                vendor_name = vendor.vendor_name if vendor else 'jiekou'
-
                 models.append({
                     'id': str(model_id),
                     'model_id': model_id,
@@ -1208,13 +1216,20 @@ async def get_available_models(
                     'context_window': context_window
                 })
 
-        # 2. 添加阿里云 Qwen 模型（vendor_id=2，如果配置了 API Key）
+        # 2. 添加阿里云 Qwen 模型（如果配置了 API Key）
         try:
             qwen_api_key = get_dynamic_config_value('llm', 'qwen', 'api_key', default='')
             if qwen_api_key:
-                qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == 2]))
-                vendor = vendors.get(2)
-                vendor_name = vendor.vendor_name if vendor else 'aliyun'
+                # 动态查询 aliyun vendor_id，避免硬编码
+                aliyun_vendor_id = get_vendor_id_by_name('aliyun')
+                if aliyun_vendor_id:
+                    qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == aliyun_vendor_id]))
+                    vendor = vendors.get(aliyun_vendor_id)
+                    vendor_name = vendor.vendor_name if vendor else 'aliyun'
+                else:
+                    qwen_model_ids = []
+                    vendor_name = 'aliyun'
+
                 for model_id in qwen_model_ids:
                     if model_id in added_model_ids:
                         continue
@@ -1226,7 +1241,7 @@ async def get_available_models(
                         input_token_threshold = None
                         try:
                             vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
-                                vendor_id=2,
+                                vendor_id=aliyun_vendor_id,
                                 model_id=model_id,
                                 raw_input_token=0
                             )
@@ -1240,7 +1255,7 @@ async def get_available_models(
                             'model_id': model_id,
                             'name': local_model.model_name,
                             'description': local_model.note or '',
-                            'vendor_id': 2,
+                            'vendor_id': aliyun_vendor_id,
                             'vendor_name': vendor_name,
                             'recommended': False,
                             'input_token_threshold': input_token_threshold,
@@ -1250,13 +1265,20 @@ async def get_available_models(
         except Exception as e:
             logger.warning(f"获取阿里云 Qwen 模型列表失败: {e}")
 
-        # 3. 添加 Ollama 本地模型（vendor_id=3，如果启用）
+        # 3. 添加 Ollama 本地模型（如果启用）
         try:
             ollama_enabled = get_dynamic_config_value('llm', 'ollama', 'enabled', default=False)
             if ollama_enabled:
-                ollama_model_ids = [vm.model_id for vm in all_vendor_models if vm.vendor_id == 3]
-                vendor = vendors.get(3)
-                vendor_name = vendor.vendor_name if vendor else 'ollama'
+                # 动态查询 ollama vendor_id，避免硬编码
+                ollama_vendor_id = get_vendor_id_by_name('ollama')
+                if ollama_vendor_id:
+                    ollama_model_ids = [vm.model_id for vm in all_vendor_models if vm.vendor_id == ollama_vendor_id]
+                    vendor = vendors.get(ollama_vendor_id)
+                    vendor_name = vendor.vendor_name if vendor else 'ollama'
+                else:
+                    ollama_model_ids = []
+                    vendor_name = 'ollama'
+
                 for model_id in ollama_model_ids:
                     if model_id in added_model_ids:
                         continue
@@ -1268,7 +1290,7 @@ async def get_available_models(
                         input_token_threshold = None
                         try:
                             vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
-                                vendor_id=3,
+                                vendor_id=ollama_vendor_id,
                                 model_id=model_id,
                                 raw_input_token=0
                             )
@@ -1282,7 +1304,7 @@ async def get_available_models(
                             'model_id': model_id,
                             'name': local_model.model_name,
                             'description': local_model.note or '',
-                            'vendor_id': 3,
+                            'vendor_id': ollama_vendor_id,
                             'vendor_name': vendor_name,
                             'recommended': False,
                             'input_token_threshold': input_token_threshold,
