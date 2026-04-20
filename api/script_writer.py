@@ -1758,7 +1758,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'success': False,
                 'error': '缺少 model_id 参数'
             }, status_code=400)
-        
+
         try:
             model_id = int(model_id)
         except (TypeError, ValueError):
@@ -1766,6 +1766,16 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'success': False,
                 'error': 'model_id 必须为数字'
             }, status_code=400)
+
+        # 根据 model_id 查询真实的 vendor_id（而不是使用 task_request 中的默认值 1）
+        vendor_id = task_request.vendor_id
+        if vendor_id == 1:  # 如果是默认值，尝试从数据库获取真实值
+            try:
+                real_vendor_id = VendorModelModel.get_vendor_id_by_model_id(model_id)
+                if real_vendor_id:
+                    vendor_id = real_vendor_id
+            except Exception as e:
+                logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
         
         # 强制同步模型到 pm_agent：确保切换模型后实际使用正确的 LLM client
         # 前端传来的 model 是最新的用户选择，优先使用
@@ -1816,7 +1826,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             user_id=user_id,
             world_id=world_id,
             auth_token=auth_token,
-            vendor_id=task_request.vendor_id,
+            vendor_id=vendor_id,
             model_id=model_id
         )
         
