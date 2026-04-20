@@ -193,7 +193,9 @@ class OllamaClient(BaseLLMClient):
             llm_logger.info(f"  Token usage: {usage_info}")
             llm_logger.info("-"*80)
 
-            # 本地模型不需要记录 token 使用到 perseids（不计费）
+            # 记录 token 使用情况（即使是本地模型，也记录统计数据用于分析）
+            if auth_token and model_id:
+                self._log_token_usage(usage_info, auth_token, vendor_id, model_id)
 
             return self._create_response(content, tool_calls, usage_info)
 
