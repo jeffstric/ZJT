@@ -172,6 +172,17 @@ class VendorModelModel:
             raise
 
     @staticmethod
+    def get_vendor_id_by_model_id(model_id: int) -> Optional[int]:
+        """根据 model_id 获取 vendor_id（假设每个 model_id 只关联一个供应商）"""
+        sql = "SELECT vendor_id FROM vendor_model WHERE model_id = %s LIMIT 1"
+        try:
+            row = execute_query(sql, (model_id,), fetch_one=True)
+            return row['vendor_id'] if row else None
+        except Exception as e:
+            logger.error(f"Failed to get vendor_id for model {model_id}: {e}")
+            return None
+
+    @staticmethod
     def delete(id: int) -> bool:
         """删除供应商模型配置"""
         sql = "DELETE FROM vendor_model WHERE id = %s"

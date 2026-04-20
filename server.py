@@ -5384,7 +5384,16 @@ async def parse_script(
         
         # 导入剧本解析模块
         from llm.script_parser import parse_script_to_shots
-        
+        from model.vendor_model import VendorModelModel
+
+        # 根据 model_id 查询真实的 vendor_id
+        real_vendor_id = 1  # 默认值
+        if model_id:
+            try:
+                real_vendor_id = VendorModelModel.get_vendor_id_by_model_id(int(model_id)) or 1
+            except Exception as e:
+                logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
+
         # 调用LLM解析剧本
         parsed_data = await parse_script_to_shots(
             script_content=script_content,
@@ -5398,7 +5407,7 @@ async def parse_script(
             narration_as_dialogue=narration_as_dialogue,
             language=language,
             auth_token=auth_token,
-            vendor_id=1,
+            vendor_id=real_vendor_id,
             model_id=int(model_id) if model_id else 1
         )
         
