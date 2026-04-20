@@ -7,6 +7,7 @@ from .history_manager import ExpertHistoryManager
 from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
+from model.model import ModelModel
 
 logger = logging.getLogger(__name__)
 
@@ -157,12 +158,24 @@ class ExpertAgent(BaseAgent):
             iteration += 1
             
             try:
+                # 从数据库获取模型的最大输出 token 数
+                max_output_tokens = 65536  # 默认值
+                try:
+                    if self.model_id:
+                        model = ModelModel.get_by_id(self.model_id)
+                        if model and model.max_output_tokens:
+                            max_output_tokens = model.max_output_tokens
+                            logger.info(f"{self.agent_id}: Using model max_output_tokens: {max_output_tokens}")
+                except Exception as e:
+                    logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
+
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
                 response = get_llm_client(self.model).call_api(
                     model=self.model,
                     messages=self._format_messages_for_api(),
                     tools=self._get_tool_definitions(),
                     temperature=1,
+                    max_tokens=max_output_tokens,
                     auth_token=self.auth_token,
                     vendor_id=self.vendor_id,
                     model_id=self.model_id

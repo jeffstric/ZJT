@@ -43,7 +43,7 @@ def upgrade() -> None:
     # 3. 插入 vendor_model 表 (动态查询 vendor_id 和 model_id，避免硬编码)
     conn.execute(text("""
         INSERT INTO vendor_model (vendor_id, model_id, input_token_threshold, out_token_threshold, cache_read_threshold)
-        SELECT v.id, m.id, 100000, 10000, 100000
+        SELECT v.id, m.id, 200000, 10000, 100000
         FROM vendor v, model m
         WHERE v.vendor_name = 'ollama' AND m.model_name = 'qwen3.6:35b-a3b'
         ON DUPLICATE KEY UPDATE input_token_threshold = VALUES(input_token_threshold)

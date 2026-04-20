@@ -431,3 +431,26 @@ GEMINI_URL_FORMATS = {
 class ExternalLinks:
     """外部链接常量"""
     USER_MANUAL_URL = 'https://bq3mlz1jiae.feishu.cn/wiki/W1h2wCK3mi1CgDk36LEcVqggnLe'  # 使用手册
+
+
+# LLM 模型和供应商常量
+class LLMVendor:
+    """LLM 供应商常量"""
+    JIEKOU = 'jiekou'      # 接口供应商（Gemini 模型）
+    ALIYUN = 'aliyun'      # 阿里云供应商（Qwen 模型）
+    OLLAMA = 'ollama'      # 本地运行供应商（Ollama 模型）
+
+
+class LLMModel:
+    """LLM 模型名称常量"""
+    # Gemini 模型
+    GEMINI_3_FLASH = 'gemini-3-flash-preview'
+    GEMINI_3_1_PRO = 'gemini-3.1-pro-preview'
+
+    # Qwen 模型
+    QWEN_3_5_PLUS = 'qwen3.5-plus'
+    QWEN_3_6_PLUS = 'qwen3.6-plus'
+    QWEN_PLUS = 'qwen-plus'
+
+    # Ollama 模型
+    OLLAMA_QWEN_3_6_35B = 'qwen3.6:35b-a3b'

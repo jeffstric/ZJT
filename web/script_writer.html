@@ -1032,6 +1032,23 @@
         };
 
         const LOGIN_URL = window.location.origin + '/?login=1&redirect_url=video-workflow-list';
+
+        // LLM 供应商常量
+        const LLMVendor = {
+            JIEKOU: 'jiekou',      // 接口供应商（Gemini 模型）
+            ALIYUN: 'aliyun',      // 阿里云供应商（Qwen 模型）
+            OLLAMA: 'ollama'       // 本地运行供应商（Ollama 模型）
+        };
+
+        // LLM 模型名称常量
+        const LLMModel = {
+            GEMINI_3_FLASH: 'gemini-3-flash-preview',
+            GEMINI_3_1_PRO: 'gemini-3.1-pro-preview',
+            QWEN_3_5_PLUS: 'qwen3.5-plus',
+            QWEN_3_6_PLUS: 'qwen3.6-plus',
+            QWEN_PLUS: 'qwen-plus',
+            OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b'
+        };
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
         let currentEditWorld = { id: '', name: '', description: '' };
@@ -2216,8 +2233,8 @@
                     const option = document.createElement('option');
                     const modelName = model.model_name || model.name || '';
                     const modelDesc = model.note || model.description || '';
-                    // 判断是否为 Ollama 模型：vendor_id=3 或 id 包含 "ollama:" 前缀
-                    const isOllama = model.vendor_id === 3 || String(model.id || '').startsWith('ollama:');
+                    // 判断是否为 Ollama 模型：vendor_name=ollama 或 id 包含 "ollama:" 前缀
+                    const isOllama = model.vendor_name === LLMVendor.OLLAMA || String(model.id || '').startsWith('ollama:');
                     // Ollama 模型使用带前缀的模型名，其他模型使用 model_name
                     option.value = isOllama ? `ollama:${modelName}` : modelName;
                     option.dataset.conciseName = modelName;
@@ -2348,8 +2365,8 @@
 
             options.forEach(option => {
                 const modelName = option.value || option.textContent;
-                // 检查是否是 qwen3.5 或 qwen3.6 系列模型
-                if (modelName && (modelName.includes('qwen3.5') || modelName.includes('qwen3.6'))) {
+                // 检查是否是 qwen3.5、qwen3.6 或 qwen-plus 系列模型
+                if (modelName && (modelName.includes('qwen3.5') || modelName.includes('qwen3.6') || modelName.includes('qwen-plus'))) {
                     if (!isQwenConfigured) {
                         option.disabled = true;
                         option.title = '请先在配置中设置 Qwen API Key';
@@ -2430,10 +2447,11 @@
             const selectedOption = selector.options[selector.selectedIndex];
             if (!selectedOption) return;
 
-            // 免费模型（gemini-3-flash-preview、qwen3.5、qwen3.6）显示正常颜色，其他显示红色提示需要配置
+            // 免费模型（gemini-3-flash-preview、qwen3.5、qwen3.6、qwen-plus）显示正常颜色，其他显示红色提示需要配置
             const isFreeModel = selectedOption.value === 'gemini-3-flash-preview' ||
                 selectedOption.value.includes('qwen3.5') ||
-                selectedOption.value.includes('qwen3.6');
+                selectedOption.value.includes('qwen3.6') ||
+                selectedOption.value.includes('qwen-plus');
             if (!isFreeModel) {
                 selector.style.color = '#ff6b6b';
             } else {
@@ -2490,11 +2508,11 @@
             updateLlmModelIcon();
 
             // Ollama 模型检测和警告
-            const vendorId = parseInt(selectedOption?.dataset?.vendorId) || 1;
-            const isOllama = vendorId === 3 || (typeof model === 'string' && model.startsWith('ollama:'));
+            const vendorName = selectedOption?.dataset?.vendorName || '';
+            const isOllama = vendorName === LLMVendor.OLLAMA;
 
             if (isOllama) {
-                showWarning('⚠️ 本地模型提示：Ollama 模型为本地运行，存在不稳定情况。推荐使用 qwen3.5-plus 模型以获得更好的体验。');
+                showWarning('⚠️ 本地模型提示：Ollama 模型为本地运行，存在不稳定情况。推荐使用 ' + LLMModel.QWEN_3_5_PLUS + ' 模型以获得更好的体验。');
             }
 
             if (!AUTH_TOKEN) {

@@ -8,6 +8,7 @@ from .task_manager import TaskManager, AgentTask
 from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
+from model.model import ModelModel
 import json
 
 logger = logging.getLogger(__name__)
@@ -213,12 +214,24 @@ class PMAgent(BaseAgent):
                 # 获取工具定义
                 tool_definitions = self._get_tool_definitions()
 
+                # 从数据库获取模型的最大输出 token 数
+                max_output_tokens = 65536  # 默认值
+                try:
+                    if task.model_id:
+                        model = ModelModel.get_by_id(task.model_id)
+                        if model and model.max_output_tokens:
+                            max_output_tokens = model.max_output_tokens
+                            logger.info(f"{self.agent_id}: Using model max_output_tokens: {max_output_tokens}")
+                except Exception as e:
+                    logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
+
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
                 response = get_llm_client(self.model).call_api(
                     model=self.model,
                     messages=messages,
                     tools=tool_definitions,
                     temperature=1,
+                    max_tokens=max_output_tokens,
                     auth_token=task.auth_token,
                     vendor_id=task.vendor_id,
                     model_id=task.model_id
@@ -301,7 +314,13 @@ class PMAgent(BaseAgent):
             }
 
             self.add_to_history("tool", tool_history_entry)
-    
+
+            # 如果是 call_agent 且有 expert_response，添加到历史以避免 LLM 重复生成
+            if tool_name == "call_agent" and result.get("success") and result.get("result"):
+                expert_response = result.get("result")
+                self.add_to_history("assistant", expert_response)
+                logger.info(f"{self.agent_id}: Added expert_response to history to prevent duplicate generation")
+
     def _execute_tool(
         self, 
         tool_name: str, 

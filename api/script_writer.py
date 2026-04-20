@@ -248,10 +248,14 @@ async def validate_model(model: str, auth_token: str) -> tuple[bool, List[str], 
             from config.config_util import get_dynamic_config_value
             from model.model import ModelModel
             from model.vendor_model import VendorModelModel
+            from model.vendor import VendorDAO
             qwen_api_key = get_dynamic_config_value('llm', 'qwen', 'api_key', default='')
             if qwen_api_key:
                 all_vendor_models = VendorModelModel.get_all()
-                qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == 2]))
+                # 动态查询 aliyun vendor_id，避免硬编码
+                aliyun_vendor = next((v for v in VendorDAO.get_all() if v.vendor_name == 'aliyun'), None)
+                aliyun_vendor_id = aliyun_vendor.id if aliyun_vendor else 2
+                qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == aliyun_vendor_id]))
                 for mid in qwen_model_ids:
                     local_model = ModelModel.get_by_id(mid)
                     if local_model and local_model.supports_tools:
@@ -264,10 +268,14 @@ async def validate_model(model: str, auth_token: str) -> tuple[bool, List[str], 
             from config.config_util import get_dynamic_config_value
             from model.model import ModelModel
             from model.vendor_model import VendorModelModel
+            from model.vendor import VendorDAO
             ollama_enabled = get_dynamic_config_value('llm', 'ollama', 'enabled', default=False)
             if ollama_enabled:
                 ollama_vendor_models = VendorModelModel.get_all()
-                ollama_model_ids = [vm.model_id for vm in ollama_vendor_models if vm.vendor_id == 3]
+                # 动态查询 ollama vendor_id，避免硬编码
+                ollama_vendor = next((v for v in VendorDAO.get_all() if v.vendor_name == 'ollama'), None)
+                ollama_vendor_id = ollama_vendor.id if ollama_vendor else 3
+                ollama_model_ids = [vm.model_id for vm in ollama_vendor_models if vm.vendor_id == ollama_vendor_id]
                 for mid in ollama_model_ids:
                     local_model = ModelModel.get_by_id(mid)
                     if local_model and local_model.supports_tools:
