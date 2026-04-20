@@ -2179,6 +2179,18 @@
                     .filter(v => v && v > 0);
                 const maxThreshold = validThresholds.length > 0 ? Math.max(...validThresholds) : null;
 
+                // 调试日志：输出所有模型的费用信息
+                console.log('[模型加载] 模型费用倍率计算:');
+                console.log('  有效的 threshold 值:', validThresholds);
+                console.log('  最大 threshold (基准):', maxThreshold);
+                data.models.forEach(m => {
+                    const threshold = m.input_token_threshold;
+                    const multiplier = maxThreshold && threshold && threshold > 0
+                        ? (maxThreshold / threshold).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+                        : '不可用';
+                    console.log(`  ${m.model_name} (vendor: ${m.vendor_name}): threshold=${threshold}, multiplier=${multiplier}x`);
+                });
+
                 // 供应商图标映射
                 const vendorIcons = {
                     'jiekou': '☁️',
@@ -2201,9 +2213,16 @@
                     option.dataset.conciseName = modelName;
 
                     let displayName = modelName;
+                    // 改进费用倍率显示：确保有效数据时必须显示倍率
                     if (maxThreshold && model.input_token_threshold && model.input_token_threshold > 0) {
-                        const multiplier = (maxThreshold / model.input_token_threshold).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
-                        displayName = `${modelName} ${multiplier}算力倍率`;
+                        const multiplier = (maxThreshold / model.input_token_threshold)
+                            .toFixed(2)
+                            .replace(/\.00$/, '')
+                            .replace(/(\.\d)0$/, '$1');
+                        displayName = `${modelName} x${multiplier}`;  // 加上 x 使倍率更清晰
+                    } else if (model.input_token_threshold === undefined || model.input_token_threshold === null) {
+                        // 调试：标记缺少费用信息的模型
+                        console.warn(`[模型加载] 模型 "${modelName}" 缺少 input_token_threshold 信息`);
                     }
 
                     option.textContent = modelDesc
@@ -2241,9 +2260,28 @@
                     }
                 });
 
-                // 设置默认选中第一个启用的模型
-                if (firstEnabledModel) {
-                    firstEnabledModel.selected = true;
+                // 设置默认选中模型：优先选择 qwen3.5-plus，否则选择第一个启用的模型
+                let defaultModel = null;
+
+                // 优先查找 qwen3.5-plus
+                const allOptions = selector.querySelectorAll('option');
+                for (let i = 0; i < allOptions.length; i++) {
+                    const option = allOptions[i];
+                    if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')) {
+                        defaultModel = option;
+                        console.log('[模型选择] 选择默认模型: qwen3.5-plus');
+                        break;
+                    }
+                }
+
+                // 如果没找到 qwen3.5-plus，则使用第一个启用的模型
+                if (!defaultModel && firstEnabledModel) {
+                    defaultModel = firstEnabledModel;
+                    console.log(`[模型选择] 未找到 qwen3.5-plus，选择第一个启用的模型: ${firstEnabledModel.value}`);
+                }
+
+                if (defaultModel) {
+                    defaultModel.selected = true;
                 }
 
                 updateModelSelectorDisplay();
