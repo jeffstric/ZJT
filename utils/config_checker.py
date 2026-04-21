@@ -28,7 +28,11 @@ def check_api_aggregator_config_exists(site_id: str) -> bool:
         # 读取站点配置
         api_key = get_dynamic_config_value("api_aggregator", site_id, "api_key", default="")
         base_url = get_dynamic_config_value("api_aggregator", site_id, "base_url", default="")
-        
+
+        # site_0 base_url 为硬编码，只需检查 api_key
+        if site_id == "site_0":
+            return bool(api_key)
+
         # 检查配置是否完整
         return bool(api_key and base_url)
         
@@ -114,7 +118,7 @@ def get_available_api_aggregator_sites() -> Dict[str, Dict[str, Any]]:
         Dict: 站点ID -> 站点信息映射
     """
     sites = {}
-    for site_id in ['site_1', 'site_2', 'site_3', 'site_4', 'site_5']:
+    for site_id in ['site_0', 'site_1', 'site_2', 'site_3', 'site_4', 'site_5']:
         if check_api_aggregator_config_exists(site_id):
             try:
                 from config.config_util import get_dynamic_config_value

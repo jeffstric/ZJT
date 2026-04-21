@@ -664,6 +664,7 @@ class DriverImplementation:
     # Gemini
     GEMINI_DUOMI_V1 = 'gemini_duomi_v1'
     GEMINI_IMAGE_PREVIEW_COMMON_V1 = 'gemini_image_preview_common_v1'
+    GEMINI_IMAGE_PREVIEW_SITE0_V1 = 'gemini_image_preview_site0_v1'
     GEMINI_IMAGE_PREVIEW_SITE1_V1 = 'gemini_image_preview_site1_v1'
     GEMINI_IMAGE_PREVIEW_SITE2_V1 = 'gemini_image_preview_site2_v1'
     GEMINI_IMAGE_PREVIEW_SITE3_V1 = 'gemini_image_preview_site3_v1'
@@ -672,6 +673,7 @@ class DriverImplementation:
 
     # VEO3
     VEO3_DUOMI_V1 = 'veo3_duomi_v1'
+    VEO3_COMMON_SITE0_V1 = 'veo3_common_site0_v1'
     VEO3_COMMON_SITE1_V1 = 'veo3_common_site1_v1'
     VEO3_COMMON_SITE2_V1 = 'veo3_common_site2_v1'
     VEO3_COMMON_SITE3_V1 = 'veo3_common_site3_v1'
@@ -712,6 +714,7 @@ class DriverImplementationId:
     KLING_DUOMI_V1 = 2
     GEMINI_DUOMI_V1 = 3
     GEMINI_IMAGE_PREVIEW_COMMON_V1 = 4
+    GEMINI_IMAGE_PREVIEW_SITE0_V1 = 27
     GEMINI_IMAGE_PREVIEW_SITE1_V1 = 5
     GEMINI_IMAGE_PREVIEW_SITE2_V1 = 6
     GEMINI_IMAGE_PREVIEW_SITE3_V1 = 7
@@ -734,6 +737,7 @@ class DriverImplementationId:
     VEO3_COMMON_SITE3_V1 = 24
     VEO3_COMMON_SITE4_V1 = 25
     VEO3_COMMON_SITE5_V1 = 26
+    VEO3_COMMON_SITE0_V1 = 28
 
 
 # implementation 字符串到 ID 的映射
@@ -742,12 +746,14 @@ IMPLEMENTATION_TO_ID = {
     'kling_duomi_v1': DriverImplementationId.KLING_DUOMI_V1,
     'gemini_duomi_v1': DriverImplementationId.GEMINI_DUOMI_V1,
     'gemini_image_preview_common_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_COMMON_V1,
+    'gemini_image_preview_site0_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE0_V1,
     'gemini_image_preview_site1_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE1_V1,
     'gemini_image_preview_site2_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE2_V1,
     'gemini_image_preview_site3_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE3_V1,
     'gemini_image_preview_site4_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE4_V1,
     'gemini_image_preview_site5_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE5_V1,
     'veo3_duomi_v1': DriverImplementationId.VEO3_DUOMI_V1,
+    'veo3_common_site0_v1': DriverImplementationId.VEO3_COMMON_SITE0_V1,
     'ltx2_runninghub_v1': DriverImplementationId.LTX2_RUNNINGHUB_V1,
     'wan22_runninghub_v1': DriverImplementationId.WAN22_RUNNINGHUB_V1,
     'digital_human_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_RUNNINGHUB_V1,
@@ -879,6 +885,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
         implementations=[
             DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
@@ -904,6 +911,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
         implementations=[
             DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
@@ -929,6 +937,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
         implementations=[
             DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
@@ -1140,6 +1149,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation=DriverImplementation.VEO3_DUOMI_V1,
         implementations=[
             DriverImplementation.VEO3_DUOMI_V1,
+            DriverImplementation.VEO3_COMMON_SITE0_V1,
             DriverImplementation.VEO3_COMMON_SITE1_V1,
             DriverImplementation.VEO3_COMMON_SITE2_V1,
             DriverImplementation.VEO3_COMMON_SITE3_V1,
@@ -1295,6 +1305,17 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
 
     # ==================== API 聚合器站点 ====================
     ImplementationConfig(
+        name='gemini_image_preview_site0_v1',
+        display_name='YWAPI',
+        driver_class='GeminiImagePreviewSite0V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='YWAPI官方站点（固定）',
+        sort_order=10500.0,
+        site_number=0,
+        sync_mode=True  # 同步模式
+    ),
+    ImplementationConfig(
         name='gemini_image_preview_site1_v1',
         display_name='Site 1',
         driver_class='GeminiImagePreviewSite1V1Driver',
@@ -1357,6 +1378,16 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='多米平台 VEO3 接口',
         sort_order=4000.0
+    ),
+    ImplementationConfig(
+        name='veo3_common_site0_v1',
+        display_name='智剧通API',
+        driver_class='Veo3CommonSite0V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='智剧通API VEO3（固定）',
+        sort_order=3900.0,
+        site_number=0,
     ),
     ImplementationConfig(
         name='veo3_common_site1_v1',

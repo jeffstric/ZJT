@@ -2,6 +2,486 @@
  * 管理后台 JavaScript
  */
 
+// ==================== 服务商配置定义 ====================
+
+const CATEGORY_LABELS = {
+    llm: '大模型',
+    image: '生图模型',
+    video: '生视频模型',
+    other: '其他服务'
+};
+
+const CATEGORY_DESCRIPTIONS = {
+    llm: '选择一个或多个大模型服务商',
+    image: '选择一个或多个生图服务商',
+    video: '选择一个或多个生视频服务商',
+    other: '选择其他推荐的 AI 服务'
+};
+
+/**
+ * 服务商配置定义
+ * 每个服务商包含：基本信息、分类、字段定义、后端配置键映射
+ */
+const PROVIDER_DEFINITIONS = [
+    // ===== 大模型服务商 =====
+    {
+        id: 'huoshan',
+        name: '火山引擎',
+        description: '火山引擎 Doubao 大模型，高性能、低延迟',
+        category: 'llm',
+        icon: '🔥',
+        docUrl: 'https://console.volcengine.com/ark',
+        lazyRecommended: false,
+        displayOrder: 3,
+        baseName: 'huoshan',
+        isOfficialAPI: false,
+        impacts: ['剧本创作', 'AI对话'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true, helpText: '从火山引擎控制台获取' }
+        ],
+        configKeyMap: { api_key: 'volcengine.api_key' },
+        testEndpoint: null
+    },
+    {
+        id: 'ywapi',
+        name: '智剧通API',
+        description: '智剧通API 官方平台，支持多种模型和服务',
+        category: 'llm',
+        icon: '☁️',
+        docUrl: 'https://yw.perseids.cn/register?aff=hE0h',
+        lazyRecommended: true,
+        displayOrder: 2,
+        baseName: 'ywapi',
+        isOfficialAPI: true,
+        impacts: ['剧本创作', 'AI对话'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '智剧通API', required: false, readOnly: true, defaultValue: '智剧通API' },
+            { id: 'base_url', label: 'Base URL', type: 'text', placeholder: 'https://yw.perseids.cn', required: true, readOnly: true, defaultValue: 'https://yw.perseids.cn' },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_0.name', base_url: 'api_aggregator.site_0.base_url', api_key: 'api_aggregator.site_0.api_key' },
+        testEndpoint: null
+    },
+    {
+        id: 'google',
+        name: 'Google/Gemini',
+        description: 'Google Gemini 大模型，支持多种 AI 能力',
+        category: 'llm',
+        icon: '✨',
+        docUrl: 'https://jiekou.ai/user/register?invited_code=119T5V',
+        lazyRecommended: false,
+        displayOrder: 5,
+        baseName: 'google',
+        isOfficialAPI: false,
+        impacts: ['剧本创作', 'AI对话', '剧本拆分'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 Google API Key', required: true, helpText: '支持第三方代理服务' },
+            { id: 'base_url', label: 'Base URL (可选)', type: 'url', placeholder: 'https://api.jiekou.ai', required: false, helpText: '可使用第三方代理服务，留空使用默认值' }
+        ],
+        configKeyMap: { api_key: 'llm.google.api_key', base_url: 'llm.google.gemini_base_url' },
+        testEndpoint: 'google'
+    },
+    {
+        id: 'claude',
+        name: 'Claude',
+        description: 'Anthropic Claude 大模型，擅长长文本推理与创作',
+        category: 'llm',
+        icon: '🟣',
+        docUrl: 'https://jiekou.ai/user/register?invited_code=119T5V',
+        lazyRecommended: false,
+        displayOrder: 6,
+        baseName: 'claude',
+        isOfficialAPI: false,
+        impacts: ['剧本创作', 'AI对话', '剧本拆分'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 Claude API Key', required: true, helpText: '支持第三方代理服务' },
+            { id: 'base_url', label: 'Base URL (可选)', type: 'url', placeholder: 'https://api.jiekou.ai/openai', required: false, helpText: '可使用第三方代理服务，留空使用默认值' }
+        ],
+        configKeyMap: { api_key: 'llm.claude.api_key', base_url: 'llm.claude.base_url' },
+        testEndpoint: null
+    },
+    {
+        id: 'qwen',
+        name: 'Qwen',
+        description: '通义千问大模型，阿里云百炼平台',
+        category: 'llm',
+        icon: '🧠',
+        docUrl: 'https://dashscope.console.aliyun.com/apiKey',
+        lazyRecommended: true,
+        displayOrder: 1,
+        baseName: 'qwen',
+        isOfficialAPI: false,
+        impacts: ['剧本创作', 'AI对话', '剧本拆分'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 Qwen API Key', required: true },
+            { id: 'base_url', label: 'Base URL (可选)', type: 'url', placeholder: 'https://dashscope.aliyuncs.com/compatible-mode/v1', required: false, helpText: '可使用第三方代理服务，留空使用默认值' }
+        ],
+        configKeyMap: { api_key: 'llm.qwen.api_key', base_url: 'llm.qwen.base_url' },
+        testEndpoint: 'qwen'
+    },
+
+    // ===== 生图服务商 =====
+    {
+        id: 'ywapi_image',
+        name: '智剧通API',
+        description: '智剧通API 生图服务',
+        category: 'image',
+        icon: '☁️',
+        docUrl: 'https://yw.perseids.cn/register?aff=hE0h',
+        lazyRecommended: true,
+        displayOrder: 2,
+        baseName: 'ywapi',
+        isOfficialAPI: true,
+        impacts: ['Nano Banana图片编辑'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { api_key: 'api_aggregator.site_0.api_key' },
+        testEndpoint: null,
+        _sharedWith: 'ywapi'
+    },
+    {
+        id: 'duomi',
+        name: '多米',
+        description: '多米 AI 生图平台，高质量图像生成',
+        category: 'image',
+        icon: '🎨',
+        docUrl: 'https://duomiapi.com/user/register?cps=U4GgW1Fx',
+        lazyRecommended: false,
+        displayOrder: 4,
+        baseName: 'duomi',
+        isOfficialAPI: false,
+        impacts: ['Nano Banana图片编辑', 'Sora2/Kling/Veo3视频生成'],
+        fields: [
+            { id: 'token', label: 'Token', type: 'text', placeholder: '请输入 Duomi API Token', required: true, helpText: '获取方式：快速注册' }
+        ],
+        configKeyMap: { token: 'duomi.token' },
+        testEndpoint: null
+    },
+    {
+        id: 'huoshan_image',
+        name: '火山引擎',
+        description: '火山引擎 AI 生图，支持文生图、图生图',
+        category: 'image',
+        icon: '🔥',
+        docUrl: 'https://console.volcengine.com/ark',
+        lazyRecommended: true,
+        displayOrder: 1,
+        baseName: 'huoshan',
+        isOfficialAPI: false,
+        impacts: ['Seedream 5.0 文生图'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true, helpText: '从火山引擎控制台获取' }
+        ],
+        configKeyMap: { api_key: 'volcengine.api_key' },
+        testEndpoint: null,
+        _sharedWith: 'huoshan'
+    },
+    {
+        id: 'site_1_image',
+        name: '聚合站 1',
+        description: 'API 聚合站点 1，支持多种生图模型',
+        category: 'image',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 10,
+        baseName: 'site_1',
+        isOfficialAPI: false,
+        impacts: ['生图模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站1', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_1.name', base_url: 'api_aggregator.site_1.base_url', api_key: 'api_aggregator.site_1.api_key' },
+        testEndpoint: null
+    },
+    {
+        id: 'site_2_image',
+        name: '聚合站 2',
+        description: 'API 聚合站点 2，支持多种生图模型',
+        category: 'image',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 11,
+        baseName: 'site_2',
+        isOfficialAPI: false,
+        impacts: ['生图模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站2', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_2.name', base_url: 'api_aggregator.site_2.base_url', api_key: 'api_aggregator.site_2.api_key' },
+        testEndpoint: null,
+        commercialOnly: true
+    },
+    {
+        id: 'site_3_image',
+        name: '聚合站 3',
+        description: 'API 聚合站点 3，支持多种生图模型',
+        category: 'image',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 12,
+        baseName: 'site_3',
+        isOfficialAPI: false,
+        impacts: ['生图模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站3', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_3.name', base_url: 'api_aggregator.site_3.base_url', api_key: 'api_aggregator.site_3.api_key' },
+        testEndpoint: null,
+        commercialOnly: true
+    },
+    {
+        id: 'site_4_image',
+        name: '聚合站 4',
+        description: 'API 聚合站点 4，支持多种生图模型',
+        category: 'image',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 13,
+        baseName: 'site_4',
+        isOfficialAPI: false,
+        impacts: ['生图模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站4', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_4.name', base_url: 'api_aggregator.site_4.base_url', api_key: 'api_aggregator.site_4.api_key' },
+        testEndpoint: null,
+        commercialOnly: true
+    },
+    {
+        id: 'site_5_image',
+        name: '聚合站 5',
+        description: 'API 聚合站点 5，支持多种生图模型',
+        category: 'image',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 14,
+        baseName: 'site_5',
+        isOfficialAPI: false,
+        impacts: ['生图模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站5', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_5.name', base_url: 'api_aggregator.site_5.base_url', api_key: 'api_aggregator.site_5.api_key' },
+        testEndpoint: null,
+        commercialOnly: true
+    },
+
+    // ===== 生视频服务商 =====
+    {
+        id: 'duomi_video',
+        name: '多米',
+        description: '多米 AI 生视频平台',
+        category: 'video',
+        icon: '🎨',
+        docUrl: 'https://duomiapi.com/user/register?cps=U4GgW1Fx',
+        lazyRecommended: true,
+        displayOrder: 1,
+        baseName: 'duomi',
+        isOfficialAPI: false,
+        impacts: ['Sora2/Kling/Veo3视频生成'],
+        fields: [
+            { id: 'token', label: 'Token', type: 'text', placeholder: '请输入 Duomi API Token', required: true }
+        ],
+        configKeyMap: { token: 'duomi.token' },
+        testEndpoint: null,
+        _sharedWith: 'duomi'
+    },
+    {
+        id: 'runninghub',
+        name: 'RunningHub',
+        description: 'RunningHub AI 生视频服务',
+        category: 'video',
+        icon: '🚀',
+        docUrl: 'https://www.runninghub.cn/?inviteCode=quacwnzc',
+        lazyRecommended: true,
+        displayOrder: 2,
+        baseName: 'runninghub',
+        isOfficialAPI: false,
+        impacts: ['LTX2.0视频', 'Wan2.2视频', '数字人合成', '相机多角度控制'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '请输入 RunningHub API Key', required: true, helpText: '获取方式：快速注册' }
+        ],
+        configKeyMap: { api_key: 'runninghub.api_key' },
+        testEndpoint: null
+    },
+    {
+        id: 'ywapi_video',
+        name: '智剧通API',
+        description: '智剧通API 生视频服务',
+        category: 'video',
+        icon: '☁️',
+        docUrl: 'https://yw.perseids.cn/register?aff=hE0h',
+        lazyRecommended: true,
+        displayOrder: 3,
+        baseName: 'ywapi',
+        isOfficialAPI: true,
+        impacts: ['生视频模型'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { api_key: 'api_aggregator.site_0.api_key' },
+        testEndpoint: null,
+        _sharedWith: 'ywapi'
+    },
+    {
+        id: 'huoshan_video',
+        name: '火山引擎',
+        description: '火山引擎 AI 生视频，支持文生视频',
+        category: 'video',
+        icon: '🔥',
+        docUrl: 'https://console.volcengine.com/ark',
+        lazyRecommended: false,
+        displayOrder: 4,
+        baseName: 'huoshan',
+        isOfficialAPI: false,
+        impacts: ['Seedance 1.5 2.0 视频'],
+        fields: [
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true, helpText: '从火山引擎控制台获取' }
+        ],
+        configKeyMap: { api_key: 'volcengine.api_key' },
+        testEndpoint: null,
+        _sharedWith: 'huoshan'
+    },
+    {
+        id: 'site_1_video',
+        name: '聚合站 1',
+        description: 'API 聚合站点 1，支持多种生视频模型',
+        category: 'video',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 10,
+        baseName: 'site_1',
+        isOfficialAPI: false,
+        impacts: ['生视频模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站1', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_1.name', base_url: 'api_aggregator.site_1.base_url', api_key: 'api_aggregator.site_1.api_key' },
+        testEndpoint: null
+    },
+    {
+        id: 'site_2_video',
+        name: '聚合站 2',
+        description: 'API 聚合站点 2，支持多种生视频模型',
+        category: 'video',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 11,
+        baseName: 'site_2',
+        isOfficialAPI: false,
+        impacts: ['生视频模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站2', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_2.name', base_url: 'api_aggregator.site_2.base_url', api_key: 'api_aggregator.site_2.api_key' },
+        testEndpoint: null,
+        commercialOnly: true
+    },
+    {
+        id: 'site_3_video',
+        name: '聚合站 3',
+        description: 'API 聚合站点 3，支持多种生视频模型',
+        category: 'video',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 12,
+        baseName: 'site_3',
+        isOfficialAPI: false,
+        impacts: ['生视频模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站3', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_3.name', base_url: 'api_aggregator.site_3.base_url', api_key: 'api_aggregator.site_3.api_key' },
+        testEndpoint: null,
+        commercialOnly: true
+    },
+    {
+        id: 'site_4_video',
+        name: '聚合站 4',
+        description: 'API 聚合站点 4，支持多种生视频模型',
+        category: 'video',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 13,
+        baseName: 'site_4',
+        isOfficialAPI: false,
+        impacts: ['生视频模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站4', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_4.name', base_url: 'api_aggregator.site_4.base_url', api_key: 'api_aggregator.site_4.api_key' },
+        testEndpoint: null,
+        commercialOnly: true
+    },
+    {
+        id: 'site_5_video',
+        name: '聚合站 5',
+        description: 'API 聚合站点 5，支持多种生视频模型',
+        category: 'video',
+        icon: '🔗',
+        lazyRecommended: false,
+        displayOrder: 14,
+        baseName: 'site_5',
+        isOfficialAPI: false,
+        impacts: ['生视频模型'],
+        fields: [
+            { id: 'name', label: '站点名称', type: 'text', placeholder: '如：聚合站5', required: false, helpText: '用于标识该聚合站点' },
+            { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://api.example.com', required: true },
+            { id: 'api_key', label: 'API Key', type: 'text', placeholder: '输入您的 API Key', required: true }
+        ],
+        configKeyMap: { name: 'api_aggregator.site_5.name', base_url: 'api_aggregator.site_5.base_url', api_key: 'api_aggregator.site_5.api_key' },
+        testEndpoint: null,
+        commercialOnly: true
+    },
+
+    // ===== 其他推荐服务 =====
+    {
+        id: 'vidu',
+        name: 'Vidu',
+        description: 'Vidu 视频生成平台',
+        category: 'other',
+        icon: '🎬',
+        docUrl: 'https://platform.vidu.cn/api-keys',
+        lazyRecommended: false,
+        displayOrder: 1,
+        baseName: 'vidu',
+        isOfficialAPI: false,
+        impacts: ['Vidu视频生成'],
+        fields: [
+            { id: 'token', label: 'Token', type: 'text', placeholder: '请输入 Vidu API Token', required: true, helpText: '获取方式：快速注册' }
+        ],
+        configKeyMap: { token: 'vidu.token' },
+        testEndpoint: null
+    }
+];
+
+// 构建 configKey -> { providerId, fieldId } 的反向映射
+const CONFIG_KEY_TO_PROVIDER_FIELD = {};
+PROVIDER_DEFINITIONS.forEach(provider => {
+    Object.entries(provider.configKeyMap).forEach(([fieldId, configKey]) => {
+        CONFIG_KEY_TO_PROVIDER_FIELD[configKey] = { providerId: provider.id, fieldId };
+    });
+});
+
 const AdminApp = {
     data() {
         return {
@@ -110,61 +590,18 @@ const AdminApp = {
                 value: ''
             },
             
-            // 快速配置弹窗
+            // 快速配置弹窗（两栏模式）
             quickConfigModal: {
                 show: false,
                 loading: false,
-                testLoading: false,
-                testResult: null,
-                // 用于跟踪原始值，检测用户是否修改了配置（包含清空操作）
-                originalValues: {},
-                duomi: {
-                    token: ''
-                },
-                google: {
-                    apiKey: '',
-                    baseUrl: ''
-                },
-                qwen: {
-                    apiKey: '',
-                    baseUrl: ''
-                },
-                runninghub: {
-                    apiKey: ''
-                },
-                vidu: {
-                    token: ''
-                },
-                volcengine: {
-                    apiKey: ''
-                },
-                apiAggregator: {
-                    site1: {
-                        name: '',
-                        baseUrl: '',
-                        apiKey: ''
-                    },
-                    site2: {
-                        name: '',
-                        baseUrl: '',
-                        apiKey: ''
-                    },
-                    site3: {
-                        name: '',
-                        baseUrl: '',
-                        apiKey: ''
-                    },
-                    site4: {
-                        name: '',
-                        baseUrl: '',
-                        apiKey: ''
-                    },
-                    site5: {
-                        name: '',
-                        baseUrl: '',
-                        apiKey: ''
-                    }
-                }
+                activeCategory: 'llm',
+                selectedProviderIds: [],
+                providerFormData: {},    // { providerId: { fieldId: value } }
+                originalValues: {},      // { providerId: { fieldId: originalValue } }
+                testLoading: {},         // { providerId: boolean }
+                testResults: {},         // { providerId: { success: boolean, message: string } }
+                saveLoading: {},         // { providerId: boolean }
+                leftPanelOpen: true
             },
             
             // 使用手册引导弹窗
@@ -262,7 +699,91 @@ const AdminApp = {
             const month = String(today.getMonth() + 1).padStart(2, '0');
             const day = String(today.getDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
-        }
+        },
+
+        // ===== 快速配置相关计算属性 =====
+
+        providersByCategory() {
+            const sortByOrder = (items) => [...items].sort((a, b) => (a.displayOrder || 999) - (b.displayOrder || 999));
+            const result = {};
+            Object.keys(CATEGORY_LABELS).forEach(cat => {
+                result[cat] = sortByOrder(PROVIDER_DEFINITIONS.filter(p => p.category === cat));
+            });
+            return result;
+        },
+
+        lazyRecommendedProviderIds() {
+            return PROVIDER_DEFINITIONS.filter(p => p.lazyRecommended).map(p => p.id);
+        },
+
+        selectedProvidersDetail() {
+            // 按 baseName 分组，合并同组的字段和配置
+            const groups = {};
+            const fieldIds = {};
+            const impactSets = {};
+
+            this.quickConfigModal.selectedProviderIds.forEach(id => {
+                const p = PROVIDER_DEFINITIONS.find(d => d.id === id);
+                if (!p) return;
+                const base = p.baseName || p.id;
+
+                if (!groups[base]) {
+                    groups[base] = { ...p, fields: [...p.fields], configKeyMap: { ...p.configKeyMap } };
+                    fieldIds[base] = new Set(p.fields.map(f => f.id));
+                    impactSets[base] = new Set(p.impacts || []);
+                } else {
+                    // 合并字段（按 field.id 去重）
+                    p.fields.forEach(field => {
+                        if (!fieldIds[base].has(field.id)) {
+                            groups[base].fields.push(field);
+                            groups[base].configKeyMap[field.id] = p.configKeyMap[field.id];
+                            fieldIds[base].add(field.id);
+                        }
+                    });
+                    // 合并 impacts
+                    (p.impacts || []).forEach(imp => impactSets[base].add(imp));
+                    groups[base].impacts = [...impactSets[base]];
+                }
+            });
+
+            return Object.values(groups).sort((a, b) =>
+                (a.displayOrder || 999) - (b.displayOrder || 999)
+            );
+        },
+
+        categoryStatus() {
+            const status = {};
+            Object.keys(CATEGORY_LABELS).forEach(cat => { status[cat] = false; });
+            this.quickConfigModal.selectedProviderIds.forEach(id => {
+                const provider = PROVIDER_DEFINITIONS.find(p => p.id === id);
+                if (provider && provider.category !== 'other') {
+                    status[provider.category] = true;
+                }
+            });
+            return status;
+        },
+
+        selectedCount() {
+            return this.quickConfigModal.selectedProviderIds.length;
+        },
+
+        configuredCount() {
+            return this.quickConfigModal.selectedProviderIds.filter(id => this.isProviderConfigured(id)).length;
+        },
+
+        configuredProgress() {
+            const total = this.selectedCount;
+            if (total === 0) return 0;
+            return Math.round((this.configuredCount / total) * 100);
+        },
+
+        progressBarWidth() {
+            return this.configuredProgress + '%';
+        },
+
+        // 暴露常量给模板
+        categoryLabels() { return CATEGORY_LABELS; },
+        categoryDescriptions() { return CATEGORY_DESCRIPTIONS; }
     },
     
     mounted() {
@@ -1029,7 +1550,7 @@ const AdminApp = {
 
         // 判断是否为商业版专属配置
         isCommercialOnlyConfig(configKey) {
-            // 站点2-5的聚合站配置
+            // 聚合站 2-5 为商业版专属配置
             const commercialPatterns = [
                 'api_aggregator.site_2',
                 'api_aggregator.site_3',
@@ -1166,18 +1687,22 @@ const AdminApp = {
             }
         },
         
-        // ==================== 快速配置方法 ====================
-        
+        // ==================== 快速配置方法（两栏模式） ====================
+
         // 打开快速配置弹窗
         async openQuickConfigModal() {
             this.quickConfigModal.show = true;
-            this.quickConfigModal.testResult = null;
-            // 清空原始值跟踪
+            this.quickConfigModal.activeCategory = 'llm';
+            this.quickConfigModal.selectedProviderIds = [];
+            this.quickConfigModal.providerFormData = {};
             this.quickConfigModal.originalValues = {};
+            this.quickConfigModal.testLoading = {};
+            this.quickConfigModal.testResults = {};
+            this.quickConfigModal.saveLoading = {};
+            this.quickConfigModal.leftPanelOpen = true;
 
-            // 从后端获取快速配置项列表并加载现有配置值
+            // 从后端加载现有配置值
             try {
-                // 获取快速配置项列表
                 const quickConfigsResp = await axios.get('/api/admin/config/quick-configs', {
                     headers: { 'Authorization': `Bearer ${this.authToken}` }
                 });
@@ -1185,7 +1710,6 @@ const AdminApp = {
                 if (quickConfigsResp.data.code === 0) {
                     const configs = quickConfigsResp.data.data.configs || [];
 
-                    // 根据配置项列表加载现有值
                     for (const config of configs) {
                         try {
                             const response = await axios.get('/api/admin/config/raw', {
@@ -1195,60 +1719,40 @@ const AdminApp = {
 
                             if (response.data.code === 0) {
                                 const value = response.data.data.config_value || '';
-                                // 保存原始值用于变更检测（支持清空操作）
-                                this.quickConfigModal.originalValues[config.key] = value;
-                                // 根据 key 映射到对应的表单字段
-                                if (config.key === 'duomi.token') {
-                                    this.quickConfigModal.duomi.token = value;
-                                } else if (config.key === 'llm.google.api_key') {
-                                    this.quickConfigModal.google.apiKey = value;
-                                } else if (config.key === 'llm.google.gemini_base_url') {
-                                    this.quickConfigModal.google.baseUrl = value;
-                                } else if (config.key === 'llm.qwen.api_key') {
-                                    this.quickConfigModal.qwen.apiKey = value;
-                                } else if (config.key === 'llm.qwen.base_url') {
-                                    this.quickConfigModal.qwen.baseUrl = value;
-                                } else if (config.key === 'runninghub.api_key') {
-                                    this.quickConfigModal.runninghub.apiKey = value;
-                                } else if (config.key === 'vidu.token') {
-                                    this.quickConfigModal.vidu.token = value;
-                                } else if (config.key === 'volcengine.api_key') {
-                                    this.quickConfigModal.volcengine.apiKey = value;
-                                } else if (config.key === 'api_aggregator.site_1.name') {
-                                    this.quickConfigModal.apiAggregator.site1.name = value;
-                                } else if (config.key === 'api_aggregator.site_1.base_url') {
-                                    this.quickConfigModal.apiAggregator.site1.baseUrl = value;
-                                } else if (config.key === 'api_aggregator.site_1.api_key') {
-                                    this.quickConfigModal.apiAggregator.site1.apiKey = value;
-                                } else if (config.key === 'api_aggregator.site_2.name') {
-                                    this.quickConfigModal.apiAggregator.site2.name = value;
-                                } else if (config.key === 'api_aggregator.site_2.base_url') {
-                                    this.quickConfigModal.apiAggregator.site2.baseUrl = value;
-                                } else if (config.key === 'api_aggregator.site_2.api_key') {
-                                    this.quickConfigModal.apiAggregator.site2.apiKey = value;
-                                } else if (config.key === 'api_aggregator.site_3.name') {
-                                    this.quickConfigModal.apiAggregator.site3.name = value;
-                                } else if (config.key === 'api_aggregator.site_3.base_url') {
-                                    this.quickConfigModal.apiAggregator.site3.baseUrl = value;
-                                } else if (config.key === 'api_aggregator.site_3.api_key') {
-                                    this.quickConfigModal.apiAggregator.site3.apiKey = value;
-                                } else if (config.key === 'api_aggregator.site_4.name') {
-                                    this.quickConfigModal.apiAggregator.site4.name = value;
-                                } else if (config.key === 'api_aggregator.site_4.base_url') {
-                                    this.quickConfigModal.apiAggregator.site4.baseUrl = value;
-                                } else if (config.key === 'api_aggregator.site_4.api_key') {
-                                    this.quickConfigModal.apiAggregator.site4.apiKey = value;
-                                } else if (config.key === 'api_aggregator.site_5.name') {
-                                    this.quickConfigModal.apiAggregator.site5.name = value;
-                                } else if (config.key === 'api_aggregator.site_5.base_url') {
-                                    this.quickConfigModal.apiAggregator.site5.baseUrl = value;
-                                } else if (config.key === 'api_aggregator.site_5.api_key') {
-                                    this.quickConfigModal.apiAggregator.site5.apiKey = value;
+                                // 通过反向映射找到对应的 provider 和 field
+                                const mapping = CONFIG_KEY_TO_PROVIDER_FIELD[config.key];
+                                if (mapping) {
+                                    const { providerId, fieldId } = mapping;
+                                    // 初始化 provider 的 form data
+                                    if (!this.quickConfigModal.providerFormData[providerId]) {
+                                        this.quickConfigModal.providerFormData[providerId] = {};
+                                    }
+                                    if (!this.quickConfigModal.originalValues[providerId]) {
+                                        this.quickConfigModal.originalValues[providerId] = {};
+                                    }
+                                    this.quickConfigModal.providerFormData[providerId][fieldId] = value;
+                                    this.quickConfigModal.originalValues[providerId][fieldId] = value;
+
+                                    // 自动选中已有配置的服务商
+                                    if (value && !this.quickConfigModal.selectedProviderIds.includes(providerId)) {
+                                        this.quickConfigModal.selectedProviderIds.push(providerId);
+                                    }
                                 }
                             }
                         } catch (e) {
-                            // 配置可能不存在，忽略错误
                             console.log(`Config ${config.key} not found, will create on save`);
+                        }
+                    }
+
+                    // 切换到第一个有选中服务商的分类
+                    for (const cat of Object.keys(CATEGORY_LABELS)) {
+                        const hasSelected = this.quickConfigModal.selectedProviderIds.some(id => {
+                            const p = PROVIDER_DEFINITIONS.find(d => d.id === id);
+                            return p && p.category === cat;
+                        });
+                        if (hasSelected) {
+                            this.quickConfigModal.activeCategory = cat;
+                            break;
                         }
                     }
                 }
@@ -1256,170 +1760,241 @@ const AdminApp = {
                 console.error('Failed to load quick config values:', error);
             }
         },
-        
+
         // 关闭快速配置弹窗
         closeQuickConfigModal() {
             this.quickConfigModal.show = false;
             this.quickConfigModal.loading = false;
-            this.quickConfigModal.testLoading = false;
-            this.quickConfigModal.testResult = null;
-            this.quickConfigModal.duomi.token = '';
-            this.quickConfigModal.google.apiKey = '';
-            this.quickConfigModal.google.baseUrl = '';
-            this.quickConfigModal.qwen.apiKey = '';
-            this.quickConfigModal.qwen.baseUrl = '';
-            this.quickConfigModal.runninghub.apiKey = '';
-            this.quickConfigModal.vidu.token = '';
-            this.quickConfigModal.volcengine.apiKey = '';
-            this.quickConfigModal.apiAggregator.site1.name = '';
-            this.quickConfigModal.apiAggregator.site1.baseUrl = '';
-            this.quickConfigModal.apiAggregator.site1.apiKey = '';
-            this.quickConfigModal.apiAggregator.site2.name = '';
-            this.quickConfigModal.apiAggregator.site2.baseUrl = '';
-            this.quickConfigModal.apiAggregator.site2.apiKey = '';
-            this.quickConfigModal.apiAggregator.site3.name = '';
-            this.quickConfigModal.apiAggregator.site3.baseUrl = '';
-            this.quickConfigModal.apiAggregator.site3.apiKey = '';
-            this.quickConfigModal.apiAggregator.site4.name = '';
-            this.quickConfigModal.apiAggregator.site4.baseUrl = '';
-            this.quickConfigModal.apiAggregator.site4.apiKey = '';
-            this.quickConfigModal.apiAggregator.site5.name = '';
-            this.quickConfigModal.apiAggregator.site5.baseUrl = '';
-            this.quickConfigModal.apiAggregator.site5.apiKey = '';
+            this.quickConfigModal.selectedProviderIds = [];
+            this.quickConfigModal.providerFormData = {};
+            this.quickConfigModal.originalValues = {};
+            this.quickConfigModal.testLoading = {};
+            this.quickConfigModal.testResults = {};
+            this.quickConfigModal.saveLoading = {};
         },
-        
-        // 显示 jiekou 注册提示
-        showJiekouTip() {
-            const confirmed = confirm('💡 提示：\n\njiekou 注册需要 Google 或 GitHub 账号，但注册即送 $1 代金券！\n\n点击"确定"前往注册页面');
-            if (confirmed) {
-                window.open('https://jiekou.ai/user/register?invited_code=119T5V', '_blank');
+
+        // 切换服务商选中状态
+        toggleProviderSelection(providerId) {
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            if (provider && provider.commercialOnly && this.isCommunityEdition) {
+                this.showToast('该配置需要商业版本才能使用，请联系管理员升级', 'error');
+                return;
             }
-        },
-        
-        // 测试 Google 连接
-        async testGoogleConnection() {
-            this.quickConfigModal.testLoading = true;
-            this.quickConfigModal.testResult = null;
-            
-            try {
-                const response = await axios.post('/api/admin/config/test-google', {
-                    api_key: this.quickConfigModal.google.apiKey,
-                    base_url: this.quickConfigModal.google.baseUrl || null
-                }, {
-                    headers: { 'Authorization': `Bearer ${this.authToken}` }
-                });
-                
-                if (response.data.code === 0) {
-                    this.quickConfigModal.testResult = {
-                        success: true,
-                        message: `✅ ${response.data.message}`
-                    };
-                } else {
-                    this.quickConfigModal.testResult = {
-                        success: false,
-                        message: `❌ ${response.data.message}`
-                    };
+
+            const idx = this.quickConfigModal.selectedProviderIds.indexOf(providerId);
+            if (idx >= 0) {
+                this.quickConfigModal.selectedProviderIds.splice(idx, 1);
+            } else {
+                this.quickConfigModal.selectedProviderIds.push(providerId);
+                // 初始化 form data
+                if (!this.quickConfigModal.providerFormData[providerId]) {
+                    this.quickConfigModal.providerFormData[providerId] = {};
                 }
-            } catch (error) {
-                console.error('Test Google connection failed:', error);
-                const detail = error?.response?.data?.detail || '测试失败';
-                this.quickConfigModal.testResult = {
-                    success: false,
-                    message: `❌ ${detail}`
-                };
-            } finally {
-                this.quickConfigModal.testLoading = false;
-            }
-        },
-
-        async testQwenConnection() {
-            this.quickConfigModal.testLoading = true;
-            this.quickConfigModal.testResult = null;
-
-            try {
-                const response = await axios.post('/api/admin/config/test-qwen', {
-                    api_key: this.quickConfigModal.qwen.apiKey,
-                    base_url: this.quickConfigModal.qwen.baseUrl || null
-                }, {
-                    headers: { 'Authorization': `Bearer ${this.authToken}` }
-                });
-
-                if (response.data.code === 0) {
-                    this.quickConfigModal.testResult = {
-                        success: true,
-                        message: `✅ ${response.data.message}`
-                    };
-                } else {
-                    this.quickConfigModal.testResult = {
-                        success: false,
-                        message: `❌ ${response.data.message}`
-                    };
+                if (!this.quickConfigModal.originalValues[providerId]) {
+                    this.quickConfigModal.originalValues[providerId] = {};
                 }
-            } catch (error) {
-                console.error('Test Qwen connection failed:', error);
-                const detail = error?.response?.data?.detail || '测试失败';
-                this.quickConfigModal.testResult = {
-                    success: false,
-                    message: `❌ ${detail}`
-                };
-            } finally {
-                this.quickConfigModal.testLoading = false;
             }
         },
 
-        // 提交快速配置
-        async submitQuickConfig() {
-            // 构建配置列表 - 通过与原始值对比，支持清空操作
+        // 快速设置：自动选择推荐的服务商
+        handleQuickSetup() {
+            const recommendedIds = this.lazyRecommendedProviderIds;
+            this.quickConfigModal.selectedProviderIds = [...recommendedIds];
+            this.quickConfigModal.providerFormData = {};
+            this.quickConfigModal.originalValues = this.quickConfigModal.originalValues || {};
+            recommendedIds.forEach(id => {
+                if (!this.quickConfigModal.providerFormData[id]) {
+                    this.quickConfigModal.providerFormData[id] = {};
+                }
+                // 保留已加载的原始值
+                if (!this.quickConfigModal.originalValues[id]) {
+                    this.quickConfigModal.originalValues[id] = {};
+                }
+            });
+            this.showToast(`已自动选择 ${recommendedIds.length} 个推荐服务商`, 'success');
+        },
+
+        // 移除已选服务商
+        removeProvider(providerId) {
+            const idx = this.quickConfigModal.selectedProviderIds.indexOf(providerId);
+            if (idx >= 0) {
+                this.quickConfigModal.selectedProviderIds.splice(idx, 1);
+            }
+        },
+
+        // 获取表单字段值
+        getFormField(providerId, fieldId) {
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            if (provider) {
+                const field = provider.fields.find(f => f.id === fieldId);
+                if (field && field.readOnly && field.defaultValue) {
+                    return field.defaultValue;
+                }
+            }
+            return (this.quickConfigModal.providerFormData[providerId] || {})[fieldId] || '';
+        },
+
+        // 更新表单字段值
+        updateFormField(providerId, fieldId, value) {
+            if (!this.quickConfigModal.providerFormData[providerId]) {
+                this.quickConfigModal.providerFormData[providerId] = {};
+            }
+            this.quickConfigModal.providerFormData[providerId][fieldId] = value;
+        },
+
+        // 判断服务商是否已配置（至少有一个字段有值）
+        isProviderConfigured(providerId) {
+            const formData = this.quickConfigModal.providerFormData[providerId];
+            if (!formData) return false;
+            return Object.values(formData).some(v => v && v.trim());
+        },
+
+        // 保存单个服务商的配置
+        async saveProviderConfig(providerId) {
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            if (!provider) return;
+
             const configs = [];
-            const origValues = this.quickConfigModal.originalValues || {};
+            const formData = this.quickConfigModal.providerFormData[providerId] || {};
+            const origData = this.quickConfigModal.originalValues[providerId] || {};
 
-            // Helper function to add config only if value changed
-            const addIfChanged = (key, currentValue) => {
-                const trimmedValue = currentValue ? currentValue.trim() : '';
-                const originalValue = origValues[key] || '';
-                if (trimmedValue !== originalValue) {
-                    configs.push({ key, value: trimmedValue });
+            provider.fields.forEach(field => {
+                if (field.readOnly) return;
+                const configKey = provider.configKeyMap[field.id];
+                if (!configKey) return;
+                const currentValue = (formData[field.id] || '').trim();
+                const originalValue = (origData[field.id] || '').trim();
+                if (currentValue !== originalValue) {
+                    configs.push({ key: configKey, value: currentValue });
                 }
-            };
+            });
 
-            // 检测所有配置项的变化（包含清空操作）
-            addIfChanged('duomi.token', this.quickConfigModal.duomi.token);
-            addIfChanged('llm.google.api_key', this.quickConfigModal.google.apiKey);
-            addIfChanged('llm.google.gemini_base_url', this.quickConfigModal.google.baseUrl);
-            addIfChanged('llm.qwen.api_key', this.quickConfigModal.qwen.apiKey);
-            addIfChanged('llm.qwen.base_url', this.quickConfigModal.qwen.baseUrl);
-            addIfChanged('runninghub.api_key', this.quickConfigModal.runninghub.apiKey);
-            addIfChanged('vidu.token', this.quickConfigModal.vidu.token);
-            addIfChanged('volcengine.api_key', this.quickConfigModal.volcengine.apiKey);
-
-            const allowedSites = this.isCommunityEdition ? [1] : [1, 2, 3, 4, 5];
-
-            for (const siteNum of allowedSites) {
-                const site = this.quickConfigModal.apiAggregator[`site${siteNum}`];
-                addIfChanged(`api_aggregator.site_${siteNum}.name`, site.name);
-                addIfChanged(`api_aggregator.site_${siteNum}.base_url`, site.baseUrl);
-                addIfChanged(`api_aggregator.site_${siteNum}.api_key`, site.apiKey);
+            if (configs.length === 0) {
+                this.showToast('配置未发生变化', 'success');
+                return;
             }
+
+            this.quickConfigModal.saveLoading[providerId] = true;
+
+            try {
+                const response = await axios.put('/api/admin/config/batch',
+                    { configs },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    const data = response.data.data;
+                    const updatedCount = data.results.filter(r => r.status === 'updated').length;
+                    this.showToast(`${provider.name} 配置已保存 (${updatedCount} 项更新)`, 'success');
+                    // 更新原始值
+                    configs.forEach(c => {
+                        const mapping = CONFIG_KEY_TO_PROVIDER_FIELD[c.key];
+                        if (mapping && mapping.providerId === providerId) {
+                            if (!this.quickConfigModal.originalValues[providerId]) {
+                                this.quickConfigModal.originalValues[providerId] = {};
+                            }
+                            this.quickConfigModal.originalValues[providerId][mapping.fieldId] = c.value;
+                        }
+                    });
+                    this.loadConfigs();
+                }
+            } catch (error) {
+                console.error('Save provider config failed:', error);
+                const detail = error?.response?.data?.detail || '保存失败';
+                this.showToast(detail, 'error');
+            } finally {
+                this.quickConfigModal.saveLoading[providerId] = false;
+            }
+        },
+
+        // 测试服务商连接
+        async testProviderConnection(providerId) {
+            const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+            if (!provider || !provider.testEndpoint) return;
+
+            const formData = this.quickConfigModal.providerFormData[providerId] || {};
+            this.quickConfigModal.testLoading[providerId] = true;
+            this.quickConfigModal.testResults[providerId] = null;
+
+            try {
+                const payload = {
+                    api_key: formData.api_key || formData.token || '',
+                    base_url: formData.base_url || null
+                };
+
+                const endpoint = provider.testEndpoint === 'google'
+                    ? '/api/admin/config/test-google'
+                    : '/api/admin/config/test-qwen';
+
+                const response = await axios.post(endpoint, payload, {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    this.quickConfigModal.testResults[providerId] = {
+                        success: true,
+                        message: response.data.message
+                    };
+                } else {
+                    this.quickConfigModal.testResults[providerId] = {
+                        success: false,
+                        message: response.data.message
+                    };
+                }
+            } catch (error) {
+                console.error('Test connection failed:', error);
+                const detail = error?.response?.data?.detail || '测试失败';
+                this.quickConfigModal.testResults[providerId] = {
+                    success: false,
+                    message: detail
+                };
+            } finally {
+                this.quickConfigModal.testLoading[providerId] = false;
+            }
+        },
+
+        // 批量保存所有已选服务商的配置
+        async submitQuickConfig() {
+            const configs = [];
+
+            this.quickConfigModal.selectedProviderIds.forEach(providerId => {
+                const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
+                if (!provider) return;
+
+                const formData = this.quickConfigModal.providerFormData[providerId] || {};
+                const origData = this.quickConfigModal.originalValues[providerId] || {};
+
+                provider.fields.forEach(field => {
+                    if (field.readOnly) return;
+                    const configKey = provider.configKeyMap[field.id];
+                    if (!configKey) return;
+                    const currentValue = (formData[field.id] || '').trim();
+                    const originalValue = (origData[field.id] || '').trim();
+                    if (currentValue !== originalValue) {
+                        configs.push({ key: configKey, value: currentValue });
+                    }
+                });
+            });
 
             if (configs.length === 0) {
                 this.showToast('配置未发生变化', 'success');
                 this.closeQuickConfigModal();
                 return;
             }
-            
+
             this.quickConfigModal.loading = true;
-            
+
             try {
-                const response = await axios.put('/api/admin/config/batch', 
+                const response = await axios.put('/api/admin/config/batch',
                     { configs },
                     { headers: { 'Authorization': `Bearer ${this.authToken}` } }
                 );
-                
+
                 if (response.data.code === 0) {
                     const data = response.data.data;
                     const updatedCount = data.results.filter(r => r.status === 'updated').length;
                     const errors = data.errors || [];
-                    
+
                     if (errors.length > 0) {
                         this.showToast(`部分配置更新失败: ${errors.join(', ')}`, 'error');
                     } else if (updatedCount > 0) {
@@ -1427,10 +2002,10 @@ const AdminApp = {
                     } else {
                         this.showToast('配置未发生变化', 'success');
                     }
-                    
+
                     this.closeQuickConfigModal();
                     this.loadConfigs();
-                    
+
                     // 显示使用手册引导弹窗
                     this.guideModal.show = true;
                 }
@@ -1440,6 +2015,14 @@ const AdminApp = {
                 this.showToast(detail, 'error');
             } finally {
                 this.quickConfigModal.loading = false;
+            }
+        },
+
+        // 显示 jiekou 注册提示（保留兼容）
+        showJiekouTip() {
+            const confirmed = confirm('💡 提示：\n\njiekou 注册需要 Google 或 GitHub 账号，但注册即送 $1 代金券！\n\n点击"确定"前往注册页面');
+            if (confirmed) {
+                window.open('https://jiekou.ai/user/register?invited_code=119T5V', '_blank');
             }
         },
 

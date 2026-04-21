@@ -1298,6 +1298,15 @@ async def admin_get_implementation_configs(
 
         # 获取所有实现方（包括动态注册的 API 聚合器实现方）
         all_implementations = UnifiedConfigRegistry.get_all_implementations()
+        print(f"[DEBUG] Total implementations from registry: {len(all_implementations)}")
+        print(f"[DEBUG] Implementation names: {list(all_implementations.keys())}")
+        site0_names = [k for k in all_implementations.keys() if 'site0' in k or 'site_0' in k]
+        print(f"[DEBUG] Site0 implementations in registry: {site0_names}")
+
+        # 获取反向映射
+        print(f"[DEBUG] impl_to_driver_keys keys: {list(impl_to_driver_keys.keys())}")
+        site0_keys = [k for k in impl_to_driver_keys.keys() if 'site0' in k or 'site_0' in k]
+        print(f"[DEBUG] Site0 in impl_to_driver_keys: {site0_keys}")
 
         # 获取数据库中的配置
         db_configs = ImplementationPowerModel.get_all_configs()
@@ -1362,8 +1371,10 @@ async def admin_get_implementation_configs(
                     from utils.config_checker import check_api_aggregator_config_exists
                     from config.config_util import get_dynamic_config_value
 
-                    if not check_api_aggregator_config_exists(site_id):
-                        print(f"API聚合站实现方 {impl_name} 配置不存在，跳过显示")
+                    exists = check_api_aggregator_config_exists(site_id)
+                    print(f"[DEBUG] {impl_name} -> site_id={site_id}, config_exists={exists}")
+                    if not exists:
+                        print(f"[DEBUG] SKIP {impl_name} because config not exists")
                         logger.info(f"API聚合站实现方 {impl_name} 配置不存在，跳过显示")
                         continue
 
@@ -1372,13 +1383,15 @@ async def admin_get_implementation_configs(
                     print(f"API聚合站实现方 {impl_name} 的站点名称: {site_name}")
                     display_name = site_name
 
-                except ImportError:
-                    logger.warning("无法导入配置检查工具，显示所有API聚合站实现方")
+                except Exception as e:
+                    print(f"[DEBUG] ERROR checking {impl_name}: {e}")
+                    logger.warning(f"无法导入配置检查工具，显示所有API聚合站实现方")
             
             print(f"Final display name for {impl_name}: {display_name}")
                 
             # 确定该实现方属于哪些 DriverKey 组
             driver_keys = impl_to_driver_keys.get(impl_name, [])
+            # print(f"[DEBUG] {impl_name} -> driver_keys={driver_keys}")
 
             # 对于 API 聚合器实现方，创建特殊的分组
             if not driver_keys and impl_name.startswith('gemini_common_'):

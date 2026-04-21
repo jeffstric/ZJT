@@ -376,6 +376,7 @@ def register_all_drivers():
 
     try:
         from .veo3_common_v1_driver import (
+            Veo3CommonSite0V1Driver,
             Veo3CommonSite1V1Driver,
             Veo3CommonSite2V1Driver,
             Veo3CommonSite3V1Driver,
@@ -384,6 +385,7 @@ def register_all_drivers():
         )
     except ImportError as e:
         logger.warning(f"Failed to import Veo3Common site drivers: {e}")
+        Veo3CommonSite0V1Driver = None
         Veo3CommonSite1V1Driver = None
         Veo3CommonSite2V1Driver = None
         Veo3CommonSite3V1Driver = None
@@ -391,6 +393,7 @@ def register_all_drivers():
         Veo3CommonSite5V1Driver = None
 
     veo3_common_sites = [
+        ('site_0', DriverImplementation.VEO3_COMMON_SITE0_V1, 'Veo3CommonSite0V1Driver'),
         ('site_1', DriverImplementation.VEO3_COMMON_SITE1_V1, 'Veo3CommonSite1V1Driver'),
         ('site_2', DriverImplementation.VEO3_COMMON_SITE2_V1, 'Veo3CommonSite2V1Driver'),
         ('site_3', DriverImplementation.VEO3_COMMON_SITE3_V1, 'Veo3CommonSite3V1Driver'),
@@ -399,6 +402,7 @@ def register_all_drivers():
     ]
 
     veo3_common_driver_classes = {
+        'site_0': Veo3CommonSite0V1Driver,
         'site_1': Veo3CommonSite1V1Driver,
         'site_2': Veo3CommonSite2V1Driver,
         'site_3': Veo3CommonSite3V1Driver,
@@ -426,24 +430,27 @@ def register_all_drivers():
         check_api_aggregator_config_exists = lambda site_id: False
     
     aggregator_sites = [
+        ('site_0', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1, 'GeminiImagePreviewSite0V1Driver'),
         ('site_1', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1, 'GeminiImagePreviewSite1V1Driver'),
         ('site_2', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1, 'GeminiImagePreviewSite2V1Driver'),
         ('site_3', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1, 'GeminiImagePreviewSite3V1Driver'),
         ('site_4', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1, 'GeminiImagePreviewSite4V1Driver'),
         ('site_5', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1, 'GeminiImagePreviewSite5V1Driver'),
     ]
-    
+
     # 先导入所有站点驱动类
     try:
         from .gemini_image_preview_common_v1_driver import (
+            GeminiImagePreviewSite0V1Driver,
             GeminiImagePreviewSite1V1Driver,
             GeminiImagePreviewSite2V1Driver,
             GeminiImagePreviewSite3V1Driver,
             GeminiImagePreviewSite4V1Driver,
             GeminiImagePreviewSite5V1Driver
         )
-        
+
         site_driver_classes = {
+            'site_0': GeminiImagePreviewSite0V1Driver,
             'site_1': GeminiImagePreviewSite1V1Driver,
             'site_2': GeminiImagePreviewSite2V1Driver,
             'site_3': GeminiImagePreviewSite3V1Driver,

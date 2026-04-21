@@ -565,9 +565,20 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
 
 # ============ 具体站点实现类 ============
 
+class GeminiImagePreviewSite0V1Driver(GeminiImagePreviewCommonV1Driver):
+    """Gemini Image Preview Site 0 v1 版本驱动
+
+    固定YWAPI官方站点，base_url为 https://yw.perseids.cn
+    对应配置 api_aggregator.site_0
+    """
+
+    def __init__(self):
+        super().__init__(site_id="site_0")
+
+
 class GeminiImagePreviewSite1V1Driver(GeminiImagePreviewCommonV1Driver):
     """Gemini Image Preview Site 1 v1 版本驱动"""
-    
+
     def __init__(self):
         super().__init__(site_id="site_1")
 

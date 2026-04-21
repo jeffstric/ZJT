@@ -69,12 +69,16 @@ database:
 duomi:
   token: "5q26ybqAXXXXX"
 
-# 适配云雾 comfly这类聚合站
+# 适配ywapi 聚合站
 api_aggregator:
-  site_1:
-    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+  site_0:
+    base_url: "https://yw.perseids.cn"  # 固定YWAPI官方站点，base_url不可修改
     api_key: ""  # API 聚合器 API Key
-    name: "yunwu"
+    name: "智剧通官方API"
+  site_1:
+    base_url: "https://yw.perseids.cn"  # API 基础 URL（根据实际中转站配置）
+    api_key: ""  # API 聚合器 API Key
+    name: "ywapi"
   site_2:
     base_url: "https://ai.comfly.chat"  # API 基础 URL（根据实际中转站配置）
     api_key: ""  # API 聚合器 API Key
@@ -195,7 +199,7 @@ alembic:
 
 # Edition configuration
 edition:
-  mode: "community"  # community (开源版/社区版) | enterprise (商业版)
+  mode: "community"
 
 file_storage:
   # Qiniu cloud storage configuration

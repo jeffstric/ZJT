@@ -198,7 +198,15 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
-    # ==================== API 聚合站配置（兼容云雾、comfly 等中转站）====================
+    # ==================== API 聚合站配置（部分兼容comfly 等中转站）====================
+    {
+        'key': 'api_aggregator.site_0.api_key',
+        'value_type': 'string',
+        'description': 'YWAPI 官方站点 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
     {
         'key': 'api_aggregator.site_1.base_url',
         'value_type': 'string',
@@ -369,6 +377,24 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'llm.google.gemini_base_url',
         'value_type': 'string',
         'description': 'Gemini API 基础URL',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
+    # ==================== Claude 配置 ====================
+    {
+        'key': 'llm.claude.api_key',
+        'value_type': 'string',
+        'description': 'Claude API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.claude.base_url',
+        'value_type': 'string',
+        'description': 'Claude API 基础URL（默认 https://api.jiekou.ai/openai）',
         'editable': True,
         'is_sensitive': False,
         'quick_config': True
