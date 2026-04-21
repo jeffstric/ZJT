@@ -1313,7 +1313,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='YWAPI官方站点（固定）',
         sort_order=10500.0,
         site_number=0,
-        sync_mode=True  # 同步模式
+        sync_mode=False  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site1_v1',
@@ -1324,7 +1324,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 1',
         sort_order=11000.0,
         site_number=1,
-        sync_mode=True  # 同步模式
+        sync_mode=False  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site2_v1',
@@ -1335,7 +1335,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 2',
         sort_order=12000.0,
         site_number=2,
-        sync_mode=True  # 同步模式
+        sync_mode=False  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site3_v1',
@@ -1346,7 +1346,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 3',
         sort_order=13000.0,
         site_number=3,
-        sync_mode=True  # 同步模式
+        sync_mode=False  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site4_v1',
@@ -1357,7 +1357,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 4',
         sort_order=14000.0,
         site_number=4,
-        sync_mode=True  # 同步模式
+        sync_mode=False  # 同步模式
     ),
     ImplementationConfig(
         name='gemini_image_preview_site5_v1',
@@ -1368,7 +1368,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 5',
         sort_order=15000.0,
         site_number=5,
-        sync_mode=True  # 同步模式
+        sync_mode=False  # 同步模式
     ),
     ImplementationConfig(
         name='veo3_duomi_v1',
@@ -1396,7 +1396,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='聚合站点1',
-        sort_order=4510.0
+        sort_order=4510.0,
+        site_number=1
     ),
     ImplementationConfig(
         name='veo3_common_site2_v1',
@@ -1405,7 +1406,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='聚合站点2',
-        sort_order=4520.0
+        sort_order=4520.0,
+        site_number=2
     ),
     ImplementationConfig(
         name='veo3_common_site3_v1',
@@ -1414,7 +1416,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='聚合站点3',
-        sort_order=4530.0
+        sort_order=4530.0,
+        site_number=3
     ),
     ImplementationConfig(
         name='veo3_common_site4_v1',
@@ -1423,7 +1426,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='聚合站点4',
-        sort_order=4540.0
+        sort_order=4540.0,
+        site_number=4
     ),
     ImplementationConfig(
         name='veo3_common_site5_v1',
@@ -1432,7 +1436,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='聚合站点5',
-        sort_order=4550.0
+        sort_order=4550.0,
+        site_number=5
     ),
 
     # ==================== RunningHub 供应商 ====================
