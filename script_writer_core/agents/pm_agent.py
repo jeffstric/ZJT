@@ -254,6 +254,7 @@ class PMAgent(BaseAgent):
                     self.add_to_history("assistant", content)
                     logger.info(f"{self.agent_id}: conversation_history now has {len(self.conversation_history)} messages")
                     
+                    logger.warning(f"[DUPLICATE-DEBUG] About to push PM message: task_id={task.task_id}, content_preview={content[:100]}...")
                     self.task_manager.push_message(task.task_id, 'message', {
                         'role': 'assistant',
                         'content': content

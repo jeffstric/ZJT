@@ -15,7 +15,7 @@ from .gemini_client import GeminiClient, get_gemini_client
 from .ollama_client import OllamaClient, get_ollama_client
 from .aliyun_openai_client import AliyunOpenAIClient, get_aliyun_openai_client
 from .volcengine_openai_client import VolcengineOpenAIClient, get_volcengine_openai_client
-from .claude_openai_client import ClaudeOpenAIClient, get_claude_openai_client
+from .claude_customer_client import ClaudeCustomerClient, get_claude_customer_client
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class LLMClientFactory:
         LLMVendor.ALIYUN: get_aliyun_openai_client,
         LLMVendor.OLLAMA: get_ollama_client,
         LLMVendor.VOLCENGINE: get_volcengine_openai_client,
-        LLMVendor.CLAUDE: get_claude_openai_client,
+        LLMVendor.CLAUDE: get_claude_customer_client,
     }
 
     @classmethod

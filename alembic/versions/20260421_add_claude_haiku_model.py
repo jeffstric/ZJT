@@ -1,7 +1,7 @@
 """Add Claude vendor and claude-haiku-4-5 model
 
 Revision ID: 20260421_add_claude_haiku
-Revises: 20260420_add_supports_thinking
+Revises: 20260421_agent_task_thinking
 Create Date: 2026-04-21
 """
 from typing import Sequence, Union
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
 revision: str = '20260421_add_claude_haiku'
-down_revision: Union[str, None] = '20260420_add_supports_thinking'
+down_revision: Union[str, None] = '20260421_agent_task_thinking'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

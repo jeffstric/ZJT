@@ -132,6 +132,9 @@ llm:
   google:
     api_key: "sk_xxxxx"
     gemini_base_url: "https://api.jiekou.ai"
+  claude:
+    api_key: "sk_xxxxx"  # Claude API Key（jiekou.ai）
+    base_url: "https://api.jiekou.ai/openai"  # Claude API Base URL
   ollama:
     enabled: false  # 是否启用 Ollama 本地模型
     base_url: "http://localhost:11434"  # Ollama 服务地址

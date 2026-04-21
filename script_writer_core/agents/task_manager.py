@@ -289,7 +289,7 @@ class TaskManager:
                     auth_token=db_task.auth_token,
                     vendor_id=db_task.vendor_id,
                     model_id=db_task.model_id,
-                    enable_thinking=getattr(db_task, 'enable_thinking', False),
+                    enable_thinking=str(getattr(db_task, 'enable_thinking', False)).lower() == 'true',
                     thinking_effort=getattr(db_task, 'thinking_effort', 'medium'),
                     status=TaskStatus(db_task.status),
                     progress=db_task.progress,
@@ -318,11 +318,12 @@ class TaskManager:
     def push_message(self, task_id: str, message_type: str, content: Dict[str, Any]):
         """推送消息到数据库（跨进程共享，SSE 统一从数据库轮询）"""
         try:
-            AgentTaskMessagesModel.create(
+            record_id = AgentTaskMessagesModel.create(
                 task_id=task_id,
                 message_type=message_type,
                 content=content
             )
+            logger.warning(f"[DUPLICATE-DEBUG] Message pushed to DB: task_id={task_id}, type={message_type}, record_id={record_id}")
         except Exception as e:
             logger.error(f"Failed to push message to database: {e}")
 

@@ -1941,12 +1941,6 @@
                             console.log('[SSE] 上下文压缩事件:', data.reason);
                         } else if (data.type === 'done') {
                             eventSource.close();
-                            // 显示 done 消息中的结果内容
-                            if (data.result && data.result.result) {
-                                fullText += data.result.result + '\n\n';
-                                contentDiv.innerHTML = renderMarkdown(fullText);
-                                scrollToBottom();
-                            }
                             updateStatus('完成');
                             isProcessing = false;
                             const sendBtn = document.getElementById('send-btn');
@@ -2361,6 +2355,7 @@
 
                 updateModelSelectorDisplay();
                 updateModelTooltip();
+                updateThinkingModeUI();
 
                 // 检查 Qwen API Key 配置并过滤模型
                 await checkQwenApiKeyConfig();

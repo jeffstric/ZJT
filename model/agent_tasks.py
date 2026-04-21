@@ -100,8 +100,10 @@ class AgentTasksModel:
              auth_token, vendor_id, model_id, enable_thinking, thinking_effort, status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
+        # enable_thinking: bool/str -> str（数据库存字符串，支持 true/false/auto）
+        enable_thinking_str = str(enable_thinking).lower() if isinstance(enable_thinking, bool) else str(enable_thinking)
         params = (task_id, session_id, user_id, world_id, user_message,
-                  auth_token, vendor_id, model_id, enable_thinking, thinking_effort, status)
+                  auth_token, vendor_id, model_id, enable_thinking_str, thinking_effort, status)
 
         try:
             record_id = execute_insert(sql, params)
@@ -257,7 +259,7 @@ CREATE TABLE IF NOT EXISTS `agent_tasks` (
   `auth_token` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Authentication token',
   `vendor_id` int DEFAULT NULL COMMENT 'Vendor ID',
   `model_id` int DEFAULT NULL COMMENT 'Model ID',
-  `enable_thinking` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Whether thinking mode is enabled',
+  `enable_thinking` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'false' COMMENT 'Thinking mode: true/false/auto',
   `thinking_effort` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT 'medium' COMMENT 'Thinking effort level (low/medium/high)',
   `status` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending' COMMENT 'Task status: pending/running/waiting_human/completed/failed/cancelled',
   `progress` float NOT NULL DEFAULT '0' COMMENT 'Task progress 0-1',
