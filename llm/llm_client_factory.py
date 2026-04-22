@@ -16,6 +16,7 @@ from .ollama_client import OllamaClient, get_ollama_client
 from .aliyun_openai_client import AliyunOpenAIClient, get_aliyun_openai_client
 from .volcengine_openai_client import VolcengineOpenAIClient, get_volcengine_openai_client
 from .claude_customer_client import ClaudeCustomerClient, get_claude_customer_client
+from .apiai_zjt import ZJTOpenAIClient, get_zjt_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class LLMClientFactory:
         LLMVendor.OLLAMA: get_ollama_client,
         LLMVendor.VOLCENGINE: get_volcengine_openai_client,
         LLMVendor.CLAUDE: get_claude_customer_client,
+        LLMVendor.ZJT_API: get_zjt_openai_client,
     }
 
     @classmethod

@@ -445,6 +445,7 @@ class LLMVendor:
     OLLAMA = 'ollama'      # 本地运行供应商（Ollama 模型）
     VOLCENGINE = 'volcengine'  # 火山引擎供应商（Doubao 模型）
     CLAUDE = 'claude'      # Claude 供应商（Anthropic 模型）
+    ZJT_API = 'zjt_api'    # ZJT API 供应商（Qwen3.5/3.6 模型）
 
 
 class LLMModel:
@@ -477,4 +478,6 @@ MODEL_PREFIX_VENDOR_MAP = {
     'claude': LLMVendor.CLAUDE,
     'ollama': LLMVendor.OLLAMA,
     'doubao': LLMVendor.VOLCENGINE,
+    'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
+    'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
 }
