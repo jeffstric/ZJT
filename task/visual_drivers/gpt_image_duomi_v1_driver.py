@@ -143,6 +143,9 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
 
         Returns:
             Dict[str, Any]: 请求参数字典
+            
+        注意：
+            多米 API 只支持 1K 分辨率，image_size 参数会被忽略
         """
         # 准备图片URL列表 - 支持参考图（可选）
         image_urls = None
@@ -155,7 +158,7 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
             image_urls = upload_local_images_to_cdn_sync(image_urls, self._config)
             self.logger.info(f"图片上传完成，CDN链接: {image_urls}")
 
-        # 映射比例
+        # 映射比例（多米只支持 1K 分辨率，忽略 image_size 参数）
         api_ratio = self._map_ratio(ai_tool.ratio or "1:1")
 
         payload = {

@@ -1180,27 +1180,11 @@ async def list_sessions(
 # ==================== 模型和算力 API ====================
 
 @router.get('/models')
-async def get_available_models(
-    auth_token: Optional[str] = QueryParam(None),
-    authorization: Optional[str] = Header(None)
-):
+async def get_available_models():
     """获取可用的 AI 模型列表，根据 vendor 表分组"""
     try:
-        # 从query参数或header获取token
-        token = auth_token or (authorization.replace('Bearer ', '') if authorization else None)
-
-        if not token:
-            return JSONResponse({
-                'success': False,
-                'error': '缺少 auth_token 参数'
-            }, status_code=400)
-
         from llm.llm_client_factory import get_available_models as _get_available_models
-        result = await _get_available_models(token)
-
-        if not result['success']:
-            status_code = 401 if result.get('token_expired') else 500
-            return JSONResponse(result, status_code=status_code)
+        result = await _get_available_models()
 
         return JSONResponse({
             'success': True,

@@ -206,7 +206,7 @@ class UnifiedTaskConfig:
     provider: str
     driver_name: Optional[str] = None
     implementation: Optional[str] = None  # 默认实现方
-    implementations: List[str] = field(default_factory=list)  # 可选实现方列表
+    implementations: List[str] = field(default_factory=list)  # 可选实现方列表，注意，如果不配置，无法支持多实现方切换
     computing_power: Union[int, Dict[int, int]] = 0  # 算力覆盖值（优先使用）
     supported_ratios: List[str] = field(default_factory=lambda: ['9:16', '16:9'])
     supported_sizes: List[str] = field(default_factory=list)
@@ -704,6 +704,12 @@ class DriverImplementation:
 
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
+    GPT_IMAGE_COMMON_SITE0_V1 = 'gpt_image_common_site0_v1'
+    GPT_IMAGE_COMMON_SITE1_V1 = 'gpt_image_common_site1_v1'
+    GPT_IMAGE_COMMON_SITE2_V1 = 'gpt_image_common_site2_v1'
+    GPT_IMAGE_COMMON_SITE3_V1 = 'gpt_image_common_site3_v1'
+    GPT_IMAGE_COMMON_SITE4_V1 = 'gpt_image_common_site4_v1'
+    GPT_IMAGE_COMMON_SITE5_V1 = 'gpt_image_common_site5_v1'
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
@@ -737,6 +743,12 @@ class DriverImplementationId:
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 21
     VEO3_COMMON_SITE1_V1 = 22
     DUOMI_GPT_IMAGE_V1 = 29
+    GPT_IMAGE_COMMON_SITE0_V1 = 30
+    GPT_IMAGE_COMMON_SITE1_V1 = 31
+    GPT_IMAGE_COMMON_SITE2_V1 = 32
+    GPT_IMAGE_COMMON_SITE3_V1 = 33
+    GPT_IMAGE_COMMON_SITE4_V1 = 34
+    GPT_IMAGE_COMMON_SITE5_V1 = 35
     VEO3_COMMON_SITE2_V1 = 23
     VEO3_COMMON_SITE3_V1 = 24
     VEO3_COMMON_SITE4_V1 = 25
@@ -771,6 +783,12 @@ IMPLEMENTATION_TO_ID = {
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
     'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
     'duomi_gpt_image_v1': DriverImplementationId.DUOMI_GPT_IMAGE_V1,
+    'gpt_image_common_site0_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE0_V1,
+    'gpt_image_common_site1_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE1_V1,
+    'gpt_image_common_site2_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE2_V1,
+    'gpt_image_common_site3_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE3_V1,
+    'gpt_image_common_site4_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE4_V1,
+    'gpt_image_common_site5_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE5_V1,
     'veo3_common_site2_v1': DriverImplementationId.VEO3_COMMON_SITE2_V1,
     'veo3_common_site3_v1': DriverImplementationId.VEO3_COMMON_SITE3_V1,
     'veo3_common_site4_v1': DriverImplementationId.VEO3_COMMON_SITE4_V1,
@@ -1011,24 +1029,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         hidden=True,  # 隐藏，前端不显示
     ),
 
-    # ==================== 文生图 ====================
-    UnifiedTaskConfig(
-        id=TaskTypeId.GPT_IMAGE_2,
-        key='gpt-image-2',
-        name='GPT Image 2',
-        category=TaskCategory.TEXT_TO_IMAGE,
-        provider=TaskProvider.DUOMI,
-        driver_name=DriverKey.GPT_IMAGE_2,
-        implementation=DriverImplementation.DUOMI_GPT_IMAGE_V1,
-        computing_power=2,
-        supported_ratios=['1:1', '2:3', '3:2'],
-        supported_sizes=['1k'],
-        default_ratio='1:1',
-        default_size='1k',
-        sort_order=16,
-        supports_grid_image=False,
-        supports_grid_merge=False,
-    ),
+    # ==================== 文生图/图片编辑 ====================
     UnifiedTaskConfig(
         id=TaskTypeId.GPT_IMAGE_2_EDIT,
         key='gpt-image-2-edit',
@@ -1038,13 +1039,22 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.GPT_IMAGE_2,
         implementation=DriverImplementation.DUOMI_GPT_IMAGE_V1,
+        implementations=[
+            DriverImplementation.DUOMI_GPT_IMAGE_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE0_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE1_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE2_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE3_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE4_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1,
+        ],
         computing_power=2,
-        supported_ratios=['1:1', '2:3', '3:2'],
-        supported_sizes=['1k'],
+        supported_ratios=['1:1', '2:3', '3:2', '16:9', '9:16'],
+        supported_sizes=['1k', '2k', '4k'],
         default_ratio='1:1',
         default_size='1k',
         sort_order=17,
-        supports_grid_image=False,
+        supports_grid_image=True,
         supports_grid_merge=False,
     ),
 
@@ -1351,20 +1361,87 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='duomi_gpt_image_v1',
         display_name='多米',
         driver_class='GptImageDuomiV1Driver',
-        default_computing_power=5,
+        default_computing_power=2,
         enabled=True,
-        description='多米平台 GPT Image 2 接口',
-        sort_order=3100.0
+        description='多米平台 GPT Image 2 接口（仅支持1K分辨率）',
+        sort_order=3200.0
+    ),
+    # ==================== GPT Image 2 通用聚合站点 ====================
+    ImplementationConfig(
+        name='gpt_image_common_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GptImageCommonSite0V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='ZJT官方',
+        sort_order=3100.0,
+        sync_mode=True,  # 同步模式
+        site_number=0
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site1_v1',
+        display_name='gpt_site1',
+        driver_class='GptImageCommonSite1V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site 1',
+        sort_order=3210.0,
+        sync_mode=True,
+        site_number=1
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site2_v1',
+        display_name='gpt site2',
+        driver_class='GptImageCommonSite2V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site 2',
+        sort_order=3220.0,
+        sync_mode=True,
+        site_number=2
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site3_v1',
+        display_name='gpt site3',
+        driver_class='GptImageCommonSite3V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site3',
+        sort_order=3230.0,
+        sync_mode=True,
+        site_number=3
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site4_v1',
+        display_name='gpt site4',
+        driver_class='GptImageCommonSite4V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site 4',
+        sort_order=3240.0,
+        sync_mode=True,
+        site_number=4
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site5_v1',
+        display_name='gpt site5',
+        driver_class='GptImageCommonSite5V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site 5',
+        sort_order=3250.0,
+        sync_mode=True,
+        site_number=5
     ),
 
     # ==================== API 聚合器站点 ====================
     ImplementationConfig(
         name='gemini_image_preview_site0_v1',
-        display_name='YWAPI',
+        display_name='ZJTapi',
         driver_class='GeminiImagePreviewSite0V1Driver',
         default_computing_power=2,
         enabled=True,
-        description='YWAPI官方站点（固定）',
+        description='ZJT官方',
         sort_order=10500.0,
         site_number=0,
         sync_mode=False  # 同步模式
@@ -1435,11 +1512,11 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
     ),
     ImplementationConfig(
         name='veo3_common_site0_v1',
-        display_name='智剧通API',
+        display_name='ZJTapi',
         driver_class='Veo3CommonSite0V1Driver',
         default_computing_power=6,
         enabled=True,
-        description='智剧通API VEO3（固定）',
+        description='ZJTapi',
         sort_order=3900.0,
         site_number=0,
     ),

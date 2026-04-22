@@ -196,7 +196,15 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,  # 使用火山引擎 Seedance 2.0
 
     # GPT Image 相关驱动
-    DriverKey.GPT_IMAGE_2: DriverImplementation.DUOMI_GPT_IMAGE_V1,  # 使用多米供应商的 GPT Image 2 版本
+    DriverKey.GPT_IMAGE_2: [
+        DriverImplementation.DUOMI_GPT_IMAGE_V1,  # 使用多米供应商的 GPT Image 2 版本
+        DriverImplementation.GPT_IMAGE_COMMON_SITE0_V1,  # ZJT API 站点0
+        DriverImplementation.GPT_IMAGE_COMMON_SITE1_V1,  # ZJT API 站点1
+        DriverImplementation.GPT_IMAGE_COMMON_SITE2_V1,  # ZJT API 站点2
+        DriverImplementation.GPT_IMAGE_COMMON_SITE3_V1,  # ZJT API 站点3
+        DriverImplementation.GPT_IMAGE_COMMON_SITE4_V1,  # ZJT API 站点4
+        DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1,  # ZJT API 站点5
+    ],
 
 }
 

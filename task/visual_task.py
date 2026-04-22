@@ -349,10 +349,18 @@ async def _check_task_status(ai_tool):
         bool: True 表示任务已完成（成功或失败），False 表示仍在处理中
     """
     from task.visual_drivers import VideoDriverFactory
+    from task.sync_task_executor import get_sync_task_executor
     
     project_id = ai_tool.project_id
     ai_tool_type = ai_tool.type
     task_id = ai_tool.id
+    
+    # 检查任务是否正在同步执行器中运行
+    # 同步任务在执行器中会被设置为 PROCESSING 状态但没有 project_id，这是正常的
+    executor = get_sync_task_executor()
+    if executor.is_task_running(task_id):
+        logger.debug(f"Task {task_id} is running in sync executor, skip status check")
+        return False
     
     if not project_id:
         logger.error(f"AI tool {task_id} has no project_id while status=AI_TOOL_STATUS_PROCESSING")

@@ -367,6 +367,38 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import GptImageDuomiV1Driver: {e}")
 
+    # GPT Image 2 通用聚合站点驱动注册
+    try:
+        from utils.config_checker import check_api_aggregator_config_exists
+    except ImportError:
+        logger.warning("无法导入配置检查工具，跳过GPT Image通用聚合站点驱动注册")
+        check_api_aggregator_config_exists = lambda site_id: False
+
+    try:
+        from .gpt_image_common_v1_driver import (
+            GptImageCommonSite0V1Driver,
+            GptImageCommonSite1V1Driver,
+            GptImageCommonSite2V1Driver,
+            GptImageCommonSite3V1Driver,
+            GptImageCommonSite4V1Driver,
+            GptImageCommonSite5V1Driver,
+        )
+        # 注册 GPT Image 通用聚合站点驱动（site_1 到 site_5）
+        if check_api_aggregator_config_exists("site_1"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE1_V1, GptImageCommonSite1V1Driver)
+        if check_api_aggregator_config_exists("site_2"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE2_V1, GptImageCommonSite2V1Driver)
+        if check_api_aggregator_config_exists("site_3"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE3_V1, GptImageCommonSite3V1Driver)
+        if check_api_aggregator_config_exists("site_4"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE4_V1, GptImageCommonSite4V1Driver)
+        if check_api_aggregator_config_exists("site_5"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1, GptImageCommonSite5V1Driver)
+        # Site 0 固定站点，无需检查配置
+        VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE0_V1, GptImageCommonSite0V1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GPT Image Common site drivers: {e}")
+
     try:
         from .veo3_duomi_v1_driver import Veo3DuomiV1Driver
         # 注册 VEO3 多米供应商 v1 版本
