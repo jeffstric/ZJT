@@ -55,11 +55,17 @@ def check_implementation_config_exists(implementation_name: str) -> bool:
         from config.config_util import get_dynamic_config_value
 
         # 对于API聚合器实现方，检查对应的站点配置
-        if implementation_name.startswith('gemini_image_preview_site') and implementation_name.endswith('_v1'):
-            # 提取站点ID，如 gemini_image_preview_site1_v1 -> site_1
-            site_num = implementation_name.replace('gemini_image_preview_site', '').replace('_v1', '')
-            site_id = f"site_{site_num}"
-            return check_api_aggregator_config_exists(site_id)
+        # 支持的前缀：gemini_image_preview_site*, gpt_image_common_site*, veo3_common_site*
+        aggregator_prefixes = [
+            'gemini_image_preview_site',
+            'gpt_image_common_site',
+            'veo3_common_site',
+        ]
+        for prefix in aggregator_prefixes:
+            if implementation_name.startswith(prefix) and implementation_name.endswith('_v1'):
+                site_num = implementation_name.replace(prefix, '').replace('_v1', '')
+                site_id = f"site_{site_num}"
+                return check_api_aggregator_config_exists(site_id)
 
         # 对于多米平台实现方，检查 token 是否配置
         if '_duomi_' in implementation_name:
