@@ -5096,14 +5096,58 @@
           // 从后端配置获取第一个视频模型作为默认值
           let firstVideoModelValue = 'wan22';
           if(window.TaskConfig && window.TaskConfig.isLoaded()) {
-            const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-            if(options.length > 0) firstVideoModelValue = options[0].value;
-            options.forEach(opt => {
-              const optEl = document.createElement('option');
-              optEl.value = opt.value;
-              optEl.textContent = opt.label;
-              videoModelSelect.appendChild(optEl);
+            // 使用 getAllTasks 获取完整任务数据（含 provider 字段）
+            const allTasks = window.TaskConfig.getAllTasks();
+            const tasks = allTasks.filter(t =>
+              !t.hidden &&
+              (t.category === 'image_to_video' || t.categories?.includes('image_to_video'))
+            );
+
+            // 从 providers 获取显示名称映射（动态来自后端，无硬编码）
+            const providers = window.TaskConfig.getProviders() || {};
+            const providerIcons = { duomi: '☁️', runninghub: '🚀', vidu: '🎬', volcengine: '🌋', local: '💻' };
+
+            // 按 provider 分组
+            const providerGroups = {};
+            const providerOrder = [];
+
+            tasks.forEach(task => {
+              const provider = task.provider || 'unknown';
+              if (!providerGroups[provider]) {
+                providerGroups[provider] = [];
+                providerOrder.push(provider);
+              }
+              providerGroups[provider].push(task);
             });
+
+            // 按 provider 分组渲染
+            providerOrder.forEach(provider => {
+              const optGroup = document.createElement('optgroup');
+              const icon = providerIcons[provider] || '📦';
+              const providerName = providers[provider] || provider;
+              optGroup.label = `${icon} ${providerName}`;
+
+              providerGroups[provider].forEach(task => {
+                // 复用 getModelOptionsForCategory 的 shortKey 提取逻辑
+                const shortKey = task.key.replace(/_image_to_video|_text_to_video|_text_to_image|_image_edit/g, '');
+                const power = typeof task.computing_power === 'object'
+                  ? Object.values(task.computing_power)[0]
+                  : task.computing_power;
+                const optEl = document.createElement('option');
+                optEl.value = shortKey;
+                optEl.textContent = `${task.name} (${power}算力)`;
+                optGroup.appendChild(optEl);
+              });
+
+              videoModelSelect.appendChild(optGroup);
+            });
+
+            // 获取第一个可用值
+            if(providerOrder.length > 0 && providerGroups[providerOrder[0]].length > 0) {
+              const firstTask = providerGroups[providerOrder[0]][0];
+              const shortKey = firstTask.key.replace(/_image_to_video|_text_to_video|_text_to_image|_image_edit/g, '');
+              firstVideoModelValue = shortKey;
+            }
           } else {
             // 回退：硬编码选项
             const fallbackOptions = [

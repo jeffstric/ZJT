@@ -194,6 +194,10 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_1_5_PRO_VOLCENGINE_V1,  # 使用火山引擎 Seedance 1.5 Pro
     DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,  # 使用火山引擎 Seedance 2.0 Fast
     DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,  # 使用火山引擎 Seedance 2.0
+
+    # GPT Image 相关驱动
+    DriverKey.GPT_IMAGE_2: DriverImplementation.DUOMI_GPT_IMAGE_V1,  # 使用多米供应商的 GPT Image 2 版本
+
 }
 
 # 视频模型时长选项配置

@@ -1101,7 +1101,10 @@
         const LLMVendor = {
             JIEKOU: 'jiekou',      // 接口供应商（Gemini 模型）
             ALIYUN: 'aliyun',      // 阿里云供应商（Qwen 模型）
-            OLLAMA: 'ollama'       // 本地运行供应商（Ollama 模型）
+            OLLAMA: 'ollama',      // 本地运行供应商（Ollama 模型）
+            VOLCENGINE: 'volcengine',  // 火山引擎供应商（Doubao 模型）
+            CLAUDE: 'claude',      // Claude 供应商（Anthropic 模型）
+            ZJT_API: 'zjt_api'     // ZJT API 供应商（Qwen3.5/3.6 模型）
         };
 
         // LLM 模型名称常量
@@ -2328,7 +2331,9 @@
                     'jiekou': '☁️',
                     'aliyun': '🌐',
                     'ollama': '🖥️',
-                    'volcengine': '🌋'
+                    'volcengine': '🌋',
+                    'claude': '🤖',
+                    'zjt_api': '🔗'
                 };
 
                 // 记录排序后的第一个作为默认选中
@@ -2422,8 +2427,8 @@
                 updateModelTooltip();
                 updateThinkingModeUI();
 
-                // 检查 Qwen API Key 配置并过滤模型
-                await checkQwenApiKeyConfig();
+                // 检查供应商配置并过滤模型
+                await checkAllVendorConfigs();
                 filterModelsByConfig();
                 // 确保选中的模型可用，否则自动切换
                 ensureValidModelSelected();
@@ -2433,38 +2438,51 @@
             }
         }
 
-        // ==================== Qwen 配置检查 ====================
+        // ==================== 供应商配置检查 ====================
         // 配置检查结果缓存
-        let qwenConfigChecked = false;
-        let isQwenConfigured = false;
+        let vendorConfigChecked = false;
+        let vendorConfigStatus = {};  // { vendorName: boolean }
+
+        // 供应商配置路径映射
+        const VENDOR_CONFIG_MAP = {
+            'aliyun': 'llm.qwen.api_key',
+            'ollama': 'llm.ollama.enabled',
+            'volcengine': 'volcengine.api_key',
+            'zjt_api': 'api_aggregator.site_0.api_key',
+            'claude': 'llm.claude.api_key'
+        };
 
         /**
-         * 检查 Qwen API Key 是否已配置
+         * 检查所有供应商配置状态
          */
-        async function checkQwenApiKeyConfig() {
+        async function checkAllVendorConfigs() {
             try {
-                const response = await fetch('/api/config/check?keys=llm.qwen.api_key', {
+                const configKeys = Object.values(VENDOR_CONFIG_MAP).join(',');
+                const response = await fetch(`/api/config/check?keys=${configKeys}`, {
                     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
                 });
                 const data = await response.json();
-                if (data.success) {
-                    isQwenConfigured = data.results['llm.qwen.api_key'] || false;
-                    qwenConfigChecked = true;
-                    console.log(`[Qwen配置检查] llm.qwen.api_key 配置状态: ${isQwenConfigured}`);
+                if (data.success && data.results) {
+                    Object.entries(VENDOR_CONFIG_MAP).forEach(([vendorName, configKey]) => {
+                        vendorConfigStatus[vendorName] = data.results[configKey] || false;
+                    });
+                    vendorConfigChecked = true;
+                    console.log('[供应商配置检查] 配置状态:', vendorConfigStatus);
                 }
             } catch (error) {
-                console.error('检查 Qwen 配置失败:', error);
-                isQwenConfigured = false;
-                qwenConfigChecked = true;
+                console.error('检查供应商配置失败:', error);
+                Object.keys(VENDOR_CONFIG_MAP).forEach(v => {
+                    vendorConfigStatus[v] = false;
+                });
+                vendorConfigChecked = true;
             }
         }
 
         /**
          * 根据配置状态过滤模型选项
-         * qwen3.5 和 qwen3.6 系列模型需要配置 api_key 才能选择
          */
         function filterModelsByConfig() {
-            if (!qwenConfigChecked) return;
+            if (!vendorConfigChecked) return;
 
             const selector = document.getElementById('model-selector');
             if (!selector) return;
@@ -2472,13 +2490,14 @@
             const options = selector.querySelectorAll('option');
 
             options.forEach(option => {
-                const modelName = option.value || option.textContent;
-                // 检查是否是 qwen3.5、qwen3.6 或 qwen-plus 系列模型
-                if (modelName && (modelName.includes('qwen3.5') || modelName.includes('qwen3.6') || modelName.includes('qwen-plus'))) {
-                    if (!isQwenConfigured) {
+                const vendorName = option.dataset.vendorName;
+                const configKey = VENDOR_CONFIG_MAP[vendorName];
+
+                if (configKey) {
+                    if (!vendorConfigStatus[vendorName]) {
                         option.disabled = true;
-                        option.title = '请先在配置中设置 Qwen API Key';
-                        console.log(`[模型过滤] 禁用模型: ${modelName}`);
+                        option.title = `请先在配置中设置 ${vendorName} 对应的 API Key`;
+                        console.log(`[模型过滤] 禁用模型: ${option.value} (${vendorName}未配置)`);
                     } else {
                         option.disabled = false;
                         option.title = '';

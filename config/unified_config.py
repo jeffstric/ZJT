@@ -702,6 +702,9 @@ class DriverImplementation:
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 'seedance_2_0_fast_volcengine_v1'
     SEEDANCE_2_0_VOLCENGINE_V1 = 'seedance_2_0_volcengine_v1'
 
+    # GPT Image
+    DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
+
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
 
@@ -733,6 +736,7 @@ class DriverImplementationId:
     SEEDANCE_2_0_VOLCENGINE_V1 = 20
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 21
     VEO3_COMMON_SITE1_V1 = 22
+    DUOMI_GPT_IMAGE_V1 = 29
     VEO3_COMMON_SITE2_V1 = 23
     VEO3_COMMON_SITE3_V1 = 24
     VEO3_COMMON_SITE4_V1 = 25
@@ -766,6 +770,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
     'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
+    'duomi_gpt_image_v1': DriverImplementationId.DUOMI_GPT_IMAGE_V1,
     'veo3_common_site2_v1': DriverImplementationId.VEO3_COMMON_SITE2_V1,
     'veo3_common_site3_v1': DriverImplementationId.VEO3_COMMON_SITE3_V1,
     'veo3_common_site4_v1': DriverImplementationId.VEO3_COMMON_SITE4_V1,
@@ -823,6 +828,7 @@ class DriverKey:
     
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
+    GPT_IMAGE_2 = 'gpt_image_2'
 
     # Seedance 图生视频
     SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 'seedance_1_5_pro_image_to_video'
@@ -840,7 +846,9 @@ class TaskTypeId:
     SEEDREAM_TEXT_TO_IMAGE = 16         # Seedream 5.0 文生图/图片编辑
     SEEDREAM_4_5_IMAGE = 18             # Seedream 4.5 图片编辑
     QWEN_MULTI_ANGLE_IMAGE = 24         # Qwen 多角度图片编辑
-    
+    GPT_IMAGE_2 = 25                     # GPT Image 2 文生图
+    GPT_IMAGE_2_EDIT = 26                # GPT Image 2 图片编辑
+
     # 文生视频
     SORA2_TEXT_TO_VIDEO = 2             # Sora2 文生视频
     
@@ -1001,6 +1009,43 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_size='1K',
         sort_order=15,
         hidden=True,  # 隐藏，前端不显示
+    ),
+
+    # ==================== 文生图 ====================
+    UnifiedTaskConfig(
+        id=TaskTypeId.GPT_IMAGE_2,
+        key='gpt-image-2',
+        name='GPT Image 2',
+        category=TaskCategory.TEXT_TO_IMAGE,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GPT_IMAGE_2,
+        implementation=DriverImplementation.DUOMI_GPT_IMAGE_V1,
+        computing_power=2,
+        supported_ratios=['1:1', '2:3', '3:2'],
+        supported_sizes=['1k'],
+        default_ratio='1:1',
+        default_size='1k',
+        sort_order=16,
+        supports_grid_image=False,
+        supports_grid_merge=False,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.GPT_IMAGE_2_EDIT,
+        key='gpt-image-2-edit',
+        name='GPT Image 2 图片编辑',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GPT_IMAGE_2,
+        implementation=DriverImplementation.DUOMI_GPT_IMAGE_V1,
+        computing_power=2,
+        supported_ratios=['1:1', '2:3', '3:2'],
+        supported_sizes=['1k'],
+        default_ratio='1:1',
+        default_size='1k',
+        sort_order=17,
+        supports_grid_image=False,
+        supports_grid_merge=False,
     ),
 
     # ==================== 文生视频 ====================
@@ -1301,6 +1346,15 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='多米平台 Gemini 接口',
         sort_order=3000.0
+    ),
+    ImplementationConfig(
+        name='duomi_gpt_image_v1',
+        display_name='多米',
+        driver_class='GptImageDuomiV1Driver',
+        default_computing_power=5,
+        enabled=True,
+        description='多米平台 GPT Image 2 接口',
+        sort_order=3100.0
     ),
 
     # ==================== API 聚合器站点 ====================
