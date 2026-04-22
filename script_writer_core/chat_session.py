@@ -7,7 +7,7 @@ import os
 import logging
 import litellm
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from script_writer_core.agents import TaskManager, PMAgent, ToolExecutor
 from script_writer_core.file_manager import FileManager
@@ -155,3 +155,30 @@ class ChatSession:
         
         self.updated_at = datetime.now()
         return True
+
+    def compress_history(self, task) -> Dict[str, Any]:
+        """
+        手动压缩对话历史
+
+        Args:
+            task: 当前任务对象，包含模型配置信息
+
+        Returns:
+            Dict: 压缩结果
+        """
+        if not self.pm_agent:
+            return {
+                "success": False,
+                "error": "PM Agent 未初始化"
+            }
+
+        try:
+            result = self.pm_agent.force_compress(task)
+            self.updated_at = datetime.now()
+            return result
+        except Exception as e:
+            logger.error(f"压缩对话历史失败: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }

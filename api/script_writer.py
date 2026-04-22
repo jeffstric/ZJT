@@ -842,6 +842,65 @@ async def clear_session_history(request: Request, session_id: str):
             'error': str(e)
         }, status_code=500)
 
+@router.post('/session/{session_id}/compress')
+@require_permission("script_session:compress_history")
+async def compress_session_history(request: Request, session_id: str):
+    """压缩会话历史"""
+    try:
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
+        # 获取当前任务信息（从请求体或数据库）
+        from model.agent_tasks import AgentTasksModel
+        task = AgentTasksModel.get_latest_by_session(session_id)
+
+        if not task:
+            return JSONResponse({
+                'success': False,
+                'error': '没有可用的任务信息，无法确定模型配置'
+            }, status_code=400)
+
+        # 执行压缩（使用 run_in_executor 避免阻塞事件循环）
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, session.compress_history, task)
+
+        if result.get('success'):
+            # 持久化压缩后的历史到数据库
+            from model.chat_sessions import ChatSessionsModel
+            ChatSessionsModel.update_conversation_history(session_id, session.get_history())
+
+            return JSONResponse({
+                'success': True,
+                'message': f"对话历史已压缩：{result.get('before_count')} → {result.get('after_count')} 条消息",
+                'before_count': result.get('before_count'),
+                'after_count': result.get('after_count'),
+                'reduced': result.get('reduced'),
+                'summary': result.get('summary', '')
+            })
+        else:
+            return JSONResponse({
+                'success': False,
+                'error': result.get('error', '压缩失败')
+            }, status_code=400)
+    except Exception as e:
+        logger.error(f'压缩会话历史失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
 @router.post('/session/clear-directory')
 async def clear_user_directory(request: SyncFilesRequest):
     """清空用户世界目录"""

@@ -200,7 +200,7 @@ class PMAgent(BaseAgent):
                 # 在构建 API 消息前检查是否需要压缩上下文
                 if self._should_compress():
                     logger.warning(f"{self.agent_id}: 上下文窗口使用率超过90%，触发历史压缩")
-                    self._compress_conversation_history()
+                    self._compress_conversation_history(task)
                     # 向前端发送压缩事件通知
                     self.task_manager.push_message(task.task_id, 'context_compression', {
                         'compressed': True,
@@ -558,14 +558,55 @@ class PMAgent(BaseAgent):
         current_tokens = self._estimate_current_tokens()
         return current_tokens / context_window >= 0.90
 
-    def _compress_conversation_history(self):
-        """压缩对话历史：优先使用 summarizer，兜底使用滑动窗口截断"""
+    def force_compress(self, task: AgentTask) -> Dict[str, Any]:
+        """
+        手动触发上下文压缩（公开接口）
+
+        Args:
+            task: 当前任务对象，包含模型配置信息
+
+        Returns:
+            Dict: 压缩结果，包含 before_count, after_count, summary 等信息
+        """
+        from config.constant import SessionHistoryConstants
+
+        history = self.conversation_history
+        original_count = len(history)
+
+        # 检查是否有足够消息可压缩
+        if original_count <= SessionHistoryConstants.MIN_HISTORY_MESSAGES:
+            return {
+                "success": False,
+                "error": f"历史消息数量过少（{original_count}），无需压缩",
+                "before_count": original_count,
+                "after_count": original_count
+            }
+
+        # 执行压缩，获取摘要内容
+        summary_text = self._compress_conversation_history(task)
+
+        new_count = len(self.conversation_history)
+
+        return {
+            "success": True,
+            "before_count": original_count,
+            "after_count": new_count,
+            "reduced": original_count - new_count,
+            "summary": summary_text or ""
+        }
+
+    def _compress_conversation_history(self, task: AgentTask) -> str:
+        """压缩对话历史：优先使用 summarizer，兜底使用滑动窗口截断
+
+        Returns:
+            str: 压缩生成的摘要文本
+        """
         from config.constant import SessionHistoryConstants
 
         history = self.conversation_history
         if len(history) <= SessionHistoryConstants.MIN_HISTORY_MESSAGES:
             logger.warning(f"{self.agent_id}: 历史消息数量过少（{len(history)}），跳过压缩")
-            return
+            return ""
 
         # 保留 system 消息和最近 MIN_HISTORY_MESSAGES 条消息
         system_msgs = [msg for msg in history if msg.get("role") == "system"]
@@ -575,17 +616,27 @@ class PMAgent(BaseAgent):
         compressible = other_msgs[:-keep_count]
 
         if not compressible:
-            return
+            return ""
 
         logger.warning(
             f"{self.agent_id}: 上下文窗口使用率超过90%，触发压缩。"
             f"可压缩消息数: {len(compressible)}, 保留消息数: {len(preserved)}"
         )
 
-        # 主策略：使用 summarizer 生成摘要
+        # 主策略：使用 summarizer 生成摘要（使用当前对话的模型）
         try:
             pm_context = self._build_context_for_expert("script-orchestrator", self.user_id, self.world_id)
-            summary = self.summarizer.summarize(pm_context, compressible, "script-orchestrator")
+            summary = self.summarizer.summarize(
+                pm_context=pm_context,
+                expert_conversation=compressible,
+                expert_name="script-orchestrator",
+                model=self.model,
+                vendor_id=task.vendor_id,
+                auth_token=task.auth_token,
+                model_id=task.model_id,
+                enable_thinking=task.enable_thinking,
+                thinking_effort=task.thinking_effort
+            )
             summary_text = summary.get("summary", "")
             if not summary_text:
                 summary_text = f"[上下文摘要] 任务: {summary.get('task', '')}; 状态: {summary.get('status', '')}"
@@ -594,8 +645,23 @@ class PMAgent(BaseAgent):
                 "content": f"[历史对话已压缩] {summary_text}",
                 "timestamp": datetime.now().isoformat()
             }
-            self.conversation_history = system_msgs + [compressed_msg] + preserved
-            logger.info(f"{self.agent_id}: 使用 summarizer 压缩成功，历史消息从 {len(history)} 降至 {len(self.conversation_history)}")
+            new_history = system_msgs + [compressed_msg] + preserved
+
+            # 有效性检查：压缩后消息数必须显著减少（至少减少 MIN_HISTORY_MESSAGES 条）
+            min_reduction = SessionHistoryConstants.MIN_HISTORY_MESSAGES
+            if len(new_history) > len(history) - min_reduction:
+                raise ValueError(
+                    f"压缩无效：消息数从 {len(history)} 降至 {len(new_history)}，"
+                    f"仅减少 {len(history) - len(new_history)} 条，未达到阈值 {min_reduction}"
+                )
+
+            self.conversation_history = new_history
+            logger.info(
+                f"{self.agent_id}: 使用 summarizer 压缩成功，"
+                f"历史消息从 {len(history)} 降至 {len(self.conversation_history)} "
+                f"(减少 {len(history) - len(self.conversation_history)} 条)"
+            )
+            return summary_text
         except Exception as e:
             logger.error(f"{self.agent_id}: summarizer 压缩失败，回退到滑动窗口截断: {e}")
             # 兜底策略：滑动窗口截断，只保留最近的 MAX_HISTORY_MESSAGES 条
@@ -603,6 +669,7 @@ class PMAgent(BaseAgent):
             kept = history[-max_msgs:] if len(history) > max_msgs else history
             self.conversation_history = kept
             logger.info(f"{self.agent_id}: 滑动窗口截断后，历史消息降至 {len(self.conversation_history)}")
+            return f"[滑动窗口截断] 保留最近 {len(self.conversation_history)} 条消息"
 
     def _build_messages_for_api(self) -> List[Dict[str, Any]]:
         """构建用于 API 调用的消息列表

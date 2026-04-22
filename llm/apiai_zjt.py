@@ -15,9 +15,9 @@ class ZJTOpenAIClient(OpenAIBaseClient):
     def _refresh_config(self):
         """刷新 ZJT API 配置"""
         self.api_key = get_dynamic_config_value('api_aggregator', 'site_0', 'api_key', default='')
-        self.base_url = 'https://yunwu.ai/v1/chat/completions'
+        self.base_url = 'https://yunwu.ai/v1'
         self.vendor_name = 'zjt_api'
-        self.thinking_mode = None  # ZJT API 暂不支持 thinking 模式
+        self.thinking_mode = 'enable_thinking'  # ZJT API 支持 thinking 模式
 
         if self.api_key:
             logger.info(f"ZJTOpenAIClient config loaded: base_url={self.base_url}")

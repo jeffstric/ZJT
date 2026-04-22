@@ -415,7 +415,7 @@ CONFIG_KEY_MAX_LENGTH = SystemConfigConstants.CONFIG_KEY_MAX_LENGTH
 class SessionHistoryConstants:
     """会话历史配置相关常量"""
     MAX_HISTORY_MESSAGES = 100  # 最大历史消息数量（剧本创作需要较多上下文）
-    MIN_HISTORY_MESSAGES = 20   # 最小保留的历史消息数量（确保上下文连续性）
+    MIN_HISTORY_MESSAGES = 10   # 最小保留的历史消息数量（确保上下文连续性）
     TRUNCATION_KEEP_SYSTEM = True  # 截断时保留系统提示
 
 

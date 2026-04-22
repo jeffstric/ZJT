@@ -187,6 +187,11 @@
         <main class="main-layout">
             <!-- 聊天区域 -->
             <div class="chat-area">
+                <button class="chat-compress-btn" onclick="compressHistory()" title="压缩对话历史（保留关键信息，减少上下文长度）">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                    </svg>
+                </button>
                 <button class="chat-refresh-btn" onclick="refreshPage()" title="新建会话（刷新页面，清空对话历史）">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
@@ -1562,6 +1567,64 @@
             }
         }
 
+        async function compressHistory() {
+            if (!sessionId) {
+                showError('没有活跃的会话，无法压缩历史');
+                return;
+            }
+
+            if (!confirm('🗜️ 确定要压缩对话历史吗？\n\n这将会：\n• 保留关键决策和重要信息\n• 删除冗余对话内容\n• 减少上下文长度以节省 token\n\n压缩后无法恢复原始历史，是否继续？')) {
+                return;
+            }
+
+            try {
+                updateStatus('正在压缩对话历史...');
+                const response = await fetch(`/api/session/${sessionId}/compress`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    showSuccess(`✓ 对话历史已压缩：${data.before_count} → ${data.after_count} 条消息`);
+                    updateStatus(`对话历史已压缩，减少 ${data.reduced} 条消息`);
+
+                    // 添加系统消息到聊天窗口显示压缩结果
+                    addSystemMessage(`对话历史已压缩`,
+                        `原始消息：${data.before_count} 条\n` +
+                        `压缩后：${data.after_count} 条\n` +
+                        `摘要：${data.summary || '无'}`,
+                        'info'
+                    );
+                } else {
+                    showError('压缩失败: ' + (data.error || '未知错误'));
+                    updateStatus('压缩失败');
+                }
+            } catch (error) {
+                console.error('压缩对话历史失败:', error);
+                showError('压缩失败: ' + error.message);
+                updateStatus('压缩失败');
+            }
+        }
+
+        // 添加系统消息到聊天窗口
+        function addSystemMessage(title, content, type = 'info') {
+            const chatMessages = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `system-message ${type}`;
+            messageDiv.innerHTML = `
+                <div class="system-message-header">
+                    <span class="system-message-icon">${type === 'info' ? 'ℹ️' : '⚠️'}</span>
+                    <span class="system-message-title">${title}</span>
+                </div>
+                <div class="system-message-content">${content.replace(/\n/g, '<br>')}</div>
+            `;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
         // 提交状态标志，防止重复提交
         let isSubmitting = false;
 
@@ -1861,6 +1924,7 @@
                 const selector = document.getElementById('model-selector');
                 const selectedOption = selector?.options[selector.selectedIndex];
                 const modelId = selectedOption?.dataset?.modelId;
+                const vendorId = selectedOption?.dataset?.vendorId;
 
                 if (!modelId) {
                     hideTypingIndicator();
@@ -1880,6 +1944,7 @@
                         auth_token: AUTH_TOKEN,
                         model: selector?.value || '',
                         model_id: modelId,
+                        vendor_id: vendorId ? parseInt(vendorId) : 1,
                         ...getThinkingParams()
                     }),
                     signal: controller.signal

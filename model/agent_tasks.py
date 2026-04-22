@@ -225,6 +225,30 @@ class AgentTasksModel:
             raise
 
     @staticmethod
+    def get_latest_by_session(session_id: str) -> Optional[AgentTaskEntity]:
+        """
+        获取会话的最新任务
+
+        Returns:
+            最新的 AgentTaskEntity 对象或 None
+        """
+        sql = """
+            SELECT * FROM agent_tasks
+            WHERE session_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """
+
+        try:
+            result = execute_query(sql, (session_id,), fetch_one=True)
+            if result:
+                return AgentTaskEntity(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get latest task for session {session_id}: {e}")
+            raise
+
+    @staticmethod
     def delete_old_tasks(max_age_hours: int = 24) -> int:
         """
         Delete old completed/failed/cancelled tasks

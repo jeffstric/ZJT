@@ -916,6 +916,38 @@ body {
     animation: pulse-sending 1.5s ease-in-out infinite;
 }
 
+.chat-compress-btn {
+    position: absolute;
+    top: 2px;
+    right: 52px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.1);
+}
+
+.chat-compress-btn:hover {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px -2px rgba(139, 92, 246, 0.4);
+}
+
+.chat-compress-btn:active {
+    transform: scale(0.95);
+}
+
 .chat-refresh-btn {
     position: absolute;
     top: 2px;
@@ -946,6 +978,50 @@ body {
 
 .chat-refresh-btn:active {
     transform: rotate(180deg) scale(0.95);
+}
+
+/* 系统消息样式 */
+.system-message {
+    margin: 12px 24px;
+    padding: 12px 16px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border: 1px solid #bae6fd;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.system-message.info {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+    border-color: #bae6fd;
+}
+
+.system-message.warning {
+    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    border-color: #fcd34d;
+}
+
+.system-message-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.system-message-icon {
+    font-size: 16px;
+}
+
+.system-message-title {
+    font-size: 14px;
+}
+
+.system-message-content {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    padding-left: 24px;
 }
 
 .feedback-fab-container {

@@ -1,16 +1,15 @@
 import json
 import logging
-from typing import Dict, List, Any
-from litellm import completion
+from typing import Dict, List, Any, Optional
+from llm.llm_client_factory import get_llm_client
 
 logger = logging.getLogger(__name__)
 
 
 class ConversationSummarizer:
     """对话精简器 - 负责压缩 PM 和 Expert 的沟通内容"""
-    
-    def __init__(self, model: str = "gemini/gemini-2.5-flash"):
-        self.model = model
+
+    def __init__(self):
         self.summary_prompt = """你是一个专业的对话精简助手。
 
 你的任务是将 PM（项目经理）和 Expert（专家）之间的对话内容压缩为简洁的摘要。
@@ -38,15 +37,21 @@ class ConversationSummarizer:
 请严格按照JSON格式输出，不要添加其他内容。"""
     
     def summarize(
-        self, 
-        pm_context: str, 
+        self,
+        pm_context: str,
         expert_conversation: List[Dict[str, Any]],
-        expert_name: str
+        expert_name: str,
+        model: str,
+        vendor_id: int,
+        auth_token: str,
+        model_id: Optional[int] = None,
+        enable_thinking: bool = False,
+        thinking_effort: Optional[str] = None
     ) -> Dict[str, Any]:
         """精简 PM 和 Expert 的对话"""
         try:
             conversation_text = self._format_conversation(expert_conversation)
-            
+
             messages = [
                 {"role": "system", "content": self.summary_prompt},
                 {"role": "user", "content": f"""PM 上下文：
@@ -57,11 +62,18 @@ Expert ({expert_name}) 对话记录：
 
 请精简以上对话内容。"""}
             ]
-            
-            response = completion(
-                model=self.model,
+
+            # 使用当前对话的模型进行摘要生成
+            client = get_llm_client(model, vendor_id=vendor_id)
+            response = client.call_api(
+                model=model,
                 messages=messages,
-                temperature=0.3
+                temperature=0.3,
+                auth_token=auth_token,
+                vendor_id=vendor_id,
+                model_id=model_id,
+                enable_thinking=enable_thinking,
+                thinking_effort=thinking_effort
             )
             
             content = response.choices[0].message.content.strip()
