@@ -169,7 +169,7 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
             payload["image"] = image_urls
 
         return {
-            "url": f"{self._base_url}/v1/images/generations",
+            "url": f"{self._base_url}/v1/images/generations?async=true",
             "method": "POST",
             "json": payload,
             "headers": {
