@@ -82,40 +82,29 @@ class TestVendorCRUD(DatabaseTestCase):
 
     def test_vendor_dao_get_all(self):
         """测试 VendorDAO.get_all() 方法"""
-        # 插入测试数据
-        self.insert_fixture('vendor', {
-            'id': 104,
-            'vendor_name': 'vendor_a',
-            'note': '供应商A'
-        })
-        self.insert_fixture('vendor', {
-            'id': 105,
-            'vendor_name': 'vendor_b',
-            'note': '供应商B'
-        })
-
         from model.vendor import VendorDAO
+        # 使用 Model 层方法插入数据，确保在同一连接池可见
+        vendor_id_1 = VendorDAO.create('vendor_a', '供应商A')
+        vendor_id_2 = VendorDAO.create('vendor_b', '供应商B')
+
         vendors = VendorDAO.get_all()
 
         self.assertIsInstance(vendors, list)
         # 至少包含我们插入的两个
         vendor_ids = [v.id for v in vendors]
-        self.assertIn(104, vendor_ids)
-        self.assertIn(105, vendor_ids)
+        self.assertIn(vendor_id_1, vendor_ids)
+        self.assertIn(vendor_id_2, vendor_ids)
 
     def test_vendor_dao_get_by_id(self):
         """测试 VendorDAO.get_by_id() 方法"""
-        self.insert_fixture('vendor', {
-            'id': 106,
-            'vendor_name': 'test_get_by_id',
-            'note': '测试获取'
-        })
-
         from model.vendor import VendorDAO
-        vendor = VendorDAO.get_by_id(106)
+        # 使用 Model 层方法插入数据
+        vendor_id = VendorDAO.create('test_get_by_id', '测试获取')
+
+        vendor = VendorDAO.get_by_id(vendor_id)
 
         self.assertIsNotNone(vendor)
-        self.assertEqual(vendor.id, 106)
+        self.assertEqual(vendor.id, vendor_id)
         self.assertEqual(vendor.vendor_name, 'test_get_by_id')
         self.assertEqual(vendor.note, '测试获取')
 

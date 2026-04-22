@@ -11,19 +11,17 @@ class TestVendorModelCRUD(DatabaseTestCase):
     def setUp(self):
         """设置测试数据"""
         super().setUp()
-        # 确保有测试用的 vendor 和 model
-        self.insert_fixture('vendor', {
-            'id': 200,
-            'vendor_name': 'test_vendor_for_vm',
-            'note': '测试供应商'
-        })
-        self.insert_fixture('model', {
-            'id': 2000,
-            'model_name': 'test_model_for_vm',
-            'context_window': 100000,
-            'supports_tools': 1,
-            'note': '测试模型'
-        })
+        # 使用 Model 层创建依赖数据，确保在同一连接池可见
+        from model.vendor import VendorDAO
+        from model.model import ModelModel
+        VendorDAO.create('test_vendor_for_vm', '测试供应商')
+        ModelModel.create(
+            model_name='test_model_for_vm',
+            context_window=100000,
+            supports_tools=True,
+            note='测试模型'
+        )
+        # 注意：不创建 vendor_model，让每个测试根据需要自行插入
 
     def test_create_vendor_model(self):
         """测试创建供应商模型关联"""
@@ -107,15 +105,16 @@ class TestVendorModelCRUD(DatabaseTestCase):
 
     def test_vendor_model_model_get_all(self):
         """测试 VendorModelModel.get_all() 方法"""
-        self.insert_fixture('vendor_model', {
-            'vendor_id': 200,
-            'model_id': 2000,
-            'input_token_threshold': 100000,
-            'out_token_threshold': 10000,
-            'cache_read_threshold': 100000
-        })
-
         from model.vendor_model import VendorModelModel
+        # 使用 Model 层创建数据，确保在同一连接池可见
+        VendorModelModel.create(
+            vendor_id=200,
+            model_id=2000,
+            input_threshold=100000,
+            output_threshold=10000,
+            cache_read_threshold=100000
+        )
+
         vendor_models = VendorModelModel.get_all()
 
         self.assertIsInstance(vendor_models, list)
@@ -125,15 +124,16 @@ class TestVendorModelCRUD(DatabaseTestCase):
 
     def test_vendor_model_model_get_by_vendor_id(self):
         """测试 VendorModelModel.get_by_vendor_id() 方法"""
-        self.insert_fixture('vendor_model', {
-            'vendor_id': 200,
-            'model_id': 2000,
-            'input_token_threshold': 110000,
-            'out_token_threshold': 11000,
-            'cache_read_threshold': 110000
-        })
-
         from model.vendor_model import VendorModelModel
+        # 使用 Model 层创建数据，确保在同一连接池可见
+        VendorModelModel.create(
+            vendor_id=200,
+            model_id=2000,
+            input_threshold=110000,
+            output_threshold=11000,
+            cache_read_threshold=110000
+        )
+
         vendor_models = VendorModelModel.get_by_vendor_id(200)
 
         self.assertIsInstance(vendor_models, list)
