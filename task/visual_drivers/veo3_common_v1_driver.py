@@ -182,6 +182,7 @@ class Veo3CommonV1Driver(BaseVideoDriver):
         payload = {
             "model": "veo3.1-fast",
             "prompt": ai_tool.prompt,
+            "aspect_ratio": ai_tool.ratio or "9:16",
             "enhance_prompt": True,
         }
 
