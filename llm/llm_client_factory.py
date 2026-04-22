@@ -50,16 +50,33 @@ class LLMClientFactory:
         return LLMVendor.JIEKOU
 
     @classmethod
-    def get_client(cls, model: str) -> BaseLLMClient:
+    def get_client(cls, model: str, vendor_id: Optional[int] = None) -> BaseLLMClient:
         """
         根据模型名称获取对应的 LLM 客户端
 
         Args:
             model: 模型名称（如 gemini-3-flash-preview, qwen3.5-plus）
+            vendor_id: 可选的供应商 ID。若提供，优先使用该 ID 直接路由，
+                      不再依赖模型名称前缀匹配。
 
         Returns:
             对应的 LLM 客户端实例
         """
+        # 如果提供了 vendor_id，优先从数据库查询 vendor_name 直接路由
+        if vendor_id is not None:
+            try:
+                from model.vendor import VendorDAO
+                vendor_obj = VendorDAO.get_by_id(vendor_id)
+                if vendor_obj and vendor_obj.vendor_name:
+                    vendor = vendor_obj.vendor_name
+                    getter = cls._VENDOR_CLIENT_MAP.get(vendor, get_gemini_client)
+                    client = getter()
+                    logger.debug(f"模型 {model} (vendor_id={vendor_id}, vendor={vendor}) -> {type(client).__name__}")
+                    return client
+            except Exception as e:
+                logger.warning(f"根据 vendor_id={vendor_id} 查询供应商失败，回退到前缀匹配: {e}")
+
+        # 回退：根据模型名称前缀匹配
         vendor = cls._get_vendor_by_model(model)
         getter = cls._VENDOR_CLIENT_MAP.get(vendor, get_gemini_client)
         client = getter()
@@ -80,9 +97,14 @@ class LLMClientFactory:
         logger.info(f"注册模型前缀映射: {prefix} -> {vendor}")
 
 
-def get_llm_client(model: str) -> BaseLLMClient:
-    """获取 LLM 客户端的便捷函数"""
-    return LLMClientFactory.get_client(model)
+def get_llm_client(model: str, vendor_id: Optional[int] = None) -> BaseLLMClient:
+    """获取 LLM 客户端的便捷函数
+
+    Args:
+        model: 模型名称
+        vendor_id: 可选的供应商 ID。若提供，优先使用该 ID 直接路由。
+    """
+    return LLMClientFactory.get_client(model, vendor_id=vendor_id)
 
 
 async def get_available_models(token: str) -> dict:

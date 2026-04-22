@@ -405,8 +405,8 @@ async def convert_script_to_narration(
     _save_log_file(log_dir, f"script_parser_{timestamp}_narration_convert_system_prompt.txt", NARRATION_CONVERSION_SYSTEM_PROMPT)
     _save_log_file(log_dir, f"script_parser_{timestamp}_narration_convert_user_prompt.txt", user_prompt)
     
-    # 获取 LLM 客户端
-    llm_client = get_llm_client(model)
+    # 获取 LLM 客户端（传入 vendor_id 确保正确路由）
+    llm_client = get_llm_client(model, vendor_id=vendor_id)
     
     if not model:
         model = "gemini-3-flash-preview"
@@ -867,13 +867,13 @@ JSON格式示例：
         # 调用LLM API（增加max_tokens以避免输出被截断）
         logger.info(f"调用Gemini API，temperature={temperature}")
         
-        # 获取 LLM 客户端
-        llm_client = get_llm_client(model)
-        
+        # 获取 LLM 客户端（传入 vendor_id 确保正确路由）
+        llm_client = get_llm_client(model, vendor_id=vendor_id)
+
         # 使用默认模型或指定模型
         if not model:
             model = "gemini-3-flash-preview"
-        
+
         # 使用 asyncio.to_thread 包装同步调用
         import asyncio
         response = await asyncio.to_thread(

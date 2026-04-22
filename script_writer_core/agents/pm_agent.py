@@ -226,7 +226,8 @@ class PMAgent(BaseAgent):
                     logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
 
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
-                response = get_llm_client(self.model).call_api(
+                # 传入 vendor_id 确保正确路由到目标供应商（如 zjt_api）
+                response = get_llm_client(self.model, vendor_id=task.vendor_id).call_api(
                     model=self.model,
                     messages=messages,
                     tools=tool_definitions,
