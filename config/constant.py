@@ -136,7 +136,15 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.SORA2_IMAGE_TO_VIDEO: DriverImplementation.SORA2_DUOMI_V1,     # 使用多米供应商的 Sora2 v1 版本
     
     # Kling 相关驱动
-    DriverKey.KLING_IMAGE_TO_VIDEO: DriverImplementation.KLING_DUOMI_V1,     # 使用多米供应商的 Kling v1 版本
+    DriverKey.KLING_IMAGE_TO_VIDEO: [
+        DriverImplementation.KLING_DUOMI_V1,          # 使用多米供应商的 Kling v1 版本
+        DriverImplementation.KLING_COMMON_SITE0_V1,   # 智剧通API Kling
+        DriverImplementation.KLING_COMMON_SITE1_V1,   # 通用聚合站点 1
+        DriverImplementation.KLING_COMMON_SITE2_V1,   # 通用聚合站点 2
+        DriverImplementation.KLING_COMMON_SITE3_V1,   # 通用聚合站点 3
+        DriverImplementation.KLING_COMMON_SITE4_V1,   # 通用聚合站点 4
+        DriverImplementation.KLING_COMMON_SITE5_V1,   # 通用聚合站点 5
+    ],
     
     # Gemini 相关驱动
     DriverKey.GEMINI_IMAGE_EDIT: [

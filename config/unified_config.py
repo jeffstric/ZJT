@@ -57,6 +57,23 @@ class TaskProvider:
 
 
 @dataclass
+class PowerModifier:
+    """
+    算力修饰符 - 根据额外属性（如 image_mode、resolution）动态调整算力
+
+    算力计算公式: final_power = base_power(duration) × modifier1 × modifier2 × ...
+
+    Attributes:
+        attribute: 属性名，如 'image_mode', 'resolution'
+        values: 属性值 -> 乘数映射，如 {'first_last_with_tail': 1.66, 'first_last_frame': 1.0}
+        default: 未匹配时的默认乘数
+    """
+    attribute: str
+    values: Dict[str, float]
+    default: float = 1.0
+
+
+@dataclass
 class ImplementationConfig:
     """
     实现方配置类 - 定义具体的实现方及其算力配置
@@ -84,13 +101,14 @@ class ImplementationConfig:
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
 
-    def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None) -> int:
+    def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
         获取算力（优先数据库配置，其次代码默认值）
 
         Args:
             duration: 时长（秒），用于按时长计费的实现方
             driver_key: DriverKey，用于从数据库读取实现方算力配置
+            context: 额外上下文参数（预留，用于修饰符计算）
 
         Returns:
             算力值
@@ -223,40 +241,60 @@ class UnifiedTaskConfig:
     supports_grid_image: bool = False  # 是否支持宫格生图（一次生成多张图片）
     supports_last_frame: bool = True  # 是否支持尾帧（某些模型虽然支持首尾帧模式，但只使用首帧，忽略尾帧）
     hidden: bool = False  # 是否隐藏（隐藏的任务不在前端模型选择器中显示，仅通过API调用）
+    power_modifiers: List[PowerModifier] = field(default_factory=list)  # 算力修饰符列表
 
-    def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None) -> int:
+    def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
         获取算力消耗
 
         优先使用任务配置中的 computing_power，如果没有设置（或为0）则从实现方配置读取。
+        先累积所有修饰符乘数，再进行一次向上取整（ceiling）。
 
         Args:
             duration: 时长（秒），用于按时长计费的任务
             implementation: 实现方名称，用于从实现方配置读取算力
+            context: 额外上下文参数，用于修饰符计算（如 {'image_mode': 'first_last_with_tail'}）
 
         Returns:
-            算力消耗值
+            算力消耗值（整数）
         """
+        import math
+
         # 优先使用任务配置中的算力覆盖值
         if self.computing_power:
             if isinstance(self.computing_power, dict):
                 if duration and duration in self.computing_power:
-                    return self.computing_power[duration]
-                return list(self.computing_power.values())[0] if self.computing_power else 0
-            return self.computing_power
+                    base_power = self.computing_power[duration]
+                else:
+                    base_power = list(self.computing_power.values())[0] if self.computing_power else 0
+            else:
+                base_power = self.computing_power
+        else:
+            # 回退到实现方配置
+            if not implementation:
+                implementation = self.implementation
 
-        # 回退到实现方配置
-        if not implementation:
-            implementation = self.implementation
+            if not implementation:
+                return 0  # 没有实现方配置，返回0
 
-        if not implementation:
-            return 0  # 没有实现方配置，返回0
+            impl_config = UnifiedConfigRegistry.get_implementation(implementation)
+            if not impl_config:
+                return 0
 
-        impl_config = UnifiedConfigRegistry.get_implementation(implementation)
-        if not impl_config:
-            return 0
+            base_power = impl_config.get_computing_power(duration, self.driver_name)
 
-        return impl_config.get_computing_power(duration, self.driver_name)
+        # 应用修饰符（累积乘数，最后一次向上取整）
+        if context and self.power_modifiers:
+            multiplier = 1.0
+            for modifier in self.power_modifiers:
+                attr_value = context.get(modifier.attribute)
+                if attr_value and attr_value in modifier.values:
+                    multiplier *= modifier.values[attr_value]
+                else:
+                    multiplier *= modifier.default
+            base_power = math.ceil(base_power * multiplier)
+
+        return int(base_power)
     
     def to_frontend_dict(self) -> Dict[str, Any]:
         """
@@ -300,6 +338,17 @@ class UnifiedTaskConfig:
         # 文生图任务添加宫格生图配置
         if TaskCategory.TEXT_TO_IMAGE in [self.category] + self.categories:
             result['supports_grid_image'] = self.supports_grid_image
+
+        # 添加算力修饰符
+        if self.power_modifiers:
+            result['power_modifiers'] = [
+                {
+                    'attribute': m.attribute,
+                    'values': m.values,
+                    'default': m.default
+                }
+                for m in self.power_modifiers
+            ]
 
         return result
 
@@ -504,7 +553,24 @@ class UnifiedConfigRegistry:
             else:
                 result[c.id] = 0
         return result
-    
+
+    @classmethod
+    def get_power_modifiers_map(cls) -> Dict[int, List[Dict]]:
+        """
+        获取 ID -> 算力修饰符 映射
+
+        Returns:
+            Dict[int, List[Dict]]: 任务类型ID到修饰符列表的映射
+        """
+        result = {}
+        for c in cls._configs.values():
+            if c.power_modifiers:
+                result[c.id] = [
+                    {'attribute': m.attribute, 'values': m.values, 'default': m.default}
+                    for m in c.power_modifiers
+                ]
+        return result
+
     @classmethod
     def get_driver_mapping(cls) -> Dict[int, str]:
         """获取 ID -> 业务驱动名称 映射（向后兼容）"""
@@ -660,6 +726,12 @@ class DriverImplementation:
 
     # Kling
     KLING_DUOMI_V1 = 'kling_duomi_v1'
+    KLING_COMMON_SITE0_V1 = 'kling_common_site0_v1'
+    KLING_COMMON_SITE1_V1 = 'kling_common_site1_v1'
+    KLING_COMMON_SITE2_V1 = 'kling_common_site2_v1'
+    KLING_COMMON_SITE3_V1 = 'kling_common_site3_v1'
+    KLING_COMMON_SITE4_V1 = 'kling_common_site4_v1'
+    KLING_COMMON_SITE5_V1 = 'kling_common_site5_v1'
 
     # Gemini
     GEMINI_DUOMI_V1 = 'gemini_duomi_v1'
@@ -755,6 +827,14 @@ class DriverImplementationId:
     VEO3_COMMON_SITE5_V1 = 26
     VEO3_COMMON_SITE0_V1 = 28
 
+    # Kling Common
+    KLING_COMMON_SITE0_V1 = 36
+    KLING_COMMON_SITE1_V1 = 37
+    KLING_COMMON_SITE2_V1 = 38
+    KLING_COMMON_SITE3_V1 = 39
+    KLING_COMMON_SITE4_V1 = 40
+    KLING_COMMON_SITE5_V1 = 41
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -789,6 +869,12 @@ IMPLEMENTATION_TO_ID = {
     'gpt_image_common_site3_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE3_V1,
     'gpt_image_common_site4_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE4_V1,
     'gpt_image_common_site5_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE5_V1,
+    'kling_common_site0_v1': DriverImplementationId.KLING_COMMON_SITE0_V1,
+    'kling_common_site1_v1': DriverImplementationId.KLING_COMMON_SITE1_V1,
+    'kling_common_site2_v1': DriverImplementationId.KLING_COMMON_SITE2_V1,
+    'kling_common_site3_v1': DriverImplementationId.KLING_COMMON_SITE3_V1,
+    'kling_common_site4_v1': DriverImplementationId.KLING_COMMON_SITE4_V1,
+    'kling_common_site5_v1': DriverImplementationId.KLING_COMMON_SITE5_V1,
     'veo3_common_site2_v1': DriverImplementationId.VEO3_COMMON_SITE2_V1,
     'veo3_common_site3_v1': DriverImplementationId.VEO3_COMMON_SITE3_V1,
     'veo3_common_site4_v1': DriverImplementationId.VEO3_COMMON_SITE4_V1,
@@ -1153,14 +1239,33 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.KLING_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.KLING_DUOMI_V1,
+        implementations=[
+            DriverImplementation.KLING_DUOMI_V1,
+            DriverImplementation.KLING_COMMON_SITE0_V1,
+            DriverImplementation.KLING_COMMON_SITE1_V1,
+            DriverImplementation.KLING_COMMON_SITE2_V1,
+            DriverImplementation.KLING_COMMON_SITE3_V1,
+            DriverImplementation.KLING_COMMON_SITE4_V1,
+            DriverImplementation.KLING_COMMON_SITE5_V1,
+        ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 10],
         default_ratio='9:16',
         default_duration=5,
         sort_order=33,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
-        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        supports_last_frame=True,  # 支持首尾帧
         supports_grid_merge=True,  # 支持宫格合并生成视频
+        power_modifiers=[
+            PowerModifier(
+                attribute='image_mode',
+                values={
+                    'first_last_with_tail': 1.66,  # 前后帧（有2张图）比首帧贵 1.66 倍
+                    'first_last_frame': 1.0,        # 仅首帧
+                },
+                default=1.0
+            )
+        ]
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VIDU_IMAGE_TO_VIDEO,
@@ -1346,7 +1451,68 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 38, 10: 70},
         enabled=True,
         description='多米平台 Kling 接口',
-        sort_order=2000.0
+        sort_order=2010.0
+    ),
+    # ==================== Kling 通用聚合站点 ====================
+    ImplementationConfig(
+        name='kling_common_site0_v1',
+        display_name='ZJTapi',
+        driver_class='KlingCommonSite0V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='ZJTapi Kling 接口',
+        sort_order=2000.0,
+        site_number=0,
+    ),
+    ImplementationConfig(
+        name='kling_common_site1_v1',
+        display_name='聚合站点1',
+        driver_class='KlingCommonSite1V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点1 Kling 接口',
+        sort_order=2020.0,
+        site_number=1,
+    ),
+    ImplementationConfig(
+        name='kling_common_site2_v1',
+        display_name='聚合站点2',
+        driver_class='KlingCommonSite2V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点2 Kling 接口',
+        sort_order=2030.0,
+        site_number=2,
+    ),
+    ImplementationConfig(
+        name='kling_common_site3_v1',
+        display_name='聚合站点3',
+        driver_class='KlingCommonSite3V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点3 Kling 接口',
+        sort_order=2040.0,
+        site_number=3,
+    ),
+    ImplementationConfig(
+        name='kling_common_site4_v1',
+        display_name='聚合站点4',
+        driver_class='KlingCommonSite4V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点4 Kling 接口',
+        sort_order=2050.0,
+        site_number=4,
+    ),
+    ImplementationConfig(
+        name='kling_common_site5_v1',
+        display_name='聚合站点5',
+        driver_class='KlingCommonSite5V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点5 Kling 接口',
+        sort_order=2060.0,
+        site_number=5,
     ),
     ImplementationConfig(
         name='gemini_duomi_v1',

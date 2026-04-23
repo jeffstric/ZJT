@@ -352,6 +352,50 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.KLING_DUOMI_V1, KlingDuomiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import KlingDuomiV1Driver: {e}")
+
+    # Kling 通用聚合站点驱动注册（仅在配置存在时注册）
+    try:
+        from utils.config_checker import check_api_aggregator_config_exists
+    except ImportError:
+        logger.warning("无法导入配置检查工具，跳过Kling通用聚合站点驱动注册")
+        check_api_aggregator_config_exists = lambda site_id: False
+
+    try:
+        from .kling_common_v1_driver import (
+            KlingCommonSite0V1Driver,
+            KlingCommonSite1V1Driver,
+            KlingCommonSite2V1Driver,
+            KlingCommonSite3V1Driver,
+            KlingCommonSite4V1Driver,
+            KlingCommonSite5V1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import KlingCommon site drivers: {e}")
+        KlingCommonSite0V1Driver = None
+        KlingCommonSite1V1Driver = None
+        KlingCommonSite2V1Driver = None
+        KlingCommonSite3V1Driver = None
+        KlingCommonSite4V1Driver = None
+        KlingCommonSite5V1Driver = None
+
+    kling_common_sites = [
+        ('site_0', DriverImplementation.KLING_COMMON_SITE0_V1, KlingCommonSite0V1Driver),
+        ('site_1', DriverImplementation.KLING_COMMON_SITE1_V1, KlingCommonSite1V1Driver),
+        ('site_2', DriverImplementation.KLING_COMMON_SITE2_V1, KlingCommonSite2V1Driver),
+        ('site_3', DriverImplementation.KLING_COMMON_SITE3_V1, KlingCommonSite3V1Driver),
+        ('site_4', DriverImplementation.KLING_COMMON_SITE4_V1, KlingCommonSite4V1Driver),
+        ('site_5', DriverImplementation.KLING_COMMON_SITE5_V1, KlingCommonSite5V1Driver),
+    ]
+
+    for site_id, impl_name, driver_class in kling_common_sites:
+        if check_api_aggregator_config_exists(site_id):
+            if driver_class:
+                VideoDriverFactory.register_driver(impl_name, driver_class)
+                logger.info(f"已注册 Kling通用聚合 {site_id} 驱动: {impl_name}")
+            else:
+                logger.warning(f"Kling通用聚合 {site_id} 驱动类未找到，跳过注册")
+        else:
+            logger.info(f"Kling通用聚合 {site_id} 配置不存在或不完整，跳过驱动注册")
     
     try:
         from .gemini_duomi_v1_driver import GeminiDuomiV1Driver
