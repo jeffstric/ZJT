@@ -182,6 +182,7 @@ class Veo3CommonV1Driver(BaseVideoDriver):
         payload = {
             "model": "veo3.1-fast",
             "prompt": ai_tool.prompt,
+            "aspect_ratio": ai_tool.ratio or "9:16",
             "enhance_prompt": True,
         }
 
@@ -540,3 +541,13 @@ class Veo3CommonSite5V1Driver(Veo3CommonV1Driver):
 
     def __init__(self):
         super().__init__(site_id="site_5")
+
+
+class Veo3CommonSite0V1Driver(Veo3CommonV1Driver):
+    """VEO3 通用聚合 Site 0 v1 版本驱动
+
+    智剧通API官方站点，对应配置 api_aggregator.site_0
+    """
+
+    def __init__(self):
+        super().__init__(site_id="site_0")

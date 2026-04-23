@@ -25,6 +25,7 @@ CATEGORY_PATTERNS: Dict[str, List[str]] = {
     'auth': ['auth'],
     'reference_images': ['reference_images'],
     'stats': ['stats'],
+    'llm': ['llm'],
     # 特殊：db_connection 不使用目录遍历
     'db_connection': [],
 }
@@ -84,6 +85,7 @@ def get_category_display_name(category: str) -> str:
         'auth': 'Auth',
         'reference_images': 'Reference Images',
         'stats': 'Stats',
+        'llm': 'LLM',
         'db_connection': 'DB Connection',
     }
     return display_names.get(category, category)

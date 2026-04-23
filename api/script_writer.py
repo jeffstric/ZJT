@@ -242,12 +242,53 @@ async def validate_model(model: str, auth_token: str) -> tuple[bool, List[str], 
         remote_models = response_data.get('models', []) if isinstance(response_data, dict) else []
         for model_info in remote_models:
             valid_models.append(model_info.get('model_name'))
-        
+
+        # 添加阿里云 Qwen 模型（如果配置了 API Key）
+        try:
+            from config.config_util import get_dynamic_config_value
+            from model.model import ModelModel
+            from model.vendor_model import VendorModelModel
+            from model.vendor import VendorDAO
+            qwen_api_key = get_dynamic_config_value('llm', 'qwen', 'api_key', default='')
+            if qwen_api_key:
+                all_vendor_models = VendorModelModel.get_all()
+                # 动态查询 aliyun vendor_id，避免硬编码
+                aliyun_vendor = next((v for v in VendorDAO.get_all() if v.vendor_name == 'aliyun'), None)
+                aliyun_vendor_id = aliyun_vendor.id if aliyun_vendor else 2
+                qwen_model_ids = list(set([vm.model_id for vm in all_vendor_models if vm.vendor_id == aliyun_vendor_id]))
+                for mid in qwen_model_ids:
+                    local_model = ModelModel.get_by_id(mid)
+                    if local_model and local_model.supports_tools:
+                        valid_models.append(local_model.model_name)
+        except Exception as e:
+            logger.warning(f"获取阿里云 Qwen 模型列表失败: {e}")
+
+        # 添加 Ollama 本地模型（如果启用）
+        try:
+            from config.config_util import get_dynamic_config_value
+            from model.model import ModelModel
+            from model.vendor_model import VendorModelModel
+            from model.vendor import VendorDAO
+            ollama_enabled = get_dynamic_config_value('llm', 'ollama', 'enabled', default=False)
+            if ollama_enabled:
+                ollama_vendor_models = VendorModelModel.get_all()
+                # 动态查询 ollama vendor_id，避免硬编码
+                ollama_vendor = next((v for v in VendorDAO.get_all() if v.vendor_name == 'ollama'), None)
+                ollama_vendor_id = ollama_vendor.id if ollama_vendor else 3
+                ollama_model_ids = [vm.model_id for vm in ollama_vendor_models if vm.vendor_id == ollama_vendor_id]
+                for mid in ollama_model_ids:
+                    local_model = ModelModel.get_by_id(mid)
+                    if local_model and local_model.supports_tools:
+                        # Ollama 模型使用 ollama: 前缀
+                        valid_models.append(f"ollama:{local_model.model_name}")
+        except Exception as e:
+            logger.warning(f"获取 Ollama 模型列表失败: {e}")
+
         # 验证用户选择的模型是否在有效列表中
         if model not in valid_models:
             logger.warning(f"用户尝试设置无效模型: {model}, 有效模型列表: {valid_models}")
             return False, valid_models, f'模型 "{model}" 不存在或不可用'
-        
+
         return True, valid_models, None
         
     except Exception as e:
@@ -629,6 +670,8 @@ class TaskCreateRequest(BaseModel):
     model: Optional[str] = None
     model_id: Optional[int] = None
     vendor_id: int = 1
+    enable_thinking: bool = False
+    thinking_effort: str = "medium"
 
 class ModelChangeRequest(BaseModel):
     model: str
@@ -794,6 +837,65 @@ async def clear_session_history(request: Request, session_id: str):
         })
     except Exception as e:
         logger.error(f'清空会话历史失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+@router.post('/session/{session_id}/compress')
+@require_permission("script_session:compress_history")
+async def compress_session_history(request: Request, session_id: str):
+    """压缩会话历史"""
+    try:
+        # 从数据库加载会话
+        session = session_storage.load_session(
+            session_id=session_id,
+            task_manager=task_manager,
+            file_manager=file_manager,
+            tool_executor=tool_executor,
+            agents_config=agents_config
+        )
+
+        if not session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+
+        # 获取当前任务信息（从请求体或数据库）
+        from model.agent_tasks import AgentTasksModel
+        task = AgentTasksModel.get_latest_by_session(session_id)
+
+        if not task:
+            return JSONResponse({
+                'success': False,
+                'error': '没有可用的任务信息，无法确定模型配置'
+            }, status_code=400)
+
+        # 执行压缩（使用 run_in_executor 避免阻塞事件循环）
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, session.compress_history, task)
+
+        if result.get('success'):
+            # 持久化压缩后的历史到数据库
+            from model.chat_sessions import ChatSessionsModel
+            ChatSessionsModel.update_conversation_history(session_id, session.get_history())
+
+            return JSONResponse({
+                'success': True,
+                'message': f"对话历史已压缩：{result.get('before_count')} → {result.get('after_count')} 条消息",
+                'before_count': result.get('before_count'),
+                'after_count': result.get('after_count'),
+                'reduced': result.get('reduced'),
+                'summary': result.get('summary', '')
+            })
+        else:
+            return JSONResponse({
+                'success': False,
+                'error': result.get('error', '压缩失败')
+            }, status_code=400)
+    except Exception as e:
+        logger.error(f'压缩会话历史失败: {str(e)}')
         return JSONResponse({
             'success': False,
             'error': str(e)
@@ -1078,73 +1180,15 @@ async def list_sessions(
 # ==================== 模型和算力 API ====================
 
 @router.get('/models')
-async def get_available_models(
-    auth_token: Optional[str] = QueryParam(None),
-    authorization: Optional[str] = Header(None)
-):
-    """获取可用的 AI 模型列表"""
+async def get_available_models():
+    """获取可用的 AI 模型列表，根据 vendor 表分组"""
     try:
-        # 从query参数或header获取token
-        token = auth_token or (authorization.replace('Bearer ', '') if authorization else None)
-        
-        if not token:
-            return JSONResponse({
-                'success': False,
-                'error': '缺少 auth_token 参数'
-            }, status_code=400)
-        
-        # 调用perseids服务获取模型列表
-        headers = {'Authorization': f'Bearer {token}'}
-        success, message, response_data = await async_make_perseids_request(
-            endpoint='user/models',
-            method='GET',
-            headers=headers
-        )
-        
-        models = []
-        if not success:
-            logger.info(f"获取模型列表失败: {message}")
-            # 检测 token 过期
-            if '无效或已过期' in message or 'token' in message.lower() or '认证' in message:
-                return JSONResponse({
-                    'success': False,
-                    'error': message,
-                    'error_code': 'TOKEN_EXPIRED',
-                    'token_expired': True
-                }, status_code=401)
-        else:
-            logger.info(f"模型列表响应: {response_data}")
-            remote_models = response_data.get('models', []) if isinstance(response_data, dict) else []
-            for idx, model_info in enumerate(remote_models):
-                model_id = model_info.get('id')
-                input_token_threshold = None
-                try:
-                    if model_id:
-                        vendor_model = VendorModelModel.get_by_vendor_model_for_billing(
-                            vendor_id=1,
-                            model_id=int(model_id),
-                            raw_input_token=0
-                        )
-                        if vendor_model and vendor_model.input_token_threshold:
-                            input_token_threshold = vendor_model.input_token_threshold
-                except Exception as vm_err:
-                    logger.warning(f"获取模型 {model_id} 的 vendor_model 失败: {vm_err}")
+        from llm.llm_client_factory import get_available_models as _get_available_models
+        result = await _get_available_models()
 
-                models.append({
-                    'id': str(model_id),
-                    'name': model_info.get('model_name'),
-                    'description': model_info.get('note') or '',
-                    'category': 'perseids',
-                    'recommended': model_id == 1,
-                    'input_token_threshold': input_token_threshold
-                })
-        
-        if not models:
-            models = []
-        
         return JSONResponse({
             'success': True,
-            'models': models
+            'models': result['models']
         })
     except Exception as e:
         logger.error(f'获取模型列表失败: {str(e)}')
@@ -1635,7 +1679,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'success': False,
                 'error': '缺少 model_id 参数'
             }, status_code=400)
-        
+
         try:
             model_id = int(model_id)
         except (TypeError, ValueError):
@@ -1643,6 +1687,16 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 'success': False,
                 'error': 'model_id 必须为数字'
             }, status_code=400)
+
+        # 根据 model_id 查询真实的 vendor_id（而不是使用 task_request 中的默认值 1）
+        vendor_id = task_request.vendor_id
+        if vendor_id == 1:  # 如果是默认值，尝试从数据库获取真实值
+            try:
+                real_vendor_id = VendorModelModel.get_vendor_id_by_model_id(model_id)
+                if real_vendor_id:
+                    vendor_id = real_vendor_id
+            except Exception as e:
+                logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
         
         # 强制同步模型到 pm_agent：确保切换模型后实际使用正确的 LLM client
         # 前端传来的 model 是最新的用户选择，优先使用
@@ -1693,8 +1747,10 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             user_id=user_id,
             world_id=world_id,
             auth_token=auth_token,
-            vendor_id=task_request.vendor_id,
-            model_id=model_id
+            vendor_id=vendor_id,
+            model_id=model_id,
+            enable_thinking=task_request.enable_thinking,
+            thinking_effort=task_request.thinking_effort
         )
         
         # 获取任务对象

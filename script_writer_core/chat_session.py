@@ -7,7 +7,7 @@ import os
 import logging
 import litellm
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from script_writer_core.agents import TaskManager, PMAgent, ToolExecutor
 from script_writer_core.file_manager import FileManager
@@ -42,16 +42,28 @@ class ChatSession:
         
         # 初始化文件操作处理器（带权限控制和认证）
         self.file_handler = FileOperationHandler(user_id, world_id, auth_token, file_manager=file_manager)
-        
+
         # 初始化 PM Agent（多智能体模式）
         logger.warning(f"[DEBUG] 开始初始化 PM Agent for session {session_id}")
-        
+
         pm_config = agents_config.get("pm_agent", {})
-        
+
         # 使用传入的 model 参数，如果没有则使用配置文件中的模型
         pm_model = model if model else pm_config.get("model", "gemini/gemini-3-pro-preview")
         logger.warning(f"[DEBUG] PM Agent 将使用模型: {pm_model}")
-        
+
+        # 根据 model_id 获取模型的上下文窗口配置
+        context_window = None
+        if model_id is not None:
+            try:
+                from model.model import ModelModel
+                model_entity = ModelModel.get_by_id(int(model_id))
+                if model_entity:
+                    context_window = model_entity.context_window
+                    logger.info(f"[ChatSession] Loaded context_window={context_window} for model_id={model_id}")
+            except Exception as e:
+                logger.warning(f"[ChatSession] Failed to load context_window for model_id={model_id}: {e}")
+
         self.pm_agent = PMAgent(
             model=pm_model,
             allowed_tools=pm_config.get("allowed_tools", ["skill", "request_human_verification"]),
@@ -63,7 +75,8 @@ class ChatSession:
             world_id=world_id,
             auth_token=auth_token,
             max_consecutive_failures=pm_config.get("max_consecutive_failures", 3),
-            max_total_failures=pm_config.get("max_total_failures", 7)
+            max_total_failures=pm_config.get("max_total_failures", 7),
+            context_window=context_window
         )
         logger.warning(f"[DEBUG] PM Agent 初始化完成: {self.pm_agent.agent_id}")
         
@@ -142,3 +155,30 @@ class ChatSession:
         
         self.updated_at = datetime.now()
         return True
+
+    def compress_history(self, task) -> Dict[str, Any]:
+        """
+        手动压缩对话历史
+
+        Args:
+            task: 当前任务对象，包含模型配置信息
+
+        Returns:
+            Dict: 压缩结果
+        """
+        if not self.pm_agent:
+            return {
+                "success": False,
+                "error": "PM Agent 未初始化"
+            }
+
+        try:
+            result = self.pm_agent.force_compress(task)
+            self.updated_at = datetime.now()
+            return result
+        except Exception as e:
+            logger.error(f"压缩对话历史失败: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }

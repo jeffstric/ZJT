@@ -198,7 +198,15 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
-    # ==================== API 聚合站配置（兼容云雾、comfly 等中转站）====================
+    # ==================== API 聚合站配置（部分兼容comfly 等中转站）====================
+    {
+        'key': 'api_aggregator.site_0.api_key',
+        'value_type': 'string',
+        'description': 'YWAPI 官方站点 API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
     {
         'key': 'api_aggregator.site_1.base_url',
         'value_type': 'string',
@@ -374,6 +382,24 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== Claude 配置 ====================
+    {
+        'key': 'llm.claude.api_key',
+        'value_type': 'string',
+        'description': 'Claude API Key',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.claude.base_url',
+        'value_type': 'string',
+        'description': 'Claude API 基础URL（默认 https://api.jiekou.ai/openai）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== Qwen 配置 ====================
     {
         'key': 'llm.qwen.api_key',
@@ -391,6 +417,81 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False,
         'quick_config': True
     },
+
+    # ==================== Ollama 配置 ====================
+    {
+        'key': 'llm.ollama.enabled',
+        'value_type': 'bool',
+        'description': '是否启用 Ollama 本地模型',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.ollama.base_url',
+        'value_type': 'string',
+        'description': 'Ollama 服务地址',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.ollama.temperature',
+        'value_type': 'float',
+        'description': 'Ollama 温度参数 (0.0-2.0)',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.ollama.top_p',
+        'value_type': 'float',
+        'description': 'Ollama 核采样概率 (0.0-1.0)',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.ollama.top_k',
+        'value_type': 'int',
+        'description': 'Ollama Top-K 采样',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.ollama.min_p',
+        'value_type': 'float',
+        'description': 'Ollama 最小概率阈值',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.ollama.presence_penalty',
+        'value_type': 'float',
+        'description': 'Ollama 存在惩罚',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.ollama.repetition_penalty',
+        'value_type': 'float',
+        'description': 'Ollama 重复惩罚',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'llm.ollama.enable_thinking',
+        'value_type': 'bool',
+        'description': 'Ollama 是否启用思维链（部分模型支持）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== 七牛云存储配置 ====================
     {
         'key': 'file_storage.qiniu.access_key',

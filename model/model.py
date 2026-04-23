@@ -11,18 +11,26 @@ logger = logging.getLogger(__name__)
 
 class Model:
     """Model model class"""
-    
+
     def __init__(self, **kwargs):
         self.id = kwargs.get('id')
         self.model_name = kwargs.get('model_name')
+        self.context_window = kwargs.get('context_window')
+        self.supports_tools = kwargs.get('supports_tools', 1)
+        self.max_output_tokens = kwargs.get('max_output_tokens', 64000)  # 默认 64000
+        self.supports_thinking = kwargs.get('supports_thinking', 0)
         self.created_at = kwargs.get('created_at')
         self.note = kwargs.get('note')
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
             'id': self.id,
             'model_name': self.model_name,
+            'context_window': self.context_window,
+            'supports_tools': self.supports_tools,
+            'max_output_tokens': self.max_output_tokens,
+            'supports_thinking': self.supports_thinking,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'note': self.note,
         }
@@ -32,21 +40,21 @@ class ModelModel:
     """Model database operations"""
     
     @staticmethod
-    def create(model_name: Optional[str] = None, note: Optional[str] = None) -> int:
+    def create(model_name: Optional[str] = None, context_window: Optional[int] = None, supports_tools: int = 1, max_output_tokens: int = 64000, note: Optional[str] = None) -> int:
         """创建模型"""
-        sql = "INSERT INTO model (model_name, note) VALUES (%s, %s)"
+        sql = "INSERT INTO model (model_name, context_window, supports_tools, max_output_tokens, note) VALUES (%s, %s, %s, %s, %s)"
         try:
-            model_id = execute_insert(sql, (model_name, note))
+            model_id = execute_insert(sql, (model_name, context_window, supports_tools, max_output_tokens, note))
             logger.info(f"Created model with ID: {model_id}")
             return model_id
         except Exception as e:
             logger.error(f"Failed to create model: {e}")
             raise
-    
+
     @staticmethod
     def get_by_id(model_id: int) -> Optional[Model]:
         """根据ID获取模型"""
-        sql = "SELECT id, model_name, created_at, note FROM model WHERE id = %s"
+        sql = "SELECT id, model_name, context_window, supports_tools, max_output_tokens, supports_thinking, created_at, note FROM model WHERE id = %s"
         try:
             result = execute_query(sql, (model_id,), fetch_one=True)
             if result:
@@ -55,36 +63,36 @@ class ModelModel:
         except Exception as e:
             logger.error(f"Failed to get model by id {model_id}: {e}")
             raise
-    
+
     @staticmethod
     def get_all(limit: int = 50, offset: int = 0) -> List[Model]:
         """
         获取所有模型（分页）
         对应Go的GetAllModels
         """
-        sql = "SELECT id, model_name, created_at, note FROM model ORDER BY created_at DESC"
+        sql = "SELECT id, model_name, context_window, supports_tools, max_output_tokens, supports_thinking, created_at, note FROM model ORDER BY created_at DESC"
         params = []
-        
+
         if limit > 0:
             sql += " LIMIT %s"
             params.append(limit)
             if offset > 0:
                 sql += " OFFSET %s"
                 params.append(offset)
-        
+
         try:
             results = execute_query(sql, tuple(params) if params else None, fetch_all=True)
             return [Model(**row) for row in results] if results else []
         except Exception as e:
             logger.error(f"Failed to get all models: {e}")
             raise
-    
+
     @staticmethod
-    def update(model_id: int, model_name: Optional[str] = None, note: Optional[str] = None) -> int:
+    def update(model_id: int, model_name: Optional[str] = None, context_window: Optional[int] = None, supports_tools: int = 1, max_output_tokens: int = 64000, note: Optional[str] = None) -> int:
         """更新模型"""
-        sql = "UPDATE model SET model_name = %s, note = %s WHERE id = %s"
+        sql = "UPDATE model SET model_name = %s, context_window = %s, supports_tools = %s, max_output_tokens = %s, note = %s WHERE id = %s"
         try:
-            return execute_update(sql, (model_name, note, model_id))
+            return execute_update(sql, (model_name, context_window, supports_tools, max_output_tokens, note, model_id))
         except Exception as e:
             logger.error(f"Failed to update model {model_id}: {e}")
             raise
@@ -104,6 +112,9 @@ CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `model` (
   `id` int NOT NULL AUTO_INCREMENT,
   `model_name` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '模型名称',
+  `context_window` int DEFAULT NULL COMMENT '模型上下文窗口大小（token数）',
+  `supports_tools` tinyint(1) DEFAULT 1 COMMENT '是否支持 Tool Calling',
+  `max_output_tokens` int DEFAULT 64000 COMMENT '最大输出token数（默认64000）',
   `created_at` datetime DEFAULT NULL,
   `note` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '其他信息',
   PRIMARY KEY (`id`) USING BTREE

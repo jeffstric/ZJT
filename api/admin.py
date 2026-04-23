@@ -1338,23 +1338,16 @@ async def admin_get_implementation_configs(
 
         # 处理所有实现方（包括动态注册的 API 聚合器实现方）
         for impl_name, impl_config in all_implementations.items():
-            print(f"Processing implementation: {impl_name}")
             # 只对 API 聚合器实现方进行配置检查
             display_name = impl_config.display_name
             site_name = None
 
-            print(f"Checking if {impl_name} is an API aggregator...")
             is_api_aggregator = False
             site_id = None
 
-            if impl_name.startswith('gemini_image_preview_site') and impl_name.endswith('_v1'):
+            if impl_config.site_number is not None:
                 is_api_aggregator = True
-                site_num = impl_name.replace('gemini_image_preview_site', '').replace('_v1', '')
-                site_id = f"site_{site_num}"
-            elif impl_name.startswith('veo3_common_site') and impl_name.endswith('_v1'):
-                is_api_aggregator = True
-                site_num = impl_name.replace('veo3_common_site', '').replace('_v1', '')
-                site_id = f"site_{site_num}"
+                site_id = f"site_{impl_config.site_number}"
 
             if is_api_aggregator and site_id:
                 # 检查API聚合器配置是否存在
@@ -1363,20 +1356,16 @@ async def admin_get_implementation_configs(
                     from config.config_util import get_dynamic_config_value
 
                     if not check_api_aggregator_config_exists(site_id):
-                        print(f"API聚合站实现方 {impl_name} 配置不存在，跳过显示")
                         logger.info(f"API聚合站实现方 {impl_name} 配置不存在，跳过显示")
                         continue
 
                     # 获取站点配置的名称
                     site_name = get_dynamic_config_value("api_aggregator", site_id, "name", default=site_id)
-                    print(f"API聚合站实现方 {impl_name} 的站点名称: {site_name}")
                     display_name = site_name
 
-                except ImportError:
-                    logger.warning("无法导入配置检查工具，显示所有API聚合站实现方")
-            
-            print(f"Final display name for {impl_name}: {display_name}")
-                
+                except Exception:
+                    logger.warning(f"无法导入配置检查工具，显示所有API聚合站实现方")
+
             # 确定该实现方属于哪些 DriverKey 组
             driver_keys = impl_to_driver_keys.get(impl_name, [])
 

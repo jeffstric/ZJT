@@ -39,7 +39,9 @@ class BaseLLMClient(ABC):
         max_tokens: int = 65536,
         auth_token: str = None,
         vendor_id: int = None,
-        model_id: int = None
+        model_id: int = None,
+        enable_thinking: bool = False,
+        thinking_effort: str = "medium"
     ) -> Any:
         """
         调用 LLM API
@@ -53,6 +55,8 @@ class BaseLLMClient(ABC):
             auth_token: 认证 token（用于记录用量）
             vendor_id: 供应商 ID
             model_id: 模型 ID
+            enable_thinking: 是否开启思考模式
+            thinking_effort: 思考强度（doubao 用，值：low/medium/high）
 
         Returns:
             Response 对象（包含 choices 和 usage）

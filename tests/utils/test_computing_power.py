@@ -1,8 +1,10 @@
 """
 算力计算工具单元测试
 测试 utils.computing_power 模块，防止数据库配置与代码默认值回退的回归问题
+包括修饰符功能和 context 构建的完整单元测试
 """
 import unittest
+import json
 from unittest.mock import patch, MagicMock
 
 
@@ -357,6 +359,317 @@ class TestGetComputingPowerConfigForTask(unittest.TestCase):
 
         self.assertEqual(result['source'], 'task_config')
         self.assertEqual(result['computing_power'], 200)
+
+
+class TestPowerModifiers(unittest.TestCase):
+    """测试算力修饰符功能"""
+
+    def setUp(self):
+        """测试前准备：注册带修饰符的任务配置"""
+        from config.unified_config import (
+            UnifiedConfigRegistry,
+            UnifiedTaskConfig,
+            PowerModifier,
+            TaskCategory,
+            TaskProvider,
+            ImplementationConfig,
+        )
+
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+
+        # 注册实现方
+        UnifiedConfigRegistry.register_implementation(
+            ImplementationConfig(
+                name='kling_test_impl',
+                display_name='测试 Kling',
+                driver_class='KlingTestDriver',
+                default_computing_power={5: 38, 10: 70},
+                enabled=True,
+                sort_order=1000.0,
+            )
+        )
+
+        # 注册带修饰符的任务（图生视频 - Kling）
+        UnifiedConfigRegistry.register(
+            UnifiedTaskConfig(
+                id=9997,
+                key='kling_modifier_test',
+                name='测试 Kling 修饰符',
+                category=TaskCategory.IMAGE_TO_VIDEO,
+                provider=TaskProvider.DUOMI,
+                driver_name='KLING_TEST_DRIVER',
+                implementation='kling_test_impl',
+                supported_durations=[5, 10],
+                default_duration=5,
+                power_modifiers=[
+                    PowerModifier(
+                        attribute='image_mode',
+                        values={
+                            'first_last_with_tail': 1.66,
+                            'first_last_frame': 1.0,
+                        },
+                        default=1.0
+                    )
+                ],
+                sort_order=50,
+            )
+        )
+
+        # 注册带多个修饰符的任务
+        UnifiedConfigRegistry.register(
+            UnifiedTaskConfig(
+                id=9998,
+                key='multi_modifier_test',
+                name='测试多修饰符',
+                category=TaskCategory.IMAGE_EDIT,
+                provider=TaskProvider.DUOMI,
+                computing_power={1: 2},  # 基础算力 2
+                power_modifiers=[
+                    PowerModifier(
+                        attribute='resolution',
+                        values={
+                            '2K': 1.5,
+                            '4K': 2.5,
+                            '1K': 1.0,
+                        },
+                        default=1.0
+                    ),
+                    PowerModifier(
+                        attribute='quality',
+                        values={
+                            'high': 1.2,
+                            'normal': 1.0,
+                        },
+                        default=1.0
+                    )
+                ],
+                sort_order=60,
+            )
+        )
+
+    def tearDown(self):
+        """测试后清理"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+
+    def test_modifier_not_applied_without_context(self):
+        """未提供 context 时，修饰符不应被应用"""
+        from utils.computing_power import get_computing_power_for_task
+
+        # 不提供 context，应返回基础算力
+        result = get_computing_power_for_task(9997, duration=5)
+
+        self.assertEqual(result, 38)
+
+    def test_first_last_frame_modifier_multiplier_1_0(self):
+        """first_last_frame 模式的修饰符为 1.0"""
+        from utils.computing_power import get_computing_power_for_task
+
+        result = get_computing_power_for_task(9997, duration=5, context={'image_mode': 'first_last_frame'})
+
+        # 38 × 1.0 = 38
+        self.assertEqual(result, 38)
+
+    def test_first_last_with_tail_modifier_multiplier_1_66(self):
+        """first_last_with_tail 模式的修饰符为 1.66，结果应向上取整"""
+        from utils.computing_power import get_computing_power_for_task
+
+        result = get_computing_power_for_task(9997, duration=5, context={'image_mode': 'first_last_with_tail'})
+
+        # 38 × 1.66 = 63.08，向上取整 = 64
+        self.assertEqual(result, 64)
+
+    def test_first_last_with_tail_10s_duration(self):
+        """10秒前后帧计算：70 × 1.66 = 116.2 → 117"""
+        from utils.computing_power import get_computing_power_for_task
+
+        result = get_computing_power_for_task(9997, duration=10, context={'image_mode': 'first_last_with_tail'})
+
+        # 70 × 1.66 = 116.2，向上取整 = 117
+        self.assertEqual(result, 117)
+
+    def test_default_modifier_for_unmatched_attribute_value(self):
+        """未匹配的属性值应使用 default 乘数"""
+        from utils.computing_power import get_computing_power_for_task
+
+        result = get_computing_power_for_task(
+            9997,
+            duration=5,
+            context={'image_mode': 'unknown_mode'}
+        )
+
+        # 未匹配到 'unknown_mode'，使用 default=1.0，结果 = 38
+        self.assertEqual(result, 38)
+
+    def test_multiple_modifiers_accumulate(self):
+        """多个修饰符应累积相乘，最后一次向上取整"""
+        from utils.computing_power import get_computing_power_for_task
+
+        context = {
+            'resolution': '2K',    # 乘数 1.5
+            'quality': 'high',     # 乘数 1.2
+        }
+        result = get_computing_power_for_task(9998, context=context)
+
+        # 基础算力 2 × (1.5 × 1.2) = 2 × 1.8 = 3.6，向上取整 = 4
+        self.assertEqual(result, 4)
+
+    def test_multiple_modifiers_4k_high_quality(self):
+        """4K 高质量：2 × (2.5 × 1.2) = 6.0"""
+        from utils.computing_power import get_computing_power_for_task
+
+        context = {
+            'resolution': '4K',    # 乘数 2.5
+            'quality': 'high',     # 乘数 1.2
+        }
+        result = get_computing_power_for_task(9998, context=context)
+
+        # 2 × (2.5 × 1.2) = 2 × 3.0 = 6.0，向上取整 = 6
+        self.assertEqual(result, 6)
+
+    def test_partial_context_uses_default_for_missing_attribute(self):
+        """context 中缺少某些属性时，应使用该属性的 default 乘数"""
+        from utils.computing_power import get_computing_power_for_task
+
+        context = {
+            'resolution': '2K',  # 乘数 1.5
+            # 'quality' 缺失，应使用 default=1.0
+        }
+        result = get_computing_power_for_task(9998, context=context)
+
+        # 2 × (1.5 × 1.0) = 3.0，向上取整 = 3
+        self.assertEqual(result, 3)
+
+    def test_ceiling_function_used_not_rounding(self):
+        """验证使用 ceiling 函数而非 rounding"""
+        from utils.computing_power import get_computing_power_for_task
+
+        # 构造一个会产生 x.1 的情况来区分 ceil 和 round
+        context = {
+            'resolution': '1K',    # 乘数 1.0
+            'quality': 'normal',   # 乘数 1.0
+        }
+        result = get_computing_power_for_task(9998, context=context)
+
+        # 2 × (1.0 × 1.0) = 2.0
+        self.assertEqual(result, 2)
+
+
+class TestBuildContextFromTaskRecord(unittest.TestCase):
+    """测试 build_context_from_task_record 函数"""
+
+    def test_extract_image_mode_from_extra_config(self):
+        """从 extra_config JSON 提取 image_mode"""
+        from utils.computing_power import build_context_from_task_record
+        import json
+
+        task_record = MagicMock()
+        task_record.extra_config = json.dumps({'image_mode': 'first_last_frame'})
+        task_record.image_path = 'image1.jpg'
+
+        context = build_context_from_task_record(task_record)
+
+        self.assertEqual(context['image_mode'], 'first_last_frame')
+
+    def test_detect_first_last_with_tail_from_image_path(self):
+        """当 image_path 有逗号时，应转换为 first_last_with_tail"""
+        from utils.computing_power import build_context_from_task_record
+        import json
+
+        task_record = MagicMock()
+        task_record.extra_config = json.dumps({'image_mode': 'first_last_frame'})
+        task_record.image_path = 'image1.jpg,image2.jpg'  # 两张图，有逗号
+
+        context = build_context_from_task_record(task_record)
+
+        # 应该转换为 first_last_with_tail
+        self.assertEqual(context['image_mode'], 'first_last_with_tail')
+
+    def test_keep_first_last_frame_when_single_image(self):
+        """单张图片时应保持 first_last_frame"""
+        from utils.computing_power import build_context_from_task_record
+        import json
+
+        task_record = MagicMock()
+        task_record.extra_config = json.dumps({'image_mode': 'first_last_frame'})
+        task_record.image_path = 'image1.jpg'  # 单张图
+
+        context = build_context_from_task_record(task_record)
+
+        self.assertEqual(context['image_mode'], 'first_last_frame')
+
+    def test_extract_resolution_from_image_size(self):
+        """从 image_size 字段提取分辨率"""
+        from utils.computing_power import build_context_from_task_record
+        import json
+
+        task_record = MagicMock()
+        task_record.extra_config = json.dumps({})
+        task_record.image_size = '2K'
+
+        context = build_context_from_task_record(task_record)
+
+        self.assertEqual(context['resolution'], '2K')
+
+    def test_combine_image_mode_and_resolution(self):
+        """同时提取 image_mode 和 resolution"""
+        from utils.computing_power import build_context_from_task_record
+        import json
+
+        task_record = MagicMock()
+        task_record.extra_config = json.dumps({'image_mode': 'first_last_frame'})
+        task_record.image_path = 'img1.jpg,img2.jpg'
+        task_record.image_size = '4K'
+
+        context = build_context_from_task_record(task_record)
+
+        self.assertEqual(context['image_mode'], 'first_last_with_tail')
+        self.assertEqual(context['resolution'], '4K')
+
+    def test_handle_missing_extra_config(self):
+        """缺少 extra_config 时不抛异常"""
+        from utils.computing_power import build_context_from_task_record
+
+        task_record = MagicMock()
+        del task_record.extra_config  # 模拟缺失字段
+        task_record.image_size = '2K'
+
+        context = build_context_from_task_record(task_record)
+
+        self.assertEqual(context['resolution'], '2K')
+        self.assertNotIn('image_mode', context)
+
+    def test_handle_invalid_json_in_extra_config(self):
+        """无效的 JSON 不应导致异常"""
+        from utils.computing_power import build_context_from_task_record
+
+        task_record = MagicMock()
+        task_record.extra_config = 'invalid json {'
+        task_record.image_size = '1K'
+
+        context = build_context_from_task_record(task_record)
+
+        # 应只返回 resolution，image_mode 因 JSON 错误而缺失
+        self.assertEqual(context['resolution'], '1K')
+        self.assertNotIn('image_mode', context)
+
+    def test_empty_context_for_empty_record(self):
+        """空任务记录应返回空 context"""
+        from utils.computing_power import build_context_from_task_record
+
+        task_record = MagicMock()
+        task_record.extra_config = json.dumps({})
+        # 确保 image_size 不存在或为 None
+        del task_record.image_size  # 删除可能存在的属性
+
+        context = build_context_from_task_record(task_record)
+
+        self.assertEqual(context, {})
 
 
 if __name__ == '__main__':

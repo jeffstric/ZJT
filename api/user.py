@@ -186,7 +186,7 @@ async def get_implementation_preferences(
                 "category": "image_edit",
                 "category_group": "image",
                 "implementations": [
-                    {"name": "gemini_duomi_v1", "display_name": "云雾", "computing_power": 95, "enabled": True, "stats": None},
+                    {"name": "gemini_duomi_v1", "display_name": "yw", "computing_power": 95, "enabled": True, "stats": None},
                     {"name": "comfiy", "display_name": "ComfyUI", "computing_power": 92, "enabled": True, "stats": None}
                 ]
             },
@@ -195,7 +195,7 @@ async def get_implementation_preferences(
                 "category": "image_edit",
                 "category_group": "image",
                 "implementations": [
-                    {"name": "gemini_duomi_v1", "display_name": "云雾", "computing_power": 98, "enabled": True, "stats": None},
+                    {"name": "gemini_duomi_v1", "display_name": "yw", "computing_power": 98, "enabled": True, "stats": None},
                     {"name": "comfiy", "display_name": "ComfyUI", "computing_power": 95, "enabled": True, "stats": None}
                 ]
             },
@@ -204,7 +204,7 @@ async def get_implementation_preferences(
                 "category": "image_edit",
                 "category_group": "image",
                 "implementations": [
-                    {"name": "gemini_duomi_v1", "display_name": "云雾", "computing_power": 96, "enabled": True, "stats": None},
+                    {"name": "gemini_duomi_v1", "display_name": "yw", "computing_power": 96, "enabled": True, "stats": None},
                     {"name": "comfiy", "display_name": "ComfyUI", "computing_power": 93, "enabled": True, "stats": None}
                 ]
             }

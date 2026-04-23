@@ -69,6 +69,7 @@ from utils.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
 from utils import file_lock
+from utils.computing_power import build_context_from_task_record
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
@@ -230,9 +231,7 @@ def _get_processed_html(file_path: str) -> bytes:
         content = f.read()
 
     # 检查是否启用了缓存失效功能
-    cache_bust_enabled = get_config_value("frontend", "cache_bust", "enabled", default=True)
-
-    if cache_bust_enabled:
+    if CACHE_BUST_ENABLED:
         # 匹配 <script src="..."> 和 <link ... href="..."> 中引用的 .js 和 .css 文件
         # 只匹配以 /js/ 或 /css/ 开头的本地引用
         pattern = r'(<(?:script|link)[^>]*(?:src|href)=")(/(?:js|css)/[^"]+)(")'
@@ -258,6 +257,8 @@ MP_VERIFY_ROUTE = "/MP_verify_lXQewBFqjUipl3B8.txt"
 # Load server configuration
 from config.config_util import get_config_value, get_dynamic_config_value
 
+# cache_bust 配置：控制是否给静态资源加版本号，关闭时对静态资源禁用浏览器缓存
+CACHE_BUST_ENABLED = get_config_value("frontend", "cache_bust", "enabled", default=True)
 
 # Choose appropriate host based on HTTPS configuration
 https_enabled = get_config_value("server", "https", "enabled", default=False)
@@ -1052,7 +1053,11 @@ async def image_edit(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图片编辑任务")
         
         image_edit_type = task_id
-        computing_power = task_config.get_computing_power() if task_config else 0
+        # 根据 image_size 构建 context，用于算力修饰符计算
+        context = {}
+        if image_size:
+            context['resolution'] = image_size
+        computing_power = task_config.get_computing_power(context=context) if task_config else 0
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
@@ -1188,7 +1193,11 @@ async def text_to_image(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生图任务")
         
         text_to_image_type = task_id
-        computing_power = task_config.get_computing_power() if task_config else 0
+        # 根据 image_size 构建 context，用于算力修饰符计算
+        context = {}
+        if image_size:
+            context['resolution'] = image_size
+        computing_power = task_config.get_computing_power(context=context) if task_config else 0
 
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -1343,8 +1352,9 @@ async def runninghub_status(
                 #发起请求，增加算力
                 type = task_record.type
                 task_config = TaskTypeRegistry.get(type)
-                # 使用任务记录中的时长来计算正确的算力（支持按时长计费的任务）
-                computing_power = task_config.get_computing_power(duration=task_record.duration) if task_config else 0
+                # 使用任务记录中的时长和 context 来计算正确的算力（支持按时长计费的任务和修饰符）
+                context = build_context_from_task_record(task_record)
+                computing_power = task_config.get_computing_power(duration=task_record.duration, context=context) if task_config else 0
                 success, message, response_data = await async_make_perseids_request(
                     endpoint='user/calculate_computing_power',
                     method='POST',
@@ -1627,14 +1637,12 @@ async def ai_app_run_image(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图生视频任务")
         
         image_to_video_type = task_id
-        # 根据时长获取算力（优先任务配置，回退到实现方配置）
-        computing_power = task_config.get_computing_power(duration=duration_seconds)
 
         # 验证 image_mode 参数
         valid_image_modes = ['first_last_frame', 'multi_reference', 'first_last_with_ref']
         if image_mode not in valid_image_modes:
             raise HTTPException(status_code=400, detail=f"无效的 image_mode: {image_mode}，合法值: {valid_image_modes}")
-        
+
         # 记录输入的图片信息
         logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}")
         
@@ -1706,7 +1714,18 @@ async def ai_app_run_image(
             all_refs = middle_refs + ref_image_list
             if all_refs:
                 reference_images_json = json.dumps(all_refs)
-        
+
+        # 根据 image_mode 和图片数量构建 context，用于算力修饰符计算
+        context = {}
+        if image_mode == 'first_last_frame' and main_image_list and len(main_image_list) > 1:
+            # 首尾帧模式且有2张图时，使用 first_last_with_tail
+            context['image_mode'] = 'first_last_with_tail'
+        elif image_mode:
+            context['image_mode'] = image_mode
+
+        # 根据时长和 context 获取算力（优先任务配置，回退到实现方配置）
+        computing_power = task_config.get_computing_power(duration=duration_seconds, context=context)
+
         # 为了向后兼容，设置 image_url 用于日志和响应
         image_url = image_path or (main_image_list[0] if main_image_list else None)
 
@@ -2664,7 +2683,8 @@ async def get_ai_tools_history(
                             updated_count += 1
                             # 累计需要补回的算力
                             task_config = TaskTypeRegistry.get(task.type)
-                            computing_power = task_config.get_computing_power() if task_config else 0
+                            context = build_context_from_task_record(task)
+                            computing_power = task_config.get_computing_power(context=context) if task_config else 0
                             total_refund_power += computing_power
                             logger.info(f"Upscale task {task.project_id} failed, will refund {computing_power} computing power")
                     
@@ -2807,13 +2827,14 @@ async def get_computing_power_config(request: Request):
     try:
         # 获取 driver 可用状态
         driver_status = VideoDriverFactory.get_driver_availability()
-        
+
         return JSONResponse(
             content={
                 'success': True,
                 'message': '获取成功',
                 'data': {
                     'task_computing_power': TaskTypeRegistry.get_computing_power_map(),
+                    'task_power_modifiers': UnifiedConfigRegistry.get_power_modifiers_map(),  # 新增
                     'video_model_duration_options': VIDEO_MODEL_DURATION_OPTIONS,
                     'driver_status': driver_status
                 }
@@ -5384,7 +5405,16 @@ async def parse_script(
         
         # 导入剧本解析模块
         from llm.script_parser import parse_script_to_shots
-        
+        from model.vendor_model import VendorModelModel
+
+        # 根据 model_id 查询真实的 vendor_id
+        real_vendor_id = 1  # 默认值
+        if model_id:
+            try:
+                real_vendor_id = VendorModelModel.get_vendor_id_by_model_id(int(model_id)) or 1
+            except Exception as e:
+                logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
+
         # 调用LLM解析剧本
         parsed_data = await parse_script_to_shots(
             script_content=script_content,
@@ -5398,7 +5428,7 @@ async def parse_script(
             narration_as_dialogue=narration_as_dialogue,
             language=language,
             auth_token=auth_token,
-            vendor_id=1,
+            vendor_id=real_vendor_id,
             model_id=int(model_id) if model_id else 1
         )
         
@@ -8231,8 +8261,15 @@ async def serve_spa(full_path: str):
     # Try to serve static file first
     file_path = os.path.join(static_dir, full_path)
     if os.path.isfile(file_path):
-        # 对于 js/css 文件，直接返回；对于其他文件也直接返回（不做处理）
-        return FileResponse(file_path)
+        response = FileResponse(file_path)
+        # cache_bust 关闭时，对静态资源禁用浏览器缓存，确保改动立即生效
+        if not CACHE_BUST_ENABLED:
+            _, ext = os.path.splitext(full_path)
+            if ext in ('.js', '.css', '.html', '.json'):
+                response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+        return response
 
     # 检查是否有对应的 .html 文件（支持 /admin -> admin.html）
     html_path = os.path.join(static_dir, f"{full_path}.html")

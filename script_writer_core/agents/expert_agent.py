@@ -7,6 +7,7 @@ from .history_manager import ExpertHistoryManager
 from llm.llm_client_factory import get_llm_client
 from script_writer_core.file_manager import FileManager
 from script_writer_core.skill_loader import SkillLoader
+from model.model import ModelModel
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,9 @@ class ExpertAgent(BaseAgent):
         auth_token: str,
         tool_executor: Any,
         vendor_id: Optional[int] = None,
-        model_id: Optional[int] = None
+        model_id: Optional[int] = None,
+        enable_thinking: bool = False,
+        thinking_effort: str = "medium"
     ):
         # 使用第一个技能名称作为主要标识
         primary_skill = skill_names[0] if skill_names else "unknown"
@@ -54,6 +57,8 @@ class ExpertAgent(BaseAgent):
         self.tool_executor = tool_executor
         self.vendor_id = vendor_id
         self.model_id = model_id
+        self.enable_thinking = enable_thinking
+        self.thinking_effort = thinking_effort
         
         self.history_manager = ExpertHistoryManager(
             file_manager=file_manager,
@@ -157,15 +162,30 @@ class ExpertAgent(BaseAgent):
             iteration += 1
             
             try:
+                # 从数据库获取模型的最大输出 token 数
+                max_output_tokens = 65536  # 默认值
+                try:
+                    if self.model_id:
+                        model = ModelModel.get_by_id(self.model_id)
+                        if model and model.max_output_tokens:
+                            max_output_tokens = model.max_output_tokens
+                            logger.info(f"{self.agent_id}: Using model max_output_tokens: {max_output_tokens}")
+                except Exception as e:
+                    logger.warning(f"{self.agent_id}: Failed to get model info for max_output_tokens: {e}")
+
                 # 使用 LLM 客户端工厂获取对应模型的客户端并调用 API
-                response = get_llm_client(self.model).call_api(
+                # 传入 vendor_id 确保正确路由到目标供应商（如 zjt_api）
+                response = get_llm_client(self.model, vendor_id=self.vendor_id).call_api(
                     model=self.model,
                     messages=self._format_messages_for_api(),
                     tools=self._get_tool_definitions(),
                     temperature=1,
+                    max_tokens=max_output_tokens,
                     auth_token=self.auth_token,
                     vendor_id=self.vendor_id,
-                    model_id=self.model_id
+                    model_id=self.model_id,
+                    enable_thinking=self.enable_thinking,
+                    thinking_effort=self.thinking_effort
                 )
                 
                 message = response.choices[0].message

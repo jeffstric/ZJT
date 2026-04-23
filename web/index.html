@@ -3819,9 +3819,20 @@
           return 0;  // 配置未加载时返回0
         }
 
+        // 根据 image_mode 和图片数量构建 context，用于算力修饰符计算
+        const context = {};
+        if (this.imageMode) {
+          // 首尾帧模式且有2张图时，使用 first_last_with_tail
+          if (this.imageMode === 'first_last_frame' && this.files.length > 1) {
+            context['image_mode'] = 'first_last_with_tail';
+          } else {
+            context['image_mode'] = this.imageMode;
+          }
+        }
+
         // 使用 TaskConfig.getComputingPower 动态获取算力
-        // 该方法会自动处理固定算力和按时长计费两种情况
-        return TaskConfig.getComputingPower(this.videoModel, this.durationSeconds);
+        // 该方法会自动处理固定算力和按时长计费两种情况，以及应用修饰符
+        return TaskConfig.getComputingPower(this.videoModel, this.durationSeconds, context);
       },
       totalComputingPower() {
         // 总算力 = 单个算力 × 生成数量
