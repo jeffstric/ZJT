@@ -21,15 +21,21 @@ English | [中文](README.md) | [Live Demo](http://ailive.perseids.cn) | [Full T
 
 | 🖥️ Cross-Platform Support | 🐳 Docker Deployment | 🧪 Complete Test Coverage | 🎓 Education-Ready |
 |:---:|:---:|:---:|:---:|
-| Windows / Linux / macOS native support | Container deployment, K8s compatible | Full API tests, 99.5% stability | User-level billing, cost-transparent |
+| Windows / Linux / macOS native support | Container deployment | Full API tests, production-ready | User-level billing, cost-transparent |
 
 ---
 
 ## 🚀 Quick Start
 
+### Try Online (No Installation) ✨
+👉 **[ailive.perseids.cn](http://ailive.perseids.cn)** - Full features demo (no setup or installation required)
+
+---
+
 ### Windows Users (Recommended) ⭐
 
-📥 **[🎯 Download from Release Page](https://github.com/ZhiJuTong/comfyui_server/releases)**
+📥 **Download the latest "Click-to-Start.exe" from GitHub Release page**
+👉 Project: github.com/jeffstric/ZJT/releases
 
 ```bash
 # 1. Download pre-built executable
@@ -47,23 +53,33 @@ Click-to-Start.exe
 Open Browser | View Logs | Exit
 ```
 
-### Linux Users
+### macOS Users (Recommended) ⭐
+
+📥 **Download the latest compressed package from GitHub Release page and extract it**
+👉 Project: github.com/jeffstric/ZJT/releases
+
 ```bash
-# 1. Clone the repository
-git clone https://github.com/ZhiJuTong/comfyui_server
+# 1. Extract the downloaded file
+unzip ZJT-mac.zip
 cd comfyui_server
 
-# 2. Install dependencies
-uv sync
+# 2. Double-click startup script (one-click startup)
+open start.command
 
-# 3. Start the service
-python3 scripts/running/run_prod.py
+# Or start via command line
+bash start.command
 
-# 4. Open in browser
-http://localhost:9003/
+# 3. Wait for startup to complete
+✅ Browser opens automatically
+✅ Access http://localhost:9003/
+
+# Stop the service
+bash stop.command
 ```
 
-### macOS Users
+📖 **Detailed configuration**: See [docs/README.md](docs/README.md)
+
+### Linux Users
 ```bash
 # 1. Clone the repository
 git clone https://github.com/ZhiJuTong/comfyui_server
@@ -112,75 +128,84 @@ python3 scripts/running/run_dev.py
 http://localhost:9003/admin.html
 ```
 
-### Try Online (No Installation)
-👉 [ailive.perseids.cn](http://ailive.perseids.cn) - Full features demo
+---
+
+## 🚀 Core Innovations
+
+### 1️⃣ Real-Time Team Collaboration (Zero-Latency Teamwork)
+
+![Infinite Canvas](files/无限画布.png)
+
+ZhiJuTong **breaks the traditional single-creator model** with true team collaboration:
+
+- **Browser-based real-time editing** - No plugins needed. Multiple team members edit scripts, storyboards, and character profiles simultaneously
+- **Fine-grained permission management** - Three-tier permission system (project/team/user) for flexible control
+- **LAN + Public network support** - Works for local team collab and global remote production
+- **Real-time sync** - WebSocket + SSE dual-channel sync with millisecond latency, no conflicts
+- **Complete workflow**: Discuss → Assign → Agent executes → Real-time feedback → Team review
+
+**Scenario**: 5-person content team (writer, art director, producer) edit simultaneously while AI Agent generates storyboards in parallel → **300%+ efficiency gain**
 
 ---
 
-## 🧠 AI Multi-Agent System (Core Innovation)
+### 2️⃣ User-Level Independent Compute Accounts (Revolution in EdTech/Team Cost Management)
 
-ZhiJuTong uses a multi-agent collaboration architecture comprising a **PM Agent (Project Manager)** and **8 Expert Agents (Specialist Team)**, enabling full automation from script creation to storyboard design.
+![Compute Management](files/算力.png)
 
-### 8 Expert Agents Overview
+**Traditional approach**: Single platform account, all members share, no cost control
+**ZhiJuTong approach**: Independent account per user, transparent, flexible, fully managed
 
+**Core capabilities**:
+
+- **Per-user independent accounts** - Each student/member has separate compute quota, zero conflicts
+- **Per-user vendor selection** - Different users choose different model providers (OpenAI/Alibaba/Google)
+  - Premium users: GPT (best quality)
+  - Regular users: Qwen (cheap, sufficient)
+  - Budget users: Open-source models (free)
+- **Admin hot-update capability** - Platform admin can update in real-time:
+  - Model configs and pricing
+  - Vendor priority
+  - User quotas and limits
+  - No restart needed, instant effect
+- **Platform-level cost management** - Admin sets total budget, auto-tracks spending, precise to cent
+- **WeChat Pay integration** - Users self-service top-up, transparent billing
+
+**Use Cases**:
+- 📚 **Online Education**: 1000 students × 100¥ quota = fully managed 100k¥ budget
+- 🏢 **Corporate Training**: Different departments, different quotas, cost attribution by dept
+- 🎨 **Creative Studio**: Team members manage their own budgets, transparency + performance tracking
+
+---
+
+### 🧠 AI Multi-Agent System
+
+![AI Agent](files/智能体生成剧本.png)
+
+ZhiJuTong uses multi-agent architecture: **PM Agent (Project Manager)** + **8 Expert Agents (Specialists)**
+
+#### 8 Expert Agents
+
+| Role | Responsibility | Capabilities |
+|------|------|------|
+| **Story Writer** | Write script, dialogue | Smart outline, dialogue writing, emotional arc design |
+| **Character Creator** | Character setup, traits | Character profiles, backstory, OOC checks |
+| **Location Creator** | Scenes, backgrounds, style | Scene design, prop lists, visual style guidance |
+| **Plot Analyzer** | Plot, tension, pacing | Three-act structure, tension setup, rhythm optimization |
+| **Content Compliance** | Content moderation | Banned word detection, policy compliance, safety checks |
+| **Novel Splitter** | Novel adaptation, episode split | Auto episode split, chapter alignment, content decomposition |
+| **Character Designer** | Character image design | Consistent character reference images, style unity |
+| **Location Designer** | Location, prop design | Scene reference images, prop library building |
+
+#### Agent-User Interaction
+
+Agents support **ask_user tool** for proactive user engagement:
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  User Request (Create new drama, continue, adapt, etc.)     │
-└────────────────────────┬────────────────────────────────────┘
-                         ↓
-        ┌────────────────────────────────┐
-        │   PM Agent (Project Manager)    │
-        │  • Understand user needs        │
-        │  • Create production plan       │
-        │  • Task dispatch & coordination │
-        └────┬─────────────────────────┬─────────────────────┘
-             ↓                         ↓
-   ┌─────────────────────┐  ┌─────────────────────────────┐
-   │  Task Queue         │  │  Execution Coordination     │
-   └──────┬──────────────┘  └──────────┬───────────────────┘
-          ↓                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│ 8 Expert Agents Executing in Parallel                       │
-├─────────────────────────────────────────────────────────────┤
-│ ① Story Writer         → Write script, dialogue            │
-│ ② Character Creator    → Design characters, traits         │
-│ ③ Location Creator     → Design scenes, backgrounds        │
-│ ④ Plot Analyzer        → Analyze plot, pacing, tension     │
-│ ⑤ Content Compliance   → Verify content compliance         │
-│ ⑥ Novel Splitter       → Adapt novels, split episodes      │
-│ ⑦ Character Designer   → Design character images           │
-│ ⑧ Location Designer    → Design locations, props           │
-└─────────────────────────────────────────────────────────────┘
-             ↓
-  ┌──────────────────────────────────────────┐
-  │  ask_user Tool (Innovation Highlight)    │
-  │  • Agents can ask users directly         │
-  │  • Get feedback on creative direction   │
-  │  • Ensure alignment with user intent    │
-  └──────────────────────────────────────────┘
-             ↓
-  ┌──────────────────────────────────────────┐
-  │ Final Deliverables: Complete profile    │
-  │ • Script, characters, scenes, props      │
-  │ • Structured data storage                │
-  │ • Ready for storyboard generation        │
-  │ • Support for iteration                  │
-  └──────────────────────────────────────────┘
-```
-
-### Core Innovation: ask_user Tool
-
-Unlike traditional AI, ZhiJuTong agents can **proactively ask users**:
-
-```javascript
-// Example: Character Creator designing a character
-Expert: "Designing the protagonist... Here are three directions:"
-  1️⃣ Ancient Beauty  (elegant, classical)
+Expert: "Designing protagonist... Three directions:"
+  1️⃣ Ancient Beauty (elegant, classical)
   2️⃣ Modern Executive (sharp, professional)
-  3️⃣ Young Girl     (cute, energetic)
+  3️⃣ Young Girl (cute, energetic)
 
-// User selects → Expert continues
-// Result: Accurate direction, no need for revisions
+User selects → Expert continues → Precise result, no revisions needed
 ```
 
 ---
@@ -259,11 +284,14 @@ Step 6: Video Synthesis
 - Permission management (project, team, user levels)
 
 ### 4. Flexible Computing Power Management (🎓 Perfect for EdTech)
-- **User-Level Independent Accounts** - Each student/user has separate billing
-- **Multi-Vendor Key Configuration** - Platform admin manages multiple API keys
-- **User-Level Model Selection** - Each user can choose their own LLM (GPT/Gemini/Qwen/etc.)
-- **Vendor-Level Management** - Assign different models to different user groups
-- **WeChat Pay Integration** - Users can top-up computing credits
+- **User-Level Independent Accounts** - Each student/user has separate billing, zero conflicts
+- **User-Level Vendor Selection** - Users choose different model providers (OpenAI/Alibaba/Google)
+- **Admin Hot-Update Capability** - Platform admin can update in real-time:
+  - Model configs and pricing
+  - Vendor priority
+  - User quotas and limits
+  - No restart needed, instant effect
+- **WeChat Pay Integration** - Users self-service top-up, transparent billing
 
 **Use Cases**:
 - 📚 **Online Education** - Allocate compute budgets per student
@@ -392,10 +420,10 @@ Frontend UI Update → Show Final Output
 | **Multi-Model Support** | 10+ LLMs flexible switching | Cost ↓40%, quality ↑ |
 | **Auto Storyboarding** | Smart split + prompt filling | Workload ↓80% |
 | **Character Locking** | Consistency guarantee | Solves "face collapse" problem |
-| **User-Level Model Management** | Each user selects LLM vendor | EdTech cost control, flexible |
+| **Admin Hot-Update** | Update configs, prices, priorities in real-time | No restart needed, instant effect |
 | **Cross-Platform Support** | Windows / Linux / macOS native | One codebase, multiple platforms |
-| **Docker Deployment** | Container-ready | Cloud deployment, K8s scalable |
-| **Complete Test Coverage** | Full API endpoint tests | 99.5%+ stability, production-ready |
+| **Docker Deployment** | Container-ready | Cloud deployment simplified |
+| **Complete Test Coverage** | Full API endpoint tests | Core features covered, production-ready |
 | **Production-Verified** | Real Hongguo platform deployment | Reliability ⭐⭐⭐⭐⭐ |
 
 ---
@@ -422,7 +450,8 @@ Frontend UI Update → Show Final Output
 
 ### 🎓 Education & Training (Highly Recommended)
 - ✅ **Per-Student Independent Accounts** - Each learner has their own computing credit
-- ✅ **User-Level Model Selection** - Different classes can use different LLMs for cost optimization
+- ✅ **User-Level Vendor Selection** - Different classes choose different model providers for cost optimization
+- ✅ **Admin Hot-Update** - Institutions can dynamically adjust model configs and prices
 - ✅ **Platform Cost Management** - Institutions can set total compute budgets
 - ✅ **Creation History & Feedback** - Track student work, enable instructor-student interaction
 - ✅ **Cross-Platform Accessibility** - Students create on Windows/Mac/Linux devices
@@ -494,7 +523,7 @@ This project uses a modified Apache License 2.0. See [LICENSE](LICENSE) for deta
 
 ### Get Help
 - 📧 **Email**: jeffstricg@gmail.com
-- 💬 **GitHub Issues**: [Report bugs / request features](https://github.com/ZhiJuTong/comfyui_server/issues)
+- 💬 **GitHub Issues**: [Report bugs / request features](https://github.com/jeffstric/zjt/issues)
 
 ### Join Community
 | WeChat Group | Personal WeChat |
@@ -513,7 +542,7 @@ This project uses a modified Apache License 2.0. See [LICENSE](LICENSE) for deta
 | **Skill Required** | Zero barrier | Requires expertise |
 | **Setup Difficulty** | One-click (Windows) | Complex config |
 | **Cost** | Flexible, controllable | High fixed cost |
-| **Stability** | 99.5%+ | Manual-dependent |
+| **Stability** | Full API unit test coverage | Manual-dependent |
 | **Scalability** | 10+ LLMs + APIs | Single tool |
 
 ---
