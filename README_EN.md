@@ -17,35 +17,86 @@ English | [中文](README.md) | [Live Demo](http://ailive.perseids.cn) | [Full T
 
 | 👥 Unlimited Team Collaboration | 💰 Flexible Computing Power Management | 🔒 Enterprise-Grade Stability | 📦 Ready-to-Use |
 |:---:|:---:|:---:|:---:|
-| Browser-based collaboration, LAN & public network support | Multi-vendor keys, independent user billing | Full API unit tests, production-verified | Built-in image hosting, prompt library, TTS |
+| Browser-based collaboration, LAN & public network support | User-level accounts with independent billing | Full API unit tests, production-verified | Built-in image hosting, prompt library, TTS |
+
+| 🖥️ Cross-Platform Support | 🐳 Docker Deployment | 🧪 Complete Test Coverage | 🎓 Education-Ready |
+|:---:|:---:|:---:|:---:|
+| Windows / Linux / macOS native support | Container deployment, K8s compatible | Full API tests, 99.5% stability | User-level billing, cost-transparent |
 
 ---
 
 ## 🚀 Quick Start
 
-### Windows Users (Recommended)
+### Windows Users (Recommended) ⭐
+
+📥 **[🎯 Download from Release Page](https://github.com/ZhiJuTong/comfyui_server/releases)**
+
 ```bash
-# 1. Download and double-click to run
+# 1. Download pre-built executable
+Get the latest "Click-to-Start.exe" from Release page
+
+# 2. Double-click to run (one-click startup)
 Click-to-Start.exe
 
-# 2. Wait for startup (browser opens automatically)
-✅ System tray icon shows startup status
+# 3. Wait for startup
+✅ System tray icon shows status
+✅ Browser opens automatically
 ✅ Access http://localhost:9003/
 
-# 3. Right-click menu options
+# 4. Right-click menu
 Open Browser | View Logs | Exit
 ```
 
-### Linux / macOS Users
+### Linux Users
 ```bash
-# 1. Install dependencies
+# 1. Clone the repository
+git clone https://github.com/ZhiJuTong/comfyui_server
+cd comfyui_server
+
+# 2. Install dependencies
 uv sync
 
-# 2. Start the service
+# 3. Start the service
 python3 scripts/running/run_prod.py
 
-# 3. Open in browser
+# 4. Open in browser
 http://localhost:9003/
+```
+
+### macOS Users
+```bash
+# 1. Clone the repository
+git clone https://github.com/ZhiJuTong/comfyui_server
+cd comfyui_server
+
+# 2. Install dependencies
+uv sync
+
+# 3. Start the service
+python3 scripts/running/run_prod.py
+
+# 4. Open in browser
+http://localhost:9003/
+```
+
+### Docker Deployment (Recommended for Servers) 🐳
+```bash
+# 1. Navigate to Docker directory
+cd docker
+
+# 2. Start containers
+docker-compose up -d
+
+# 3. View logs
+docker-compose logs -f
+
+# 4. Access application
+http://localhost:9003/
+
+# Common commands
+docker-compose down           # Stop services
+docker-compose build          # Rebuild images
+docker-compose exec app bash  # Enter container
 ```
 
 ### Developer Setup
@@ -57,7 +108,7 @@ uv sync
 # 2. Start development server
 python3 scripts/running/run_dev.py
 
-# 3. Access admin dashboard
+# 3. View DEBUG logs
 http://localhost:9003/admin.html
 ```
 
@@ -207,11 +258,18 @@ Step 6: Video Synthesis
 - Real-time sync via WebSocket + SSE
 - Permission management (project, team, user levels)
 
-### 4. Flexible Computing Power Management
-- Independent multi-vendor key configuration
-- User-level billing system
-- WeChat Pay integration
-- Smart cost optimization (auto-select best API)
+### 4. Flexible Computing Power Management (🎓 Perfect for EdTech)
+- **User-Level Independent Accounts** - Each student/user has separate billing
+- **Multi-Vendor Key Configuration** - Platform admin manages multiple API keys
+- **User-Level Model Selection** - Each user can choose their own LLM (GPT/Gemini/Qwen/etc.)
+- **Vendor-Level Management** - Assign different models to different user groups
+- **WeChat Pay Integration** - Users can top-up computing credits
+
+**Use Cases**:
+- 📚 **Online Education** - Allocate compute budgets per student
+- 🏢 **Corporate Training** - Department-level cost management
+- 🎨 **Creative Teams** - Individual member billing, transparent costs
+- 🚀 **Startup Incubators** - Provide compute support to startups
 
 ### 5. Built-In Resource Library
 - 500+ curated prompt templates
@@ -334,30 +392,47 @@ Frontend UI Update → Show Final Output
 | **Multi-Model Support** | 10+ LLMs flexible switching | Cost ↓40%, quality ↑ |
 | **Auto Storyboarding** | Smart split + prompt filling | Workload ↓80% |
 | **Character Locking** | Consistency guarantee | Solves "face collapse" problem |
-| **Full Test Coverage** | All API endpoints tested | 99.5%+ stability |
+| **User-Level Model Management** | Each user selects LLM vendor | EdTech cost control, flexible |
+| **Cross-Platform Support** | Windows / Linux / macOS native | One codebase, multiple platforms |
+| **Docker Deployment** | Container-ready | Cloud deployment, K8s scalable |
+| **Complete Test Coverage** | Full API endpoint tests | 99.5%+ stability, production-ready |
 | **Production-Verified** | Real Hongguo platform deployment | Reliability ⭐⭐⭐⭐⭐ |
 
 ---
 
 ## 💡 Use Cases
 
-### Content Creators
+### 📱 Content Creators
 - ✅ Generate viral short drama scripts rapidly
 - ✅ Refine creative direction via ask_user
 - ✅ Auto-generate storyboards & reference images
 - ✅ Lower creation barrier and cost
 
-### Team Collaboration
+### 👥 Team Collaboration
 - ✅ Real-time multi-user editing
 - ✅ Permission & version management
 - ✅ Transparent workflows
 - ✅ LAN & public network support
 
-### Enterprise
+### 🏢 Enterprise
 - ✅ Fast brand video production
 - ✅ Auto marketing content generation
 - ✅ Cost control (flexible billing)
 - ✅ Enterprise-grade reliability
+
+### 🎓 Education & Training (Highly Recommended)
+- ✅ **Per-Student Independent Accounts** - Each learner has their own computing credit
+- ✅ **User-Level Model Selection** - Different classes can use different LLMs for cost optimization
+- ✅ **Platform Cost Management** - Institutions can set total compute budgets
+- ✅ **Creation History & Feedback** - Track student work, enable instructor-student interaction
+- ✅ **Cross-Platform Accessibility** - Students create on Windows/Mac/Linux devices
+- ✅ **Private Server Deployment** - Institutions can self-host with Docker, data security guaranteed
+
+**Typical Scenarios**:
+- High school / University media production courses
+- Online creative writing training programs
+- Animation / Game design storyboard teaching
+- Content creator professional certifications
 
 ---
 
