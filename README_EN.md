@@ -139,10 +139,10 @@ http://localhost:9003/admin.html
 ZhiJuTong **breaks the traditional single-creator model** with true team collaboration:
 
 - **Browser-based real-time editing** - No plugins needed. Multiple team members edit scripts, storyboards, and character profiles simultaneously
-- **Fine-grained permission management** - Three-tier permission system (project/team/user) for flexible control
+- **Simple permission management** - Two-tier system: admin and regular user
 - **LAN + Public network support** - Works for local team collab and global remote production
 - **Real-time sync** - WebSocket + SSE dual-channel sync with millisecond latency, no conflicts
-- **Complete workflow**: Discuss → Assign → Agent executes → Real-time feedback → Team review
+- **Complete workflow**: Script Agent → Infinite Canvas → Storyboard Draft
 
 **Scenario**: 5-person content team (writer, art director, producer) edit simultaneously while AI Agent generates storyboards in parallel → **300%+ efficiency gain**
 
@@ -158,10 +158,14 @@ ZhiJuTong **breaks the traditional single-creator model** with true team collabo
 **Core capabilities**:
 
 - **Per-user independent accounts** - Each student/member has separate compute quota, zero conflicts
-- **Per-user vendor selection** - Different users choose different model providers (OpenAI/Alibaba/Google)
-  - Premium users: GPT (best quality)
-  - Regular users: Qwen (cheap, sufficient)
-  - Budget users: Open-source models (free)
+- **Per-user vendor selection** - Multi-vendor redundancy architecture ensures uninterrupted creation, no single point of failure
+  - **LLM Model Selection**
+    - Premium users: Claude (strong function calling, primary model)
+    - Regular users: Qwen (excellent Chinese understanding, cost-effective)
+    - Local deployment: Ollama (zero cost, privacy-focused)
+  - **Image/Video Generation Vendor Selection**
+    - Nano, Banana can flexibly switch between ZhiJuTong Official, Duomi, ComfyUI and other channels
+    - Automatic seamless failover when a vendor is down, ensuring continuous creative workflow
 - **Admin hot-update capability** - Platform admin can update in real-time:
   - Model configs and pricing
   - Vendor priority
@@ -287,11 +291,11 @@ Step 6: Video Synthesis
 - Browser-based, no installation needed
 - LAN & public network remote collaboration
 - Real-time sync via WebSocket + SSE
-- Permission management (project, team, user levels)
+- **Permission management**: Admin and regular user two-tier system
 
 ### 4. Flexible Computing Power Management (🎓 Perfect for EdTech)
 - **User-Level Independent Accounts** - Each student/user has separate billing, zero conflicts
-- **User-Level Vendor Selection** - Users choose different model providers (OpenAI/Alibaba/Google)
+- **User-Level Vendor Selection** - Multi-vendor redundancy, LLM and image/video generation can be selected independently, ensuring uninterrupted creation
 - **Admin Hot-Update Capability** - Platform admin can update in real-time:
   - Model configs and pricing
   - Vendor priority
@@ -319,8 +323,7 @@ Step 6: Video Synthesis
 
 | Provider | Models | Highlights |
 |----------|--------|-----------|
-| **Google Gemini** | gemini-1.5-pro, gemini-2.0-flash | 🔥 Primary model, thinking mode |
-| **OpenAI** | GPT-4, GPT-4-turbo | Strong function calling |
+| **Claude** | Claude Haiku, Claude 4.5 | Strong function calling, primary model |
 | **Ollama** | Llama 2, Mistral, CodeLlama | Local deployment, zero cost |
 | **Alibaba Qwen** | qwen-turbo, qwen-plus | Excellent Chinese understanding |
 | **Baidu ERNIE** | ERNIE series | Native Chinese support |
@@ -456,7 +459,7 @@ Frontend UI Update → Show Final Output
 
 ### 🎓 Education & Training (Highly Recommended)
 - ✅ **Per-Student Independent Accounts** - Each learner has their own computing credit
-- ✅ **User-Level Vendor Selection** - Different classes choose different model providers for cost optimization
+- ✅ **User-Level Vendor Selection** - Different classes/learner can flexibly choose providers for cost optimization
 - ✅ **Admin Hot-Update** - Institutions can dynamically adjust model configs and prices
 - ✅ **Platform Cost Management** - Institutions can set total compute budgets
 - ✅ **Creation History & Feedback** - Track student work, enable instructor-student interaction
