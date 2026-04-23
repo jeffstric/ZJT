@@ -137,6 +137,54 @@ class VideoDriverFactory:
             return None
 
     @classmethod
+    def create_driver_by_implementation(cls, implementation_name: str) -> Optional[BaseVideoDriver]:
+        """
+        根据实现方名称直接创建驱动实例
+        用于状态查询时，确保使用任务提交时的相同实现方
+
+        Args:
+            implementation_name: 实现方名称（如 'grok_duomi_v1'）
+
+        Returns:
+            BaseVideoDriver: 驱动实例，如果未注册则返回 None
+        """
+        cls._last_create_error = None
+
+        driver_class = cls._registered_drivers.get(implementation_name)
+        if not driver_class:
+            logger.error(f"Driver implementation not registered: {implementation_name}")
+            cls._last_create_error = {
+                "reason": "NOT_REGISTERED",
+                "message": f"驱动 {implementation_name} 未注册"
+            }
+            return None
+
+        # 获取驱动参数
+        driver_params = {}
+        impl_config = UnifiedConfigRegistry.get_implementation(implementation_name)
+        if impl_config and impl_config.driver_params:
+            driver_params = impl_config.driver_params.copy()
+
+        try:
+            logger.info(f"Creating driver by implementation: {implementation_name}")
+            return driver_class(**driver_params)
+        except DriverConfigError as e:
+            logger.warning(f"Driver {implementation_name} 配置不完整: {e.message}")
+            cls._last_create_error = {
+                "reason": "CONFIG_MISSING",
+                "message": f"驱动配置不完整，缺少: {', '.join(e.missing_configs)}",
+                "missing_configs": e.missing_configs
+            }
+            return None
+        except Exception as e:
+            logger.error(f"Failed to create driver instance for {implementation_name}: {str(e)}")
+            cls._last_create_error = {
+                "reason": "CREATE_FAILED",
+                "message": f"驱动创建失败: {str(e)}"
+            }
+            return None
+
+    @classmethod
     def get_last_create_error(cls) -> Optional[Dict[str, Any]]:
         """
         获取最近一次创建驱动失败的详细原因
@@ -345,7 +393,14 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.SORA2_DUOMI_V1, Sora2DuomiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Sora2DuomiV1Driver: {e}")
-    
+
+    try:
+        from .grok_duomi_v1_driver import GrokDuomiV1Driver
+        # 注册 Grok 多米供应商 v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.GROK_DUOMI_V1, GrokDuomiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GrokDuomiV1Driver: {e}")
+
     try:
         from .kling_duomi_v1_driver import KlingDuomiV1Driver
         # 注册 Kling 多米供应商 v1 版本
@@ -624,5 +679,49 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.QWEN_MULTI_ANGLE_RUNNINGHUB_V1, QwenMultiAngleRunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import QwenMultiAngleRunninghubV1Driver: {e}")
+
+    # Grok 通用聚合站点驱动注册（仅在配置存在时注册）
+    try:
+        from utils.config_checker import check_api_aggregator_config_exists
+    except ImportError:
+        logger.warning("无法导入配置检查工具，跳过Grok通用聚合站点驱动注册")
+        check_api_aggregator_config_exists = lambda site_id: False
+
+    try:
+        from .grok_common_v1_driver import (
+            GrokCommonSite0V1Driver,
+            GrokCommonSite1V1Driver,
+            GrokCommonSite2V1Driver,
+            GrokCommonSite3V1Driver,
+            GrokCommonSite4V1Driver,
+            GrokCommonSite5V1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import GrokCommon site drivers: {e}")
+        GrokCommonSite0V1Driver = None
+        GrokCommonSite1V1Driver = None
+        GrokCommonSite2V1Driver = None
+        GrokCommonSite3V1Driver = None
+        GrokCommonSite4V1Driver = None
+        GrokCommonSite5V1Driver = None
+
+    grok_common_sites = [
+        ('site_0', DriverImplementation.GROK_COMMON_SITE0_V1, GrokCommonSite0V1Driver),
+        ('site_1', DriverImplementation.GROK_COMMON_SITE1_V1, GrokCommonSite1V1Driver),
+        ('site_2', DriverImplementation.GROK_COMMON_SITE2_V1, GrokCommonSite2V1Driver),
+        ('site_3', DriverImplementation.GROK_COMMON_SITE3_V1, GrokCommonSite3V1Driver),
+        ('site_4', DriverImplementation.GROK_COMMON_SITE4_V1, GrokCommonSite4V1Driver),
+        ('site_5', DriverImplementation.GROK_COMMON_SITE5_V1, GrokCommonSite5V1Driver),
+    ]
+
+    for site_id, impl_name, driver_class in grok_common_sites:
+        if check_api_aggregator_config_exists(site_id):
+            if driver_class:
+                VideoDriverFactory.register_driver(impl_name, driver_class)
+                logger.info(f"已注册 Grok通用聚合 {site_id} 驱动: {impl_name}")
+            else:
+                logger.warning(f"Grok通用聚合 {site_id} 驱动类未找到，跳过注册")
+        else:
+            logger.info(f"Grok通用聚合 {site_id} 配置不存在或不完整，跳过驱动注册")
 
     logger.info(f"Registered {len(VideoDriverFactory.get_supported_drivers())} video drivers")
