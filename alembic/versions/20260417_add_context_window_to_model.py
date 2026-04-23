@@ -23,12 +23,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add context_window field to model table and backfill known models"""
-    op.execute(text("""
-        ALTER TABLE `model`
-        ADD COLUMN `context_window` INT DEFAULT NULL COMMENT '模型上下文窗口大小（token数）'
-        AFTER `model_name`
+    conn = op.get_bind()
+    result = conn.execute(text("""
+        SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'model' AND COLUMN_NAME = 'context_window'
     """))
-    logger.info("[Migration] Added context_window field to model table")
+    if result.scalar() > 0:
+        logger.info("[Migration] context_window column already exists, skipping ADD COLUMN")
+    else:
+        op.execute(text("""
+            ALTER TABLE `model`
+            ADD COLUMN `context_window` INT DEFAULT NULL COMMENT '模型上下文窗口大小（token数）'
+            AFTER `model_name`
+        """))
+        logger.info("[Migration] Added context_window field to model table")
 
     # Backfill known models with their context window sizes
     # Mapping: model_name substring -> context_window
@@ -52,8 +60,16 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove context_window field from model table"""
-    op.execute(text("""
-        ALTER TABLE `model`
-        DROP COLUMN `context_window`
+    conn = op.get_bind()
+    result = conn.execute(text("""
+        SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'model' AND COLUMN_NAME = 'context_window'
     """))
-    logger.info("[Migration] Removed context_window field from model table")
+    if result.scalar() == 0:
+        logger.info("[Migration] context_window column does not exist, skipping DROP COLUMN")
+    else:
+        op.execute(text("""
+            ALTER TABLE `model`
+            DROP COLUMN `context_window`
+        """))
+        logger.info("[Migration] Removed context_window field from model table")
