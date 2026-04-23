@@ -124,8 +124,68 @@ class TestGetFrontendConfig(unittest.TestCase):
         self.assertEqual(updated_task.get('user_preferred_implementation'), 'gemini_duomi_v1')
 
     @patch('model.implementation_power.ImplementationPowerModel')
+    def test_get_frontend_config_with_user_prefs_db_returns_empty_fallback_to_impl(self, mock_impl_power_model):
+        """测试用户偏好设置但数据库返回空时，从 implementations 列表中获取算力（回退机制）"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        # Mock ImplementationPowerModel methods - 返回空字典模拟数据库无配置
+        mock_impl_power_model.get_all_powers_for_implementation.return_value = {}
+        mock_impl_power_model.get_config.return_value = {}
+
+        # 找到一个有 implementations 列表的任务（如 grok_image_to_video）
+        default_config = UnifiedConfigRegistry.get_frontend_config()
+        
+        task_with_impls = None
+        for task in default_config['tasks']:
+            if task.get('key') == 'grok_image_to_video' and task.get('implementations'):
+                task_with_impls = task
+                break
+
+        if not task_with_impls:
+            self.skipTest("没有找到 grok_image_to_video 任务，跳过此测试")
+
+        task_key = task_with_impls['key']
+        implementations = task_with_impls.get('implementations', [])
+        
+        # 找到用户偏好的实现方（如 grok_duomi_v1）
+        preferred_impl = None
+        for impl in implementations:
+            if impl.get('name') == 'grok_duomi_v1':
+                preferred_impl = impl
+                break
+        
+        if not preferred_impl:
+            self.skipTest("没有找到 grok_duomi_v1 实现方，跳过此测试")
+
+        expected_power = preferred_impl.get('computing_power')
+
+        # 设置用户偏好
+        user_prefs = {
+            task_key: 'grok_duomi_v1'
+        }
+
+        # 获取带偏好的配置
+        config_with_prefs = UnifiedConfigRegistry.get_frontend_config(
+            user_id=1,
+            user_prefs=user_prefs
+        )
+
+        # 找到同一任务
+        updated_task = None
+        for task in config_with_prefs['tasks']:
+            if task['key'] == task_key:
+                updated_task = task
+                break
+
+        self.assertIsNotNone(updated_task)
+        # 当数据库返回空配置时，应该从 implementations 列表中获取算力（回退机制）
+        self.assertEqual(updated_task.get('computing_power'), expected_power,
+            f"数据库无配置时应该从 implementations 获取算力 {expected_power}，实际为 {updated_task.get('computing_power')}")
+        self.assertEqual(updated_task.get('user_preferred_implementation'), 'grok_duomi_v1')
+
+    @patch('model.implementation_power.ImplementationPowerModel')
     def test_get_frontend_config_with_user_prefs_get_power_returns_none(self, mock_impl_power_model):
-        """测试用户偏好设置但算力获取返回空时保持默认"""
+        """测试用户偏好设置但算力获取返回空时，从 implementations 列表中获取算力"""
         from config.unified_config import UnifiedConfigRegistry
 
         # Mock ImplementationPowerModel methods
@@ -167,8 +227,15 @@ class TestGetFrontendConfig(unittest.TestCase):
                 break
 
         self.assertIsNotNone(updated_task)
-        # 算力应该保持默认值（因为 DB 返回空配置）
-        self.assertEqual(updated_task.get('computing_power'), default_power)
+        # 算力应该从 implementations 列表中获取
+        impls = task_with_power.get('implementations', [])
+        if impls:
+            first_impl = impls[0]
+            expected_power = first_impl.get('computing_power')
+            self.assertEqual(updated_task.get('computing_power'), expected_power,
+                f"应该使用 implementations 第一位的算力 {expected_power}，实际为 {updated_task.get('computing_power')}")
+        else:
+            self.assertEqual(updated_task.get('computing_power'), default_power)
 
 
 class TestApplyUserPreferencesToTasks(unittest.TestCase):
@@ -350,6 +417,80 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['computing_power'], 5)
+
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_apply_user_preferences_db_empty_fallback_to_implementations(self, mock_impl_power_model):
+        """测试数据库返回空配置时，从 implementations 列表中获取算力（回退机制）- 防止返回 0"""
+        from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
+
+        # Mock 数据库返回空配置
+        mock_impl_power_model.get_all_powers_for_implementation.return_value = {}
+
+        # 注册一个任务配置
+        config = UnifiedTaskConfig(
+            id=997,
+            key='grok_image_to_video',
+            name='Grok Image to Video',
+            category='image_to_video',
+            provider='duomi',
+            computing_power=0,
+            driver_name='grok_image_to_video'
+        )
+        UnifiedConfigRegistry.register(config)
+
+        tasks = [
+            {
+                'key': 'grok_image_to_video',
+                'computing_power': 0,
+                'driver_name': 'grok_image_to_video',
+                'implementations': [
+                    {'name': 'grok_duomi_v1', 'computing_power': 8, 'sort_order': 100},
+                    {'name': 'grok_common_site0_v1', 'computing_power': 8, 'sort_order': 200},
+                ]
+            },
+        ]
+
+        user_prefs = {
+            'grok_image_to_video': 'grok_duomi_v1'
+        }
+
+        result = UnifiedConfigRegistry._apply_user_preferences_to_tasks(tasks, user_prefs)
+
+        self.assertEqual(len(result), 1)
+        # 数据库无配置时，应该从 implementations 列表中获取算力，而不是返回 0
+        self.assertEqual(result[0]['computing_power'], 8,
+            "数据库无配置时应该从 implementations 获取算力 8，而不是返回 0")
+        self.assertEqual(result[0]['user_preferred_implementation'], 'grok_duomi_v1')
+        mock_impl_power_model.get_all_powers_for_implementation.assert_called_once_with(
+            'grok_duomi_v1', 'grok_image_to_video'
+        )
+
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_apply_user_preferences_no_prefs_computing_power_zero_uses_first_impl(self, mock_impl_power_model):
+        """测试没有用户偏好且 computing_power 为 0 时，使用 implementations 第一位的算力 - 防止返回 0"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        tasks = [
+            {
+                'key': 'grok_image_to_video',
+                'computing_power': 0,
+                'driver_name': 'grok_image_to_video',
+                'implementations': [
+                    {'name': 'grok_duomi_v1', 'computing_power': 8, 'sort_order': 100},
+                    {'name': 'grok_common_site0_v1', 'computing_power': 8, 'sort_order': 200},
+                ]
+            },
+        ]
+
+        result = UnifiedConfigRegistry._apply_user_preferences_to_tasks(tasks, {})
+
+        self.assertEqual(len(result), 1)
+        # 没有用户偏好且 computing_power 为 0 时，应该使用 implementations 第一位的算力
+        self.assertEqual(result[0]['computing_power'], 8,
+            "computing_power 为 0 时应该使用 implementations 第一位的算力 8，而不是保持 0")
+        self.assertEqual(result[0]['default_implementation'], 'grok_duomi_v1')
+        # 不应该调用数据库查询
+        mock_impl_power_model.get_all_powers_for_implementation.assert_not_called()
 
 
 class TestGetFrontendConfigStructure(unittest.TestCase):

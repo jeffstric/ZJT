@@ -54,6 +54,7 @@ class TaskProvider:
     VIDU = 'vidu'             # Vidu 官方
     VOLCENGINE = 'volcengine' # 火山引擎
     LOCAL = 'local'           # 本地处理
+    ZJT = 'zjt'
 
 
 @dataclass
@@ -686,6 +687,7 @@ class UnifiedConfigRegistry:
                     continue
 
                 driver_name = config.driver_name if hasattr(config, 'driver_name') else None
+                impl_power = None
 
                 try:
                     db_powers = ImplementationPowerModel.get_all_powers_for_implementation(user_pref_impl, driver_name)
@@ -694,18 +696,28 @@ class UnifiedConfigRegistry:
                             impl_power = db_powers[None]
                         else:
                             impl_power = list(db_powers.values())[0]
-                        task['computing_power'] = impl_power
-                        task['user_preferred_implementation'] = user_pref_impl
                 except Exception as e:
                     logger.debug(f"Failed to get implementation power for {user_pref_impl}: {e}")
-            elif implementations:
-                # 没有用户偏好，使用 implementations 中排序第一位的算力
+
+                # 如果数据库中没有配置，从 implementations 列表中查找
+                if impl_power is None or impl_power == 0:
+                    for impl in implementations:
+                        if impl.get('name') == user_pref_impl:
+                            impl_power = impl.get('computing_power')
+                            break
+
+                # 更新算力
+                if impl_power is not None and impl_power != 0:
+                    task['computing_power'] = impl_power
+                    task['user_preferred_implementation'] = user_pref_impl
+            elif implementations and (task.get('computing_power') == 0 or not task.get('computing_power')):
+                # 没有用户偏好，且任务的 computing_power 为 0 或未设置时，使用 implementations 中排序第一位的算力
                 # implementations 已经按 sort_order 排序
                 first_impl = implementations[0]
                 impl_name = first_impl.get('name')
                 impl_power = first_impl.get('computing_power')
 
-                if impl_power is not None:
+                if impl_power is not None and impl_power != 0:
                     task['computing_power'] = impl_power
                     task['default_implementation'] = impl_name
 
@@ -787,6 +799,15 @@ class DriverImplementation:
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
 
+    # Grok
+    GROK_DUOMI_V1 = 'grok_duomi_v1'
+    GROK_COMMON_SITE0_V1 = 'grok_common_site0_v1'
+    GROK_COMMON_SITE1_V1 = 'grok_common_site1_v1'
+    GROK_COMMON_SITE2_V1 = 'grok_common_site2_v1'
+    GROK_COMMON_SITE3_V1 = 'grok_common_site3_v1'
+    GROK_COMMON_SITE4_V1 = 'grok_common_site4_v1'
+    GROK_COMMON_SITE5_V1 = 'grok_common_site5_v1'
+
 
 # ============ 驱动实现 ID 常量（用于数据库存储） ============
 class DriverImplementationId:
@@ -836,6 +857,14 @@ class DriverImplementationId:
     KLING_COMMON_SITE4_V1 = 40
     KLING_COMMON_SITE5_V1 = 41
 
+    GROK_COMMON_SITE0_V1 = 42
+    GROK_COMMON_SITE1_V1 = 43
+    GROK_COMMON_SITE2_V1 = 44
+    GROK_COMMON_SITE3_V1 = 45
+    GROK_COMMON_SITE4_V1 = 46
+    GROK_COMMON_SITE5_V1 = 47
+    GROK_DUOMI_V1 = 48
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -880,6 +909,13 @@ IMPLEMENTATION_TO_ID = {
     'veo3_common_site3_v1': DriverImplementationId.VEO3_COMMON_SITE3_V1,
     'veo3_common_site4_v1': DriverImplementationId.VEO3_COMMON_SITE4_V1,
     'veo3_common_site5_v1': DriverImplementationId.VEO3_COMMON_SITE5_V1,
+    'grok_common_site0_v1': DriverImplementationId.GROK_COMMON_SITE0_V1,
+    'grok_common_site1_v1': DriverImplementationId.GROK_COMMON_SITE1_V1,
+    'grok_common_site2_v1': DriverImplementationId.GROK_COMMON_SITE2_V1,
+    'grok_common_site3_v1': DriverImplementationId.GROK_COMMON_SITE3_V1,
+    'grok_common_site4_v1': DriverImplementationId.GROK_COMMON_SITE4_V1,
+    'grok_common_site5_v1': DriverImplementationId.GROK_COMMON_SITE5_V1,
+    'grok_duomi_v1': DriverImplementationId.GROK_DUOMI_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -940,6 +976,9 @@ class DriverKey:
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 'seedance_2_0_fast_image_to_video'
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 'seedance_2_0_image_to_video'
 
+    # Grok 图生视频
+    GROK_IMAGE_TO_VIDEO = 'grok_image_to_video'
+
 
 # ============ 任务类型 ID 常量 ============
 class TaskTypeId:
@@ -969,7 +1008,8 @@ class TaskTypeId:
     SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 21  # Seedance 1.5 Pro 图生视频
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 22 # Seedance 2.0 Fast 图生视频
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 23      # Seedance 2.0 图生视频
-    
+    GROK_IMAGE_TO_VIDEO = 27             # Grok 图生视频
+
     # 图片/视频 增强
     IMAGE_ENHANCE = 4                   # 图片高清放大
     VIDEO_ENHANCE = 5                   # AI视频高清修复
@@ -1324,6 +1364,32 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=35,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME,ImageMode.MULTI_REFERENCE],  # 支持首尾帧
         supports_last_frame=True,  # 真正支持尾帧
+        supports_grid_merge=True,  # 支持宫格合并生成视频
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.GROK_IMAGE_TO_VIDEO,
+        key='grok_image_to_video',
+        name='图片生成视频 (Grok)',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GROK_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.GROK_DUOMI_V1,
+        implementations=[
+            DriverImplementation.GROK_DUOMI_V1,
+            DriverImplementation.GROK_COMMON_SITE0_V1,
+            DriverImplementation.GROK_COMMON_SITE1_V1,
+            DriverImplementation.GROK_COMMON_SITE2_V1,
+            DriverImplementation.GROK_COMMON_SITE3_V1,
+            DriverImplementation.GROK_COMMON_SITE4_V1,
+            DriverImplementation.GROK_COMMON_SITE5_V1,
+        ],
+        supported_ratios=['9:16', '16:9', '1:1', '2:3', '3:2'],
+        supported_durations=[10],
+        default_ratio='9:16',
+        default_duration=10,
+        sort_order=36,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        supports_last_frame=False,  # 不支持尾帧
         supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
     UnifiedTaskConfig(
@@ -1764,6 +1830,76 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='聚合站点5',
         sort_order=4550.0,
         site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_duomi_v1',
+        display_name='多米',
+        driver_class='GrokDuomiV1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='多米平台 Grok 接口',
+        sort_order=4500.0,
+        required_config_keys=['duomi.token']
+    ),
+    ImplementationConfig(
+        name='grok_common_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GrokCommonSite0V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='ZJTapi',
+        sort_order=4450.0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='grok_common_site1_v1',
+        display_name='Grok 站点1',
+        driver_class='GrokCommonSite1V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点1',
+        sort_order=4560.0,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_common_site2_v1',
+        display_name='Grok 站点2',
+        driver_class='GrokCommonSite2V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点2',
+        sort_order=4570.0,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_common_site3_v1',
+        display_name='Grok 站点3',
+        driver_class='GrokCommonSite3V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点3',
+        sort_order=4580.0,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_common_site4_v1',
+        display_name='Grok 站点4',
+        driver_class='GrokCommonSite4V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点4',
+        sort_order=4590.0,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_common_site5_v1',
+        display_name='Grok 站点5',
+        driver_class='GrokCommonSite5V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点5',
+        sort_order=4600.0,
         required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
 

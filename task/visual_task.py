@@ -396,8 +396,19 @@ async def _check_task_status(ai_tool):
         logger.info(f"[TEST MODE] [DRIVER] Checking status for mock task {project_id}")
 
     try:
-        # 1. 根据任务类型创建对应的驱动实例（传递 user_id 以应用用户偏好）
-        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+        # 1. 优先使用任务提交时记录的 implementation 创建驱动，确保状态查询与提交使用同一实现方
+        driver = None
+        if ai_tool.implementation:
+            from config.unified_config import get_implementation_name
+            impl_name = get_implementation_name(ai_tool.implementation)
+            if impl_name and impl_name != 'unknown':
+                driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                if driver:
+                    logger.info(f"Using recorded implementation {impl_name} (id: {ai_tool.implementation}) for status check, task {task_id}")
+
+        # 如果没有记录的 implementation 或创建失败，回退到根据任务类型创建
+        if not driver:
+            driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
 
         if not driver:
             # 获取详细的错误原因

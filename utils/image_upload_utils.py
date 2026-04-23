@@ -167,9 +167,9 @@ async def upload_local_images_to_cdn(
             if is_local_file_path(image_path):
                 # 本地文件路径
                 if not os.path.exists(image_path):
-                    logger.warning(f"本地图片文件不存在: {image_path}")
-                    result_urls.append(image_path)
-                    continue
+                    error_msg = f"本地图片文件不存在: {image_path}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
                 file_to_upload = image_path
                 filename = os.path.basename(image_path)
             else:
@@ -184,9 +184,9 @@ async def upload_local_images_to_cdn(
                     logger.info(f"检测到局域网URL，准备下载: {image_path}")
                     temp_file = await download_url_to_temp(image_path, project_root)
                     if not temp_file:
-                        logger.error(f"下载局域网图片失败: {image_path}")
-                        result_urls.append(image_path)
-                        continue
+                        error_msg = f"下载局域网图片失败: {image_path}"
+                        logger.error(error_msg)
+                        raise RuntimeError(error_msg)
                     file_to_upload = temp_file
                     # 从URL中提取文件名
                     parsed = urlparse(image_path)
@@ -206,11 +206,15 @@ async def upload_local_images_to_cdn(
                 logger.info(f"图片上传成功，CDN链接: {cdn_url}")
                 result_urls.append(cdn_url)
             else:
-                logger.error(f"图片上传失败: {upload_result.error}")
-                result_urls.append(image_path)
+                error_msg = f"图片上传到CDN失败: {image_path}, 错误: {upload_result.error}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+        except RuntimeError:
+            raise
         except Exception as e:
-            logger.error(f"上传图片异常: {str(e)}")
-            result_urls.append(image_path)
+            error_msg = f"上传图片到CDN异常: {image_path}, 错误: {str(e)}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from e
         finally:
             # 清理临时文件
             if temp_file and os.path.exists(temp_file):

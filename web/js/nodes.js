@@ -3,14 +3,13 @@
     // 通用函数：根据 driver 状态禁用 select 选项
     function applyDriverStatusToSelect(selectEl) {
       if(!selectEl) return;
-      
+
       const driverStatus = getDriverStatusConfig();
-      const modelTaskTypeMap = getModelTaskTypeMap();
-      
+
       if(!driverStatus || Object.keys(driverStatus).length === 0) return;
-      
+
       selectEl.querySelectorAll('option').forEach(option => {
-        const taskType = modelTaskTypeMap[option.value];
+        const taskType = window.TaskConfig ? window.TaskConfig.getTaskIdByKey(option.value) : null;
         if(taskType && driverStatus[taskType] && driverStatus[taskType].available === false) {
           option.disabled = true;
           if(!option.textContent.includes('(未配置)')) {
@@ -19,17 +18,16 @@
         }
       });
     }
-    
+
     // 检查指定模型是否可用
     function isModelAvailable(modelValue) {
       const driverStatus = getDriverStatusConfig();
-      const modelTaskTypeMap = getModelTaskTypeMap();
-      
+
       if(!driverStatus || Object.keys(driverStatus).length === 0) return true;
-      
-      const taskType = modelTaskTypeMap[modelValue];
+
+      const taskType = window.TaskConfig ? window.TaskConfig.getTaskIdByKey(modelValue) : null;
       if(!taskType) return true;
-      
+
       return driverStatus[taskType]?.available !== false;
     }
     

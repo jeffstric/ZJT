@@ -214,6 +214,17 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1,  # ZJT API 站点5
     ],
 
+    # Grok 相关驱动
+    DriverKey.GROK_IMAGE_TO_VIDEO: [
+        DriverImplementation.GROK_DUOMI_V1,         # 使用多米供应商的 Grok 版本
+        DriverImplementation.GROK_COMMON_SITE0_V1,  # ZJT API 站点0
+        DriverImplementation.GROK_COMMON_SITE1_V1,  # 通用聚合站点 1
+        DriverImplementation.GROK_COMMON_SITE2_V1,  # 通用聚合站点 2
+        DriverImplementation.GROK_COMMON_SITE3_V1,  # 通用聚合站点 3
+        DriverImplementation.GROK_COMMON_SITE4_V1,  # 通用聚合站点 4
+        DriverImplementation.GROK_COMMON_SITE5_V1,  # 通用聚合站点 5
+    ],
+
 }
 
 # 视频模型时长选项配置
