@@ -199,8 +199,8 @@ class TestTaskConfigToFrontendWithModifiers(unittest.TestCase):
         # 应该是一个字典，key 是任务 ID，value 是修饰符列表
         self.assertIsInstance(modifiers_map, dict)
 
-        # Kling 任务应该在其中（ID=2）
-        kling_task_id = 2  # 根据配置中 KLING_IMAGE_TO_VIDEO = 2
+        # Kling 任务应该在其中（ID=12）
+        kling_task_id = 12  # 根据配置中 KLING_IMAGE_TO_VIDEO = 12
         self.assertIn(kling_task_id, modifiers_map)
         self.assertIsInstance(modifiers_map[kling_task_id], list)
 

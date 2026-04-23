@@ -664,7 +664,8 @@ class TestBuildContextFromTaskRecord(unittest.TestCase):
 
         task_record = MagicMock()
         task_record.extra_config = json.dumps({})
-        # 不设置 image_size
+        # 确保 image_size 不存在或为 None
+        del task_record.image_size  # 删除可能存在的属性
 
         context = build_context_from_task_record(task_record)
 
