@@ -100,6 +100,7 @@ class ImplementationConfig:
     sort_order: float = 999999.0  # 默认排序到最后
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
+    required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
 
     def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
@@ -1442,7 +1443,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=18,
         enabled=True,
         description='多米平台 Sora2 接口',
-        sort_order=1000.0
+        sort_order=1000.0,
+        required_config_keys=['duomi.token']
     ),
     ImplementationConfig(
         name='kling_duomi_v1',
@@ -1451,7 +1453,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 38, 10: 70},
         enabled=True,
         description='多米平台 Kling 接口',
-        sort_order=2010.0
+        sort_order=2010.0,
+        required_config_keys=['duomi.token']
     ),
     # ==================== Kling 通用聚合站点 ====================
     ImplementationConfig(
@@ -1463,6 +1466,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='ZJTapi Kling 接口',
         sort_order=2000.0,
         site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
     ),
     ImplementationConfig(
         name='kling_common_site1_v1',
@@ -1473,6 +1477,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='聚合站点1 Kling 接口',
         sort_order=2020.0,
         site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
     ),
     ImplementationConfig(
         name='kling_common_site2_v1',
@@ -1483,6 +1488,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='聚合站点2 Kling 接口',
         sort_order=2030.0,
         site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
     ),
     ImplementationConfig(
         name='kling_common_site3_v1',
@@ -1493,6 +1499,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='聚合站点3 Kling 接口',
         sort_order=2040.0,
         site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
     ),
     ImplementationConfig(
         name='kling_common_site4_v1',
@@ -1503,6 +1510,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='聚合站点4 Kling 接口',
         sort_order=2050.0,
         site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
     ),
     ImplementationConfig(
         name='kling_common_site5_v1',
@@ -1513,6 +1521,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='聚合站点5 Kling 接口',
         sort_order=2060.0,
         site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
     ImplementationConfig(
         name='gemini_duomi_v1',
@@ -1521,7 +1530,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=2,
         enabled=True,
         description='多米平台 Gemini 接口',
-        sort_order=3000.0
+        sort_order=3000.0,
+        required_config_keys=['duomi.token']
     ),
     ImplementationConfig(
         name='duomi_gpt_image_v1',
@@ -1530,7 +1540,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=2,
         enabled=True,
         description='多米平台 GPT Image 2 接口（仅支持1K分辨率）',
-        sort_order=3200.0
+        sort_order=3200.0,
+        required_config_keys=['duomi.token']
     ),
     # ==================== GPT Image 2 通用聚合站点 ====================
     ImplementationConfig(
@@ -1542,7 +1553,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='ZJT官方',
         sort_order=3100.0,
         sync_mode=True,  # 同步模式
-        site_number=0
+        site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
     ),
     ImplementationConfig(
         name='gpt_image_common_site1_v1',
@@ -1553,7 +1565,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='site 1',
         sort_order=3210.0,
         sync_mode=True,
-        site_number=1
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
     ),
     ImplementationConfig(
         name='gpt_image_common_site2_v1',
@@ -1564,7 +1577,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='site 2',
         sort_order=3220.0,
         sync_mode=True,
-        site_number=2
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
     ),
     ImplementationConfig(
         name='gpt_image_common_site3_v1',
@@ -1575,7 +1589,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='site3',
         sort_order=3230.0,
         sync_mode=True,
-        site_number=3
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
     ),
     ImplementationConfig(
         name='gpt_image_common_site4_v1',
@@ -1586,7 +1601,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='site 4',
         sort_order=3240.0,
         sync_mode=True,
-        site_number=4
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
     ),
     ImplementationConfig(
         name='gpt_image_common_site5_v1',
@@ -1597,7 +1613,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='site 5',
         sort_order=3250.0,
         sync_mode=True,
-        site_number=5
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
 
     # ==================== API 聚合器站点 ====================
@@ -1610,7 +1627,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='ZJT官方',
         sort_order=10500.0,
         site_number=0,
-        sync_mode=False  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_0.api_key']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site1_v1',
@@ -1621,7 +1639,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 1',
         sort_order=11000.0,
         site_number=1,
-        sync_mode=False  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site2_v1',
@@ -1632,7 +1651,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 2',
         sort_order=12000.0,
         site_number=2,
-        sync_mode=False  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site3_v1',
@@ -1643,7 +1663,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 3',
         sort_order=13000.0,
         site_number=3,
-        sync_mode=False  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site4_v1',
@@ -1654,7 +1675,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 4',
         sort_order=14000.0,
         site_number=4,
-        sync_mode=False  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site5_v1',
@@ -1665,7 +1687,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 5',
         sort_order=15000.0,
         site_number=5,
-        sync_mode=False  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
     ImplementationConfig(
         name='veo3_duomi_v1',
@@ -1674,7 +1697,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='多米平台 VEO3 接口',
-        sort_order=4000.0
+        sort_order=4000.0,
+        required_config_keys=['duomi.token']
     ),
     ImplementationConfig(
         name='veo3_common_site0_v1',
@@ -1685,6 +1709,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='ZJTapi',
         sort_order=3900.0,
         site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
     ),
     ImplementationConfig(
         name='veo3_common_site1_v1',
@@ -1694,7 +1719,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='聚合站点1',
         sort_order=4510.0,
-        site_number=1
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
     ),
     ImplementationConfig(
         name='veo3_common_site2_v1',
@@ -1704,7 +1730,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='聚合站点2',
         sort_order=4520.0,
-        site_number=2
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
     ),
     ImplementationConfig(
         name='veo3_common_site3_v1',
@@ -1714,7 +1741,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='聚合站点3',
         sort_order=4530.0,
-        site_number=3
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
     ),
     ImplementationConfig(
         name='veo3_common_site4_v1',
@@ -1724,7 +1752,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='聚合站点4',
         sort_order=4540.0,
-        site_number=4
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
     ),
     ImplementationConfig(
         name='veo3_common_site5_v1',
@@ -1734,7 +1763,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='聚合站点5',
         sort_order=4550.0,
-        site_number=5
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
 
     # ==================== RunningHub 供应商 ====================
@@ -1745,7 +1775,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='RunningHub LTX2.0 接口',
-        sort_order=5000.0
+        sort_order=5000.0,
+        required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(
         name='wan22_runninghub_v1',
@@ -1754,7 +1785,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 8, 10: 18},
         enabled=True,
         description='RunningHub Wan2.2 接口',
-        sort_order=6000.0
+        sort_order=6000.0,
+        required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(
         name='qwen_multi_angle_runninghub_v1',
@@ -1763,7 +1795,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=4,
         enabled=True,
         description='RunningHub Qwen 多角度图片编辑接口',
-        sort_order=7500.0
+        sort_order=7500.0,
+        required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(
         name='digital_human_runninghub_v1',
@@ -1772,7 +1805,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=12,
         enabled=True,
         description='RunningHub 数字人接口',
-        sort_order=7000.0
+        sort_order=7000.0,
+        required_config_keys=['runninghub.api_key']
     ),
 
     # ==================== Vidu 供应商 ====================
@@ -1783,7 +1817,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 16, 8: 22},
         enabled=True,
         description='Vidu 图生视频接口',
-        sort_order=8000.0
+        sort_order=8000.0,
+        required_config_keys=['vidu.token']
     ),
     ImplementationConfig(
         name='vidu_q2',
@@ -1792,7 +1827,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 45, 8: 60},
         enabled=True,
         description='Vidu Q2 图生视频接口',
-        sort_order=9000.0
+        sort_order=9000.0,
+        required_config_keys=['vidu.token']
     ),
 
     # ==================== 火山引擎供应商 ====================
@@ -1804,7 +1840,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='火山引擎 Seedream 5.0 文生图接口',
         sort_order=10000.0,
-        sync_mode=True  # 同步模式
+        sync_mode=True,  # 同步模式
+        required_config_keys=['volcengine.api_key']
     ),
     ImplementationConfig(
         name='seedance_1_5_pro_volcengine_v1',
@@ -1813,7 +1850,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 46, 6: 56, 7: 66, 8: 76, 9: 85, 10: 94, 11: 103, 12: 112},
         enabled=True,
         description='火山引擎 Seedance 1.5 Pro 图生视频接口',
-        sort_order=10500.0
+        sort_order=10500.0,
+        required_config_keys=['volcengine.api_key']
     ),
     ImplementationConfig(
         name='seedance_2_0_fast_volcengine_v1',
@@ -1822,7 +1860,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 105, 6: 126, 7: 147, 8: 168, 9: 189, 10: 210, 11: 231, 12: 252, 13: 273, 14: 294, 15: 315},
         enabled=True,
         description='火山引擎 Seedance 2.0 Fast 图生视频接口',
-        sort_order=10600.0
+        sort_order=10600.0,
+        required_config_keys=['volcengine.api_key']
     ),
     ImplementationConfig(
         name='seedance_2_0_volcengine_v1',
@@ -1831,7 +1870,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 250, 6: 300, 7: 350, 8: 400, 9: 450, 10: 500, 11: 550, 12: 600, 13: 650, 14: 700, 15: 750},
         enabled=True,
         description='火山引擎 Seedance 2.0 图生视频接口',
-        sort_order=10700.0
+        sort_order=10700.0,
+        required_config_keys=['volcengine.api_key']
     ),
 
     # ==================== 本地处理 ====================
