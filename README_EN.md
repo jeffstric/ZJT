@@ -245,11 +245,17 @@ Step 5: Storyboard Image Generation
   ↓ Output: 80+ consistent reference images
 
 Step 6: Video Synthesis
-  ↓ Auto-orchestrate: text-to-image + image-to-video
+  ↓ Workflow-driven processing: API orchestration for video generation
   ↓ Support RunningHub, Duomi, Vidu APIs
-  ↓ Audio synthesis: TTS voice + background music
+  ↓ Workflow-driven processing: TTS voice + background music synthesis
   ↓ Output: Complete MP4 short drama
 ```
+
+> 💡 **Real-World Experience Insight**: Video and audio processing use **workflow-driven processing rather than full automation**, a key decision based on Hongguo platform's production experience. Workflow processing ensures:
+> - ✅ Stable and consistent quality of video/audio output
+> - ✅ Flexible API switching and fault tolerance
+> - ✅ Fine-grained parameter tuning
+> - ✅ Better generation controllability
 
 ### Automation Comparison
 
