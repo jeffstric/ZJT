@@ -77,7 +77,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         self._api_key = get_dynamic_config_value("api_aggregator", site_id, "api_key", default="")
         self._base_url = get_dynamic_config_value("api_aggregator", site_id, "base_url", default="")
         self._site_name = get_dynamic_config_value("api_aggregator", site_id, "name", default=site_id)
-        self._timeout = get_dynamic_config_value("timeout", "sync_request_timeout", default=300)
+        self._timeout = get_dynamic_config_value("timeout", "sync_request_timeout", default=300) * 2
 
         self._is_local = get_dynamic_config_value("server", "is_local", default=False)
         self._config = get_config()
@@ -215,6 +215,65 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 self.logger.info(f"通过HTTP下载图片: {image_path}")
                 return self._download_image_as_base64(image_path)
 
+    def _prepare_image_file(self, image_path: str) -> tuple[bytes, str, str]:
+        """
+        准备图片文件用于 multipart/form-data 上传
+
+        Args:
+            image_path: 图片路径或URL
+
+        Returns:
+            tuple[bytes, str, str]: (文件内容, 文件名, MIME类型)
+        """
+        # 确定实际文件路径
+        if is_local_file_path(image_path):
+            actual_path = image_path
+            self.logger.info(f"准备上传本地文件: {image_path}")
+        else:
+            # URL，尝试映射到本地文件
+            local_file = try_map_url_to_local_file(image_path, self._config)
+            if local_file:
+                actual_path = local_file
+                self.logger.info(f"URL映射到本地文件: {image_path} -> {local_file}")
+            else:
+                # 下载远程图片
+                self.logger.info(f"下载远程图片用于上传: {image_path}")
+                response = requests.get(image_path, timeout=30)
+                response.raise_for_status()
+
+                # 从 URL 提取文件名
+                from urllib.parse import urlparse
+                parsed = urlparse(image_path)
+                filename = os.path.basename(parsed.path) or "image.png"
+
+                # 从 Content-Type 获取 MIME 类型
+                content_type = response.headers.get('Content-Type', 'image/png')
+                if 'jpeg' in content_type or 'jpg' in content_type:
+                    mime_type = 'image/jpeg'
+                elif 'webp' in content_type:
+                    mime_type = 'image/webp'
+                else:
+                    mime_type = 'image/png'
+
+                return response.content, filename, mime_type
+
+        # 读取本地文件
+        ext = os.path.splitext(actual_path)[1].lower()
+        mime_types = {
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp'
+        }
+        mime_type = mime_types.get(ext, 'image/png')
+        filename = os.path.basename(actual_path)
+
+        with open(actual_path, 'rb') as f:
+            file_content = f.read()
+
+        return file_content, filename, mime_type
+
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         创建 GPT Image 任务的完整请求参数
@@ -232,28 +291,13 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         # 映射到 OpenAI size 格式
         size = self._map_size(image_size, ratio)
 
-        # 构建请求体
+        # 构建请求体（仅用于文生图，不包含 image 字段）
         payload = {
             "model": self.DEFAULT_MODEL,
             "prompt": ai_tool.prompt or "",
             "n": 1,
             "size": size,
         }
-
-        # 添加参考图（如果有）
-        if ai_tool.image_path:
-            image_paths = [path.strip() for path in ai_tool.image_path.split(',') if path.strip()]
-            if image_paths:
-                try:
-                    base64_data, mime_type = self._prepare_image_data(image_paths[0])
-                    # OpenAI 格式使用 image 字段，值为 base64 或 URL
-                    if image_paths[0].startswith('http'):
-                        payload["image"] = image_paths[0]
-                    else:
-                        payload["image"] = f"data:{mime_type};base64,{base64_data}"
-                    self.logger.info(f"已添加参考图: {image_paths[0]}")
-                except Exception as e:
-                    self.logger.warning(f"处理参考图失败: {str(e)}")
 
         return {
             "url": f"{self._base_url}/v1/images/generations",
@@ -262,6 +306,60 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             "headers": {
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "Authorization": f"Bearer {self._api_key}"
+            }
+        }
+
+    def build_edit_request(self, ai_tool) -> Dict[str, Any]:
+        """
+        构建图片编辑请求参数（multipart/form-data 格式）
+
+        Args:
+            ai_tool: AITool 对象
+                - prompt: 文本描述
+                - image_path: 输入图片路径（支持多张，逗号分隔）
+                - ratio: 图片比例
+                - image_size: 图片分辨率
+
+        Returns:
+            Dict[str, Any]: 请求参数字典，包含 files 和 data
+        """
+        # 获取分辨率和比例
+        image_size = getattr(ai_tool, 'image_size', None) or '1k'
+        ratio = ai_tool.ratio or '1:1'
+        size = self._map_size(image_size, ratio)
+
+        # 解析图片路径列表
+        image_paths = [path.strip() for path in ai_tool.image_path.split(',') if path.strip()]
+        if not image_paths:
+            raise ValueError("图片编辑模式需要至少一张输入图片")
+
+        # 准备文件上传列表
+        files = []
+        for i, img_path in enumerate(image_paths):
+            try:
+                file_content, filename, mime_type = self._prepare_image_file(img_path)
+                # multipart/form-data 中多个同名字段会作为数组
+                files.append(('image', (filename, file_content, mime_type)))
+                self.logger.info(f"已准备上传图片 [{i+1}/{len(image_paths)}]: {filename}")
+            except Exception as e:
+                self.logger.error(f"准备图片文件失败: {img_path}, error: {str(e)}")
+                raise
+
+        # 构建表单数据
+        form_data = {
+            "prompt": ai_tool.prompt or "",
+            "model": 'gpt-image-2-all',
+            "n": "1",
+            "size": size,
+        }
+
+        return {
+            "url": f"{self._base_url}/v1/images/edits",
+            "method": "POST",
+            "files": files,
+            "data": form_data,
+            "headers": {
                 "Authorization": f"Bearer {self._api_key}"
             }
         }
@@ -394,10 +492,18 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             Dict[str, Any]: 提交结果
         """
         try:
-            self.logger.info(f"Submitting GPT Image 2 task: prompt='{ai_tool.prompt[:50] if ai_tool.prompt else ''}...', ratio={ai_tool.ratio}")
+            # 判断是文生图还是图片编辑
+            is_edit_mode = bool(ai_tool.image_path and ai_tool.image_path.strip())
+            mode_str = "图片编辑" if is_edit_mode else "文生图"
+            self.logger.info(f"Submitting GPT Image 2 task ({mode_str}): prompt='{ai_tool.prompt[:50] if ai_tool.prompt else ''}...', ratio={ai_tool.ratio}")
 
-            # 构建请求参数
-            request_params = self.build_create_request(ai_tool)
+            # 根据模式构建请求参数
+            if is_edit_mode:
+                # 图片编辑模式：使用 multipart/form-data
+                request_params = self.build_edit_request(ai_tool)
+            else:
+                # 文生图模式：使用 JSON
+                request_params = self.build_create_request(ai_tool)
 
             # 调用 API（同步接口）
             try:

@@ -141,27 +141,42 @@ GPT Image 2 是 OpenAI 推出的文生图模型，通过多米（Duomi）API 平
 
 #### API 接口
 
+##### 1. 文生图
+
 - **URL**: `POST {base_url}/v1/images/generations`
 - **认证**: Header `Authorization: Bearer {api_key}`
+- **Content-Type**: `application/json`
 - **请求体**:
 ```json
 {
-    "model": "gpt-image-2-all",
+    "model": "gpt-image-2",
     "prompt": "图片描述文本",
     "n": 1,
     "size": "1024x1024"
 }
 ```
 
-- **参考图支持**（可选）:
-```json
-{
-    "model": "gpt-image-2-all",
-    "prompt": "图片描述文本",
-    "n": 1,
-    "size": "1024x1024",
-    "image": "https://example.com/ref.png"
-}
+##### 2. 图片编辑
+
+- **URL**: `POST {base_url}/v1/images/edits`
+- **认证**: Header `Authorization: Bearer {api_key}`
+- **Content-Type**: `multipart/form-data`
+- **表单字段**:
+  - `image`: 图片文件（必需，支持多张）
+  - `prompt`: 文本描述（必需）
+  - `model`: 模型名称
+  - `n`: 生成数量
+  - `size`: 图片尺寸
+
+```
+POST /v1/images/edits
+Content-Type: multipart/form-data
+
+image: [文件上传]
+prompt: "将他们合并在一个图片里面"
+model: "gpt-image-2"
+n: 1
+size: "1024x1536"
 ```
 
 #### 比例映射
