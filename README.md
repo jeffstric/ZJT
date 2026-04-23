@@ -35,7 +35,7 @@
 ### Windows 用户（推荐）⭐
 
 📥 **从 GitHub Release 页面下载最新的 "点我启动.exe"**
-👉 项目地址：github.com/jeffstric/ZJT/releases
+👉 [github.com/jeffstric/ZJT/releases](https://github.com/jeffstric/ZJT/releases)
 
 ```bash
 # 1. 下载已编译的可执行文件
@@ -56,12 +56,12 @@
 ### macOS 用户（推荐）⭐
 
 📥 **从 GitHub Release 页面下载最新的压缩包并解压**
-👉 项目地址：github.com/jeffstric/ZJT/releases
+👉 [github.com/jeffstric/ZJT/releases](https://github.com/jeffstric/ZJT/releases)
 
 ```bash
 # 1. 解压下载的文件
 unzip ZJT-mac.zip
-cd comfyui_server
+cd ZJT
 
 # 2. 双击启动脚本（一键启动）
 open start.command
@@ -82,8 +82,8 @@ bash stop.command
 ### Linux 用户
 ```bash
 # 1. 克隆项目
-git clone https://github.com/ZhiJuTong/comfyui_server
-cd comfyui_server
+git clone https://github.com/jeffstric/zjt
+cd zjt
 
 # 2. 安装依赖
 uv sync

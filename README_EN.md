@@ -35,7 +35,7 @@ English | [中文](README.md) | [Live Demo](http://ailive.perseids.cn) | [Full T
 ### Windows Users (Recommended) ⭐
 
 📥 **Download the latest "Click-to-Start.exe" from GitHub Release page**
-👉 Project: github.com/jeffstric/ZJT/releases
+👉 [github.com/jeffstric/ZJT/releases](https://github.com/jeffstric/ZJT/releases)
 
 ```bash
 # 1. Download pre-built executable
@@ -56,12 +56,12 @@ Open Browser | View Logs | Exit
 ### macOS Users (Recommended) ⭐
 
 📥 **Download the latest compressed package from GitHub Release page and extract it**
-👉 Project: github.com/jeffstric/ZJT/releases
+👉 [github.com/jeffstric/ZJT/releases](https://github.com/jeffstric/ZJT/releases)
 
 ```bash
 # 1. Extract the downloaded file
 unzip ZJT-mac.zip
-cd comfyui_server
+cd ZJT
 
 # 2. Double-click startup script (one-click startup)
 open start.command
@@ -82,8 +82,8 @@ bash stop.command
 ### Linux Users
 ```bash
 # 1. Clone the repository
-git clone https://github.com/ZhiJuTong/comfyui_server
-cd comfyui_server
+git clone https://github.com/jeffstric/zjt
+cd zjt
 
 # 2. Install dependencies
 uv sync
