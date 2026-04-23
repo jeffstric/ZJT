@@ -35,7 +35,7 @@ def upgrade() -> None:
     # 2. 添加 claude-haiku-4-5 模型
     conn.execute(text("""
         INSERT INTO `model` (model_name, created_at, note, supports_tools, context_window, max_output_tokens, supports_thinking)
-        VALUES ('claude-haiku-4-5', NOW(), 'Claude Haiku 4.5', 1, 20000, 64000, 0)
+        VALUES ('claude-haiku-4-5', NOW(), '', 1, 20000, 64000, 0)
         ON DUPLICATE KEY UPDATE model_name = VALUES(model_name), context_window = VALUES(context_window), max_output_tokens = VALUES(max_output_tokens), supports_thinking = VALUES(supports_thinking)
     """))
     logger.info("[Migration] Inserted claude-haiku-4-5 model")

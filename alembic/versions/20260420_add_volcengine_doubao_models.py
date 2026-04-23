@@ -37,7 +37,7 @@ def upgrade() -> None:
     # 2. 添加 doubao-seed-2-0-pro 模型
     conn.execute(text("""
         INSERT INTO `model` (model_name, created_at, note, supports_tools, context_window, max_output_tokens)
-        VALUES ('doubao-seed-2-0-pro', NOW(), 'Doubao Seed 2.0 Pro', 1, 256000, 128000)
+        VALUES ('doubao-seed-2-0-pro', NOW(), '', 1, 256000, 128000)
         ON DUPLICATE KEY UPDATE model_name = VALUES(model_name), context_window = VALUES(context_window), max_output_tokens = VALUES(max_output_tokens)
     """))
     logger.info("[Migration] Inserted doubao-seed-2-0-pro model")
@@ -45,7 +45,7 @@ def upgrade() -> None:
     # 3. 添加 doubao-seed-2-0-lite 模型
     conn.execute(text("""
         INSERT INTO `model` (model_name, created_at, note, supports_tools, context_window, max_output_tokens)
-        VALUES ('doubao-seed-2-0-lite', NOW(), 'Doubao Seed 2.0 Lite', 1, 256000, 128000)
+        VALUES ('doubao-seed-2-0-lite', NOW(), '', 1, 256000, 128000)
         ON DUPLICATE KEY UPDATE model_name = VALUES(model_name), context_window = VALUES(context_window), max_output_tokens = VALUES(max_output_tokens)
     """))
     logger.info("[Migration] Inserted doubao-seed-2-0-lite model")
