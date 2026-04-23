@@ -312,6 +312,84 @@
       connectionsSvg.setAttribute('height', newHeight);
     }
 
+    // 重新计算指定图生视频节点的算力显示
+    function updateImageToVideoComputingPower(videoNodeId) {
+      // 找到图生视频节点的元素
+      const videoEl = canvasEl.querySelector(`.node[data-node-id="${videoNodeId}"]`);
+      if(!videoEl) return;
+
+      const videoNode = state.nodes.find(n => n.id === videoNodeId);
+      if(!videoNode || videoNode.type !== 'image_to_video') return;
+
+      // 尝试调用保存的函数
+      if(videoEl._updateComputingPowerDisplay) {
+        try {
+          videoEl._updateComputingPowerDisplay();
+          console.log(`[updateImageToVideoComputingPower] 成功更新节点 ${videoNodeId}`);
+          return;
+        } catch(e) {
+          console.error(`[updateImageToVideoComputingPower] 调用保存的函数失败:`, e);
+        }
+      }
+
+      // 备用方案：手动重新计算算力（如果无法调用保存的函数）
+      if(!window.TaskConfig || !window.TaskConfig.isLoaded()) {
+        console.log(`[updateImageToVideoComputingPower] TaskConfig未加载，跳过`);
+        return;
+      }
+
+      try {
+        const videoModel = videoNode.data.videoModel || 'sora2';
+        const duration = videoNode.data.duration || 10;
+        const imageMode = videoNode.data.imageMode || 'first_last_frame';
+
+        // 构建context
+        const context = {};
+        if(imageMode === 'first_last_frame') {
+          const hasStartFile = !!videoNode.data.startFile;
+          const hasStartUrl = !!videoNode.data.startUrl;
+          const hasStartConnection = state.imageConnections.some(c => c.to === videoNodeId && c.portType === 'start');
+          const hasStartImage = hasStartFile || hasStartUrl || hasStartConnection;
+
+          const hasEndFile = !!videoNode.data.endFile;
+          const hasEndUrl = !!videoNode.data.endUrl;
+          const hasEndConnection = state.imageConnections.some(c => c.to === videoNodeId && c.portType === 'end');
+          const hasEndImage = hasEndFile || hasEndUrl || hasEndConnection;
+
+          console.log(`[updateImageToVideoComputingPower] 节点${videoNodeId} - 计算算力:`, {
+            hasStartImage, hasEndImage, imageMode
+          });
+
+          if(hasStartImage && hasEndImage) {
+            context['image_mode'] = 'first_last_with_tail';
+          } else {
+            context['image_mode'] = 'first_last_frame';
+          }
+        } else {
+          context['image_mode'] = imageMode;
+        }
+
+        // 获取算力
+        const singlePower = window.TaskConfig.getComputingPower(videoModel, duration, context);
+        const count = videoNode.data.drawCount || 1;
+        const totalPower = singlePower * count;
+
+        // 更新DOM
+        const computingPowerValue = videoEl.querySelector('.computing-power-value');
+        const computingPowerDetail = videoEl.querySelector('.computing-power-detail');
+
+        if(computingPowerValue) {
+          computingPowerValue.textContent = `${totalPower} 算力`;
+          console.log(`[updateImageToVideoComputingPower] 节点${videoNodeId} 更新为 ${totalPower} 算力`);
+        }
+        if(computingPowerDetail) {
+          computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
+        }
+      } catch(e) {
+        console.error(`[updateImageToVideoComputingPower] 手动计算失败:`, e);
+      }
+    }
+
     function removeNode(id){
       const node = state.nodes.find(n => n.id === id);
       
@@ -341,14 +419,42 @@
       }
       
       // 清除该节点相关的图片连接
-      state.imageConnections = state.imageConnections.filter(c => c.from !== id && c.to !== id);
-      
+      // 如果删除的是图片节点，需要清除连接的图生视频节点的URL和更新算力
+      if(node && node.type === 'image') {
+        const imageConns = state.imageConnections.filter(c => c.from === id);
+        const affectedVideoNodes = new Set();
+
+        for(const conn of imageConns) {
+          const targetNode = state.nodes.find(n => n.id === conn.to);
+          if(targetNode && targetNode.type === 'image_to_video') {
+            if(conn.portType === 'start') {
+              targetNode.data.startUrl = '';
+            } else if(conn.portType === 'end') {
+              targetNode.data.endUrl = '';
+            }
+            affectedVideoNodes.add(conn.to);
+            console.log(`[删除图片节点 ${id}] 清除图生视频节点 ${conn.to} 的 ${conn.portType} URL`);
+          }
+        }
+
+        // 删除连接
+        state.imageConnections = state.imageConnections.filter(c => c.from !== id && c.to !== id);
+
+        // 更新所有受影响的图生视频节点的算力显示
+        for(const videoNodeId of affectedVideoNodes) {
+          updateImageToVideoComputingPower(videoNodeId);
+        }
+      } else {
+        // 如果是其他类型的节点被删除，也需要清除图片连接（to = id）
+        state.imageConnections = state.imageConnections.filter(c => c.from !== id && c.to !== id);
+      }
+
       // 清除该节点相关的首帧连接
       state.firstFrameConnections = state.firstFrameConnections.filter(c => c.from !== id && c.to !== id);
-      
+
       // 清除该节点相关的视频连接
       state.videoConnections = state.videoConnections.filter(c => c.from !== id && c.to !== id);
-      
+
       // 清除该节点相关的参考连接
       const affectedNodes = new Set();
       state.referenceConnections.filter(c => c.from === id).forEach(c => affectedNodes.add(c.to));

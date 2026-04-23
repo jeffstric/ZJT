@@ -2447,12 +2447,15 @@
         group.appendChild(hitbox);
         group.appendChild(path);
         connectionsSvg.appendChild(group);
-        
+
+        // 保存连接ID到元素上，避免闭包问题
+        const connId = conn.id;
+
         // 点击选中
         hitbox.addEventListener('click', (e) => {
           e.stopPropagation();
           state.selectedConnId = null;
-          state.selectedImgConnId = conn.id;
+          state.selectedImgConnId = connId;  // 使用保存的connId
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
@@ -2478,6 +2481,11 @@
           connDeleteBtn.style.left = (screenX - 12) + 'px';
           connDeleteBtn.style.top = (screenY - 12) + 'px';
         }
+      }
+
+      // 如果没有连接被选中，隐藏删除按钮
+      if(state.selectedImgConnId === null) {
+        connDeleteBtn.style.display = 'none';
       }
     }
 
@@ -3179,8 +3187,33 @@
         const videoModel = node.data.videoModel || 'sora2';
         const duration = node.data.duration || 10;
 
-        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
-        return TaskConfig.getComputingPower(videoModel, duration);
+        // 构建context，用于算力修饰符计算（支持首尾帧模式）
+        const context = {};
+        const imageMode = node.data.imageMode || 'first_last_frame';
+
+        if (imageMode === 'first_last_frame') {
+          // 判断是否同时存在首帧和尾帧（兼容直接上传和节点连接两种方式）
+          const hasStartFile = !!node.data.startFile;
+          const hasStartUrl = !!node.data.startUrl;
+          const hasStartConnection = state.imageConnections.some(c => c.to === id && c.portType === 'start');
+          const hasStartImage = hasStartFile || hasStartUrl || hasStartConnection;
+
+          const hasEndFile = !!node.data.endFile;
+          const hasEndUrl = !!node.data.endUrl;
+          const hasEndConnection = state.imageConnections.some(c => c.to === id && c.portType === 'end');
+          const hasEndImage = hasEndFile || hasEndUrl || hasEndConnection;
+
+          if (hasStartImage && hasEndImage) {
+            context['image_mode'] = 'first_last_with_tail';
+          } else {
+            context['image_mode'] = 'first_last_frame';
+          }
+        } else {
+          context['image_mode'] = imageMode;
+        }
+
+        // 使用 TaskConfig API 动态获取算力，并传递context以应用修饰符
+        return TaskConfig.getComputingPower(videoModel, duration, context);
       }
       
       // 更新算力显示
@@ -3188,13 +3221,18 @@
         const singlePower = calculateComputingPower();
         const count = node.data.drawCount || 1;
         const totalPower = singlePower * count;
-        
+
         if(computingPowerValue) {
           computingPowerValue.textContent = `${totalPower} 算力`;
         }
         if(computingPowerDetail) {
           computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
         }
+      }
+
+      // 保存更新函数的引用到元素上，便于外部调用
+      if(!el._updateComputingPowerDisplay) {
+        el._updateComputingPowerDisplay = updateComputingPowerDisplay;
       }
       
       durationSelect.addEventListener('change', () => {
@@ -3804,8 +3842,11 @@
                 to: id,
                 portType: 'start'
               });
+              // 从源图片节点获取URL并设置到目标节点（即使URL为空也要设置）
+              node.data.startUrl = fromNode.data.url || '';
               renderImageConnections();
               renderVideoConnections();
+              updateComputingPowerDisplay();  // 更新算力显示
             }
           }
         }
@@ -3844,8 +3885,11 @@
                 to: id,
                 portType: 'end'
               });
+              // 从源图片节点获取URL并设置到目标节点（即使URL为空也要设置）
+              node.data.endUrl = fromNode.data.url || '';
               renderImageConnections();
               renderVideoConnections();
+              updateComputingPowerDisplay();  // 更新算力显示
             }
           }
         }
@@ -3919,12 +3963,12 @@
       startFileEl.addEventListener('change', async () => {
         const file = startFileEl.files && startFileEl.files[0];
         if(!file) return;
-        
+
         // 先显示本地预览
         const localPreview = await readFileAsDataUrl(file);
         startPreviewImg.src = localPreview;
         startPreviewRow.style.display = 'flex';
-        
+
         // 上传到服务器获取永久URL
         const uploadedUrl = await uploadFile(file);
         if(uploadedUrl){
@@ -3936,6 +3980,7 @@
           startImagePort.classList.add('disabled');
           renderImageConnections();
           renderVideoConnections();
+          updateComputingPowerDisplay();  // 更新算力显示
           showToast('首帧图片上传成功', 'success');
         } else {
           startPreviewRow.style.display = 'none';
@@ -3947,12 +3992,12 @@
       endFileEl.addEventListener('change', async () => {
         const file = endFileEl.files && endFileEl.files[0];
         if(!file) return;
-        
+
         // 先显示本地预览
         const localPreview = await readFileAsDataUrl(file);
         endPreviewImg.src = localPreview;
         endPreviewRow.style.display = 'flex';
-        
+
         // 上传到服务器获取永久URL
         const uploadedUrl = await uploadFile(file);
         if(uploadedUrl){
@@ -3964,6 +4009,7 @@
           endImagePort.classList.add('disabled');
           renderImageConnections();
           renderVideoConnections();
+          updateComputingPowerDisplay();  // 更新算力显示
           showToast('尾帧图片上传成功', 'success');
         } else {
           endPreviewRow.style.display = 'none';
@@ -3980,6 +4026,7 @@
         startPreviewRow.style.display = 'none';
         startPreviewImg.removeAttribute('src');
         startImagePort.classList.remove('disabled');
+        updateComputingPowerDisplay();  // 更新算力显示
       });
 
       endClearBtn.addEventListener('click', (e) => {
@@ -3990,6 +4037,7 @@
         endPreviewRow.style.display = 'none';
         endPreviewImg.removeAttribute('src');
         endImagePort.classList.remove('disabled');
+        updateComputingPowerDisplay();  // 更新算力显示
       });
 
       // 初始化：恢复已保存的图片预览
@@ -4586,17 +4634,41 @@
         const file = imageFileEl.files && imageFileEl.files[0];
         if(!file) return;
         node.data.file = file;
-        
+
         const localPreview = await readFileAsDataUrl(file);
         imagePreviewImg.src = localPreview;
         imagePreviewRow.style.display = 'flex';
-        
+
         const uploadedUrl = await uploadFile(file);
         if(uploadedUrl){
           node.data.url = uploadedUrl;
           node.data.name = file.name;
           node.data.preview = uploadedUrl;
           imagePreviewImg.src = proxyImageUrl(uploadedUrl);
+
+          // 通知所有连接到此图片节点的图生视频节点更新算力显示
+          const imageConnections = state.imageConnections.filter(c => c.from === id);
+          for(const conn of imageConnections){
+            const targetNode = state.nodes.find(n => n.id === conn.to);
+            if(targetNode && targetNode.type === 'image_to_video'){
+              const targetEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+              if(targetEl){
+                // 更新目标节点的URL
+                if(conn.portType === 'start'){
+                  targetNode.data.startUrl = uploadedUrl;
+                } else if(conn.portType === 'end'){
+                  targetNode.data.endUrl = uploadedUrl;
+                }
+
+                // 触发目标节点的算力更新
+                const updateFn = targetEl._updateComputingPowerDisplay;
+                if(typeof updateFn === 'function') {
+                  updateFn();
+                }
+              }
+            }
+          }
+
           showToast('图片上传成功', 'success');
           try{ autoSaveWorkflow(); } catch(e){}
         } else {
