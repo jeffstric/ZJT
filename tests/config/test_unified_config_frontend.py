@@ -263,10 +263,11 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
         from config.unified_config import UnifiedConfigRegistry
 
         # 模拟 tasks 有 implementations 列表（按 sort_order 排序）
+        # computing_power 为 0 时，才会回退到 implementations 中排序第一位的算力
         tasks = [
             {
                 'key': 'task1',
-                'computing_power': 2,  # 原始默认值
+                'computing_power': 0,  # 0 算力，触发回退到第一位实现方
                 'driver_name': 'GEMINI_IMAGE_EDIT',
                 'implementations': [
                     {'name': 'impl_a', 'computing_power': 5, 'sort_order': 100},
@@ -275,7 +276,7 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
             },
             {
                 'key': 'task2',
-                'computing_power': 3,
+                'computing_power': 0,  # 0 算力，触发回退到第一位实现方
                 'driver_name': 'GEMINI_IMAGE_EDIT',
                 'implementations': [
                     {'name': 'impl_c', 'computing_power': 7, 'sort_order': 50},
@@ -421,23 +422,12 @@ class TestApplyUserPreferencesToTasks(unittest.TestCase):
     @patch('model.implementation_power.ImplementationPowerModel')
     def test_apply_user_preferences_db_empty_fallback_to_implementations(self, mock_impl_power_model):
         """测试数据库返回空配置时，从 implementations 列表中获取算力（回退机制）- 防止返回 0"""
-        from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
+        from config.unified_config import UnifiedConfigRegistry
 
         # Mock 数据库返回空配置
         mock_impl_power_model.get_all_powers_for_implementation.return_value = {}
 
-        # 注册一个任务配置
-        config = UnifiedTaskConfig(
-            id=997,
-            key='grok_image_to_video',
-            name='Grok Image to Video',
-            category='image_to_video',
-            provider='duomi',
-            computing_power=0,
-            driver_name='grok_image_to_video'
-        )
-        UnifiedConfigRegistry.register(config)
-
+        # 使用 init_unified_config() 已注册的任务（grok_image_to_video），不再手动注册
         tasks = [
             {
                 'key': 'grok_image_to_video',
