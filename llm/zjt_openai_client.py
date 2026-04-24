@@ -15,7 +15,17 @@ class ZJTOpenAIClient(OpenAIBaseClient):
     def _refresh_config(self):
         """刷新 ZJT API 配置"""
         self.api_key = get_dynamic_config_value('api_aggregator', 'site_0', 'api_key', default='')
-        self.base_url = get_dynamic_config_value('api_aggregator', 'site_0', 'base_url', default='')
+        base_url = get_dynamic_config_value('api_aggregator', 'site_0', 'base_url', default='')
+
+        # 确保 base_url 包含 /v1 路径
+        if base_url:
+            # 移除尾部斜杠
+            base_url = base_url.rstrip('/')
+            # 如果不以 /v1 结尾，添加 /v1
+            if not base_url.endswith('/v1'):
+                base_url = f"{base_url}/v1"
+
+        self.base_url = base_url
         self.vendor_name = 'zjt_api'
         self.thinking_mode = 'enable_thinking'  # ZJT API 支持 thinking 模式
 

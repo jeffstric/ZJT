@@ -2408,17 +2408,29 @@
                     }
                 });
 
-                // 设置默认选中模型：优先选择 qwen3.5-plus，否则选择第一个启用的模型
+                // 设置默认选中模型：优先选择 aliyun 供应商的 qwen3.5-plus，否则选择第一个启用的模型
                 let defaultModel = null;
 
-                // 优先查找 qwen3.5-plus
                 const allOptions = selector.querySelectorAll('option');
+                // 第一轮：优先查找 aliyun 供应商下的 qwen3.5-plus
                 for (let i = 0; i < allOptions.length; i++) {
                     const option = allOptions[i];
-                    if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')) {
+                    if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')
+                        && option.dataset.vendorName === LLMVendor.ALIYUN) {
                         defaultModel = option;
-                        console.log('[模型选择] 选择默认模型: qwen3.5-plus');
+                        console.log('[模型选择] 选择默认模型: qwen3.5-plus (aliyun)');
                         break;
+                    }
+                }
+                // 第二轮：如果 aliyun 下没有，再查找其他供应商的 qwen3.5-plus
+                if (!defaultModel) {
+                    for (let i = 0; i < allOptions.length; i++) {
+                        const option = allOptions[i];
+                        if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')) {
+                            defaultModel = option;
+                            console.log(`[模型选择] 未找到 aliyun 的 qwen3.5-plus，选择其他供应商: ${option.dataset.vendorName}`);
+                            break;
+                        }
                     }
                 }
 
@@ -2433,14 +2445,45 @@
                 }
 
                 // 检查是否有上次选择的模型并自动选中
-                const savedModel = localStorage.getItem('lastSelectedLlmModel');
-                if (savedModel) {
-                    const options = selector.querySelectorAll('option');
-                    for (let i = 0; i < options.length; i++) {
-                        if (options[i].value === savedModel && !options[i].disabled) {
-                            selector.selectedIndex = i;
-                            console.log(`[模型记忆] 自动选中上次模型: ${savedModel}`);
-                            break;
+                const savedModelRaw = localStorage.getItem('lastSelectedLlmModel');
+                if (savedModelRaw) {
+                    try {
+                        const saved = JSON.parse(savedModelRaw);
+                        const savedModelName = saved.model || saved;
+                        const savedVendorId = saved.vendorId || '';
+                        const options = selector.querySelectorAll('option');
+                        // 优先匹配模型名+供应商ID
+                        let matched = false;
+                        if (savedVendorId) {
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === savedModelName && !options[i].disabled
+                                    && options[i].dataset.vendorId === String(savedVendorId)) {
+                                    selector.selectedIndex = i;
+                                    console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (vendor_id: ${savedVendorId})`);
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                        }
+                        // 回退：仅匹配模型名
+                        if (!matched) {
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === savedModelName && !options[i].disabled) {
+                                    selector.selectedIndex = i;
+                                    console.log(`[模型记忆] 自动选中上次模型(回退匹配): ${savedModelName}`);
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        // 兼容旧格式（纯字符串）
+                        const options = selector.querySelectorAll('option');
+                        for (let i = 0; i < options.length; i++) {
+                            if (options[i].value === savedModelRaw && !options[i].disabled) {
+                                selector.selectedIndex = i;
+                                console.log(`[模型记忆] 自动选中上次模型(旧格式): ${savedModelRaw}`);
+                                break;
+                            }
                         }
                     }
                 }
@@ -2625,8 +2668,9 @@
             const model = selector.value;
             const modelId = selectedOption?.dataset?.modelId;
 
-            // 保存选中的模型到 localStorage
-            localStorage.setItem('lastSelectedLlmModel', model);
+            // 保存选中的模型和供应商到 localStorage
+            const vendorId = selectedOption?.dataset?.vendorId || '';
+            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({ model, vendorId }));
 
             updateModelTooltip();
             updateLlmModelIcon();
