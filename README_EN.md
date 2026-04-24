@@ -85,10 +85,14 @@ bash stop.command
 git clone https://github.com/jeffstric/zjt
 cd zjt
 
-# 2. Install dependencies
+# 2. Configure database connection
+cp config.example.yml config.prod.yml
+# Edit config.prod.yml and fill in your database connection info
+
+# 3. Install dependencies
 uv sync
 
-# 3. Start the service
+# 4. Start the service
 python3 scripts/running/run_prod.py
 
 # 4. Open in browser
@@ -141,7 +145,7 @@ ZhiJuTong **breaks the traditional single-creator model** with true team collabo
 - **Browser-based real-time editing** - No plugins needed. Multiple team members edit scripts, storyboards, and character profiles simultaneously
 - **Simple permission management** - Two-tier system: admin and regular user
 - **LAN + Public network support** - Works for local team collab and global remote production
-- **Real-time sync** - WebSocket + SSE dual-channel sync with millisecond latency, no conflicts
+- **Real-time sync** - SSE real-time push with millisecond latency
 - **Complete workflow**: Script Agent → Infinite Canvas → Storyboard Draft
 
 **Scenario**: 5-person content team (writer, art director, producer) edit simultaneously while AI Agent generates storyboards in parallel → **300%+ efficiency gain**
@@ -290,7 +294,7 @@ Step 6: Video Synthesis
 ### 3. Unlimited Team Collaboration
 - Browser-based, no installation needed
 - LAN & public network remote collaboration
-- Real-time sync via WebSocket + SSE
+- Real-time sync via SSE
 - **Permission management**: Admin and regular user two-tier system
 
 ### 4. Flexible Computing Power Management (🎓 Perfect for EdTech)
