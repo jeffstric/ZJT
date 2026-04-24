@@ -60,6 +60,9 @@ unit_tests:
       - .cache/pip
 
   before_script:
+    # 使用国内 Alpine 镜像源加速
+    - sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
     # 安装必要工具（包括 Docker CLI）
     - apk add --no-cache python3 py3-pip mysql-client
 
