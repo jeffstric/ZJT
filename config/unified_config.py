@@ -1693,7 +1693,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='ZJT官方',
         sort_order=10500.0,
         site_number=0,
-        sync_mode=False,  # 同步模式
+        sync_mode=True,  # 同步模式
         required_config_keys=['api_aggregator.site_0.api_key']
     ),
     ImplementationConfig(
@@ -1705,7 +1705,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 1',
         sort_order=11000.0,
         site_number=1,
-        sync_mode=False,  # 同步模式
+        sync_mode=True,  # 同步模式
         required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
     ),
     ImplementationConfig(
@@ -1717,7 +1717,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 2',
         sort_order=12000.0,
         site_number=2,
-        sync_mode=False,  # 同步模式
+        sync_mode=True,  # 同步模式
         required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
     ),
     ImplementationConfig(
@@ -1729,7 +1729,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 3',
         sort_order=13000.0,
         site_number=3,
-        sync_mode=False,  # 同步模式
+        sync_mode=True,  # 同步模式
         required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
     ),
     ImplementationConfig(
@@ -1741,7 +1741,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 4',
         sort_order=14000.0,
         site_number=4,
-        sync_mode=False,  # 同步模式
+        sync_mode=True,  # 同步模式
         required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
     ),
     ImplementationConfig(
