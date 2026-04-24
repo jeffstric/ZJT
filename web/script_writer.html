@@ -1113,6 +1113,7 @@
             QWEN_PLUS: 'qwen-plus',
             OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b'
         };
+        let isCommunityEdition = false;  // 默认为商业版，页面初始化时通过API更新
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
         let currentEditWorld = { id: '', name: '', description: '' };
@@ -1227,6 +1228,16 @@
             }
 
             configureMarked();
+            // 获取版本信息，用于社区版功能标注
+            try {
+                const editionResp = await fetch('/api/edition');
+                const editionResult = await editionResp.json();
+                if (editionResult.code === 0 && editionResult.data) {
+                    isCommunityEdition = editionResult.data.mode === 'community';
+                }
+            } catch (e) {
+                isCommunityEdition = true;
+            }
             await loadAvailableModels();
             await loadDriverStatus();
             await loadTextToImageModels();
@@ -2383,7 +2394,9 @@
                     if (group.models.length > 0) {
                         const optGroup = document.createElement('optgroup');
                         const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
-                        optGroup.label = `${icon} ${group.vendorName}`;
+                        const isOllamaGroup = group.vendorName.toLowerCase() === 'ollama';
+                        const suffix = (isOllamaGroup && isCommunityEdition) ? '（限时免费）' : '';
+                        optGroup.label = `${icon} ${group.vendorName}${suffix}`;
                         group.models.forEach(model => {
                             const option = createModelOption(model);
                             if (!option.disabled && !firstEnabledModel) {
