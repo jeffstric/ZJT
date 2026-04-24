@@ -36,12 +36,13 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return result
 
 
-def _get_base_config_path(config_path: str) -> str:
+def _get_base_config_path(config_path: str, project_root: str = None) -> str:
     """
     根据配置文件路径获取基类配置文件路径
 
     Args:
         config_path: 配置文件路径，如 'config_prod.yml'
+        project_root: 项目根目录，用于检查文件是否存在
 
     Returns:
         基类配置文件路径，如 'config_prod.base.yaml'，如果不存在则返回 None
@@ -49,16 +50,26 @@ def _get_base_config_path(config_path: str) -> str:
     if config_path is None:
         return None
 
-    # 从 config_prod.yml -> config_prod.base.yaml
-    # 从 config_dev.yml -> config_dev.base.yaml (如果存在)
+    # 获取不带扩展名的基础名称
+    # 从 config_prod.yml -> config_prod
+    # 从 config_dev.yaml -> config_dev
     if config_path.endswith('.yml'):
-        base_path = config_path.replace('.yml', '.base.yaml')
-        return base_path
+        base_name = config_path[:-4]
     elif config_path.endswith('.yaml'):
-        base_path = config_path.replace('.yaml', '.base.yaml')
-        return base_path
+        base_name = config_path[:-5]
+    else:
+        return None
 
-    return None
+    # 优先查找 .yaml，其次 .yml
+    candidates = [f"{base_name}.base.yaml", f"{base_name}.base.yml"]
+    if project_root:
+        for candidate in candidates:
+            if os.path.exists(os.path.join(project_root, candidate)):
+                return candidate
+        return None
+    else:
+        # 无法检查文件存在，默认返回 .yaml
+        return candidates[0]
 
 
 def get_config(config_path: str = None) -> Dict[str, Any]:
@@ -106,19 +117,18 @@ def get_config(config_path: str = None) -> Dict[str, Any]:
         config = yaml.safe_load(f)
         user_config = config or {}
 
-    # 检查并加载基类配置文件
-    base_config_path = _get_base_config_path(file_path)
+    # 检查并加载基类配置文件（支持 .yaml 和 .yml 两种后缀）
+    base_config_path = _get_base_config_path(file_path, project_root)
     if base_config_path:
         base_full_path = os.path.join(project_root, base_config_path)
-        if os.path.exists(base_full_path):
-            logger.info(f"Loading base config from: {base_config_path}")
-            with open(base_full_path, 'r', encoding='utf-8') as f:
-                base_config = yaml.safe_load(f) or {}
-            # 深度合并：用户配置优先，基类配置作为默认值
-            config = _deep_merge(base_config, user_config)
-            logger.info(f"Base config merged with user config: {file_path}")
-        else:
-            logger.debug(f"Base config file not found: {base_config_path}, using user config only")
+        logger.info(f"Loading base config from: {base_config_path}")
+        with open(base_full_path, 'r', encoding='utf-8') as f:
+            base_config = yaml.safe_load(f) or {}
+        # 深度合并：用户配置优先，基类配置作为默认值
+        config = _deep_merge(base_config, user_config)
+        logger.info(f"Base config merged with user config: {file_path}")
+    else:
+        logger.debug(f"Base config file not found for: {file_path}, using user config only")
 
     # 缓存并返回
     _config_cache[file_path] = config
