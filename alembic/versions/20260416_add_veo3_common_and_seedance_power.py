@@ -1,7 +1,7 @@
 """Add VEO3 common site and Seedance power configs
 
 Revision ID: 20260416_veo3_seedance_power
-Revises: 20260409_tiered_billing
+Revises: 20260409_qwen_tiered
 Create Date: 2026-04-16
 
 """
