@@ -145,7 +145,7 @@ class Veo3CommonV1Driver(BaseVideoDriver):
         last_frame = image_info['last_frame']
         reference_images = image_info['reference_images']
 
-        self.logger.info(f"VEO3 云雾驱动图片模式: {mode}, 首帧: {first_frame}, 尾帧: {last_frame}, 参考图: {len(reference_images)}张")
+        self.logger.info(f"VEO3 yw驱动图片模式: {mode}, 首帧: {first_frame}, 尾帧: {last_frame}, 参考图: {len(reference_images)}张")
 
         # 根据模式构建图片列表
         image_urls = []
@@ -159,7 +159,7 @@ class Veo3CommonV1Driver(BaseVideoDriver):
             if reference_images:
                 image_urls = reference_images[:3]
                 if len(reference_images) > 3:
-                    self.logger.warning(f"云雾 VEO3 最多支持3张参考图，已截取前3张")
+                    self.logger.warning(f"yw VEO3 最多支持3张参考图，已截取前3张")
         elif mode == ImageMode.FIRST_LAST_WITH_REF:
             if first_frame or last_frame:
                 if first_frame:
@@ -167,7 +167,7 @@ class Veo3CommonV1Driver(BaseVideoDriver):
                 if last_frame:
                     image_urls.append(last_frame)
                 if reference_images:
-                    self.logger.warning(f"云雾 VEO3 首尾帧+参考图模式，已使用首尾帧，忽略 {len(reference_images)} 张参考图")
+                    self.logger.warning(f"yw VEO3 首尾帧+参考图模式，已使用首尾帧，忽略 {len(reference_images)} 张参考图")
             elif reference_images:
                 image_urls = reference_images[:3]
 
