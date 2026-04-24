@@ -112,10 +112,10 @@ volcengine:
 # File storage configuration
 file_storage:
   qiniu:
-    access_key: ""
-    secret_key: ""
-    bucket_name: ""
-    cdn_domain: ""
+    access_key: "IAM-xxxxxxxxxxxxxxxx"  # 七牛云 Access Key
+    secret_key: "xxxxxxxxxxxxxxxxxxxx"  # 七牛云 Secret Key
+    bucket_name: "jeffstric"  # 存储空间名称
+    cdn_domain: "cdn.perseids.cn"  # CDN 加速域名
 
 # SMS configuration (empty by default)
 sms:
