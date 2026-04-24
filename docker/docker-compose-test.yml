@@ -7,7 +7,7 @@
 services:
   # MySQL 8.0 数据库服务（测试专用）
   mysql_test:
-    image: mysql:8.0
+    image: m.daocloud.io/docker.io/library/mysql:8.0
     container_name: zjt_mysql_test
     restart: unless-stopped
     environment:
