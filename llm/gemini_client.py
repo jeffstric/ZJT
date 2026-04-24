@@ -290,7 +290,9 @@ class GeminiClient(BaseLLMClient):
         max_tokens: int = 65536,
         auth_token: str = None,
         vendor_id: int = None,
-        model_id: int = None
+        model_id: int = None,
+        enable_thinking: bool = False,
+        thinking_effort: str = "medium"
     ) -> Any:
         """
         调用 Gemini 原生 API

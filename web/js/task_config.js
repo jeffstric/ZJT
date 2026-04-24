@@ -210,22 +210,39 @@
    * @param {number} duration 时长（可选，用于按时长计费的任务）
    * @returns {number} 算力消耗
    */
-  function getComputingPower(taskTypeIdOrModelKey, duration) {
+  function getComputingPower(taskTypeIdOrModelKey, duration, context = {}) {
     let task;
     if (typeof taskTypeIdOrModelKey === 'number') {
       task = getTaskById(taskTypeIdOrModelKey);
     } else {
       task = getTaskByKey(taskTypeIdOrModelKey);
     }
-    
+
     if (!task) return 0;
-    
+
     const power = task.computing_power;
+    let basePower;
     if (typeof power === 'object' && power !== null) {
       // 按时长计费
-      return power[duration] || power[Object.keys(power)[0]] || 0;
+      basePower = power[duration] || power[Object.keys(power)[0]] || 0;
+    } else {
+      basePower = power || 0;
     }
-    return power || 0;
+
+    // 应用修饰符（累积乘数，最后一次向上取整）
+    if (task.power_modifiers && context) {
+      let totalMultiplier = 1.0;
+      for (const modifier of task.power_modifiers) {
+        const attrValue = context[modifier.attribute];
+        const multiplier = attrValue && modifier.values[attrValue]
+            ? modifier.values[attrValue]
+            : (modifier.default || 1.0);
+        totalMultiplier *= multiplier;
+      }
+      basePower = Math.ceil(basePower * totalMultiplier);
+    }
+
+    return basePower;
   }
 
   /**

@@ -126,23 +126,6 @@
       }
     }
     
-    // 模型值 -> 任务类型映射
-    const MODEL_TASK_TYPE_MAP = {
-      // 视频模型
-      'sora2': 3,
-      'ltx2': 10,
-      'wan22': 11,
-      'kling': 12,
-      'vidu': 14,
-      'veo3': 15,
-      // 图片模型
-      'gemini-2.5-pro-image-preview': 1,
-      'gemini-3-pro-image-preview': 7,
-      'gemini-3-pro-4grid': 7,  // 4宫格也用加强版
-      'seedream-5.0': 16,  // Seedream 5.0 文生图
-      'seedream-4.5': 18   // Seedream 4.5 图片编辑
-    };
-    
     async function fetchComputingPowerConfig(){
       try {
         // 优先使用统一配置模块
@@ -206,11 +189,6 @@
       return driverStatusConfig;
     }
     
-    // 获取模型任务类型映射（供节点使用）
-    function getModelTaskTypeMap(){
-      return MODEL_TASK_TYPE_MAP;
-    }
-    
     // 获取模型配置（供节点使用）
     function getModelConfigs(){
       return modelConfigs;
@@ -231,42 +209,10 @@
     
     // 计算视频生成算力（公共函数）
     function calculateVideoGenerationPower(videoModel, duration){
-      if(!taskComputingPowerConfig || Object.keys(taskComputingPowerConfig).length === 0){
-        return 0;
+      if(window.TaskConfig){
+        return window.TaskConfig.getComputingPower(videoModel, duration);
       }
-      
-      let power = 0;
-      
-      if(videoModel === 'sora2'){
-        power = taskComputingPowerConfig[3] || 0;
-      } else if(videoModel === 'ltx2'){
-        power = taskComputingPowerConfig[10] || 0;
-      } else if(videoModel === 'wan22'){
-        const wan22Power = taskComputingPowerConfig[11];
-        if(typeof wan22Power === 'object'){
-          power = wan22Power[duration] || wan22Power[5] || 0;
-        } else {
-          power = wan22Power || 0;
-        }
-      } else if(videoModel === 'kling'){
-        const klingPower = taskComputingPowerConfig[12];
-        if(typeof klingPower === 'object'){
-          power = klingPower[duration] || klingPower[5] || 0;
-        } else {
-          power = klingPower || 0;
-        }
-      } else if(videoModel === 'vidu'){
-        const viduPower = taskComputingPowerConfig[14];
-        if(typeof viduPower === 'object'){
-          power = viduPower[duration] || viduPower[5] || 0;
-        } else {
-          power = viduPower || 0;
-        }
-      } else if(videoModel === 'veo3'){
-        power = taskComputingPowerConfig[15] || 0;
-      }
-      
-      return power;
+      return 0;
     }
     
     // 更新所有图生视频节点的算力显示
@@ -1510,48 +1456,9 @@
           const computingPowerDetail = el.querySelector('.computing-power-detail');
           if(computingPowerValue && computingPowerDetail) {
             // 计算算力
-            const config = getTaskComputingPowerConfig();
-            let singlePower = 0;
-            if(config && Object.keys(config).length > 0) {
-              const videoModel = node.data.videoModel || 'sora2';
-              const duration = node.data.duration || 10;
-              
-              if(videoModel === 'sora2') {
-                singlePower = config[3] || 0;
-              } else if(videoModel === 'ltx2') {
-                singlePower = config[10] || 0;
-              } else if(videoModel === 'wan22') {
-                const wan22Power = config[11];
-                if(typeof wan22Power === 'object') {
-                  singlePower = wan22Power[duration] || wan22Power[5] || 0;
-                } else {
-                  singlePower = wan22Power || 0;
-                }
-              } else if(videoModel === 'kling') {
-                const klingPower = config[12];
-                if(typeof klingPower === 'object') {
-                  singlePower = klingPower[duration] || klingPower[5] || 0;
-                } else {
-                  singlePower = klingPower || 0;
-                }
-              } else if(videoModel === 'vidu') {
-                const viduPower = config[14];
-                if(typeof viduPower === 'object') {
-                  singlePower = viduPower[duration] || viduPower[5] || 0;
-                } else {
-                  singlePower = viduPower || 0;
-                }
-              } else if(videoModel === 'vidu_q2') {
-                const viduQ2Power = config[19];
-                if(typeof viduQ2Power === 'object') {
-                  singlePower = viduQ2Power[duration] || viduQ2Power[5] || 0;
-                } else {
-                  singlePower = viduQ2Power || 0;
-                }
-              } else if(videoModel === 'veo3') {
-                singlePower = config[15] || 0;
-              }
-            }
+            const videoModel = node.data.videoModel || 'sora2';
+            const duration = node.data.duration || 10;
+            const singlePower = calculateVideoGenerationPower(videoModel, duration);
             const count = node.data.drawCount || 1;
             const totalPower = singlePower * count;
             computingPowerValue.textContent = `${totalPower} 算力`;

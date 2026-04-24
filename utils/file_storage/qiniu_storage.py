@@ -3,12 +3,49 @@
 """
 
 import asyncio
+import logging
+import os
+from datetime import datetime
+from logging.handlers import TimedRotatingFileHandler
 from typing import Optional, Union
 from concurrent.futures import ThreadPoolExecutor
 
 import qiniu
 
 from .base import BaseFileStorage, UploadResult
+
+
+def _setup_qiniu_logger() -> logging.Logger:
+    """配置七牛云专用日志，输出到单独文件"""
+    qiniu_logger = logging.getLogger("qiniu_upload")
+    if qiniu_logger.handlers:
+        return qiniu_logger
+
+    qiniu_logger.setLevel(logging.DEBUG)
+
+    # 确保日志目录存在
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    # 按天轮转的文件处理器
+    log_file = os.path.join(log_dir, "qiniu_upload.log")
+    file_handler = TimedRotatingFileHandler(
+        log_file,
+        when="midnight",
+        interval=1,
+        backupCount=7,
+        encoding="utf-8"
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s"
+    ))
+    qiniu_logger.addHandler(file_handler)
+
+    return qiniu_logger
+
+
+logger = _setup_qiniu_logger()
 
 
 class QiniuFileStorage(BaseFileStorage):
@@ -59,10 +96,18 @@ class QiniuFileStorage(BaseFileStorage):
     ) -> UploadResult:
         """同步上传数据"""
         try:
+            logger.info(f"[七牛云] 开始上传数据, key={key}, data_size={len(data)} bytes")
             token = self._get_upload_token(key)
             ret, info = qiniu.put_data(token, key, data)
 
+            logger.info(f"[七牛云] 上传响应: ret={ret}, status_code={info.status_code}, "
+                        f"req_id={info.req_id}, x_log={info.x_log}")
+            if hasattr(info, 'error') and info.error:
+                logger.error(f"[七牛云] 上传错误详情: error={info.error}, "
+                            f"text_body={info.text_body}")
+
             if ret is not None:
+                logger.info(f"[七牛云] 数据上传成功, key={ret.get('key')}, hash={ret.get('hash')}")
                 return UploadResult(
                     success=True,
                     key=ret.get("key", key),
@@ -70,11 +115,13 @@ class QiniuFileStorage(BaseFileStorage):
                     url=self.get_public_url(key)
                 )
             else:
+                logger.error(f"[七牛云] 数据上传失败: {info}")
                 return UploadResult(
                     success=False,
                     error=str(info)
                 )
         except Exception as e:
+            logger.exception(f"[七牛云] 数据上传异常: {e}")
             return UploadResult(
                 success=False,
                 error=str(e)
@@ -88,10 +135,19 @@ class QiniuFileStorage(BaseFileStorage):
     ) -> UploadResult:
         """同步上传文件"""
         try:
+            logger.info(f"[七牛云] 开始上传文件, key={key}, file_path={file_path}")
             token = self._get_upload_token(key)
-            ret, info = qiniu.put_file(token, key, file_path)
+            logger.debug(f"[七牛云] 获取token成功, token={token}, key={key}, file_path={file_path}, bucket={self.bucket_name}")
+            ret, info = qiniu.put_file(token, key, file_path) #qiniu 来自于 pip install qiniu
+
+            logger.info(f"[七牛云] 上传响应: ret={ret}, status_code={info.status_code}, "
+                        f"req_id={info.req_id}, x_log={info.x_log}")
+            if hasattr(info, 'error') and info.error:
+                logger.error(f"[七牛云] 上传错误详情: error={info.error}, "
+                            f"text_body={info.text_body}")
 
             if ret is not None:
+                logger.info(f"[七牛云] 文件上传成功, key={ret.get('key')}, hash={ret.get('hash')}")
                 return UploadResult(
                     success=True,
                     key=ret.get("key", key),
@@ -99,11 +155,13 @@ class QiniuFileStorage(BaseFileStorage):
                     url=self.get_public_url(key)
                 )
             else:
+                logger.error(f"[七牛云] 文件上传失败: {info}")
                 return UploadResult(
                     success=False,
                     error=str(info)
                 )
         except Exception as e:
+            logger.exception(f"[七牛云] 文件上传异常: {e}")
             return UploadResult(
                 success=False,
                 error=str(e)

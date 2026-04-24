@@ -256,6 +256,18 @@ class SyncTaskExecutor:
         """检查执行器是否运行中"""
         return self._running and self._executor is not None
 
+    def is_task_running(self, task_id: int) -> bool:
+        """
+        检查指定任务是否正在同步执行器中运行
+        
+        Args:
+            task_id: AI工具ID
+            
+        Returns:
+            bool: 任务是否正在运行中
+        """
+        return task_id in self._futures
+
     def submit(self, task_id: int, ai_tool_type: int) -> bool:
         """
         提交同步任务到进程池

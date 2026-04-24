@@ -54,6 +54,24 @@ class TaskProvider:
     VIDU = 'vidu'             # Vidu 官方
     VOLCENGINE = 'volcengine' # 火山引擎
     LOCAL = 'local'           # 本地处理
+    ZJT = 'zjt'
+
+
+@dataclass
+class PowerModifier:
+    """
+    算力修饰符 - 根据额外属性（如 image_mode、resolution）动态调整算力
+
+    算力计算公式: final_power = base_power(duration) × modifier1 × modifier2 × ...
+
+    Attributes:
+        attribute: 属性名，如 'image_mode', 'resolution'
+        values: 属性值 -> 乘数映射，如 {'first_last_with_tail': 1.66, 'first_last_frame': 1.0}
+        default: 未匹配时的默认乘数
+    """
+    attribute: str
+    values: Dict[str, float]
+    default: float = 1.0
 
 
 @dataclass
@@ -83,13 +101,16 @@ class ImplementationConfig:
     sort_order: float = 999999.0  # 默认排序到最后
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
+    required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
 
-    def get_computing_power(self, duration: Optional[int] = None) -> int:
+    def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
         获取算力（优先数据库配置，其次代码默认值）
 
         Args:
             duration: 时长（秒），用于按时长计费的实现方
+            driver_key: DriverKey，用于从数据库读取实现方算力配置
+            context: 额外上下文参数（预留，用于修饰符计算）
 
         Returns:
             算力值
@@ -97,9 +118,20 @@ class ImplementationConfig:
         # 尝试从数据库读取（支持管理员热更新）
         try:
             from model.implementation_power import ImplementationPowerModel
-            db_power = ImplementationPowerModel.get_power(self.name, duration)
-            if db_power is not None:
-                return db_power
+            if driver_key:
+                db_powers = ImplementationPowerModel.get_all_powers_for_implementation(self.name, driver_key)
+                if db_powers:
+                    if duration is not None and duration in db_powers:
+                        return db_powers[duration]
+                    if None in db_powers:
+                        return db_powers[None]
+                    if db_powers:
+                        return list(db_powers.values())[0]
+            else:
+                # 兼容旧调用：未传 driver_key 时按原来的行为
+                db_power = ImplementationPowerModel.get_power(self.name, duration)
+                if db_power is not None:
+                    return db_power
         except ImportError:
             pass
         except Exception:
@@ -194,7 +226,7 @@ class UnifiedTaskConfig:
     provider: str
     driver_name: Optional[str] = None
     implementation: Optional[str] = None  # 默认实现方
-    implementations: List[str] = field(default_factory=list)  # 可选实现方列表
+    implementations: List[str] = field(default_factory=list)  # 可选实现方列表，注意，如果不配置，无法支持多实现方切换
     computing_power: Union[int, Dict[int, int]] = 0  # 算力覆盖值（优先使用）
     supported_ratios: List[str] = field(default_factory=lambda: ['9:16', '16:9'])
     supported_sizes: List[str] = field(default_factory=list)
@@ -211,40 +243,60 @@ class UnifiedTaskConfig:
     supports_grid_image: bool = False  # 是否支持宫格生图（一次生成多张图片）
     supports_last_frame: bool = True  # 是否支持尾帧（某些模型虽然支持首尾帧模式，但只使用首帧，忽略尾帧）
     hidden: bool = False  # 是否隐藏（隐藏的任务不在前端模型选择器中显示，仅通过API调用）
+    power_modifiers: List[PowerModifier] = field(default_factory=list)  # 算力修饰符列表
 
-    def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None) -> int:
+    def get_computing_power(self, duration: Optional[int] = None, implementation: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
         获取算力消耗
 
         优先使用任务配置中的 computing_power，如果没有设置（或为0）则从实现方配置读取。
+        先累积所有修饰符乘数，再进行一次向上取整（ceiling）。
 
         Args:
             duration: 时长（秒），用于按时长计费的任务
             implementation: 实现方名称，用于从实现方配置读取算力
+            context: 额外上下文参数，用于修饰符计算（如 {'image_mode': 'first_last_with_tail'}）
 
         Returns:
-            算力消耗值
+            算力消耗值（整数）
         """
+        import math
+
         # 优先使用任务配置中的算力覆盖值
         if self.computing_power:
             if isinstance(self.computing_power, dict):
                 if duration and duration in self.computing_power:
-                    return self.computing_power[duration]
-                return list(self.computing_power.values())[0] if self.computing_power else 0
-            return self.computing_power
+                    base_power = self.computing_power[duration]
+                else:
+                    base_power = list(self.computing_power.values())[0] if self.computing_power else 0
+            else:
+                base_power = self.computing_power
+        else:
+            # 回退到实现方配置
+            if not implementation:
+                implementation = self.implementation
 
-        # 回退到实现方配置
-        if not implementation:
-            implementation = self.implementation
+            if not implementation:
+                return 0  # 没有实现方配置，返回0
 
-        if not implementation:
-            return 0  # 没有实现方配置，返回0
+            impl_config = UnifiedConfigRegistry.get_implementation(implementation)
+            if not impl_config:
+                return 0
 
-        impl_config = UnifiedConfigRegistry.get_implementation(implementation)
-        if not impl_config:
-            return 0
+            base_power = impl_config.get_computing_power(duration, self.driver_name)
 
-        return impl_config.get_computing_power(duration)
+        # 应用修饰符（累积乘数，最后一次向上取整）
+        if context and self.power_modifiers:
+            multiplier = 1.0
+            for modifier in self.power_modifiers:
+                attr_value = context.get(modifier.attribute)
+                if attr_value and attr_value in modifier.values:
+                    multiplier *= modifier.values[attr_value]
+                else:
+                    multiplier *= modifier.default
+            base_power = math.ceil(base_power * multiplier)
+
+        return int(base_power)
     
     def to_frontend_dict(self) -> Dict[str, Any]:
         """
@@ -289,6 +341,17 @@ class UnifiedTaskConfig:
         if TaskCategory.TEXT_TO_IMAGE in [self.category] + self.categories:
             result['supports_grid_image'] = self.supports_grid_image
 
+        # 添加算力修饰符
+        if self.power_modifiers:
+            result['power_modifiers'] = [
+                {
+                    'attribute': m.attribute,
+                    'values': m.values,
+                    'default': m.default
+                }
+                for m in self.power_modifiers
+            ]
+
         return result
 
     def _get_implementations_info(self) -> List[Dict[str, Any]]:
@@ -329,9 +392,15 @@ class UnifiedTaskConfig:
                 # 获取算力（从数据库读取，使用 driver_key 查询）
                 try:
                     from model.implementation_power import ImplementationPowerModel
-                    impl_power = ImplementationPowerModel.get_power(impl_name, self.driver_name)
-                    if impl_power is not None:
-                        computing_power = impl_power
+                    power_configs = ImplementationPowerModel.get_all_powers_for_implementation(impl_name, self.driver_name)
+                    if power_configs:
+                        duration_powers = {k: v for k, v in power_configs.items() if k is not None}
+                        if duration_powers:
+                            computing_power = duration_powers
+                        elif None in power_configs:
+                            computing_power = power_configs[None]
+                        else:
+                            computing_power = impl_config.default_computing_power
                     else:
                         computing_power = impl_config.default_computing_power
                 except Exception:
@@ -486,7 +555,24 @@ class UnifiedConfigRegistry:
             else:
                 result[c.id] = 0
         return result
-    
+
+    @classmethod
+    def get_power_modifiers_map(cls) -> Dict[int, List[Dict]]:
+        """
+        获取 ID -> 算力修饰符 映射
+
+        Returns:
+            Dict[int, List[Dict]]: 任务类型ID到修饰符列表的映射
+        """
+        result = {}
+        for c in cls._configs.values():
+            if c.power_modifiers:
+                result[c.id] = [
+                    {'attribute': m.attribute, 'values': m.values, 'default': m.default}
+                    for m in c.power_modifiers
+                ]
+        return result
+
     @classmethod
     def get_driver_mapping(cls) -> Dict[int, str]:
         """获取 ID -> 业务驱动名称 映射（向后兼容）"""
@@ -601,22 +687,37 @@ class UnifiedConfigRegistry:
                     continue
 
                 driver_name = config.driver_name if hasattr(config, 'driver_name') else None
+                impl_power = None
 
                 try:
-                    impl_power = ImplementationPowerModel.get_power(user_pref_impl, driver_name)
-                    if impl_power is not None:
-                        task['computing_power'] = impl_power
-                        task['user_preferred_implementation'] = user_pref_impl
+                    db_powers = ImplementationPowerModel.get_all_powers_for_implementation(user_pref_impl, driver_name)
+                    if db_powers:
+                        if None in db_powers:
+                            impl_power = db_powers[None]
+                        else:
+                            impl_power = list(db_powers.values())[0]
                 except Exception as e:
                     logger.debug(f"Failed to get implementation power for {user_pref_impl}: {e}")
-            elif implementations:
-                # 没有用户偏好，使用 implementations 中排序第一位的算力
+
+                # 如果数据库中没有配置，从 implementations 列表中查找
+                if impl_power is None or impl_power == 0:
+                    for impl in implementations:
+                        if impl.get('name') == user_pref_impl:
+                            impl_power = impl.get('computing_power')
+                            break
+
+                # 更新算力
+                if impl_power is not None and impl_power != 0:
+                    task['computing_power'] = impl_power
+                    task['user_preferred_implementation'] = user_pref_impl
+            elif implementations and (task.get('computing_power') == 0 or not task.get('computing_power')):
+                # 没有用户偏好，且任务的 computing_power 为 0 或未设置时，使用 implementations 中排序第一位的算力
                 # implementations 已经按 sort_order 排序
                 first_impl = implementations[0]
                 impl_name = first_impl.get('name')
                 impl_power = first_impl.get('computing_power')
 
-                if impl_power is not None:
+                if impl_power is not None and impl_power != 0:
                     task['computing_power'] = impl_power
                     task['default_implementation'] = impl_name
 
@@ -638,10 +739,17 @@ class DriverImplementation:
 
     # Kling
     KLING_DUOMI_V1 = 'kling_duomi_v1'
+    KLING_COMMON_SITE0_V1 = 'kling_common_site0_v1'
+    KLING_COMMON_SITE1_V1 = 'kling_common_site1_v1'
+    KLING_COMMON_SITE2_V1 = 'kling_common_site2_v1'
+    KLING_COMMON_SITE3_V1 = 'kling_common_site3_v1'
+    KLING_COMMON_SITE4_V1 = 'kling_common_site4_v1'
+    KLING_COMMON_SITE5_V1 = 'kling_common_site5_v1'
 
     # Gemini
     GEMINI_DUOMI_V1 = 'gemini_duomi_v1'
     GEMINI_IMAGE_PREVIEW_COMMON_V1 = 'gemini_image_preview_common_v1'
+    GEMINI_IMAGE_PREVIEW_SITE0_V1 = 'gemini_image_preview_site0_v1'
     GEMINI_IMAGE_PREVIEW_SITE1_V1 = 'gemini_image_preview_site1_v1'
     GEMINI_IMAGE_PREVIEW_SITE2_V1 = 'gemini_image_preview_site2_v1'
     GEMINI_IMAGE_PREVIEW_SITE3_V1 = 'gemini_image_preview_site3_v1'
@@ -650,6 +758,12 @@ class DriverImplementation:
 
     # VEO3
     VEO3_DUOMI_V1 = 'veo3_duomi_v1'
+    VEO3_COMMON_SITE0_V1 = 'veo3_common_site0_v1'
+    VEO3_COMMON_SITE1_V1 = 'veo3_common_site1_v1'
+    VEO3_COMMON_SITE2_V1 = 'veo3_common_site2_v1'
+    VEO3_COMMON_SITE3_V1 = 'veo3_common_site3_v1'
+    VEO3_COMMON_SITE4_V1 = 'veo3_common_site4_v1'
+    VEO3_COMMON_SITE5_V1 = 'veo3_common_site5_v1'
 
     # LTX2
     LTX2_RUNNINGHUB_V1 = 'ltx2_runninghub_v1'
@@ -673,8 +787,26 @@ class DriverImplementation:
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 'seedance_2_0_fast_volcengine_v1'
     SEEDANCE_2_0_VOLCENGINE_V1 = 'seedance_2_0_volcengine_v1'
 
+    # GPT Image
+    DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
+    GPT_IMAGE_COMMON_SITE0_V1 = 'gpt_image_common_site0_v1'
+    GPT_IMAGE_COMMON_SITE1_V1 = 'gpt_image_common_site1_v1'
+    GPT_IMAGE_COMMON_SITE2_V1 = 'gpt_image_common_site2_v1'
+    GPT_IMAGE_COMMON_SITE3_V1 = 'gpt_image_common_site3_v1'
+    GPT_IMAGE_COMMON_SITE4_V1 = 'gpt_image_common_site4_v1'
+    GPT_IMAGE_COMMON_SITE5_V1 = 'gpt_image_common_site5_v1'
+
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
+
+    # Grok
+    GROK_DUOMI_V1 = 'grok_duomi_v1'
+    GROK_COMMON_SITE0_V1 = 'grok_common_site0_v1'
+    GROK_COMMON_SITE1_V1 = 'grok_common_site1_v1'
+    GROK_COMMON_SITE2_V1 = 'grok_common_site2_v1'
+    GROK_COMMON_SITE3_V1 = 'grok_common_site3_v1'
+    GROK_COMMON_SITE4_V1 = 'grok_common_site4_v1'
+    GROK_COMMON_SITE5_V1 = 'grok_common_site5_v1'
 
 
 # ============ 驱动实现 ID 常量（用于数据库存储） ============
@@ -685,6 +817,7 @@ class DriverImplementationId:
     KLING_DUOMI_V1 = 2
     GEMINI_DUOMI_V1 = 3
     GEMINI_IMAGE_PREVIEW_COMMON_V1 = 4
+    GEMINI_IMAGE_PREVIEW_SITE0_V1 = 27
     GEMINI_IMAGE_PREVIEW_SITE1_V1 = 5
     GEMINI_IMAGE_PREVIEW_SITE2_V1 = 6
     GEMINI_IMAGE_PREVIEW_SITE3_V1 = 7
@@ -702,6 +835,35 @@ class DriverImplementationId:
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 19
     SEEDANCE_2_0_VOLCENGINE_V1 = 20
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 21
+    VEO3_COMMON_SITE1_V1 = 22
+    DUOMI_GPT_IMAGE_V1 = 29
+    GPT_IMAGE_COMMON_SITE0_V1 = 30
+    GPT_IMAGE_COMMON_SITE1_V1 = 31
+    GPT_IMAGE_COMMON_SITE2_V1 = 32
+    GPT_IMAGE_COMMON_SITE3_V1 = 33
+    GPT_IMAGE_COMMON_SITE4_V1 = 34
+    GPT_IMAGE_COMMON_SITE5_V1 = 35
+    VEO3_COMMON_SITE2_V1 = 23
+    VEO3_COMMON_SITE3_V1 = 24
+    VEO3_COMMON_SITE4_V1 = 25
+    VEO3_COMMON_SITE5_V1 = 26
+    VEO3_COMMON_SITE0_V1 = 28
+
+    # Kling Common
+    KLING_COMMON_SITE0_V1 = 36
+    KLING_COMMON_SITE1_V1 = 37
+    KLING_COMMON_SITE2_V1 = 38
+    KLING_COMMON_SITE3_V1 = 39
+    KLING_COMMON_SITE4_V1 = 40
+    KLING_COMMON_SITE5_V1 = 41
+
+    GROK_COMMON_SITE0_V1 = 42
+    GROK_COMMON_SITE1_V1 = 43
+    GROK_COMMON_SITE2_V1 = 44
+    GROK_COMMON_SITE3_V1 = 45
+    GROK_COMMON_SITE4_V1 = 46
+    GROK_COMMON_SITE5_V1 = 47
+    GROK_DUOMI_V1 = 48
 
 
 # implementation 字符串到 ID 的映射
@@ -710,12 +872,14 @@ IMPLEMENTATION_TO_ID = {
     'kling_duomi_v1': DriverImplementationId.KLING_DUOMI_V1,
     'gemini_duomi_v1': DriverImplementationId.GEMINI_DUOMI_V1,
     'gemini_image_preview_common_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_COMMON_V1,
+    'gemini_image_preview_site0_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE0_V1,
     'gemini_image_preview_site1_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE1_V1,
     'gemini_image_preview_site2_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE2_V1,
     'gemini_image_preview_site3_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE3_V1,
     'gemini_image_preview_site4_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE4_V1,
     'gemini_image_preview_site5_v1': DriverImplementationId.GEMINI_IMAGE_PREVIEW_SITE5_V1,
     'veo3_duomi_v1': DriverImplementationId.VEO3_DUOMI_V1,
+    'veo3_common_site0_v1': DriverImplementationId.VEO3_COMMON_SITE0_V1,
     'ltx2_runninghub_v1': DriverImplementationId.LTX2_RUNNINGHUB_V1,
     'wan22_runninghub_v1': DriverImplementationId.WAN22_RUNNINGHUB_V1,
     'digital_human_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_RUNNINGHUB_V1,
@@ -727,6 +891,31 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_fast_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
     'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
+    'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
+    'duomi_gpt_image_v1': DriverImplementationId.DUOMI_GPT_IMAGE_V1,
+    'gpt_image_common_site0_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE0_V1,
+    'gpt_image_common_site1_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE1_V1,
+    'gpt_image_common_site2_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE2_V1,
+    'gpt_image_common_site3_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE3_V1,
+    'gpt_image_common_site4_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE4_V1,
+    'gpt_image_common_site5_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE5_V1,
+    'kling_common_site0_v1': DriverImplementationId.KLING_COMMON_SITE0_V1,
+    'kling_common_site1_v1': DriverImplementationId.KLING_COMMON_SITE1_V1,
+    'kling_common_site2_v1': DriverImplementationId.KLING_COMMON_SITE2_V1,
+    'kling_common_site3_v1': DriverImplementationId.KLING_COMMON_SITE3_V1,
+    'kling_common_site4_v1': DriverImplementationId.KLING_COMMON_SITE4_V1,
+    'kling_common_site5_v1': DriverImplementationId.KLING_COMMON_SITE5_V1,
+    'veo3_common_site2_v1': DriverImplementationId.VEO3_COMMON_SITE2_V1,
+    'veo3_common_site3_v1': DriverImplementationId.VEO3_COMMON_SITE3_V1,
+    'veo3_common_site4_v1': DriverImplementationId.VEO3_COMMON_SITE4_V1,
+    'veo3_common_site5_v1': DriverImplementationId.VEO3_COMMON_SITE5_V1,
+    'grok_common_site0_v1': DriverImplementationId.GROK_COMMON_SITE0_V1,
+    'grok_common_site1_v1': DriverImplementationId.GROK_COMMON_SITE1_V1,
+    'grok_common_site2_v1': DriverImplementationId.GROK_COMMON_SITE2_V1,
+    'grok_common_site3_v1': DriverImplementationId.GROK_COMMON_SITE3_V1,
+    'grok_common_site4_v1': DriverImplementationId.GROK_COMMON_SITE4_V1,
+    'grok_common_site5_v1': DriverImplementationId.GROK_COMMON_SITE5_V1,
+    'grok_duomi_v1': DriverImplementationId.GROK_DUOMI_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -780,11 +969,15 @@ class DriverKey:
     
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
+    GPT_IMAGE_2 = 'gpt_image_2'
 
     # Seedance 图生视频
     SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 'seedance_1_5_pro_image_to_video'
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 'seedance_2_0_fast_image_to_video'
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 'seedance_2_0_image_to_video'
+
+    # Grok 图生视频
+    GROK_IMAGE_TO_VIDEO = 'grok_image_to_video'
 
 
 # ============ 任务类型 ID 常量 ============
@@ -797,7 +990,9 @@ class TaskTypeId:
     SEEDREAM_TEXT_TO_IMAGE = 16         # Seedream 5.0 文生图/图片编辑
     SEEDREAM_4_5_IMAGE = 18             # Seedream 4.5 图片编辑
     QWEN_MULTI_ANGLE_IMAGE = 24         # Qwen 多角度图片编辑
-    
+    GPT_IMAGE_2 = 25                     # GPT Image 2 文生图
+    GPT_IMAGE_2_EDIT = 26                # GPT Image 2 图片编辑
+
     # 文生视频
     SORA2_TEXT_TO_VIDEO = 2             # Sora2 文生视频
     
@@ -813,7 +1008,8 @@ class TaskTypeId:
     SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 21  # Seedance 1.5 Pro 图生视频
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 22 # Seedance 2.0 Fast 图生视频
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 23      # Seedance 2.0 图生视频
-    
+    GROK_IMAGE_TO_VIDEO = 27             # Grok 图生视频
+
     # 图片/视频 增强
     IMAGE_ENHANCE = 4                   # 图片高清放大
     VIDEO_ENHANCE = 5                   # AI视频高清修复
@@ -842,6 +1038,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
         implementations=[
             DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
@@ -867,6 +1064,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
         implementations=[
             DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
@@ -892,6 +1090,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementation=DriverImplementation.GEMINI_DUOMI_V1,
         implementations=[
             DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
             DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
@@ -955,6 +1154,35 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_size='1K',
         sort_order=15,
         hidden=True,  # 隐藏，前端不显示
+    ),
+
+    # ==================== 文生图/图片编辑 ====================
+    UnifiedTaskConfig(
+        id=TaskTypeId.GPT_IMAGE_2_EDIT,
+        key='gpt-image-2-edit',
+        name='GPT Image 2 图片编辑',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GPT_IMAGE_2,
+        implementation=DriverImplementation.DUOMI_GPT_IMAGE_V1,
+        implementations=[
+            DriverImplementation.DUOMI_GPT_IMAGE_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE0_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE1_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE2_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE3_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE4_V1,
+            DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1,
+        ],
+        computing_power=2,
+        supported_ratios=['1:1', '2:3', '3:2', '16:9', '9:16'],
+        supported_sizes=['1k', '2k', '4k'],
+        default_ratio='1:1',
+        default_size='1k',
+        sort_order=17,
+        supports_grid_image=True,
+        supports_grid_merge=False,
     ),
 
     # ==================== 文生视频 ====================
@@ -1052,14 +1280,33 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.KLING_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.KLING_DUOMI_V1,
+        implementations=[
+            DriverImplementation.KLING_DUOMI_V1,
+            DriverImplementation.KLING_COMMON_SITE0_V1,
+            DriverImplementation.KLING_COMMON_SITE1_V1,
+            DriverImplementation.KLING_COMMON_SITE2_V1,
+            DriverImplementation.KLING_COMMON_SITE3_V1,
+            DriverImplementation.KLING_COMMON_SITE4_V1,
+            DriverImplementation.KLING_COMMON_SITE5_V1,
+        ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[5, 10],
         default_ratio='9:16',
         default_duration=5,
         sort_order=33,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
-        supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
+        supports_last_frame=True,  # 支持首尾帧
         supports_grid_merge=True,  # 支持宫格合并生成视频
+        power_modifiers=[
+            PowerModifier(
+                attribute='image_mode',
+                values={
+                    'first_last_with_tail': 1.66,  # 前后帧（有2张图）比首帧贵 1.66 倍
+                    'first_last_frame': 1.0,        # 仅首帧
+                },
+                default=1.0
+            )
+        ]
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VIDU_IMAGE_TO_VIDEO,
@@ -1101,6 +1348,15 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.DUOMI,
         driver_name=DriverKey.VEO3_IMAGE_TO_VIDEO,
         implementation=DriverImplementation.VEO3_DUOMI_V1,
+        implementations=[
+            DriverImplementation.VEO3_DUOMI_V1,
+            DriverImplementation.VEO3_COMMON_SITE0_V1,
+            DriverImplementation.VEO3_COMMON_SITE1_V1,
+            DriverImplementation.VEO3_COMMON_SITE2_V1,
+            DriverImplementation.VEO3_COMMON_SITE3_V1,
+            DriverImplementation.VEO3_COMMON_SITE4_V1,
+            DriverImplementation.VEO3_COMMON_SITE5_V1,
+        ],
         supported_ratios=['9:16', '16:9'],
         supported_durations=[8],
         default_ratio='9:16',
@@ -1108,6 +1364,32 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=35,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME,ImageMode.MULTI_REFERENCE],  # 支持首尾帧
         supports_last_frame=True,  # 真正支持尾帧
+        supports_grid_merge=True,  # 支持宫格合并生成视频
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.GROK_IMAGE_TO_VIDEO,
+        key='grok_image_to_video',
+        name='图片生成视频 (Grok)',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GROK_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.GROK_DUOMI_V1,
+        implementations=[
+            DriverImplementation.GROK_DUOMI_V1,
+            DriverImplementation.GROK_COMMON_SITE0_V1,
+            DriverImplementation.GROK_COMMON_SITE1_V1,
+            DriverImplementation.GROK_COMMON_SITE2_V1,
+            DriverImplementation.GROK_COMMON_SITE3_V1,
+            DriverImplementation.GROK_COMMON_SITE4_V1,
+            DriverImplementation.GROK_COMMON_SITE5_V1,
+        ],
+        supported_ratios=['9:16', '16:9', '1:1', '2:3', '3:2'],
+        supported_durations=[10],
+        default_ratio='9:16',
+        default_duration=10,
+        sort_order=36,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        supports_last_frame=False,  # 不支持尾帧
         supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
     UnifiedTaskConfig(
@@ -1227,7 +1509,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=18,
         enabled=True,
         description='多米平台 Sora2 接口',
-        sort_order=1000.0
+        sort_order=1000.0,
+        required_config_keys=['duomi.token']
     ),
     ImplementationConfig(
         name='kling_duomi_v1',
@@ -1236,7 +1519,75 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 38, 10: 70},
         enabled=True,
         description='多米平台 Kling 接口',
-        sort_order=2000.0
+        sort_order=2010.0,
+        required_config_keys=['duomi.token']
+    ),
+    # ==================== Kling 通用聚合站点 ====================
+    ImplementationConfig(
+        name='kling_common_site0_v1',
+        display_name='ZJTapi',
+        driver_class='KlingCommonSite0V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='ZJTapi Kling 接口',
+        sort_order=2000.0,
+        site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='kling_common_site1_v1',
+        display_name='聚合站点1',
+        driver_class='KlingCommonSite1V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点1 Kling 接口',
+        sort_order=2020.0,
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='kling_common_site2_v1',
+        display_name='聚合站点2',
+        driver_class='KlingCommonSite2V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点2 Kling 接口',
+        sort_order=2030.0,
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='kling_common_site3_v1',
+        display_name='聚合站点3',
+        driver_class='KlingCommonSite3V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点3 Kling 接口',
+        sort_order=2040.0,
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='kling_common_site4_v1',
+        display_name='聚合站点4',
+        driver_class='KlingCommonSite4V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点4 Kling 接口',
+        sort_order=2050.0,
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='kling_common_site5_v1',
+        display_name='聚合站点5',
+        driver_class='KlingCommonSite5V1Driver',
+        default_computing_power={5: 38, 10: 70},
+        enabled=True,
+        description='聚合站点5 Kling 接口',
+        sort_order=2060.0,
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
     ImplementationConfig(
         name='gemini_duomi_v1',
@@ -1245,10 +1596,106 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=2,
         enabled=True,
         description='多米平台 Gemini 接口',
-        sort_order=3000.0
+        sort_order=3000.0,
+        required_config_keys=['duomi.token']
+    ),
+    ImplementationConfig(
+        name='duomi_gpt_image_v1',
+        display_name='多米',
+        driver_class='GptImageDuomiV1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='多米平台 GPT Image 2 接口（仅支持1K分辨率）',
+        sort_order=3200.0,
+        required_config_keys=['duomi.token']
+    ),
+    # ==================== GPT Image 2 通用聚合站点 ====================
+    ImplementationConfig(
+        name='gpt_image_common_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GptImageCommonSite0V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='ZJT官方',
+        sort_order=3100.0,
+        sync_mode=True,  # 同步模式
+        site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site1_v1',
+        display_name='gpt_site1',
+        driver_class='GptImageCommonSite1V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site 1',
+        sort_order=3210.0,
+        sync_mode=True,
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site2_v1',
+        display_name='gpt site2',
+        driver_class='GptImageCommonSite2V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site 2',
+        sort_order=3220.0,
+        sync_mode=True,
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site3_v1',
+        display_name='gpt site3',
+        driver_class='GptImageCommonSite3V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site3',
+        sort_order=3230.0,
+        sync_mode=True,
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site4_v1',
+        display_name='gpt site4',
+        driver_class='GptImageCommonSite4V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site 4',
+        sort_order=3240.0,
+        sync_mode=True,
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_common_site5_v1',
+        display_name='gpt site5',
+        driver_class='GptImageCommonSite5V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='site 5',
+        sort_order=3250.0,
+        sync_mode=True,
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
 
     # ==================== API 聚合器站点 ====================
+    ImplementationConfig(
+        name='gemini_image_preview_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GeminiImagePreviewSite0V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='ZJT官方',
+        sort_order=10500.0,
+        site_number=0,
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
     ImplementationConfig(
         name='gemini_image_preview_site1_v1',
         display_name='Site 1',
@@ -1258,7 +1705,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 1',
         sort_order=11000.0,
         site_number=1,
-        sync_mode=True  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site2_v1',
@@ -1269,7 +1717,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 2',
         sort_order=12000.0,
         site_number=2,
-        sync_mode=True  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site3_v1',
@@ -1280,7 +1729,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 3',
         sort_order=13000.0,
         site_number=3,
-        sync_mode=True  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site4_v1',
@@ -1291,7 +1741,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 4',
         sort_order=14000.0,
         site_number=4,
-        sync_mode=True  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
     ),
     ImplementationConfig(
         name='gemini_image_preview_site5_v1',
@@ -1302,7 +1753,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='API聚合器站点 5',
         sort_order=15000.0,
         site_number=5,
-        sync_mode=True  # 同步模式
+        sync_mode=False,  # 同步模式
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
     ImplementationConfig(
         name='veo3_duomi_v1',
@@ -1311,7 +1763,144 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='多米平台 VEO3 接口',
-        sort_order=4000.0
+        sort_order=4000.0,
+        required_config_keys=['duomi.token']
+    ),
+    ImplementationConfig(
+        name='veo3_common_site0_v1',
+        display_name='ZJTapi',
+        driver_class='Veo3CommonSite0V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='ZJTapi',
+        sort_order=3900.0,
+        site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='veo3_common_site1_v1',
+        display_name='聚合站点1',
+        driver_class='Veo3CommonSite1V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点1',
+        sort_order=4510.0,
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='veo3_common_site2_v1',
+        display_name='聚合站点2',
+        driver_class='Veo3CommonSite2V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点2',
+        sort_order=4520.0,
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='veo3_common_site3_v1',
+        display_name='聚合站点3',
+        driver_class='Veo3CommonSite3V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点3',
+        sort_order=4530.0,
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='veo3_common_site4_v1',
+        display_name='聚合站点4',
+        driver_class='Veo3CommonSite4V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点4',
+        sort_order=4540.0,
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='veo3_common_site5_v1',
+        display_name='聚合站点5',
+        driver_class='Veo3CommonSite5V1Driver',
+        default_computing_power=6,
+        enabled=True,
+        description='聚合站点5',
+        sort_order=4550.0,
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_duomi_v1',
+        display_name='多米',
+        driver_class='GrokDuomiV1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='多米平台 Grok 接口',
+        sort_order=4500.0,
+        required_config_keys=['duomi.token']
+    ),
+    ImplementationConfig(
+        name='grok_common_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GrokCommonSite0V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='ZJTapi',
+        sort_order=4450.0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='grok_common_site1_v1',
+        display_name='Grok 站点1',
+        driver_class='GrokCommonSite1V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点1',
+        sort_order=4560.0,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_common_site2_v1',
+        display_name='Grok 站点2',
+        driver_class='GrokCommonSite2V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点2',
+        sort_order=4570.0,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_common_site3_v1',
+        display_name='Grok 站点3',
+        driver_class='GrokCommonSite3V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点3',
+        sort_order=4580.0,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_common_site4_v1',
+        display_name='Grok 站点4',
+        driver_class='GrokCommonSite4V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点4',
+        sort_order=4590.0,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='grok_common_site5_v1',
+        display_name='Grok 站点5',
+        driver_class='GrokCommonSite5V1Driver',
+        default_computing_power=8,
+        enabled=True,
+        description='Grok 站点5',
+        sort_order=4600.0,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
 
     # ==================== RunningHub 供应商 ====================
@@ -1322,7 +1911,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=6,
         enabled=True,
         description='RunningHub LTX2.0 接口',
-        sort_order=5000.0
+        sort_order=5000.0,
+        required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(
         name='wan22_runninghub_v1',
@@ -1331,7 +1921,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 8, 10: 18},
         enabled=True,
         description='RunningHub Wan2.2 接口',
-        sort_order=6000.0
+        sort_order=6000.0,
+        required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(
         name='qwen_multi_angle_runninghub_v1',
@@ -1340,7 +1931,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=4,
         enabled=True,
         description='RunningHub Qwen 多角度图片编辑接口',
-        sort_order=7500.0
+        sort_order=7500.0,
+        required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(
         name='digital_human_runninghub_v1',
@@ -1349,7 +1941,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=12,
         enabled=True,
         description='RunningHub 数字人接口',
-        sort_order=7000.0
+        sort_order=7000.0,
+        required_config_keys=['runninghub.api_key']
     ),
 
     # ==================== Vidu 供应商 ====================
@@ -1360,7 +1953,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 16, 8: 22},
         enabled=True,
         description='Vidu 图生视频接口',
-        sort_order=8000.0
+        sort_order=8000.0,
+        required_config_keys=['vidu.token']
     ),
     ImplementationConfig(
         name='vidu_q2',
@@ -1369,7 +1963,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 45, 8: 60},
         enabled=True,
         description='Vidu Q2 图生视频接口',
-        sort_order=9000.0
+        sort_order=9000.0,
+        required_config_keys=['vidu.token']
     ),
 
     # ==================== 火山引擎供应商 ====================
@@ -1381,7 +1976,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='火山引擎 Seedream 5.0 文生图接口',
         sort_order=10000.0,
-        sync_mode=True  # 同步模式
+        sync_mode=True,  # 同步模式
+        required_config_keys=['volcengine.api_key']
     ),
     ImplementationConfig(
         name='seedance_1_5_pro_volcengine_v1',
@@ -1390,7 +1986,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 46, 6: 56, 7: 66, 8: 76, 9: 85, 10: 94, 11: 103, 12: 112},
         enabled=True,
         description='火山引擎 Seedance 1.5 Pro 图生视频接口',
-        sort_order=10500.0
+        sort_order=10500.0,
+        required_config_keys=['volcengine.api_key']
     ),
     ImplementationConfig(
         name='seedance_2_0_fast_volcengine_v1',
@@ -1399,7 +1996,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 105, 6: 126, 7: 147, 8: 168, 9: 189, 10: 210, 11: 231, 12: 252, 13: 273, 14: 294, 15: 315},
         enabled=True,
         description='火山引擎 Seedance 2.0 Fast 图生视频接口',
-        sort_order=10600.0
+        sort_order=10600.0,
+        required_config_keys=['volcengine.api_key']
     ),
     ImplementationConfig(
         name='seedance_2_0_volcengine_v1',
@@ -1408,7 +2006,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power={5: 250, 6: 300, 7: 350, 8: 400, 9: 450, 10: 500, 11: 550, 12: 600, 13: 650, 14: 700, 15: 750},
         enabled=True,
         description='火山引擎 Seedance 2.0 图生视频接口',
-        sort_order=10700.0
+        sort_order=10700.0,
+        required_config_keys=['volcengine.api_key']
     ),
 
     # ==================== 本地处理 ====================

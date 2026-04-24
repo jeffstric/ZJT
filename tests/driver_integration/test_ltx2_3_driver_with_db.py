@@ -110,7 +110,7 @@ class TestLtx2Dot3RunninghubWithDB(BaseVideoDriverTest):
             # Mock 返回本地文件路径
             mock_resolve.return_value = "/fake/local/path/image.jpg"
 
-            with patch('PIL.Image.open') as mock_image_open:
+            with patch('task.visual_drivers.ltx2_3_runninghub_v1_driver.Image.open') as mock_image_open:
                 mock_img = MagicMock()
                 mock_img.size = (1920, 1080)
                 mock_image_open.return_value = mock_img

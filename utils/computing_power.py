@@ -4,25 +4,69 @@
 """
 from typing import Optional, Union, Dict, Any
 import logging
+import json
 from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
 
 logger = logging.getLogger(__name__)
+
+
+def build_context_from_task_record(task_record) -> Dict[str, Any]:
+    """
+    从 ai_tools 任务记录构建算力计算所需的 context
+
+    Args:
+        task_record: ai_tools 表中的记录对象（有 extra_config、image_size、image_path 等字段）
+
+    Returns:
+        context 字典，格式如 {'image_mode': 'first_last_with_tail', 'resolution': '2K'}
+    """
+    context = {}
+
+    try:
+        # 1. image_mode：从 extra_config JSON 解析
+        if task_record and hasattr(task_record, 'extra_config') and task_record.extra_config:
+            try:
+                extra = task_record.extra_config if isinstance(task_record.extra_config, dict) else json.loads(task_record.extra_config)
+                if 'image_mode' in extra:
+                    # 判断是否有尾帧：first_last_frame 模式下 image_path 有2张图
+                    image_mode = extra['image_mode']
+                    if image_mode == 'first_last_frame' and hasattr(task_record, 'image_path') and task_record.image_path:
+                        # 仅检查是否有逗号（有尾帧），避免不必要的 split
+                        if ',' in task_record.image_path:
+                            context['image_mode'] = 'first_last_with_tail'
+                        else:
+                            context['image_mode'] = image_mode
+                    else:
+                        context['image_mode'] = image_mode
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # 2. resolution：从 image_size 字段
+        if task_record and hasattr(task_record, 'image_size') and task_record.image_size:
+            context['resolution'] = task_record.image_size
+
+    except Exception as e:
+        logger.error(f"Failed to build context from task record: {e}")
+
+    return context
 
 
 def get_computing_power_for_task(
     task_type: int,
     duration: Optional[int] = None,
     user_id: Optional[int] = None,
-    implementation: Optional[str] = None
+    implementation: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None
 ) -> int:
     """
-    获取任务的算力消耗（支持实现方级别的算力配置）
+    获取任务的算力消耗（支持实现方级别的算力配置和修饰符）
 
     Args:
         task_type: 任务类型ID
         duration: 时长（秒），用于按时长计费的任务
         user_id: 用户ID（可选），用于获取用户偏好的实现方
         implementation: 直接指定实现方（可选），优先级高于用户偏好
+        context: 额外上下文参数，用于修饰符计算（如 {'image_mode': 'first_last_with_tail'}）
 
     Returns:
         算力消耗值，如果无法获取则返回 0
@@ -50,14 +94,14 @@ def get_computing_power_for_task(
     if not impl_name:
         impl_name = config.implementation
 
-    # 3. 从实现方配置获取算力
+    # 3. 获取算力（优先任务配置的 computing_power 覆盖值，其次实现方配置）
     if impl_name:
-        impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
-        if impl_config:
-            return impl_config.get_computing_power(duration)
+        power = config.get_computing_power(duration, implementation=impl_name, context=context)
+        if power:
+            return power
 
-    # 4. 回退到任务配置的算力（向后兼容）
-    return config.get_computing_power(duration, implementation=None)
+    # 4. 回退到任务配置的算力（向后兼容，无实现方时）
+    return config.get_computing_power(duration, implementation=None, context=context)
 
 
 def get_computing_power_config_for_task(
@@ -116,7 +160,7 @@ def get_computing_power_config_for_task(
             # 检查是否有数据库配置
             try:
                 from model.implementation_power import ImplementationPowerModel
-                db_powers = ImplementationPowerModel.get_all_powers_for_implementation(impl_name)
+                db_powers = ImplementationPowerModel.get_all_powers_for_implementation(impl_name, config.driver_name)
                 if db_powers:
                     return {
                         'computing_power': db_powers if len(db_powers) > 1 or None in db_powers else list(db_powers.values())[0],

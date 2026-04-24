@@ -420,32 +420,30 @@ class TestImageUploadUtils(DatabaseTestCase):
     
     @patch('utils.image_upload_utils.get_file_storage')
     def test_upload_local_images_to_cdn_nonexistent_file(self, mock_storage):
-        """测试上传不存在的本地文件"""
+        """测试上传不存在的本地文件应直接失败，避免降级导致图片和视频不一致"""
         # Mock 存储对象
         mock_storage_instance = MagicMock()
         mock_storage.return_value = mock_storage_instance
-        
+
         config = {
             'server': {'host': 'http://localhost:9003'},
             'file_storage': {'type': 'mock'}
         }
-        
+
         # 测试不存在的文件
         nonexistent_files = [
             '/nonexistent/file1.jpg',
             '/nonexistent/file2.jpg',
         ]
-        
-        # 测试批量上传
-        result_urls = upload_local_images_to_cdn_sync(nonexistent_files, config, project_root)
-        
-        # 验证：不存在的文件应该保持原样返回
-        self.assertEqual(len(result_urls), 2)
-        self.assertEqual(result_urls[0], '/nonexistent/file1.jpg')
-        self.assertEqual(result_urls[1], '/nonexistent/file2.jpg')
-        
+
+        # 验证：不存在的文件应该直接抛出 RuntimeError，而不是降级保留原路径
+        with self.assertRaises(RuntimeError) as context:
+            upload_local_images_to_cdn_sync(nonexistent_files, config, project_root)
+
+        self.assertIn('本地图片文件不存在', str(context.exception))
+
         # 验证：没有尝试上传
-        mock_storage_instance.upload.assert_not_called()
+        mock_storage_instance.upload_file.assert_not_called()
     
     def test_compress_and_upload_image_edge_cases(self):
         """测试压缩上传的边界情况"""

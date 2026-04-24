@@ -39,6 +39,14 @@
             <div class="user-info-wrapper">
               <span class="user-phone clickable" @click="openInviteModal" title="点击查看邀请码">{{ maskedPhone }}</span>
               <div class="computing-power-display">
+                <template v-if="checkinStatus.checkin_enabled">
+                  <button class="checkin-badge" v-if="!checkinStatus.checked_in_today" @click="performCheckin" :disabled="checkinLoading" title="点击签到领算力">
+                    签到
+                  </button>
+                  <span class="checkin-badge checked" v-else title="今日已签到">
+                    已签
+                  </span>
+                </template>
                 <span class="clickable" @click="openComputingPowerLogs" title="点击查看算力日志">
                   算力: <span class="computing-power-value">{{ computingPower !== null ? computingPower : '加载中...' }}</span>
                 </span>
@@ -71,6 +79,13 @@
     <button class="feedback-btn" @click="showFeedbackModal = true">
       💬 意见反馈
     </button>
+
+    <!-- 签到成功 Toast -->
+    <div class="checkin-toast" v-if="checkinToast.show" @click="checkinToast.show = false">
+      <div class="checkin-toast-title">签到成功 +{{ checkinToast.reward }} 算力</div>
+      <div class="checkin-toast-sub">已连续签到 {{ checkinToast.streak_days }} 天</div>
+      <div v-if="checkinToast.nextRewardText" class="checkin-toast-next">{{ checkinToast.nextRewardText }}</div>
+    </div>
 
     <!-- 意见反馈弹窗 -->
     <div class="modal-overlay" v-if="showFeedbackModal" @click.self="showFeedbackModal = false">
@@ -784,8 +799,8 @@
     `,
     methods: {
       handleStartCreation() {
-        // 跳转到工作流列表页面并自动打开新建表单
-        window.location.href = '/video-workflow-list?action=create';
+        // 跳转到工作流列表页面并自动打开新建表单，加随机数防止缓存
+        window.location.href = '/video-workflow-list?action=create&_t=' + Date.now();
       },
       handleVideoWorkflowClick() {
         window.location.href = '/video-workflow-list';
@@ -3804,9 +3819,20 @@
           return 0;  // 配置未加载时返回0
         }
 
+        // 根据 image_mode 和图片数量构建 context，用于算力修饰符计算
+        const context = {};
+        if (this.imageMode) {
+          // 首尾帧模式且有2张图时，使用 first_last_with_tail
+          if (this.imageMode === 'first_last_frame' && this.files.length > 1) {
+            context['image_mode'] = 'first_last_with_tail';
+          } else {
+            context['image_mode'] = this.imageMode;
+          }
+        }
+
         // 使用 TaskConfig.getComputingPower 动态获取算力
-        // 该方法会自动处理固定算力和按时长计费两种情况
-        return TaskConfig.getComputingPower(this.videoModel, this.durationSeconds);
+        // 该方法会自动处理固定算力和按时长计费两种情况，以及应用修饰符
+        return TaskConfig.getComputingPower(this.videoModel, this.durationSeconds, context);
       },
       totalComputingPower() {
         // 总算力 = 单个算力 × 生成数量
@@ -4480,9 +4506,13 @@
                 </div>
                 <div v-if="item.image_path" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">
                   <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">输入图片:</div>
-                  <div style="display: flex; align-items: center; gap: 12px;">
-                    <img :src="item.image_path" style="max-width: 120px; max-height: 80px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border);" />
-                    <a :href="item.image_path" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">查看原图</a>
+                  <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <template v-for="(img, idx) in item.image_path.split(',')" :key="idx">
+                      <div v-if="img" style="display: flex; align-items: center; gap: 12px;">
+                        <img :src="img" style="max-width: 120px; max-height: 80px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border);" />
+                        <a :href="img" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">查看原图</a>
+                      </div>
+                    </template>
                   </div>
                 </div>
                 <div v-if="item.result_url" style="margin-top: 8px;">
@@ -6140,6 +6170,11 @@
       apiTokenLoading: false,
       apiTokenError: '',
       apiTokenNewToken: '', // 仅在生成时显示一次
+      // 签到相关
+      checkinStatus: { checked_in_today: false, streak_days: 0, checkin_enabled: true, base_reward: 10, days_to_next_reward: null, next_reward_amount: null },
+      checkinLoading: false,
+      checkinToast: { show: false, reward: 0, streak_days: 0, nextRewardText: '' },
+      checkinToastTimer: null,
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -6207,6 +6242,7 @@
       if (this.authToken) {
         this.fetchComputingPower();
         this.fetchUserRole();
+        this.fetchCheckinStatus();
       }
       
       // 检查是否需要自动弹出登录窗口
@@ -6994,6 +7030,66 @@
         }
       },
       
+      async fetchCheckinStatus() {
+        if (!this.authToken) return;
+        try {
+          const response = await axios.get('/api/user/checkin/status', {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data.success) {
+            this.checkinStatus = response.data.data;
+          }
+        } catch (error) {
+          if (error.response && error.response.status === 403) {
+            this.checkinStatus.checkin_enabled = false;
+          }
+          console.error('Fetch checkin status error:', error);
+        }
+      },
+
+      async performCheckin() {
+        if (!this.authToken || this.checkinLoading) return;
+        this.checkinLoading = true;
+        try {
+          const response = await axios.post('/api/user/checkin', {}, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data.success) {
+            const data = response.data.data;
+            this.checkinStatus.checked_in_today = true;
+            this.checkinStatus.streak_days = data.streak_days;
+            // 刷新算力
+            this.fetchComputingPower();
+            // 显示 Toast
+            const nextRewardText = (this.checkinStatus.days_to_next_reward)
+              ? `再签${this.checkinStatus.days_to_next_reward}天领${this.checkinStatus.next_reward_amount}算力`
+              : '';
+            this.checkinToast = {
+              show: true,
+              reward: data.reward_amount,
+              streak_days: data.streak_days,
+              nextRewardText: nextRewardText
+            };
+            if (this.checkinToastTimer) clearTimeout(this.checkinToastTimer);
+            this.checkinToastTimer = setTimeout(() => {
+              this.checkinToast.show = false;
+            }, 3000);
+          } else {
+            alert(response.data.message || '签到失败');
+            if (response.data.data && response.data.data.checked_in_today) {
+              this.checkinStatus.checked_in_today = true;
+            }
+          }
+        } catch (error) {
+          console.error('Checkin error:', error);
+          if (!this.handleAuthError(error)) {
+            alert('签到请求失败，请稍后重试');
+          }
+        } finally {
+          this.checkinLoading = false;
+        }
+      },
+
       async fetchUserRole() {
         if (!this.authToken) {
           this.userRole = '';

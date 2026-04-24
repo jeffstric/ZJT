@@ -53,6 +53,7 @@ class TestRunner:
             'stats': {'passed': 0, 'failed': 0, 'errors': 0},
             'drivers': {'passed': 0, 'failed': 0, 'errors': 0},
             'driver_integration': {'passed': 0, 'failed': 0, 'errors': 0},
+            'llm': {'passed': 0, 'failed': 0, 'errors': 0},
             'total': {'passed': 0, 'failed': 0, 'errors': 0}
         }
         # 收集所有失败测试的详细信息

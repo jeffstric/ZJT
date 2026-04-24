@@ -61,7 +61,7 @@ class ImplementationPowerModel:
             power_config: 数据库中的 power_config 值（可能是字符串或字典）
 
         Returns:
-            解析后的字典，格式如 {"5": 38, "10": 70} 或 {"fixed": 100}
+            解析后的字典，格式如 {"5": 38, "10": 70, "modifiers": {...}} 或 {"fixed": 100}
         """
         if not power_config:
             return {}
@@ -161,6 +161,40 @@ class ImplementationPowerModel:
             return {}
         except Exception as e:
             logger.error(f"Failed to get all powers for {implementation_name}/{driver_key}: {e}")
+            return {}
+
+    @staticmethod
+    def get_modifiers(
+        implementation_name: str,
+        driver_key: str
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        获取某实现方的算力修饰符配置
+
+        Args:
+            implementation_name: 实现方名称
+            driver_key: DriverKey
+
+        Returns:
+            算力修饰符配置，格式如 {"image_mode": {"first_last_with_tail": 1.5, ...}, ...}
+        """
+        sql = """
+            SELECT power_config FROM implementation_power_config
+            WHERE implementation_name = %s AND driver_key = %s
+            LIMIT 1
+        """
+        params = (implementation_name, driver_key)
+
+        try:
+            result = execute_query(sql, params, fetch_one=True)
+            if result:
+                power_config = ImplementationPowerModel._parse_power_config(result.get('power_config'))
+                # 从 power_config 中提取 modifiers 字段
+                if 'modifiers' in power_config and isinstance(power_config['modifiers'], dict):
+                    return power_config['modifiers']
+            return {}
+        except Exception as e:
+            logger.error(f"Failed to get modifiers for {implementation_name}/{driver_key}: {e}")
             return {}
 
     @staticmethod

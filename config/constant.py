@@ -136,11 +136,20 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.SORA2_IMAGE_TO_VIDEO: DriverImplementation.SORA2_DUOMI_V1,     # 使用多米供应商的 Sora2 v1 版本
     
     # Kling 相关驱动
-    DriverKey.KLING_IMAGE_TO_VIDEO: DriverImplementation.KLING_DUOMI_V1,     # 使用多米供应商的 Kling v1 版本
+    DriverKey.KLING_IMAGE_TO_VIDEO: [
+        DriverImplementation.KLING_DUOMI_V1,          # 使用多米供应商的 Kling v1 版本
+        DriverImplementation.KLING_COMMON_SITE0_V1,   # 智剧通API Kling
+        DriverImplementation.KLING_COMMON_SITE1_V1,   # 通用聚合站点 1
+        DriverImplementation.KLING_COMMON_SITE2_V1,   # 通用聚合站点 2
+        DriverImplementation.KLING_COMMON_SITE3_V1,   # 通用聚合站点 3
+        DriverImplementation.KLING_COMMON_SITE4_V1,   # 通用聚合站点 4
+        DriverImplementation.KLING_COMMON_SITE5_V1,   # 通用聚合站点 5
+    ],
     
     # Gemini 相关驱动
     DriverKey.GEMINI_IMAGE_EDIT: [
         DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini v1 版本（标准版）
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,  # 智剧通API官方站点
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
@@ -149,6 +158,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     ],
     DriverKey.GEMINI_IMAGE_EDIT_PRO: [
         DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini v1 版本（Pro模型）
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,  # 智剧通API官方站点
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
@@ -157,16 +167,25 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     ],
     DriverKey.GEMINI_3_1_FLASH_IMAGE_EDIT: [
         DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Gemini 3.1 Flash 版本
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,  # 智剧通API官方站点
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
     ],
-    
+
     # VEO3 相关驱动
-    DriverKey.VEO3_IMAGE_TO_VIDEO: DriverImplementation.VEO3_DUOMI_V1,       # 使用多米供应商的 VEO3 v1 版本
-    
+    DriverKey.VEO3_IMAGE_TO_VIDEO: [
+        DriverImplementation.VEO3_DUOMI_V1,       # 使用多米供应商的 VEO3 v1 版本
+        DriverImplementation.VEO3_COMMON_SITE0_V1,  # 智剧通API VEO3
+        DriverImplementation.VEO3_COMMON_SITE1_V1,  # 通用聚合站点 1
+        DriverImplementation.VEO3_COMMON_SITE2_V1,  # 通用聚合站点 2
+        DriverImplementation.VEO3_COMMON_SITE3_V1,  # 通用聚合站点 3
+        DriverImplementation.VEO3_COMMON_SITE4_V1,  # 通用聚合站点 4
+        DriverImplementation.VEO3_COMMON_SITE5_V1,  # 通用聚合站点 5
+    ],
+
     # RunningHub 相关驱动
     DriverKey.LTX2_IMAGE_TO_VIDEO: DriverImplementation.LTX2_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2 v1 版本
     DriverKey.LTX2_3_IMAGE_TO_VIDEO: DriverImplementation.LTX2_3_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 v1 版本
@@ -178,6 +197,34 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     
     # Seedream 相关驱动
     DriverKey.SEEDREAM_TEXT_TO_IMAGE: DriverImplementation.SEEDREAM5_VOLCENGINE_V1,  # 使用火山引擎 Seedream 5.0 v1 版本
+
+    # Seedance 相关驱动
+    DriverKey.SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_1_5_PRO_VOLCENGINE_V1,  # 使用火山引擎 Seedance 1.5 Pro
+    DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_2_0_FAST_VOLCENGINE_V1,  # 使用火山引擎 Seedance 2.0 Fast
+    DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO: DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,  # 使用火山引擎 Seedance 2.0
+
+    # GPT Image 相关驱动
+    DriverKey.GPT_IMAGE_2: [
+        DriverImplementation.DUOMI_GPT_IMAGE_V1,  # 使用多米供应商的 GPT Image 2 版本
+        DriverImplementation.GPT_IMAGE_COMMON_SITE0_V1,  # ZJT API 站点0
+        DriverImplementation.GPT_IMAGE_COMMON_SITE1_V1,  # ZJT API 站点1
+        DriverImplementation.GPT_IMAGE_COMMON_SITE2_V1,  # ZJT API 站点2
+        DriverImplementation.GPT_IMAGE_COMMON_SITE3_V1,  # ZJT API 站点3
+        DriverImplementation.GPT_IMAGE_COMMON_SITE4_V1,  # ZJT API 站点4
+        DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1,  # ZJT API 站点5
+    ],
+
+    # Grok 相关驱动
+    DriverKey.GROK_IMAGE_TO_VIDEO: [
+        DriverImplementation.GROK_DUOMI_V1,         # 使用多米供应商的 Grok 版本
+        DriverImplementation.GROK_COMMON_SITE0_V1,  # ZJT API 站点0
+        DriverImplementation.GROK_COMMON_SITE1_V1,  # 通用聚合站点 1
+        DriverImplementation.GROK_COMMON_SITE2_V1,  # 通用聚合站点 2
+        DriverImplementation.GROK_COMMON_SITE3_V1,  # 通用聚合站点 3
+        DriverImplementation.GROK_COMMON_SITE4_V1,  # 通用聚合站点 4
+        DriverImplementation.GROK_COMMON_SITE5_V1,  # 通用聚合站点 5
+    ],
+
 }
 
 # 视频模型时长选项配置
@@ -399,7 +446,7 @@ CONFIG_KEY_MAX_LENGTH = SystemConfigConstants.CONFIG_KEY_MAX_LENGTH
 class SessionHistoryConstants:
     """会话历史配置相关常量"""
     MAX_HISTORY_MESSAGES = 100  # 最大历史消息数量（剧本创作需要较多上下文）
-    MIN_HISTORY_MESSAGES = 20   # 最小保留的历史消息数量（确保上下文连续性）
+    MIN_HISTORY_MESSAGES = 10   # 最小保留的历史消息数量（确保上下文连续性）
     TRUNCATION_KEEP_SYSTEM = True  # 截断时保留系统提示
 
 
@@ -419,3 +466,49 @@ GEMINI_URL_FORMATS = {
 class ExternalLinks:
     """外部链接常量"""
     USER_MANUAL_URL = 'https://bq3mlz1jiae.feishu.cn/wiki/W1h2wCK3mi1CgDk36LEcVqggnLe'  # 使用手册
+
+
+# LLM 模型和供应商常量
+class LLMVendor:
+    """LLM 供应商常量"""
+    JIEKOU = 'jiekou'      # 接口供应商（Gemini 模型）
+    ALIYUN = 'aliyun'      # 阿里云供应商（Qwen 模型）
+    OLLAMA = 'ollama'      # 本地运行供应商（Ollama 模型）
+    VOLCENGINE = 'volcengine'  # 火山引擎供应商（Doubao 模型）
+    CLAUDE = 'claude'      # Claude 供应商（Anthropic 模型）
+    ZJT_API = 'zjt_api'    # ZJT API 供应商（Qwen3.5/3.6 模型）
+
+
+class LLMModel:
+    """LLM 模型名称常量"""
+    # Gemini 模型
+    GEMINI_3_FLASH = 'gemini-3-flash-preview'
+    GEMINI_3_1_PRO = 'gemini-3.1-pro-preview'
+
+    # Qwen 模型
+    QWEN_3_5_PLUS = 'qwen3.5-plus'
+    QWEN_3_6_PLUS = 'qwen3.6-plus'
+    QWEN_PLUS = 'qwen-plus'
+
+    # Ollama 模型
+    OLLAMA_QWEN_3_6_35B = 'qwen3.6:35b-a3b'
+
+    # Doubao 模型
+    DOUBAO_SEED_2_0_PRO = 'doubao-seed-2-0-pro'
+    DOUBAO_SEED_2_0_LITE = 'doubao-seed-2-0-lite'
+
+    # Claude 模型
+    CLAUDE_HAIKU_4_5 = 'claude-haiku-4-5'
+
+
+# 模型前缀 -> 供应商映射（用于 LLMClientFactory 路由）
+MODEL_PREFIX_VENDOR_MAP = {
+    'gemini': LLMVendor.JIEKOU,
+    'qwen': LLMVendor.ALIYUN,
+    'gpt': LLMVendor.ALIYUN,
+    'claude': LLMVendor.CLAUDE,
+    'ollama': LLMVendor.OLLAMA,
+    'doubao': LLMVendor.VOLCENGINE,
+    'qwen3.5': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.5 Plus 模型
+    'qwen3.6': LLMVendor.ZJT_API,  # ZJT API 的 Qwen 3.6 Plus 模型
+}

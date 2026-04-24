@@ -3,14 +3,13 @@
     // 通用函数：根据 driver 状态禁用 select 选项
     function applyDriverStatusToSelect(selectEl) {
       if(!selectEl) return;
-      
+
       const driverStatus = getDriverStatusConfig();
-      const modelTaskTypeMap = getModelTaskTypeMap();
-      
+
       if(!driverStatus || Object.keys(driverStatus).length === 0) return;
-      
+
       selectEl.querySelectorAll('option').forEach(option => {
-        const taskType = modelTaskTypeMap[option.value];
+        const taskType = window.TaskConfig ? window.TaskConfig.getTaskIdByKey(option.value) : null;
         if(taskType && driverStatus[taskType] && driverStatus[taskType].available === false) {
           option.disabled = true;
           if(!option.textContent.includes('(未配置)')) {
@@ -19,17 +18,16 @@
         }
       });
     }
-    
+
     // 检查指定模型是否可用
     function isModelAvailable(modelValue) {
       const driverStatus = getDriverStatusConfig();
-      const modelTaskTypeMap = getModelTaskTypeMap();
-      
+
       if(!driverStatus || Object.keys(driverStatus).length === 0) return true;
-      
-      const taskType = modelTaskTypeMap[modelValue];
+
+      const taskType = window.TaskConfig ? window.TaskConfig.getTaskIdByKey(modelValue) : null;
       if(!taskType) return true;
-      
+
       return driverStatus[taskType]?.available !== false;
     }
     
@@ -2447,12 +2445,15 @@
         group.appendChild(hitbox);
         group.appendChild(path);
         connectionsSvg.appendChild(group);
-        
+
+        // 保存连接ID到元素上，避免闭包问题
+        const connId = conn.id;
+
         // 点击选中
         hitbox.addEventListener('click', (e) => {
           e.stopPropagation();
           state.selectedConnId = null;
-          state.selectedImgConnId = conn.id;
+          state.selectedImgConnId = connId;  // 使用保存的connId
           renderConnections();
           renderImageConnections();
           renderFirstFrameConnections();
@@ -2478,6 +2479,11 @@
           connDeleteBtn.style.left = (screenX - 12) + 'px';
           connDeleteBtn.style.top = (screenY - 12) + 'px';
         }
+      }
+
+      // 如果没有连接被选中，隐藏删除按钮
+      if(state.selectedImgConnId === null) {
+        connDeleteBtn.style.display = 'none';
       }
     }
 
@@ -3179,8 +3185,33 @@
         const videoModel = node.data.videoModel || 'sora2';
         const duration = node.data.duration || 10;
 
-        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
-        return TaskConfig.getComputingPower(videoModel, duration);
+        // 构建context，用于算力修饰符计算（支持首尾帧模式）
+        const context = {};
+        const imageMode = node.data.imageMode || 'first_last_frame';
+
+        if (imageMode === 'first_last_frame') {
+          // 判断是否同时存在首帧和尾帧（兼容直接上传和节点连接两种方式）
+          const hasStartFile = !!node.data.startFile;
+          const hasStartUrl = !!node.data.startUrl;
+          const hasStartConnection = state.imageConnections.some(c => c.to === id && c.portType === 'start');
+          const hasStartImage = hasStartFile || hasStartUrl || hasStartConnection;
+
+          const hasEndFile = !!node.data.endFile;
+          const hasEndUrl = !!node.data.endUrl;
+          const hasEndConnection = state.imageConnections.some(c => c.to === id && c.portType === 'end');
+          const hasEndImage = hasEndFile || hasEndUrl || hasEndConnection;
+
+          if (hasStartImage && hasEndImage) {
+            context['image_mode'] = 'first_last_with_tail';
+          } else {
+            context['image_mode'] = 'first_last_frame';
+          }
+        } else {
+          context['image_mode'] = imageMode;
+        }
+
+        // 使用 TaskConfig API 动态获取算力，并传递context以应用修饰符
+        return TaskConfig.getComputingPower(videoModel, duration, context);
       }
       
       // 更新算力显示
@@ -3188,13 +3219,18 @@
         const singlePower = calculateComputingPower();
         const count = node.data.drawCount || 1;
         const totalPower = singlePower * count;
-        
+
         if(computingPowerValue) {
           computingPowerValue.textContent = `${totalPower} 算力`;
         }
         if(computingPowerDetail) {
           computingPowerDetail.textContent = `单个 ${singlePower} 算力 × ${count} 个 = ${totalPower} 算力`;
         }
+      }
+
+      // 保存更新函数的引用到元素上，便于外部调用
+      if(!el._updateComputingPowerDisplay) {
+        el._updateComputingPowerDisplay = updateComputingPowerDisplay;
       }
       
       durationSelect.addEventListener('change', () => {
@@ -3804,8 +3840,11 @@
                 to: id,
                 portType: 'start'
               });
+              // 从源图片节点获取URL并设置到目标节点（即使URL为空也要设置）
+              node.data.startUrl = fromNode.data.url || '';
               renderImageConnections();
               renderVideoConnections();
+              updateComputingPowerDisplay();  // 更新算力显示
             }
           }
         }
@@ -3844,8 +3883,11 @@
                 to: id,
                 portType: 'end'
               });
+              // 从源图片节点获取URL并设置到目标节点（即使URL为空也要设置）
+              node.data.endUrl = fromNode.data.url || '';
               renderImageConnections();
               renderVideoConnections();
+              updateComputingPowerDisplay();  // 更新算力显示
             }
           }
         }
@@ -3919,12 +3961,12 @@
       startFileEl.addEventListener('change', async () => {
         const file = startFileEl.files && startFileEl.files[0];
         if(!file) return;
-        
+
         // 先显示本地预览
         const localPreview = await readFileAsDataUrl(file);
         startPreviewImg.src = localPreview;
         startPreviewRow.style.display = 'flex';
-        
+
         // 上传到服务器获取永久URL
         const uploadedUrl = await uploadFile(file);
         if(uploadedUrl){
@@ -3936,6 +3978,7 @@
           startImagePort.classList.add('disabled');
           renderImageConnections();
           renderVideoConnections();
+          updateComputingPowerDisplay();  // 更新算力显示
           showToast('首帧图片上传成功', 'success');
         } else {
           startPreviewRow.style.display = 'none';
@@ -3947,12 +3990,12 @@
       endFileEl.addEventListener('change', async () => {
         const file = endFileEl.files && endFileEl.files[0];
         if(!file) return;
-        
+
         // 先显示本地预览
         const localPreview = await readFileAsDataUrl(file);
         endPreviewImg.src = localPreview;
         endPreviewRow.style.display = 'flex';
-        
+
         // 上传到服务器获取永久URL
         const uploadedUrl = await uploadFile(file);
         if(uploadedUrl){
@@ -3964,6 +4007,7 @@
           endImagePort.classList.add('disabled');
           renderImageConnections();
           renderVideoConnections();
+          updateComputingPowerDisplay();  // 更新算力显示
           showToast('尾帧图片上传成功', 'success');
         } else {
           endPreviewRow.style.display = 'none';
@@ -3980,6 +4024,7 @@
         startPreviewRow.style.display = 'none';
         startPreviewImg.removeAttribute('src');
         startImagePort.classList.remove('disabled');
+        updateComputingPowerDisplay();  // 更新算力显示
       });
 
       endClearBtn.addEventListener('click', (e) => {
@@ -3990,6 +4035,7 @@
         endPreviewRow.style.display = 'none';
         endPreviewImg.removeAttribute('src');
         endImagePort.classList.remove('disabled');
+        updateComputingPowerDisplay();  // 更新算力显示
       });
 
       // 初始化：恢复已保存的图片预览
@@ -4586,17 +4632,41 @@
         const file = imageFileEl.files && imageFileEl.files[0];
         if(!file) return;
         node.data.file = file;
-        
+
         const localPreview = await readFileAsDataUrl(file);
         imagePreviewImg.src = localPreview;
         imagePreviewRow.style.display = 'flex';
-        
+
         const uploadedUrl = await uploadFile(file);
         if(uploadedUrl){
           node.data.url = uploadedUrl;
           node.data.name = file.name;
           node.data.preview = uploadedUrl;
           imagePreviewImg.src = proxyImageUrl(uploadedUrl);
+
+          // 通知所有连接到此图片节点的图生视频节点更新算力显示
+          const imageConnections = state.imageConnections.filter(c => c.from === id);
+          for(const conn of imageConnections){
+            const targetNode = state.nodes.find(n => n.id === conn.to);
+            if(targetNode && targetNode.type === 'image_to_video'){
+              const targetEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+              if(targetEl){
+                // 更新目标节点的URL
+                if(conn.portType === 'start'){
+                  targetNode.data.startUrl = uploadedUrl;
+                } else if(conn.portType === 'end'){
+                  targetNode.data.endUrl = uploadedUrl;
+                }
+
+                // 触发目标节点的算力更新
+                const updateFn = targetEl._updateComputingPowerDisplay;
+                if(typeof updateFn === 'function') {
+                  updateFn();
+                }
+              }
+            }
+          }
+
           showToast('图片上传成功', 'success');
           try{ autoSaveWorkflow(); } catch(e){}
         } else {
@@ -5088,49 +5158,107 @@
       // 动态填充视频模型选项
       function populateScriptVideoModelOptions() {
         if(!videoModelSelect) return;
-        
-        videoModelSelect.innerHTML = '';
-        
-        // 从后端配置获取第一个视频模型作为默认值
-        let firstVideoModelValue = 'wan22';
-        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
-          const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-          if(options.length > 0) firstVideoModelValue = options[0].value;
-          options.forEach(opt => {
-            const optEl = document.createElement('option');
-            optEl.value = opt.value;
-            optEl.textContent = opt.label;
-            videoModelSelect.appendChild(optEl);
-          });
-        } else {
-          // 回退：硬编码选项
-          const fallbackOptions = [
-            { value: 'wan22', label: 'Wan2.2' },
-            { value: 'sora2', label: 'Sora2' },
-            { value: 'ltx2', label: 'LTX2.0' },
-            { value: 'kling', label: '可灵' },
-            { value: 'vidu', label: 'Vidu' },
-            { value: 'veo3', label: 'VEO3.1' }
-          ];
-          fallbackOptions.forEach(opt => {
-            const optEl = document.createElement('option');
-            optEl.value = opt.value;
-            optEl.textContent = opt.label;
-            videoModelSelect.appendChild(optEl);
-          });
+
+        function renderOptions() {
+          if(!videoModelSelect) return;
+          videoModelSelect.innerHTML = '';
+
+          // 从后端配置获取第一个视频模型作为默认值
+          let firstVideoModelValue = 'wan22';
+          if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+            // 使用 getAllTasks 获取完整任务数据（含 provider 字段）
+            const allTasks = window.TaskConfig.getAllTasks();
+            const tasks = allTasks.filter(t =>
+              !t.hidden &&
+              (t.category === 'image_to_video' || t.categories?.includes('image_to_video'))
+            );
+
+            // 从 providers 获取显示名称映射（动态来自后端，无硬编码）
+            const providers = window.TaskConfig.getProviders() || {};
+            const providerIcons = { duomi: '☁️', runninghub: '🚀', vidu: '🎬', volcengine: '🌋', local: '💻' };
+
+            // 按 provider 分组
+            const providerGroups = {};
+            const providerOrder = [];
+
+            tasks.forEach(task => {
+              const provider = task.provider || 'unknown';
+              if (!providerGroups[provider]) {
+                providerGroups[provider] = [];
+                providerOrder.push(provider);
+              }
+              providerGroups[provider].push(task);
+            });
+
+            // 按 provider 分组渲染
+            providerOrder.forEach(provider => {
+              const optGroup = document.createElement('optgroup');
+              const icon = providerIcons[provider] || '📦';
+              const providerName = providers[provider] || provider;
+              optGroup.label = `${icon} ${providerName}`;
+
+              providerGroups[provider].forEach(task => {
+                // 复用 getModelOptionsForCategory 的 shortKey 提取逻辑
+                const shortKey = task.key.replace(/_image_to_video|_text_to_video|_text_to_image|_image_edit/g, '');
+                const power = typeof task.computing_power === 'object'
+                  ? Object.values(task.computing_power)[0]
+                  : task.computing_power;
+                const optEl = document.createElement('option');
+                optEl.value = shortKey;
+                optEl.textContent = `${task.name} (${power}算力)`;
+                optGroup.appendChild(optEl);
+              });
+
+              videoModelSelect.appendChild(optGroup);
+            });
+
+            // 获取第一个可用值
+            if(providerOrder.length > 0 && providerGroups[providerOrder[0]].length > 0) {
+              const firstTask = providerGroups[providerOrder[0]][0];
+              const shortKey = firstTask.key.replace(/_image_to_video|_text_to_video|_text_to_image|_image_edit/g, '');
+              firstVideoModelValue = shortKey;
+            }
+          } else {
+            // 回退：硬编码选项
+            const fallbackOptions = [
+              { value: 'wan22', label: 'Wan2.2' },
+              { value: 'sora2', label: 'Sora2' },
+              { value: 'ltx2', label: 'LTX2.0' },
+              { value: 'kling', label: '可灵' },
+              { value: 'vidu', label: 'Vidu' },
+              { value: 'veo3', label: 'VEO3.1' }
+            ];
+            fallbackOptions.forEach(opt => {
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              videoModelSelect.appendChild(optEl);
+            });
+          }
+
+          // 恢复之前的选择，默认使用后端配置的第一个模型（与分镜组节点和图生图片节点一致）
+          const currentValue = node.data.videoModel || firstVideoModelValue;
+          const selectedOption = videoModelSelect.querySelector(`option[value="${currentValue}"]`);
+          if(selectedOption) {
+            videoModelSelect.value = currentValue;
+          } else {
+            videoModelSelect.value = firstVideoModelValue;
+            node.data.videoModel = firstVideoModelValue;
+          }
         }
-        
-        // 恢复之前的选择，默认使用后端配置的第一个模型（与分镜组节点和图生图片节点一致）
-        const currentValue = node.data.videoModel || firstVideoModelValue;
-        const selectedOption = videoModelSelect.querySelector(`option[value="${currentValue}"]`);
-        if(selectedOption) {
-          videoModelSelect.value = currentValue;
+
+        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          renderOptions();
+        } else if(window.TaskConfig) {
+          videoModelSelect.innerHTML = '<option value="">加载中...</option>';
+          window.TaskConfig.onLoaded(() => {
+            renderOptions();
+          });
         } else {
-          videoModelSelect.value = firstVideoModelValue;
-          node.data.videoModel = firstVideoModelValue;
+          renderOptions();
         }
       }
-      
+
       // 初始化视频模型
       populateScriptVideoModelOptions();
       
@@ -5236,25 +5364,44 @@
       }
 
       // 动态填充宫格生图模型选项
-      if(gridModelSelect) {
-        gridModelSelect.innerHTML = '<option value="auto" selected>智能模式 (根据分镜数自动选择)</option>';
+      function populateScriptGridModelOptions() {
+        if(!gridModelSelect) return;
+
+        function renderOptions() {
+          if(!gridModelSelect) return;
+          gridModelSelect.innerHTML = '<option value="auto" selected>智能模式 (根据分镜数自动选择)</option>';
+          if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+            const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
+            options.forEach(opt => {
+              // 过滤掉不支持宫格生图的模型
+              if (!opt.supportsGridImage) return;
+              const optEl = document.createElement('option');
+              optEl.value = opt.value;
+              optEl.textContent = opt.label;
+              gridModelSelect.appendChild(optEl);
+            });
+          } else {
+            gridModelSelect.innerHTML += `
+              <option value="gemini_pro">加强版 (9宫格)</option>
+              <option value="seedream-5.0">Seedream 5.0</option>
+            `;
+          }
+        }
+
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
-          const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
-          options.forEach(opt => {
-            // 过滤掉不支持宫格生图的模型
-            if (!opt.supportsGridImage) return;
-            const optEl = document.createElement('option');
-            optEl.value = opt.value;
-            optEl.textContent = opt.label;
-            gridModelSelect.appendChild(optEl);
+          renderOptions();
+        } else if(window.TaskConfig) {
+          gridModelSelect.innerHTML = '<option value="auto" selected>智能模式 (根据分镜数自动选择)</option>';
+          window.TaskConfig.onLoaded(() => {
+            renderOptions();
           });
         } else {
-          gridModelSelect.innerHTML += `
-            <option value="gemini_pro">加强版 (9宫格)</option>
-            <option value="seedream-5.0">Seedream 5.0</option>
-          `;
+          renderOptions();
         }
       }
+
+      // 初始化宫格生图模型
+      populateScriptGridModelOptions();
       
       // 初始化节点数据中的最大时长和选项
       node.data.maxGroupDuration = 15;

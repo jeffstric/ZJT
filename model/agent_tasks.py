@@ -25,6 +25,8 @@ class AgentTaskEntity:
         self.auth_token = kwargs.get('auth_token', '')
         self.vendor_id = kwargs.get('vendor_id')
         self.model_id = kwargs.get('model_id')
+        self.enable_thinking = kwargs.get('enable_thinking', False)
+        self.thinking_effort = kwargs.get('thinking_effort', 'medium')
         self.status = kwargs.get('status', 'pending')
         self.progress = kwargs.get('progress', 0.0)
         self.current_step = kwargs.get('current_step', '')
@@ -56,6 +58,8 @@ class AgentTaskEntity:
             'auth_token': self.auth_token,
             'vendor_id': self.vendor_id,
             'model_id': self.model_id,
+            'enable_thinking': self.enable_thinking,
+            'thinking_effort': self.thinking_effort,
             'status': self.status,
             'progress': self.progress,
             'current_step': self.current_step,
@@ -80,6 +84,8 @@ class AgentTasksModel:
         auth_token: str = '',
         vendor_id: Optional[int] = None,
         model_id: Optional[int] = None,
+        enable_thinking: bool = False,
+        thinking_effort: str = 'medium',
         status: str = 'pending'
     ) -> int:
         """
@@ -91,11 +97,13 @@ class AgentTasksModel:
         sql = """
             INSERT INTO agent_tasks
             (task_id, session_id, user_id, world_id, user_message,
-             auth_token, vendor_id, model_id, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             auth_token, vendor_id, model_id, enable_thinking, thinking_effort, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
+        # enable_thinking: bool/str -> str（数据库存字符串，支持 true/false/auto）
+        enable_thinking_str = str(enable_thinking).lower() if isinstance(enable_thinking, bool) else str(enable_thinking)
         params = (task_id, session_id, user_id, world_id, user_message,
-                  auth_token, vendor_id, model_id, status)
+                  auth_token, vendor_id, model_id, enable_thinking_str, thinking_effort, status)
 
         try:
             record_id = execute_insert(sql, params)
@@ -217,6 +225,30 @@ class AgentTasksModel:
             raise
 
     @staticmethod
+    def get_latest_by_session(session_id: str) -> Optional[AgentTaskEntity]:
+        """
+        获取会话的最新任务
+
+        Returns:
+            最新的 AgentTaskEntity 对象或 None
+        """
+        sql = """
+            SELECT * FROM agent_tasks
+            WHERE session_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+        """
+
+        try:
+            result = execute_query(sql, (session_id,), fetch_one=True)
+            if result:
+                return AgentTaskEntity(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get latest task for session {session_id}: {e}")
+            raise
+
+    @staticmethod
     def delete_old_tasks(max_age_hours: int = 24) -> int:
         """
         Delete old completed/failed/cancelled tasks
@@ -251,6 +283,8 @@ CREATE TABLE IF NOT EXISTS `agent_tasks` (
   `auth_token` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Authentication token',
   `vendor_id` int DEFAULT NULL COMMENT 'Vendor ID',
   `model_id` int DEFAULT NULL COMMENT 'Model ID',
+  `enable_thinking` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'false' COMMENT 'Thinking mode: true/false/auto',
+  `thinking_effort` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT 'medium' COMMENT 'Thinking effort level (low/medium/high)',
   `status` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending' COMMENT 'Task status: pending/running/waiting_human/completed/failed/cancelled',
   `progress` float NOT NULL DEFAULT '0' COMMENT 'Task progress 0-1',
   `current_step` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT '' COMMENT 'Current step description',

@@ -162,7 +162,7 @@ class KlingDuomiV1Driver(BaseVideoDriver):
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         构建创建 Kling 任务的完整请求参数
-        
+
         支持三种图片模式：
         - first_last_frame: 首尾帧模式（使用首帧图片）
         - multi_reference: 多参考图模式（暂不支持，使用第一张参考图）
@@ -174,25 +174,20 @@ class KlingDuomiV1Driver(BaseVideoDriver):
         Returns:
             Dict[str, Any]: 请求参数字典
         """
-        # 固定使用标准模式 (std)
-        mode = "std"
-
         # 解析图片模式
         image_info = self.get_all_images_by_mode(ai_tool)
         img_mode = image_info['mode']
         first_frame = image_info['first_frame']
         last_frame = image_info['last_frame']
         reference_images = image_info['reference_images']
-        
+
         self.logger.info(f"Kling 驱动图片模式: {img_mode}, 首帧: {first_frame}, 参考图: {len(reference_images)}张")
-        
+
         # 根据模式获取图片
         image_path = None
         if img_mode == ImageMode.FIRST_LAST_FRAME:
-            # 首尾帧模式：仅使用首帧
+            # 首尾帧模式：使用首帧，支持尾帧
             image_path = first_frame
-            if last_frame:
-                self.logger.warning(f"Kling 不支持尾帧，已忽略尾帧")
         elif img_mode == ImageMode.MULTI_REFERENCE:
             # 多参考图模式：使用第一张参考图
             if reference_images:
@@ -200,21 +195,27 @@ class KlingDuomiV1Driver(BaseVideoDriver):
                 if len(reference_images) > 1:
                     self.logger.warning(f"Kling 不支持多参考图模式，仅使用第一张参考图")
         elif img_mode == ImageMode.FIRST_LAST_WITH_REF:
-            # 首尾帧+参考图模式：仅使用首帧，忽略尾帧和参考图
+            # 首尾帧+参考图模式：使用首帧和尾帧，忽略参考图
             image_path = first_frame
-            if last_frame or reference_images:
-                self.logger.warning(f"Kling 不支持尾帧和参考图，仅使用首帧")
-        
+
         if not image_path:
             raise ValueError("Kling 任务需要至少1张图片")
 
         # 处理图片路径 - 如果是本地环境，上传到图床
         if self._is_local:
-            self.logger.info(f"本地环境检测到图片路径，准备上传到图床: {image_path}")
-            cdn_urls = upload_local_images_to_cdn_sync([image_path], self._config)
+            images_to_upload = [image_path]
+            if last_frame:
+                images_to_upload.append(last_frame)
+            self.logger.info(f"本地环境检测到图片路径，准备上传到图床: {images_to_upload}")
+            cdn_urls = upload_local_images_to_cdn_sync(images_to_upload, self._config)
             self.logger.info(f"图片上传完成，CDN链接: {cdn_urls}")
             if cdn_urls and cdn_urls[0]:
                 image_path = cdn_urls[0]
+                if last_frame and len(cdn_urls) > 1 and cdn_urls[1]:
+                    last_frame = cdn_urls[1]
+
+        # 根据是否存在尾帧，动态选择模式
+        mode = "pro" if last_frame else "std"
 
         payload = {
             "model_name": "kling-v2-5-turbo",
@@ -224,6 +225,10 @@ class KlingDuomiV1Driver(BaseVideoDriver):
             "duration": ai_tool.duration or 5,
             "cfg_scale": 0.5
         }
+
+        # 如果有尾帧，添加 image_tail 参数
+        if last_frame:
+            payload["image_tail"] = last_frame
 
         return {
             "url": f"{self._base_url}/api/video/kling/v1/videos/image2video",
