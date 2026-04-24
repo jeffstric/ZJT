@@ -3,7 +3,7 @@
 # Python 3.10 + FastAPI + MySQL 8.0
 # =============================================================================
 
-FROM python:3.10-slim
+FROM m.daocloud.io/docker.io/library/python:3.10-slim
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
