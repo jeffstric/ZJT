@@ -15,3 +15,9 @@ files/script_writer/*
 files/tmp/*
 bin
 build/*
+test-results.xml
+uv.lock
+dist/*
+*.zip
+.claude/
+*.spec

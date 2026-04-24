@@ -219,6 +219,58 @@ class TestImplementationConfig(unittest.TestCase):
         self.assertEqual(d['default_computing_power'], 5)
         self.assertTrue(d['enabled'])
 
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_get_computing_power_with_driver_key_db_override(self, mock_model):
+        """传入 driver_key 时应使用数据库配置的算力覆盖值"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        impl = UnifiedConfigRegistry.get_implementation('test_impl_dict_power')
+        mock_model.get_all_powers_for_implementation.return_value = {5: 99, 10: 199}
+
+        result = impl.get_computing_power(duration=5, driver_key='TEST_DRIVER')
+
+        self.assertEqual(result, 99)
+        mock_model.get_all_powers_for_implementation.assert_called_once_with(
+            'test_impl_dict_power', 'TEST_DRIVER'
+        )
+
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_get_computing_power_with_driver_key_and_duration(self, mock_model):
+        """数据库有对应时长的配置时应正确返回"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        impl = UnifiedConfigRegistry.get_implementation('test_impl_dict_power')
+        mock_model.get_all_powers_for_implementation.return_value = {5: 88}
+
+        result = impl.get_computing_power(duration=5, driver_key='TEST_DRIVER')
+
+        self.assertEqual(result, 88)
+
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_get_computing_power_without_driver_key_uses_legacy_path(self, mock_model):
+        """未传 driver_key 时应走旧的 get_power 路径（向后兼容）"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        impl = UnifiedConfigRegistry.get_implementation('test_impl')
+        mock_model.get_power.return_value = 42
+
+        result = impl.get_computing_power()
+
+        self.assertEqual(result, 42)
+        mock_model.get_power.assert_called_once_with('test_impl', None)
+
+    @patch('model.implementation_power.ImplementationPowerModel')
+    def test_get_computing_power_db_empty_powers_falls_back(self, mock_model):
+        """数据库返回空配置时应回退到代码默认值"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        impl = UnifiedConfigRegistry.get_implementation('test_impl_dict_power')
+        mock_model.get_all_powers_for_implementation.return_value = {}
+
+        result = impl.get_computing_power(duration=5, driver_key='TEST_DRIVER')
+
+        self.assertEqual(result, 10)
+
 
 class TestUnifiedTaskConfigComputingPower(unittest.TestCase):
     """UnifiedTaskConfig 算力获取测试"""

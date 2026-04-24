@@ -45,8 +45,12 @@ volcengine:
 
 # 适配云雾 comfly这类聚合站
 api_aggregator:
+  site_0:
+    base_url: "https://yw.perseids.cn"  # 固定YWAPI官方站点，base_url不可修改
+    api_key: ""  # API 聚合器 API Key
+    name: "zjtapi"
   site_1:
-    base_url: "https://yunwu.ai"  # API 基础 URL（根据实际中转站配置）
+    base_url: "https://yw.perseids.cn"  # API 基础 URL（根据实际中转站配置）
     api_key: ""  # API 聚合器 API Key
     name: "yunwu"
   site_2:
@@ -86,6 +90,20 @@ llm:
   google:
     api_key: ""
     gemini_base_url: "https://api.jiekou.ai"
+  claude:
+    api_key: ""
+    base_url: "https://api.jiekou.ai/openai"
+  ollama:
+    enabled: false  # 是否启用 Ollama 本地模型
+    base_url: "http://192.168.10.191:11434"  # Ollama 服务地址
+    # 模型参数配置
+    temperature: 0.7  # 温度参数 (0.0-2.0)
+    top_p: 0.8  # 核采样概率 (0.0-1.0)
+    top_k: 20  # Top-K 采样
+    min_p: 0.0  # 最小概率阈值
+    presence_penalty: 1.5  # 存在惩罚
+    repetition_penalty: 1.0  # 重复惩罚
+    enable_thinking: false  # 是否启用思维链（部分模型支持）
 
 tts:
   api_url: "http://47.98.190.124"
@@ -110,6 +128,11 @@ upload:
 
 frontend:
   debug_password: "123"
+  # 前端静态资源缓存失效开关
+  # enabled: true 时，HTML 中的 js/css 引用会自动添加 ?v={version_hash} 参数
+  # 用于上线后强制浏览器重新加载新版本的前端资源
+  cache_bust:
+    enabled: true
 
 
 image:
@@ -137,3 +160,14 @@ file_storage:
 
 zjt:
   token: ""
+
+# 每日签到配置
+checkin:
+  enabled: false                     # 是否启用每日签到功能
+  base_reward: 6                   # 每日签到基础奖励算力
+  streak_bonus_enabled: true        # 是否启用连续签到额外奖励
+  streak_bonus_config:              # 连续签到奖励配置，键为连续天数，值为额外奖励算力
+    3: 12
+    7: 18
+    14: 24
+    30: 30

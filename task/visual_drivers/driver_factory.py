@@ -137,6 +137,54 @@ class VideoDriverFactory:
             return None
 
     @classmethod
+    def create_driver_by_implementation(cls, implementation_name: str) -> Optional[BaseVideoDriver]:
+        """
+        根据实现方名称直接创建驱动实例
+        用于状态查询时，确保使用任务提交时的相同实现方
+
+        Args:
+            implementation_name: 实现方名称（如 'grok_duomi_v1'）
+
+        Returns:
+            BaseVideoDriver: 驱动实例，如果未注册则返回 None
+        """
+        cls._last_create_error = None
+
+        driver_class = cls._registered_drivers.get(implementation_name)
+        if not driver_class:
+            logger.error(f"Driver implementation not registered: {implementation_name}")
+            cls._last_create_error = {
+                "reason": "NOT_REGISTERED",
+                "message": f"驱动 {implementation_name} 未注册"
+            }
+            return None
+
+        # 获取驱动参数
+        driver_params = {}
+        impl_config = UnifiedConfigRegistry.get_implementation(implementation_name)
+        if impl_config and impl_config.driver_params:
+            driver_params = impl_config.driver_params.copy()
+
+        try:
+            logger.info(f"Creating driver by implementation: {implementation_name}")
+            return driver_class(**driver_params)
+        except DriverConfigError as e:
+            logger.warning(f"Driver {implementation_name} 配置不完整: {e.message}")
+            cls._last_create_error = {
+                "reason": "CONFIG_MISSING",
+                "message": f"驱动配置不完整，缺少: {', '.join(e.missing_configs)}",
+                "missing_configs": e.missing_configs
+            }
+            return None
+        except Exception as e:
+            logger.error(f"Failed to create driver instance for {implementation_name}: {str(e)}")
+            cls._last_create_error = {
+                "reason": "CREATE_FAILED",
+                "message": f"驱动创建失败: {str(e)}"
+            }
+            return None
+
+    @classmethod
     def get_last_create_error(cls) -> Optional[Dict[str, Any]]:
         """
         获取最近一次创建驱动失败的详细原因
@@ -345,13 +393,64 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.SORA2_DUOMI_V1, Sora2DuomiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Sora2DuomiV1Driver: {e}")
-    
+
+    try:
+        from .grok_duomi_v1_driver import GrokDuomiV1Driver
+        # 注册 Grok 多米供应商 v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.GROK_DUOMI_V1, GrokDuomiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GrokDuomiV1Driver: {e}")
+
     try:
         from .kling_duomi_v1_driver import KlingDuomiV1Driver
         # 注册 Kling 多米供应商 v1 版本
         VideoDriverFactory.register_driver(DriverImplementation.KLING_DUOMI_V1, KlingDuomiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import KlingDuomiV1Driver: {e}")
+
+    # Kling 通用聚合站点驱动注册（仅在配置存在时注册）
+    try:
+        from utils.config_checker import check_api_aggregator_config_exists
+    except ImportError:
+        logger.warning("无法导入配置检查工具，跳过Kling通用聚合站点驱动注册")
+        check_api_aggregator_config_exists = lambda site_id: False
+
+    try:
+        from .kling_common_v1_driver import (
+            KlingCommonSite0V1Driver,
+            KlingCommonSite1V1Driver,
+            KlingCommonSite2V1Driver,
+            KlingCommonSite3V1Driver,
+            KlingCommonSite4V1Driver,
+            KlingCommonSite5V1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import KlingCommon site drivers: {e}")
+        KlingCommonSite0V1Driver = None
+        KlingCommonSite1V1Driver = None
+        KlingCommonSite2V1Driver = None
+        KlingCommonSite3V1Driver = None
+        KlingCommonSite4V1Driver = None
+        KlingCommonSite5V1Driver = None
+
+    kling_common_sites = [
+        ('site_0', DriverImplementation.KLING_COMMON_SITE0_V1, KlingCommonSite0V1Driver),
+        ('site_1', DriverImplementation.KLING_COMMON_SITE1_V1, KlingCommonSite1V1Driver),
+        ('site_2', DriverImplementation.KLING_COMMON_SITE2_V1, KlingCommonSite2V1Driver),
+        ('site_3', DriverImplementation.KLING_COMMON_SITE3_V1, KlingCommonSite3V1Driver),
+        ('site_4', DriverImplementation.KLING_COMMON_SITE4_V1, KlingCommonSite4V1Driver),
+        ('site_5', DriverImplementation.KLING_COMMON_SITE5_V1, KlingCommonSite5V1Driver),
+    ]
+
+    for site_id, impl_name, driver_class in kling_common_sites:
+        if check_api_aggregator_config_exists(site_id):
+            if driver_class:
+                VideoDriverFactory.register_driver(impl_name, driver_class)
+                logger.info(f"已注册 Kling通用聚合 {site_id} 驱动: {impl_name}")
+            else:
+                logger.warning(f"Kling通用聚合 {site_id} 驱动类未找到，跳过注册")
+        else:
+            logger.info(f"Kling通用聚合 {site_id} 配置不存在或不完整，跳过驱动注册")
     
     try:
         from .gemini_duomi_v1_driver import GeminiDuomiV1Driver
@@ -361,11 +460,105 @@ def register_all_drivers():
         logger.warning(f"Failed to import GeminiDuomiV1Driver: {e}")
 
     try:
+        from .gpt_image_duomi_v1_driver import GptImageDuomiV1Driver
+        # 注册 GPT Image 多米供应商 v1 版本
+        VideoDriverFactory.register_driver(DriverImplementation.DUOMI_GPT_IMAGE_V1, GptImageDuomiV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GptImageDuomiV1Driver: {e}")
+
+    # GPT Image 2 通用聚合站点驱动注册
+    try:
+        from utils.config_checker import check_api_aggregator_config_exists
+    except ImportError:
+        logger.warning("无法导入配置检查工具，跳过GPT Image通用聚合站点驱动注册")
+        check_api_aggregator_config_exists = lambda site_id: False
+
+    try:
+        from .gpt_image_common_v1_driver import (
+            GptImageCommonSite0V1Driver,
+            GptImageCommonSite1V1Driver,
+            GptImageCommonSite2V1Driver,
+            GptImageCommonSite3V1Driver,
+            GptImageCommonSite4V1Driver,
+            GptImageCommonSite5V1Driver,
+        )
+        # 注册 GPT Image 通用聚合站点驱动（site_1 到 site_5）
+        if check_api_aggregator_config_exists("site_1"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE1_V1, GptImageCommonSite1V1Driver)
+        if check_api_aggregator_config_exists("site_2"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE2_V1, GptImageCommonSite2V1Driver)
+        if check_api_aggregator_config_exists("site_3"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE3_V1, GptImageCommonSite3V1Driver)
+        if check_api_aggregator_config_exists("site_4"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE4_V1, GptImageCommonSite4V1Driver)
+        if check_api_aggregator_config_exists("site_5"):
+            VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE5_V1, GptImageCommonSite5V1Driver)
+        # Site 0 固定站点，无需检查配置
+        VideoDriverFactory.register_driver(DriverImplementation.GPT_IMAGE_COMMON_SITE0_V1, GptImageCommonSite0V1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import GPT Image Common site drivers: {e}")
+
+    try:
         from .veo3_duomi_v1_driver import Veo3DuomiV1Driver
         # 注册 VEO3 多米供应商 v1 版本
         VideoDriverFactory.register_driver(DriverImplementation.VEO3_DUOMI_V1, Veo3DuomiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Veo3DuomiV1Driver: {e}")
+
+    # VEO3 通用聚合站点驱动注册（仅在配置存在时注册）
+    try:
+        from utils.config_checker import check_api_aggregator_config_exists
+    except ImportError:
+        logger.warning("无法导入配置检查工具，跳过VEO3通用聚合站点驱动注册")
+        check_api_aggregator_config_exists = lambda site_id: False
+
+    try:
+        from .veo3_common_v1_driver import (
+            Veo3CommonSite0V1Driver,
+            Veo3CommonSite1V1Driver,
+            Veo3CommonSite2V1Driver,
+            Veo3CommonSite3V1Driver,
+            Veo3CommonSite4V1Driver,
+            Veo3CommonSite5V1Driver
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import Veo3Common site drivers: {e}")
+        Veo3CommonSite0V1Driver = None
+        Veo3CommonSite1V1Driver = None
+        Veo3CommonSite2V1Driver = None
+        Veo3CommonSite3V1Driver = None
+        Veo3CommonSite4V1Driver = None
+        Veo3CommonSite5V1Driver = None
+
+    veo3_common_sites = [
+        ('site_0', DriverImplementation.VEO3_COMMON_SITE0_V1, 'Veo3CommonSite0V1Driver'),
+        ('site_1', DriverImplementation.VEO3_COMMON_SITE1_V1, 'Veo3CommonSite1V1Driver'),
+        ('site_2', DriverImplementation.VEO3_COMMON_SITE2_V1, 'Veo3CommonSite2V1Driver'),
+        ('site_3', DriverImplementation.VEO3_COMMON_SITE3_V1, 'Veo3CommonSite3V1Driver'),
+        ('site_4', DriverImplementation.VEO3_COMMON_SITE4_V1, 'Veo3CommonSite4V1Driver'),
+        ('site_5', DriverImplementation.VEO3_COMMON_SITE5_V1, 'Veo3CommonSite5V1Driver'),
+    ]
+
+    veo3_common_driver_classes = {
+        'site_0': Veo3CommonSite0V1Driver,
+        'site_1': Veo3CommonSite1V1Driver,
+        'site_2': Veo3CommonSite2V1Driver,
+        'site_3': Veo3CommonSite3V1Driver,
+        'site_4': Veo3CommonSite4V1Driver,
+        'site_5': Veo3CommonSite5V1Driver,
+    }
+
+    # 只为有配置的站点注册驱动
+    for site_id, impl_name, driver_class_name in veo3_common_sites:
+        if check_api_aggregator_config_exists(site_id):
+            driver_class = veo3_common_driver_classes.get(site_id)
+            if driver_class:
+                VideoDriverFactory.register_driver(impl_name, driver_class)
+                logger.info(f"已注册 VEO3通用聚合 {site_id} 驱动: {impl_name}")
+            else:
+                logger.warning(f"VEO3通用聚合 {site_id} 驱动类未找到，跳过注册")
+        else:
+            logger.info(f"VEO3通用聚合 {site_id} 配置不存在或不完整，跳过驱动注册")
     
     # 注册 API 聚合器站点驱动（仅在配置存在时注册）
     try:
@@ -375,24 +568,27 @@ def register_all_drivers():
         check_api_aggregator_config_exists = lambda site_id: False
     
     aggregator_sites = [
+        ('site_0', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1, 'GeminiImagePreviewSite0V1Driver'),
         ('site_1', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1, 'GeminiImagePreviewSite1V1Driver'),
         ('site_2', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1, 'GeminiImagePreviewSite2V1Driver'),
         ('site_3', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1, 'GeminiImagePreviewSite3V1Driver'),
         ('site_4', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1, 'GeminiImagePreviewSite4V1Driver'),
         ('site_5', DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1, 'GeminiImagePreviewSite5V1Driver'),
     ]
-    
+
     # 先导入所有站点驱动类
     try:
         from .gemini_image_preview_common_v1_driver import (
+            GeminiImagePreviewSite0V1Driver,
             GeminiImagePreviewSite1V1Driver,
             GeminiImagePreviewSite2V1Driver,
             GeminiImagePreviewSite3V1Driver,
             GeminiImagePreviewSite4V1Driver,
             GeminiImagePreviewSite5V1Driver
         )
-        
+
         site_driver_classes = {
+            'site_0': GeminiImagePreviewSite0V1Driver,
             'site_1': GeminiImagePreviewSite1V1Driver,
             'site_2': GeminiImagePreviewSite2V1Driver,
             'site_3': GeminiImagePreviewSite3V1Driver,
@@ -483,5 +679,49 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.QWEN_MULTI_ANGLE_RUNNINGHUB_V1, QwenMultiAngleRunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import QwenMultiAngleRunninghubV1Driver: {e}")
+
+    # Grok 通用聚合站点驱动注册（仅在配置存在时注册）
+    try:
+        from utils.config_checker import check_api_aggregator_config_exists
+    except ImportError:
+        logger.warning("无法导入配置检查工具，跳过Grok通用聚合站点驱动注册")
+        check_api_aggregator_config_exists = lambda site_id: False
+
+    try:
+        from .grok_common_v1_driver import (
+            GrokCommonSite0V1Driver,
+            GrokCommonSite1V1Driver,
+            GrokCommonSite2V1Driver,
+            GrokCommonSite3V1Driver,
+            GrokCommonSite4V1Driver,
+            GrokCommonSite5V1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import GrokCommon site drivers: {e}")
+        GrokCommonSite0V1Driver = None
+        GrokCommonSite1V1Driver = None
+        GrokCommonSite2V1Driver = None
+        GrokCommonSite3V1Driver = None
+        GrokCommonSite4V1Driver = None
+        GrokCommonSite5V1Driver = None
+
+    grok_common_sites = [
+        ('site_0', DriverImplementation.GROK_COMMON_SITE0_V1, GrokCommonSite0V1Driver),
+        ('site_1', DriverImplementation.GROK_COMMON_SITE1_V1, GrokCommonSite1V1Driver),
+        ('site_2', DriverImplementation.GROK_COMMON_SITE2_V1, GrokCommonSite2V1Driver),
+        ('site_3', DriverImplementation.GROK_COMMON_SITE3_V1, GrokCommonSite3V1Driver),
+        ('site_4', DriverImplementation.GROK_COMMON_SITE4_V1, GrokCommonSite4V1Driver),
+        ('site_5', DriverImplementation.GROK_COMMON_SITE5_V1, GrokCommonSite5V1Driver),
+    ]
+
+    for site_id, impl_name, driver_class in grok_common_sites:
+        if check_api_aggregator_config_exists(site_id):
+            if driver_class:
+                VideoDriverFactory.register_driver(impl_name, driver_class)
+                logger.info(f"已注册 Grok通用聚合 {site_id} 驱动: {impl_name}")
+            else:
+                logger.warning(f"Grok通用聚合 {site_id} 驱动类未找到，跳过注册")
+        else:
+            logger.info(f"Grok通用聚合 {site_id} 配置不存在或不完整，跳过驱动注册")
 
     logger.info(f"Registered {len(VideoDriverFactory.get_supported_drivers())} video drivers")

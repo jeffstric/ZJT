@@ -172,6 +172,42 @@ class VendorModelModel:
             raise
 
     @staticmethod
+    def get_by_vendor_id(vendor_id: int) -> List[VendorModel]:
+        """根据 vendor_id 获取所有供应商模型配置"""
+        sql = """SELECT id, vendor_id, model_id, created_at,
+               input_token_threshold, out_token_threshold as output_token_threshold, cache_read_threshold, raw_token_threshold
+               FROM vendor_model WHERE vendor_id = %s ORDER BY created_at DESC"""
+        try:
+            rows = execute_query(sql, (vendor_id,), fetch_all=True)
+            return [
+                VendorModel(
+                    id=row['id'],
+                    vendor_id=row['vendor_id'],
+                    model_id=row['model_id'],
+                    created_at=row['created_at'],
+                    input_token_threshold=row['input_token_threshold'],
+                    output_token_threshold=row['output_token_threshold'],
+                    cache_read_threshold=row['cache_read_threshold'],
+                    raw_token_threshold=row['raw_token_threshold']
+                )
+                for row in rows
+            ] if rows else []
+        except Exception as e:
+            logger.error(f"Failed to get vendor models by vendor_id {vendor_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_vendor_id_by_model_id(model_id: int) -> Optional[int]:
+        """根据 model_id 获取 vendor_id（假设每个 model_id 只关联一个供应商）"""
+        sql = "SELECT vendor_id FROM vendor_model WHERE model_id = %s LIMIT 1"
+        try:
+            row = execute_query(sql, (model_id,), fetch_one=True)
+            return row['vendor_id'] if row else None
+        except Exception as e:
+            logger.error(f"Failed to get vendor_id for model {model_id}: {e}")
+            return None
+
+    @staticmethod
     def delete(id: int) -> bool:
         """删除供应商模型配置"""
         sql = "DELETE FROM vendor_model WHERE id = %s"

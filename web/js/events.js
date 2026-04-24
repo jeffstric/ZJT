@@ -330,6 +330,24 @@
             fromNode.data.extractedImageNodeId = null;
           }
         }
+        // 如果删除的是图生视频节点的首尾帧连接，清除URL并更新算力
+        if(conn && conn.to) {
+          const targetNode = state.nodes.find(n => n.id === conn.to);
+          if(targetNode && targetNode.type === 'image_to_video'){
+            if(conn.portType === 'start') {
+              targetNode.data.startUrl = '';
+            } else if(conn.portType === 'end') {
+              targetNode.data.endUrl = '';
+            }
+            console.log(`[删除图片连接] 清除图生视频节点 ${conn.to} 的 ${conn.portType} URL，准备更新算力`);
+            // 更新目标节点的算力显示（使用canvas.js中定义的函数）
+            if(typeof updateImageToVideoComputingPower === 'function') {
+              updateImageToVideoComputingPower(conn.to);
+            } else {
+              console.log(`[删除图片连接] WARNING: updateImageToVideoComputingPower 函数不存在`);
+            }
+          }
+        }
         try{ autoSaveWorkflow(); } catch(e){}
       } else if(state.selectedFirstFrameConnId !== null){
         removeFirstFrameConnection(state.selectedFirstFrameConnId);
@@ -387,6 +405,24 @@
             const fromNode = state.nodes.find(n => n.id === conn.from);
             if(fromNode && fromNode.type === 'extract_frame'){
               fromNode.data.extractedImageNodeId = null;
+            }
+          }
+          // 如果删除的是图生视频节点的首尾帧连接，清除URL并更新算力
+          if(conn && conn.to) {
+            const targetNode = state.nodes.find(n => n.id === conn.to);
+            if(targetNode && targetNode.type === 'image_to_video'){
+              if(conn.portType === 'start') {
+                targetNode.data.startUrl = '';
+              } else if(conn.portType === 'end') {
+                targetNode.data.endUrl = '';
+              }
+              console.log(`[键盘删除图片连接] 清除图生视频节点 ${conn.to} 的 ${conn.portType} URL，准备更新算力`);
+              // 更新目标节点的算力显示（使用canvas.js中定义的函数）
+              if(typeof updateImageToVideoComputingPower === 'function') {
+                updateImageToVideoComputingPower(conn.to);
+              } else {
+                console.log(`[键盘删除图片连接] WARNING: updateImageToVideoComputingPower 函数不存在`);
+              }
             }
           }
           try{ autoSaveWorkflow(); } catch(e){}

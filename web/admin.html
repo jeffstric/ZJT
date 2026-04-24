@@ -54,6 +54,14 @@
                     </a>
                 </li>
                 <li>
+                    <a href="#" :class="{ active: currentPage === 'checkin' }" @click.prevent="switchPage('checkin')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                        <span>签到管理</span>
+                    </a>
+                </li>
+                <li>
                     <a href="#" :class="{ active: currentPage === 'implementations' }" @click.prevent="switchPage('implementations')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
@@ -71,6 +79,7 @@
                 <h2 v-if="currentPage === 'dashboard'">仪表盘</h2>
                 <h2 v-else-if="currentPage === 'users'">用户管理</h2>
                 <h2 v-else-if="currentPage === 'config'">系统配置</h2>
+                <h2 v-else-if="currentPage === 'checkin'">签到管理</h2>
                 <h2 v-else-if="currentPage === 'implementations'">实现方管理</h2>
                 
                 <div class="admin-user">
@@ -236,7 +245,7 @@
                         <h3>配置列表</h3>
                         <div class="table-actions">
                             <button class="action-btn warning" @click="openQuickConfigModal" style="font-weight: bold;">
-                                🚀 快速配置
+                                🚀 供应商快速配置
                             </button>
                             <button class="action-btn primary" @click="initConfigs" :disabled="config.initLoading">
                                 {{ config.initLoading ? '初始化中...' : '初始化配置' }}
@@ -321,6 +330,60 @@
                         <span class="page-info">第 {{ config.page }} / {{ configTotalPages }} 页，共 {{ config.total }} 条</span>
                         <button class="page-btn" @click="goToConfigPage(config.page + 1)" :disabled="config.page >= configTotalPages">下一页</button>
                         <button class="page-btn" @click="goToConfigPage(configTotalPages)" :disabled="config.page >= configTotalPages">末页</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 签到管理页面 -->
+            <section v-if="currentPage === 'checkin'">
+                <div class="table-container" style="max-width: 800px;">
+                    <div class="table-header">
+                        <h3>签到配置</h3>
+                        <div class="table-actions">
+                            <button class="action-btn primary" @click="saveCheckinConfig" :disabled="checkin.loading">
+                                {{ checkin.loading ? '保存中...' : '保存配置' }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div v-if="checkin.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>加载中...</p>
+                    </div>
+
+                    <div v-else class="checkin-config-form">
+                        <div class="form-group">
+                            <label class="form-label"><input type="checkbox" v-model="checkin.enabled" /> 启用每日签到功能</label>
+                            <p class="form-hint">关闭后，用户将无法进行签到</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">基础奖励算力</label>
+                            <input type="number" class="filter-input" v-model.number="checkin.baseReward" min="0" style="width: 120px;" />
+                            <p class="form-hint">用户每日签到可获得的基础算力值</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label"><input type="checkbox" v-model="checkin.streakBonusEnabled" /> 启用连续签到额外奖励</label>
+                        </div>
+
+                        <div class="form-group" v-if="checkin.streakBonusEnabled">
+                            <label class="form-label">连续签到奖励配置</label>
+                            <div class="streak-bonus-table">
+                                <div class="streak-bonus-row header">
+                                    <span>连续天数</span>
+                                    <span>额外奖励</span>
+                                    <span>操作</span>
+                                </div>
+                                <div v-for="(item, index) in checkin.streakBonuses" :key="index" class="streak-bonus-row">
+                                    <input type="number" class="filter-input" v-model.number="item.days" min="1" placeholder="天数" />
+                                    <input type="number" class="filter-input" v-model.number="item.reward" min="0" placeholder="奖励" />
+                                    <button class="action-btn" @click="removeStreakBonus(index)">删除</button>
+                                </div>
+                                <button class="action-btn primary" @click="addStreakBonus" style="margin-top: 8px;">+ 添加奖励阶梯</button>
+                            </div>
+                            <p class="form-hint">格式示例：连续3天额外奖励5算力，连续7天额外奖励15算力</p>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -706,222 +769,155 @@
             </div>
         </div>
 
-        <!-- 快速配置弹窗 -->
+        <!-- 快速配置弹窗（两栏模式） -->
         <div class="modal-overlay" v-if="quickConfigModal.show" @click.self="closeQuickConfigModal">
-            <div class="modal modal-wide">
-                <div class="modal-header">
-                    <h3>🚀 快速配置</h3>
-                    <button class="modal-close" @click="closeQuickConfigModal">&times;</button>
-                </div>
-                <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
-                    <!-- Duomi 配置组 -->
-                    <div class="config-group">
-                        <div class="config-group-header">
-                            <h4>多米 (Duomi) 配置</h4>
-                            <span class="config-group-desc">📋 影响服务：Nano Banana图片编辑、Sora2/Kling/Veo3视频生成</span>
+            <div class="modal qc-modal-wide">
+                <div class="qc-header">
+                    <h3>快速配置</h3>
+                    <div class="qc-header-right">
+                        <div class="qc-progress">
+                            <span>已选: <strong class="selected">{{ selectedCount }}</strong></span>
+                            <span>已配置: <strong class="configured">{{ configuredCount }}</strong></span>
+                            <div class="qc-progress-bar">
+                                <div class="qc-progress-fill" :style="{ width: progressBarWidth }"></div>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label>Token <span style="color: red;">*</span></label>
-                            <input type="text" v-model="quickConfigModal.duomi.token" placeholder="请输入 Duomi API Token">
-                            <p class="form-hint">📖 获取方式：<a href="https://duomiapi.com/user/register?cps=U4GgW1Fx" target="_blank" style="color: #3b82f6;">快速注册</a></p>
-                        </div>
-                    </div>
-
-                    <!-- Qwen 配置组 -->
-                    <div class="config-group">
-                        <div class="config-group-header">
-                            <h4>Qwen 配置</h4>
-                            <span class="config-group-desc">📋 影响服务：剧本创作、AI对话、剧本拆分（与 Google/Gemini 并列可选）</span>
-                        </div>
-                        <div class="form-group">
-                            <label>API Key <span style="color: red;">*</span></label>
-                            <input type="text" v-model="quickConfigModal.qwen.apiKey" placeholder="请输入 Qwen API Key">
-                            <p class="form-hint">📖 获取方式：<a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" style="color: #3b82f6;">阿里云百炼控制台</a></p>
-                        </div>
-                        <div class="form-group">
-                            <label>Base URL (可选)</label>
-                            <input type="text" v-model="quickConfigModal.qwen.baseUrl" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
-                            <p class="form-hint">📖 可使用第三方代理服务，留空使用默认值</p>
-                        </div>
-                        <div class="form-group">
-                            <button
-                                class="action-btn primary"
-                                @click="testQwenConnection"
-                                :disabled="quickConfigModal.testLoading || !quickConfigModal.qwen.apiKey"
-                            >
-                                {{ quickConfigModal.testLoading ? '测试中...' : '🔗 测试连接' }}
-                            </button>
-                            <span v-if="quickConfigModal.testResult" :style="{ color: quickConfigModal.testResult.success ? '#22c55e' : '#ef4444', marginLeft: '10px' }">
-                                {{ quickConfigModal.testResult.message }}
-                            </span>
-                        </div>
-                    </div>
-
-                    <!-- 二选一提示 -->
-                    <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
-                        <p style="margin: 0; color: #92400e; font-size: 13px;">
-                            <strong>💡 提示：</strong>Qwen 与 Google/Gemini 为并列选项，<strong>二选一</strong>即可，无需同时配置
-                        </p>
-                    </div>
-
-                    <!-- Google 配置组 -->
-                    <div class="config-group">
-                        <div class="config-group-header">
-                            <h4>Google/Gemini 配置</h4>
-                            <span class="config-group-desc">📋 影响服务：剧本创作、AI对话、剧本拆分</span>
-                        </div>
-                        <div class="form-group">
-                            <label>API Key <span style="color: red;">*</span></label>
-                            <input type="text" v-model="quickConfigModal.google.apiKey" placeholder="请输入 Google API Key">
-                            <p class="form-hint">📖 获取方式：
-                                <a href="javascript:void(0)" @click="showJiekouTip" style="color: #3b82f6;">jiekou</a> |
-                                <a href="https://ai.comfly.chat/register?aff=d3Mx98625" target="_blank" style="color: #3b82f6;">comfly</a> |
-                                <a href="https://yw.perseids.cn/register?aff=hE0h" target="_blank" style="color: #3b82f6;">ywapi</a>
-                            </p>
-                        </div>
-                        <div class="form-group">
-                            <label>Base URL (可选)</label>
-                            <input type="text" v-model="quickConfigModal.google.baseUrl" placeholder="https://api.jiekou.ai">
-                            <p class="form-hint">📖 可使用第三方代理服务，留空使用默认值</p>
-                        </div>
-                        <div class="form-group">
-                            <button
-                                class="action-btn primary"
-                                @click="testGoogleConnection"
-                                :disabled="quickConfigModal.testLoading || !quickConfigModal.google.apiKey"
-                            >
-                                {{ quickConfigModal.testLoading ? '测试中...' : '🔗 测试连接' }}
-                            </button>
-                            <span v-if="quickConfigModal.testResult" :style="{ color: quickConfigModal.testResult.success ? '#22c55e' : '#ef4444', marginLeft: '10px' }">
-                                {{ quickConfigModal.testResult.message }}
-                            </span>
-                        </div>
-                    </div>
-
-                    <!-- 火山引擎配置组 (可选) -->
-                    <div class="config-group">
-                        <div class="config-group-header">
-                            <h4>火山引擎配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
-                            <span class="config-group-desc">📋 影响服务：Seedream 5.0 文生图</span>
-                        </div>
-                        <div class="form-group">
-                            <label>API Key</label>
-                            <input type="text" v-model="quickConfigModal.volcengine.apiKey" placeholder="请输入火山引擎 API Key">
-                            <p class="form-hint">📖 获取方式：<a href="https://console.volcengine.com/ark" target="_blank" style="color: #3b82f6;">火山引擎控制台</a></p>
-                        </div>
-                    </div>
-
-                    <!-- RunningHub 配置组 (可选) -->
-                    <div class="config-group">
-                        <div class="config-group-header">
-                            <h4>RunningHub 配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
-                            <span class="config-group-desc">📋 影响服务：LTX2.0视频、Wan2.2视频、数字人合成、相机多角度控制</span>
-                        </div>
-                        <div class="form-group">
-                            <label>API Key</label>
-                            <input type="text" v-model="quickConfigModal.runninghub.apiKey" placeholder="请输入 RunningHub API Key">
-                            <p class="form-hint">📖 获取方式：<a href="https://www.runninghub.cn/?inviteCode=quacwnzc" target="_blank" style="color: #3b82f6;">快速注册</a></p>
-                        </div>
-                    </div>
-
-                    <!-- API 聚合站配置组 (可选) -->
-                    <div class="config-group">
-                        <div class="config-group-header">
-                            <h4>API 聚合站配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
-                            <span class="config-group-desc">📋 影响服务：Gemini图片生成/编辑（支持云雾、comfly等中转站）</span>
-                        </div>
-                        
-                        <!-- Site 1 -->
-                        <div class="form-group">
-                            <label>站点1名称</label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site1.name" placeholder="如：comfly">
-                        </div>
-                        <div class="form-group">
-                            <label>站点1 Base URL <span style="color: red;">*</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site1.baseUrl" placeholder="https://ai.comfly.chat">
-                        </div>
-                        <div class="form-group">
-                            <label>站点1 API Key <span style="color: red;">*</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site1.apiKey" placeholder="请输入 API Key">
-                        </div>
-                        
-                        <!-- Site 2 -->
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点2名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.name" placeholder="如：ywapi" :disabled="isCommunityEdition">
-                        </div>
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点2 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.baseUrl" placeholder="https://yw.perseids.cn" :disabled="isCommunityEdition">
-                        </div>
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点2 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site2.apiKey" placeholder="请输入 API Key" :disabled="isCommunityEdition">
-                        </div>
-                        
-                        <!-- Site 3 -->
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点3名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.name" placeholder="站点3名称" :disabled="isCommunityEdition">
-                        </div>
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点3 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.baseUrl" placeholder="站点3 URL" :disabled="isCommunityEdition">
-                        </div>
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点3 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site3.apiKey" placeholder="请输入 API Key" :disabled="isCommunityEdition">
-                        </div>
-                        
-                        <!-- Site 4 -->
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点4名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.name" placeholder="如：site4" :disabled="isCommunityEdition">
-                        </div>
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点4 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.baseUrl" placeholder="站点4 URL" :disabled="isCommunityEdition">
-                        </div>
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点4 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site4.apiKey" placeholder="请输入 API Key" :disabled="isCommunityEdition">
-                        </div>
-                        
-                        <!-- Site 5 -->
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点5名称 <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.name" placeholder="如：site5" :disabled="isCommunityEdition">
-                        </div>
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点5 Base URL <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.baseUrl" placeholder="站点5 URL" :disabled="isCommunityEdition">
-                        </div>
-                        <div class="form-group" :style="isCommunityEdition ? 'opacity: 0.6; cursor: not-allowed;' : ''" :title="isCommunityEdition ? '社区版本只支持1个聚合站点，请购买商业版本解锁' : ''">
-                            <label>站点5 API Key <span v-if="isCommunityEdition" style="color: #f59e0b; font-size: 12px;">(需商业版)</span></label>
-                            <input type="text" v-model="quickConfigModal.apiAggregator.site5.apiKey" placeholder="请输入 API Key" :disabled="isCommunityEdition">
-                        </div>
-                        
-                        <p class="form-hint">💡 提示：配置完成后需要重启服务才能生效，系统会自动创建对应的实现方</p>
-                    </div>
-
-                    <!-- Vidu 配置组 (可选) -->
-                    <div class="config-group">
-                        <div class="config-group-header">
-                            <h4>Vidu 配置 <span style="color: #64748b; font-size: 14px; font-weight: normal;">(可选)</span></h4>
-                            <span class="config-group-desc">📋 影响服务：Vidu视频生成</span>
-                        </div>
-                        <div class="form-group">
-                            <label>Token</label>
-                            <input type="text" v-model="quickConfigModal.vidu.token" placeholder="请输入 Vidu API Token">
-                            <p class="form-hint">📖 获取方式：<a href="https://platform.vidu.cn/api-keys" target="_blank" style="color: #3b82f6;">快速注册</a></p>
-                        </div>
+                        <button class="qc-quick-setup-btn" @click="handleQuickSetup">
+                            &#9889; 快速选择
+                        </button>
+                        <button class="modal-close" @click="closeQuickConfigModal">&times;</button>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button class="modal-btn cancel" @click="closeQuickConfigModal">取消</button>
-                    <button class="modal-btn confirm" @click="submitQuickConfig" :disabled="quickConfigModal.loading">
-                        {{ quickConfigModal.loading ? '保存中...' : '💾 批量保存' }}
+
+                <div class="qc-body">
+                    <!-- 左侧面板：分类标签 + 服务商卡片 -->
+                    <div class="qc-left-panel" v-show="quickConfigModal.leftPanelOpen">
+                        <div class="qc-tabs">
+                            <button v-for="(label, cat) in categoryLabels"
+                                    :key="cat"
+                                    :class="['qc-tab', { active: quickConfigModal.activeCategory === cat }]"
+                                    @click="quickConfigModal.activeCategory = cat">
+                                {{ label }}
+                                <span v-if="categoryStatus[cat]" class="qc-tab-check">&#10003;</span>
+                            </button>
+                        </div>
+                        <div class="qc-cards-list">
+                            <div class="qc-category-desc">{{ categoryDescriptions[quickConfigModal.activeCategory] }}</div>
+                            <button v-for="provider in providersByCategory[quickConfigModal.activeCategory]"
+                                    :key="provider.id"
+                                    :class="['qc-provider-card', {
+                                        selected: quickConfigModal.selectedProviderIds.includes(provider.id),
+                                        disabled: isCommunityEdition && provider.commercialOnly
+                                    }]"
+                                    @click="toggleProviderSelection(provider.id)">
+                                <div class="qc-card-main">
+                                    <span class="qc-card-icon">{{ provider.icon }}</span>
+                                    <div class="qc-card-info">
+                                        <div class="qc-card-name">
+                                            {{ provider.name }}
+                                            <span v-if="provider.isOfficialAPI" class="qc-badge qc-badge-official">ZJT官方API</span>
+                                            <span v-if="isCommunityEdition && provider.commercialOnly" class="qc-badge qc-badge-commercial">商业版专属</span>
+                                        </div>
+                                        <div class="qc-card-desc">{{ provider.description }}</div>
+                                        <div v-if="provider.impacts && provider.impacts.length" class="qc-card-impacts">
+                                            <span v-for="(impact, idx) in provider.impacts" :key="idx" class="qc-badge qc-badge-impact">
+                                                {{ impact }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="qc-card-badges">
+                                    <span v-if="provider.lazyRecommended" class="qc-badge qc-badge-recommended">&#9733; 推荐</span>
+                                    <span v-if="quickConfigModal.selectedProviderIds.includes(provider.id)" class="qc-check">&#10003;</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 切换左侧面板按钮 -->
+                    <button class="qc-toggle-panel" @click="quickConfigModal.leftPanelOpen = !quickConfigModal.leftPanelOpen">
+                        {{ quickConfigModal.leftPanelOpen ? '&#9664;' : '&#9654;' }}
                     </button>
+
+                    <!-- 右侧面板：配置表单 -->
+                    <div class="qc-right-panel">
+                        <!-- 空状态 -->
+                        <div v-if="selectedProvidersDetail.length === 0" class="qc-empty-state">
+                            <div class="qc-empty-icon">&#9888;</div>
+                            <p>请从左侧选择服务商进行配置</p>
+                            <p class="qc-empty-hint">或点击 "快速选择" 按钮自动选择推荐服务商</p>
+                        </div>
+
+                        <!-- 服务商配置表单 -->
+                        <template v-for="provider in selectedProvidersDetail" :key="provider.id">
+                            <div class="qc-config-card">
+                                <div class="qc-config-header">
+                                    <div>
+                                        <h4>{{ provider.icon }} {{ provider.name }}</h4>
+                                        <p>{{ provider.description }}</p>
+                                        <a v-if="provider.docUrl" :href="provider.docUrl" target="_blank" class="qc-register-link">
+                                            &#128279; 注册引导
+                                        </a>
+                                    </div>
+                                    <span v-if="isProviderConfigured(provider.id)" class="qc-badge qc-badge-done">&#10003; 已配置</span>
+                                </div>
+                                <div class="qc-config-fields">
+                                    <div v-for="field in provider.fields" :key="field.id" class="form-group">
+                                        <label>
+                                            {{ field.label }}
+                                            <span v-if="field.required" style="color: red;">*</span>
+                                            <span v-if="field.readOnly" class="qc-readonly-badge">只读</span>
+                                        </label>
+                                        <input :type="field.type"
+                                               :value="getFormField(provider.id, field.id)"
+                                               @input="!field.readOnly && updateFormField(provider.id, field.id, $event.target.value)"
+                                               :placeholder="field.placeholder"
+                                               :readonly="field.readOnly || false"
+                                               :class="{ 'qc-readonly-input': field.readOnly }">
+                                        <p v-if="field.helpText" class="form-hint">{{ field.helpText }}</p>
+                                    </div>
+
+                                    <!-- 操作按钮 -->
+                                    <div class="qc-config-actions">
+                                        <button class="modal-btn confirm"
+                                                @click="saveProviderConfig(provider.id)"
+                                                :disabled="quickConfigModal.saveLoading[provider.id]">
+                                            {{ quickConfigModal.saveLoading[provider.id] ? '保存中...' : '保存' }}
+                                        </button>
+                                        <button v-if="provider.testEndpoint"
+                                                class="modal-btn cancel"
+                                                @click="testProviderConnection(provider.id)"
+                                                :disabled="quickConfigModal.testLoading[provider.id]">
+                                            <template v-if="quickConfigModal.testLoading[provider.id]">
+                                                <span style="display:inline-block;width:12px;height:12px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:qc-spin 0.6s linear infinite;vertical-align:middle;margin-right:4px;"></span>
+                                                测试中
+                                            </template>
+                                            <template v-else-if="quickConfigModal.testResults[provider.id]?.success">
+                                                &#10003; 成功
+                                            </template>
+                                            <template v-else>
+                                                测试连接
+                                            </template>
+                                        </button>
+                                        <span v-if="quickConfigModal.testResults[provider.id]"
+                                              class="qc-test-result"
+                                              :class="quickConfigModal.testResults[provider.id].success ? 'success' : 'error'">
+                                            {{ quickConfigModal.testResults[provider.id].success ? '&#10003; ' : '&#10007; ' }}{{ quickConfigModal.testResults[provider.id].message }}
+                                        </span>
+                                        <button class="qc-remove-btn" @click="removeProvider(provider.id)" title="移除">&#10005;</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+
+                        <!-- 批量保存按钮 -->
+                        <button v-if="selectedProvidersDetail.length > 0"
+                                class="qc-submit-all"
+                                @click="submitQuickConfig"
+                                :disabled="quickConfigModal.loading">
+                            {{ quickConfigModal.loading ? '保存中...' : '保存所有配置' }}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

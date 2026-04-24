@@ -14,6 +14,45 @@
     <script src="js/axios.min.js"></script>
     <!-- 任务配置模块 -->
     <script src="/js/task_config.js"></script>
+    <style>
+        .thinking-toggle {
+            position: relative;
+            display: inline-block;
+            width: 32px;
+            height: 18px;
+            flex-shrink: 0;
+        }
+        .thinking-toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .thinking-toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--border-color, #ccc);
+            border-radius: 18px;
+            transition: .2s;
+        }
+        .thinking-toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            border-radius: 50%;
+            transition: .2s;
+        }
+        .thinking-toggle input:checked + .thinking-toggle-slider {
+            background-color: var(--accent-color, #4f46e5);
+        }
+        .thinking-toggle input:checked + .thinking-toggle-slider:before {
+            transform: translateX(14px);
+        }
+    </style>
 </head>
 <body>
     <!-- 左侧导览条 - 悬浮模式 -->
@@ -70,7 +109,7 @@
                         <path d="M3 12h18M3 6h18M3 18h18"/>
                     </svg>
                 </button>
-                <a href="/video-workflow-list" class="logo-link">
+                <a href="/" class="logo-link">
                     <img src="/files/logo.svg" alt="Logo" class="app-logo">
                 </a>
                 <nav class="breadcrumb-nav">
@@ -89,8 +128,23 @@
                                 <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
                             </svg>
                         </div>
-                        <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型">
-                            <option value="">加载中...</option>
+                        <div class="model-select-wrapper">
+                            <select id="model-selector" class="model-select" onchange="changeModel()" title="选择 AI 模型">
+                                <option value="">加载中...</option>
+                            </select>
+                            <div class="model-select-display" id="model-selector-display">加载中...</div>
+                        </div>
+                    </div>
+                    <div class="thinking-mode-wrapper" id="thinking-mode-wrapper" style="display: none; align-items: center; gap: 6px; margin-left: 8px;">
+                        <label class="thinking-toggle" title="思考模式：让模型先深度思考再回答，提高回答质量">
+                            <input type="checkbox" id="thinking-toggle" onchange="onThinkingToggleChange()">
+                            <span class="thinking-toggle-slider"></span>
+                        </label>
+                        <span class="thinking-label" onclick="document.getElementById('thinking-toggle').click()" style="cursor: pointer; font-size: 12px; color: var(--text-secondary); white-space: nowrap;">思考</span>
+                        <select id="thinking-effort" class="thinking-effort-select" onchange="onThinkingEffortChange()" style="display: none; font-size: 11px; padding: 2px 4px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                            <option value="low">低</option>
+                            <option value="medium" selected>中</option>
+                            <option value="high">高</option>
                         </select>
                     </div>
                     <div class="model-divider"></div>
@@ -114,10 +168,6 @@
                     <span class="power-icon">⚡</span>
                     <span class="power-value" id="power-value">--</span>
                 </div>
-                <button class="header-action-btn" onclick="newSession()">
-                    <span class="btn-icon">🗑️</span>
-                    <span class="btn-text">删除暂存，重置会话</span>
-                </button>
                 <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交数据">
                     <span class="btn-icon">💾</span>
                     <span class="btn-text">提交数据</span>
@@ -126,7 +176,7 @@
                     <label class="auto-submit-toggle" title="开启后每分钟自动提交">
                         <input type="checkbox" id="auto-submit-switch" onchange="toggleAutoSubmit()">
                         <span class="toggle-slider"></span>
-                        <span class="toggle-label">🔄 自动提交</span>
+                        <span class="toggle-label">自动</span>
                     </label>
                     <span id="auto-submit-countdown" class="auto-submit-countdown" style="display: none;"></span>
                 </div>
@@ -137,6 +187,11 @@
         <main class="main-layout">
             <!-- 聊天区域 -->
             <div class="chat-area">
+                <button class="chat-compress-btn" onclick="compressHistory()" title="压缩对话历史（保留关键信息，减少上下文长度）">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                    </svg>
+                </button>
                 <button class="chat-refresh-btn" onclick="refreshPage()" title="新建会话（刷新页面，清空对话历史）">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
@@ -301,10 +356,6 @@
                             <span id="status-text">就绪</span>
                         </span>
                         <span class="status-item">会话: <span id="session-id">未创建</span></span>
-                        <span class="token-stats">
-                            本次: <span id="current-tokens">0</span> tokens | 
-                            累计: <span id="total-tokens">0</span> tokens
-                        </span>
                     </div>
                 </div>
             </div>
@@ -313,11 +364,23 @@
             <aside class="file-sidebar">
                 <div class="sidebar-header">
                     <h3 class="sidebar-title">📁 暂存文件管理</h3>
-                    <button class="refresh-icon-btn" onclick="refreshFiles()" title="刷新文件列表">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M1 4v6h6M23 20v-6h-6M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-                        </svg>
-                    </button>
+                    <div class="sidebar-header-actions">
+                        <button class="refresh-icon-btn" onclick="refreshFiles()" title="刷新文件列表">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="23 4 23 10 17 10"/>
+                                <polyline points="1 20 1 14 7 14"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                        </button>
+                        <button class="delete-icon-btn" onclick="newSession()" title="删除暂存，重置会话">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                <line x1="10" y1="11" x2="10" y2="17"/>
+                                <line x1="14" y1="11" x2="14" y2="17"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="file-tabs">
                     <button class="tab-btn active" onclick="switchFileTab('worlds')">
@@ -1033,6 +1096,24 @@
         };
 
         const LOGIN_URL = window.location.origin + '/?login=1&redirect_url=video-workflow-list';
+
+        // LLM 供应商常量
+        const LLMVendor = {
+            JIEKOU: 'jiekou',      // 接口供应商（Gemini 模型）
+            ALIYUN: 'aliyun',      // 阿里云供应商（Qwen 模型）
+            OLLAMA: 'ollama'       // 本地运行供应商（Ollama 模型）
+        };
+
+        // LLM 模型名称常量
+        const LLMModel = {
+            GEMINI_3_FLASH: 'gemini-3-flash-preview',
+            GEMINI_3_1_PRO: 'gemini-3.1-pro-preview',
+            QWEN_3_5_PLUS: 'qwen3.5-plus',
+            QWEN_3_6_PLUS: 'qwen3.6-plus',
+            QWEN_PLUS: 'qwen-plus',
+            OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b'
+        };
+        let isCommunityEdition = false;  // 默认为商业版，页面初始化时通过API更新
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
         let currentEditWorld = { id: '', name: '', description: '' };
@@ -1147,6 +1228,16 @@
             }
 
             configureMarked();
+            // 获取版本信息，用于社区版功能标注
+            try {
+                const editionResp = await fetch('/api/edition');
+                const editionResult = await editionResp.json();
+                if (editionResult.code === 0 && editionResult.data) {
+                    isCommunityEdition = editionResult.data.mode === 'community';
+                }
+            } catch (e) {
+                isCommunityEdition = true;
+            }
             await loadAvailableModels();
             await loadDriverStatus();
             await loadTextToImageModels();
@@ -1436,8 +1527,6 @@
                         </div>
                     `;
                     
-                    document.getElementById('current-tokens').textContent = '0';
-                    document.getElementById('total-tokens').textContent = '0';
                     
                     await createSession();
                     initCarousel();
@@ -1487,6 +1576,64 @@
                 // 刷新页面
                 window.location.reload();
             }
+        }
+
+        async function compressHistory() {
+            if (!sessionId) {
+                showError('没有活跃的会话，无法压缩历史');
+                return;
+            }
+
+            if (!confirm('🗜️ 确定要压缩对话历史吗？\n\n这将会：\n• 保留关键决策和重要信息\n• 删除冗余对话内容\n• 减少上下文长度以节省 token\n\n压缩后无法恢复原始历史，是否继续？')) {
+                return;
+            }
+
+            try {
+                updateStatus('正在压缩对话历史...');
+                const response = await fetch(`/api/session/${sessionId}/compress`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    showSuccess(`✓ 对话历史已压缩：${data.before_count} → ${data.after_count} 条消息`);
+                    updateStatus(`对话历史已压缩，减少 ${data.reduced} 条消息`);
+
+                    // 添加系统消息到聊天窗口显示压缩结果
+                    addSystemMessage(`对话历史已压缩`,
+                        `原始消息：${data.before_count} 条\n` +
+                        `压缩后：${data.after_count} 条\n` +
+                        `摘要：${data.summary || '无'}`,
+                        'info'
+                    );
+                } else {
+                    showError('压缩失败: ' + (data.error || '未知错误'));
+                    updateStatus('压缩失败');
+                }
+            } catch (error) {
+                console.error('压缩对话历史失败:', error);
+                showError('压缩失败: ' + error.message);
+                updateStatus('压缩失败');
+            }
+        }
+
+        // 添加系统消息到聊天窗口
+        function addSystemMessage(title, content, type = 'info') {
+            const chatMessages = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `system-message ${type}`;
+            messageDiv.innerHTML = `
+                <div class="system-message-header">
+                    <span class="system-message-icon">${type === 'info' ? 'ℹ️' : '⚠️'}</span>
+                    <span class="system-message-title">${title}</span>
+                </div>
+                <div class="system-message-content">${content.replace(/\n/g, '<br>')}</div>
+            `;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
         // 提交状态标志，防止重复提交
@@ -1623,23 +1770,9 @@
 
         function updateCountdownDisplay() {
             const countdownEl = document.getElementById('auto-submit-countdown');
-            const switchEl = document.getElementById('auto-submit-switch');
-            
-            if (!switchEl || !switchEl.checked || !nextSubmitTime) {
+            if (countdownEl) {
                 countdownEl.style.display = 'none';
-                return;
             }
-
-            const remaining = Math.max(0, nextSubmitTime - Date.now());
-            if (remaining <= 0) {
-                countdownEl.style.display = 'none';
-                return;
-            }
-
-            const minutes = Math.floor(remaining / 60000);
-            const seconds = Math.floor((remaining % 60000) / 1000);
-            countdownEl.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            countdownEl.style.display = 'inline';
         }
 
         function saveAutoSubmitSettings() {
@@ -1802,6 +1935,7 @@
                 const selector = document.getElementById('model-selector');
                 const selectedOption = selector?.options[selector.selectedIndex];
                 const modelId = selectedOption?.dataset?.modelId;
+                const vendorId = selectedOption?.dataset?.vendorId;
 
                 if (!modelId) {
                     hideTypingIndicator();
@@ -1820,7 +1954,9 @@
                         message,
                         auth_token: AUTH_TOKEN,
                         model: selector?.value || '',
-                        model_id: modelId
+                        model_id: modelId,
+                        vendor_id: vendorId ? parseInt(vendorId) : 1,
+                        ...getThinkingParams()
                     }),
                     signal: controller.signal
                 });
@@ -1876,14 +2012,11 @@
                             }
                         } else if (data.type === 'progress') {
                             updateStatus(`执行中: ${data.step || ''}`);
+                        } else if (data.type === 'context_compression') {
+                            updateStatus('上下文已自动压缩，继续回复中...');
+                            console.log('[SSE] 上下文压缩事件:', data.reason);
                         } else if (data.type === 'done') {
                             eventSource.close();
-                            // 显示 done 消息中的结果内容
-                            if (data.result && data.result.result) {
-                                fullText += data.result.result + '\n\n';
-                                contentDiv.innerHTML = renderMarkdown(fullText);
-                                scrollToBottom();
-                            }
                             updateStatus('完成');
                             isProcessing = false;
                             const sendBtn = document.getElementById('send-btn');
@@ -2082,6 +2215,16 @@
             setTimeout(() => infoDiv.remove(), 3000);
         }
 
+        function showWarning(message) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const warningDiv = document.createElement('div');
+            warningDiv.className = 'warning-toast';
+            warningDiv.textContent = message;
+            messagesDiv.appendChild(warningDiv);
+            scrollToBottom();
+            setTimeout(() => warningDiv.remove(), 5000);
+        }
+
         async function loadComputingPower() {
             try {
                 const response = await fetch('/api/user/computing_power', {
@@ -2157,114 +2300,204 @@
                     return;
                 }
 
-                // 按指定顺序排序模型：qwen3.5 > qwen3.6 > flash 3.0 > flash 3.5 > gemini-3-flash > gemini-3.1-flash-lite > 其他
-                const sortOrder = ['qwen3.5', 'qwen3.6', 'flash-3.0', 'flash-3.5', 'flash', 'gemini-3-flash', 'gemini-3.1-flash-lite'];
-                const sortedModels = [...data.models].sort((a, b) => {
-                    const nameA = (a.model_name || a.name || '').toLowerCase();
-                    const nameB = (b.model_name || b.name || '').toLowerCase();
-                    // 使用 startsWith 精确匹配，避免 gemini-3.1-flash-lite 被 gemini-3-flash 错误匹配
-                    const indexA = sortOrder.findIndex(k => nameA.startsWith(k.toLowerCase()));
-                    const indexB = sortOrder.findIndex(k => nameB.startsWith(k.toLowerCase()));
-                    if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-                    if (indexA !== -1) return -1;
-                    if (indexB !== -1) return 1;
-                    return 0;
+                // 按 vendor_name 分组，vendor_id 排序
+                const vendorGroups = {};
+                const vendorOrder = [];  // 保持 vendor 顺序
+                data.models.forEach(model => {
+                    const vendorId = model.vendor_id || 1;
+                    const vendorName = model.vendor_name || 'unknown';
+                    if (!vendorGroups[vendorId]) {
+                        vendorGroups[vendorId] = {
+                            vendorName: vendorName,
+                            models: []
+                        };
+                        vendorOrder.push(vendorId);
+                    }
+                    vendorGroups[vendorId].models.push(model);
                 });
+
+                // 计算 input_token_threshold 倍数（threshold 越小越贵，以最大的 threshold 为基准 x1）
+                const validThresholds = data.models
+                    .map(m => m.input_token_threshold)
+                    .filter(v => v && v > 0);
+                const maxThreshold = validThresholds.length > 0 ? Math.max(...validThresholds) : null;
+
+                // 调试日志：输出所有模型的费用信息
+                console.log('[模型加载] 模型费用倍率计算:');
+                console.log('  有效的 threshold 值:', validThresholds);
+                console.log('  最大 threshold (基准):', maxThreshold);
+                data.models.forEach(m => {
+                    const threshold = m.input_token_threshold;
+                    const multiplier = maxThreshold && threshold && threshold > 0
+                        ? (maxThreshold / threshold).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+                        : '不可用';
+                    console.log(`  ${m.model_name} (vendor: ${m.vendor_name}): threshold=${threshold}, multiplier=${multiplier}x`);
+                });
+
+                // 供应商图标映射
+                const vendorIcons = {
+                    'jiekou': '☁️',
+                    'aliyun': '🌐',
+                    'ollama': '🖥️',
+                    'volcengine': '🌋',
+                    'zjt_api': '🚀'
+                };
 
                 // 记录排序后的第一个作为默认选中
                 let firstEnabledModel = null;
 
-                sortedModels.forEach(model => {
+                // 创建选项的辅助函数
+                const createModelOption = (model) => {
                     const option = document.createElement('option');
-                    // 兼容后端返回的 model_name 或 name 字段
                     const modelName = model.model_name || model.name || '';
                     const modelDesc = model.note || model.description || '';
-                    option.value = modelName;
+                    // 判断是否为 Ollama 模型：vendor_name=ollama 或 id 包含 "ollama:" 前缀
+                    const isOllama = model.vendor_name === LLMVendor.OLLAMA || String(model.id || '').startsWith('ollama:');
+                    // Ollama 模型使用带前缀的模型名，其他模型使用 model_name
+                    option.value = isOllama ? `ollama:${modelName}` : modelName;
+                    option.dataset.conciseName = modelName;
+
+                    let displayName = modelName;
+                    // 改进费用倍率显示：确保有效数据时必须显示倍率
+                    if (maxThreshold && model.input_token_threshold && model.input_token_threshold > 0) {
+                        const multiplier = (maxThreshold / model.input_token_threshold)
+                            .toFixed(2)
+                            .replace(/\.00$/, '')
+                            .replace(/(\.\d)0$/, '$1');
+                        displayName = `${modelName} x${multiplier}`;  // 加上 x 使倍率更清晰
+                    } else if (model.input_token_threshold === undefined || model.input_token_threshold === null) {
+                        // 调试：标记缺少费用信息的模型
+                        console.warn(`[模型加载] 模型 "${modelName}" 缺少 input_token_threshold 信息`);
+                    }
+
                     option.textContent = modelDesc
-                        ? `${modelName} - ${modelDesc}`
-                        : modelName;
-                    const modelId = model.id ?? model.model_id ?? '';
-                    if (modelId) {
-                        option.dataset.modelId = modelId;
+                        ? `${displayName} - ${modelDesc}`
+                        : displayName;
+                    // model_id 用于获取 context_window 等信息
+                    const dbModelId = model.model_id ?? '';
+                    if (dbModelId) {
+                        option.dataset.modelId = dbModelId;
+                    }
+                    if (model.context_window) {
+                        option.dataset.contextWindow = model.context_window;
                     }
                     option.dataset.recommended = model.recommended ? 'true' : 'false';
-                    // 记录第一个启用的模型作为默认
-                    if (!option.disabled && !firstEnabledModel) {
-                        firstEnabledModel = option;
+                    option.dataset.vendorId = model.vendor_id || 1;
+                    option.dataset.vendorName = model.vendor_name || 'jiekou';
+                    option.dataset.supportsThinking = model.supports_thinking ? 'true' : 'false';
+                    return option;
+                };
+
+                // 按 vendor 分组添加模型
+                vendorOrder.forEach(vendorId => {
+                    const group = vendorGroups[vendorId];
+                    if (group.models.length > 0) {
+                        const optGroup = document.createElement('optgroup');
+                        const icon = vendorIcons[group.vendorName.toLowerCase()] || '📦';
+                        const isOllamaGroup = group.vendorName.toLowerCase() === 'ollama';
+                        const suffix = (isOllamaGroup && isCommunityEdition) ? '（限时免费）' : '';
+                        optGroup.label = `${icon} ${group.vendorName}${suffix}`;
+                        group.models.forEach(model => {
+                            const option = createModelOption(model);
+                            if (!option.disabled && !firstEnabledModel) {
+                                firstEnabledModel = option;
+                            }
+                            optGroup.appendChild(option);
+                        });
+                        selector.appendChild(optGroup);
                     }
-                    selector.appendChild(option);
                 });
 
-                // 设置默认选中第一个启用的模型
-                if (firstEnabledModel) {
-                    firstEnabledModel.selected = true;
-                }
-                
-                updateModelTooltip();
+                // 设置默认选中模型：优先选择 aliyun 供应商的 qwen3.5-plus，否则选择第一个启用的模型
+                let defaultModel = null;
 
-                // 检查 Qwen API Key 配置并过滤模型
-                await checkQwenApiKeyConfig();
-                filterModelsByConfig();
+                const allOptions = selector.querySelectorAll('option');
+                // 第一轮：优先查找 aliyun 供应商下的 qwen3.5-plus
+                for (let i = 0; i < allOptions.length; i++) {
+                    const option = allOptions[i];
+                    if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')
+                        && option.dataset.vendorName === LLMVendor.ALIYUN) {
+                        defaultModel = option;
+                        console.log('[模型选择] 选择默认模型: qwen3.5-plus (aliyun)');
+                        break;
+                    }
+                }
+                // 第二轮：如果 aliyun 下没有，再查找其他供应商的 qwen3.5-plus
+                if (!defaultModel) {
+                    for (let i = 0; i < allOptions.length; i++) {
+                        const option = allOptions[i];
+                        if (!option.disabled && option.value && option.value.includes('qwen3.5-plus')) {
+                            defaultModel = option;
+                            console.log(`[模型选择] 未找到 aliyun 的 qwen3.5-plus，选择其他供应商: ${option.dataset.vendorName}`);
+                            break;
+                        }
+                    }
+                }
+
+                // 如果没找到 qwen3.5-plus，则使用第一个启用的模型
+                if (!defaultModel && firstEnabledModel) {
+                    defaultModel = firstEnabledModel;
+                    console.log(`[模型选择] 未找到 qwen3.5-plus，选择第一个启用的模型: ${firstEnabledModel.value}`);
+                }
+
+                if (defaultModel) {
+                    defaultModel.selected = true;
+                }
+
+                // 检查是否有上次选择的模型并自动选中
+                const savedModelRaw = localStorage.getItem('lastSelectedLlmModel');
+                if (savedModelRaw) {
+                    try {
+                        const saved = JSON.parse(savedModelRaw);
+                        const savedModelName = saved.model || saved;
+                        const savedVendorId = saved.vendorId || '';
+                        const options = selector.querySelectorAll('option');
+                        // 优先匹配模型名+供应商ID
+                        let matched = false;
+                        if (savedVendorId) {
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === savedModelName && !options[i].disabled
+                                    && options[i].dataset.vendorId === String(savedVendorId)) {
+                                    selector.selectedIndex = i;
+                                    console.log(`[模型记忆] 自动选中上次模型: ${savedModelName} (vendor_id: ${savedVendorId})`);
+                                    matched = true;
+                                    break;
+                                }
+                            }
+                        }
+                        // 回退：仅匹配模型名
+                        if (!matched) {
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === savedModelName && !options[i].disabled) {
+                                    selector.selectedIndex = i;
+                                    console.log(`[模型记忆] 自动选中上次模型(回退匹配): ${savedModelName}`);
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        // 兼容旧格式（纯字符串）
+                        const options = selector.querySelectorAll('option');
+                        for (let i = 0; i < options.length; i++) {
+                            if (options[i].value === savedModelRaw && !options[i].disabled) {
+                                selector.selectedIndex = i;
+                                console.log(`[模型记忆] 自动选中上次模型(旧格式): ${savedModelRaw}`);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                updateModelSelectorDisplay();
+                updateModelTooltip();
+                updateThinkingModeUI();
+
                 // 确保选中的模型可用，否则自动切换
                 ensureValidModelSelected();
             } catch (error) {
                 console.error('加载模型列表失败:', error);
                 showError('加载模型列表失败，请稍后重试');
             }
-        }
-
-        // ==================== Qwen 配置检查 ====================
-        // 配置检查结果缓存
-        let qwenConfigChecked = false;
-        let isQwenConfigured = false;
-
-        /**
-         * 检查 Qwen API Key 是否已配置
-         */
-        async function checkQwenApiKeyConfig() {
-            try {
-                const response = await fetch('/api/config/check?keys=llm.qwen.api_key', {
-                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
-                });
-                const data = await response.json();
-                if (data.success) {
-                    isQwenConfigured = data.results['llm.qwen.api_key'] || false;
-                    qwenConfigChecked = true;
-                    console.log(`[Qwen配置检查] llm.qwen.api_key 配置状态: ${isQwenConfigured}`);
-                }
-            } catch (error) {
-                console.error('检查 Qwen 配置失败:', error);
-                isQwenConfigured = false;
-                qwenConfigChecked = true;
-            }
-        }
-
-        /**
-         * 根据配置状态过滤模型选项
-         * qwen3.5 和 qwen3.6 系列模型需要配置 api_key 才能选择
-         */
-        function filterModelsByConfig() {
-            if (!qwenConfigChecked) return;
-
-            const selector = document.getElementById('model-selector');
-            if (!selector) return;
-
-            const options = selector.querySelectorAll('option');
-
-            options.forEach(option => {
-                const modelName = option.value || option.textContent;
-                // 检查是否是 qwen3.5 或 qwen3.6 系列模型
-                if (modelName && (modelName.includes('qwen3.5') || modelName.includes('qwen3.6'))) {
-                    if (!isQwenConfigured) {
-                        option.disabled = true;
-                        option.title = '请先在配置中设置 Qwen API Key';
-                        console.log(`[模型过滤] 禁用模型: ${modelName}`);
-                    } else {
-                        option.disabled = false;
-                        option.title = '';
-                    }
-                }
-            });
         }
 
         /**
@@ -2309,6 +2542,19 @@
             updateModelTooltip();
         }
 
+        function updateModelSelectorDisplay() {
+            const selector = document.getElementById('model-selector');
+            const display = document.getElementById('model-selector-display');
+            if (!selector || !display) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) return;
+
+            const conciseName = selectedOption.dataset.conciseName || selectedOption.value || selectedOption.textContent;
+            display.textContent = conciseName;
+            display.style.color = '';
+        }
+
         function updateModelTooltip() {
             const selector = document.getElementById('model-selector');
             if (!selector) return;
@@ -2316,18 +2562,12 @@
             const selectedOption = selector.options[selector.selectedIndex];
             if (!selectedOption) return;
 
-            // 免费模型（gemini-3-flash-preview、qwen3.5、qwen3.6）显示正常颜色，其他显示红色提示需要配置
-            const isFreeModel = selectedOption.value === 'gemini-3-flash-preview' ||
-                selectedOption.value.includes('qwen3.5') ||
-                selectedOption.value.includes('qwen3.6');
-            if (!isFreeModel) {
-                selector.style.color = '#ff6b6b';
-            } else {
-                selector.style.color = '';
-            }
+            // 清除红色样式
+            selector.style.color = '';
 
             // 更新 LLM 模型图标的 hover 提示
             updateLlmModelIcon();
+            updateModelSelectorDisplay();
         }
 
         function updateLlmModelIcon() {
@@ -2343,6 +2583,63 @@
 
             const modelName = selectedOption.textContent;
             icon.title = `AI 模型: ${modelName}`;
+        }
+
+        // ==================== 思考模式 ====================
+        function updateThinkingModeUI() {
+            const selector = document.getElementById('model-selector');
+            const wrapper = document.getElementById('thinking-mode-wrapper');
+            if (!selector || !wrapper) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) {
+                wrapper.style.display = 'none';
+                return;
+            }
+
+            const supportsThinking = selectedOption.dataset.supportsThinking === 'true';
+            wrapper.style.display = supportsThinking ? 'flex' : 'none';
+
+            // 如果不支持思考模式，重置开关
+            if (!supportsThinking) {
+                const toggle = document.getElementById('thinking-toggle');
+                if (toggle) toggle.checked = false;
+                updateThinkingEffortVisibility();
+            }
+        }
+
+        function onThinkingToggleChange() {
+            updateThinkingEffortVisibility();
+        }
+
+        function updateThinkingEffortVisibility() {
+            const toggle = document.getElementById('thinking-toggle');
+            const effortSelect = document.getElementById('thinking-effort');
+            const selector = document.getElementById('model-selector');
+            if (!toggle || !effortSelect || !selector) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            const vendorName = selectedOption?.dataset?.vendorName || '';
+            const isDoubao = vendorName === 'volcengine' || (selectedOption?.value || '').startsWith('doubao');
+
+            // 只在开关打开且是 Doubao 模型时显示 effort 选择
+            effortSelect.style.display = (toggle.checked && isDoubao) ? 'inline-block' : 'none';
+        }
+
+        function onThinkingEffortChange() {
+            // effort 值已经通过 select 的 value 管理
+        }
+
+        function getThinkingParams() {
+            const toggle = document.getElementById('thinking-toggle');
+            const effortSelect = document.getElementById('thinking-effort');
+            if (!toggle || !toggle.checked) {
+                return { enable_thinking: false, thinking_effort: 'medium' };
+            }
+            return {
+                enable_thinking: true,
+                thinking_effort: effortSelect ? effortSelect.value : 'medium'
+            };
         }
 
         function updateImageModelIcon() {
@@ -2371,14 +2668,35 @@
             const model = selector.value;
             const modelId = selectedOption?.dataset?.modelId;
 
+            // 保存选中的模型和供应商到 localStorage
+            const vendorId = selectedOption?.dataset?.vendorId || '';
+            localStorage.setItem('lastSelectedLlmModel', JSON.stringify({ model, vendorId }));
+
             updateModelTooltip();
             updateLlmModelIcon();
+            updateThinkingModeUI();
+
+            // Ollama 模型检测和警告
+            const vendorName = selectedOption?.dataset?.vendorName || '';
+            const isOllama = vendorName === LLMVendor.OLLAMA;
+
+            if (isOllama) {
+                showWarning('⚠️ 本地模型提示：Ollama 模型为本地运行，存在不稳定情况。推荐使用 ' + LLMModel.QWEN_3_5_PLUS + ' 模型以获得更好的体验。');
+            }
+
+            // 其他模型不推荐提示
+            const modelValue = model || '';
+            if (modelValue === LLMModel.GEMINI_3_1_PRO) {
+                showWarning('⚠️ 该模型价格较贵，推荐使用 ' + LLMModel.GEMINI_3_FLASH + ' 以获得更好的性价比。');
+            } else if (modelValue.includes('flash-lite')) {
+                showWarning('⚠️ 该模型实际表现不够智能，可能无法胜任复杂任务，谨慎选择。推荐使用 ' + LLMModel.GEMINI_3_FLASH + ' 以获得更好的效果。');
+            }
 
             if (!AUTH_TOKEN) {
                 showError('缺少认证信息，请重新登录');
                 return;
             }
-            
+
 
             try {
                 const response = await fetch(`/api/session/${sessionId}/model`, {

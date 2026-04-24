@@ -66,7 +66,7 @@ def calculate_next_retry_delay(try_count):
 
 def _refund_computing_power(ai_tool, reason: str):
     """
-    退还算力
+    退还算力（考虑修饰符）
 
     Args:
         ai_tool: AITool 对象
@@ -81,16 +81,42 @@ def _refund_computing_power(ai_tool, reason: str):
             logger.warning(f"Task {task_id} has no user_id, skipping refund")
             return
 
-        computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
+        computing_power = None
 
-        # Handle dict-based computing power (e.g., Wan2.2, Kling, Vidu)
-        if isinstance(computing_power_config, dict):
-            duration = getattr(ai_tool, 'duration', 5) or 5
-            computing_power = computing_power_config.get(duration)
-            if not computing_power:
-                computing_power = list(computing_power_config.values())[0]
-        else:
-            computing_power = computing_power_config
+        # 优先使用新的算力计算工具（考虑修饰符）
+        try:
+            from utils.computing_power import (
+                build_context_from_task_record,
+                get_computing_power_for_task,
+                get_implementation_for_user
+            )
+
+            context = build_context_from_task_record(ai_tool)
+            implementation = get_implementation_for_user(ai_tool_type, user_id)
+
+            computing_power = get_computing_power_for_task(
+                task_type=ai_tool_type,
+                duration=getattr(ai_tool, 'duration', 5),
+                user_id=user_id,
+                implementation=implementation,
+                context=context
+            )
+
+            if computing_power:
+                logger.info(f"Refund with modifiers: context={context}, implementation={implementation}")
+        except Exception as e:
+            logger.warning(f"Modifier-aware refund failed for task {task_id}, falling back: {e}")
+
+        # 回退：使用旧的 TASK_COMPUTING_POWER 配置
+        if not computing_power:
+            computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
+            if isinstance(computing_power_config, dict):
+                duration = getattr(ai_tool, 'duration', 5) or 5
+                computing_power = computing_power_config.get(duration)
+                if not computing_power:
+                    computing_power = list(computing_power_config.values())[0]
+            else:
+                computing_power = computing_power_config
 
         if not computing_power:
             logger.warning(f"Task {task_id} type {ai_tool_type} has no computing power config")
@@ -349,10 +375,18 @@ async def _check_task_status(ai_tool):
         bool: True 表示任务已完成（成功或失败），False 表示仍在处理中
     """
     from task.visual_drivers import VideoDriverFactory
+    from task.sync_task_executor import get_sync_task_executor
     
     project_id = ai_tool.project_id
     ai_tool_type = ai_tool.type
     task_id = ai_tool.id
+    
+    # 检查任务是否正在同步执行器中运行
+    # 同步任务在执行器中会被设置为 PROCESSING 状态但没有 project_id，这是正常的
+    executor = get_sync_task_executor()
+    if executor.is_task_running(task_id):
+        logger.debug(f"Task {task_id} is running in sync executor, skip status check")
+        return False
     
     if not project_id:
         logger.error(f"AI tool {task_id} has no project_id while status=AI_TOOL_STATUS_PROCESSING")
@@ -362,8 +396,19 @@ async def _check_task_status(ai_tool):
         logger.info(f"[TEST MODE] [DRIVER] Checking status for mock task {project_id}")
 
     try:
-        # 1. 根据任务类型创建对应的驱动实例（传递 user_id 以应用用户偏好）
-        driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+        # 1. 优先使用任务提交时记录的 implementation 创建驱动，确保状态查询与提交使用同一实现方
+        driver = None
+        if ai_tool.implementation:
+            from config.unified_config import get_implementation_name
+            impl_name = get_implementation_name(ai_tool.implementation)
+            if impl_name and impl_name != 'unknown':
+                driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                if driver:
+                    logger.info(f"Using recorded implementation {impl_name} (id: {ai_tool.implementation}) for status check, task {task_id}")
+
+        # 如果没有记录的 implementation 或创建失败，回退到根据任务类型创建
+        if not driver:
+            driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
 
         if not driver:
             # 获取详细的错误原因
@@ -528,23 +573,53 @@ def _handle_task_failure(project_id, task_id, ai_tool_type, reason, user_id):
     
     # Refund computing power (note: auth_token not available in background task)
     try:
-        computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
-        
-        # Handle dict-based computing power (e.g., Wan2.2, Kling, Vidu)
-        if isinstance(computing_power_config, dict):
-            # Get AI tool to retrieve duration
-            ai_tool = AIToolsModel.get_by_id(task_id)
-            duration = ai_tool.duration if ai_tool else 5
-            computing_power = computing_power_config.get(duration)
-            if not computing_power:
-                # Use first available value as fallback
-                computing_power = list(computing_power_config.values())[0]
-        else:
-            computing_power = computing_power_config
-        
+        # 获取 AI 工具详情
+        ai_tool = AIToolsModel.get_by_id(task_id)
+        if not ai_tool:
+            logger.error(f"AI tool {task_id} not found for refund")
+            return False
+
+        computing_power = None
+
+        # 优先使用新的算力计算工具（考虑修饰符）
+        try:
+            from utils.computing_power import (
+                build_context_from_task_record,
+                get_computing_power_for_task,
+                get_implementation_for_user
+            )
+
+            context = build_context_from_task_record(ai_tool)
+            implementation = get_implementation_for_user(ai_tool_type, user_id)
+
+            computing_power = get_computing_power_for_task(
+                task_type=ai_tool_type,
+                duration=ai_tool.duration if ai_tool else 5,
+                user_id=user_id,
+                implementation=implementation,
+                context=context
+            )
+
+            if computing_power:
+                logger.info(f"Refund with modifiers: context={context}, implementation={implementation}")
+        except Exception as e:
+            logger.warning(f"Modifier-aware refund failed for task {task_id}, falling back: {e}")
+
+        # 回退：使用旧的 TASK_COMPUTING_POWER 配置
+        if not computing_power:
+            computing_power_config = TASK_COMPUTING_POWER.get(ai_tool_type)
+            if isinstance(computing_power_config, dict):
+                duration = ai_tool.duration if ai_tool else 5
+                computing_power = computing_power_config.get(duration)
+                if not computing_power:
+                    computing_power = list(computing_power_config.values())[0]
+            else:
+                computing_power = computing_power_config
+
         if computing_power:
             transaction_id = str(uuid.uuid4())
             logger.info(f"Refunding computing power for user {user_id}")
+
             success, message, response_data = make_perseids_request(
                 endpoint='get_auth_token_by_user_id',
                 method='POST',
@@ -556,10 +631,10 @@ def _handle_task_failure(project_id, task_id, ai_tool_type, reason, user_id):
             if not success:
                 logger.error(f"Failed to get auth token for user {user_id}: {message}")
                 return False
-                
+
             auth_token = response_data['token']
             headers = {'Authorization': f'Bearer {auth_token}'}
-                        
+
             # 发起请求，增加算力（补回）
             success, message, response_data = make_perseids_request(
                 endpoint='user/calculate_computing_power',
@@ -707,11 +782,39 @@ def process_task_with_retry(task_type, process_func):
                     # 获取 AI 工具详情用于退还算力和释放槽位
                     ai_tool = AIToolsModel.get_by_id(task.task_id)
                     if ai_tool:
-                        # 退还算力
+                        # 退还算力（考虑修饰符，带回退机制）
                         try:
-                            computing_power = TASK_COMPUTING_POWER.get(ai_tool.type)
+                            computing_power = None
+
+                            # 优先使用新的算力计算工具（考虑修饰符）
+                            try:
+                                from utils.computing_power import (
+                                    build_context_from_task_record,
+                                    get_computing_power_for_task,
+                                    get_implementation_for_user
+                                )
+
+                                context = build_context_from_task_record(ai_tool)
+                                implementation = get_implementation_for_user(ai_tool.type, ai_tool.user_id)
+
+                                computing_power = get_computing_power_for_task(
+                                    task_type=ai_tool.type,
+                                    duration=ai_tool.duration if ai_tool else 5,
+                                    user_id=ai_tool.user_id,
+                                    implementation=implementation,
+                                    context=context
+                                )
+                            except Exception as e:
+                                logger.warning(f"Modifier-aware refund failed for task {task.task_id}, falling back: {e}")
+
+                            # 回退：使用旧的 TASK_COMPUTING_POWER 配置
+                            if not computing_power:
+                                computing_power = TASK_COMPUTING_POWER.get(ai_tool.type)
+
                             if computing_power:
                                 transaction_id = str(uuid.uuid4())
+                                logger.info(f"Refunding computing power for user {ai_tool.user_id}")
+
                                 success, message, response_data = make_perseids_request(
                                     endpoint='get_auth_token_by_user_id',
                                     method='POST',
