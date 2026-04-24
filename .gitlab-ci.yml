@@ -47,7 +47,10 @@ unit_tests:
   services:
     - name: m.daocloud.io/docker.io/library/docker:24-dind
       alias: docker
-      command: ["--registry-mirror=https://docker.1ms.run"]
+      command: 
+        - "--registry-mirror=https://docker.1ms.run"
+        - "--registry-mirror=https://m60nr9km.mirror.aliyuncs.com"
+        - "--registry-mirror=https://docker.mirrors.ustc.edu.cn"
 
   # 缓存配置（加速后续构建）
   cache:
@@ -63,12 +66,21 @@ unit_tests:
     # 等待 Docker daemon 就绪
     - |
       echo "Waiting for Docker daemon..."
-      for i in {1..30}; do
-        docker info > /dev/null 2>&1 && break
-        echo "Attempt $i failed, retrying..."
-        sleep 1
+      max_attempts=60
+      for i in $(seq 1 $max_attempts); do
+        if docker info > /dev/null 2>&1; then
+          echo "Docker daemon is ready!"
+          break
+        fi
+        if [ $i -eq $max_attempts ]; then
+          echo "ERROR: Docker daemon failed to start after $max_attempts attempts"
+          echo "Checking dind service status..."
+          cat /var/log/docker.log 2>/dev/null || true
+          exit 1
+        fi
+        echo "Attempt $i/$max_attempts - waiting..."
+        sleep 2
       done
-      docker info || echo "Docker daemon not available"
 
     # 调试：检查 DinD 服务
     - echo "DOCKER_HOST=$DOCKER_HOST"
