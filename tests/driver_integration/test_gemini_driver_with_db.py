@@ -190,7 +190,7 @@ class TestGeminiDuomiWithDB(BaseVideoDriverTest):
         task_id = self.create_test_ai_tool(
             ai_tool_type=GEMINI_IMAGE_TO_VIDEO_TYPE,
             prompt='测试用户错误',
-            image_path='invalid_url',
+            image_path='https://example.com/invalid.jpg',
             ratio='9:16',
             image_size='1K',
             status=AI_TOOL_STATUS_PENDING
