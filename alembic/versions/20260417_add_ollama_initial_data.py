@@ -24,21 +24,21 @@ def upgrade() -> None:
     """Insert Ollama vendor, model and vendor_model data"""
     conn = op.get_bind()
 
-    # 1. 插入 vendor 表 (id=3, ollama)
+    # 1. 插入 vendor 表 (ollama)，不指定 id，由 AUTO_INCREMENT 分配
     conn.execute(text("""
-        INSERT INTO vendor (id, vendor_name, created_at, note)
-        VALUES (3, 'ollama', NOW(), 'ollama 本地')
+        INSERT INTO vendor (vendor_name, created_at, note)
+        VALUES ('ollama', NOW(), 'ollama 本地')
         ON DUPLICATE KEY UPDATE vendor_name = VALUES(vendor_name)
     """))
-    logger.info("[Migration] Inserted Ollama vendor (id=3)")
+    logger.info("[Migration] Inserted Ollama vendor")
 
-    # 2. 插入 model 表 (id=1000, qwen3.6:35b-a3b)
+    # 2. 插入 model 表 (qwen3.6:35b-a3b)，不指定 id，由 AUTO_INCREMENT 分配
     conn.execute(text("""
-        INSERT INTO model (id, model_name, context_window, supports_tools, created_at, note)
-        VALUES (1000, 'qwen3.6:35b-a3b', 250000, 1, NOW(), '')
+        INSERT INTO model (model_name, context_window, supports_tools, created_at, note)
+        VALUES ('qwen3.6:35b-a3b', 250000, 1, NOW(), '')
         ON DUPLICATE KEY UPDATE model_name = VALUES(model_name), context_window = VALUES(context_window)
     """))
-    logger.info("[Migration] Inserted Ollama model (id=1000, qwen3.6:35b-a3b)")
+    logger.info("[Migration] Inserted Ollama model (qwen3.6:35b-a3b)")
 
     # 3. 插入 vendor_model 表 (动态查询 vendor_id 和 model_id，避免硬编码)
     conn.execute(text("""
