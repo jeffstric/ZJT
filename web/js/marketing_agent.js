@@ -326,20 +326,6 @@
                 return `<button class="publish-result-btn" onclick="event.stopPropagation(); window.publishGeneratedResult && window.publishGeneratedResult(${escapeHtmlAttr(JSON.stringify(String(aiToolId)))}, '${safeTitle}')">发布</button>`;
             }
 
-            function buildGeneratedMediaHtml(type, urls) {
-                if (type === 'image') {
-                    return urls.map(url =>
-                        `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(url)}';window.resetModalImageInfo && window.resetModalImageInfo()"><img src="${escapeHtmlAttr(url)}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`
-                    ).join('');
-                }
-                if (type === 'video') {
-                    return urls.map(url =>
-                        `<video src="${escapeHtmlAttr(url)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video>`
-                    ).join('');
-                }
-                return '';
-            }
-
             function buildGeneratedMediaRowsHtml(type, rows) {
                 if (type === 'image') {
                     return rows.map(row => {
