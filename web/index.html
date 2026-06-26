@@ -895,9 +895,9 @@
     
   </div>
 
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <script src="https://unpkg.com/vue-router@4"></script>
-  <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+  <script src="/js/vendor/vue.global.prod.js"></script>
+  <script src="/js/vendor/vue-router.global.prod.js"></script>
+  <script src="/js/vendor/axios.min.js"></script>
   <script src="/js/task_config.js"></script>
   <script>
   /**
@@ -8397,7 +8397,7 @@
       async fetchUserIp() {
         try {
           // 使用公共IP查询API获取用户IP
-          const response = await axios.get('https://api.ipify.org?format=json');
+          const response = await axios.get('https://api.ipify.org?format=json', { timeout: 5000 });
           this.userIp = response.data.ip;
           console.log('User IP:', this.userIp);
         } catch (error) {
