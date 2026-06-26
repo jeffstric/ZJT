@@ -162,22 +162,33 @@ GPT Image 2 是 OpenAI 推出的文生图模型，通过多米（Duomi）API 平
 - **认证**: Header `Authorization: Bearer {api_key}`
 - **Content-Type**: `multipart/form-data`
 - **表单字段**:
-  - `image`: 图片文件（必需，支持多张）
+  - `image`: 单张图片文件（必需）
+  - `image[]`: 多张图片文件（多图编辑时使用，最多 16 张，单张/数组总量需符合供应商限制）
   - `prompt`: 文本描述（必需）
-  - `model`: 模型名称
-  - `n`: 生成数量
+  - `mask`: PNG 遮罩图（可选，透明区域表示需要编辑的位置；多图时应用于第一张图）
+  - `model`: 模型名称，默认 `gpt-image-2`
+  - `n`: 生成数量，默认 `1`，有效范围 `1-10`
   - `size`: 图片尺寸
+  - `quality`: 图片质量（可选：`low`、`medium`、`high`、`auto`）
+  - `background`: 背景策略（可选：`opaque`、`auto`、`transparent`）
+  - `moderation`: 内容审核强度（可选：`low`、`auto`）
 
 ```
 POST /v1/images/edits
 Content-Type: multipart/form-data
 
-image: [文件上传]
+image[]: [文件上传1]
+image[]: [文件上传2]
 prompt: "将他们合并在一个图片里面"
 model: "gpt-image-2"
 n: 1
 size: "1024x1536"
+quality: "high"
+background: "transparent"
+moderation: "low"
 ```
+
+驱动会从 `ai_tool.extra_config` 读取 `quality`、`background`、`moderation`、`mask`、`n`、`model`，仅透传合法值；响应同时兼容 OpenAI 常见的 `data: [{ b64_json }]` 和 yunwu 示例中的 `data: { b64_json }`。
 
 #### 比例映射
 

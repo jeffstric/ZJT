@@ -5,8 +5,10 @@
 Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，支持在任务提交前和执行结束后插入可异步处理的子步骤。
 
 两个核心阶段：
-- **param_prepare**（参数预处理）：在任务提交到外部 API 之前，对输入数据进行预处理（如 Seedance 2.0 视频/图片人脸遮盖）
+- **param_prepare**（参数预处理）：在任务提交到外部 API 之前，对输入数据进行预处理（如 Seedance 2.0 / 2.0 Fast / 2.0 Mini 视频/图片人脸遮盖）
 - **before_finish**（结束前处理）：任务失败后，自动切换不同供应商重试
+
+> **适配模型清单（单一事实来源）**：param_prepare 人脸遮盖适用的 Seedance 模型统一维护在 `config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS`，`server.py` 闸门与 `PipelineDriverFactory` 均查询该集合，新增模型只需在此追加一项。
 
 ## 状态机
 
@@ -92,7 +94,7 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 用于 `param_prepare` 阶段，在 Seedance 2.0 等需要处理含人脸视频的场景中，先将视频中的人脸遮盖掉。
 
-**触发条件**：Seedance 2.0 / 2.0 Fast 任务类型 + `pipeline.seedance_face_mask_enabled=true` + 有 video_path 输入
+**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + `pipeline.seedance_face_mask_enabled=true` + 有 video_path 输入
 
 **遮盖语义**：单帧 ComfyUI 工作流 `人脸识别_单帧.json` 不再在检测前 resize，YOLOv8 的 `BBOX Detector (combined)` 直接在原图上生成整图尺寸的 bbox 矩形 mask，再通过 `8x8` 黑色图像按 mask 拉伸合成回原图。遮盖区域以检测框 `x1/y1/x2/y2` 为基础，并使用 `dilation=128` 增加安全边距，补偿 YOLO face bbox 在侧脸、头发遮挡、扇子遮挡、局部置信度偏高时只框住人脸核心区域的问题；它不是 SEGS 裁剪图或人脸轮廓分割区域，避免出现纯黑背景里残留脸部裁剪图的结果。
 
@@ -107,9 +109,9 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 ### image_face_mask（图片人脸遮盖）
 
-用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的图片做人脸矩形黑块遮盖。
+用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast / 2.0 Mini 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的图片做人脸矩形黑块遮盖。
 
-**触发条件**：Seedance 2.0 / 2.0 Fast 任务类型 + `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
+**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
 
 **配置开关**：`pipeline.seedance_face_mask_enabled`，默认 `true`，是 Seedance 人脸遮盖前置处理的**总开关**，同时控制图片（`image_face_mask`）和视频（`face_mask`）两种遮盖步骤。关闭后图片和视频的遮盖步骤均不创建，任务走普通生成流程。
 

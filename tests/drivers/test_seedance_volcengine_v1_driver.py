@@ -15,6 +15,8 @@ import sys
 import unittest
 from unittest.mock import patch, MagicMock, PropertyMock
 
+from model.ai_tool_pipeline_steps import PipelineStepStatus
+
 # Mock 外部依赖（必须在 import driver 之前）
 sys.modules['utils.sentry_util'] = MagicMock()
 sys.modules['utils.image_upload_utils'] = MagicMock()
@@ -335,6 +337,103 @@ class TestBuildCreateRequestFirstLastFrame(unittest.TestCase):
         # 应该走首尾帧分支，成功构建
         self.assertIn('json', result)
         self.assertIn('model', result['json'])
+
+
+class TestBuildCreateRequestTextToVideo(unittest.TestCase):
+    """测试文生视频模式下的 build_create_request"""
+
+    def setUp(self):
+        self.driver = _create_driver()
+
+    def test_text_to_video_content_only_text(self):
+        """文生视频：无任何媒体输入、extra_config 为空，content 仅一个 text 元素"""
+        ai_tool = _make_ai_tool(
+            prompt='一只猫在跳舞',
+            image_path=None,
+            extra_config=None,
+            ratio='9:16',
+            duration=5
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        # content 仅含 text
+        content = result['json']['content']
+        self.assertEqual(len(content), 1)
+        self.assertEqual(content[0]['type'], 'text')
+        self.assertEqual(content[0]['text'], '一只猫在跳舞')
+        # payload 含 model / ratio / duration
+        self.assertEqual(result['json']['model'], 'doubao-seedance-1-5-pro-251215')
+        self.assertEqual(result['json']['ratio'], '9:16')
+        self.assertEqual(result['json']['duration'], 5)
+        # url / method / headers 正确
+        self.assertIn('/api/v3/contents/generations/tasks', result['url'])
+        self.assertEqual(result['method'], 'POST')
+        self.assertIn('Authorization', result['headers'])
+
+    def test_text_to_video_empty_prompt_returns_error(self):
+        """文生视频但 prompt 为空：返回 USER 错误"""
+        ai_tool = _make_ai_tool(
+            prompt='',
+            image_path=None,
+            extra_config=None
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertIn('提示词', result['error'])
+
+    def test_text_to_video_whitespace_prompt_returns_error(self):
+        """文生视频但 prompt 仅为空白字符：返回 USER 错误"""
+        ai_tool = _make_ai_tool(
+            prompt='   ',
+            image_path=None,
+            extra_config=None
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+
+    def test_image_mode_declared_no_media_not_text_to_video(self):
+        """边界守护 A：图生视频接口任务（extra_config 带 image_mode）即使无任何媒体输入，
+        也不被判为文生视频（走首尾帧逻辑并按原逻辑报错）"""
+        ai_tool = _make_ai_tool(
+            prompt='测试',
+            image_path=None,
+            extra_config={'image_mode': 'first_last_frame'}
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        # 走首尾帧分支：因无首帧报错，而非被判为文生视频而成功
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertIn('首帧图片', result['error'])
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_multi_reference_with_only_video_not_text_to_video(self, mock_compress, mock_upload_cdn):
+        """边界守护 B：multi_reference + 仅参考视频、无图片，不被判为文生视频，
+        走多参考图逻辑并构建含 reference_video 的 content"""
+        mock_upload_cdn.return_value = (True, 'https://cdn.example.com/video.mp4', None)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频生成',
+            image_path=None,
+            extra_config={'image_mode': 'multi_reference', 'reference_video': 'http://example.com/video.mp4'},
+            reference_images=None,
+            video_path=None
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        # 走 multi_reference 分支：content 含 reference_video，而非被判为文生视频（仅 text）
+        video_items = [c for c in result['json']['content'] if c['type'] == 'video_url']
+        self.assertEqual(len(video_items), 1)
+        self.assertEqual(video_items[0].get('role'), 'reference_video')
 
 
 class TestBuildCreateRequestMultiReference(unittest.TestCase):
@@ -863,6 +962,128 @@ class TestParseExtraConfig(unittest.TestCase):
         ai_tool = _make_ai_tool(extra_config='not a json')
         result = self.driver._parse_extra_config(ai_tool)
         self.assertEqual(result, {})
+
+
+class TestResolveImagePathWithFaceMask(unittest.TestCase):
+    """测试 _resolve_image_path_with_face_mask（图片遮盖替换，对齐视频）"""
+
+    def setUp(self):
+        self.driver = _create_driver()
+        self.ai_tool = _make_ai_tool()
+
+    def _make_step(self, step_type='image_face_mask', status=PipelineStepStatus.COMPLETED,
+                   target='http://example.com/ref1.jpg', result_url='/upload/cache/masked.png'):
+        step = MagicMock()
+        step.step_type = step_type
+        step.status = status
+        step.target = target
+        step.result_url = result_url
+        return step
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel')
+    def test_completed_matching_step_returns_result_url(self, MockStepModel):
+        """COMPLETED 且 target 匹配的 image_face_mask 步骤：返回遮盖路径"""
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [self._make_step()]
+        result = self.driver._resolve_image_path_with_face_mask(self.ai_tool, 'http://example.com/ref1.jpg')
+        self.assertEqual(result, '/upload/cache/masked.png')
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel')
+    def test_target_mismatch_returns_original(self, MockStepModel):
+        """target 不匹配：返回原始路径"""
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [self._make_step(target='http://other.com/x.jpg')]
+        result = self.driver._resolve_image_path_with_face_mask(self.ai_tool, 'http://example.com/ref1.jpg')
+        self.assertEqual(result, 'http://example.com/ref1.jpg')
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel')
+    def test_non_completed_step_skipped(self, MockStepModel):
+        """非 COMPLETED 的步骤被跳过：返回原始路径"""
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [self._make_step(status=PipelineStepStatus.PROCESSING)]
+        result = self.driver._resolve_image_path_with_face_mask(self.ai_tool, 'http://example.com/ref1.jpg')
+        self.assertEqual(result, 'http://example.com/ref1.jpg')
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel')
+    def test_face_mask_step_type_ignored(self, MockStepModel):
+        """FACE_MASK（视频）步骤不参与图片替换：返回原始路径"""
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [self._make_step(step_type='face_mask')]
+        result = self.driver._resolve_image_path_with_face_mask(self.ai_tool, 'http://example.com/ref1.jpg')
+        self.assertEqual(result, 'http://example.com/ref1.jpg')
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel')
+    def test_no_steps_returns_original(self, MockStepModel):
+        """无任何步骤：返回原始路径"""
+        MockStepModel.get_by_ai_tool_and_stage.return_value = []
+        result = self.driver._resolve_image_path_with_face_mask(self.ai_tool, 'http://example.com/ref1.jpg')
+        self.assertEqual(result, 'http://example.com/ref1.jpg')
+
+    def test_empty_image_path_returns_empty(self):
+        """空图片路径：直接返回空，不查询 step"""
+        with patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel') as MockStepModel:
+            result = self.driver._resolve_image_path_with_face_mask(self.ai_tool, '')
+            self.assertEqual(result, '')
+            MockStepModel.get_by_ai_tool_and_stage.assert_not_called()
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel')
+    def test_exception_returns_original(self, MockStepModel):
+        """查询异常：返回原始路径，不抛出"""
+        MockStepModel.get_by_ai_tool_and_stage.side_effect = RuntimeError('db error')
+        result = self.driver._resolve_image_path_with_face_mask(self.ai_tool, 'http://example.com/ref1.jpg')
+        self.assertEqual(result, 'http://example.com/ref1.jpg')
+
+
+class TestBuildCreateRequestUsesFaceMaskedImage(unittest.TestCase):
+    """端到端验证 build_create_request 实际使用遮盖后的图片"""
+
+    def setUp(self):
+        self.driver = _create_driver()
+
+    def _make_image_face_mask_step(self, target, result_url):
+        step = MagicMock()
+        step.step_type = 'image_face_mask'
+        step.status = PipelineStepStatus.COMPLETED
+        step.target = target
+        step.result_url = result_url
+        return step
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_multi_reference_uses_masked_image(self, mock_compress, MockStepModel):
+        """多参考图模式：compress 收到的是遮盖路径而非原始 URL"""
+        original_url = 'http://example.com/ref1.jpg'
+        masked_path = '/upload/cache/2026-06-26/masked.png'
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [
+            self._make_image_face_mask_step(original_url, masked_path)
+        ]
+        mock_compress.return_value = (True, 'https://cdn.example.com/masked.png', None)
+
+        ai_tool = _make_ai_tool(
+            image_path=None,
+            extra_config={'image_mode': 'multi_reference'},
+            reference_images=json.dumps([original_url])
+        )
+        self.driver.build_create_request(ai_tool)
+
+        self.assertGreater(mock_compress.call_count, 0)
+        self.assertEqual(mock_compress.call_args_list[0].args[0], masked_path)
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.PipelineStepModel')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_first_last_frame_uses_masked_image(self, mock_compress, MockStepModel):
+        """首尾帧模式：首帧 compress 收到的是遮盖路径"""
+        original_url = 'http://example.com/first.jpg'
+        masked_path = '/upload/cache/2026-06-26/masked_first.png'
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [
+            self._make_image_face_mask_step(original_url, masked_path)
+        ]
+        mock_compress.return_value = (True, 'https://cdn.example.com/masked_first.png', None)
+
+        ai_tool = _make_ai_tool(
+            image_path=original_url,
+            extra_config={'image_mode': 'first_last_frame'}
+        )
+        self.driver.build_create_request(ai_tool)
+
+        self.assertGreater(mock_compress.call_count, 0)
+        self.assertEqual(mock_compress.call_args_list[0].args[0], masked_path)
 
 
 if __name__ == '__main__':

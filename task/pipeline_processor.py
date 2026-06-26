@@ -48,6 +48,14 @@ class PipelineProcessor:
         return PipelineDriverFactory.create_param_prepare_steps(ai_tool_id, ai_tool_type)
 
     @staticmethod
+    def is_seedance_face_mask_type(ai_tool_type: int) -> bool:
+        """是否属于走 param_prepare 人脸遮盖的 Seedance 模型（委托 PipelineDriverFactory）。
+
+        供 server.py 闸门查询，模型清单单一来源在 config/unified_config.py。
+        """
+        return PipelineDriverFactory.is_seedance_face_mask_type(ai_tool_type)
+
+    @staticmethod
     def create_before_finish_steps(
         ai_tool_id: int,
         ai_tool_type: int,

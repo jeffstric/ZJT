@@ -62,6 +62,11 @@ class GptImageCommonV1Driver(BaseVideoDriver):
 
     # 默认模型
     DEFAULT_MODEL = "gpt-image-2"
+    EDIT_MODEL = "gpt-image-2"
+    DEFAULT_EDIT_COUNT = 1
+    VALID_QUALITIES = {"low", "medium", "high", "auto"}
+    VALID_BACKGROUNDS = {"opaque", "auto", "transparent"}
+    VALID_MODERATIONS = {"low", "auto"}
 
     def __init__(self, site_id: str, impl_name: str = None):
         """
@@ -277,6 +282,99 @@ class GptImageCommonV1Driver(BaseVideoDriver):
 
         return file_content, filename, mime_type
 
+    def _parse_extra_config(self, ai_tool) -> Dict[str, Any]:
+        """
+        解析 AITool.extra_config，兼容 JSON 字符串和字典。
+        """
+        extra_config = getattr(ai_tool, 'extra_config', None)
+        if not extra_config:
+            return {}
+
+        if isinstance(extra_config, dict):
+            return extra_config
+
+        try:
+            config = json.loads(extra_config)
+            return config if isinstance(config, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            self.logger.warning(f"无法解析 extra_config: {extra_config}")
+            return {}
+
+    def _get_edit_count(self, config: Dict[str, Any]) -> str:
+        """
+        获取图片编辑生成数量，API 要求 1 到 10。
+        """
+        raw_count = config.get("n", self.DEFAULT_EDIT_COUNT)
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            self.logger.warning(f"无效的 n 值: {raw_count}，使用默认值 {self.DEFAULT_EDIT_COUNT}")
+            count = self.DEFAULT_EDIT_COUNT
+
+        if count < 1 or count > 10:
+            self.logger.warning(f"n 值超出范围: {count}，使用默认值 {self.DEFAULT_EDIT_COUNT}")
+            count = self.DEFAULT_EDIT_COUNT
+
+        return str(count)
+
+    def _append_optional_form_value(
+        self,
+        form_data: Dict[str, Any],
+        config: Dict[str, Any],
+        key: str,
+        valid_values: set[str],
+    ) -> None:
+        value = config.get(key)
+        if not value:
+            return
+
+        value = str(value)
+        if value in valid_values:
+            form_data[key] = value
+        else:
+            self.logger.warning(f"无效的 {key} 值: {value}，有效值: {valid_values}，已忽略")
+
+    def _build_edit_form_data(self, ai_tool, size: str) -> Dict[str, Any]:
+        """
+        构建 /v1/images/edits 表单字段。
+        """
+        config = self._parse_extra_config(ai_tool)
+        form_data = {
+            "prompt": ai_tool.prompt or "",
+            "model": str(config.get("model") or self.EDIT_MODEL),
+            "n": self._get_edit_count(config),
+            "size": size,
+        }
+
+        self._append_optional_form_value(form_data, config, "quality", self.VALID_QUALITIES)
+        self._append_optional_form_value(form_data, config, "background", self.VALID_BACKGROUNDS)
+        self._append_optional_form_value(form_data, config, "moderation", self.VALID_MODERATIONS)
+
+        return form_data
+
+    def _build_edit_files(self, image_paths: list[str], config: Dict[str, Any]) -> list[tuple[str, tuple[str, bytes, str]]]:
+        """
+        构建 /v1/images/edits multipart 文件字段。
+        """
+        files = []
+        image_field = "image[]" if len(image_paths) > 1 else "image"
+        for i, img_path in enumerate(image_paths):
+            try:
+                file_content, filename, mime_type = self._prepare_image_file(img_path)
+                files.append((image_field, (filename, file_content, mime_type)))
+                self.logger.info(f"已准备上传图片 [{i+1}/{len(image_paths)}]: {filename}")
+            except Exception as e:
+                self.logger.error(f"准备图片文件失败: {img_path}, error: {str(e)}")
+                raise
+
+        mask_path = config.get("mask")
+        if mask_path:
+            file_content, filename, mime_type = self._prepare_image_file(str(mask_path))
+            files.append(("mask", (filename, file_content, mime_type)))
+            self.logger.info(f"已准备上传遮罩图片: {filename}")
+
+        return files
+
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
         创建 GPT Image 任务的完整请求参数
@@ -337,25 +435,9 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         if not image_paths:
             raise ValueError("图片编辑模式需要至少一张输入图片")
 
-        # 准备文件上传列表
-        files = []
-        for i, img_path in enumerate(image_paths):
-            try:
-                file_content, filename, mime_type = self._prepare_image_file(img_path)
-                # multipart/form-data 中多个同名字段会作为数组
-                files.append(('image', (filename, file_content, mime_type)))
-                self.logger.info(f"已准备上传图片 [{i+1}/{len(image_paths)}]: {filename}")
-            except Exception as e:
-                self.logger.error(f"准备图片文件失败: {img_path}, error: {str(e)}")
-                raise
-
-        # 构建表单数据
-        form_data = {
-            "prompt": ai_tool.prompt or "",
-            "model": 'gpt-image-2-all',
-            "n": "1",
-            "size": size,
-        }
+        config = self._parse_extra_config(ai_tool)
+        files = self._build_edit_files(image_paths, config)
+        form_data = self._build_edit_form_data(ai_tool, size)
 
         return {
             "url": f"{self._base_url}/v1/images/edits",
@@ -363,6 +445,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             "files": files,
             "data": form_data,
             "headers": {
+                "Accept": "application/json",
                 "Authorization": f"Bearer {self._api_key}"
             }
         }
@@ -394,13 +477,17 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         import copy
         truncated = copy.deepcopy(response)
         
-        # 处理 data 数组中的 b64_json
+        # 处理 data 数组或对象中的 b64_json
         if "data" in truncated and isinstance(truncated["data"], list):
             for item in truncated["data"]:
                 if isinstance(item, dict) and "b64_json" in item:
                     b64_data = item["b64_json"]
                     if isinstance(b64_data, str) and len(b64_data) > max_b64_length:
                         item["b64_json"] = f"{b64_data[:max_b64_length]}...[truncated {len(b64_data)} chars]"
+        elif "data" in truncated and isinstance(truncated["data"], dict):
+            b64_data = truncated["data"].get("b64_json")
+            if isinstance(b64_data, str) and len(b64_data) > max_b64_length:
+                truncated["data"]["b64_json"] = f"{b64_data[:max_b64_length]}...[truncated {len(b64_data)} chars]"
         
         return truncated
 
@@ -408,9 +495,10 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         """
         从 OpenAI API 响应中提取图片 URL 或 base64 数据
 
-        支持两种格式：
+        支持三种格式：
         1. images/generations 格式：{ "data": [{ "url": "..." }] }
-        2. chat completions 格式：{ "choices": [{ "message": { "content": "..." } }] }
+        2. yunwu edits 格式：{ "data": { "b64_json": "..." } }
+        3. chat completions 格式：{ "choices": [{ "message": { "content": "..." } }] }
 
         Args:
             response: API 响应
@@ -421,6 +509,12 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         try:
             # 1. 尝试处理 images/generations 格式
             data = response.get("data", [])
+            if data and isinstance(data, dict):
+                if data.get("url"):
+                    return data["url"]
+                if "b64_json" in data:
+                    return f"data:image/png;base64,{data['b64_json']}"
+
             if data and isinstance(data, list) and len(data) > 0:
                 first_item = data[0]
                 if isinstance(first_item, dict):
@@ -646,95 +740,14 @@ class GptImageCommonSite1V1Driver(GptImageCommonV1Driver):
 class GptImageCommonSite2V1Driver(GptImageCommonV1Driver):
     """GPT Image Common Site 2 v1 版本驱动
 
-    针对 comfly.chat 反代站点，使用标准 OpenAI /v1/images/edits API 格式。
-    与基类的差异：
-    - 使用 gpt-image-2 模型（非 gpt-image-2-all）
-    - 支持 quality 参数（从 extra_config 解析）
-    - 添加 response_format=b64_json
-    - 移除 n 参数（非官方 API 规范）
+    针对 comfly.chat 反代站点，复用基类的 /v1/images/edits 表单格式。
     """
-
-    EDIT_MODEL = "gpt-image-2"
-    VALID_QUALITIES = {"low", "medium", "high", "auto"}
 
     def __init__(self):
         super().__init__(site_id="site_2", impl_name=DriverImplementation.GPT_IMAGE_COMMON_SITE2_V1)
 
     def build_edit_request(self, ai_tool) -> Dict[str, Any]:
-        """
-        构建图片编辑请求参数（Site2 专用，符合 OpenAI /v1/images/edits 规范）
-
-        与基类的差异：
-        - model: gpt-image-2（非 gpt-image-2-all）
-        - 移除 n 参数
-        - 添加 quality 参数（从 extra_config 解析，默认 auto）
-        - 添加 response_format=b64_json
-
-        Args:
-            ai_tool: AITool 对象
-                - prompt: 文本描述
-                - image_path: 输入图片路径（支持多张，逗号分隔）
-                - ratio: 图片比例
-                - image_size: 图片分辨率
-                - extra_config: JSON 字符串，可包含 quality 字段
-
-        Returns:
-            Dict[str, Any]: 请求参数字典，包含 files 和 data
-        """
-        # 获取分辨率和比例
-        image_size = getattr(ai_tool, 'image_size', None) or '1k'
-        ratio = ai_tool.ratio or '1:1'
-        size = self._map_size(image_size, ratio)
-
-        # 解析 extra_config 中的 quality
-        quality = "auto"
-        if ai_tool.extra_config:
-            try:
-                config = ai_tool.extra_config if isinstance(ai_tool.extra_config, dict) else json.loads(ai_tool.extra_config)
-                if isinstance(config, dict):
-                    q = config.get("quality")
-                    if q:
-                        if q in self.VALID_QUALITIES:
-                            quality = q
-                        else:
-                            self.logger.warning(f"无效的 quality 值: {q}，有效值: {self.VALID_QUALITIES}，使用默认值 auto")
-            except (json.JSONDecodeError, TypeError):
-                self.logger.warning(f"无法解析 extra_config: {ai_tool.extra_config}")
-
-        # 解析图片路径列表
-        image_paths = [path.strip() for path in ai_tool.image_path.split(',') if path.strip()]
-        if not image_paths:
-            raise ValueError("图片编辑模式需要至少一张输入图片")
-
-        # 准备文件上传列表
-        files = []
-        for i, img_path in enumerate(image_paths):
-            try:
-                file_content, filename, mime_type = self._prepare_image_file(img_path)
-                files.append(('image', (filename, file_content, mime_type)))
-                self.logger.info(f"已准备上传图片 [{i+1}/{len(image_paths)}]: {filename}")
-            except Exception as e:
-                self.logger.error(f"准备图片文件失败: {img_path}, error: {str(e)}")
-                raise
-
-        # 构建表单数据 - 符合 OpenAI /v1/images/edits 规范
-        form_data = {
-            "prompt": ai_tool.prompt or "",
-            "model": self.EDIT_MODEL,
-            "size": size,
-            "quality": quality,
-            "response_format": "b64_json",
-        }
-
-        return {
-            "url": f"{self._base_url}/v1/images/edits",
-            "method": "POST",
-            "files": files,
-            "data": form_data,
-            "headers": {
-                "Authorization": f"Bearer {self._api_key}"
-            }
-        }
+        return super().build_edit_request(ai_tool)
 
 
 class GptImageCommonSite3V1Driver(GptImageCommonV1Driver):

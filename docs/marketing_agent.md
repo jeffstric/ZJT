@@ -584,6 +584,7 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - 专家通过 `script_writer_core/config/agents_config.json` 中的 `expert_type` 声明所属模式；剧本 PM 只允许 `script` 类型专家，营销 PM 只允许 `marketing` 类型专家
 - `call_agent.AgentName` 的工具枚举会按当前 PM 的 `allowed_expert_types` 动态过滤，`_handle_agent_call()` 也会做后端校验，避免营销模式误调用剧本专家或反向串线
 - 营销视频克隆必须走 `sop-video-clone` 并委托 `marketing-video`；数字人口播必须走 `sop-digital-human` 并委托 `digital-human-creator`，且数字人专家必须实际调用 `generate_digital_human` 并返回非空 `project_ids` 才算提交成功
+- 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast 和 Seedance2.0 Mini（seedance2.0-mini）；专家提示词必须通过 `video_urls` 传入参考视频，并在视频克隆提示词末尾保留"将人脸位置的黑色方框修改为真人人脸。"这句人脸修正指令
 - 数字人口播缺少用户音频时，专家应调用通用 `generate_reference_audio` 生成参考音频；数字人专家不暴露角色耦合的 `generate_character_reference_audio`
 
 ### 用户偏好同步

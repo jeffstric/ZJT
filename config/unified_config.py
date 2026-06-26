@@ -1125,6 +1125,16 @@ class DriverKey:
     HAPPY_HORSE_TEXT_TO_VIDEO = 'happy_horse_text_to_video'
 
 
+# ============ 走 param_prepare 人脸遮盖预处理的 Seedance 任务 DriverKey 集合 ============
+# 单一事实来源：server.py 闸门与 PipelineDriverFactory 均通过此集合判断
+# 让某 Seedance 模型走人脸遮盖预处理，只需在此追加对应 DriverKey
+SEEDANCE_FACE_MASK_DRIVER_KEYS = frozenset({
+    DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
+    DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
+})
+
+
 # ============ Agent 相关常量 ============
 ASK_USER_MAX_CONSECUTIVE_FAILS = 3  # ask_user 连续失败上限（不含超时），超过则终止任务
 COMPUTING_POWER_CHECK_THRESHOLD = 1  # Agent 循环算力检查阈值，低于此值停止任务

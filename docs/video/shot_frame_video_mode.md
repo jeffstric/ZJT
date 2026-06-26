@@ -39,7 +39,7 @@
 
 当参考图模式下没有收集到任何参考图时：
 - 自动回退调用 `/api/ai-app-run`（text_to_video 端点）
-- 仅当所选视频模型同时支持 text_to_video 分类时才可用（如 veo3、grok、seedance 2.0）
+- 仅当所选视频模型同时支持 text_to_video 分类时才可用（如 veo3、grok、seedance 2.0 / 2.0 Fast / 2.0 Mini）
 - 若模型不支持 text_to_video，提示用户添加参考图或切换模型
 - 回退时启用角色标记替换（`replaceCharacterMarkers`）
 

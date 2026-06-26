@@ -12,7 +12,8 @@ from config.unified_config import (
     UnifiedConfigRegistry,
     get_implementation_id,
     get_implementation_name,
-    DriverKey
+    DriverKey,
+    SEEDANCE_FACE_MASK_DRIVER_KEYS,
 )
 
 from .base_pipeline_driver import BasePipelineDriver
@@ -33,10 +34,8 @@ _DRIVER_MAP = {
 class PipelineDriverFactory:
     """Pipeline 驱动工厂"""
 
-    _SEEDANCE_FACE_MASK_KEYS = {
-        DriverKey.SEEDANCE_2_0_IMAGE_TO_VIDEO,
-        DriverKey.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
-    }
+    # 走人脸遮盖预处理的 Seedance 任务 DriverKey（单一来源：config/unified_config.py）
+    _SEEDANCE_FACE_MASK_KEYS = SEEDANCE_FACE_MASK_DRIVER_KEYS
 
     @staticmethod
     def create_driver(step_type: str) -> Optional[BasePipelineDriver]:
@@ -154,6 +153,15 @@ class PipelineDriverFactory:
             })
 
         return step_configs
+
+    @classmethod
+    def is_seedance_face_mask_type(cls, ai_tool_type: int) -> bool:
+        """判断某任务类型（TaskTypeId）是否属于走 param_prepare 人脸遮盖的 Seedance 模型。
+
+        供 server.py 等外部入口查询，避免各处重复维护 Seedance 模型清单。
+        """
+        task_config = UnifiedConfigRegistry.get_by_id(ai_tool_type)
+        return bool(task_config and task_config.key in cls._SEEDANCE_FACE_MASK_KEYS)
 
     @classmethod
     def create_param_prepare_steps(

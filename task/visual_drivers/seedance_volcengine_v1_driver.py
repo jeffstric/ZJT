@@ -1,7 +1,8 @@
 """
 Seedance 火山引擎供应商 v1 版本驱动实现
 异步 API - 创建任务后轮询状态
-支持 Seedance 1.5 Pro / 2.0 Fast / 2.0 三个模型（图生视频）
+支持 Seedance 1.5 Pro / 2.0 Fast / 2.0 / 2.0 Mini 四个模型
+支持图生视频（首尾帧 / 多参考图）与文生视频（纯文本）
 
 基类 SeedanceVolcengineV1Driver 包含核心逻辑，
 子类通过 driver_type 和 model_name 区分不同模型。
@@ -24,7 +25,7 @@ from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, 
 class SeedanceVolcengineV1Driver(BaseVideoDriver):
     """
     Seedance 火山引擎供应商 v1 版本驱动（基类）
-    异步 API - 图生视频
+    异步 API - 图生视频 / 文生视频
 
     子类通过不同的 driver_type 和 model_name 区分模型。
 
@@ -98,6 +99,34 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             self.logger.warning(f"查询 face_mask pipeline step 失败，使用原始路径: {e}")
         return video_path
 
+    def _resolve_image_path_with_face_mask(self, ai_tool, image_path: str) -> str:
+        """
+        查找 image_face_mask pipeline step 的遮盖结果替换原始图片路径
+
+        与 _resolve_video_path_with_face_mask 对称：若 ai_tool_pipeline_steps 中存在
+        target 匹配的已完成 image_face_mask 步骤，使用其 result_url（人脸遮盖后的图片）
+        替代原始路径，避免 seedance 2.0 审核不通过。
+
+        主动查询 step 而非依赖 apply_results 对 ai_tool 字段的回写，规避并发调度下
+        回写未及时生效导致提交原始（带人脸）图片的问题。无论回写是否生效均鲁棒：
+        - 回写未生效：step.target(原始URL) == 当前图片路径(原始URL)，命中遮盖结果
+        - 回写已生效：当前图片路径已是遮盖路径，target 不匹配，原样返回（仍是遮盖图）
+        """
+        if not image_path:
+            return image_path
+        try:
+            steps = PipelineStepModel.get_by_ai_tool_and_stage(ai_tool.id, PipelineStage.PARAM_PREPARE)
+            for step in steps:
+                if (step.step_type == PipelineStepType.IMAGE_FACE_MASK
+                        and step.status == PipelineStepStatus.COMPLETED
+                        and step.target == image_path
+                        and step.result_url):
+                    self.logger.info(f"使用 image_face_mask 结果替换图片: {image_path} -> {step.result_url}")
+                    return step.result_url
+        except Exception as e:
+            self.logger.warning(f"查询 image_face_mask pipeline step 失败，使用原始路径: {e}")
+        return image_path
+
     def _parse_extra_config(self, ai_tool) -> Dict[str, Any]:
         """解析 extra_config JSON"""
         if not ai_tool.extra_config:
@@ -166,12 +195,16 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
 
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """
-        构建 Seedance 图生视频创建任务请求
+        构建 Seedance 创建任务请求（图生视频 / 文生视频）
 
-        三种互斥模式（不可混用）：
+        模式（互斥）：
+        - text_to_video: 文生视频，无任何图片/音视频输入，content 只放 text
         - first_last_frame: 首帧/首尾帧模式，content 中放 first_frame/last_frame
         - multi_reference: 多模态参考模式，content 中放 reference_image + reference_video + reference_audio
         - first_last_with_ref: 首尾帧+参考图模式（暂不支持，降级为首尾帧）
+
+        文生视频判定：无首/尾帧、无参考图、无参考视频/音频，且 extra_config 未声明 image_mode
+        （文生视频接口不写 extra_config，图生视频接口必写 {'image_mode': ...}）。
         """
         # 1. 解析 extra_config 和图片模式
         extra_config = self._parse_extra_config(ai_tool)
@@ -184,8 +217,30 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         prompt = ai_tool.prompt or ""
         content = []
 
-        # 2. 根据 image_mode 分支构建 content（三种模式互斥）
-        if img_mode == ImageMode.FIRST_LAST_FRAME or img_mode == ImageMode.FIRST_LAST_WITH_REF:
+        # 2. 根据输入分支构建 content
+        # 文生视频判定：无任何图片/音视频输入，且 extra_config 未声明 image_mode
+        # （文生视频接口 /api/ai-app-run 不写 extra_config；图生视频接口必写 {'image_mode': ...}）
+        reference_video_raw = self.get_video_path(ai_tool) or extra_config.get('reference_video')
+        reference_audio_raw = self.get_audio_path(ai_tool) or extra_config.get('reference_audio')
+        is_text_to_video = (
+            not first_frame and not last_frame and not reference_images
+            and not reference_video_raw and not reference_audio_raw
+            and 'image_mode' not in extra_config
+        )
+
+        if is_text_to_video:
+            # ---- 文生视频模式（纯文本，无图片/音视频输入）----
+            self.logger.info("文生视频模式: 无任何图片/音视频输入")
+            if not prompt.strip():
+                return {
+                    "success": False,
+                    "error": "文生视频模式需要输入提示词",
+                    "error_type": "USER",
+                    "retry": False
+                }
+            content.append({"type": "text", "text": prompt})
+
+        elif img_mode == ImageMode.FIRST_LAST_FRAME or img_mode == ImageMode.FIRST_LAST_WITH_REF:
             # ---- 首帧/首尾帧模式 ----
             self.logger.info(f"首尾帧模式: first_frame={first_frame}, last_frame={last_frame}")
 
@@ -198,6 +253,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
                 }
 
             # 处理首帧图片
+            first_frame = self._resolve_image_path_with_face_mask(ai_tool, first_frame)
             success, processed_url, error = compress_and_upload_image_sync(
                 first_frame, self._config, max_size_mb=10.0, is_local=True
             )
@@ -213,6 +269,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             # 处理尾帧图片（可选）
             processed_last_frame = None
             if last_frame:
+                last_frame = self._resolve_image_path_with_face_mask(ai_tool, last_frame)
                 success_lf, url_lf, error_lf = compress_and_upload_image_sync(
                     last_frame, self._config, max_size_mb=10.0, is_local=True
                 )
@@ -251,8 +308,9 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             # 处理参考图列表（图片可选，多参考模式下视频/音频也可独立使用）
             processed_reference_images = []
             for ref_img in reference_images:
+                resolved_ref = self._resolve_image_path_with_face_mask(ai_tool, ref_img)
                 success, new_url, error = compress_and_upload_image_sync(
-                    ref_img, self._config, max_size_mb=10.0, is_local=True
+                    resolved_ref, self._config, max_size_mb=10.0, is_local=True
                 )
                 if success:
                     processed_reference_images.append(new_url)
@@ -313,6 +371,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
                     "error_type": "USER",
                     "retry": False
                 }
+            first_frame = self._resolve_image_path_with_face_mask(ai_tool, first_frame)
             success, processed_url, error = compress_and_upload_image_sync(
                 first_frame, self._config, max_size_mb=10.0, is_local=True
             )

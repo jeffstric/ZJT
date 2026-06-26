@@ -488,3 +488,113 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
                     )
         # 应创建了至少一个重试步骤
         self.assertGreater(len(result), 0)
+
+
+# ==================== 新增：PipelineDriverFactory.is_seedance_face_mask_type 测试 ====================
+
+class TestIsSeedanceFaceMaskType(unittest.TestCase):
+    """测试 PipelineDriverFactory.is_seedance_face_mask_type()"""
+
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_mini_is_seedance_face_mask(self, MockRegistry):
+        """Seedance 2.0 Mini (type=31) 应识别为走人脸遮盖的 Seedance 模型"""
+        mock_config = MagicMock()
+        mock_config.key = 'seedance_2_0_mini_image_to_video'
+        MockRegistry.get_by_id.return_value = mock_config
+
+        self.assertTrue(PipelineDriverFactory.is_seedance_face_mask_type(31))
+
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_seedance_2_0_and_fast_are_face_mask(self, MockRegistry):
+        """Seedance 2.0 (23) 与 2.0 Fast (22) 仍被识别"""
+        cases = {23: 'seedance_2_0_image_to_video', 22: 'seedance_2_0_fast_image_to_video'}
+        for task_type, key in cases.items():
+            mock_config = MagicMock()
+            mock_config.key = key
+            MockRegistry.get_by_id.return_value = mock_config
+            self.assertTrue(
+                PipelineDriverFactory.is_seedance_face_mask_type(task_type),
+                f"{key} should be seedance face mask type"
+            )
+
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_non_seedance_is_not_face_mask(self, MockRegistry):
+        """非 Seedance 模型（如 Kling）应返回 False"""
+        mock_config = MagicMock()
+        mock_config.key = 'kling_image_to_video'
+        MockRegistry.get_by_id.return_value = mock_config
+
+        self.assertFalse(PipelineDriverFactory.is_seedance_face_mask_type(12))
+
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_unknown_task_type_returns_false(self, MockRegistry):
+        """未知任务类型返回 False"""
+        MockRegistry.get_by_id.return_value = None
+
+        self.assertFalse(PipelineDriverFactory.is_seedance_face_mask_type(999))
+
+
+# ==================== 新增：Seedance 2.0 Mini 的 param_prepare 步骤创建测试 ====================
+
+class TestCreateParamPrepareStepsMini(unittest.TestCase):
+    """测试 Seedance 2.0 Mini 的 param_prepare 步骤创建"""
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    @patch('task.pipeline_drivers.AIToolsModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_mini_image_path_creates_image_face_mask_steps(
+        self, MockRegistry, MockAITools, MockStepModel, mock_config
+    ):
+        """Seedance 2.0 Mini 的 image_path 首尾帧应创建 image_face_mask 步骤"""
+        mock_task_config = MagicMock()
+        mock_task_config.key = 'seedance_2_0_mini_image_to_video'
+        MockRegistry.get_by_id.return_value = mock_task_config
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.image_path = 'first.png,last.png'
+        mock_ai_tool.reference_images = None
+        mock_ai_tool.video_path = None
+        MockAITools.get_by_id.return_value = mock_ai_tool
+        mock_config.side_effect = (
+            lambda section, key, default=None:
+            True if (section, key) == ('pipeline', 'seedance_face_mask_enabled') else default
+        )
+        MockStepModel.create.side_effect = [301, 302]
+
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=12, ai_tool_type=31)
+
+        self.assertEqual(result, [301, 302])
+        self.assertEqual(MockStepModel.create.call_count, 2)
+        first_call = MockStepModel.create.call_args_list[0].kwargs
+        self.assertEqual(first_call['step_type'], 'image_face_mask')
+        self.assertEqual(first_call['params']['image_path'], 'first.png')
+
+    @patch('task.pipeline_drivers.get_dynamic_config_value')
+    @patch('task.pipeline_drivers.PipelineStepModel')
+    @patch('task.pipeline_drivers.AIToolsModel')
+    @patch('task.pipeline_drivers.UnifiedConfigRegistry')
+    def test_mini_video_path_creates_face_mask_steps(
+        self, MockRegistry, MockAITools, MockStepModel, mock_config
+    ):
+        """Seedance 2.0 Mini 的 video_path 应创建 face_mask 步骤"""
+        mock_task_config = MagicMock()
+        mock_task_config.key = 'seedance_2_0_mini_image_to_video'
+        MockRegistry.get_by_id.return_value = mock_task_config
+        mock_ai_tool = MagicMock()
+        mock_ai_tool.image_path = None
+        mock_ai_tool.reference_images = None
+        mock_ai_tool.video_path = 'input.mp4'
+        MockAITools.get_by_id.return_value = mock_ai_tool
+        mock_config.side_effect = (
+            lambda section, key, default=None:
+            True if (section, key) == ('pipeline', 'seedance_face_mask_enabled') else default
+        )
+        MockStepModel.create.side_effect = [303]
+
+        result = PipelineDriverFactory.create_param_prepare_steps(ai_tool_id=13, ai_tool_type=31)
+
+        self.assertEqual(result, [303])
+        first_call = MockStepModel.create.call_args_list[0].kwargs
+        self.assertEqual(first_call['step_type'], 'face_mask')
+        self.assertEqual(first_call['params']['video_path'], 'input.mp4')
+        self.assertEqual(first_call['target'], 'input.mp4')
