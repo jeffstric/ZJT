@@ -407,15 +407,6 @@
             statusEl.textContent = _t('dh_task_submitted', '任务已提交，正在生成视频...');
 
             // === 创建关联视频节点 ===
-            // 断开之前的关联视频节点连接（支持重复生成）
-            if (node.data._linkedVideoNodeIds && node.data._linkedVideoNodeIds.length) {
-              node.data._linkedVideoNodeIds.forEach(function(vid) {
-                state.connections = state.connections.filter(function(c) {
-                  return !(c.from === node.id && c.to === vid);
-                });
-              });
-            }
-
             var sourceWidth = (el ? el.offsetWidth : 300);
             var createdVideoNodeIds = [];
             var pidToNodeId = {};
@@ -471,7 +462,7 @@
             renderMinimap();
             safeAutoSave();
 
-            node.data._linkedVideoNodeIds = createdVideoNodeIds;
+            node.data._linkedVideoNodeIds = (node.data._linkedVideoNodeIds || []).concat(createdVideoNodeIds);
 
             // === 轮询多个任务状态（全局 pollVideoStatus）===
             pollVideoStatus(

@@ -596,3 +596,10 @@ class Seedance20VolcengineV1Driver(SeedanceVolcengineV1Driver):
 
     def __init__(self):
         super().__init__(driver_type=23, model_name="doubao-seedance-2-0-260128", impl_name=DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1)
+
+
+class Seedance20MiniVolcengineV1Driver(SeedanceVolcengineV1Driver):
+    """Seedance 2.0 Mini 图生视频驱动"""
+
+    def __init__(self):
+        super().__init__(driver_type=31, model_name="doubao-seedance-2-0-mini-260615", impl_name=DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1)

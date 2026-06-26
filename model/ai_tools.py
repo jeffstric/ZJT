@@ -332,7 +332,8 @@ class AIToolsModel:
         order_direction: str = 'DESC',
         type: Optional[int] = None,
         type_list: Optional[List[int]] = None,
-        has_image_path: Optional[bool] = None
+        has_image_path: Optional[bool] = None,
+        has_result_url: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Get AI tool records list by user ID with pagination
@@ -346,6 +347,7 @@ class AIToolsModel:
             type: Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频, 4-图片高清放大)
             type_list: List of tool types to filter (alternative to type)
             has_image_path: Filter by whether image_path is not null (True=图片编辑, False=文生图)
+            has_result_url: Filter by whether result_url is not null/non-empty
 
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
@@ -377,6 +379,11 @@ class AIToolsModel:
         elif has_image_path is False:
             where_conditions.append("(image_path IS NULL OR image_path = '')")
             where_conditions.append("reference_images IS NULL")
+
+        if has_result_url is True:
+            where_conditions.append("result_url IS NOT NULL AND result_url != ''")
+        elif has_result_url is False:
+            where_conditions.append("(result_url IS NULL OR result_url = '')")
 
         where_clause = " AND ".join(where_conditions)
         

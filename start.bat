@@ -88,18 +88,21 @@ set "COMFYUI_MIRROR_MODE=manual"
 :mirror_detect_done
 echo.
 
-REM === 预下载 Python，支持多镜像自动回退（每个镜像 60 秒超时） ===
+REM === 预下载 Python，支持多镜像自动回退（默认 80 秒超时） ===
 echo [1.2/4] Ensuring Python 3.10 is available...
 set "PYTHON_READY=0"
 set "MIRROR_IDX=0"
 set "AUTO_RETRY=1"
 set "SUCCESS_FLAG=%TEMP%\comfyui_python_ok.flag"
+set "MIRROR_TIMEOUT=80"
 
 REM 根据网络检测结果或用户手动配置设置镜像索引
 if not "!UV_MIRROR!"=="auto" (
     if "%UV_MIRROR%"=="ghfast" set "MIRROR_IDX=0"
     if "%UV_MIRROR%"=="ghproxy" set "MIRROR_IDX=1"
-    if "%UV_MIRROR%"=="direct" set "MIRROR_IDX=2"
+    if "%UV_MIRROR%"=="gh-proxy" set "MIRROR_IDX=2"
+    if "%UV_MIRROR%"=="moeyy" set "MIRROR_IDX=3"
+    if "%UV_MIRROR%"=="direct" set "MIRROR_IDX=4"
     REM 仅用户手动指定镜像时才禁止回退，auto检测结果允许回退
     if "%COMFYUI_MIRROR_MODE%"=="manual" set "AUTO_RETRY=0"
 )
@@ -107,14 +110,23 @@ if not "!UV_MIRROR!"=="auto" (
 :try_mirror
 if "!MIRROR_IDX!"=="0" set "MIRROR_NAME=ghfast"
 if "!MIRROR_IDX!"=="0" set "MIRROR_URL=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download"
+if "!MIRROR_IDX!"=="0" set "MIRROR_TIMEOUT=80"
 if "!MIRROR_IDX!"=="1" set "MIRROR_NAME=ghproxy"
 if "!MIRROR_IDX!"=="1" set "MIRROR_URL=https://ghproxy.cn/https://github.com/astral-sh/python-build-standalone/releases/download"
-if "!MIRROR_IDX!"=="2" set "MIRROR_NAME=direct"
-if "!MIRROR_IDX!"=="2" set "MIRROR_URL="
-if "!MIRROR_IDX!"=="3" goto :mirror_all_failed
+if "!MIRROR_IDX!"=="1" set "MIRROR_TIMEOUT=80"
+if "!MIRROR_IDX!"=="2" set "MIRROR_NAME=gh-proxy"
+if "!MIRROR_IDX!"=="2" set "MIRROR_URL=https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download"
+if "!MIRROR_IDX!"=="2" set "MIRROR_TIMEOUT=80"
+if "!MIRROR_IDX!"=="3" set "MIRROR_NAME=moeyy"
+if "!MIRROR_IDX!"=="3" set "MIRROR_URL=https://github.moeyy.xyz/https://github.com/astral-sh/python-build-standalone/releases/download"
+if "!MIRROR_IDX!"=="3" set "MIRROR_TIMEOUT=80"
+if "!MIRROR_IDX!"=="4" set "MIRROR_NAME=direct"
+if "!MIRROR_IDX!"=="4" set "MIRROR_URL="
+if "!MIRROR_IDX!"=="4" set "MIRROR_TIMEOUT=120"
+if "!MIRROR_IDX!"=="5" goto :mirror_all_failed
 
 del "!SUCCESS_FLAG!" 2>nul
-echo   Trying !MIRROR_NAME! mirror (60s timeout)...
+echo   Trying !MIRROR_NAME! mirror (!MIRROR_TIMEOUT!s timeout)...
 
 if not "!MIRROR_URL!"=="" goto :mirror_has_url
 start /B "" "!UV_CMD!" python install cpython-3.10-windows-x86_64-none >nul 2>&1
@@ -138,7 +150,7 @@ if errorlevel 1 (
 
 REM 进程还在运行，继续等待
 set /a "TIMEOUT_COUNT+=1"
-if !TIMEOUT_COUNT! GEQ 60 (
+if !TIMEOUT_COUNT! GEQ !MIRROR_TIMEOUT! (
     REM 超时，杀掉进程
     taskkill /F /IM uv.exe >nul 2>&1
     goto :mirror_check
@@ -161,7 +173,14 @@ goto :try_mirror
 
 :mirror_all_failed
 echo [ERROR] All mirrors failed to download Python 3.10
-echo   You can set UV_MIRROR=direct and try again with a VPN
+echo.
+echo   Possible solutions:
+echo   1. Set UV_MIRROR=direct and use a VPN
+echo   2. Set UV_MIRROR=ghfast or UV_MIRROR=ghproxy to specify mirror
+echo   3. Manually download Python 3.10 and place it in the uv managed path
+echo      Download URL: https://github.com/astral-sh/python-build-standalone/releases
+echo   4. Check your network/firewall settings
+echo.
 pause
 exit /b 1
 
@@ -218,7 +237,7 @@ echo.
 if errorlevel 1 (
     echo.
     echo ========================================
-    echo [ERROR] Program exited with code: %errorlevel%
+    echo [ERROR] Program exited with code: !errorlevel!
     echo ========================================
     echo.
     pause

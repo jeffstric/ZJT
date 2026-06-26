@@ -27,22 +27,22 @@
             <a href="/" class="marketing-nav-logo" :title="$t('back_to_home')">
                 <img src="/files/logo.svg" alt="Logo" style="width: 32px; height: 32px;" />
             </a>
-            <div class="marketing-nav-item" style="opacity: 0.4; cursor: not-allowed;" :title="$t('in_development')">
+            <a href="/marketing-inspiration" class="marketing-nav-item" :title="$t('nav_inspiration')">
                 <div class="marketing-nav-icon">💡</div>
                 <div class="marketing-nav-text">{{ $t('nav_inspiration') }}</div>
-            </div>
-            <div class="marketing-nav-item active">
+            </a>
+            <div class="marketing-nav-item" :class="{active: activeView === 'generate'}" @click="switchView('generate')" :title="$t('nav_generate')">
                 <div class="marketing-nav-icon">✨</div>
                 <div class="marketing-nav-text">{{ $t('nav_generate') }}</div>
             </div>
-            <div class="marketing-nav-item" style="opacity: 0.4; cursor: not-allowed;" :title="$t('in_development')">
+            <div class="marketing-nav-item" :class="{active: activeView === 'assets'}" @click="switchView('assets')" :title="$t('nav_assets')">
                 <div class="marketing-nav-icon">📁</div>
                 <div class="marketing-nav-text">{{ $t('nav_assets') }}</div>
             </div>
         </nav>
 
         <!-- 第二列：对话历史 -->
-        <aside class="sidebar">
+        <aside class="sidebar" v-show="activeView === 'generate'">
             <div class="sidebar-header">
                 <div class="sidebar-header-top">
                     <span class="sidebar-title">{{ $t('sidebar_create') }}</span>
@@ -139,6 +139,7 @@
                 </div>
             </header>
 
+            <template v-if="activeView === 'generate'">
             <!-- 消息流 -->
             <div class="chat-messages" ref="chatMessages">
                 <!-- 欢迎卡片 -->
@@ -636,6 +637,57 @@
                     </div>
                 </div>
             </div>
+            </template>
+
+            <section v-else-if="activeView === 'assets'" class="asset-library">
+                <div class="asset-library-header">
+                    <div>
+                        <h2>{{ $t('asset_library_title') }}</h2>
+                        <p>{{ $t('asset_library_desc') }}</p>
+                    </div>
+                    <button class="asset-refresh-btn" @click="loadAssets(1)">
+                        <span>↻</span>
+                        <span>{{ $t('refresh') }}</span>
+                    </button>
+                </div>
+
+                <div v-if="assetsLoading" class="asset-empty-state">
+                    <div class="loading-spinner"></div>
+                    <p>{{ $t('loading') }}</p>
+                </div>
+                <div v-else-if="assetItems.length === 0" class="asset-empty-state">
+                    <div class="asset-empty-icon">📁</div>
+                    <h3>{{ $t('asset_empty_title') }}</h3>
+                    <p>{{ $t('asset_empty_desc') }}</p>
+                </div>
+                <div v-else class="asset-grid">
+                    <article v-for="asset in assetItems" :key="asset.id" class="asset-card">
+                        <div class="asset-preview">
+                            <video v-if="isAssetVideo(asset)" :src="asset.result_url" controls preload="metadata"></video>
+                            <img v-else :src="asset.result_url" :alt="asset.prompt || $t('generated_result_alt')" loading="lazy" decoding="async" @click="showImageModal(asset.result_url, asset.id, asset.prompt)">
+                        </div>
+                        <div class="asset-card-body">
+                            <div class="asset-card-title">{{ asset.prompt || $t('generated_result_alt') }}</div>
+                            <div class="asset-card-meta">
+                                <span>{{ asset.model_name || formatAssetType(asset) }}</span>
+                                <span v-if="asset.ratio">{{ asset.ratio }}</span>
+                                <span>{{ formatAssetDate(asset.completed_time || asset.create_time) }}</span>
+                            </div>
+                            <div class="asset-card-actions">
+                                <a :href="asset.result_url" target="_blank" rel="noopener">{{ $t('view_original') }}</a>
+                                <button v-if="!isAssetVideo(asset)" @click="useAssetForVideo(asset)">{{ $t('generate_video') }}</button>
+                                <button class="publish-asset-btn" @click="publishAsset(asset)" :disabled="asset.published">{{ asset.published ? '已发布' : '发布' }}</button>
+                            </div>
+                        </div>
+                    </article>
+                </div>
+
+                <div v-if="assetItems.length > 0" class="asset-pagination">
+                    <button class="asset-page-btn" :disabled="assetsPage <= 1 || assetsLoading" @click="loadAssets(assetsPage - 1)">{{ $t('previous_page') }}</button>
+                    <span>{{ assetsPage }} / {{ assetsTotalPages }}</span>
+                    <button class="asset-page-btn" :disabled="assetsPage >= assetsTotalPages || assetsLoading" @click="loadAssets(assetsPage + 1)">{{ $t('next_page') }}</button>
+                </div>
+            </section>
         </main>
 
         <!-- 浮动反馈按钮 -->
@@ -684,10 +736,29 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     {{ $t('download_image') }}
                 </button>
+                <button id="imgModalPublishBtn" style="padding: 8px 20px; background: rgba(0,168,230,0.6); color: white; border: 1px solid rgba(0,168,230,0.8); border-radius: 8px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; transition: background 0.2s;" onmouseover="this.style.background='rgba(0,168,230,0.8)'" onmouseout="this.style.background='rgba(0,168,230,0.6)'" onclick="event.stopPropagation(); window.publishFromModal && window.publishFromModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21V9M5 12l7-7 7 7"/></svg>
+                    发布
+                </button>
                 <button style="padding: 8px 20px; background: rgba(0,168,230,0.6); color: white; border: 1px solid rgba(0,168,230,0.8); border-radius: 8px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; transition: background 0.2s;" onmouseover="this.style.background='rgba(0,168,230,0.8)'" onmouseout="this.style.background='rgba(0,168,230,0.6)'" onclick="event.stopPropagation(); imageToVideo()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     {{ $t('generate_video') }}
                 </button>
+            </div>
+        </div>
+
+        <!-- 发布标题输入弹框 -->
+        <div id="publishTitleModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 2100; align-items: center; justify-content: center;">
+            <div style="background: white; border-radius: 16px; padding: 32px; width: 420px; max-width: 90vw; box-shadow: 0 20px 60px rgba(0,0,0,0.3);" onclick="event.stopPropagation()">
+                <h3 style="margin: 0 0 20px; font-size: 20px; font-weight: 600; color: #1e293b;">发布到灵感页</h3>
+                <div style="margin-bottom: 8px;">
+                    <label style="display: block; font-size: 14px; font-weight: 500; color: #475569; margin-bottom: 8px;">标题</label>
+                    <input id="publishTitleInput" type="text" placeholder="请输入发布标题" style="width: 100%; padding: 12px 16px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 15px; outline: none; transition: border-color 0.2s; box-sizing: border-box;" onfocus="this.style.borderColor='#0ea5e9'" onblur="this.style.borderColor='#e2e8f0'">
+                </div>
+                <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                    <button onclick="document.getElementById('publishTitleModal').style.display='none'" style="padding: 10px 24px; background: #f1f5f9; color: #475569; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f1f5f9'">取消</button>
+                    <button id="publishTitleConfirmBtn" onclick="window.confirmPublish && window.confirmPublish()" style="padding: 10px 24px; background: #0ea5e9; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;" onmouseover="this.style.background='#0284c7'" onmouseout="this.style.background='#0ea5e9'">确认发布</button>
+                </div>
             </div>
         </div>
 
@@ -788,6 +859,7 @@
             const isInitializing = ref(true);
             const errorMessage = ref('');
             const searchQuery = ref('');
+            const activeView = ref('generate');
 
             const sessions = ref([]);
             const currentSessionId = ref(null);
@@ -800,6 +872,11 @@
             const inputTextarea = ref(null);
             const maxImageSizeMB = ref(10);  // 从服务器配置获取
             const isEnterprise = ref(false);  // 是否为商业版
+            const assetItems = ref([]);
+            const assetsLoading = ref(false);
+            const assetsPage = ref(1);
+            const assetsPageSize = 60;
+            const assetsTotal = ref(0);
 
             // 创作类型与模型选择
             const showDropdown = ref(false);
@@ -1054,10 +1131,43 @@
                 return filterGenerationUrlsByType(urls, type);
             }
 
+            function collectGenerationRowsByType(tasks, type) {
+                const rows = [];
+                const seen = new Set();
+                tasks.forEach(task => {
+                    const taskId = task.ai_tool_id || task.project_id || task.id;
+                    filterGenerationUrlsByType(collectGenerationUrls(task), type).forEach(url => {
+                        const key = `${taskId || ''}:${url}`;
+                        if (seen.has(key)) return;
+                        seen.add(key);
+                        rows.push({ result_url: url, ai_tool_id: taskId });
+                    });
+                });
+                return rows;
+            }
+
+            function escapeHtmlAttr(value) {
+                return String(value || '')
+                    .replace(/\\/g, '\\\\')
+                    .replace(/'/g, "\\'")
+                    .replace(/\n/g, '\\n')
+                    .replace(/\r/g, '\\r')
+                    .replace(/&/g, '&amp;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+            }
+
+            function buildPublishButton(aiToolId, title) {
+                if (!aiToolId) return '';
+                const safeTitle = escapeHtmlAttr(title || '');
+                return `<button class="publish-result-btn" onclick="event.stopPropagation(); window.publishGeneratedResult && window.publishGeneratedResult('${aiToolId}', '${safeTitle}')">发布</button>`;
+            }
+
             function buildGeneratedMediaHtml(type, urls) {
                 if (type === 'image') {
                     return urls.map(url =>
-                        `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${url}'"><img src="${url}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`
+                        `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${url}';window.resetModalImageInfo && window.resetModalImageInfo()"><img src="${url}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`
                     ).join('');
                 }
                 if (type === 'video') {
@@ -1068,16 +1178,34 @@
                 return '';
             }
 
+            function buildGeneratedMediaRowsHtml(type, rows) {
+                if (type === 'image') {
+                    return rows.map(row => {
+                        const url = row.result_url || '';
+                        const aiToolId = row.ai_tool_id || '';
+                        const safeTitle = escapeHtmlAttr(inputText.value || '');
+                        return `<div class="generated-image-wrapper generated-result-card" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${url}';window.setModalImageInfo && window.setModalImageInfo('${aiToolId}', '${safeTitle}')"><img src="${url}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
+                    }).join('');
+                }
+                if (type === 'video') {
+                    return rows.map(row => {
+                        const url = row.result_url || '';
+                        return `<div class="generated-result-card"><video src="${url}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video><div class="generated-result-actions">${buildPublishButton(row.ai_tool_id, inputText.value)}</div></div>`;
+                    }).join('');
+                }
+                return '';
+            }
+
             function buildGeneratedTaskContent(type, tasks) {
-                const urls = collectGenerationUrlsByType(tasks, type);
-                if (urls.length === 0) {
+                const rows = collectGenerationRowsByType(tasks, type);
+                if (rows.length === 0) {
                     return type === 'image' ? window.t('image_generation_failed') : window.t('video_generation_failed');
                 }
                 if (type === 'image') {
-                    const html = buildGeneratedMediaHtml('image', urls);
+                    const html = buildGeneratedMediaRowsHtml('image', rows);
                     return window.t('image_generated') + '\n\n' + html;
                 }
-                const html = buildGeneratedMediaHtml('video', urls);
+                const html = buildGeneratedMediaRowsHtml('video', rows);
                 return window.t('video_generated') + '\n\n' + html;
             }
 
@@ -1182,10 +1310,13 @@
 
             function normalizeLoadedMessages(messageList) {
                 const seenVideoUrls = new Set();
-                return messageList.filter(msg => {
+                const seenImageUrls = new Map();
+                const normalizedMessages = [];
+
+                messageList.forEach(msg => {
                     const content = msg?.content || '';
                     if (msg?.role === 'ai' && !msg?.isVerification && !content.trim()) {
-                        return false;
+                        return;
                     }
                     if (msg?.role === 'ai' && content.includes('<video')) {
                         const urls = [];
@@ -1194,11 +1325,29 @@
                             return match;
                         });
                         const key = urls.join('|') || content;
-                        if (seenVideoUrls.has(key)) return false;
+                        if (seenVideoUrls.has(key)) return;
                         seenVideoUrls.add(key);
                     }
-                    return true;
+                    if (msg?.role === 'ai' && content.includes('generated-image-wrapper')) {
+                        const urls = [];
+                        content.replace(/<img[^>]+src=["']([^"']+)["']/gi, (match, url) => {
+                            urls.push(url);
+                            return match;
+                        });
+                        const key = urls.join('|') || content;
+                        if (seenImageUrls.has(key)) {
+                            const existingIndex = seenImageUrls.get(key);
+                            const existingContent = normalizedMessages[existingIndex]?.content || '';
+                            if (content.includes('publish-result-btn') && !existingContent.includes('publish-result-btn')) {
+                                normalizedMessages[existingIndex] = msg;
+                            }
+                            return;
+                        }
+                        seenImageUrls.set(key, normalizedMessages.length);
+                    }
+                    normalizedMessages.push(msg);
                 });
+                return normalizedMessages;
             }
 
 
@@ -1278,6 +1427,30 @@
 
             // 当前可选分辨率
             const currentResolutions = Vue.computed(() => availableResolutions.value);
+
+            function normalizeImageResolution(resolution) {
+                const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
+                return sizeMap[resolution] || resolution;
+            }
+
+            function getLowestCurrentImageResolution() {
+                const firstConcrete = currentResolutions.value.find(res => res && res !== 'auto');
+                return firstConcrete ? normalizeImageResolution(firstConcrete) : null;
+            }
+
+            function getImageResolutionForRequest() {
+                if (selectedResolution.value && selectedResolution.value !== 'auto') {
+                    return normalizeImageResolution(selectedResolution.value);
+                }
+                return getLowestCurrentImageResolution();
+            }
+
+            function getImageResolutionPreference() {
+                if (!selectedResolution.value || selectedResolution.value === 'auto') {
+                    return 'auto';
+                }
+                return normalizeImageResolution(selectedResolution.value);
+            }
 
             // 是否为视频模式
             const isVideoMode = Vue.computed(() => {
@@ -1697,7 +1870,7 @@
                 if (media.type === 'image') {
                     const displayUrl = media.thumbnailUrl || media.url;  // 显示用缩略图
                     const fullUrl = media.url;  // 点击查看原图
-                    return `${label} <img src="${displayUrl}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${fullUrl}'" alt="${label}">`;
+                    return `${label} <img src="${displayUrl}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${fullUrl}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${label}">`;
                 }
                 if (media.type === 'video') {
                     return `${label} <video src="${media.url}" style="max-height:160px;border-radius:8px;" controls muted></video>`;
@@ -1788,6 +1961,88 @@
                 setTimeout(() => { errorMessage.value = ''; }, 5000);
             }
 
+            const assetsTotalPages = computed(() => {
+                return Math.max(1, Math.ceil((assetsTotal.value || 0) / assetsPageSize));
+            });
+
+            function switchView(view) {
+                activeView.value = view;
+                if (view === 'assets' && assetItems.value.length === 0) {
+                    loadAssets(1);
+                }
+            }
+
+            function normalizeAssetRecord(item) {
+                return {
+                    ...item,
+                    result_url: String(item?.result_url || '').trim()
+                };
+            }
+
+            async function loadAssets(page = 1) {
+                if (!userId.value) return;
+                assetsLoading.value = true;
+                try {
+                    const params = new URLSearchParams({
+                        user_id: userId.value,
+                        page: String(page),
+                        page_size: String(assetsPageSize),
+                        has_result_url: 'true'
+                    });
+                    const response = await fetch(`/api/ai-tools/history?${params.toString()}`, {
+                        headers: {
+                            'Authorization': authToken.value,
+                            'X-User-Id': userId.value
+                        }
+                    });
+                    if (!checkAuthResponse(response)) return;
+                    const result = await response.json();
+                    if (!result.success) {
+                        throw new Error(result.message || 'load assets failed');
+                    }
+                    const payload = result.data || {};
+                    const rows = Array.isArray(payload.data) ? payload.data : [];
+                    assetItems.value = rows
+                        .map(normalizeAssetRecord)
+                        .filter(item => item.result_url);
+                    assetsTotal.value = Number(payload.total || assetItems.value.length || 0);
+                    assetsPage.value = Number(payload.page || page || 1);
+                } catch (error) {
+                    console.error('加载资产失败:', error);
+                    showError(window.t('asset_load_failed'));
+                } finally {
+                    assetsLoading.value = false;
+                }
+            }
+
+            function isAssetVideo(asset) {
+                return isVideoResultUrl(asset?.result_url || asset?.video_path || '');
+            }
+
+            function formatAssetType(asset) {
+                if (isAssetVideo(asset)) return window.t('video');
+                return window.t('image');
+            }
+
+            function formatAssetDate(value) {
+                if (!value) return '';
+                const d = new Date(value);
+                if (Number.isNaN(d.getTime())) return '';
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+
+            // 发布资产到灵感页
+            async function publishAsset(asset) {
+                if (!asset || asset.published) return;
+                const aiToolId = asset.id;
+                if (!aiToolId) return;
+                currentModalImageInfo = { aiToolId: aiToolId, published: false, suggestedTitle: asset.prompt || '' };
+                showPublishTitleModal(asset.prompt || '');
+            }
+
             // 跳转到登录页面，带上当前页面路径以便登录后跳回
             function redirectToLogin() {
                 const currentPath = window.location.pathname + window.location.search;
@@ -1823,6 +2078,21 @@
                     return formatTime(timestamp);
                 }
                 return `${d.getMonth() + 1}/${d.getDate()}`;
+            }
+
+            // 图片/媒体 URL 代理辅助函数（幂等：已是同源 URL 则原样返回）
+            function proxyImageUrl(url) {
+                if (!url) return url;
+                // 同源路径直接返回
+                if (url.startsWith('/') && !url.startsWith('//')) return url;
+                return url;
+            }
+
+            function proxyDownloadUrl(url) {
+                if (!url) return url;
+                // 同源路径直接返回
+                if (url.startsWith('/') && !url.startsWith('//')) return url;
+                return url;
             }
 
             // 渲染 Markdown
@@ -1874,47 +2144,227 @@
                 // 解析 Markdown
                 let html = marked.parse(text);
 
-                // 为图片添加样式和点击事件
+                // 为图片添加样式和点击事件（跳过已由 buildGeneratedMediaRowsHtml 处理的图片）
                 html = html.replace(/<img([^>]*)>/g, (match, attrs) => {
+                    // 跳过已有 generated-image class 的图片，它们由父级 div 的 onclick 处理
+                    if (attrs.includes('generated-image')) return match;
                     // 提取 src 属性
                     const srcMatch = attrs.match(/src="([^"]*)"/);
                     const src = srcMatch ? srcMatch[1] : '';
 
                     // 添加样式和点击事件
-                    return `<img${attrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${src}'" alt="${window.t('image_alt')}">`;
+                    return `<img${attrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${src}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('image_alt')}">`;
                 });
+
+
+                // 兜底重新签名：内容中所有「点击放大」设置 imgModalImg.src 的 onclick，
+                // 无论挂在 <img> 还是 <div>（如 generated-image-wrapper）等元素上，都统一
+                // 重新走代理。解决历史已存库图片消息：commit 0bf53fe 之前生成结果以已渲染
+                // HTML 入库，onclick 直接写的是会过期的图床原始 URL，reload 后点击放大仍用过期
+                // 地址。proxyImageUrl 对已是代理 URL（同源）幂等，故新生成内容不受影响。
+                html = html.replace(/imgModalImg'\)\.src='([^']*)'/g, (_m, u) =>
+                    `imgModalImg').src='${proxyImageUrl(u)}'`
+                );
+
+                // 兜底重新签名：<video>/<audio>/<source> 的原始 src。
+                // 同因：commit 0bf53fe 之前生成的视频/音频以已渲染 HTML 入库，src 写死的是
+                // 会过期的图床原始 URL，renderMarkdown 既有处理只覆盖 <img>。此处统一走
+                // /api/download 代理（后端识别 CDN 后 302 到重新签名地址，支持 Range 播放）。
+                // proxyDownloadUrl 对已是代理 URL（同源）幂等，新生成内容不受影响。
+                html = html.replace(/<(video|audio|source)\b([^>]*?)\ssrc="([^"]*)"/gi, (_m, tag, attrs, src) =>
+                    `<${tag}${attrs} src="${proxyDownloadUrl(src)}"`
+                );
 
                 return html;
             }
 
             // 图片放大弹窗
-            function showImageModal(src) {
+            function showImageModal(src, aiToolId, suggestedTitle) {
                 const modal = document.getElementById('imgModal');
                 const img = document.getElementById('imgModalImg');
                 if (modal && img) {
                     img.src = src;
                     modal.style.display = 'flex';
+                    // 设置弹框图片信息
+                    if (aiToolId) {
+                        setModalImageInfo(aiToolId, suggestedTitle);
+                    } else {
+                        resetModalImageInfo();
+                    }
                 }
+            }
+
+            /**
+             * 构建下载 URL：CDN 地址直接下载（七牛 attname 参数指定文件名），本地路径走 /api/download 代理
+             */
+            function buildDownloadUrl(url, filename) {
+                if (url && url.startsWith('http')) {
+                    const separator = url.includes('?') ? '&' : '?';
+                    return `${url}${separator}attname=${encodeURIComponent(filename)}`;
+                }
+                return `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+            }
+
+            function isWechatBrowser() {
+                const ua = navigator.userAgent.toLowerCase();
+                return /micromessenger/.test(ua);
             }
 
             function downloadModalImage() {
                 const img = document.getElementById('imgModalImg');
                 if (!img || !img.src) return;
-                const link = document.createElement('a');
-                link.href = img.src;
                 // 从 URL 中提取文件名，默认 fallback
+                let filename = 'image.png';
                 try {
                     const urlPath = img.src.split('?')[0];
-                    link.download = urlPath.split('/').pop() || 'image.png';
+                    filename = urlPath.split('/').pop() || 'image.png';
                 } catch (e) {
-                    link.download = 'image.png';
+                    filename = 'image.png';
                 }
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
+
+                const downloadUrl = buildDownloadUrl(img.src, filename);
+
+                if (isWechatBrowser()) {
+                    window.open(downloadUrl, '_blank');
+                    setTimeout(() => {
+                        alert('请长按图片，然后选择"保存图片"');
+                    }, 500);
+                } else {
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = filename;
+                    link.target = '_blank';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                }
             }
             // 挂载到全局，供原生 HTML onclick 调用
             window.downloadModalImage = downloadModalImage;
+
+            // 跟踪当前放大图片的信息
+            let currentModalImageInfo = { aiToolId: null, published: false, suggestedTitle: '' };
+
+            // 设置弹框图片信息（点击图片时调用）
+            function setModalImageInfo(aiToolId, suggestedTitle) {
+                currentModalImageInfo = { aiToolId: aiToolId || null, published: false, suggestedTitle: suggestedTitle || '' };
+                updateModalPublishButton();
+            }
+            window.setModalImageInfo = setModalImageInfo;
+
+            // 重置弹框图片信息（无 aiToolId 时禁用发布按钮）
+            function resetModalImageInfo() {
+                currentModalImageInfo = { aiToolId: null, published: false, suggestedTitle: '' };
+                updateModalPublishButton();
+            }
+            window.resetModalImageInfo = resetModalImageInfo;
+
+            // 打开发布标题弹框
+            function showPublishTitleModal(suggestedTitle) {
+                const modal = document.getElementById('publishTitleModal');
+                const input = document.getElementById('publishTitleInput');
+                input.value = suggestedTitle || '';
+                modal.style.display = 'flex';
+                setTimeout(() => input.focus(), 100);
+            }
+
+            // 从弹框发布
+            function publishFromModal() {
+                if (!currentModalImageInfo.aiToolId || currentModalImageInfo.published) return;
+                showPublishTitleModal(currentModalImageInfo.suggestedTitle);
+            }
+            window.publishFromModal = publishFromModal;
+
+            // 确认发布
+            async function confirmPublish() {
+                const input = document.getElementById('publishTitleInput');
+                const title = input.value.trim();
+                if (!title) {
+                    input.style.borderColor = '#ef4444';
+                    return;
+                }
+                document.getElementById('publishTitleModal').style.display = 'none';
+                await doPublish(currentModalImageInfo.aiToolId, title);
+            }
+            window.confirmPublish = confirmPublish;
+
+            // 更新弹框发布按钮状态
+            function updateModalPublishButton() {
+                const btn = document.getElementById('imgModalPublishBtn');
+                if (!btn) return;
+                if (currentModalImageInfo.published) {
+                    btn.style.opacity = '0.5';
+                    btn.style.cursor = 'not-allowed';
+                    btn.style.background = 'rgba(255,255,255,0.15)';
+                    btn.style.borderColor = 'rgba(255,255,255,0.3)';
+                } else {
+                    btn.style.opacity = '1';
+                    btn.style.cursor = 'pointer';
+                    btn.style.background = 'rgba(0,168,230,0.6)';
+                    btn.style.borderColor = 'rgba(0,168,230,0.8)';
+                }
+            }
+
+            async function publishGeneratedResult(aiToolId, suggestedTitle) {
+                if (!aiToolId) return;
+                currentModalImageInfo = { aiToolId, published: false, suggestedTitle };
+                showPublishTitleModal(suggestedTitle || inputText.value || '');
+            }
+            window.publishGeneratedResult = publishGeneratedResult;
+
+            async function doPublish(aiToolId, title) {
+                const numericId = Number(aiToolId);
+                if (!numericId || Number.isNaN(numericId)) {
+                    showError('发布失败：无效的任务ID');
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/marketing-publications', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': authToken.value || '',
+                            'X-User-Id': userId.value || ''
+                        },
+                        body: JSON.stringify({
+                            ai_tool_id: numericId,
+                            title: (title || '').slice(0, 255),
+                            tags: []
+                        })
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json().catch(() => ({}));
+                    if (!resp.ok || data.success === false) {
+                        throw new Error(data.detail || data.message || '发布失败');
+                    }
+                    // 标记已发布
+                    currentModalImageInfo.published = true;
+                    updateModalPublishButton();
+                    // 更新资产列表中的发布状态
+                    const assetIndex = assetItems.value.findIndex(item => {
+                        return String(item.id) === String(aiToolId);
+                    });
+                    if (assetIndex !== -1) {
+                        assetItems.value[assetIndex].published = true;
+                    }
+                    // 禁用对话中对应的发布按钮
+                    document.querySelectorAll('.publish-result-btn').forEach(btn => {
+                        if (btn.onclick && btn.onclick.toString().includes(aiToolId)) {
+                            btn.disabled = true;
+                            btn.style.opacity = '0.5';
+                            btn.style.cursor = 'not-allowed';
+                        }
+                    });
+                    messages.value.push({
+                        role: 'ai',
+                        content: '已提交发布审核，通过后会出现在灵感页。',
+                        timestamp: new Date().toISOString()
+                    });
+                    scrollToBottom();
+                } catch (e) {
+                    showError(e.message || '发布失败');
+                }
+            }
 
             function imageToVideo() {
                 const img = document.getElementById('imgModalImg');
@@ -1942,11 +2392,41 @@
                 });
                 mediaItems.value = [...mediaItems.value];
                 // 切换到视频生成模式（selectType 会自动选择图生视频模型）
+                switchView('generate');
                 const videoType = creationTypes.find(t => t.key === 'video');
                 if (videoType) selectType(videoType);
                 scrollToBottom();
             }
             window.imageToVideo = imageToVideo;
+
+            function useAssetForVideo(asset) {
+                const url = asset?.result_url;
+                if (!url) return;
+                // 清除已有图片
+                mediaItems.value = mediaItems.value.filter(m => m.type !== 'image');
+                agentImageFiles.value = [];
+                // 设置图片到输入区
+                uploadedImageUrl.value = url;
+                hasUploadedImage.value = true;
+                uploadedImageFile.value = null;
+                // 添加到媒体列表
+                const id = `i_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+                mediaItems.value.push({
+                    id,
+                    displayName: window.t('type_image') + '1',
+                    type: 'image',
+                    fileUrl: url,
+                    thumbnailUrl: url,
+                    originalFile: null,
+                    uploading: false
+                });
+                mediaItems.value = [...mediaItems.value];
+                // 切换到视频生成模式
+                switchView('generate');
+                const videoType = creationTypes.find(t => t.key === 'video');
+                if (videoType) selectType(videoType);
+                scrollToBottom();
+            }
 
             // 自动调整 textarea 高度
             function autoResize() {
@@ -2221,9 +2701,8 @@
                         form.append('image', uploadedImageFile.value);
                         form.append('ratio', selectedRatio.value);
                         form.append('count', '1');
-                        if (selectedResolution.value && selectedResolution.value !== 'auto') {
-                            const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
-                            const sizeVal = sizeMap[selectedResolution.value] || selectedResolution.value;
+                        const sizeVal = getImageResolutionForRequest();
+                        if (sizeVal) {
                             form.append('image_size', sizeVal);
                         }
                         // 获取 task_id
@@ -2239,9 +2718,8 @@
                         // 文生图
                         form.append('aspect_ratio', selectedRatio.value);
                         form.append('count', '1');
-                        if (selectedResolution.value && selectedResolution.value !== 'auto') {
-                            const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
-                            const sizeVal = sizeMap[selectedResolution.value] || selectedResolution.value;
+                        const sizeVal = getImageResolutionForRequest();
+                        if (sizeVal) {
                             form.append('image_size', sizeVal);
                         }
                         // 获取 task_id
@@ -2325,8 +2803,7 @@
                         const allSuccess = tasks.every(isGenerationSuccess);
                         const anyFailed = tasks.some(isGenerationFailed);
                         const anyRunning = tasks.some(t => !isGenerationTerminal(t));
-                        const resultUrls = collectGenerationUrlsByType(tasks, task.type);
-                        const resultRows = resultUrls.map(url => ({ result_url: url }));
+                        const resultRows = collectGenerationRowsByType(tasks, task.type);
 
                         if (task.type === 'image') imageResults.value = resultRows;
                         if (task.type === 'video') videoResults.value = resultRows;
@@ -2398,20 +2875,14 @@
                         const anyFailed = tasks.some(isGenerationFailed);
                         const anyRunning = tasks.some(t => !isGenerationTerminal(t));
 
-                        const allResults = [];
-                        tasks.forEach(task => {
-                            collectGenerationUrls(task).forEach(url => allResults.push({ result_url: url }));
-                        });
+                        const allResults = collectGenerationRowsByType(tasks, 'image');
                         imageResults.value = allResults;
 
                         if (allSuccess) {
                             imageStatus.value = 'SUCCESS';
                             clearImageStatusCheck();
                             // 更新 AI 消息为图片结果
-                            const imageHtml = allResults.map(r => {
-                                const imgUrl = r.result_url || r.file_url || r.url || r.image_url || '';
-                                return `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${imgUrl}'"><img src="${imgUrl}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`;
-                            }).join('');
+                            const imageHtml = buildGeneratedMediaRowsHtml('image', allResults);
                             const finalContent = window.t('image_generated') + '\n\n' + imageHtml;
                             const currentMsgIdx = messages.value.findIndex(m => m._uid === msgUid);
                             if (currentMsgIdx !== -1) {
@@ -2526,10 +2997,8 @@
                             const tasks = res.data.tasks;
                             const allDone = tasks.every(isGenerationTerminal);
 
-                            const imageUrls = [];
-                            tasks.forEach(task => {
-                                collectGenerationUrls(task).forEach(url => imageUrls.push(url));
-                            });
+                            // 仅保留图片类型 URL，过滤掉混入的视频，避免把视频包进 <img>
+                            const imageUrls = collectGenerationUrlsByType(tasks, 'image');
 
                             if (allDone) {
                                 shouldContinuePolling = false;
@@ -2537,10 +3006,13 @@
                                 activeGenerationPollKeys.delete(pollKey);
                                 let finalContent = '';
                                 if (imageUrls.length > 0) {
-                                    const imageHtml = imageUrls.map(url =>
-                                        `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${url}'"><img src="${url}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`
-                                    ).join('');
-                                    finalContent = window.t('image_generated') + '\n\n' + imageHtml;
+                                    if (hasGeneratedImageResult(projectIds, imageUrls)) {
+                                        const duplicateIdx = messages.value.findIndex(m => m._uid === msgUid);
+                                        if (duplicateIdx !== -1) messages.value.splice(duplicateIdx, 1);
+                                        scrollToBottom();
+                                        return;
+                                    }
+                                    finalContent = buildGeneratedTaskContent('image', tasks);
                                 } else {
                                     finalContent = window.t('image_generation_failed');
                                 }
@@ -2646,10 +3118,8 @@
                             const tasks = res.data.tasks;
                             const allDone = tasks.every(isGenerationTerminal);
 
-                            const videoUrls = [];
-                            tasks.forEach(task => {
-                                collectGenerationUrls(task).forEach(url => videoUrls.push(url));
-                            });
+                            // 仅保留视频类型 URL，过滤掉混入的图片（如数字人参考图），避免把图片包进 <video>
+                            const videoUrls = collectGenerationUrlsByType(tasks, 'video');
 
                             if (allDone) {
                                 shouldContinuePolling = false;
@@ -2663,10 +3133,7 @@
                                         scrollToBottom();
                                         return;
                                     }
-                                    const videoHtml = videoUrls.map(url =>
-                                        `<video src="${url}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video>`
-                                    ).join('');
-                                    finalContent = window.t('video_generated') + '\n\n' + videoHtml;
+                                    finalContent = buildGeneratedTaskContent('video', tasks);
                                 } else {
                                     finalContent = window.t('video_generation_failed');
                                 }
@@ -2885,19 +3352,13 @@
                         const anyFailed = tasks.some(isGenerationFailed);
                         const anyRunning = tasks.some(t => !isGenerationTerminal(t));
 
-                        const allResults = [];
-                        tasks.forEach(task => {
-                            collectGenerationUrls(task).forEach(url => allResults.push({ result_url: url }));
-                        });
+                        const allResults = collectGenerationRowsByType(tasks, 'video');
                         videoResults.value = allResults;
 
                         if (allSuccess) {
                             videoStatus.value = 'SUCCESS';
                             clearVideoStatusCheck();
-                            const videoHtml = allResults.map(r => {
-                                const vidUrl = r.result_url || r.file_url || r.url || '';
-                                return `<video src="${vidUrl}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video>`;
-                            }).join('');
+                            const videoHtml = buildGeneratedMediaRowsHtml('video', allResults);
                             const finalContent = window.t('video_generated') + '\n\n' + videoHtml;
 
                             const currentMsgIdx = messages.value.findIndex(m => m._uid === msgUid);
@@ -3058,15 +3519,12 @@
                     const validAudioUrls = audioUrls.filter(isHttpUrl);
 
                     // 1. 创建任务
-                    // 构建图片偏好（auto 分辨率不传）
+                    // 构建图片偏好（auto 显式传给后端，用于清理旧分辨率偏好）
                     const imagePreferences = {
                         ratio: selectedRatio.value,
-                        model_name: selectedImageModel.value
+                        model_name: selectedImageModel.value,
+                        resolution: getImageResolutionPreference()
                     };
-                    if (selectedResolution.value && selectedResolution.value !== 'auto') {
-                        const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
-                        imagePreferences.resolution = sizeMap[selectedResolution.value] || selectedResolution.value;
-                    }
 
                     const taskResponse = await fetch(`/api/session/${sessionId}/task`, {
                         method: 'POST',
@@ -3688,7 +4146,7 @@
                         // 优先使用原始 HTTP URL，避免传递 base64 data URL
                         const fullUrl = originalUrlMap[imgUrl] || imgUrl;
                         const displayUrl = thumbnailMap[imgIdx] || fullUrl;
-                        finalContent += `\n\n<img src="${displayUrl}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${fullUrl}'" alt="${window.t('reference_image_alt')}">`;
+                        finalContent += `\n\n<img src="${displayUrl}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${fullUrl}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('reference_image_alt')}">`;
                     }
                     if (h.role === 'user' && window.AgentMessageDedupe?.formatAgentUserMessageForDisplay) {
                         finalContent = window.AgentMessageDedupe.formatAgentUserMessageForDisplay(finalContent);
@@ -3711,7 +4169,7 @@
                     for (const m of imageUrlMatches) {
                         const fullUrl = m[1];
                         const thumbUrl = m[2] || fullUrl;
-                        renderedContent += `\n\n<img src="${thumbUrl}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${fullUrl}'" alt="${window.t('reference_image_alt')}">`;
+                        renderedContent += `\n\n<img src="${thumbUrl}" style="max-height:160px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${fullUrl}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('reference_image_alt')}">`;
                     }
                 }
 
@@ -3851,24 +4309,6 @@
 
             function buildResultContent(type, tasks) {
                 return buildGeneratedTaskContent(type, tasks);
-                const urls = [];
-                tasks.forEach(task => {
-                    collectGenerationUrls(task).forEach(url => urls.push(url));
-                });
-                if (urls.length > 0) {
-                    if (type === 'image') {
-                        const html = urls.map(url =>
-                            `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${url}'"><img src="${url}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`
-                        ).join('');
-                        return window.t('image_generated') + '\n\n' + html;
-                    } else {
-                        const html = urls.map(url =>
-                            `<video src="${url}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video>`
-                        ).join('');
-                        return window.t('video_generated') + '\n\n' + html;
-                    }
-                }
-                return type === 'image' ? window.t('image_generation_failed') : window.t('video_generation_failed');
             }
 
             // 恢复页面刷新后的待处理任务（从历史中的 __PENDING_TASK__ 标记恢复）
@@ -3877,6 +4317,10 @@
                 if (pendingMsgs.length === 0) return;
 
                 for (const msg of pendingMsgs) {
+                    const pollKey = getGenerationPollKey(msg._taskType, msg._projectIds, currentSessionId.value);
+                    if (activeGenerationPollKeys.has(pollKey)) continue;
+                    activeGenerationPollKeys.add(pollKey);
+                    let handedToPoller = false;
                     try {
                         const params = authToken.value ? { auth_token: authToken.value } : {};
                         const res = await axios.get(`/api/get-status/${msg._projectIds.join(',')}`, { params });
@@ -3899,6 +4343,7 @@
                             msg.role = 'ai';
                             msg.content = window.t('generating_placeholder');
                             msg._isPendingTask = false;
+                            handedToPoller = true;
                             if (msg._taskType === 'image') pollAgentImageStatus(msg._uid, msg._projectIds);
                             else pollAgentVideoStatus(msg._uid, msg._projectIds);
                         }
@@ -3907,6 +4352,8 @@
                         msg.role = 'ai';
                         msg.content = window.t('task_restore_failed');
                         msg._isPendingTask = false;
+                    } finally {
+                        if (!handedToPoller) activeGenerationPollKeys.delete(pollKey);
                     }
                 }
             }
@@ -4197,11 +4644,15 @@
                 await loadComputingPower();
                 startComputingPowerRefresh();
 
+                const forceNewSession = getUrlParam('new_session') === '1';
+
                 // 从后端加载会话列表
                 const backendSessions = await loadSessionsFromBackend();
 
                 // 如果有历史会话，自动复用最近一条
-                if (backendSessions.length > 0) {
+                if (forceNewSession) {
+                    await createSession();
+                } else if (backendSessions.length > 0) {
                     const latestSession = backendSessions[0];
                     currentSessionId.value = latestSession.id;
                     const history = await loadSessionHistory(latestSession.id);
@@ -4261,6 +4712,133 @@
                         await createSession();
                     }
                     await handleSend();
+                }
+
+                // URL 参数：tab=assets 时自动切换到资产视图
+                const tabParam = getUrlParam('tab');
+                if (tabParam === 'assets') {
+                    switchView('assets');
+                }
+
+                // 灵感页跳转：应用 URL 参数
+                // 模式参数（无论是否有 prompt 都生效）
+                const modeParam = getUrlParam('mode');
+                if (modeParam && ['agent', 'image', 'video'].includes(modeParam)) {
+                    selectedType.value = modeParam;
+                }
+
+                // Agent 模式参数
+                if (selectedType.value === 'agent') {
+                    const mediaTypeParam = getUrlParam('media_type');
+                    if (mediaTypeParam && ['image', 'video'].includes(mediaTypeParam)) {
+                        mediaType.value = mediaTypeParam;
+                    }
+                    const videoModeParam = getUrlParam('video_mode');
+                    if (videoModeParam && ['first_last_frame', 'multi_reference'].includes(videoModeParam)) {
+                        videoImageMode.value = videoModeParam;
+                    }
+                }
+
+                // 通用参数：比例
+                const ratioParam = getUrlParam('ratio');
+                if (ratioParam) {
+                    selectedRatio.value = ratioParam;
+                    hasUserSelectedRatio.value = true;
+                }
+
+                // 通用参数：分辨率
+                const resolutionParam = getUrlParam('resolution');
+                if (resolutionParam) {
+                    selectedResolution.value = resolutionParam;
+                }
+
+                // 通用参数：视频时长
+                const durationParam = getUrlParam('duration');
+                if (durationParam) {
+                    const dur = parseInt(durationParam);
+                    if (!isNaN(dur) && dur > 0) {
+                        selectedDuration.value = dur;
+                    }
+                }
+
+                // 通用参数：模型 key
+                const modelKeyParam = getUrlParam('model_key');
+                if (modelKeyParam) {
+                    const isVideo = selectedType.value === 'video' ||
+                                    (selectedType.value === 'agent' && mediaType.value === 'video');
+                    if (isVideo) {
+                        selectedVideoModelKey.value = modelKeyParam;
+                        const modelNameParam = getUrlParam('model_name');
+                        if (modelNameParam) selectedVideoModelName.value = decodeURIComponent(modelNameParam);
+                    } else {
+                        selectedImageModelKey.value = modelKeyParam;
+                        const modelNameParam = getUrlParam('model_name');
+                        if (modelNameParam) selectedImageModel.value = decodeURIComponent(modelNameParam);
+                    }
+                }
+
+                // LLM 模型参数（Agent 模式）
+                const llmModelIdParam = getUrlParam('llm_model_id');
+                if (llmModelIdParam && allLLMModels.value.length > 0) {
+                    const llmId = parseInt(llmModelIdParam);
+                    const llmVendorIdParam = getUrlParam('llm_vendor_id');
+                    const llmVendorId = llmVendorIdParam ? parseInt(llmVendorIdParam) : null;
+                    let matched = null;
+                    if (llmVendorId) {
+                        matched = allLLMModels.value.find(m => m.id === llmId && m.vendor_id === llmVendorId);
+                    }
+                    if (!matched) {
+                        matched = allLLMModels.value.find(m => m.id === llmId);
+                    }
+                    if (matched) {
+                        selectedLLMModel.value = matched;
+                    }
+                }
+
+                // 灵感页“做同款”跳转：仅填入输入框，不自动发送
+                const promptParam = getUrlParam('prompt');
+                if (promptParam) {
+                    inputText.value = decodeURIComponent(promptParam);
+                    autoResize();
+                }
+
+                // 从灵感页传递的上传媒体文件（通过 sessionStorage）
+                try {
+                    const hasMedia = getUrlParam('has_media') === '1';
+                    if (hasMedia) {
+                        const mediaJson = sessionStorage.getItem('inspiration_media');
+                        sessionStorage.removeItem('inspiration_media'); // 读取后立即清除
+                        if (mediaJson) {
+                            const mediaList = JSON.parse(mediaJson);
+                            for (const media of mediaList) {
+                                if (media.type === 'image' && media.serverUrl) {
+                                    // 图片：已有服务器 URL，直接加入
+                                    const imgItem = {
+                                        file: null,
+                                        previewUrl: media.thumbnailUrl || media.serverUrl,
+                                        serverUrl: media.serverUrl,
+                                        uploading: false,
+                                        uploadFailed: false
+                                    };
+                                    agentImageFiles.value.push(imgItem);
+                                    addMediaItem(null, 'image', media.thumbnailUrl || media.serverUrl, {
+                                        serverUrl: media.serverUrl,
+                                        thumbnailUrl: media.thumbnailUrl,
+                                        agentImageItem: imgItem
+                                    });
+                                } else if (media.type === 'video' && media.serverUrl) {
+                                    // 视频：已有服务器 URL
+                                    addMediaItem(null, 'video', media.thumbnailUrl || media.serverUrl, {
+                                        serverUrl: media.serverUrl,
+                                        thumbnailUrl: media.thumbnailUrl
+                                    });
+                                }
+                            }
+                            console.log(`[Agent] 从灵感页加载了 ${mediaList.length} 个媒体文件`);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[Agent] 读取灵感页媒体文件失败:', e);
                 }
 
                 // 全局点击监听（关闭下拉菜单）
@@ -6058,9 +6636,8 @@
                         ? window.TaskConfig.getTaskIdByKey(model.key, 'text_to_image') || window.TaskConfig.getTaskIdByKey(model.key, 'image_edit')
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
-                    // 解析分辨率为后端格式（auto 不传）
-                    const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
-                    const resolvedResolution = selectedResolution.value === 'auto' ? null : (sizeMap[selectedResolution.value] || selectedResolution.value);
+                    // 解析分辨率为后端格式；auto 显式同步以清理旧的固定分辨率偏好
+                    const resolvedResolution = getImageResolutionPreference();
                     const resp = await fetch('/api/text-to-image-model', {
                         method: 'POST',
                         headers: {
@@ -6328,6 +6905,18 @@
                 isInitializing,
                 errorMessage,
                 searchQuery,
+                activeView,
+                switchView,
+                assetItems,
+                assetsLoading,
+                assetsPage,
+                assetsTotalPages,
+                loadAssets,
+                isAssetVideo,
+                formatAssetType,
+                formatAssetDate,
+                useAssetForVideo,
+                publishAsset,
 
                 sessions,
                 currentSessionId,

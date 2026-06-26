@@ -62,5 +62,11 @@
   "fetch_logs_failed": "获取日志失败",
   "network_error_retry": "网络错误，请稍后重试",
   "log_increase": "➕ 增加",
-  "log_deduct": "➖ 扣除"
+  "log_deduct": "➖ 扣除",
+
+  "nav_inspiration": "灵感",
+  "nav_generate": "生成",
+  "nav_assets": "资产",
+  "back_to_home": "返回首页",
+  "in_development": "开发中"
 }

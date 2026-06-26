@@ -162,8 +162,8 @@ async def get_implementation_preferences(
                     "stats": impl_stats
                 })
 
-        # 只保留有多个可选实现方的任务
-        if len(impls) > 1:
+        # 只保留有可选实现方的任务（≥1 即纳入；只有 1 个实现时也展示，便于用户确认供应商）
+        if len(impls) >= 1:
             # 确定任务所属的分类组
             category_group = None
             for group_name, categories in category_groups.items():

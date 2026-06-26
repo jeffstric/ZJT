@@ -12,13 +12,13 @@ class GrokDuomiV1Driver(BaseVideoDriver):
     """
     Grok 多米供应商 v1 版本驱动
     支持图生视频，使用 grok-video 模型
-    仅支持 10s 时长，支持最多 7 张参考图
+    支持 6/10/15 秒时长（默认 10s），最多 7 张参考图
     """
 
     # Grok 模型名称
     MODEL_NAME = "grok-video"
 
-    # 固定时长
+    # 默认时长（秒）；用户传入的 ai_tool.duration 优先，缺失/非法/非档位时回退到此值
     DURATION = 10
 
     def __init__(self):
@@ -189,11 +189,21 @@ class GrokDuomiV1Driver(BaseVideoDriver):
         if image_urls:
             image_urls = self.ensure_public_urls(image_urls)
 
+        # 时长：优先用用户传入的 ai_tool.duration，缺失/非法/非支持档位时回退默认 DURATION
+        duration = getattr(ai_tool, 'duration', None)
+        try:
+            duration = int(duration) if duration is not None else self.DURATION
+        except (TypeError, ValueError):
+            duration = self.DURATION
+        if duration not in (6, 10, 15):
+            self.logger.warning(f"Grok duomi 驱动时长 {duration} 不在支持档位(6/10/15)，回退默认 {self.DURATION}")
+            duration = self.DURATION
+
         payload = {
             "model": self.MODEL_NAME,
             "prompt": ai_tool.prompt,
             "aspect_ratio": ai_tool.ratio or "9:16",
-            "duration": self.DURATION,
+            "duration": duration,
             "quality": "720p",
         }
 
@@ -367,7 +377,7 @@ class GrokDuomiV1Driver(BaseVideoDriver):
                 }
             elif state == "error":
                 result = {
-                    "code": 1,
+                    "code": 0,
                     "msg": message or "任务失败",
                     "data": {
                         "status": 2,

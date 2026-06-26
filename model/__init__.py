@@ -25,6 +25,7 @@ from .ai_tool_pipeline_steps import PipelineStepModel, PipelineStep, PipelineSte
 from .implementation_attempts import ImplementationAttemptModel, ImplementationAttempt
 from .commission_log import CommissionLogModel, CommissionLog
 from .commission_withdraw import CommissionWithdrawModel, CommissionWithdraw
+from .marketing_publications import MarketingPublicationModel, MarketingPublication, PublicationStatus
 
 __all__ = [
     'AIToolsModel',
@@ -86,4 +87,7 @@ __all__ = [
     'CommissionLog',
     'CommissionWithdrawModel',
     'CommissionWithdraw',
+    'MarketingPublicationModel',
+    'MarketingPublication',
+    'PublicationStatus',
 ]

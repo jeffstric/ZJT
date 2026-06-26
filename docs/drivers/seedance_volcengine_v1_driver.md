@@ -11,6 +11,27 @@
 | 21 | doubao-seedance-1-5-pro-251215 | `Seedance15ProVolcengineV1Driver` | first_last_frame | 支持 |
 | 22 | doubao-seedance-2-0-fast-260128 | `Seedance20FastVolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 23 | doubao-seedance-2-0-260128 | `Seedance20VolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
+| 31 | doubao-seedance-2-0-mini-260615 | `Seedance20MiniVolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
+
+> **Seedance 2.0 Mini**：价格为 Seedance 2.0 的一半，功能与 Seedance 2.0 一致。
+
+## 720p 默认算力配置
+
+Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 秒的最高成本计算，换算规则为 `1 算力 = 0.04 元`，使用向上取整保证不亏本。国内版和海外版实现方使用同一组默认算力。
+
+| 输出时长 | seedance-2.0 | seedance-2.0-fast | seedance-2.0-mini |
+|---------:|-------------:|------------------:|------------------:|
+| 5 秒 | 303 | 238 | 152 |
+| 6 秒 | 318 | 250 | 159 |
+| 7 秒 | 333 | 262 | 167 |
+| 8 秒 | 348 | 274 | 174 |
+| 9 秒 | 363 | 285 | 182 |
+| 10 秒 | 378 | 297 | 189 |
+| 11 秒 | 393 | 309 | 197 |
+| 12 秒 | 409 | 321 | 204 |
+| 13 秒 | 424 | 333 | 212 |
+| 14 秒 | 439 | 345 | 220 |
+| 15 秒 | 454 | 357 | 227 |
 
 ## 特性
 
@@ -74,7 +95,9 @@ volcengine:
 
 | 文件 | 说明 |
 |------|------|
-| `task/visual_drivers/seedance_volcengine_v1_driver.py` | 驱动实现 |
+| `task/visual_drivers/seedance_volcengine_v1_driver.py` | 国内版驱动实现 |
+| `task/visual_drivers/seedance_volcengine_oversea_v1_driver.py` | 海外版驱动实现 |
 | `task/visual_drivers/base_video_driver.py` | 驱动基类 |
 | `config/unified_config.py` | 驱动配置定义 |
+| `config/constant.py` | 驱动映射配置 |
 | `model/ai_tools.py` | AI 工具模型（含 audio_path、video_path 字段） |

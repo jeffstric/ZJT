@@ -60,6 +60,11 @@ EXCLUDE_FILES = [
     "package.bat",
 ]
 
+# 不需要打包的文件扩展名
+EXCLUDE_EXTENSIONS = [
+    ".spec",
+]
+
 
 # ============================================
 # 平台配置
@@ -134,6 +139,9 @@ def should_exclude_file(name: str, rel_path: str = "") -> bool:
         return True
     # 检查文件名匹配
     if name in EXCLUDE_FILES:
+        return True
+    # 检查文件扩展名匹配
+    if any(name.endswith(ext) for ext in EXCLUDE_EXTENSIONS):
         return True
     # 检查根目录下的压缩包
     if not rel_path or rel_path == name:

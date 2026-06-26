@@ -130,6 +130,42 @@ def _get_model_name_by_task_id(task_id: int) -> str:
     return config.name if config else "unknown"
 
 
+def _get_lowest_supported_image_size(config) -> Optional[str]:
+    """获取当前模型支持的最低输出分辨率。"""
+    if not config:
+        return None
+    supported_sizes = getattr(config, 'supported_sizes', None) or []
+    if supported_sizes:
+        return supported_sizes[0]
+    return getattr(config, 'default_size', None)
+
+
+def _resolve_image_size_for_model(config, image_size: Optional[str], image_size_source: str = "argument"):
+    """
+    解析图片输出分辨率。
+
+    - auto/未指定：使用当前模型支持的最低输出分辨率
+    - 旧偏好不再被当前模型支持：忽略旧偏好并使用最低输出分辨率
+    - 显式参数不被支持：返回错误，避免悄悄违背调用者指令
+    """
+    default_size = _get_lowest_supported_image_size(config)
+    if not image_size or str(image_size).lower() == 'auto':
+        return default_size, None
+
+    if config and getattr(config, 'supported_sizes', None):
+        supported_lower = [str(s).lower() for s in config.supported_sizes]
+        if str(image_size).lower() not in supported_lower:
+            if image_size_source == "preference":
+                logger.warning(
+                    f"忽略不兼容的图片分辨率偏好: {image_size}, "
+                    f"当前模型支持: {config.supported_sizes}, 使用: {default_size}"
+                )
+                return default_size, None
+            return None, f'不支持的图片尺寸: {image_size}，当前模型支持: {config.supported_sizes}'
+
+    return image_size, None
+
+
 def get_text_to_image_model_info(user_id: str, world_id: str, auth_token: str) -> Dict[str, Any]:
     """
     获取当前用户/世界选中的生图模型信息 - MCP工具函数
@@ -542,6 +578,7 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             return {'success': False, 'error': '配置文件中未找到comfyui_base_url_inner或host配置'}
 
         # 强制应用用户偏好（比例和分辨率由前端界面控制，LLM 不需要传入）
+        image_size_source = "argument" if image_size else "default"
         user_prefs = _get_image_preferences(user_id, world_id)
         if user_prefs:
             pref_ratio = user_prefs.get('ratio')
@@ -550,9 +587,22 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             pref_resolution = user_prefs.get('resolution')
             if pref_resolution and pref_resolution != 'auto':
                 image_size = pref_resolution
+                image_size_source = "preference"
 
         # 确定 image_size
         config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
+        if (
+            image_size
+            and image_size_source == "preference"
+            and config
+            and config.supported_sizes
+            and image_size.lower() not in [s.lower() for s in config.supported_sizes]
+        ):
+            logger.warning(
+                f"忽略不兼容的图片分辨率偏好: {image_size}, "
+                f"当前模型支持: {config.supported_sizes}"
+            )
+            image_size = None
         if image_size:
             if config and config.supported_sizes:
                 supported_lower = [s.lower() for s in config.supported_sizes]
@@ -561,8 +611,8 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                         'success': False,
                         'error': f'不支持的图片尺寸: {image_size}，当前模型支持: {config.supported_sizes}'
                     }
-        elif config and config.default_size:
-            image_size = config.default_size
+        elif config:
+            image_size = _get_lowest_supported_image_size(config)
 
         # 计算预估算力
         from utils.computing_power import get_computing_power_for_task
@@ -3900,6 +3950,7 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
         
         # 强制应用用户偏好（比例和分辨率由前端界面控制，LLM 不需要传入）
         # 4宫格模式(is_grid=True)跳过用户偏好覆盖，因为4宫格布局必须使用16:9横屏比例和最大分辨率
+        image_size_source = "argument" if image_size else "default"
         user_prefs = _get_image_preferences(user_id, world_id)
         if user_prefs and not is_grid:
             pref_ratio = user_prefs.get('ratio')
@@ -3908,6 +3959,7 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
             pref_resolution = user_prefs.get('resolution')
             if pref_resolution and pref_resolution != 'auto':
                 image_size = pref_resolution
+                image_size_source = "preference"
 
         # 准备请求数据
         request_data = {
@@ -3922,6 +3974,10 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
         # 确定 image_size
         from config.unified_config import UnifiedConfigRegistry
         config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
+        if not is_grid:
+            image_size, image_size_error = _resolve_image_size_for_model(config, image_size, image_size_source)
+            if image_size_error:
+                return {'success': False, 'error': image_size_error}
         if is_grid:
             # 4宫格生成：自动使用模型支持的最大尺寸
             if config and config.supported_sizes:

@@ -451,7 +451,33 @@ class TrayLauncher:
         service_thread = threading.Thread(target=self._start_service, daemon=True)
         service_thread.start()
         
+        # 托盘图标与服务线程已就绪，进入事件循环前隐藏控制台窗口。
+        # 启动过程中的致命错误（路径/单实例/图标创建）会在到达此处前抛出，
+        # 控制台保持可见，便于 .bat 捕获退出码并提示。
+        hide_console()
+
         self.icon.run()
+
+
+def hide_console():
+    """隐藏并脱离控制台窗口。
+
+    通过 点我启动.bat / uv 启动时，python 附属 cmd 的控制台、与 cmd/uv 同属一个
+    控制台进程组；若用户关闭该控制台，组内进程收到 CTRL_CLOSE_EVENT 会被连带终止，
+    导致托盘图标消失。本函数先 ShowWindow 隐藏窗口，再 FreeConsole 让 python 脱离
+    控制台独立运行——这样即便控制台被关闭，托盘进程也不受影响。
+    PyInstaller --noconsole 打包的 exe 无控制台，GetConsoleWindow 返回 0、FreeConsole 无副作用。
+    """
+    try:
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE = 0
+    except Exception:
+        pass
+    try:
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        pass
 
 
 def show_error(message):
@@ -506,15 +532,60 @@ def fallback_vbs_launch():
     return False
 
 
+DETACHED_ENV_FLAG = "ZJT_LAUNCHER_DETACHED"
+
+
+def _relaunch_detached(project_dir):
+    """以独立后台进程重新启动自己（DETACHED_PROCESS），让当前 uv run 的 python 退出。
+
+    这样 uv run 返回 -> cmd 退出 -> 命令行窗口自动关闭；托盘由 detached 副本作为
+    独立进程常驻，与启动它的控制台彻底解耦。
+    """
+    env = dict(os.environ)
+    env[DETACHED_ENV_FLAG] = "1"
+    flags = 0
+    for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+        flags |= getattr(subprocess, name, 0)
+    subprocess.Popen(
+        [sys.executable, "-X", "utf8", os.path.abspath(__file__)],
+        creationflags=flags,
+        cwd=project_dir,
+        env=env,
+        close_fds=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def main():
     """主函数"""
     # 检查路径是否包含非ASCII字符
     if not check_non_ascii_in_path():
         sys.exit(1)
-    
-    # 单实例检测
+
+    # 确定项目根目录
+    if getattr(sys, 'frozen', False):
+        project_dir = os.path.dirname(sys.executable)
+    else:
+        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    # 首次启动（被 .bat/.exe 经 uv run 启动，非 frozen、非 detached）：
+    # 脱离控制台后重启为独立后台进程，然后让当前进程退出。
+    # -> uv run 返回 -> cmd 退出 -> 命令行窗口自动关闭；托盘由 detached 副本常驻。
+    # PyInstaller 打包的 exe（frozen）本身无控制台，无需此步。
+    if not getattr(sys, 'frozen', False) and os.environ.get(DETACHED_ENV_FLAG) != "1":
+        hide_console()
+        try:
+            _relaunch_detached(project_dir)
+        except Exception as e:
+            show_error(f"启动后台进程失败: {e}")
+            sys.exit(1)
+        sys.exit(0)
+
+    # detached 副本 / 打包 exe：单实例检测 + 运行托盘
     ensure_single_instance()
-    
+
     try:
         if HAS_TRAY_DEPS:
             # 使用托盘启动器
@@ -531,20 +602,15 @@ def main():
         import traceback
         error_msg = f"启动失败:\n{e}\n\n{traceback.format_exc()}"
         show_error(error_msg)
-        
+
         # 同时写入日志文件
         try:
-            if getattr(sys, 'frozen', False):
-                log_dir = os.path.dirname(sys.executable)
-            else:
-                # 开发环境下，获取项目根目录
-                log_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            log_file = os.path.join(log_dir, "launcher_error.log")
+            log_file = os.path.join(project_dir, "launcher_error.log")
             with open(log_file, 'w', encoding='utf-8') as f:
                 f.write(error_msg)
-        except:
+        except Exception:
             pass
-        
+
         sys.exit(1)
 
 

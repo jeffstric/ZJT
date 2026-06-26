@@ -886,11 +886,13 @@ class DriverImplementation:
     SEEDANCE_1_5_PRO_VOLCENGINE_V1 = 'seedance_1_5_pro_volcengine_v1'
     SEEDANCE_2_0_FAST_VOLCENGINE_V1 = 'seedance_2_0_fast_volcengine_v1'
     SEEDANCE_2_0_VOLCENGINE_V1 = 'seedance_2_0_volcengine_v1'
+    SEEDANCE_2_0_MINI_VOLCENGINE_V1 = 'seedance_2_0_mini_volcengine_v1'
 
     # Volcengine Oversea (火山引擎海外版)
     SEEDREAM5_VOLCENGINE_OVERSEA_V1 = 'seedream5_volcengine_oversea_v1'
     SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1 = 'seedance_2_0_fast_volcengine_oversea_v1'
     SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1 = 'seedance_2_0_volcengine_oversea_v1'
+    SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1 = 'seedance_2_0_mini_volcengine_oversea_v1'
 
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
@@ -984,6 +986,8 @@ class DriverImplementationId:
     SEEDREAM5_VOLCENGINE_OVERSEA_V1 = 52
     SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1 = 53
     SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1 = 54
+    SEEDANCE_2_0_MINI_VOLCENGINE_V1 = 56
+    SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1 = 57
 
 
 # implementation 字符串到 ID 的映射
@@ -1011,6 +1015,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_1_5_pro_volcengine_v1': DriverImplementationId.SEEDANCE_1_5_PRO_VOLCENGINE_V1,
     'seedance_2_0_fast_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_FAST_VOLCENGINE_V1,
     'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
+    'seedance_2_0_mini_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_MINI_VOLCENGINE_V1,
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
     'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
     'duomi_gpt_image_v1': DriverImplementationId.DUOMI_GPT_IMAGE_V1,
@@ -1043,6 +1048,7 @@ IMPLEMENTATION_TO_ID = {
     'seedream5_volcengine_oversea_v1': DriverImplementationId.SEEDREAM5_VOLCENGINE_OVERSEA_V1,
     'seedance_2_0_fast_volcengine_oversea_v1': DriverImplementationId.SEEDANCE_2_0_FAST_VOLCENGINE_OVERSEA_V1,
     'seedance_2_0_volcengine_oversea_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,
+    'seedance_2_0_mini_volcengine_oversea_v1': DriverImplementationId.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1104,6 +1110,7 @@ class DriverKey:
     SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 'seedance_1_5_pro_image_to_video'
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 'seedance_2_0_fast_image_to_video'
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 'seedance_2_0_image_to_video'
+    SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 'seedance_2_0_mini_image_to_video'
 
     # Grok 图生视频
     GROK_IMAGE_TO_VIDEO = 'grok_image_to_video'
@@ -1148,6 +1155,7 @@ class TaskTypeId:
         'SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO': 'Seedance 1.5 Pro 图生视频',
         'SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO': 'Seedance 2.0 Fast 图生视频',
         'SEEDANCE_2_0_IMAGE_TO_VIDEO': 'Seedance 2.0 图生视频',
+        'SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO': 'Seedance 2.0 Mini 图生视频',
         'GROK_IMAGE_TO_VIDEO': 'Grok 图生视频',
         'HAPPY_HORSE_IMAGE_TO_VIDEO': 'Happy Horse 图生视频',
         'HAPPY_HORSE_REFERENCE_TO_VIDEO': 'Happy Horse 参考生视频',
@@ -1184,6 +1192,7 @@ class TaskTypeId:
     SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO = 21
     SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO = 22
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 23
+    SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 31
     GROK_IMAGE_TO_VIDEO = 27
     HAPPY_HORSE_IMAGE_TO_VIDEO = 28
     HAPPY_HORSE_REFERENCE_TO_VIDEO = 29
@@ -1438,6 +1447,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 支持首尾帧
         supports_last_frame=False,  # 当前仅支持单图（忽略尾帧）
         supports_grid_merge=True,  # 支持宫格合并生成视频
+        hidden=True,  # 该功能已下线，隐藏但保留配置常量
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.LTX2_IMAGE_TO_VIDEO,
@@ -1573,6 +1583,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME,ImageMode.MULTI_REFERENCE],  # 支持首尾帧
         supports_last_frame=True,  # 真正支持尾帧
         supports_grid_merge=True,  # 支持宫格合并生成视频
+        enabled=False,
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.GROK_IMAGE_TO_VIDEO,
@@ -1593,12 +1604,13 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.GROK_COMMON_SITE4_V1,
             DriverImplementation.GROK_COMMON_SITE5_V1,
         ],
-        supported_ratios=['9:16', '16:9', '1:1', '2:3', '3:2'],
-        supported_durations=[10],
+        supported_ratios=['9:16', '16:9', '1:1'],
+        supported_durations=[6, 10, 15],
         default_ratio='9:16',
         default_duration=10,
         sort_order=36,
-        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
+        max_multi_ref_images=7,  # 多参模式最多7张参考图
         supports_last_frame=False,  # 不支持尾帧
         supports_grid_merge=True,  # 支持宫格合并生成视频
     ),
@@ -1665,6 +1677,31 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_duration=5,
         sort_order=39,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
+        supports_last_frame=True,  # 支持首尾帧
+        supports_ref_audio_video=True,  # 支持参考音频和视频
+        max_multi_ref_images=9,
+        supports_grid_merge=True,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
+        key='seedance_2_0_mini_image_to_video',
+        short_key='seedance_2_0_mini',
+        name='Seedance 2.0 Mini',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,
+            DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,
+        ],
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        default_ratio='9:16',
+        default_duration=5,
+        sort_order=40,
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=True,  # 支持参考音频和视频
@@ -2062,8 +2099,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='多米',
         driver_class='Veo3DuomiV1Driver',
         default_computing_power=6,
-        enabled=True,
-        description='多米平台 VEO3 接口',
+        enabled=False,
+        description='多米平台 VEO3 接口（已禁用：成功率太低）',
         sort_order=4000.0,
         required_config_keys=['duomi.token']
     ),
@@ -2072,8 +2109,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='ZJTapi',
         driver_class='Veo3CommonSite0V1Driver',
         default_computing_power=6,
-        enabled=True,
-        description='ZJTapi',
+        enabled=False,
+        description='ZJTapi（已禁用：成功率太低）',
         sort_order=3900.0,
         site_number=0,
         required_config_keys=['api_aggregator.site_0.api_key']
@@ -2083,8 +2120,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='聚合站点1',
         driver_class='Veo3CommonSite1V1Driver',
         default_computing_power=6,
-        enabled=True,
-        description='聚合站点1',
+        enabled=False,
+        description='聚合站点1（已禁用：成功率太低）',
         sort_order=4510.0,
         site_number=1,
         required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
@@ -2094,8 +2131,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='聚合站点2',
         driver_class='Veo3CommonSite2V1Driver',
         default_computing_power=6,
-        enabled=True,
-        description='聚合站点2',
+        enabled=False,
+        description='聚合站点2（已禁用：成功率太低）',
         sort_order=4520.0,
         site_number=2,
         required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
@@ -2105,8 +2142,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='聚合站点3',
         driver_class='Veo3CommonSite3V1Driver',
         default_computing_power=6,
-        enabled=True,
-        description='聚合站点3',
+        enabled=False,
+        description='聚合站点3（已禁用：成功率太低）',
         sort_order=4530.0,
         site_number=3,
         required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
@@ -2116,8 +2153,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='聚合站点4',
         driver_class='Veo3CommonSite4V1Driver',
         default_computing_power=6,
-        enabled=True,
-        description='聚合站点4',
+        enabled=False,
+        description='聚合站点4（已禁用：成功率太低）',
         sort_order=4540.0,
         site_number=4,
         required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
@@ -2127,8 +2164,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='聚合站点5',
         driver_class='Veo3CommonSite5V1Driver',
         default_computing_power=6,
-        enabled=True,
-        description='聚合站点5',
+        enabled=False,
+        description='聚合站点5（已禁用：成功率太低）',
         sort_order=4550.0,
         site_number=5,
         required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
@@ -2137,7 +2174,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='grok_duomi_v1',
         display_name='多米',
         driver_class='GrokDuomiV1Driver',
-        default_computing_power=8,
+        default_computing_power={6: 8, 10: 8, 15: 16},
         enabled=True,
         description='多米平台 Grok 接口',
         sort_order=4500.0,
@@ -2147,7 +2184,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='grok_common_site0_v1',
         display_name='ZJTapi',
         driver_class='GrokCommonSite0V1Driver',
-        default_computing_power=8,
+        default_computing_power={6: 35, 10: 55, 15: 80},
         enabled=True,
         description='ZJTapi',
         sort_order=4450.0,
@@ -2157,7 +2194,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='grok_common_site1_v1',
         display_name='Grok 站点1',
         driver_class='GrokCommonSite1V1Driver',
-        default_computing_power=8,
+        default_computing_power={6: 6, 10: 8, 15: 12},
         enabled=True,
         description='Grok 站点1',
         sort_order=4560.0,
@@ -2167,7 +2204,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='grok_common_site2_v1',
         display_name='Grok 站点2',
         driver_class='GrokCommonSite2V1Driver',
-        default_computing_power=8,
+        default_computing_power={6: 6, 10: 8, 15: 12},
         enabled=True,
         description='Grok 站点2',
         sort_order=4570.0,
@@ -2177,7 +2214,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='grok_common_site3_v1',
         display_name='Grok 站点3',
         driver_class='GrokCommonSite3V1Driver',
-        default_computing_power=8,
+        default_computing_power={6: 6, 10: 8, 15: 12},
         enabled=True,
         description='Grok 站点3',
         sort_order=4580.0,
@@ -2187,7 +2224,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='grok_common_site4_v1',
         display_name='Grok 站点4',
         driver_class='GrokCommonSite4V1Driver',
-        default_computing_power=8,
+        default_computing_power={6: 6, 10: 8, 15: 12},
         enabled=True,
         description='Grok 站点4',
         sort_order=4590.0,
@@ -2197,7 +2234,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='grok_common_site5_v1',
         display_name='Grok 站点5',
         driver_class='GrokCommonSite5V1Driver',
-        default_computing_power=8,
+        default_computing_power={6: 6, 10: 8, 15: 12},
         enabled=True,
         description='Grok 站点5',
         sort_order=4600.0,
@@ -2314,7 +2351,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='seedance_2_0_fast_volcengine_v1',
         display_name='火山引擎',
         driver_class='Seedance20FastVolcengineV1Driver',
-        default_computing_power={5: 105, 6: 126, 7: 147, 8: 168, 9: 189, 10: 210, 11: 231, 12: 252, 13: 273, 14: 294, 15: 315},
+        default_computing_power={5: 238, 6: 250, 7: 262, 8: 274, 9: 285, 10: 297, 11: 309, 12: 321, 13: 333, 14: 345, 15: 357},
         enabled=True,
         description='火山引擎 Seedance 2.0 Fast 图生视频接口',
         sort_order=10600.0,
@@ -2324,10 +2361,20 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='seedance_2_0_volcengine_v1',
         display_name='火山引擎',
         driver_class='Seedance20VolcengineV1Driver',
-        default_computing_power={5: 250, 6: 300, 7: 350, 8: 400, 9: 450, 10: 500, 11: 550, 12: 600, 13: 650, 14: 700, 15: 750},
+        default_computing_power={5: 303, 6: 318, 7: 333, 8: 348, 9: 363, 10: 378, 11: 393, 12: 409, 13: 424, 14: 439, 15: 454},
         enabled=True,
         description='火山引擎 Seedance 2.0 图生视频接口',
         sort_order=10700.0,
+        required_config_keys=['volcengine.api_key']
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_mini_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedance20MiniVolcengineV1Driver',
+        default_computing_power={5: 152, 6: 159, 7: 167, 8: 174, 9: 182, 10: 189, 11: 197, 12: 204, 13: 212, 14: 220, 15: 227},
+        enabled=True,
+        description='火山引擎 Seedance 2.0 Mini 图生视频接口',
+        sort_order=10650.0,
         required_config_keys=['volcengine.api_key']
     ),
 
@@ -2347,7 +2394,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='seedance_2_0_fast_volcengine_oversea_v1',
         display_name='火山引擎海外版',
         driver_class='Seedance20FastVolcengineOverseaV1Driver',
-        default_computing_power={5: 105, 6: 126, 7: 147, 8: 168, 9: 189, 10: 210, 11: 231, 12: 252, 13: 273, 14: 294, 15: 315},
+        default_computing_power={5: 238, 6: 250, 7: 262, 8: 274, 9: 285, 10: 297, 11: 309, 12: 321, 13: 333, 14: 345, 15: 357},
         enabled=True,
         description='火山引擎海外版 Seedance 2.0 Fast 图生视频接口',
         sort_order=10650.0,
@@ -2357,10 +2404,20 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='seedance_2_0_volcengine_oversea_v1',
         display_name='火山引擎海外版',
         driver_class='Seedance20VolcengineOverseaV1Driver',
-        default_computing_power={5: 250, 6: 300, 7: 350, 8: 400, 9: 450, 10: 500, 11: 550, 12: 600, 13: 650, 14: 700, 15: 750},
+        default_computing_power={5: 303, 6: 318, 7: 333, 8: 348, 9: 363, 10: 378, 11: 393, 12: 409, 13: 424, 14: 439, 15: 454},
         enabled=True,
         description='火山引擎海外版 Seedance 2.0 图生视频接口',
         sort_order=10750.0,
+        required_config_keys=['volcengine_oversea.api_key']
+    ),
+    ImplementationConfig(
+        name='seedance_2_0_mini_volcengine_oversea_v1',
+        display_name='火山引擎海外版',
+        driver_class='Seedance20MiniVolcengineOverseaV1Driver',
+        default_computing_power={5: 152, 6: 159, 7: 167, 8: 174, 9: 182, 10: 189, 11: 197, 12: 204, 13: 212, 14: 220, 15: 227},
+        enabled=True,
+        description='火山引擎海外版 Seedance 2.0 Mini 图生视频接口',
+        sort_order=10680.0,
         required_config_keys=['volcengine_oversea.api_key']
     ),
     ImplementationConfig(

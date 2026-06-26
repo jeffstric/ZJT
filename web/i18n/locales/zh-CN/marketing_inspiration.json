@@ -1,0 +1,57 @@
+{
+  "page_title": "灵感 - 营销智能体",
+
+  "hero_title": "开启你的",
+  "hero_highlight": "Agent 模式",
+  "input_placeholder": "输入想法，脚本或上传参考，和 Agent 协作",
+
+  "mode_agent": "Agent 模式",
+  "mode_agent_desc": "AI 智能协作创作",
+  "mode_image": "图片生成",
+  "mode_image_desc": "智能图片生成",
+  "mode_video": "视频生成",
+  "mode_video_desc": "智能视频生成",
+
+  "custom_settings": "自定义设置",
+  "generation_preference": "生成偏好",
+  "image": "图片",
+  "video": "视频",
+  "select_ratio": "选择比例",
+  "select_resolution": "分辨率",
+  "video_duration": "视频时长",
+  "generation_method": "生成方式",
+  "first_last_frame": "首尾帧",
+  "multi_reference": "全能参考",
+  "first_last_frame_desc": "上传首帧和尾帧图片生成视频",
+  "multi_reference_desc": "上传多张参考图生成视频",
+  "select_model": "选择模型",
+  "select_llm_model": "选择 LLM 模型",
+
+  "feature_canvas": "大纲画布",
+  "feature_canvas_desc": "自由创作",
+  "feature_agent": "Agent 模式",
+  "feature_agent_desc": "AI 智能创作",
+  "feature_image": "图片生成",
+  "feature_image_desc": "智能美学影片",
+  "feature_video": "视频生成",
+  "feature_video_desc": "一键生成",
+  "feature_digital_human": "数字人",
+  "feature_digital_human_desc": "大型模式",
+
+  "tab_discover": "发现",
+  "tab_shorts": "短片",
+  "tab_events": "活动",
+  "tab_search_placeholder": "冰箱贴",
+
+  "lightbox_prompt_label": "图片提示词",
+  "image_prompt_label": "图片提示词",
+  "video_prompt_label": "视频提示词",
+  "lightbox_do_same": "做同款",
+  "lightbox_use_ref": "用作参考图",
+
+  "toast_coming_soon": "即将上线",
+  "toast_upload_ref_hint": "请在生成页面手动上传参考图",
+  "toast_add_material": "请选择要上传的素材文件",
+
+  "load_more": "加载更多"
+}

@@ -189,7 +189,7 @@ class MediaCacheManager:
 
         return f"{task_id}_{timestamp_str}_{url_hash}{ext}"
     
-    async def download_and_cache(self, url: str, task_id: int, media_type: str = "video") -> Optional[str]:
+    async def download_and_cache(self, url: str, task_id: int, media_type: str = "video", max_retries: int = 3) -> Optional[str]:
         """
         下载媒体文件并缓存到本地
 
@@ -197,6 +197,7 @@ class MediaCacheManager:
             url: 媒体文件URL
             task_id: 任务ID
             media_type: 媒体类型 (video/image)
+            max_retries: 最大重试次数（默认3次）
 
         Returns:
             本地URL路径，失败返回None
@@ -208,49 +209,73 @@ class MediaCacheManager:
         # 获取文件大小用于后续记录
         file_size = 0
 
-        try:
-            # 使用同一个时间戳生成日期目录和文件名，避免跨秒导致路径不匹配
-            current_time = datetime.now()
+        # 使用同一个时间戳生成日期目录和文件名，避免跨秒导致路径不匹配
+        current_time = datetime.now()
 
-            # 获取日期目录
-            date_dir = self._get_date_dir(current_time)
+        # 获取日期目录
+        date_dir = self._get_date_dir(current_time)
 
-            # 生成文件名（使用相同的时间戳）
-            filename = self._generate_filename(task_id, url, media_type, current_time)
-            file_path = date_dir / filename
+        # 生成文件名（使用相同的时间戳）
+        filename = self._generate_filename(task_id, url, media_type, current_time)
+        file_path = date_dir / filename
 
-            # 下载文件
-            logger.info(f"开始下载媒体文件: {url} -> {file_path}")
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                # 下载文件
+                logger.info(f"开始下载媒体文件 (第{attempt}/{max_retries}次): {url} -> {file_path}")
 
-            timeout = aiohttp.ClientTimeout(total=300)  # 5分钟超时
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        logger.error(f"下载失败，HTTP状态码: {response.status}")
-                        return None
+                timeout = aiohttp.ClientTimeout(total=600)  # 10分钟超时
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(url) as response:
+                        if response.status != 200:
+                            logger.error(f"下载失败，HTTP状态码: {response.status}")
+                            last_error = f"HTTP {response.status}"
+                            # 4xx 客户端错误不重试
+                            if 400 <= response.status < 500:
+                                return None
+                            # 5xx 服务端错误可重试
+                            if attempt < max_retries:
+                                await asyncio.sleep(5)
+                                continue
+                            return None
 
-                    # 写入文件
-                    with open(file_path, 'wb') as f:
-                        async for chunk in response.content.iter_chunked(65536):
-                            f.write(chunk)
+                        # 写入文件
+                        with open(file_path, 'wb') as f:
+                            async for chunk in response.content.iter_chunked(65536):
+                                f.write(chunk)
 
-            # 获取文件大小
-            file_size = file_path.stat().st_size
+                # 获取文件大小
+                file_size = file_path.stat().st_size
 
-            # 生成本地URL（相对于upload目录）
-            relative_path = file_path.relative_to(self.root_dir)
-            local_url = f"/{relative_path.as_posix()}"
+                # 生成本地URL（相对于upload目录）
+                relative_path = file_path.relative_to(self.root_dir)
+                local_url = f"/{relative_path.as_posix()}"
 
+                logger.info(f"媒体文件缓存成功: {local_url} (大小: {file_size} bytes)")
+                return local_url
 
-            logger.info(f"媒体文件缓存成功: {local_url}")
-            return local_url
+            except asyncio.TimeoutError:
+                last_error = "超时"
+                logger.error(f"下载超时 (第{attempt}/{max_retries}次): {url}")
+                # 清理可能的不完整文件
+                if file_path.exists():
+                    file_path.unlink()
+                if attempt < max_retries:
+                    await asyncio.sleep(5)
+                    continue
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"下载媒体文件失败 (第{attempt}/{max_retries}次): {e}")
+                # 清理可能的不完整文件
+                if file_path.exists():
+                    file_path.unlink()
+                if attempt < max_retries:
+                    await asyncio.sleep(5)
+                    continue
 
-        except asyncio.TimeoutError:
-            logger.error(f"下载超时: {url}")
-            return None
-        except Exception as e:
-            logger.error(f"下载媒体文件失败: {e}")
-            return None
+        logger.error(f"下载媒体文件最终失败，已重试{max_retries}次: {url}, 最后错误: {last_error}")
+        return None
 
     def save_data_url_to_cache(self, data_url: str, task_id: int) -> Optional[str]:
         """

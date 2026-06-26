@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="page_title">灵感 - 营销智能体</title>
+    <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
+    <!-- 共享导航样式 + CSS 变量 -->
+    <link rel="stylesheet" href="/css/marketing_agent.css" />
+    <!-- 灵感页面专用样式 -->
+    <link rel="stylesheet" href="/css/marketing_inspiration.css" />
+    <!-- TaskConfig（模型数据加载） -->
+    <script src="/js/task_config.js"></script>
+    <!-- i18n 支持 -->
+    <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
+    <script src="/i18n/i18n-dom.js?v=__VERSION__"></script>
+    <link rel="stylesheet" href="/i18n/i18n-switcher.css?v=__VERSION__" />
+    <script src="/i18n/i18n-switcher.js?v=__VERSION__"></script>
+</head>
+<body>
+    <div class="app-container">
+
+    <!-- 左侧窄导航 -->
+    <nav class="marketing-nav">
+        <a href="/" class="marketing-nav-logo" data-i18n-title="back_to_home">
+            <img src="/files/logo.svg" alt="Logo" style="width: 32px; height: 32px;" />
+        </a>
+        <div class="marketing-nav-item active">
+            <div class="marketing-nav-icon">💡</div>
+            <div class="marketing-nav-text" data-i18n="nav_inspiration">灵感</div>
+        </div>
+        <a href="/marketing-agent" class="marketing-nav-item">
+            <div class="marketing-nav-icon">✨</div>
+            <div class="marketing-nav-text" data-i18n="nav_generate">生成</div>
+        </a>
+        <a href="/marketing-agent?tab=assets" class="marketing-nav-item" data-i18n-title="nav_assets">
+            <div class="marketing-nav-icon">📁</div>
+            <div class="marketing-nav-text" data-i18n="nav_assets">资产</div>
+        </a>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main class="main-content">
+
+        <div class="top-bar" style="display: flex; justify-content: flex-end; align-items: center; padding: 12px 32px 0; min-height: 32px; background: transparent; border-bottom: none; height: auto;"></div>
+
+        <!-- Hero 创作区 -->
+        <section class="hero-section">
+            <h1 class="hero-title">
+                <span data-i18n="hero_title">开启你的</span>
+                <span class="highlight" data-i18n="hero_highlight">Agent 模式</span>
+                <span class="dropdown-arrow">
+                    <svg viewBox="0 0 16 16" fill="currentColor" width="16" height="16"><path d="M4 6l4 4 4-4"/></svg>
+                </span>
+            </h1>
+
+            <div class="input-card">
+                <!-- 隐藏的文件输入 -->
+                <input type="file" id="inspirationFileInput" accept="image/*,video/*" multiple style="display:none">
+
+                <!-- 上传预览区 -->
+                <div class="media-preview-bar" id="mediaPreviewBar"></div>
+
+                <div class="input-area">
+                    <button class="add-btn" id="addMediaBtn" title="添加素材">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                    </button>
+                    <textarea class="prompt-input" data-i18n-placeholder="input_placeholder" placeholder="输入想法，脚本或上传参考，和 Agent 协作"></textarea>
+                </div>
+                <div class="marketing-input-bar" id="marketingInputBar">
+                    <div class="marketing-input-bar-left">
+                        <!-- 类型选择 -->
+                        <div class="marketing-dropdown" id="typeDropdown" style="position: relative;">
+                            <button class="marketing-bar-btn" id="typeBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                                </svg>
+                                <span id="typeLabel" data-i18n="mode_agent">Agent 模式</span>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="typeArrow" style="transition: transform 0.2s;">
+                                    <path d="M6 9l6 6 6-6"/>
+                                </svg>
+                            </button>
+                            <div class="marketing-dropdown-menu hidden" id="typeMenu" style="position: absolute; left: 0; background: #fff; border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); padding: 8px; min-width: 200px; z-index: 100;">
+                                <div class="mk-item active" data-type="agent" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=this.classList.contains('active')?'var(--accent-light)':'transparent'">
+                                    <span style="font-size: 18px;">✨</span>
+                                    <div style="flex: 1;">
+                                        <div style="font-size: 14px; font-weight: 500; color: var(--text-primary);" data-i18n="mode_agent">Agent 模式</div>
+                                        <div style="font-size: 12px; color: var(--text-muted);" data-i18n="mode_agent_desc">AI 智能协作创作</div>
+                                    </div>
+                                    <span class="mk-check" style="margin-left: auto; color: var(--accent-color); font-weight: bold;">✓</span>
+                                </div>
+                                <div class="mk-item" data-type="image" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=this.classList.contains('active')?'var(--accent-light)':'transparent'">
+                                    <span style="font-size: 18px;">🖼️</span>
+                                    <div style="flex: 1;">
+                                        <div style="font-size: 14px; font-weight: 500; color: var(--text-primary);" data-i18n="mode_image">图片生成</div>
+                                        <div style="font-size: 12px; color: var(--text-muted);" data-i18n="mode_image_desc">智能图片生成</div>
+                                    </div>
+                                    <span class="mk-check" style="margin-left: auto; color: var(--accent-color); font-weight: bold; opacity: 0;">✓</span>
+                                </div>
+                                <div class="mk-item" data-type="video" style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=this.classList.contains('active')?'var(--accent-light)':'transparent'">
+                                    <span style="font-size: 18px;">📹</span>
+                                    <div style="flex: 1;">
+                                        <div style="font-size: 14px; font-weight: 500; color: var(--text-primary);" data-i18n="mode_video">视频生成</div>
+                                        <div style="font-size: 12px; color: var(--text-muted);" data-i18n="mode_video_desc">智能视频生成</div>
+                                    </div>
+                                    <span class="mk-check" style="margin-left: auto; color: var(--accent-color); font-weight: bold; opacity: 0;">✓</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Agent 模式：综合设置面板 -->
+                        <div class="marketing-dropdown hidden" id="agentSettingsDropdown" style="position: relative;">
+                            <button class="marketing-bar-btn" id="agentSettingsBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="3"/>
+                                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15 1.65 1.65 0 0 0 2.66 15V15a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                                </svg>
+                                <span data-i18n="custom_settings">自定义设置</span>
+                            </button>
+                            <div class="marketing-panel agent-settings-panel hidden" id="agentSettingsPanel" style="position: absolute; left: 0; background: #fff; border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 20px; min-width: 380px; z-index: 100;">
+                                <!-- 生成偏好：图片/视频切换 -->
+                                <div class="agent-setting-group">
+                                    <span class="agent-setting-label" data-i18n="generation_preference">生成偏好</span>
+                                    <div class="agent-toggle-bar">
+                                        <div class="agent-toggle-item active" data-media="image" data-i18n="image">图片</div>
+                                        <div class="agent-toggle-item" data-media="video" data-i18n="video">视频</div>
+                                    </div>
+                                </div>
+                                <!-- 比例选择 -->
+                                <div class="agent-setting-group">
+                                    <span class="agent-setting-label" data-i18n="select_ratio">选择比例</span>
+                                    <div id="agentRatioGrid" class="agent-ratio-grid"></div>
+                                </div>
+                                <!-- 分辨率（图片模式） -->
+                                <div class="agent-setting-group" id="agentResolutionGroup">
+                                    <span class="agent-setting-label" data-i18n="select_resolution">分辨率</span>
+                                    <div id="agentResolutionList" class="agent-resolution-list"></div>
+                                </div>
+                                <!-- 视频时长（视频模式） -->
+                                <div class="agent-setting-group hidden" id="agentDurationGroup">
+                                    <span class="agent-setting-label" data-i18n="video_duration">视频时长</span>
+                                    <div id="agentDurationList" class="agent-duration-list"></div>
+                                </div>
+                                <!-- 生成方式（视频模式） -->
+                                <div class="agent-setting-group hidden" id="agentVideoModeGroup">
+                                    <span class="agent-setting-label" data-i18n="generation_method">生成方式</span>
+                                    <div class="agent-toggle-bar">
+                                        <div class="agent-toggle-item active" data-vidmode="first_last_frame" data-i18n="first_last_frame">首尾帧</div>
+                                        <div class="agent-toggle-item" data-vidmode="multi_reference" data-i18n="multi_reference">全能参考</div>
+                                    </div>
+                                    <div class="agent-setting-desc" id="agentVideoModeDesc" data-i18n="first_last_frame_desc">上传首帧和尾帧图片生成视频</div>
+                                </div>
+                                <!-- 图片/视频模型选择 -->
+                                <div class="agent-setting-group">
+                                    <span class="agent-setting-label" data-i18n="select_model">选择模型</span>
+                                    <div id="agentModelList" class="agent-model-list"></div>
+                                </div>
+                                <!-- LLM 模型选择 -->
+                                <div class="agent-setting-group" id="agentLLMGroup">
+                                    <span class="agent-setting-label" data-i18n="select_llm_model">选择 LLM 模型</span>
+                                    <div id="agentLLMList" class="agent-model-list"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 非 Agent 模式：独立模型选择 -->
+                        <div class="marketing-dropdown" id="modelDropdown" style="position: relative;">
+                            <button class="marketing-bar-btn" id="modelBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" id="modelIconImg">
+                                    <rect x="3" y="5" width="18" height="14" rx="2"/>
+                                    <circle cx="8.5" cy="10" r="1.5"/>
+                                    <path d="M21 15l-5-5L5 19"/>
+                                </svg>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" id="modelIconVid" class="hidden">
+                                    <rect x="3" y="5" width="18" height="14" rx="2"/>
+                                    <path d="M10 9l5 3-5 3V9z"/>
+                                </svg>
+                                <span id="modelLabel">默认模型</span>
+                            </button>
+                            <div class="marketing-panel hidden" id="modelPanel" style="position: absolute; left: 0; background: #fff; border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 16px; min-width: 360px; z-index: 100;">
+                                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">选择模型<span id="modelPanelSelected"></span></div>
+                                <div id="modelList" style="max-height: 320px; overflow-y: auto;"></div>
+                            </div>
+                        </div>
+
+                        <!-- 非 Agent 模式：比例选择 -->
+                        <div class="marketing-dropdown" id="ratioDropdown" style="position: relative;">
+                            <button class="marketing-bar-btn" id="ratioBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                    <path d="M3 9h18M9 21V9"/>
+                                </svg>
+                                <span id="ratioLabel">1:1</span>
+                            </button>
+                            <div class="marketing-panel hidden" id="ratioPanel" style="position: absolute; left: 0; background: #fff; border: 1px solid var(--border-color); border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 16px; min-width: 360px; z-index: 100;">
+                                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">选择比例</div>
+                                <div id="ratioGrid" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;"></div>
+                                <div id="resolutionGroup">
+                                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">分辨率</div>
+                                    <div id="resolutionList" style="display: flex; gap: 8px; flex-wrap: wrap;"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 视频时长（仅视频模式显示） -->
+                        <div class="marketing-dropdown hidden" id="durationDropdown" style="position: relative;">
+                            <button class="marketing-bar-btn" id="durationBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <path d="M12 6v6l4 2"/>
+                                </svg>
+                                <span id="durationLabel">5s</span>
+                            </button>
+                            <div class="marketing-dropdown-menu hidden" id="durationMenu" style="position: absolute; left: 0; background: #fff; border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); padding: 8px; min-width: 120px; z-index: 100;"></div>
+                        </div>
+                    </div>
+
+                    <div class="marketing-input-bar-right">
+                        <button class="marketing-send-btn" id="marketingSendBtn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"/>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 功能入口卡片 -->
+            <div class="feature-cards">
+                <div class="feature-card" data-mode="agent">
+                    <div class="feature-icon" style="background: linear-gradient(135deg,#80cbc4,#00897b)">
+                        <svg viewBox="0 0 24 24" fill="white" width="22" height="22"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    </div>
+                    <div class="feature-info">
+                        <div class="feature-name" data-i18n="feature_agent">Agent 模式</div>
+                        <div class="feature-desc" data-i18n="feature_agent_desc">AI 智能创作</div>
+                    </div>
+                </div>
+                <div class="feature-card" data-mode="image">
+                    <div class="feature-icon" style="background: linear-gradient(135deg,#7986cb,#3949ab)">
+                        <svg viewBox="0 0 24 24" fill="white" width="22" height="22"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                    </div>
+                    <div class="feature-info">
+                        <div class="feature-name" data-i18n="feature_image">图片生成</div>
+                        <div class="feature-desc" data-i18n="feature_image_desc">智能美学影片</div>
+                    </div>
+                </div>
+                <div class="feature-card" data-mode="video">
+                    <div class="feature-icon" style="background: linear-gradient(135deg,#a5d6a7,#388e3c)">
+                        <svg viewBox="0 0 24 24" fill="white" width="22" height="22"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                    </div>
+                    <div class="feature-info">
+                        <div class="feature-name" data-i18n="feature_video">视频生成</div>
+                        <div class="feature-desc" data-i18n="feature_video_desc">一键生成</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 发现区 -->
+        <section class="discover-section">
+
+            <!-- 瀑布流图片区 -->
+            <div class="masonry-grid" id="masonryGrid">
+                <!-- JS 动态填充 -->
+            </div>
+        </section>
+    </main>
+
+    <!-- 图片预览弹窗 -->
+    <div class="lightbox" id="lightbox">
+        <div class="lightbox-overlay" id="lightboxOverlay"></div>
+        <div class="lightbox-content">
+            <button class="lightbox-close" id="lightboxClose">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <div class="lightbox-main">
+                <img class="lightbox-img" id="lightboxImg" src="" alt="" />
+            </div>
+            <div class="lightbox-sidebar" id="lightboxSidebar">
+                <div class="lb-sidebar-header">
+                    <div class="lb-author-row">
+                        <div class="lb-avatar" id="lightboxAvatar">A</div>
+                        <div class="lb-author-info">
+                            <div class="lb-author-name" id="lightboxAuthorName">作者</div>
+                            <div class="lb-author-date">2026.05.16 内容由 AI 生成</div>
+                        </div>
+                    </div>
+                    <div class="lb-meta-row">
+                        <span class="lb-meta-tag" id="lightboxMediaType" data-i18n="image">图片</span>
+                        <span class="lb-meta-dot" id="lightboxModel">3.1</span>
+                        <span class="lb-meta-dot" id="lightboxRatio">9:16</span>
+                        <span class="lb-meta-more">更多</span>
+                    </div>
+                </div>
+                <div class="lb-prompt-section">
+                    <div class="lb-prompt-label" id="lightboxPromptLabel" data-i18n="image_prompt_label">图片提示词</div>
+                    <div class="lb-prompt-text" id="lightboxPrompt"></div>
+                </div>
+                <div class="lb-sidebar-actions">
+                    <button class="lb-action-btn lb-action-primary" id="lbDoSameBtn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                        <span data-i18n="lightbox_do_same">做同款</span>
+                    </button>
+                    <button class="lb-action-btn lb-action-secondary" id="lbReferenceBtn">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                        <span data-i18n="lightbox_use_ref">用作参考图</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+
+    <script src="/js/marketing_inspiration.js" defer></script>
+</body>
+</html>

@@ -13,7 +13,7 @@
     <script src="/i18n/i18n-switcher.js?v=__VERSION__"></script>
     <script src="/js/vue.global.prod.js"></script>
     <script src="/js/axios.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="/js/echarts.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/zh.js"></script>
 </head>
@@ -104,6 +104,14 @@
                     </a>
                 </li>
                 <li>
+                    <a href="#" :class="{ active: currentPage === 'marketingPublications' }" @click.prevent="switchPage('marketingPublications')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4-4 4 4 8-8M4 20h16" />
+                        </svg>
+                        <span>{{ t('nav_marketing_publications') }}</span>
+                    </a>
+                </li>
+                <li>
                     <a href="#" :class="{ active: currentPage === 'commission' }" @click.prevent="switchPage('commission')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -126,6 +134,7 @@
                 <h2 v-else-if="currentPage === 'models'">{{ t('nav_models') }}</h2>
                 <h2 v-else-if="currentPage === 'notifications'">{{ t('nav_notifications') }}</h2>
                 <h2 v-else-if="currentPage === 'constants'">{{ t('nav_constants') }}</h2>
+                <h2 v-else-if="currentPage === 'marketingPublications'">{{ t('nav_marketing_publications') }}</h2>
                 <h2 v-else-if="currentPage === 'commission'">{{ t('nav_commission') }}</h2>
 
                 <div class="admin-user">
@@ -334,6 +343,75 @@
                     </div>
                 </div>
             </section>
+            <section v-if="currentPage === 'marketingPublications'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>{{ t('marketing_review_title') }}</h3>
+                    </div>
+                    <div class="table-filters">
+                        <select class="filter-select" v-model="marketingPublications.statusFilter" @change="loadMarketingPublications(1)">
+                            <option value="pending">{{ t('marketing_status_pending') }}</option>
+                            <option value="approved">{{ t('marketing_status_approved') }}</option>
+                            <option value="rejected">{{ t('marketing_status_rejected') }}</option>
+                            <option value="hidden">{{ t('marketing_status_hidden') }}</option>
+                            <option value="cancelled">{{ t('marketing_status_cancelled') }}</option>
+                            <option value="">{{ t('status_all') }}</option>
+                        </select>
+                        <select class="filter-select" v-model="marketingPublications.mediaTypeFilter" @change="loadMarketingPublications(1)">
+                            <option value="">{{ t('status_all') }}</option>
+                            <option value="image">{{ t('image') || 'Image' }}</option>
+                            <option value="video">{{ t('video') || 'Video' }}</option>
+                        </select>
+                        <button class="filter-btn" @click="loadMarketingPublications(1)">{{ t('search_btn') }}</button>
+                    </div>
+                    <div v-if="marketingPublications.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+                    <table v-else class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>{{ t('marketing_col_preview') }}</th>
+                                <th>{{ t('marketing_col_title') }}</th>
+                                <th>{{ t('marketing_col_prompt') }}</th>
+                                <th>{{ t('marketing_col_status') }}</th>
+                                <th>{{ t('col_actions') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="marketingPublications.list.length === 0">
+                                <td colspan="6" style="text-align:center;color:#64748b;">{{ t('no_data') }}</td>
+                            </tr>
+                            <tr v-for="item in marketingPublications.list" :key="item.id">
+                                <td>{{ item.id }}</td>
+                                <td>
+                                    <img v-if="item.media_type === 'image'" :src="item.cover_url || item.result_url" class="marketing-review-thumb" alt="">
+                                    <video v-else :src="item.result_url" class="marketing-review-thumb" controls muted></video>
+                                </td>
+                                <td>
+                                    <div style="font-weight:600;">{{ item.title }}</div>
+                                    <div style="font-size:12px;color:#64748b;">{{ item.media_type }} · {{ item.owner_phone || item.owner_email || item.owner_user_id }}</div>
+                                </td>
+                                <td style="max-width:360px;">
+                                    <div class="marketing-review-prompt">{{ item.prompt_snapshot }}</div>
+                                </td>
+                                <td>
+                                    <span class="status-badge" :class="{ active: item.status === 'approved', pending: item.status === 'pending', inactive: item.status === 'hidden' || item.status === 'rejected' }">
+                                        {{ getMarketingStatusText(item.status) }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <button v-if="item.status === 'pending'" class="action-btn success" @click="reviewMarketingPublication(item, 'approve')">{{ t('approve_btn') || 'Approve' }}</button>
+                                    <button v-if="item.status === 'pending'" class="action-btn danger" @click="reviewMarketingPublication(item, 'reject')">{{ t('reject_btn') || 'Reject' }}</button>
+                                    <button v-if="item.status === 'approved'" class="action-btn danger" @click="reviewMarketingPublication(item, 'hide')">{{ t('hide_btn') || 'Hide' }}</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             <section v-if="currentPage === 'users'">
                 <div class="table-container">
                     <div class="table-header">

@@ -143,6 +143,9 @@
           if (typeof refreshShotFrameNodesModels === 'function') {
             refreshShotFrameNodesModels();
           }
+          // 同样刷新图生视频节点的 model/时长/比例 select，修复重新加载节点时
+          // 配置未加载完导致 select 使用 hardcoded fallback（时长仅5/10、比例仅9:16/16:9、模型仅保存值）的时序竞争
+          updateAllImageToVideoNodesSelects();
 
           // 驱动状态仍从原接口获取（暂未迁移）
           const response = await fetch('/api/computing-power-config');
@@ -209,6 +212,8 @@
         if (window.TaskConfig) {
           await window.TaskConfig.load();
           syncFromTaskConfig();
+          // 配置加载完成后刷新图生视频节点 select（修复时序竞争）
+          updateAllImageToVideoNodesSelects();
         }
       } catch(error){
         console.error('[模型配置] 加载失败:', error);
@@ -249,6 +254,124 @@
       });
     }
     
+    // 刷新单个图生视频节点的 model/duration/ratio select 选项
+    // 配置未加载时走 fallback（硬编码默认项）；配置加载后用完整后端配置重填。
+    // 修复 BUG：重新加载节点时若配置尚未加载完，select 会残缺（时长只有5/10、比例只有9:16/16:9、模型只有保存的那一个）。
+    function refreshImageToVideoNodeSelects(node){
+      if(!node || node.type !== 'image_to_video' || !node.data) return;
+      const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+      if(!el) return;
+
+      // ---- 视频模型 select ----
+      const videoModelSelect = el.querySelector('.video-model-select');
+      if(videoModelSelect) {
+        const imageMode = node.data.imageMode || 'first_last_frame';
+        const savedVideoModel = node.data.videoModel;
+        videoModelSelect.innerHTML = '';
+
+        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          const category = imageMode === 'text_to_video' ? 'text_to_video' : 'image_to_video';
+          const options = window.TaskConfig.getModelOptionsForCategory(category);
+          let firstAvailable = null;
+
+          options.forEach(opt => {
+            const optEl = document.createElement('option');
+            optEl.value = opt.value;
+
+            if(imageMode === 'text_to_video') {
+              optEl.textContent = opt.label;
+              videoModelSelect.appendChild(optEl);
+              if(!firstAvailable) firstAvailable = opt.value;
+            } else {
+              const config = modelConfigs[opt.value];
+              const supportedModes = config?.supported_image_modes || ['first_last_frame'];
+              const supportsCurrentMode = supportedModes.includes(imageMode);
+              optEl.textContent = supportsCurrentMode ? opt.label : opt.label + ' (不支持当前模式)';
+              optEl.disabled = !supportsCurrentMode;
+              videoModelSelect.appendChild(optEl);
+              if(supportsCurrentMode && !firstAvailable) firstAvailable = opt.value;
+            }
+          });
+
+          // 恢复之前的选择（如果仍然可用且支持当前模式）
+          const selectedOption = videoModelSelect.querySelector(`option[value="${savedVideoModel}"]:not([disabled])`);
+          if(selectedOption) {
+            videoModelSelect.value = savedVideoModel;
+          } else if(firstAvailable) {
+            videoModelSelect.value = firstAvailable;
+            node.data.videoModel = firstAvailable;
+          }
+        } else {
+          // 回退：确保已保存的值在下拉框中可见
+          ensureSelectHasSavedOption(videoModelSelect, savedVideoModel);
+          videoModelSelect.value = savedVideoModel;
+        }
+      }
+
+      // ---- 时长 select ----
+      const durationSelect = el.querySelector('.duration-select');
+      if(durationSelect) {
+        const videoModel = node.data.videoModel;
+        const config = modelConfigs[videoModel];
+        const ltx2Labels = { 5: '5秒 (121帧)', 8: '8秒 (201帧)', 10: '10秒 (241帧)' };
+
+        if(config && config.durations && config.durations.length > 0) {
+          durationSelect.innerHTML = '';
+          config.durations.forEach(duration => {
+            const label = videoModel === 'ltx2' ? (ltx2Labels[duration] || `${duration}秒`) : `${duration}秒`;
+            durationSelect.innerHTML += `<option value="${duration}">${label}</option>`;
+          });
+          if(!config.durations.includes(node.data.duration)) {
+            node.data.duration = config.default_duration || config.durations[0];
+          }
+        } else {
+          durationSelect.innerHTML = `<option value="5">5秒</option><option value="10">10秒</option>`;
+          if(![5, 10].includes(node.data.duration)) node.data.duration = 5;
+        }
+        durationSelect.value = node.data.duration;
+      }
+
+      // ---- 比例 select ----
+      const ratioSelect = el.querySelector('.ratio-select');
+      if(ratioSelect) {
+        const ratioField = ratioSelect.closest('.field');
+        const videoModel = node.data.videoModel;
+        const config = modelConfigs[videoModel];
+        const labelMap = { '9:16': '9:16 (竖屏)', '16:9': '16:9 (横屏)', '1:1': '1:1 (方形)' };
+
+        // vidu 模型隐藏比例选择器
+        if(videoModel === 'vidu') {
+          if(ratioField) ratioField.style.display = 'none';
+        } else {
+          if(ratioField) ratioField.style.display = '';
+
+          if(config && config.ratios && config.ratios.length > 0) {
+            ratioSelect.innerHTML = '';
+            config.ratios.forEach(ratio => {
+              ratioSelect.innerHTML += `<option value="${ratio}">${labelMap[ratio] || ratio}</option>`;
+            });
+            if(!config.ratios.includes(node.data.ratio)) {
+              node.data.ratio = config.default_ratio || config.ratios[0];
+            }
+          } else {
+            ratioSelect.innerHTML = `<option value="9:16">9:16 (竖屏)</option><option value="16:9">16:9 (横屏)</option>`;
+            if(node.data.ratio !== '9:16' && node.data.ratio !== '16:9') node.data.ratio = '16:9';
+          }
+          ratioSelect.value = node.data.ratio;
+        }
+      }
+    }
+
+    // 配置加载完成后，刷新所有已存在图生视频节点的 model/duration/ratio select 选项
+    function updateAllImageToVideoNodesSelects(){
+      if(!state || !state.nodes) return;
+      state.nodes.forEach(node => {
+        if(node.type === 'image_to_video'){
+          refreshImageToVideoNodeSelects(node);
+        }
+      });
+    }
+
     // 更新所有分镜节点的视频算力显示
     function updateAllShotFrameNodesPower(){
       if(!state || !state.nodes) return;
@@ -1555,107 +1678,11 @@
             promptCharCount.textContent = `${node.data.prompt.length} 字符`;
           }
           
-          // 先更新视频模型选择
+          // 根据图片模式筛选并填充视频模型/时长/比例选项（抽取为 refreshImageToVideoNodeSelects）
+          // 重新加载节点时配置可能尚未加载完，此处先按 fallback 填充；
+          // 配置加载完成后 updateAllImageToVideoNodesSelects() 会用完整配置再次刷新。
+          refreshImageToVideoNodeSelects(node);
 
-          // 根据图片模式筛选并填充视频模型选项
-          const videoModelSelect = el.querySelector('.video-model-select');
-          if(videoModelSelect) {
-            const imageMode = node.data.imageMode || 'first_last_frame';
-            const savedVideoModel = node.data.videoModel;
-            videoModelSelect.innerHTML = '';
-            
-            if(window.TaskConfig && window.TaskConfig.isLoaded()) {
-              const category = imageMode === 'text_to_video' ? 'text_to_video' : 'image_to_video';
-              const options = window.TaskConfig.getModelOptionsForCategory(category);
-              let firstAvailable = null;
-
-              options.forEach(opt => {
-                const optEl = document.createElement('option');
-                optEl.value = opt.value;
-
-                if(imageMode === 'text_to_video') {
-                  optEl.textContent = opt.label;
-                  videoModelSelect.appendChild(optEl);
-                  if(!firstAvailable) firstAvailable = opt.value;
-                } else {
-                  const config = modelConfigs[opt.value];
-                  const supportedModes = config?.supported_image_modes || ['first_last_frame'];
-                  const supportsCurrentMode = supportedModes.includes(imageMode);
-                  optEl.textContent = supportsCurrentMode ? opt.label : opt.label + ' (不支持当前模式)';
-                  optEl.disabled = !supportsCurrentMode;
-                  videoModelSelect.appendChild(optEl);
-                  if(supportsCurrentMode && !firstAvailable) firstAvailable = opt.value;
-                }
-              });
-              
-              // 恢复之前的选择（如果仍然可用且支持当前模式）
-              const selectedOption = videoModelSelect.querySelector(`option[value="${savedVideoModel}"]:not([disabled])`);
-              if(selectedOption) {
-                videoModelSelect.value = savedVideoModel;
-              } else if(firstAvailable) {
-                videoModelSelect.value = firstAvailable;
-                node.data.videoModel = firstAvailable;
-              }
-            } else {
-              // 回退：确保已保存的值在下拉框中可见
-              ensureSelectHasSavedOption(videoModelSelect, savedVideoModel);
-              videoModelSelect.value = savedVideoModel;
-            }
-          }
-          
-          // 根据模型更新时长选项（从后端配置获取）
-          const durationSelect = el.querySelector('.duration-select');
-          if(durationSelect && videoModelSelect) {
-            const videoModel = node.data.videoModel;
-            const config = modelConfigs[videoModel];
-            const ltx2Labels = { 5: '5秒 (121帧)', 8: '8秒 (201帧)', 10: '10秒 (241帧)' };
-            
-            if(config && config.durations && config.durations.length > 0) {
-              durationSelect.innerHTML = '';
-              config.durations.forEach(duration => {
-                const label = videoModel === 'ltx2' ? (ltx2Labels[duration] || `${duration}秒`) : `${duration}秒`;
-                durationSelect.innerHTML += `<option value="${duration}">${label}</option>`;
-              });
-              if(!config.durations.includes(node.data.duration)) {
-                node.data.duration = config.default_duration || config.durations[0];
-              }
-            } else {
-              durationSelect.innerHTML = `<option value="5">5秒</option><option value="10">10秒</option>`;
-              if(![5, 10].includes(node.data.duration)) node.data.duration = 5;
-            }
-            durationSelect.value = node.data.duration;
-          }
-          
-          // 根据模型更新比例选项（从后端配置获取）
-          const ratioSelect = el.querySelector('.ratio-select');
-          if(ratioSelect) {
-            const ratioField = ratioSelect.closest('.field');
-            const videoModel = node.data.videoModel;
-            const config = modelConfigs[videoModel];
-            const labelMap = { '9:16': '9:16 (竖屏)', '16:9': '16:9 (横屏)', '1:1': '1:1 (方形)' };
-            
-            // vidu 模型隐藏比例选择器
-            if(videoModel === 'vidu') {
-              if(ratioField) ratioField.style.display = 'none';
-            } else {
-              if(ratioField) ratioField.style.display = '';
-              
-              if(config && config.ratios && config.ratios.length > 0) {
-                ratioSelect.innerHTML = '';
-                config.ratios.forEach(ratio => {
-                  ratioSelect.innerHTML += `<option value="${ratio}">${labelMap[ratio] || ratio}</option>`;
-                });
-                if(!config.ratios.includes(node.data.ratio)) {
-                  node.data.ratio = config.default_ratio || config.ratios[0];
-                }
-              } else {
-                ratioSelect.innerHTML = `<option value="9:16">9:16 (竖屏)</option><option value="16:9">16:9 (横屏)</option>`;
-                if(node.data.ratio !== '9:16' && node.data.ratio !== '16:9') node.data.ratio = '16:9';
-              }
-              ratioSelect.value = node.data.ratio;
-            }
-          }
-          
           // 更新抽卡次数标签
           const genCountLabel = el.querySelector('.gen-count-label');
           if(genCountLabel) { const _t = window.t ? window.t('draw_count_x', { count: node.data.drawCount }) : null; genCountLabel.textContent = (_t && _t !== 'draw_count_x') ? _t : `抽卡次数：X${node.data.drawCount}`; }

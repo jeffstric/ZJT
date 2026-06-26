@@ -104,6 +104,12 @@ database:
 duomi:
   token: ""
 
+# Grok 配置
+grok:
+  # 视频下载代理配置（用于大陆地区无法直接访问 vidgen.x.ai 的情况）
+  video_proxy_enabled: true  # 是否启用视频下载代理
+  video_proxy_domain: "http://43.128.143.13"  # 代理服务器地址（需要替换为实际跳板机地址）
+
 # 适配ywapi 聚合站
 api_aggregator:
   site_0:

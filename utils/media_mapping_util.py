@@ -19,15 +19,27 @@ logger = logging.getLogger(__name__)
 
 def extract_local_path_from_url(url: str) -> Optional[str]:
     """
-    从图片 URL 中提取本地路径
+    从「本服务 upload 目录」的图片 URL 中提取本地相对路径（**与域名无关**）。
+
+    只要 URL 的 path 以 `/upload/` 开头即认定为本服务文件，去掉前导 `/` 返回相对路径；
+    其它路径（如外部 CDN、`/static/` 等）返回 None。
+
+    本函数只做「字符串提取」，不读磁盘、不校验文件是否存在。
+    **调用方拿到相对路径后，需自行 `os.path.join(get_project_root(), rel)` 拼成绝对路径，
+    并用 `os.path.exists()` 校验后再使用**——否则当某 `/upload/` URL 实际指向另一台机器
+    的文件时，可能读到本机同名路径的错误文件。
 
     Examples:
         "http://localhost:8000/upload/character/pic/abc.png" → "upload/character/pic/abc.png"
+        "http://zjt_dev.perseids.cn/upload/image_to_video/2/x.png" → "upload/image_to_video/2/x.png"
         "/upload/character/pic/abc.png" → "upload/character/pic/abc.png"
         "https://external-cdn.com/image.png" → None
 
+    Args:
+        url: 图片 URL 或路径
+
     Returns:
-        本地相对路径（无前导 /），外部 URL 返回 None
+        本地相对路径（无前导 /）；非 `/upload/` 路径或空值返回 None。
     """
     if not url or not isinstance(url, str):
         return None

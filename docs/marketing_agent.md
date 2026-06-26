@@ -11,7 +11,7 @@
 | 模式 | 入口 | 主题 | 适用场景 |
 |------|------|------|----------|
 | 短剧模式 | `/video-workflow-list` | 深色主题 | AI 短剧创作全流程 |
-| 营销模式 | `/marketing-agent` | 浅色主题（白底蓝调） | 营销内容对话式创作 |
+| 营销模式 | `/marketing-inspiration`（首页"开始创作"落地页）→ `/marketing-agent`（生成对话页） | 浅色主题（白底蓝调） | 营销内容创作 |
 
 模式切换入口位于 `web/index.html` 的模式选择弹窗（约第 630-660 行），`selectCreationMode(mode)` 方法仅保存模式状态，不自动跳转。
 
@@ -41,7 +41,7 @@
 
 | 区块 | 类名 | 宽度 | 说明 |
 |------|------|------|------|
-| 左侧窄导航 | `.marketing-nav` | 64px | Logo、灵感（禁用）、生成（高亮）、资产（禁用） |
+| 左侧窄导航 | `.marketing-nav` | 64px | Logo、灵感、生成（高亮）、资产 |
 | 左侧边栏 | `.sidebar` | 260px | 新对话按钮、搜索框、最近对话列表、用户信息 |
 | 主内容区 | `.main-content` | flex: 1 | 顶部栏 + 消息流 + 底部输入区 |
 
@@ -55,6 +55,7 @@
 2. **消息流** (`.chat-messages`)：欢迎卡片、用户/AI 消息气泡、打字指示器、继续按钮
 3. **底部输入区** (`.input-area`)：文件上传按钮、文本输入框、媒体缩略图条、类型选择、模型选择、比例/分辨率选择、发送按钮
 4. **弹窗层**：联系反馈弹窗、算力日志弹窗（iframe）、算力充值弹窗、图片放大模态框
+5. **资产库视图** (`.asset-library`)：通过左侧导航切换 `activeView` 为 `assets` 显示，展示用户历史生成结果（图片/视频），每页 60 条，支持分页。图片资产支持"生成视频"操作（`useAssetForVideo`），会将图片带入生成页输入区并自动切换到视频模式。图片放大弹窗中的"生成视频"按钮（`imageToVideo`）同样会自动切换回生成视图。
 
 ## 核心功能详解
 
@@ -77,6 +78,7 @@ Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可�
 - 调用 `POST /api/session/create`，传入 `user_id`、`world_id`、`auth_token`、`session_type: 2`（营销模式标识）
 - 营销智能体使用固定 `world_id = '1'`，无需多世界概念
 - 创建成功后将新会话加入本地 `sessions` 列表头部并持久化到 `localStorage`（`marketing_sessions` 键）
+- 从 `/marketing-inspiration` 输入框发送或做同款跳转时会携带 `new_session=1`，生成页在加载历史后先创建新会话，再应用 URL 中的 prompt、模式、模型和媒体参数，避免继续写入最近一次对话。
 
 #### 搜索
 
@@ -115,6 +117,10 @@ Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可�
 - 视频以 `<video>` 标签渲染，支持 controls
 - 音频以 `<audio>` 标签渲染
 - 历史消息中的多模态内容（JSON 数组格式的 `image_url` + `text`）在 `parseHistoryMessage` 中解析为文本+图片分别渲染
+
+#### 灵感页输入
+
+`/marketing-inspiration` 顶部输入框中，Enter 会触发送出并跳转到生成页；Shift+Enter 保留为输入换行。该发送路径会带上 `new_session=1`，因此每次从灵感页发起都会在 `/marketing-agent` 新建一条对话。
 
 #### Markdown 渲染
 
@@ -249,6 +255,12 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 ### 分辨率选择
 
 图片模式下显示分辨率选项，通过 `TaskConfig.getSizeOptions(modelKey)` 动态获取。选项前自动添加 `auto`（自动根据模型选择最佳分辨率）。分辨率映射：`1K` -> `1K`，`2K` -> 高清 2K，`4K` -> 超清 4K。
+
+Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指令中说明分辨率，专家不再向用户追问清晰度选项，而是直接选择当前模型支持的最低输出分辨率。例如模型支持 1K/2K/4K 时默认 1K，支持 2K/3K 时默认 2K。只有用户主动表达“高清”“大图”“印刷”“海报大图”等需求时，才按需求选择更高分辨率。
+
+前端选择 `auto` 时会显式把 `resolution: "auto"` 同步到后端，用于覆盖旧的固定分辨率偏好；直接图片生成/编辑请求会在提交前将 `auto` 解析为当前模型支持的最低输出分辨率，避免落入接口层的通用 1K 默认值。
+
+分辨率选项表示生成或编辑结果的目标输出清晰度，不用于校验用户上传原图的像素尺寸。例如 Seedream 5.0 支持 2K/3K 时，用户上传 1K 或普通尺寸照片仍可发起图片编辑；系统应将 2K/3K 作为 `image_size` 输出参数传递，而不是要求用户重新上传 2K/3K 原图。
 
 ### 视频时长和生成方式
 
@@ -398,7 +410,7 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 }
 ```
 
-Agent 模式下，`image_preferences.ratio`、`image_preferences.resolution` 会在创建任务时同步写入后端图片偏好，后续专家调用 `generate_text_to_image` / `edit_image` 工具时会由工具层强制应用当前偏好。`ratio: "auto"` 也会被保存，表示本次任务不强制覆盖专家或模型默认比例。
+Agent 模式下，`image_preferences.ratio`、`image_preferences.resolution` 会在创建任务时同步写入后端图片偏好，后续专家调用 `generate_text_to_image` / `edit_image` 工具时会由工具层强制应用当前偏好。`ratio: "auto"` 也会被保存，表示本次任务不强制覆盖专家或模型默认比例。图片编辑场景中，`image_preferences.resolution` 只代表输出结果的目标分辨率；专家不应因为输入原图分辨率低于该值而中断任务或要求用户重传高清原图。如果没有有效的 `image_preferences.resolution`，也没有历史/本轮文本分辨率要求，专家应直接使用当前模型支持的最低输出分辨率，不触发 `ask_user`。
 
 ### 媒体上传
 
@@ -578,7 +590,35 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 
 用户在前端选择的图片模型、比例、分辨率等偏好通过 API 同步到后端 `user_preferences` 数据库表，确保跨设备/会话的一致性。
 
-Agent 对话任务还会在 `/api/session/{session_id}/task` 入口同步本次请求携带的 `image_preferences`，避免只把“9:16”等偏好写入提示词、但专家实际调用生图工具时仍读取旧偏好。LLM 调用日志会输出 `Agent` 与 `Agent scope` 字段，可在 `llm.log` 中按 `Agent scope: expert` 或具体专家 ID 筛选专家智能体；OpenAI 兼容模型返回的 `reasoning_content` 会按日志截断规则记录正文，便于排查专家决策过程。
+Agent 对话任务还会在 `/api/session/{session_id}/task` 入口同步本次请求携带的 `image_preferences`，避免只把“9:16”等偏好写入提示词、但专家实际调用生图工具时仍读取旧偏好。该同步只影响生成/编辑工具的输出参数，不表示上传图片必须与所选分辨率一致。分辨率缺省时按最低可用输出分辨率执行，避免为了清晰度选项反复向用户确认。LLM 调用日志会输出 `Agent` 与 `Agent scope` 字段，可在 `llm.log` 中按 `Agent scope: expert` 或具体专家 ID 筛选专家智能体；OpenAI 兼容模型返回的 `reasoning_content` 会按日志截断规则记录正文，便于排查专家决策过程。
+
+## 灵感发布页（Inspiration）
+
+灵感页（`/marketing-inspiration`，由 `web/marketing_inspiration.html` + `web/js/marketing_inspiration.js` + `web/css/marketing_inspiration.css` 实现）展示已审核通过的公开作品（`marketing_publications` 表），支持瀑布流浏览、Lightbox 详情、"做同款/用作参考图"（携带参数跳转到生成页），以及上传参考图直接发起 Agent 创作。
+
+> 首页（`web/index.html`）在营销模式下点击"开始创作"横幅（`handleStartCreation`）即跳转到本页（`/marketing-inspiration?user_id=...`），灵感页左侧导航再进入生成对话页 `/marketing-agent`。
+
+### 发布与资产固化
+
+用户在生成页将 `ai_tools` 记录"发布为灵感"时，`POST /api/marketing-publications` 触发 `MarketingPublicationAssetService.promote_assets`：
+
+1. 将生成结果、参考图、参考音视频从临时缓存（`/upload/cache/...`、`/upload/temp/...`）复制到长期目录 `/upload/marketing_publications/{publication_id}/`，避免缓存过期导致链接失效。
+2. 为每个固化文件创建一条 `media_file_mapping` 记录（`entity_type=6`、`policy_code=never_expire`、`label` 区分 result/reference/audio/video）。
+3. 发布时写入数据库的仍是**本地路径**（`result_url`/`cover_url` 指向 `/upload/marketing_publications/...`）。
+
+### CDN 透明加速
+
+灵感页图片/视频统一通过 `server.py` 的 `cdn_redirect_middleware`（约第 391 行）提供 CDN 访问，前端无需感知 URL 变化：
+
+- 浏览器请求任意 `/upload/*.{媒体扩展名}` 时，中间件按 `local_path_hash` 查 `media_file_mapping`；若记录已有 `cloud_path`，则 302 重定向到新鲜的七牛签名 URL（28 小时有效），否则直接返回本地文件。
+- `promote_assets` 在创建映射后，通过守护线程 fire-and-forget 调用 `CDNUtil.trigger_cdn_upload` 触发异步上传。因发布接口为 async 端点，此处用独立守护线程而非直接调用，避免 `trigger_cdn_upload` 内部 `ThreadPoolExecutor` 阻塞事件循环（遵守 CLAUDE.md 规则 1：Web 接口不得阻塞）。
+- 上传是否触发受 `server.auto_upload_to_cdn` 配置门控：未启用时只建映射不上传，中间件也直接走本地文件，行为与无 CDN 一致。
+
+> 设计说明：**无需在 API 层（`list_public`/`to_dict`）替换 CDN URL**。这与 `ai_tools` 的处理方式一致（保持本地路径，依赖中间件透明重定向）。在 API 层每次生成签名 URL 既冗余又会绕过中间件统一的刷新逻辑。
+
+### 做同款/参考图跳转
+
+Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` 获取参数快照与输入媒体（注意：模板返回的是参考图/参考视频，**不包含**生成的结果本身），再跳转到生成页；"用作参考图"将作品 URL 作为参考图带入 Agent 模式。跳转前对 `src` 做绝对 URL 判断（`/^https?:\/\//`），避免已是完整 URL 时重复拼接 `window.location.origin`。
 
 ## 文件清单
 
@@ -590,6 +630,13 @@ Agent 对话任务还会在 `/api/session/{session_id}/task` 入口同步本次�
 | `web/js/video_compressor.js` | 脚本 | 前端视频压缩模块（Canvas + MediaRecorder） |
 | `web/i18n/locales/zh-CN/marketing_agent.json` | 翻译 | 中文翻译文件（约 215 个键） |
 | `web/i18n/locales/en/marketing_agent.json` | 翻译 | 英文翻译文件 |
-| `server.py` | 路由 | `/marketing-agent` 静态页面路由（约第 8281 行） |
+| `server.py` | 路由 | `/marketing-agent` 静态页面路由（约第 8281 行）；`cdn_redirect_middleware`（约第 391 行）为 `/upload/` 媒体提供透明 CDN 重定向 |
 | `api/script_writer.py` | API | 会话管理、任务创建、流式响应、文件上传等 API |
+| `api/marketing_publications.py` | API | 灵感发布/审核/列表/模板等接口（`/api/marketing-publications`、`/api/marketing-inspirations`） |
+| `model/marketing_publications.py` | 模型 | `marketing_publications` 表模型与查询 |
+| `services/marketing_publication_asset_service.py` | 服务 | 发布时资产固化（复制到长期目录）+ 异步触发 CDN 上传 |
+| `web/marketing_inspiration.html` | 页面 | 灵感瀑布流页面 |
+| `web/js/marketing_inspiration.js` | 脚本 | 灵感页交互（瀑布流、Lightbox、工具栏、做同款/参考图跳转） |
+| `web/css/marketing_inspiration.css` | 样式 | 灵感页专用样式 |
+| `web/i18n/locales/{zh-CN,en}/marketing_inspiration.json` | 翻译 | 灵感页国际化文案 |
 | `web/index.html` | 页面 | 模式选择弹窗入口 |

@@ -264,6 +264,10 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1,           # 火山引擎国内版
         DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
     ],
+    DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO: [
+        DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_V1,           # 火山引擎国内版
+        DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1,   # 火山引擎海外版
+    ],
 
     # GPT Image 相关驱动
     DriverKey.GPT_IMAGE_2: [

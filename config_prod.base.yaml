@@ -40,6 +40,10 @@ timeout:
 duomi:
   token: ""
 
+grok:
+  video_proxy_enabled: true
+  video_proxy_domain: "http://43.128.143.13"
+
 vidu:
   token: ""
 

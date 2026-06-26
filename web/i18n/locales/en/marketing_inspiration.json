@@ -1,0 +1,57 @@
+{
+  "page_title": "Inspiration - Marketing Agent",
+
+  "hero_title": "Start your",
+  "hero_highlight": "Agent Mode",
+  "input_placeholder": "Enter ideas, scripts or upload references, collaborate with Agent",
+
+  "mode_agent": "Agent Mode",
+  "mode_agent_desc": "AI-powered collaborative creation",
+  "mode_image": "Image Generation",
+  "mode_image_desc": "Smart image generation",
+  "mode_video": "Video Generation",
+  "mode_video_desc": "Smart video generation",
+
+  "custom_settings": "Custom Settings",
+  "generation_preference": "Generation Preference",
+  "image": "Image",
+  "video": "Video",
+  "select_ratio": "Aspect Ratio",
+  "select_resolution": "Resolution",
+  "video_duration": "Video Duration",
+  "generation_method": "Generation Method",
+  "first_last_frame": "First-Last Frame",
+  "multi_reference": "Multi Reference",
+  "first_last_frame_desc": "Upload first and last frame images to generate video",
+  "multi_reference_desc": "Upload multiple reference images to generate video",
+  "select_model": "Select Model",
+  "select_llm_model": "Select LLM Model",
+
+  "feature_canvas": "Outline Canvas",
+  "feature_canvas_desc": "Free creation",
+  "feature_agent": "Agent Mode",
+  "feature_agent_desc": "AI-powered creation",
+  "feature_image": "Image Generation",
+  "feature_image_desc": "Smart aesthetic films",
+  "feature_video": "Video Generation",
+  "feature_video_desc": "One-click generate",
+  "feature_digital_human": "Digital Human",
+  "feature_digital_human_desc": "Large model",
+
+  "tab_discover": "Discover",
+  "tab_shorts": "Shorts",
+  "tab_events": "Events",
+  "tab_search_placeholder": "Fridge magnet",
+
+  "lightbox_prompt_label": "Image Prompt",
+  "image_prompt_label": "Image Prompt",
+  "video_prompt_label": "Video Prompt",
+  "lightbox_do_same": "Create Similar",
+  "lightbox_use_ref": "Use as Reference",
+
+  "toast_coming_soon": "Coming Soon",
+  "toast_upload_ref_hint": "Please upload reference image on the Generate page",
+  "toast_add_material": "Please select a file to upload",
+
+  "load_more": "Load More"
+}

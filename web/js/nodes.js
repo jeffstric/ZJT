@@ -4392,16 +4392,6 @@
           genStatus.textContent = '任务已提交，正在生成视频...';
           node.data.projectIds = result.projectIds;
 
-          // 创建对应数量的视频节点：每次生成都新建节点，旧节点断开连接但保留
-          // 先断开旧连接到图生视频节点的视频节点
-          state.connections = state.connections.filter(c => {
-            if(c.from === id) {
-              const toNode = state.nodes.find(n => n.id === c.to);
-              return toNode && toNode.type !== 'video';
-            }
-            return true;
-          });
-
           const newVideoNodeIds = [];
           // 使用源节点实际宽度计算偏移，避免宽节点下视频节点被遮挡
           const sourceEl = canvasEl.querySelector(`.node[data-node-id="${id}"]`);
@@ -4682,7 +4672,7 @@
         const items = [];
         if(node.data.startUrl) items.push({displayName: '首帧图片', type: 'image', url: node.data.startUrl});
         if(node.data.endUrl) items.push({displayName: '尾帧图片', type: 'image', url: node.data.endUrl});
-        (node.data.referenceUrls || []).forEach((url, i) => items.push({displayName: `参考图${i+1}`, type: 'image', url}));
+        (node.data.referenceUrls || []).forEach((url, i) => items.push({displayName: `Image${i+1}`, type: 'image', url}));
         (node.data.audioUrls || []).forEach((item, i) => items.push({displayName: `音频${i+1}`, type: 'audio', url: item.url}));
         (node.data.videoUrls || []).forEach((item, i) => items.push({displayName: `视频${i+1}`, type: 'video', url: item.url}));
         return items;

@@ -277,10 +277,23 @@ class BaseVideoDriver(ABC):
             elif isinstance(value, dict):
                 masked[key] = self._mask_sensitive_payload(value)
             elif isinstance(value, list):
-                masked[key] = [self._mask_sensitive_payload(item) if isinstance(item, dict) else item for item in value]
+                masked[key] = [
+                    self._mask_sensitive_payload(item) if isinstance(item, dict) else self._mask_data_uri(item)
+                    for item in value
+                ]
             else:
-                masked[key] = value
+                masked[key] = self._mask_data_uri(value)
         return masked
+
+    def _mask_data_uri(self, value: Any, threshold: int = 200) -> Any:
+        """
+        截断超长的 base64 data URI 字符串，避免把数 MB 的 base64 写入请求日志。
+
+        仅处理以 "data:" 开头且超过阈值长度的字符串，非 data-URI 的真实 URL/普通值原样返回。
+        """
+        if isinstance(value, str) and value.startswith("data:") and len(value) > threshold:
+            return value[:60] + f"...[data-uri {len(value)} chars truncated]"
+        return value
 
     def _truncate_base64_in_response(self, data: Any, max_length: int = 50) -> Any:
         """
@@ -558,24 +571,24 @@ class BaseVideoDriver(ABC):
     def ensure_public_urls(self, urls: List[str]) -> List[str]:
         """
         确保图片/媒体URL可被外部API访问，统一上传到CDN图床
-        
+
         无论是本地环境还是服务器环境，都上传到CDN以确保外部API可访问。
         upload_local_images_to_cdn_sync 内部已处理：
         - 外网URL直接返回不再上传
         - 本地文件路径会上传到CDN
         - 局域网URL会下载后上传
-        
+
         Args:
             urls: 图片/媒体路径列表
-            
+
         Returns:
             List[str]: CDN链接列表
         """
         if not urls:
             return urls
-        
+
         from utils.image_upload_utils import upload_local_images_to_cdn_sync
-        
+
         self.logger.info(f"准备上传媒体到CDN图床: {urls}")
         cdn_urls = upload_local_images_to_cdn_sync(urls, self._config)
         self.logger.info(f"CDN上传完成: {cdn_urls}")

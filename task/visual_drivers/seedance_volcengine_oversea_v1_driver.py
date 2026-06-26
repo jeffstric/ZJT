@@ -79,3 +79,14 @@ class Seedance20VolcengineOverseaV1Driver(SeedanceVolcengineOverseaV1Driver):
             model_name="doubao-seedance-2-0-260128",
             impl_name=DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1
         )
+
+
+class Seedance20MiniVolcengineOverseaV1Driver(SeedanceVolcengineOverseaV1Driver):
+    """Seedance 2.0 Mini 火山引擎海外版驱动"""
+
+    def __init__(self):
+        super().__init__(
+            driver_type=31,
+            model_name="doubao-seedance-2-0-mini-260615",
+            impl_name=DriverImplementation.SEEDANCE_2_0_MINI_VOLCENGINE_OVERSEA_V1
+        )

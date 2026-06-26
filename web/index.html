@@ -1073,7 +1073,7 @@
       handleStartCreation() {
         if (this.$root.creationMode === 'marketing') {
           const userId = localStorage.getItem('user_id') || '';
-          window.location.href = '/marketing-agent?user_id=' + encodeURIComponent(userId);
+          window.location.href = '/marketing-inspiration?user_id=' + encodeURIComponent(userId);
         } else {
           // 跳转到工作流列表页面并自动打开新建表单，加随机数防止缓存
           window.location.href = '/video-workflow-list?action=create&_t=' + Date.now();

@@ -811,6 +811,22 @@ body {
     border-bottom: none;
 }
 
+.marketing-review-thumb {
+    width: 96px;
+    height: 96px;
+    object-fit: cover;
+    border-radius: 8px;
+    background: #f1f5f9;
+}
+
+.marketing-review-prompt {
+    max-height: 84px;
+    overflow: hidden;
+    color: #475569;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
 .account-cell {
     min-width: 180px;
 }

@@ -598,6 +598,16 @@ const AdminApp = {
 
             // 敏感字段可见性控制（手机号、邮箱的小眼睛切换）
             visibleFields: {},
+
+            marketingPublications: {
+                list: [],
+                total: 0,
+                page: 1,
+                pageSize: 20,
+                statusFilter: 'pending',
+                mediaTypeFilter: '',
+                loading: false
+            },
             
             // 算力调整弹窗
             powerModal: {
@@ -1172,6 +1182,8 @@ const AdminApp = {
                 this.loadCheckinConfig();
             } else if (page === 'implementations') {
                 this.loadImplementations();
+            } else if (page === 'marketingPublications') {
+                this.loadMarketingPublications();
             } else if (page === 'models') {
                 this.loadModels();
             } else if (page === 'constants') {
@@ -1182,6 +1194,60 @@ const AdminApp = {
                     this.loadCommissionMaxRate();
                 }
             }
+        },
+
+        async loadMarketingPublications(page = 1) {
+            this.marketingPublications.loading = true;
+            this.marketingPublications.page = page;
+            try {
+                const response = await axios.get('/api/admin/marketing-publications', {
+                    headers: { 'Authorization': `Bearer ${this.authToken}` },
+                    params: {
+                        page: this.marketingPublications.page,
+                        page_size: this.marketingPublications.pageSize,
+                        status: this.marketingPublications.statusFilter || undefined,
+                        media_type: this.marketingPublications.mediaTypeFilter || undefined
+                    }
+                });
+                if (response.data.code === 0) {
+                    const data = response.data.data || {};
+                    this.marketingPublications.list = data.data || [];
+                    this.marketingPublications.total = data.total || 0;
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('marketing_review_load_failed'), 'error');
+            } finally {
+                this.marketingPublications.loading = false;
+            }
+        },
+
+        async reviewMarketingPublication(item, action) {
+            const note = action === 'reject' ? window.prompt(this.t('marketing_review_reject_reason'), '') : '';
+            if (action === 'reject' && note === null) return;
+            try {
+                const response = await axios.post(
+                    `/api/admin/marketing-publications/${item.id}/${action}`,
+                    { review_note: note || '' },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('operation_success'), 'success');
+                    this.loadMarketingPublications(this.marketingPublications.page);
+                }
+            } catch (error) {
+                this.showToast(error.response?.data?.detail || this.t('operation_failed'), 'error');
+            }
+        },
+
+        getMarketingStatusText(status) {
+            const map = {
+                pending: this.t('marketing_status_pending'),
+                approved: this.t('marketing_status_approved'),
+                rejected: this.t('marketing_status_rejected'),
+                hidden: this.t('marketing_status_hidden'),
+                cancelled: this.t('marketing_status_cancelled')
+            };
+            return map[status] || status;
         },
         
         // 加载仪表盘

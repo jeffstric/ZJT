@@ -2,7 +2,6 @@
 图片上传相关工具函数
 支持本地图片和局域网URL上传到图床
 """
-import aiofiles
 import aiohttp
 import os
 import asyncio
@@ -158,7 +157,7 @@ async def upload_local_images_to_cdn(
         if not image_path:
             continue
 
-        # 如果是外网URL，直接使用
+        # 外网URL：直接透传
         if not is_local_path(image_path):
             result_urls.append(image_path)
             continue
@@ -185,7 +184,7 @@ async def upload_local_images_to_cdn(
                 file_to_upload = resolved_path
                 filename = os.path.basename(resolved_path)
             else:
-                # 局域网URL，优先尝试映射到本地文件
+                # 局域网URL，优先尝试映射到本地文件（省下载），否则HTTP下载
                 local_file = try_map_url_to_local_file(image_path, config, project_root)
                 if local_file:
                     # URL域名与server.host匹配，直接使用本地文件

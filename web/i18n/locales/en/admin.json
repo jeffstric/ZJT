@@ -463,4 +463,20 @@
   "commission_max_rate_no_affected": "No users affected",
   "toast_max_rate_load_failed": "Failed to load max rate",
   "toast_max_rate_updated": "Max commission rate updated"
+  ,"nav_marketing_publications": "Inspiration Review",
+  "marketing_review_title": "Inspiration Publication Review",
+  "marketing_col_preview": "Preview",
+  "marketing_col_title": "Title",
+  "marketing_col_prompt": "Prompt",
+  "marketing_col_status": "Status",
+  "marketing_status_pending": "Pending",
+  "marketing_status_approved": "Approved",
+  "marketing_status_rejected": "Rejected",
+  "marketing_status_hidden": "Hidden",
+  "marketing_status_cancelled": "Cancelled",
+  "marketing_review_reject_reason": "Enter rejection reason",
+  "marketing_review_load_failed": "Failed to load publication reviews",
+  "approve_btn": "Approve",
+  "reject_btn": "Reject",
+  "hide_btn": "Hide"
 }

@@ -21,19 +21,32 @@ def compress_image_to_limit(
     quality_min: int = 60
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    压缩图片到指定大小限制
-    
+    【通用图片体积压缩】把图片文件压到指定体积以内，尽量保留画质。
+
+    这是**保画质的通用压缩**，与 `compress_local_image_to_base64` 那套为 LLM 省 token 的
+    激进压缩相对。适合需要保留细节的通用场景（视频参考图、图生图首帧、对外提供的图片等）。
+
+    策略：
+    - 原图体积 ≤ max_size_mb → **原样返回，不重编码**（零损耗）；
+    - 超限时：JPEG 质量从 `quality_start`(95) 二分下降到 `quality_min`(60)；
+    - 若降到最低质量仍超限，再按 0.9 等比缩小尺寸（最后手段）；
+    - PNG 会转为 JPEG 以获得更好压缩比（透明通道压平为白底）。
+
+    注意：本函数 **不做 LLM 式强制像素缩放**，只按体积压；返回的是**文件路径**（非 base64）。
+    若需 base64 data URL，请在本函数处理后再自行读取文件转 base64，或用
+    `compress_local_image_to_base64(max_pixels=0)`（等价于先调本函数再转 base64）。
+
     Args:
         image_path: 输入图片路径
         max_size_mb: 最大文件大小（MB），默认 10MB
         output_path: 输出路径，如果为 None 则覆盖原文件
         quality_start: 起始压缩质量（1-100），默认 95
         quality_min: 最低压缩质量（1-100），默认 60
-    
+
     Returns:
-        Tuple[bool, Optional[str], Optional[str]]: 
+        Tuple[bool, Optional[str], Optional[str]]:
             - 是否成功
-            - 输出文件路径（成功时）
+            - 输出文件路径（成功时；未超限时即原路径）
             - 错误信息（失败时）
     """
     try:
@@ -294,14 +307,31 @@ def compress_local_image_to_base64(
     cleanup: bool = False
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    从本地文件路径读取图片，压缩并返回 base64 data URL。
+    【⚠️ 用途限定：LLM 视觉理解专用】从本地文件读取图片，压缩并返回 base64 data URL。
+
+    本函数为「把图片喂给大模型做视觉理解（Vision-Language，即日志中的 [VL]）」而设计，
+    核心目标是 **省 token**，因此压缩偏激进。处理流程：
+
+    1. 若 max_pixels > 0：先把图等比缩放到 max_pixels 以内，并以 JPEG quality=85 重编码
+       （顺带把 PNG / 带透明通道的图压平为白底 JPEG）——用于控制送入 LLM 的像素/token 消耗；
+    2. 再按 max_size_mb 做体积压缩（转调 compress_image_to_limit，质量 95→60 自适应）。
 
     不涉及任何 HTTP 下载，仅处理本地磁盘上的文件。
 
+    ⚠️ 误用警告（重要）：
+        max_pixels > 0 会触发「强制缩放 + JPEG q85 重编码」，对需要保留细节的场景有损。
+        曾因对**视频生成参考图**误传 max_pixels=2_073_600，把 1.3MB 的图压成 45KB、
+        导致生成视频里人物细节丢失。**若你的场景需要保留图片细节**（视频参考图、图生图
+        首帧、需要高保真的输入），请：
+        - 传 `max_pixels=0`（跳过强制缩放+JPEG-q85，仅按体积温和压缩）；或
+        - 直接用更通用的 `compress_image_to_limit`（仅按体积压、不强制缩放）。
+
     Args:
         local_path: 本地图片文件路径
-        max_size_mb: 最大文件大小（MB），默认 2MB
-        max_pixels: 最大总像素数（width * height），0 表示不限制
+        max_size_mb: 最大文件大小（MB），默认 2MB。**仅当原图超此体积才压缩，否则原样返回**（保留画质）。
+        max_pixels: 最大总像素数（width * height）。这是本函数最易误用的参数：
+            - **0（默认）= 不做像素缩放**，仅按体积压缩（温和、保留细节，适合通用场景）；
+            - **>0 = 触发 LLM 式强制缩放 + JPEG q85 重编码**（激进、省 token、有损，仅限喂 LLM）。
         cleanup: 是否在完成后清理临时文件（当输入文件本身就是临时文件时设为 True）
 
     Returns:
@@ -403,14 +433,20 @@ def download_and_compress_to_base64(
     max_pixels: int = 0
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    从 URL 下载图片，压缩并返回 base64 data URL。
+    【⚠️ 用途限定：LLM 视觉理解专用】从 URL 下载图片，压缩并返回 base64 data URL。
 
-    供 PM Agent 在专家返回图片 URL 后，将图片注入到 LLM 对话历史。
+    供 PM Agent 在专家返回图片 URL 后，将图片注入到 LLM 对话历史。下载后转调
+    `compress_local_image_to_base64`，因此**继承其 LLM 式激进压缩特性与 max_pixels 陷阱**：
+    - 仅允许 http/https 协议（其它协议如 ftp/file/data 一律拒绝并返回错误）；
+    - max_pixels > 0 会强制缩放 + JPEG q85 重编码（为 LLM 省 token，对细节有损）。
+    ⚠️ 若需保留细节（视频参考图等），请传 `max_pixels=0`，详见
+    `compress_local_image_to_base64` 的「误用警告」。
 
     Args:
-        image_url: 图片 URL
-        max_size_mb: 最大文件大小（MB），默认 2MB
-        max_pixels: 最大总像素数（width * height），0 表示不限制
+        image_url: 图片 URL（仅 http/https）
+        max_size_mb: 最大文件大小（MB），默认 2MB；仅超限时才压缩。
+        max_pixels: 最大总像素数。**0=仅按体积温和压缩（保留细节，推荐）**；
+            >0=LLM 式强制缩放+JPEG q85（有损）。详见 compress_local_image_to_base64。
 
     Returns:
         Tuple[bool, Optional[str], Optional[str]]:
@@ -469,14 +505,17 @@ def download_and_compress_to_base64(
 
 def url_to_base64(image_url: str, max_size_mb: float = 2.0, max_pixels: int = 0) -> Optional[str]:
     """
-    URL 转 base64 data URL，供 LLM 视觉理解使用。
+    【⚠️ LLM 视觉理解专用】URL 转 base64 data URL（同步）。
 
-    封装 download_and_compress_to_base64()，失败时返回 None。
+    封装 download_and_compress_to_base64()，失败时返回 None。**继承 LLM 式激进压缩与
+    max_pixels 陷阱**：需保留细节的场景（视频参考图等）请传 `max_pixels=0`，详见
+    compress_local_image_to_base64 的「误用警告」。
 
     Args:
-        image_url: 图片 HTTP URL
-        max_size_mb: 最大文件大小（MB），默认 2MB
-        max_pixels: 最大总像素数（width * height），0 表示不限制
+        image_url: 图片 HTTP URL（仅 http/https）
+        max_size_mb: 最大文件大小（MB），默认 2MB；仅超限时才压缩
+        max_pixels: 最大总像素数。**0=仅体积温和压缩（保留细节，推荐）**；
+            >0=LLM 式强制缩放+JPEG q85（有损）
 
     Returns:
         base64 data URL（如 "data:image/jpeg;base64,..."），失败返回 None
@@ -494,14 +533,19 @@ async def async_download_and_compress_to_base64(
     max_pixels: int = 0
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    异步版本：从 URL 下载图片，压缩并返回 base64 data URL。
+    【⚠️ LLM 视觉理解专用】异步版本：从 URL 下载图片，压缩并返回 base64 data URL。
 
-    使用 httpx.AsyncClient 进行网络请求，PIL 图片处理通过 asyncio.to_thread 卸载到线程池。
+    使用 httpx.AsyncClient 进行网络请求，PIL 图片处理通过 asyncio.to_thread 协载到线程池，
+    适合在异步事件循环中调用（避免阻塞）。逻辑与同步版 `download_and_compress_to_base64`
+    一致，**同样继承 LLM 式激进压缩与 max_pixels 陷阱**：仅允许 http/https；max_pixels>0
+    会强制缩放+JPEG q85（有损）。需保留细节的场景请传 `max_pixels=0`，详见
+    `compress_local_image_to_base64` 的「误用警告」。
 
     Args:
-        image_url: 图片 URL
-        max_size_mb: 最大文件大小（MB），默认 2MB
-        max_pixels: 最大总像素数（width * height），0 表示不限制
+        image_url: 图片 URL（仅 http/https）
+        max_size_mb: 最大文件大小（MB），默认 2MB；仅超限时才压缩
+        max_pixels: 最大总像素数。**0=仅体积温和压缩（保留细节，推荐）**；
+            >0=LLM 式强制缩放+JPEG q85（有损）
 
     Returns:
         Tuple[bool, Optional[str], Optional[str]]:
@@ -637,14 +681,17 @@ async def async_download_and_compress_to_base64(
 
 async def async_url_to_base64(image_url: str, max_size_mb: float = 2.0, max_pixels: int = 0) -> Optional[str]:
     """
-    异步版本：URL 转 base64 data URL，供 LLM 视觉理解使用。
+    【⚠️ LLM 视觉理解专用】异步版本：URL 转 base64 data URL。
 
-    使用 asyncio.to_thread 包装 PIL 处理和 httpx.AsyncClient 进行网络请求。
+    封装 async_download_and_compress_to_base64()，失败返回 None。**继承 LLM 式激进压缩与
+    max_pixels 陷阱**：需保留细节的场景（视频参考图等）请传 `max_pixels=0`，详见
+    compress_local_image_to_base64 的「误用警告」。
 
     Args:
-        image_url: 图片 HTTP URL
-        max_size_mb: 最大文件大小（MB），默认 2MB
-        max_pixels: 最大总像素数（width * height），0 表示不限制
+        image_url: 图片 HTTP URL（仅 http/https）
+        max_size_mb: 最大文件大小（MB），默认 2MB；仅超限时才压缩
+        max_pixels: 最大总像素数。**0=仅体积温和压缩（保留细节，推荐）**；
+            >0=LLM 式强制缩放+JPEG q85（有损）
 
     Returns:
         base64 data URL（如 "data:image/jpeg;base64,..."），失败返回 None

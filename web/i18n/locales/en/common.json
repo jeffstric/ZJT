@@ -62,5 +62,11 @@
   "fetch_logs_failed": "Failed to get logs",
   "network_error_retry": "Network error, please try again later",
   "log_increase": "➕ Increase",
-  "log_deduct": "➖ Deduct"
+  "log_deduct": "➖ Deduct",
+
+  "nav_inspiration": "Inspiration",
+  "nav_generate": "Generate",
+  "nav_assets": "Assets",
+  "back_to_home": "Back to Home",
+  "in_development": "In Development"
 }

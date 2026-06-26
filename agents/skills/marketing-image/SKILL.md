@@ -21,7 +21,7 @@ allowed-tools: ["generate_text_to_image", "edit_image", "get_text_to_image_model
 - `prompt`（必填）：图片描述提示词
 - `aspect_ratio`（可选，默认 16:9）：宽高比，支持 1:1、4:3、16:9、9:16 等
 - `count`（可选，默认 1）：生成数量
-- `image_size`（可选）：分辨率，如 1K/2K/3K/4K
+- `image_size`（可选）：输出分辨率，如 1K/2K/3K/4K。它表示生成结果使用的目标清晰度。
 - **注意**：营销场景下**不要传** `item_type` 和 `item_name` 参数
 
 ### 4. `edit_image(prompt, image_url, aspect_ratio, count, image_size)` — 图片编辑（图生图）
@@ -30,8 +30,14 @@ allowed-tools: ["generate_text_to_image", "edit_image", "get_text_to_image_model
 - **⚠️ 严禁捏造图片URL**：`image_url` 必须是对话中真实存在的图片地址，绝对不允许编造示例URL（如 `https://example.com/xxx.jpg`）。如果对话中没有图片，应使用 `generate_text_to_image` 而非 `edit_image`。
 - `aspect_ratio`（可选，默认 16:9）：宽高比
 - `count`（可选，默认 1）：生成数量
-- `image_size`（可选）：分辨率，如 1K/2K/3K/4K
+- `image_size`（可选）：输出分辨率，如 1K/2K/3K/4K。它表示希望生成/编辑结果使用的目标清晰度，不是对输入原图像素尺寸的要求。
 - **使用场景**：用户提供了原始图片并希望对其进行修改（换背景、改风格、添加元素等）
+
+## ⚠️ 重要：分辨率规则
+
+- `image_size` 是输出分辨率，不是输入原图尺寸门槛；用户给了真实图片并要求修改时，直接调用 `edit_image`，不要要求重传 2K/3K 原图。
+- 不要为了分辨率调用 `ask_user`。用户未指定时，工具层会按当前模型选择最低可用输出分辨率；用户主动要求高清/印刷/大图时再合理选择更高分辨率。
+- 只有工具实际返回“输入图片不满足要求”时，才向用户解释并建议换模型或重传图片。
 
 ## ⚠️ 重要：前端自动轮询（禁止跟踪图片生成结果）
 
@@ -67,14 +73,27 @@ allowed-tools: ["generate_text_to_image", "edit_image", "get_text_to_image_model
 
 
 ### 步骤 2：提交生图请求
-调用 `generate_text_to_image()`：
+用户提供真实图片并要求修改时调用 `edit_image()`；没有原始图片时调用 `generate_text_to_image()`。除非用户明确要求，否则不需要主动传 `image_size`，工具层会处理默认分辨率。
+
+**图片编辑示例**：
 ```
-generate_text_to_image(
-    prompt="构建好的提示词",
-    aspect_ratio="16:9",  # 根据用途选择
+edit_image(
+    prompt="Replace the original background with a realistic sunny beach scene while preserving the main subject, lighting, perspective, and natural edges.",
+    image_url="[对话中真实出现的图片URL]",
     count=1
 )
 ```
+
+**文生图示例**：
+```
+generate_text_to_image(
+    prompt="构建好的英文提示词",
+    aspect_ratio="16:9",
+    count=1
+)
+```
+
+如果用户明确指定分辨率，可额外传 `image_size`；用户未指定时不要为了分辨率提问。
 
 返回结果中重点关注：
 - `project_ids`：用于后续查询结果
@@ -130,4 +149,5 @@ studio lighting, soft shadows, commercial style, high-end retail aesthetic.
 7. **判断文生图还是图编辑**：
    - 用户**没有提供原始图片** → 使用 `generate_text_to_image`
    - 用户**提供了原始图片并要求修改** → 使用 `edit_image`，将图片URL传入 `image_url` 参数
-7. **严禁捏造图片URL**：调用 `edit_image` 时，`image_url` 参数必须使用对话中真实出现的图片地址。绝对不允许编造任何示例URL（如 `https://example.com/fan.jpg`）。如果没有真实图片可用，应引导用户先上传图片或使用 `generate_text_to_image` 生成新图片。
+8. **不要为分辨率打断用户**：不要把输出分辨率当作原图门槛，也不要询问 1K/2K/3K/4K；工具层会处理默认值和模型兼容。
+9. **严禁捏造图片URL**：调用 `edit_image` 时，`image_url` 参数必须使用对话中真实出现的图片地址。绝对不允许编造任何示例URL（如 `https://example.com/fan.jpg`）。如果没有真实图片可用，应引导用户先上传图片或使用 `generate_text_to_image` 生成新图片。

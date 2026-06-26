@@ -337,6 +337,9 @@ app.include_router(system_router)
 from api.media import router as media_router
 app.include_router(media_router)
 
+from api.marketing_publications import router as marketing_publications_router
+app.include_router(marketing_publications_router)
+
 # 导入并注册通知系统 API 路由
 from api.notifications import router as notifications_router
 app.include_router(notifications_router)
@@ -3151,6 +3154,7 @@ async def get_ai_tools_history(
     type: Optional[int] = Query(None, description="Tool type filter (1-图片编辑, 2-AI视频生成, 3-图片生成视频)"),
     types: Optional[str] = Query(None, description="Multiple tool types filter, comma-separated (e.g., '3,10,11,12')"),
     has_image_path: Optional[bool] = Query(None, description="Filter by image_path presence: true=图片编辑, false=文生图"),
+    has_result_url: Optional[bool] = Query(None, description="Filter by result_url presence: true=has result asset"),
 ):
     """
     获取用户的 AI 工具历史记录
@@ -3195,7 +3199,8 @@ async def get_ai_tools_history(
                 order_by='create_time',
                 order_direction='DESC',
                 type_list=type_list_param,
-                has_image_path=has_image_path
+                has_image_path=has_image_path,
+                has_result_url=has_result_url
             )
         elif type in type_mapping:
             result = AIToolsModel.list_by_user(
@@ -3205,7 +3210,8 @@ async def get_ai_tools_history(
                 order_by='create_time',
                 order_direction='DESC',
                 type_list=type_mapping[type],
-                has_image_path=has_image_path
+                has_image_path=has_image_path,
+                has_result_url=has_result_url
             )
         else:
             result = AIToolsModel.list_by_user(
@@ -3215,7 +3221,8 @@ async def get_ai_tools_history(
                 order_by='create_time',
                 order_direction='DESC',
                 type=type,
-                has_image_path=has_image_path
+                has_image_path=has_image_path,
+                has_result_url=has_result_url
             )
         
         return JSONResponse(
@@ -8846,6 +8853,15 @@ async def serve_marketing_agent():
         content = _get_processed_html(file_path)
         return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Marketing agent page not found")
+
+
+@app.get("/marketing-inspiration")
+async def serve_marketing_inspiration():
+    file_path = os.path.join(static_dir, "marketing_inspiration.html")
+    if os.path.isfile(file_path):
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Marketing inspiration page not found")
 
 
 @app.get(f"{MP_VERIFY_ROUTE}")

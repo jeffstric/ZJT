@@ -463,4 +463,20 @@
   "commission_max_rate_no_affected": "无用户受到影响",
   "toast_max_rate_load_failed": "加载佣金上限失败",
   "toast_max_rate_updated": "佣金比例上限已更新"
+  ,"nav_marketing_publications": "灵感审核",
+  "marketing_review_title": "灵感发布审核",
+  "marketing_col_preview": "预览",
+  "marketing_col_title": "标题",
+  "marketing_col_prompt": "提示词",
+  "marketing_col_status": "状态",
+  "marketing_status_pending": "待审核",
+  "marketing_status_approved": "已通过",
+  "marketing_status_rejected": "已拒绝",
+  "marketing_status_hidden": "已下架",
+  "marketing_status_cancelled": "已取消",
+  "marketing_review_reject_reason": "请输入拒绝原因",
+  "marketing_review_load_failed": "加载灵感审核列表失败",
+  "approve_btn": "通过",
+  "reject_btn": "拒绝",
+  "hide_btn": "下架"
 }
