@@ -72,6 +72,21 @@
                 <span class="feature-card-link">→</span>
               </div>
             </div>
+            <div class="feature-card" @click="handleStoryboardListClick">
+              <div class="feature-card-header">
+                <div class="feature-card-icon storyboard">▦</div>
+                <div class="feature-card-info">
+                  <div class="feature-card-title">{{ $t('storyboard_system') }}</div>
+                  <div class="feature-card-subtitle">{{ $t('storyboard_system_desc') }}</div>
+                </div>
+              </div>
+              <div class="feature-card-body">
+                <p class="feature-card-desc">{{ $t('storyboard_system_detail') }}</p>
+              </div>
+              <div class="feature-card-footer">
+                <span class="feature-card-link">→</span>
+              </div>
+            </div>
           </div>
 
           <!-- AI工具区域 -->
@@ -168,6 +183,17 @@
       },
       handleVideoWorkflowClick() {
         window.location.href = '/video-workflow-list';
+      },
+      handleStoryboardListClick() {
+        const authToken = localStorage.getItem('auth_token');
+        const userId = localStorage.getItem('user_id');
+
+        if (!authToken || !userId) {
+          alert(this.$t('need_login') || '请先登录');
+          return;
+        }
+
+        window.location.href = '/storyboard-list';
       },
       handleScriptWriterClick() {
         const authToken = localStorage.getItem('auth_token');

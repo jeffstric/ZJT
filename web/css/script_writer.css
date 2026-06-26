@@ -1805,6 +1805,14 @@ body {
     background: #fff5f5;
 }
 
+.storyboard-btn {
+    color: #0f766e;
+}
+
+.storyboard-btn:hover {
+    background: #ccfbf1;
+}
+
 .file-empty {
     padding: 40px 20px;
     text-align: center;

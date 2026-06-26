@@ -151,6 +151,21 @@ class TaskProvider:
     LOCAL = 'local'
     ZJT = 'zjt'
 
+
+class SceneVideoType:
+    """分镜视频类型（分镜的呈现形式）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'IMAGE': '图片分镜',
+        'VIDEO': '视频分镜',
+        'DIGITAL_HUMAN': '数字人分镜',
+    }
+    IMAGE = 'image'                  # 静态图片分镜（仅首帧，不生成视频）
+    VIDEO = 'video'                  # AI 视频分镜（首帧 → 图生视频）
+    DIGITAL_HUMAN = 'digital_human'  # 数字人分镜（人物形象图 + 配音 → 数字人视频）
+    ALL_TYPES = [IMAGE, VIDEO, DIGITAL_HUMAN]
+
+
 # ============ 异步任务实现 ID 常量 ============
 class AsyncTaskImplementationId:
     """异步任务实现ID"""

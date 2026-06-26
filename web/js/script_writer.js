@@ -2665,6 +2665,38 @@
             return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
+        function getScriptEpisodeNumber(file) {
+            if (!file) return '';
+            const direct = file.episode_number || file.json_data?.episode_number;
+            if (direct) return direct;
+            const source = `${file.display_name || ''} ${file.file_name || ''} ${file.name || ''}`;
+            const match = source.match(/(?:第\s*)?(\d+)\s*(?:集|episode|ep)?/i);
+            return match ? match[1] : '';
+        }
+
+        function openStoryboardFromScript(scriptId, episodeNumber) {
+            const currentWorldId = window.currentWorldId || WORLD_ID;
+            if (!currentWorldId) {
+                alert('请先选择世界');
+                return;
+            }
+
+            const ep = parseInt(episodeNumber, 10);
+            if (!ep) {
+                alert('该剧本没有集数信息');
+                return;
+            }
+
+            const params = new URLSearchParams({
+                world_id: currentWorldId,
+                episode_number: ep,
+            });
+            if (scriptId) params.set('script_id', scriptId);
+            if (USER_ID) params.set('user_id', USER_ID);
+            if (WORKFLOW_ID) params.set('workflow_id', WORKFLOW_ID);
+            window.location.href = `/storyboard?${params.toString()}`;
+        }
+
 
         function switchFileTab(fileType, evt) {
             currentFileType = fileType;
@@ -2823,6 +2855,7 @@
                         let imageIconHtml = '';
                         let voiceIconHtml = '';
                         let deleteButtonHtml = '';
+                        let storyboardButtonHtml = '';
                         
                         // 角色、场景、道具显示图片预览图标
                         if (['characters', 'locations', 'props'].includes(fileType)) {
@@ -2893,6 +2926,17 @@
                             `;
                         }
                         
+                        if (fileType === 'scripts') {
+                            storyboardButtonHtml = `
+                                <button class="file-btn storyboard-btn" data-action="open-storyboard" data-script-id="${escapeHtmlAttr(file.id || file.script_id || '')}" data-episode-number="${escapeHtmlAttr(getScriptEpisodeNumber(file))}" title="打开故事板">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="4" width="18" height="16" rx="2"/>
+                                        <path d="M8 4v16M3 9h18M3 15h18"/>
+                                    </svg>
+                                </button>
+                            `;
+                        }
+
                         // 剧本使用 display_name 展示，其他类型使用 name
                         const displayName = (fileType === 'scripts' && file.display_name) ? file.display_name : file.name;
                         // 剧本使用 file_name 作为 API 键，其他类型使用 name
@@ -2903,6 +2947,7 @@
                             <div class="file-actions">
                                 ${imageIconHtml}
                                 ${voiceIconHtml}
+                                ${storyboardButtonHtml}
                                 ${deleteButtonHtml}
                                 <button class="file-btn view-btn" data-action="view" data-file-type="${escapeHtmlAttr(fileType)}" data-file-key="${escapeHtmlAttr(fileKey)}" title="查看" data-i18n-title="title_view">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2934,6 +2979,8 @@
                                 if (!btn.disabled) playCharacterVoice(btn.dataset.fileName);
                             } else if (action === 'delete') {
                                 deleteStagingFile(btn.dataset.filePath);
+                            } else if (action === 'open-storyboard') {
+                                openStoryboardFromScript(btn.dataset.scriptId, btn.dataset.episodeNumber);
                             } else if (action === 'view') {
                                 viewFile(btn.dataset.fileType, btn.dataset.fileKey);
                             } else if (action === 'edit') {
@@ -5817,6 +5864,107 @@
             });
         }
         
+        function showModeSelection() {
+            submitToDatabase().catch(e => console.warn('预提交失败:', e));
+
+            let modal = document.getElementById('mode-selection-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'mode-selection-modal';
+                modal.className = 'sw-modal-overlay';
+                modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;z-index:9999;';
+                modal.innerHTML = `
+                    <div style="background:#1e1e2e;border-radius:12px;padding:32px;max-width:480px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+                        <h2 style="color:#e8e8e8;margin:0 0 8px;font-size:20px;">选择制作模式</h2>
+                        <p style="color:#a0a0b0;margin:0 0 24px;font-size:14px;">选择你想使用的短剧制作方式</p>
+                        <div style="display:flex;gap:16px;">
+                            <div onclick="selectMode('canvas')" style="flex:1;background:#0f3460;border:2px solid transparent;border-radius:10px;padding:20px;cursor:pointer;text-align:center;transition:all 0.2s;" onmouseenter="this.style.borderColor='#4f46e5'" onmouseleave="this.style.borderColor='transparent'">
+                                <div style="font-size:36px;margin-bottom:8px;">🎨</div>
+                                <h3 style="color:#e8e8e8;margin:0 0 6px;font-size:16px;">画布模式</h3>
+                                <p style="color:#a0a0b0;margin:0;font-size:12px;">节点式工作流，自由连接各类处理节点</p>
+                            </div>
+                            <div onclick="selectMode('storyboard')" style="flex:1;background:#0f3460;border:2px solid transparent;border-radius:10px;padding:20px;cursor:pointer;text-align:center;transition:all 0.2s;" onmouseenter="this.style.borderColor='#4f46e5'" onmouseleave="this.style.borderColor='transparent'">
+                                <div style="font-size:36px;margin-bottom:8px;">📋</div>
+                                <h3 style="color:#e8e8e8;margin:0 0 6px;font-size:16px;">故事板模式</h3>
+                                <p style="color:#a0a0b0;margin:0;font-size:12px;">分镜式编辑，按场景逐帧生成图片和视频</p>
+                            </div>
+                        </div>
+                        <div style="text-align:center;margin-top:16px;">
+                            <button onclick="closeModeSelection()" style="background:none;border:1px solid #555;color:#a0a0b0;padding:6px 20px;border-radius:6px;cursor:pointer;font-size:13px;">取消</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            }
+            modal.style.display = 'flex';
+        }
+
+        function closeModeSelection() {
+            const modal = document.getElementById('mode-selection-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function selectMode(mode) {
+            closeModeSelection();
+            if (mode === 'canvas') {
+                await goToWorkflowCanvas();
+            } else if (mode === 'storyboard') {
+                await goToStoryboard();
+            }
+        }
+
+        async function goToStoryboard() {
+            try {
+                await submitToDatabase();
+            } catch (e) {
+                console.error('提交数据失败:', e);
+            }
+
+            const assetsStatus = await checkAssetsComplete();
+            const hasProblems = !assetsStatus.hasScript || assetsStatus.missingAssets.length > 0;
+            if (hasProblems) {
+                const confirmed = await showAssetConfirmModal(assetsStatus.hasScript, assetsStatus.missingAssets);
+                if (!confirmed) return;
+            }
+
+            const currentWorldId = window.currentWorldId || WORLD_ID;
+            if (!currentWorldId) {
+                alert('请先选择世界');
+                return;
+            }
+
+            let episodeNumber = 1;
+            const episodeInput = document.getElementById('script-episode');
+            if (episodeInput && episodeInput.value) {
+                episodeNumber = parseInt(episodeInput.value, 10) || 1;
+            }
+
+            let scriptId = null;
+            try {
+                const resp = await fetch(`/api/scripts?world_id=${encodeURIComponent(currentWorldId)}&page_size=100&order_by=episode_number&order_direction=ASC`, {
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const result = await resp.json();
+                const scripts = result?.data?.data || [];
+                const matched = scripts.find(item => parseInt(item.episode_number, 10) === episodeNumber);
+                scriptId = matched ? matched.id : null;
+            } catch (e) {
+                console.warn('获取当前剧本ID失败，故事板后端将按集数兜底:', e);
+            }
+
+            const params = new URLSearchParams({
+                world_id: currentWorldId,
+                episode_number: episodeNumber,
+            });
+            if (scriptId) params.set('script_id', scriptId);
+            if (USER_ID) params.set('user_id', USER_ID);
+            if (WORKFLOW_ID) params.set('workflow_id', WORKFLOW_ID);
+            window.location.href = `/storyboard?${params.toString()}`;
+        }
+
         // 跳转到工作流画布
         async function goToWorkflowCanvas() {
             // 如果没有WORKFLOW_ID，尝试从当前世界获取关联的工作流

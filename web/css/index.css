@@ -1554,7 +1554,7 @@ header {
 /* Feature Cards */
 .feature-cards {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -1601,6 +1601,10 @@ header {
 
 .feature-card-icon.purple {
   background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+}
+
+.feature-card-icon.storyboard {
+  background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
 }
 
 .feature-card-info {

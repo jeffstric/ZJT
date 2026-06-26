@@ -26,6 +26,7 @@ from .implementation_attempts import ImplementationAttemptModel, ImplementationA
 from .commission_log import CommissionLogModel, CommissionLog
 from .commission_withdraw import CommissionWithdrawModel, CommissionWithdraw
 from .marketing_publications import MarketingPublicationModel, MarketingPublication, PublicationStatus
+from .storyboard import StoryboardModel, Storyboard, StoryboardSceneModel, StoryboardScene
 
 __all__ = [
     'AIToolsModel',
@@ -90,4 +91,8 @@ __all__ = [
     'MarketingPublicationModel',
     'MarketingPublication',
     'PublicationStatus',
+    'StoryboardModel',
+    'Storyboard',
+    'StoryboardSceneModel',
+    'StoryboardScene',
 ]

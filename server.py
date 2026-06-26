@@ -81,19 +81,26 @@ from utils.sentry_util import SentryUtil
 from utils import file_lock
 from utils.computing_power import build_context_from_task_record, get_implementation_for_user
 from utils.video_resolution import validate_video_resolution
+from utils.resource_access import (
+    get_user_id_from_header,
+    check_resource_permission,
+    ensure_resource_access,
+    ensure_world_access,
+)
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
 
-def _get_user_id_from_header(user_id: Optional[int]) -> int:
-    if user_id is None:
-        raise HTTPException(status_code=400, detail="user_id is required")
-    if isinstance(user_id, str) and not user_id.strip():
-        raise HTTPException(status_code=400, detail="user_id is required")
-    try:
-        return int(user_id)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="invalid user_id")
+# 向后兼容别名（已有代码可直接使用 _前缀 名称）
+_get_user_id_from_header = get_user_id_from_header
+_check_resource_permission = check_resource_permission
+_ensure_resource_access = ensure_resource_access
+_ensure_world_access = ensure_world_access
+
+
+# _get_user_id_from_header / _check_resource_permission /
+# _ensure_resource_access / _ensure_world_access
+# 已迁移至 utils/resource_access.py，上方通过别名保持向后兼容
 
 
 
@@ -150,56 +157,6 @@ async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> 
     
     return True, ""
 
-
-def _check_resource_permission(resource, user_id: int, action: str) -> bool:
-    """
-    统一资源权限检查
-    
-    Args:
-        resource: 资源对象（world, workflow, character等）
-        user_id: 用户ID
-        action: 操作类型 'view' | 'edit' | 'delete'
-    
-    Returns:
-        bool: 是否有权限
-    """
-    if Edition.is_space_isolated():
-        return getattr(resource, 'user_id', None) == user_id
-    else:
-        if action == Action.DELETE:
-            return getattr(resource, 'user_id', None) == user_id
-        return True
-
-
-def _ensure_resource_access(resource, user_id: int, action: str, resource_name: str = "资源"):
-    """
-    确保用户有权限访问资源，无权限则抛出异常
-    
-    Args:
-        resource: 资源对象
-        user_id: 用户ID
-        action: 操作类型 'view' | 'edit' | 'delete'
-        resource_name: 资源名称（用于错误提示）
-    
-    Returns:
-        resource: 原资源对象
-    
-    Raises:
-        HTTPException: 无权限时抛出403异常
-    """
-    if not _check_resource_permission(resource, user_id, action):
-        if action == Action.DELETE:
-            raise HTTPException(status_code=403, detail=f"仅创建者可删除该{resource_name}")
-        raise HTTPException(status_code=403, detail=f"无权访问该{resource_name}")
-    return resource
-
-
-def _ensure_world_access(world_id: int, user_id: int, action: str = Action.VIEW):
-    """检查用户对世界的访问权限"""
-    world = WorldModel.get_by_id(world_id)
-    if not world:
-        raise HTTPException(status_code=404, detail="世界不存在")
-    return _ensure_resource_access(world, user_id, action, "世界")
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = get_upload_dir()
@@ -333,6 +290,10 @@ async def startup_event():
 # 导入并注册 script_writer API 路由
 from api.script_writer import router as script_writer_router
 app.include_router(script_writer_router)
+
+# 导入并注册故事板 API 路由
+from api.storyboard import router as storyboard_router
+app.include_router(storyboard_router)
 
 # 导入并注册测试路由（临时测试，完成后移除）
 from api.test_ask_user import router as test_ask_user_router
@@ -8742,6 +8703,21 @@ async def serve_marketing_inspiration():
         return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Marketing inspiration page not found")
 
+@app.get("/storyboard")
+async def serve_storyboard():
+    file_path = os.path.join(static_dir, "storyboard.html")
+    if os.path.isfile(file_path):
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Storyboard page not found")
+
+@app.get("/storyboard-list")
+async def serve_storyboard_list():
+    file_path = os.path.join(static_dir, "storyboard_list.html")
+    if os.path.isfile(file_path):
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
+    raise HTTPException(status_code=404, detail="Storyboard list page not found")
 
 @app.get(f"{MP_VERIFY_ROUTE}")
 async def get_mp_verify_file():
