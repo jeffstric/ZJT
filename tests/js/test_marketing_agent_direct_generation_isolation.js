@@ -54,13 +54,13 @@ assert.equal(
 );
 
 assert.equal(
-  html.includes("buildGeneratedMediaHtml('image'"),
+  html.includes("buildGeneratedMediaRowsHtml('image'") || html.includes("buildGeneratedMediaHtml('image'"),
   true,
   'image results should be rendered through media-type aware HTML builder'
 );
 
 assert.equal(
-  html.includes("buildGeneratedMediaHtml('video'"),
+  html.includes("buildGeneratedMediaRowsHtml('video'") || html.includes("buildGeneratedMediaHtml('video'"),
   true,
   'video results should be rendered through media-type aware HTML builder'
 );

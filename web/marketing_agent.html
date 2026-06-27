@@ -1169,9 +1169,10 @@
 
             function buildGeneratedMediaHtml(type, urls) {
                 if (type === 'image') {
-                    return urls.map(url =>
-                        `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${url}';window.resetModalImageInfo && window.resetModalImageInfo()"><img src="${url}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`
-                    ).join('');
+                    return urls.map(url => {
+                        const displayUrl = proxyImageUrl(url);
+                        return `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${displayUrl}';window.resetModalImageInfo && window.resetModalImageInfo()"><img src="${displayUrl}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`;
+                    }).join('');
                 }
                 if (type === 'video') {
                     return urls.map(url =>
@@ -1185,9 +1186,10 @@
                 if (type === 'image') {
                     return rows.map(row => {
                         const url = row.result_url || '';
+                        const displayUrl = proxyImageUrl(url);
                         const aiToolId = row.ai_tool_id || '';
                         const safeTitle = escapeHtmlAttr(inputText.value || '');
-                        return `<div class="generated-image-wrapper generated-result-card" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${url}';window.setModalImageInfo && window.setModalImageInfo('${aiToolId}', '${safeTitle}')"><img src="${url}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
+                        return `<div class="generated-image-wrapper generated-result-card" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${displayUrl}';window.setModalImageInfo && window.setModalImageInfo('${aiToolId}', '${safeTitle}')"><img src="${displayUrl}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
                     }).join('');
                 }
                 if (type === 'video') {
@@ -2143,8 +2145,25 @@
             function proxyImageUrl(url) {
                 if (!url) return url;
                 // 同源路径直接返回
-                if (url.startsWith('/') && !url.startsWith('//')) return url;
-                return url;
+                const rawUrl = String(url).trim();
+                if (!rawUrl) return rawUrl;
+                if (rawUrl.startsWith('/api/proxy-image')) return rawUrl;
+                if (rawUrl.startsWith('data:') || rawUrl.startsWith('blob:')) return rawUrl;
+                if (rawUrl.startsWith('/') && !rawUrl.startsWith('//')) return rawUrl;
+                try {
+                    const parsed = new URL(rawUrl, window.location.origin);
+                    if (parsed.origin === window.location.origin) {
+                        return parsed.pathname + parsed.search + parsed.hash;
+                    }
+                    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                        return `/api/proxy-image?url=${encodeURIComponent(parsed.href)}`;
+                    }
+                } catch (e) {
+                    if (/^https?:\/\//i.test(rawUrl)) {
+                        return `/api/proxy-image?url=${encodeURIComponent(rawUrl)}`;
+                    }
+                }
+                return rawUrl;
             }
 
             function proxyDownloadUrl(url) {
@@ -2210,9 +2229,13 @@
                     // 提取 src 属性
                     const srcMatch = attrs.match(/src="([^"]*)"/);
                     const src = srcMatch ? srcMatch[1] : '';
+                    const displaySrc = proxyImageUrl(src);
+                    const proxiedAttrs = srcMatch
+                        ? attrs.replace(/src="[^"]*"/, `src="${displaySrc}"`)
+                        : attrs;
 
                     // 添加样式和点击事件
-                    return `<img${attrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${src}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('image_alt')}">`;
+                    return `<img${proxiedAttrs} style="max-width:300px;max-height:200px;border-radius:8px;cursor:zoom-in;" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${displaySrc}';window.resetModalImageInfo && window.resetModalImageInfo()" alt="${window.t('image_alt')}">`;
                 });
 
 
@@ -2223,6 +2246,9 @@
                 // 地址。proxyImageUrl 对已是代理 URL（同源）幂等，故新生成内容不受影响。
                 html = html.replace(/imgModalImg'\)\.src='([^']*)'/g, (_m, u) =>
                     `imgModalImg').src='${proxyImageUrl(u)}'`
+                );
+                html = html.replace(/(<img\b(?=[^>]*\bgenerated-image\b)(?=[^>]*\ssrc="))([^>]*?)\ssrc="([^"]*)"/gi, (_m, prefix, attrs, src) =>
+                    `${prefix}${attrs} src="${proxyImageUrl(src)}"`
                 );
 
                 // 兜底重新签名：<video>/<audio>/<source> 的原始 src。

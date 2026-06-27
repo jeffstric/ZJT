@@ -55,6 +55,37 @@ assert.equal(
   'marketing agent should classify video task summaries before image fallback recovery'
 );
 
+const proxyImageStart = html.indexOf('function proxyImageUrl');
+const proxyImageEnd = html.indexOf('function proxyDownloadUrl', proxyImageStart);
+assert.notEqual(proxyImageStart, -1, 'image URL proxy helper should exist');
+assert.notEqual(proxyImageEnd, -1, 'download proxy helper should follow image proxy helper');
+const proxyImageHelper = html.slice(proxyImageStart, proxyImageEnd);
+assert.equal(
+  proxyImageHelper.includes('/api/proxy-image?url='),
+  true,
+  'image proxy helper should route remote images through the signed CDN refresh proxy'
+);
+assert.equal(
+  proxyImageHelper.includes("startsWith('/api/proxy-image')"),
+  true,
+  'image proxy helper should not wrap already proxied image URLs'
+);
+
+const generatedRowsStart = html.indexOf('function buildGeneratedMediaRowsHtml');
+const generatedRowsEnd = html.indexOf('function buildGeneratedTaskContent', generatedRowsStart);
+assert.notEqual(generatedRowsStart, -1, 'generated media row renderer should exist');
+const generatedRows = html.slice(generatedRowsStart, generatedRowsEnd);
+assert.equal(
+  generatedRows.includes('const displayUrl = proxyImageUrl(url);'),
+  true,
+  'generated image cards should render through proxyImageUrl so expired CDN signatures refresh automatically'
+);
+assert.equal(
+  generatedRows.includes("document.getElementById('imgModalImg').src='${displayUrl}'"),
+  true,
+  'generated image modal should open the proxied display URL'
+);
+
 const imagePollStart = html.indexOf('function pollAgentImageStatus');
 assert.notEqual(imagePollStart, -1, 'image status polling function should exist');
 const imagePollEnd = html.indexOf('function handleVideoTaskSubmitted', imagePollStart);

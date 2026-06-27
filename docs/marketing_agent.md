@@ -651,3 +651,9 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 | `web/css/marketing_inspiration.css` | 样式 | 灵感页专用样式 |
 | `web/i18n/locales/{zh-CN,en}/marketing_inspiration.json` | 翻译 | 灵感页国际化文案 |
 | `web/index.html` | 页面 | 模式选择弹窗入口 |
+
+### 图床图片签名刷新
+
+当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`marketing_agent.html` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。
+
+生成结果卡片、历史 Markdown 图片、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过 `proxyImageUrl()`。这样旧会话重新打开、图床签名超时或点击放大时，图片仍会自动走代理刷新并显示。
