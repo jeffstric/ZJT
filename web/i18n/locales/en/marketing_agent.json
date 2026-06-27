@@ -70,6 +70,7 @@
   "first_last_frame_desc": "First image as start frame, second as end frame (optional)",
   "multi_reference_desc": "All images as style references",
   "video_duration": "Video Duration",
+  "duration_auto": "Auto",
   "duration_seconds": "{dur}s",
   "select_resolution": "Select Resolution",
   "resolution_auto_desc": "Auto-select best resolution based on model",
@@ -95,6 +96,7 @@
   "contact_us": "Contact Us",
   "feedback_desc": "Scan the QR code to join our WeChat feedback group for instant support and updates.",
   "feedback_qr_alt": "Feedback QR Code",
+  "delete_contact_button": "Delete",
 
   "power_logs": "Power Logs",
   "power_recharge": "Recharge Power",

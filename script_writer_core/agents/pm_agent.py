@@ -497,6 +497,19 @@ class PMAgent(BaseAgent, AskUserMixin):
             if tool_name == "ask_user" and isinstance(result, dict) and "_verification_meta" in result:
                 meta = result.pop("_verification_meta")
                 verification_id_for_answer = meta.get("verification_id")
+                for attr, key in (
+                    ("image_urls", "image_urls"),
+                    ("video_urls", "video_urls"),
+                    ("audio_urls", "audio_urls"),
+                    ("thumbnail_urls", "thumbnail_urls"),
+                ):
+                    incoming_urls = result.get(key) or []
+                    if incoming_urls:
+                        existing_urls = list(getattr(task, attr, None) or [])
+                        for url in incoming_urls:
+                            if isinstance(url, str) and url and url not in existing_urls:
+                                existing_urls.append(url)
+                        setattr(task, attr, existing_urls)
                 agent_name = self._get_agent_display_name()
                 self.add_to_history("verification", {
                     "verification_id": verification_id_for_answer,

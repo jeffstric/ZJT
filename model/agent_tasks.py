@@ -257,6 +257,33 @@ class AgentTasksModel:
             raise
 
     @staticmethod
+    def update_media_urls(
+        task_id: str,
+        image_urls: Optional[List[str]] = None,
+        video_urls: Optional[List[str]] = None,
+        audio_urls: Optional[List[str]] = None,
+    ) -> int:
+        """Update task media URL lists."""
+        sql = """
+            UPDATE agent_tasks
+            SET image_urls = %s, video_urls = %s, audio_urls = %s
+            WHERE task_id = %s
+        """
+        params = (
+            json.dumps(image_urls, ensure_ascii=False) if image_urls else None,
+            json.dumps(video_urls, ensure_ascii=False) if video_urls else None,
+            json.dumps(audio_urls, ensure_ascii=False) if audio_urls else None,
+            task_id,
+        )
+
+        try:
+            affected_rows = execute_update(sql, params)
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to update task media urls {task_id}: {e}")
+            raise
+
+    @staticmethod
     def list_by_session(session_id: str, limit: int = 100) -> List[AgentTaskEntity]:
         """
         List tasks by session

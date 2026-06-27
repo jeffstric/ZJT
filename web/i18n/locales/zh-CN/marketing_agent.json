@@ -70,6 +70,7 @@
   "first_last_frame_desc": "第一张为首帧，第二张为尾帧（可选）",
   "multi_reference_desc": "所有图片作为风格参考",
   "video_duration": "视频时长",
+  "duration_auto": "自动",
   "duration_seconds": "{dur}秒",
   "select_resolution": "选择分辨率",
   "resolution_auto_desc": "自动根据模型选择最佳分辨率",
@@ -95,6 +96,7 @@
   "contact_us": "联系我们",
   "feedback_desc": "扫码加入微信反馈群，第一时间获取支持与更新动态。",
   "feedback_qr_alt": "意见反馈二维码",
+  "delete_contact_button": "删除",
 
   "power_logs": "算力日志",
   "power_recharge": "算力充值",
