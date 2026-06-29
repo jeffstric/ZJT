@@ -221,9 +221,9 @@
     }
     
     // 计算视频生成算力（公共函数）
-    function calculateVideoGenerationPower(videoModel, duration){
+    function calculateVideoGenerationPower(videoModel, duration, context = {}){
       if(window.TaskConfig){
-        return window.TaskConfig.getComputingPower(videoModel, duration);
+        return window.TaskConfig.getComputingPower(videoModel, duration, context);
       }
       return 0;
     }
@@ -241,7 +241,21 @@
             if(computingPowerValue && computingPowerDetail){
               const videoModel = node.data.videoModel || 'sora2';
               const duration = node.data.duration || 10;
-              const singlePower = calculateVideoGenerationPower(videoModel, duration);
+              const context = {};
+              const imageMode = node.data.imageMode || 'first_last_frame';
+              if(imageMode === 'first_last_frame') {
+                const hasStartImage = !!node.data.startFile || !!node.data.startUrl ||
+                  state.imageConnections.some(c => c.to === node.id && c.portType === 'start');
+                const hasEndImage = !!node.data.endFile || !!node.data.endUrl ||
+                  state.imageConnections.some(c => c.to === node.id && c.portType === 'end');
+                context.image_mode = hasStartImage && hasEndImage ? 'first_last_with_tail' : 'first_last_frame';
+              } else if(imageMode) {
+                context.image_mode = imageMode;
+              }
+              if(node.data.videoResolution) {
+                context.resolution = node.data.videoResolution;
+              }
+              const singlePower = calculateVideoGenerationPower(videoModel, duration, context);
               const count = node.data.drawCount || 1;
               const totalPower = singlePower * count;
               computingPowerValue.textContent = window.t ? window.t('computing_power_value', { power: totalPower }) : `${totalPower} 算力`;

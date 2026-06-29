@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
+from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
 from api.media import _get_media_duration_seconds
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import upload_local_images_to_cdn_sync
@@ -124,8 +125,12 @@ class HappyHorseDashscopeV1Driver(BaseVideoDriver):
         try:
             config = json.loads(ai_tool.extra_config) if isinstance(ai_tool.extra_config, str) else ai_tool.extra_config
             if isinstance(config, dict):
-                if "resolution" in config and config["resolution"] in ("720P", "1080P"):
-                    params["resolution"] = config["resolution"]
+                resolution = (
+                    config.get(VIDEO_RESOLUTION_EXTRA_CONFIG_KEY)
+                    or config.get(LEGACY_RESOLUTION_EXTRA_CONFIG_KEY)
+                )
+                if resolution in ("720P", "1080P"):
+                    params["resolution"] = resolution
                 if "watermark" in config:
                     params["watermark"] = bool(config["watermark"])
                 if "seed" in config:

@@ -3266,6 +3266,7 @@
           duration: opts?.data?.duration || 5,
           ratio: opts?.data?.ratio || state.ratio || '16:9',
           videoModel: opts?.data?.videoModel || defaultVideoModel,
+          videoResolution: opts?.data?.videoResolution || '',
           drawCount: opts?.data?.drawCount || 1,
           motionEnabled: opts?.data?.motionEnabled || false,
           motion: opts?.data?.motion || '',
@@ -3383,6 +3384,10 @@
                   <option value="16:9">16:9</option>
                 </select>
               </div>
+              <div class="field field-collapsible video-resolution-field" style="display:none;">
+                <div class="label" data-i18n="video_resolution">${window.t ? window.t('video_resolution') : '分辨率'}</div>
+                <select class="video-resolution-select"></select>
+              </div>
               <div class="field field-collapsible">
                 <div class="label" data-i18n="video_model_label">${window.t ? window.t('video_model_label') : '视频模型'}</div>
                 <select class="video-model-select"></select>
@@ -3433,6 +3438,8 @@
       const durationSelect = el.querySelector('.duration-select');
       const ratioSelect = el.querySelector('.ratio-select');
       const videoModelSelect = el.querySelector('.video-model-select');
+      const resolutionField = el.querySelector('.video-resolution-field');
+      const resolutionSelect = el.querySelector('.video-resolution-select');
       const genBtnMain = el.querySelector('.gen-btn-main');
       const genBtnCaret = el.querySelector('.gen-btn-caret');
       const genMenu = el.querySelector('.gen-menu');
@@ -3955,6 +3962,9 @@
         } else {
           context['image_mode'] = imageMode;
         }
+        if(node.data.videoResolution) {
+          context['resolution'] = node.data.videoResolution;
+        }
 
         // 使用 TaskConfig API 动态获取算力，并传递context以应用修饰符
         return TaskConfig.getComputingPower(videoModel, duration, context);
@@ -4140,6 +4150,38 @@
           }
         }
       }
+
+      function updateResolutionOptions(videoModel) {
+        if(!resolutionField || !resolutionSelect) return;
+        const options = window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function'
+          ? TaskConfig.getVideoResolutionOptions(videoModel)
+          : [];
+
+        resolutionSelect.innerHTML = '';
+        if(!options.length) {
+          resolutionField.style.display = 'none';
+          node.data.videoResolution = '';
+          return;
+        }
+
+        resolutionField.style.display = '';
+        options.forEach(option => {
+          const optEl = document.createElement('option');
+          optEl.value = option.value;
+          optEl.textContent = option.label || option.value;
+          resolutionSelect.appendChild(optEl);
+        });
+
+        const validValues = options.map(option => option.value);
+        if(!node.data.videoResolution || !validValues.includes(node.data.videoResolution)) {
+          node.data.videoResolution = (
+            typeof TaskConfig.getDefaultVideoResolution === 'function'
+              ? TaskConfig.getDefaultVideoResolution(videoModel)
+              : null
+          ) || options[0].value;
+        }
+        resolutionSelect.value = node.data.videoResolution;
+      }
       
       videoModelSelect.value = node.data.videoModel;
       // 应用驱动状态禁用未配置的选项
@@ -4147,17 +4189,26 @@
       // 初始化时根据模型设置时长和比例选项
       updateDurationOptions(node.data.videoModel);
       updateRatioOptions(node.data.videoModel);
+      updateResolutionOptions(node.data.videoModel);
       
       videoModelSelect.addEventListener('change', () => {
         node.data.videoModel = videoModelSelect.value;
         // 模型改变时更新时长和比例选项
         updateDurationOptions(videoModelSelect.value);
         updateRatioOptions(videoModelSelect.value);
+        updateResolutionOptions(videoModelSelect.value);
         // 更新图片模式UI（如尾帧是否支持）
         updateImageModeUI();
         // 更新算力显示
         updateComputingPowerDisplay();
       });
+
+      if(resolutionSelect) {
+        resolutionSelect.addEventListener('change', () => {
+          node.data.videoResolution = resolutionSelect.value;
+          updateComputingPowerDisplay();
+        });
+      }
 
       /* 运镜功能暂时隐藏
       function setMotionHelp(val){
@@ -4383,9 +4434,9 @@
           // 调用生成API
           let result;
           if(currentImageMode === 'text_to_video') {
-            result = await generateVideoFromText(prompt, duration, desiredCount, ratio, videoModel);
+            result = await generateVideoFromText(prompt, duration, desiredCount, ratio, videoModel, node.data.videoResolution);
           } else {
-            result = await generateVideoFromImage(imageUrls, prompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences));
+            result = await generateVideoFromImage(imageUrls, prompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution);
           }
           console.log('[DEBUG] API返回:', { projectIds: result.projectIds, count: result.projectIds?.length });
           
@@ -11551,6 +11602,9 @@
           form.append('count', count);
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', t2vTaskId);
+          if(typeof appendVideoResolutionToForm === 'function') {
+            appendVideoResolutionToForm(form, videoModel || 'wan22');
+          }
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run', { method: 'POST', body: form });
@@ -11569,6 +11623,9 @@
           form.append('count', count);
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', refTaskId);
+          if(typeof appendVideoResolutionToForm === 'function') {
+            appendVideoResolutionToForm(form, videoModel || 'wan22');
+          }
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
@@ -11586,6 +11643,9 @@
           form.append('count', count);
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', taskId9);
+          if(typeof appendVideoResolutionToForm === 'function') {
+            appendVideoResolutionToForm(form, videoModel || 'wan22');
+          }
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });

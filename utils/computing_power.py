@@ -6,6 +6,7 @@ from typing import Optional, Union, Dict, Any
 import logging
 import json
 from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig
+from config.constant import IMAGE_MODE_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,13 @@ def build_context_from_task_record(task_record) -> Dict[str, Any]:
     context = {}
 
     try:
-        # 1. image_mode：从 extra_config JSON 解析
+        # 1. image_mode / video_resolution：从 extra_config JSON 解析
         if task_record and hasattr(task_record, 'extra_config') and task_record.extra_config:
             try:
                 extra = task_record.extra_config if isinstance(task_record.extra_config, dict) else json.loads(task_record.extra_config)
-                if 'image_mode' in extra:
+                if IMAGE_MODE_EXTRA_CONFIG_KEY in extra:
                     # 判断是否有尾帧：first_last_frame 模式下 image_path 有2张图
-                    image_mode = extra['image_mode']
+                    image_mode = extra[IMAGE_MODE_EXTRA_CONFIG_KEY]
                     if image_mode == 'first_last_frame' and hasattr(task_record, 'image_path') and task_record.image_path:
                         # 仅检查是否有逗号（有尾帧），避免不必要的 split
                         if ',' in task_record.image_path:
@@ -38,11 +39,13 @@ def build_context_from_task_record(task_record) -> Dict[str, Any]:
                             context['image_mode'] = image_mode
                     else:
                         context['image_mode'] = image_mode
+                if VIDEO_RESOLUTION_EXTRA_CONFIG_KEY in extra:
+                    context['resolution'] = extra[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY]
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # 2. resolution：从 image_size 字段
-        if task_record and hasattr(task_record, 'image_size') and task_record.image_size:
+        # 2. 图片任务 resolution：从 image_size 字段回退
+        if 'resolution' not in context and task_record and hasattr(task_record, 'image_size') and task_record.image_size:
             context['resolution'] = task_record.image_size
 
     except Exception as e:

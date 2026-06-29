@@ -68,6 +68,12 @@ def get_sync_task_stale_timeout(driver_name: str) -> Optional[int]:
     return _parse_optional_timeout(value)
 
 
+# extra_config 字段名
+IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
+VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
+LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
+
+
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
 
 class TaskTypeRegistry:

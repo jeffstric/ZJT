@@ -39,7 +39,7 @@ from PIL import Image
 from llm import call_ernie_vl_api
 from task.scheduler import init_scheduler
 from model.migration import run_migrations, get_alembic_config
-from config.unified_config import UnifiedConfigRegistry
+from config.unified_config import UnifiedConfigRegistry, IMPLEMENTATION_TO_ID, get_implementation_name
 from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
@@ -66,7 +66,9 @@ from config.constant import (
     FilePathConstants,
     UploadPathConstants,
     JIANYING_RATIO_RESOLUTION,
-    JIANYING_DEFAULT_RATIO
+    JIANYING_DEFAULT_RATIO,
+    IMAGE_MODE_EXTRA_CONFIG_KEY,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
@@ -78,7 +80,8 @@ from utils.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
 from utils import file_lock
-from utils.computing_power import build_context_from_task_record
+from utils.computing_power import build_context_from_task_record, get_implementation_for_user
+from utils.video_resolution import validate_video_resolution
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
@@ -1603,7 +1606,18 @@ async def runninghub_status(
                 task_config = TaskTypeRegistry.get(type)
                 # 使用任务记录中的时长和 context 来计算正确的算力（支持按时长计费的任务和修饰符）
                 context = build_context_from_task_record(task_record)
-                computing_power = task_config.get_computing_power(duration=task_record.duration, context=context) if task_config else 0
+                impl_id = getattr(task_record, 'implementation', None)
+                impl_name = get_implementation_name(impl_id) if impl_id else None
+                implementation = (
+                    impl_name
+                    if impl_name and impl_name != 'unknown'
+                    else get_implementation_for_user(type, task_record.user_id)
+                )
+                computing_power = task_config.get_computing_power(
+                    duration=task_record.duration,
+                    implementation=implementation,
+                    context=context
+                ) if task_config else 0
                 success, message, response_data = await async_make_perseids_request(
                     endpoint='user/calculate_computing_power',
                     method='POST',
@@ -1755,7 +1769,8 @@ async def ai_app_run(
     duration_seconds: int = Form(15, description="Duration in seconds"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
-    auth_token: str = Form(None, description="Authentication token")
+    auth_token: str = Form(None, description="Authentication token"),
+    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
 ):
     """
     Submit text-to-video task.
@@ -1771,8 +1786,19 @@ async def ai_app_run(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生视频任务")
         
         text_to_video_type = task_id
+        from task.visual_drivers.driver_factory import VideoDriverFactory
+        actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        resolution = validate_video_resolution(resolution, actual_impl)
+        context = {}
+        if resolution:
+            context['resolution'] = resolution
+
         # 根据时长获取算力（优先任务配置，回退到实现方配置）
-        computing_power = task_config.get_computing_power(duration=duration_seconds)
+        computing_power = task_config.get_computing_power(
+            duration=duration_seconds,
+            implementation=actual_impl,
+            context=context
+        )
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
@@ -1830,6 +1856,12 @@ async def ai_app_run(
             # Create database record for each project
             if user_id:
                 try:
+                    extra_config_data = {}
+                    if resolution:
+                        extra_config_data[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
+                    extra_config_json = json.dumps(extra_config_data) if extra_config_data else None
+                    impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
+
                     id = AIToolsModel.create(
                         prompt=prompt,
                         user_id=user_id,
@@ -1837,7 +1869,9 @@ async def ai_app_run(
                         ratio=ratio,
                         transaction_id=transaction_id,
                         duration=duration_seconds,
-                        status=AI_TOOL_STATUS_PENDING
+                        status=AI_TOOL_STATUS_PENDING,
+                        extra_config=extra_config_json,
+                        implementation=impl_id
                     )
                     TasksModel.create(
                         task_type=TASK_TYPE_GENERATE_VIDEO,
@@ -1886,7 +1920,8 @@ async def ai_app_run_image(
     video: UploadFile = File(None, description="Reference video file (optional)"),
     audio_urls: str = Form(None, description="Comma-separated reference audio URLs (alternative to uploading audio file)"),
     video_urls: str = Form(None, description="Comma-separated reference video URLs (alternative to uploading video file)"),
-    media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution")
+    media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution"),
+    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
 ):
     """
     Submit image to video task.
@@ -1919,8 +1954,12 @@ async def ai_app_run_image(
         if image_mode not in valid_image_modes:
             raise HTTPException(status_code=400, detail=f"无效的 image_mode: {image_mode}，合法值: {valid_image_modes}")
 
+        from task.visual_drivers.driver_factory import VideoDriverFactory
+        actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        resolution = validate_video_resolution(resolution, actual_impl)
+
         # 记录输入的图片信息
-        logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}")
+        logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}, resolution: {resolution}")
 
         # 解析 @ 引用（如果有 media_references）
         media_refs_map = {}  # {displayName: fileUrl}
@@ -2027,9 +2066,15 @@ async def ai_app_run_image(
             context['image_mode'] = 'first_last_with_tail'
         elif image_mode:
             context['image_mode'] = image_mode
+        if resolution:
+            context['resolution'] = resolution
 
         # 根据时长和 context 获取算力（优先任务配置，回退到实现方配置）
-        computing_power = task_config.get_computing_power(duration=duration_seconds, context=context)
+        computing_power = task_config.get_computing_power(
+            duration=duration_seconds,
+            implementation=actual_impl,
+            context=context
+        )
 
         # 为了向后兼容，设置 image_url 用于日志和响应
         image_url = image_path or (main_image_list[0] if main_image_list else None)
@@ -2093,9 +2138,12 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
-                        # 构建 extra_config，包含 image_mode
-                        extra_config_data = {'image_mode': image_mode}
+                        # 构建 extra_config，包含 image_mode 和视频分辨率
+                        extra_config_data = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
+                        if resolution:
+                            extra_config_data[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
                         extra_config_json = json.dumps(extra_config_data)
+                        impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
 
                         # 判断是否需要创建 pipeline steps（Seedance 2.0 系列 + RunningHub 配置）
                         # 适配模型清单为单一来源：config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS
@@ -2133,6 +2181,7 @@ async def ai_app_run_image(
                                 status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
                                 extra_config=extra_config_json,
                                 reference_images=reference_images_json,
+                                implementation=impl_id,
                                 audio_path=audio_path,
                                 video_path=video_path
                             )
@@ -2149,6 +2198,7 @@ async def ai_app_run_image(
                                 status=AI_TOOL_STATUS_PENDING,
                                 extra_config=extra_config_json,
                                 reference_images=reference_images_json,
+                                implementation=impl_id,
                                 audio_path=audio_path,
                                 video_path=video_path
                             )

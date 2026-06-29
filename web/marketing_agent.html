@@ -389,6 +389,16 @@
                                             </div>
                                         </div>
 
+                                        <!-- 视频分辨率选择（仅视频模式且模型支持） -->
+                                        <div v-if="mediaType === 'video' && currentVideoResolutionOptions.length" style="margin-bottom: 20px;">
+                                            <span style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: block; margin-bottom: 12px;">{{ $t('video_resolution') || '分辨率' }}</span>
+                                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                                <div v-for="res in currentVideoResolutionOptions" :key="res.value" @click.stop="selectedVideoResolution = res.value" style="flex: 1; min-width: 70px; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: selectedVideoResolution === res.value ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: selectedVideoResolution === res.value ? '#e6f7ff' : '#f5f5f5', color: selectedVideoResolution === res.value ? '#00a8e6' : '#1a1a1a' }">
+                                                    {{ res.label || res.value }}
+                                                </div>
+                                            </div>
+                                        </div>
+
                                         <!-- 分辨率选择（仅图片模式） -->
                                         <div v-if="mediaType === 'image'" style="margin-bottom: 20px;">
                                             <span style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: block; margin-bottom: 12px;">{{ $t('select_resolution') }}</span>
@@ -1358,6 +1368,7 @@
 
             const selectedDuration = ref('auto');
             const videoImageMode = ref('first_last_frame'); // 'first_last_frame' | 'multi_reference'
+            const selectedVideoResolution = ref('');
 
             // 参考图状态（全能参考模式使用）
             const referenceImageFiles = ref([]);
@@ -1508,6 +1519,23 @@
                 return shortKey ? videoModelConfigs.value[shortKey] : null;
             }
 
+            const currentVideoResolutionOptions = Vue.computed(() => {
+                const config = getCurrentVideoModelConfig();
+                return config?.video_resolutions || [];
+            });
+
+            function ensureSelectedVideoResolution() {
+                const options = currentVideoResolutionOptions.value;
+                if (!options.length) {
+                    selectedVideoResolution.value = '';
+                    return;
+                }
+                if (!options.some(option => option.value === selectedVideoResolution.value)) {
+                    const config = getCurrentVideoModelConfig();
+                    selectedVideoResolution.value = config?.default_video_resolution || options[0].value;
+                }
+            }
+
             function getMaxSupportedDuration(config) {
                 const durations = (config?.durations || []).filter(d => typeof d === 'number');
                 return durations.length > 0 ? Math.max(...durations) : 15;
@@ -1583,6 +1611,9 @@
                         }
                     } else {
                         context.image_mode = videoImageMode.value;
+                    }
+                    if (selectedVideoResolution.value) {
+                        context.resolution = selectedVideoResolution.value;
                     }
 
                     return window.TaskConfig?.getComputingPower
@@ -3288,6 +3319,10 @@
                     const hasVideoOrAudio = mediaItems.value.some(m => m.type === 'video' || m.type === 'audio');
                     const shortKey = selectedModelKey.value ? selectedModelKey.value.split('_image_to_video')[0].split('_text_to_video')[0] : '';
                     const modelConfig = shortKey ? videoModelConfigs.value[shortKey] : null;
+                    const videoResolution = selectedVideoResolution.value || modelConfig?.default_video_resolution || modelConfig?.video_resolutions?.[0]?.value;
+                    if (videoResolution) {
+                        form.append('resolution', videoResolution);
+                    }
                     const supportsRefAudioVideo = modelConfig?.supports_ref_audio_video === true;
                     if (hasAnyImage || (hasVideoOrAudio && supportsRefAudioVideo)) {
                         // 图生视频
@@ -5282,6 +5317,7 @@
                             selectedDuration.value = config.default_duration || config.durations[0];
                         }
                     }
+                    ensureSelectedVideoResolution();
                 }
             }
 
@@ -7147,6 +7183,8 @@
                 videoStatus,
                 videoResults,
                 selectedDuration,
+                selectedVideoResolution,
+                currentVideoResolutionOptions,
                 formatDurationOption,
                 sendVideoRequest,
                 startVideoStatusCheck,

@@ -61,8 +61,24 @@
       }
     }
 
+    function getVideoResolutionForModel(videoModel, resolution) {
+      if(resolution) return resolution;
+      if(window.TaskConfig && typeof TaskConfig.getDefaultVideoResolution === 'function') {
+        return TaskConfig.getDefaultVideoResolution(videoModel);
+      }
+      return null;
+    }
+
+    function appendVideoResolutionToForm(form, videoModel, resolution) {
+      const resolvedResolution = getVideoResolutionForModel(videoModel, resolution);
+      if(resolvedResolution) {
+        form.append('resolution', resolvedResolution);
+      }
+      return resolvedResolution;
+    }
+
     // 生成视频API调用
-    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences){
+    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences, resolution){
       // 测试模式：模拟API响应
       if(TEST_MODE){
         console.log('[TEST MODE] 模拟生成视频API调用', { imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences });
@@ -95,6 +111,7 @@
       form.append('duration_seconds', duration || 5);
       form.append('count', count || 1);
       form.append('task_id', taskId);
+      appendVideoResolutionToForm(form, videoModel || 'wan22', resolution);
 
       // 图片模式和参考图
       if(imageMode){
@@ -140,7 +157,7 @@
     }
 
     // 文生视频 API
-    async function generateVideoFromText(prompt, duration, count, ratio, videoModel){
+    async function generateVideoFromText(prompt, duration, count, ratio, videoModel, resolution){
       if(TEST_MODE){
         console.log('[TEST MODE] 模拟文生视频API调用', { prompt, duration, count, ratio, videoModel });
         await new Promise(r => setTimeout(r, 500));
@@ -165,6 +182,7 @@
       form.append('duration_seconds', duration || 5);
       form.append('count', count || 1);
       form.append('task_id', taskId);
+      appendVideoResolutionToForm(form, videoModel, resolution);
 
       if(userId) form.append('user_id', userId);
       if(authToken) form.append('auth_token', authToken);
