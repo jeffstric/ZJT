@@ -241,12 +241,10 @@ class TestTaskConfigToFrontendWithModifiers(unittest.TestCase):
             TaskTypeId.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO: {
                 '480P': 111,    # ceil(238 * 200880 / 432000)
                 '720P': 238,
-                '1080P': 536,   # ceil(238 * 2.25)
             },
             TaskTypeId.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO: {
                 '480P': 71,     # ceil(152 * 200880 / 432000)
                 '720P': 152,
-                '1080P': 342,   # ceil(152 * 2.25)
             },
             TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO: {
                 '480P': 141,    # ceil(303 * 200880 / 432000)

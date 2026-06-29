@@ -28,8 +28,8 @@ const mockConfig = {
           {
             name: 'happy_horse_dashscope_v1',
             supported_video_resolutions: [
-              { value: '720P', label: '720P', driver_value: '720P' },
-              { value: '1080P', label: '1080P', driver_value: '1080P' },
+              { value: '720P', label: '720P' },
+              { value: '1080P', label: '1080P' },
             ],
             default_video_resolution: '720P',
           },
@@ -63,8 +63,8 @@ function plain(value) {
   assert.deepEqual(
     plain(context.TaskConfig.getVideoResolutionOptions('happy_horse')),
     [
-      { value: '720P', label: '720P', driverValue: '720P' },
-      { value: '1080P', label: '1080P', driverValue: '1080P' },
+      { value: '720P', label: '720P' },
+      { value: '1080P', label: '1080P' },
     ],
     'should expose structured video resolution options'
   );
@@ -83,8 +83,8 @@ function plain(value) {
   assert.deepEqual(
     plain(modelConfigs.happy_horse.video_resolutions),
     [
-      { value: '720P', label: '720P', driverValue: '720P' },
-      { value: '1080P', label: '1080P', driverValue: '1080P' },
+      { value: '720P', label: '720P' },
+      { value: '1080P', label: '1080P' },
     ],
     'legacy model config should include video_resolutions'
   );

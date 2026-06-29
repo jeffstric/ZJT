@@ -7,8 +7,8 @@
 | 模型 | 支持分辨率 | 默认分辨率 | 驱动参数值 |
 | --- | --- | --- | --- |
 | Happy Horse | `720P`、`1080P` | `720P` | `720P`、`1080P` |
-| Seedance 2.0 Fast | `480P`、`720P`、`1080P` | `720P` | `480p`、`720p`、`1080p` |
-| Seedance 2.0 Mini | `480P`、`720P`、`1080P` | `720P` | `480p`、`720p`、`1080p` |
+| Seedance 2.0 Fast | `480P`、`720P` | `720P` | `480p`、`720p` |
+| Seedance 2.0 Mini | `480P`、`720P` | `720P` | `480p`、`720p` |
 | Seedance 2.0 | `480P`、`720P`、`1080P`、`4K` | `720P` | `480p`、`720p`、`1080p`、`4k` |
 
 国内版和海外版 Seedance 2.0 implementation 使用相同的分辨率选项。
@@ -19,15 +19,15 @@
 
 | 模型 | 480P | 720P | 1080P | 4K |
 | --- | ---: | ---: | ---: | ---: |
-| Seedance 2.0 Fast | `200880 / 432000 = 0.465` | `1.0` | `2.25` | 不支持 |
-| Seedance 2.0 Mini | `200880 / 432000 = 0.465` | `1.0` | `2.25` | 不支持 |
+| Seedance 2.0 Fast | `200880 / 432000 = 0.465` | `1.0` | 不支持 | 不支持 |
+| Seedance 2.0 Mini | `200880 / 432000 = 0.465` | `1.0` | 不支持 | 不支持 |
 | Seedance 2.0 | `200880 / 432000 = 0.465` | `1.0` | `972000 * 31 / (432000 * 28) ≈ 2.4911` | `3888000 * 16 / (432000 * 28) ≈ 5.1429` |
 
 算力最终仍按统一逻辑向上取整。由于 720P 基础算力本身已经是整数，部分档位会比截图价格直接换算多 1 个算力点，属于不低收的取整结果。
 
 ## 配置
 
-- `ImplementationConfig.supported_video_resolutions` 定义前端展示值和驱动实际值。
+- `ImplementationConfig.supported_video_resolutions` 定义前端展示值（`value` / `label`）；各驱动实际下发的参数值由 `VideoResolution` 常量统一维护（`config/unified_config.py`）。
 - `ImplementationConfig.default_video_resolution` 定义默认分辨率。
 - `UnifiedTaskConfig.power_modifiers` 使用 `PowerModifier(attribute='resolution')` 承载算力倍率。
 

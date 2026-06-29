@@ -25,22 +25,61 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+class VideoResolution:
+    """视频分辨率标准值与各驱动参数值映射
+
+    标准值（value / label / power_modifiers 键 / 校验 / 落库）统一使用大写常量。
+    各供应商驱动实际下发的参数值通过 SEEDANCE_DRIVER_VALUES / HAPPY_HORSE_DRIVER_VALUES 转换。
+    """
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'P480': '480P',
+        'P720': '720P',
+        'P1080': '1080P',
+        'P4K': '4K',
+    }
+
+    # 标准值（大写）
+    P480 = '480P'
+    P720 = '720P'
+    P1080 = '1080P'
+    P4K = '4K'
+
+    # 全部标准值（按档位升序）
+    ALL = [P480, P720, P1080, P4K]
+
+    # Seedance 火山驱动下发值（小写）
+    SEEDANCE_DRIVER_VALUES = {
+        P480: '480p',
+        P720: '720p',
+        P1080: '1080p',
+        P4K: '4k',
+    }
+
+    # Happy Horse 阿里云驱动下发值（直接等于标准值，仅支持 720P/1080P）
+    HAPPY_HORSE_DRIVER_VALUES = {
+        P720: P720,
+        P1080: P1080,
+    }
+
+
+# Seedance 分辨率算力倍率（基价为 720P，其余档位为相对 720P 的价格比）
 SEEDANCE_480P_PRICE_MULTIPLIER = 200880 / 432000
-SEEDANCE_FAST_MINI_1080P_PRICE_MULTIPLIER = 2.25
 SEEDANCE_2_0_1080P_PRICE_MULTIPLIER = (972000 * 31) / (432000 * 28)
 SEEDANCE_2_0_4K_PRICE_MULTIPLIER = (3888000 * 16) / (432000 * 28)
 
+# Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
 SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
-    {'value': '480P', 'label': '480P', 'driver_value': '480p'},
-    {'value': '720P', 'label': '720P', 'driver_value': '720p'},
-    {'value': '1080P', 'label': '1080P', 'driver_value': '1080p'},
+    {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+    {'value': VideoResolution.P720, 'label': VideoResolution.P720},
 ]
 
+# Seedance 2.0 标准版支持 480P / 720P / 1080P / 4K
 SEEDANCE_2_0_VIDEO_RESOLUTIONS = [
-    {'value': '480P', 'label': '480P', 'driver_value': '480p'},
-    {'value': '720P', 'label': '720P', 'driver_value': '720p'},
-    {'value': '1080P', 'label': '1080P', 'driver_value': '1080p'},
-    {'value': '4K', 'label': '4K', 'driver_value': '4k'},
+    {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+    {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+    {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+    {'value': VideoResolution.P4K, 'label': VideoResolution.P4K},
 ]
 
 
@@ -1695,9 +1734,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             PowerModifier(
                 attribute='resolution',
                 values={
-                    '480P': SEEDANCE_480P_PRICE_MULTIPLIER,
-                    '720P': 1.0,
-                    '1080P': SEEDANCE_FAST_MINI_1080P_PRICE_MULTIPLIER,
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
                 },
                 default=1.0
             )
@@ -1731,10 +1769,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             PowerModifier(
                 attribute='resolution',
                 values={
-                    '480P': SEEDANCE_480P_PRICE_MULTIPLIER,
-                    '720P': 1.0,
-                    '1080P': SEEDANCE_2_0_1080P_PRICE_MULTIPLIER,
-                    '4K': SEEDANCE_2_0_4K_PRICE_MULTIPLIER,
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: SEEDANCE_2_0_1080P_PRICE_MULTIPLIER,
+                    VideoResolution.P4K: SEEDANCE_2_0_4K_PRICE_MULTIPLIER,
                 },
                 default=1.0
             )
@@ -1768,9 +1806,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             PowerModifier(
                 attribute='resolution',
                 values={
-                    '480P': SEEDANCE_480P_PRICE_MULTIPLIER,
-                    '720P': 1.0,
-                    '1080P': SEEDANCE_FAST_MINI_1080P_PRICE_MULTIPLIER,
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
                 },
                 default=1.0
             )
@@ -1796,7 +1833,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
-                values={'720P': 1.0, '1080P': 1.5},
+                values={VideoResolution.P720: 1.0, VideoResolution.P1080: 1.5},
                 default=1.0
             )
         ],
@@ -1822,7 +1859,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
-                values={'720P': 1.0, '1080P': 1.5},
+                values={VideoResolution.P720: 1.0, VideoResolution.P1080: 1.5},
                 default=1.0
             )
         ],
@@ -1844,7 +1881,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
-                values={'720P': 1.0, '1080P': 1.5},
+                values={VideoResolution.P720: 1.0, VideoResolution.P1080: 1.5},
                 default=1.0
             )
         ],
@@ -2446,7 +2483,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10600.0,
         required_config_keys=['volcengine.api_key'],
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='seedance_2_0_volcengine_v1',
@@ -2458,7 +2495,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10700.0,
         required_config_keys=['volcengine.api_key'],
         supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='seedance_2_0_mini_volcengine_v1',
@@ -2470,7 +2507,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10650.0,
         required_config_keys=['volcengine.api_key'],
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
 
     # ==================== 火山引擎海外版供应商 ====================
@@ -2495,7 +2532,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10650.0,
         required_config_keys=['volcengine_oversea.api_key'],
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='seedance_2_0_volcengine_oversea_v1',
@@ -2507,7 +2544,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10750.0,
         required_config_keys=['volcengine_oversea.api_key'],
         supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='seedance_2_0_mini_volcengine_oversea_v1',
@@ -2519,7 +2556,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10680.0,
         required_config_keys=['volcengine_oversea.api_key'],
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='happy_horse_dashscope_v1',
@@ -2531,10 +2568,10 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10800.0,
         required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
-            {'value': '720P', 'label': '720P', 'driver_value': '720P'},
-            {'value': '1080P', 'label': '1080P', 'driver_value': '1080P'},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
         ],
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='happy_horse_dashscope_r2v_v1',
@@ -2546,10 +2583,10 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10810.0,
         required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
-            {'value': '720P', 'label': '720P', 'driver_value': '720P'},
-            {'value': '1080P', 'label': '1080P', 'driver_value': '1080P'},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
         ],
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='happy_horse_dashscope_t2v_v1',
@@ -2561,10 +2598,10 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10820.0,
         required_config_keys=['llm.qwen.api_key'],
         supported_video_resolutions=[
-            {'value': '720P', 'label': '720P', 'driver_value': '720P'},
-            {'value': '1080P', 'label': '1080P', 'driver_value': '1080P'},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
         ],
-        default_video_resolution='720P'
+        default_video_resolution=VideoResolution.P720
     ),
 
     # ==================== 本地处理 ====================

@@ -259,7 +259,7 @@
    * 获取指定模型/实现方支持的视频分辨率选项
    * @param {string} modelKey 模型标识符
    * @param {string} implName 实现方名称（可选）
-   * @returns {Array<{value: string, label: string, driverValue: string}>}
+   * @returns {Array<{value: string, label: string}>}
    */
   function getVideoResolutionOptions(modelKey, implName) {
     const task = getTaskByKey(modelKey);
@@ -279,8 +279,7 @@
       .filter(item => item && item.value)
       .map(item => ({
         value: item.value,
-        label: item.label || item.value,
-        driverValue: item.driver_value || item.value
+        label: item.label || item.value
       }));
   }
 

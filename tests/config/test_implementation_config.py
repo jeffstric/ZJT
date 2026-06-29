@@ -202,8 +202,8 @@ class TestImplementationConfig(unittest.TestCase):
             display_name='测试分辨率实现',
             driver_class='TestDriver',
             supported_video_resolutions=[
-                {'value': '720P', 'label': '720P', 'driver_value': '720P'},
-                {'value': '1080P', 'label': '1080P', 'driver_value': '1080P'},
+                {'value': '720P', 'label': '720P'},
+                {'value': '1080P', 'label': '1080P'},
             ],
             default_video_resolution='720P',
         )
@@ -221,10 +221,10 @@ class TestImplementationConfig(unittest.TestCase):
         init_unified_config()
 
         expected = {
-            'seedance_2_0_fast_volcengine_v1': ['480P', '720P', '1080P'],
-            'seedance_2_0_fast_volcengine_oversea_v1': ['480P', '720P', '1080P'],
-            'seedance_2_0_mini_volcengine_v1': ['480P', '720P', '1080P'],
-            'seedance_2_0_mini_volcengine_oversea_v1': ['480P', '720P', '1080P'],
+            'seedance_2_0_fast_volcengine_v1': ['480P', '720P'],
+            'seedance_2_0_fast_volcengine_oversea_v1': ['480P', '720P'],
+            'seedance_2_0_mini_volcengine_v1': ['480P', '720P'],
+            'seedance_2_0_mini_volcengine_oversea_v1': ['480P', '720P'],
             'seedance_2_0_volcengine_v1': ['480P', '720P', '1080P', '4K'],
             'seedance_2_0_volcengine_oversea_v1': ['480P', '720P', '1080P', '4K'],
         }
@@ -237,10 +237,6 @@ class TestImplementationConfig(unittest.TestCase):
                 self.assertEqual(
                     [item['value'] for item in impl.supported_video_resolutions],
                     expected_values,
-                )
-                self.assertEqual(
-                    [item['driver_value'] for item in impl.supported_video_resolutions],
-                    [value.lower() for value in expected_values],
                 )
 
     def test_is_enabled_default(self):
