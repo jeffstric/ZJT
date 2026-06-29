@@ -9,7 +9,7 @@
 本文件保留向后兼容的常量别名，逐步废弃中。
 """
 
-from typing import Union, Dict, List
+from typing import Union, Dict, List, Optional
 
 # 从统一配置系统导入（新系统）
 from config.unified_config import (
@@ -21,6 +21,51 @@ from config.unified_config import (
     UnifiedConfigRegistry,
     UnifiedTaskConfig,
 )
+
+
+IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
+IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT = 120
+SYNC_TASK_STALE_TIMEOUT_DEFAULT = None
+SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
+    DriverImplementation.SEEDREAM5_VOLCENGINE_V1: 180,
+    DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1: 180,
+}
+
+
+def _parse_optional_timeout(value) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "none", "null", "false"}:
+            return None
+        return int(normalized)
+    if value == 0 or value is False:
+        return None
+    return int(value)
+
+
+def get_sync_task_stale_timeout(driver_name: str) -> Optional[int]:
+    if not driver_name:
+        return SYNC_TASK_STALE_TIMEOUT_DEFAULT
+    try:
+        from config.config_util import get_dynamic_config_value
+
+        value = get_dynamic_config_value(
+            "sync_task",
+            "stale_timeout",
+            driver_name,
+            default=SYNC_TASK_STALE_TIMEOUT_BY_DRIVER.get(
+                driver_name,
+                SYNC_TASK_STALE_TIMEOUT_DEFAULT,
+            ),
+        )
+    except Exception:
+        value = SYNC_TASK_STALE_TIMEOUT_BY_DRIVER.get(
+            driver_name,
+            SYNC_TASK_STALE_TIMEOUT_DEFAULT,
+        )
+    return _parse_optional_timeout(value)
 
 
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============

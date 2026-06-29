@@ -12,6 +12,7 @@
 # =============================================================================
 
 stages:
+  - lint
   - test
 
 # 变量配置
@@ -33,6 +34,18 @@ variables:
   PYTHONUNBUFFERED: "1"
   PYTHONDONTWRITEBYTECODE: "1"
   PYTHONUTF8: "1"
+
+# =============================================================================
+# 阻塞调用 lint job
+# =============================================================================
+lint:blocking_calls:
+  stage: lint
+  image: python:3.10-slim
+  script:
+    - python scripts/lint_blocking_calls.py --allow-file scripts/lint_blocking_calls_allowlist.txt
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
 
 # =============================================================================
 # 单元测试 job

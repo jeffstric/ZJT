@@ -285,11 +285,17 @@ async def _submit_new_task(ai_tool):
             if impl_config and impl_config.sync_mode:
                 executor = get_sync_task_executor()
                 if executor.is_running():
-                    executor.submit(task_id, ai_tool_type)
-                    AIToolsModel.update(task_id, status=AI_TOOL_STATUS_SYNC_QUEUED)
-                    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
-                    logger.info(f"[SyncTask] Task {task_id} submitted to sync task executor (sync_mode implementation: {impl_config.name})")
-                    return True
+                    submitted = executor.submit(task_id, ai_tool_type, implementation_name)
+                    if submitted:
+                        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_SYNC_QUEUED)
+                        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
+                        logger.info(f"[SyncTask] Task {task_id} submitted to sync task executor (sync_mode implementation: {impl_config.name})")
+                        return True
+
+                    logger.error(
+                        f"[SyncTask] Submit failed for task {task_id} implementation={implementation_name}; outer retry will backoff"
+                    )
+                    return False
                 else:
                     logger.warning(f"[SyncTask] Sync task executor not running, falling back to normal processing")
 
@@ -1187,6 +1193,17 @@ def process_task_with_retry(task_type, process_func):
                 logger.error(f"Error processing task {task.task_id}: {str(e)}")
                 import traceback
                 logger.error(traceback.format_exc())
+                new_try_count = (task.try_count or 0) + 1
+                delay_seconds = calculate_next_retry_delay(new_try_count)
+                next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
+                TasksModel.update_by_task_id(
+                    task.task_id,
+                    try_count=new_try_count,
+                    next_trigger=next_trigger,
+                )
+                logger.info(
+                    f"Task exception backoff: {task.task_id}, retry count: {new_try_count}, next trigger: {next_trigger}"
+                )
                 
         logger.info(f"Summary: processed={processed_count}, succeeded={success_count}, delayed={delayed_count}, expired={expired_count}")
 

@@ -829,6 +829,27 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'editable': True,
         'is_sensitive': False
     },
+    {
+        'key': 'sync_task.stale_detection_enabled',
+        'value_type': 'bool',
+        'description': '是否启用同步任务 stale future 检测与 worker 回收',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'sync_task.stale_timeout.seedream5_volcengine_v1',
+        'value_type': 'int',
+        'description': 'Seedream 国内同步任务 stale 超时时间（秒），0 表示禁用',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'sync_task.stale_timeout.seedream5_volcengine_oversea_v1',
+        'value_type': 'int',
+        'description': 'Seedream 海外同步任务 stale 超时时间（秒），0 表示禁用',
+        'editable': True,
+        'is_sensitive': False
+    },
 
     # ==================== 每日签到配置 ====================
     {

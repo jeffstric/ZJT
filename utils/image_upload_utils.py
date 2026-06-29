@@ -5,6 +5,7 @@
 import aiohttp
 import os
 import asyncio
+import concurrent.futures
 import logging
 import uuid
 from typing import List, Optional, Dict, Any
@@ -12,7 +13,13 @@ from urllib.parse import urlparse, unquote
 from pathlib import Path
 from datetime import datetime
 
-from config.constant import FilePathConstants
+from concurrent.futures import TimeoutError as FutureTimeoutError
+
+from config.constant import (
+    FilePathConstants,
+    IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT,
+    IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT,
+)
 from utils.network_utils import is_local_path, is_local_file_path
 from utils.file_storage import get_file_storage
 from utils.image_compressor import compress_image_to_limit, get_image_size_mb
@@ -22,6 +29,31 @@ logger = logging.getLogger(__name__)
 
 # 项目根目录
 _PROJECT_ROOT = Path(__file__).parent.parent
+_SYNC_WRAPPER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="image_upload_sync_wrapper",
+)
+
+
+def _run_coro_sync(coro, timeout: float, timeout_result, operation: str):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            return asyncio.run(asyncio.wait_for(coro, timeout=timeout))
+        except asyncio.TimeoutError:
+            logger.error("%s超时: timeout=%ss", operation, timeout)
+            return timeout_result
+
+    future = _SYNC_WRAPPER_EXECUTOR.submit(
+        asyncio.run,
+        asyncio.wait_for(coro, timeout=timeout),
+    )
+    try:
+        return future.result(timeout=timeout)
+    except (FutureTimeoutError, asyncio.TimeoutError):
+        logger.error("%s超时: timeout=%ss", operation, timeout)
+        return timeout_result
 
 
 def try_map_url_to_local_file(url: str, config: Dict[str, Any], project_root: str = None) -> Optional[str]:
@@ -90,8 +122,8 @@ async def download_url_to_temp(url: str, app_dir: str = None) -> Optional[str]:
     Returns:
         Optional[str]: 临时文件路径，失败返回None
     """
-    import aiohttp
-
+    temp_path = None
+    success = False
     try:
         # 获取图片临时目录（按年月日分组）
         if app_dir is None:
@@ -116,14 +148,20 @@ async def download_url_to_temp(url: str, app_dir: str = None) -> Optional[str]:
                     content = await response.read()
                     with open(temp_path, 'wb') as f:
                         f.write(content)
+                    success = True
                     return temp_path
                 else:
                     logger.error(f"下载图片失败，状态码: {response.status}")
-                    os.remove(temp_path)
                     return None
     except Exception as e:
         logger.error(f"下载图片异常: {str(e)}")
         return None
+    finally:
+        if not success and temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 async def upload_local_images_to_cdn(
@@ -208,8 +246,16 @@ async def upload_local_images_to_cdn(
 
             logger.info(f"上传图片到图床: {file_to_upload} -> {key}")
 
-            # 上传文件
-            upload_result = await storage.upload_file(key, file_to_upload)
+            # 上传文件。外层总超时兜底，防止底层同步 SDK 卡住后长期占用线程。
+            try:
+                upload_result = await asyncio.wait_for(
+                    storage.upload_file(key, file_to_upload),
+                    timeout=IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT,
+                )
+            except asyncio.TimeoutError as exc:
+                error_msg = f"图片上传到CDN超时: {image_path}"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg) from exc
 
             if upload_result.success:
                 # 获取私有下载链接
@@ -253,24 +299,12 @@ def upload_local_images_to_cdn_sync(
     Returns:
         List[str]: 上传后的CDN链接列表
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 如果事件循环已在运行，创建新任务
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    upload_local_images_to_cdn(image_urls, config, project_root)
-                )
-                return future.result()
-        else:
-            return loop.run_until_complete(
-                upload_local_images_to_cdn(image_urls, config, project_root)
-            )
-    except RuntimeError:
-        # 没有事件循环，创建新的
-        return asyncio.run(upload_local_images_to_cdn(image_urls, config, project_root))
+    return _run_coro_sync(
+        upload_local_images_to_cdn(image_urls, config, project_root),
+        IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT,
+        [],
+        "同步上传图片到图床",
+    )
 
 
 async def resolve_url_to_local_file(
@@ -340,24 +374,12 @@ def resolve_url_to_local_file_sync(
     Returns:
         本地文件路径，失败返回 None
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 如果事件循环已在运行，创建新任务
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    resolve_url_to_local_file(url, config, project_root)
-                )
-                return future.result()
-        else:
-            return loop.run_until_complete(
-                resolve_url_to_local_file(url, config, project_root)
-            )
-    except RuntimeError:
-        # 没有事件循环，创建新的
-        return asyncio.run(resolve_url_to_local_file(url, config, project_root))
+    return _run_coro_sync(
+        resolve_url_to_local_file(url, config, project_root),
+        IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT,
+        None,
+        "同步解析URL到本地文件",
+    )
 
 
 async def compress_and_upload_image(
@@ -494,24 +516,12 @@ def compress_and_upload_image_sync(
     Returns:
         (success, new_url, error_message)
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 如果事件循环已在运行，创建新任务
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    compress_and_upload_image(image_url, config, max_size_mb, is_local, project_root)
-                )
-                return future.result()
-        else:
-            return loop.run_until_complete(
-                compress_and_upload_image(image_url, config, max_size_mb, is_local, project_root)
-            )
-    except RuntimeError:
-        # 没有事件循环，创建新的
-        return asyncio.run(compress_and_upload_image(image_url, config, max_size_mb, is_local, project_root))
+    return _run_coro_sync(
+        compress_and_upload_image(image_url, config, max_size_mb, is_local, project_root),
+        IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT,
+        (False, None, "timeout"),
+        "同步压缩并上传图片",
+    )
 
 
 def upload_media_to_cdn_sync(
