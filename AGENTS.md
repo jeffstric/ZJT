@@ -5,5 +5,5 @@
 4. 涉及到video_workflow.html 工作流相关改动时，注意工作流有重新加载功能，新建的节点需要考虑重新加载后复原。
 5. 后端代码中所有的常量都位于 config/constant.py 和 config/unified_config.py 中，请你注意参考，必要时新增。
 6. 系统需要兼容windows\linux\macos 三种系统，注意路径以及字符集编码问题。
-7. 新建表或者修改表结构,请你同步更新下 alembic/versions, 新建迁移脚本，并更新对应model的表sql
+7. 新建表或者修改表结构,请你同步更新下 alembic/versions, 新建迁移脚本，并更新对应model目录下的具体模型文件末尾sql内容。
 8. 数据库表名类似 user_token, 常见字段 create_at, update_at
