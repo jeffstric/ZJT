@@ -40,7 +40,8 @@ variables:
 # =============================================================================
 lint:blocking_calls:
   stage: lint
-  image: python:3.10-slim
+  # 走 daocloud 加速镜像，避免直连 registry-1.docker.io 网络超时（与 unit_tests job 保持一致）
+  image: m.daocloud.io/docker.io/library/python:3.10-slim
   script:
     - python scripts/lint_blocking_calls.py --allow-file scripts/lint_blocking_calls_allowlist.txt
   rules:
