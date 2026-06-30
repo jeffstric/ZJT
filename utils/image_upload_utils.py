@@ -188,7 +188,10 @@ async def upload_local_images_to_cdn(
         project_root = os.getcwd()
 
     result_urls = []
-    storage = get_file_storage(config)
+    # 延迟初始化存储实例：仅当确实存在本地文件/局域网URL需要上传时才创建。
+    # 全外网URL场景（如驱动集成测试、纯外网图源）无需 file_storage 配置即可直接透传，
+    # 避免在缺少图床配置的环境下于函数入口处无条件抛出 "未找到有效的文件存储配置" 错误。
+    storage = None
 
     for image_path in image_urls:
         image_path = image_path.strip()
@@ -199,6 +202,10 @@ async def upload_local_images_to_cdn(
         if not is_local_path(image_path):
             result_urls.append(image_path)
             continue
+
+        # 到此为本地文件或局域网URL，需要上传到图床 —— 首次按需创建存储实例并在后续迭代复用
+        if storage is None:
+            storage = get_file_storage(config)
 
         temp_file = None
         file_to_upload = None
