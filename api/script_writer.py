@@ -2826,6 +2826,8 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                     v_pref_parts.append(f"视频时长: {v_prefs['duration']}秒")
             if v_prefs.get('image_mode'):
                 v_pref_parts.append(f"图片模式: {v_prefs['image_mode']}")
+            if v_prefs.get('resolution'):
+                v_pref_parts.append(f"视频分辨率: {v_prefs['resolution']}")
             # 添加视频模型名称（优先从前端传入，其次从 task_id 解析）
             v_model_display = v_prefs.get('model_name')
             if not v_model_display and v_task_id:

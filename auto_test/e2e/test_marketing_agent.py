@@ -255,7 +255,7 @@ def test_marketing_agent_page_loads(marketing_agent_page):
 @pytest.mark.p0
 @pytest.mark.marketing_agent
 def test_marketing_agent_mode_switch(marketing_agent_page):
-    """ma_002 - 从首页导航，选择营销模式后点击开始创作进入营销智能体页面。"""
+    """ma_002 - 从首页导航，选择营销模式后点击开始创作进入营销灵感页。"""
     page = marketing_agent_page.page
     page.goto(marketing_agent_page.base_url + "/", wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle", timeout=15000)
@@ -273,8 +273,9 @@ def test_marketing_agent_mode_switch(marketing_agent_page):
     start_banner.wait_for(state="visible", timeout=5000)
     start_banner.click()
 
-    page.wait_for_url("**/marketing-agent**", timeout=15000)
-    assert marketing_agent_page.is_loaded(), "从首页跳转到营销智能体页面失败"
+    page.wait_for_url("**/marketing-inspiration**", timeout=15000)
+    # 营销创作入口已演进到灵感页（marketing-inspiration），校验 hero 创作区加载
+    page.wait_for_selector(".hero-section", timeout=10000)
 
 
 @pytest.mark.p0

@@ -992,6 +992,11 @@
             }
           }
         }
+
+        // 刷新视频分辨率选项（配置加载后模型支持情况可能变化）
+        if (typeof node.updateShotGroupResolutionOptions === 'function') {
+          node.updateShotGroupResolutionOptions(node.data.videoModel);
+        }
       });
       console.log('[刷新模型] 已刷新所有分镜组节点的模型选择器');
     }
@@ -1057,6 +1062,11 @@
               videoModelEl.value = node.data.videoModel;
             }
           }
+        }
+
+        // 刷新视频分辨率选项（配置加载后模型支持情况可能变化）
+        if (typeof node.updateShotFrameResolutionOptions === 'function') {
+          node.updateShotFrameResolutionOptions(node.data.videoModel);
         }
       });
       console.log('[刷新模型] 已刷新所有分镜节点的模型选择器');
@@ -2739,6 +2749,11 @@
           if(videoModelEl && nodeData.data.videoModel){
             ensureSelectHasSavedOption(videoModelEl, nodeData.data.videoModel);
             videoModelEl.value = nodeData.data.videoModel;
+          }
+
+          // 恢复视频分辨率选项（基于已恢复的视频模型与保存的分辨率）
+          if(node.updateShotFrameResolutionOptions) {
+            node.updateShotFrameResolutionOptions(node.data.videoModel);
           }
 
           // 恢复模式相关 UI 状态

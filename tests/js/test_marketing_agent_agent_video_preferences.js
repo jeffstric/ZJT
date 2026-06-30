@@ -48,6 +48,12 @@ assert.match(
 );
 
 assert.match(
+  html,
+  /buildAgentVideoPreferences[\s\S]{0,2000}?resolution:\s*selectedVideoResolution\.value\s*\|\|\s*undefined/,
+  'Agent video preferences should include resolution from selectedVideoResolution'
+);
+
+assert.match(
   api,
   /effective_video_preferences\s*=\s*task_request\.video_preferences\s*or\s*get_video_preferences\(user_id,\s*world_id\)/,
   'Backend should fall back to stored video preferences when older clients omit video_preferences'

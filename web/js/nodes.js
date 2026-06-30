@@ -8176,6 +8176,7 @@
           videoDuration: pickFirstDefinedValue(shotGroupData.videoDuration, shotGroupData.video_duration) || 5,
           videoDrawCount: pickFirstDefinedValue(shotGroupData.videoDrawCount, shotGroupData.video_draw_count) || 1,
           videoGenMode: shotGroupData.videoGenMode || 'first_last_frame',
+          videoResolution: shotGroupData.videoResolution || '',
           gridPreview: shotGroupData.gridPreview || {},
         }
       };
@@ -8284,6 +8285,10 @@
                   <option value="5" selected data-i18n="shot_group_video_duration_5s">${window.t ? window.t('shot_group_video_duration_5s') : '5秒'}</option>
                   <option value="10" data-i18n="shot_group_video_duration_10s">${window.t ? window.t('shot_group_video_duration_10s') : '10秒'}</option>
                 </select>
+              </div>
+              <div class="field field-always-visible shot-group-video-resolution-field" style="margin-top:5px; display: none;">
+                <div class="label" data-i18n="video_resolution">${window.t ? window.t('video_resolution') : '分辨率'}</div>
+                <select class="shot-group-video-resolution-select"></select>
               </div>
               <div class="field field-always-visible" style="margin-top: 10px;">
                 <div style="display: flex; flex-direction: column; gap: 8px;">
@@ -8478,6 +8483,8 @@
       const videoDrawCountLabel = el.querySelector('.shot-group-video-draw-count-label');
       const computingPowerValue = el.querySelector('.shot-group-computing-power-value');
       const computingPowerDetail = el.querySelector('.shot-group-computing-power-detail');
+      const videoResolutionEl = el.querySelector('.shot-group-video-resolution-select');
+      const videoResolutionField = el.querySelector('.shot-group-video-resolution-field');
 
       // 动态填充视频模型选项（根据当前视频生成模式过滤）
       let firstShotGroupVideoModelValue = 'wan22';
@@ -8571,6 +8578,35 @@
 
       updateVideoDurationOptions(node.data.videoModel);
 
+      // 根据视频模型更新分辨率选项（仅模型支持时显示）
+      function updateShotGroupResolutionOptions(videoModel) {
+        if(!videoResolutionField || !videoResolutionEl) return;
+        const options = (window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function')
+          ? TaskConfig.getVideoResolutionOptions(videoModel)
+          : [];
+        videoResolutionEl.innerHTML = '';
+        if(!options.length) {
+          videoResolutionField.style.display = 'none';
+          node.data.videoResolution = '';
+          return;
+        }
+        videoResolutionField.style.display = '';
+        options.forEach(opt => {
+          const optEl = document.createElement('option');
+          optEl.value = opt.value;
+          optEl.textContent = opt.label || opt.value;
+          videoResolutionEl.appendChild(optEl);
+        });
+        const validValues = options.map(o => o.value);
+        if(!node.data.videoResolution || !validValues.includes(node.data.videoResolution)) {
+          node.data.videoResolution = (typeof TaskConfig.getDefaultVideoResolution === 'function'
+            ? TaskConfig.getDefaultVideoResolution(videoModel)
+            : null) || options[0].value;
+        }
+        videoResolutionEl.value = node.data.videoResolution;
+      }
+      updateShotGroupResolutionOptions(node.data.videoModel);
+
       // 根据当前视频生成模式重新填充视频模型选项
       function populateShotGroupVideoModelOptions() {
         if(!videoModelEl) return;
@@ -8622,8 +8658,9 @@
         ensureSelectHasSavedOption(videoModelEl, node.data.videoModel);
         videoModelEl.value = node.data.videoModel || firstValue;
         applyDriverStatusToSelect(videoModelEl);
-        // 模型变更后联动更新时长选项和算力显示
+        // 模型变更后联动更新时长选项、分辨率选项和算力显示
         updateVideoDurationOptions(videoModelEl.value);
+        updateShotGroupResolutionOptions(videoModelEl.value);
         updateVideoComputingPowerDisplay();
       }
 
@@ -8637,8 +8674,10 @@
         const videoModel = node.data.videoModel || 'wan22';
         const duration = node.data.videoDuration || 5;
 
-        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
-        return TaskConfig.getComputingPower(videoModel, duration);
+        // 使用 TaskConfig API 动态获取算力（自动支持所有模型，含分辨率倍率）
+        const context = {};
+        if(node.data.videoResolution) context.resolution = node.data.videoResolution;
+        return TaskConfig.getComputingPower(videoModel, duration, context);
       }
 
       // 更新视频算力显示
@@ -8673,9 +8712,19 @@
       videoModelEl.addEventListener('change', () => {
         node.data.videoModel = videoModelEl.value;
         updateVideoDurationOptions(videoModelEl.value);
+        updateShotGroupResolutionOptions(videoModelEl.value);
         updateVideoComputingPowerDisplay();
         updateMergeButtonVisibility(videoModelEl.value);
       });
+
+      // 视频分辨率选择事件
+      if(videoResolutionEl) {
+        videoResolutionEl.addEventListener('change', () => {
+          node.data.videoResolution = videoResolutionEl.value;
+          updateVideoComputingPowerDisplay();
+          try { autoSaveWorkflow(); } catch(e) {}
+        });
+      }
 
       // 视频生成模式选择事件（切换模式时重新过滤视频模型列表）
       if(videoGenModeEl) {
@@ -8760,6 +8809,9 @@
       node.refreshGridPreview = function() {
         updateGridPreviewUI(el, node);
       };
+
+      // 视频分辨率选项刷新方法（挂到node对象上，供配置加载后刷新使用）
+      node.updateShotGroupResolutionOptions = updateShotGroupResolutionOptions;
 
       // 添加调试按钮
       addDebugButtonToNode(el, node);
@@ -9148,6 +9200,7 @@
             shotData: shotDataWithLocation,
             model: shotGroupNode.data.model,
             videoModel: shotGroupNode.data.videoModel,
+            videoResolution: shotGroupNode.data.videoResolution,
             checkCollision: false
           });
           createdNodeIds.push(shotFrameNodeId);
@@ -9396,6 +9449,7 @@
           videoDuration: 5,
           videoModel: inheritedVideoModel,
           videoMode: 'first_last_frame',  // 'first_last_frame' | 'multi_reference'
+          videoResolution: (opts && opts.videoResolution) || shotData.videoResolution || '',
         }
       };
       state.nodes.push(node);
@@ -9520,6 +9574,10 @@
                   <option value="10" data-i18n="shot_frame_video_duration_10s">${window.t ? window.t('shot_frame_video_duration_10s') : '10秒'}</option>
                 </select>
               </div>
+              <div class="field field-always-visible shot-frame-video-resolution-field" style="margin-top: 8px; display: none;">
+                <div class="label" data-i18n="video_resolution">${window.t ? window.t('video_resolution') : '分辨率'}</div>
+                <select class="shot-frame-video-resolution-select"></select>
+              </div>
               <div class="shot-ref-audio-field field field-always-visible" style="margin-top: 8px; display: none;">
                 <div class="label" data-i18n="shot_frame_reference_audio_label">${window.t ? window.t('shot_frame_reference_audio_label') : '参考音频（可选）'}</div>
                 <input type="file" class="shot-ref-audio-input" accept="audio/*" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
@@ -9587,6 +9645,8 @@
       const firstFramePort = el.querySelector('.first-frame-port');
       const videoDurationEl = el.querySelector('.shot-frame-video-duration');
       const videoModelEl = el.querySelector('.shot-frame-video-model');
+      const videoResolutionEl = el.querySelector('.shot-frame-video-resolution-select');
+      const videoResolutionField = el.querySelector('.shot-frame-video-resolution-field');
       const computingPowerValue = el.querySelector('.shot-frame-computing-power-value');
       const computingPowerDetail = el.querySelector('.shot-frame-computing-power-detail');
       const refSectionEl = el.querySelector('.shot-ref-section');
@@ -9779,6 +9839,8 @@
             // 重新填充视频模型列表
             populateVideoModelOptions();
             updateModeUI();
+            // 模式切换会更换视频模型列表，刷新分辨率选项
+            updateShotFrameResolutionOptions(node.data.videoModel);
             // 触发算力重新计算（通过元素引用，因为函数定义在后面）
             if(el._updateVideoComputingPowerDisplay) {
               try { el._updateVideoComputingPowerDisplay(); } catch(e) {}
@@ -10461,8 +10523,37 @@
         }
       }
       
-      // 初始化时根据模型设置时长选项
+      // 根据视频模型更新分辨率选项（仅模型支持时显示）
+      function updateShotFrameResolutionOptions(videoModel) {
+        if(!videoResolutionField || !videoResolutionEl) return;
+        const options = (window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function')
+          ? TaskConfig.getVideoResolutionOptions(videoModel)
+          : [];
+        videoResolutionEl.innerHTML = '';
+        if(!options.length) {
+          videoResolutionField.style.display = 'none';
+          node.data.videoResolution = '';
+          return;
+        }
+        videoResolutionField.style.display = '';
+        options.forEach(opt => {
+          const optEl = document.createElement('option');
+          optEl.value = opt.value;
+          optEl.textContent = opt.label || opt.value;
+          videoResolutionEl.appendChild(optEl);
+        });
+        const validValues = options.map(o => o.value);
+        if(!node.data.videoResolution || !validValues.includes(node.data.videoResolution)) {
+          node.data.videoResolution = (typeof TaskConfig.getDefaultVideoResolution === 'function'
+            ? TaskConfig.getDefaultVideoResolution(videoModel)
+            : null) || options[0].value;
+        }
+        videoResolutionEl.value = node.data.videoResolution;
+      }
+
+      // 初始化时根据模型设置时长选项与分辨率选项
       updateVideoDurationOptions(node.data.videoModel);
+      updateShotFrameResolutionOptions(node.data.videoModel);
       
       // 设置视频时长选择器的初始值
       if(!node.data.videoDuration){
@@ -10480,8 +10571,10 @@
         const videoModel = node.data.videoModel || 'sora2';
         const duration = node.data.videoDuration || 10;
 
-        // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
-        return TaskConfig.getComputingPower(videoModel, duration);
+        // 使用 TaskConfig API 动态获取算力（自动支持所有模型，含分辨率倍率）
+        const context = {};
+        if(node.data.videoResolution) context.resolution = node.data.videoResolution;
+        return TaskConfig.getComputingPower(videoModel, duration, context);
       }
 
       // 更新视频算力显示
@@ -10738,12 +10831,23 @@
         // 更新算力显示
         updateVideoComputingPowerDisplay();
       });
+
+      // 视频分辨率选择
+      if(videoResolutionEl) {
+        videoResolutionEl.addEventListener('change', () => {
+          node.data.videoResolution = videoResolutionEl.value;
+          // 分辨率影响算力倍率，刷新显示
+          updateVideoComputingPowerDisplay();
+          try { autoSaveWorkflow(); } catch(e) {}
+        });
+      }
       
       // 视频模型选择
       videoModelEl.addEventListener('change', () => {
         node.data.videoModel = videoModelEl.value;
-        // 模型改变时更新时长选项
+        // 模型改变时更新时长选项与分辨率选项
         updateVideoDurationOptions(videoModelEl.value);
+        updateShotFrameResolutionOptions(videoModelEl.value);
         // 更新算力显示
         updateVideoComputingPowerDisplay();
         // 更新按钮显示状态
@@ -10813,6 +10917,7 @@
       node.updatePreview = updatePreviewImage;
       node.updateModeUI = updateModeUI;
       node.populateVideoModelOptions = populateVideoModelOptions;
+      node.updateShotFrameResolutionOptions = updateShotFrameResolutionOptions;
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -11603,7 +11708,7 @@
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', t2vTaskId);
           if(typeof appendVideoResolutionToForm === 'function') {
-            appendVideoResolutionToForm(form, videoModel || 'wan22');
+            appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
           }
           appendAuthToForm(form);
 
@@ -11624,7 +11729,7 @@
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', refTaskId);
           if(typeof appendVideoResolutionToForm === 'function') {
-            appendVideoResolutionToForm(form, videoModel || 'wan22');
+            appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
           }
           appendAuthToForm(form);
 
@@ -11644,7 +11749,7 @@
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', taskId9);
           if(typeof appendVideoResolutionToForm === 'function') {
-            appendVideoResolutionToForm(form, videoModel || 'wan22');
+            appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
           }
           appendAuthToForm(form);
 

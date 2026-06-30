@@ -657,3 +657,12 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`marketing_agent.html` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。
 
 生成结果卡片、历史 Markdown 图片、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过 `proxyImageUrl()`。这样旧会话重新打开、图床签名超时或点击放大时，图片仍会自动走代理刷新并显示。
+
+## 视频分辨率选择
+
+`web/marketing_agent.html` 在直接“视频生成”模式和 Agent 模式的视频设置区都会根据当前视频模型展示分辨率选项。
+
+- 选项来源优先使用 `TaskConfig.getVideoResolutionOptions(selectedModelKey)`，保证 `seedance_2_0_image_to_video`、`seedance_2_0_fast_image_to_video`、`seedance_2_0_mini_image_to_video` 等完整模型 key 能直接读取后端统一配置下发的 `supported_video_resolutions`。
+- 默认值优先使用 `TaskConfig.getDefaultVideoResolution(selectedModelKey)`，无默认值时回退到模型配置缓存里的 `default_video_resolution` 或第一项。
+- 普通“生成视频”底部比例设置面板在视频模式下显示视频分辨率按钮组；图片模式仍显示图片分辨率。提交视频任务时使用 `selectedVideoResolution` 作为 `resolution` 参数。
+- Seedance 2.0 Fast / Mini 展示 `480P`、`720P`；Seedance 2.0 标准版展示 `480P`、`720P`、`1080P`、`4K`，具体支持范围以 `config/unified_config.py` 的实现方配置为准。
