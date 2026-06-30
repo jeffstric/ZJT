@@ -69,7 +69,24 @@ class BaseVideoDriver(ABC):
         self.driver_name = driver_name
         self.driver_type = driver_type
         self.logger = logging.getLogger(f"{__name__}.{driver_name}")
-    
+
+    def _build_upstream_congested_result(self) -> Dict[str, Any]:
+        """
+        构造「上游并发超限 / 限流」可重试结果
+
+        用于 RunningHub 返回 api queue limit reached / TASK_QUEUE_MAXED 等临时性拥堵错误时，
+        标记任务自动延迟重试，而非直接判失败、退算力。
+        调度层（visual_task._submit_new_task_with_driver）会依据 retry_reason=UPSTREAM_CONGESTED
+        做不消耗用户重试次数的延迟重试（释放本地槽位 → 状态回 QUEUED → 延迟后重新提交）。
+        """
+        return {
+            "success": False,
+            "error": "上游服务繁忙，正在自动排队重试…",
+            "error_type": "USER",
+            "retry": True,
+            "retry_reason": "UPSTREAM_CONGESTED",
+        }
+
     @abstractmethod
     def submit_task(self, ai_tool) -> Dict[str, Any]:
         """

@@ -225,7 +225,7 @@ class MediaCacheManager:
                 # 下载文件
                 logger.info(f"开始下载媒体文件 (第{attempt}/{max_retries}次): {url} -> {file_path}")
 
-                timeout = aiohttp.ClientTimeout(total=600)  # 10分钟超时
+                timeout = aiohttp.ClientTimeout(total=120)  # 2分钟超时
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.get(url) as response:
                         if response.status != 200:

@@ -9,6 +9,7 @@ from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
 from utils.network_utils import is_local_path
+from utils.runninghub_error import is_upstream_congested_error
 
 
 class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
@@ -347,6 +348,10 @@ class DigitalHumanRunninghubV1Driver(BaseVideoDriver):
             error_code = result.get("errorCode", "")
             error_message = result.get("errorMessage", "")
             if error_code or error_message:
+                # 上游并发超限/限流(api queue limit reached / TASK_QUEUE_MAXED 等)：自动延迟重试，不直接判失败
+                if is_upstream_congested_error(error_code):
+                    self.logger.warning(f"Digital Human upstream congested, will auto-retry: errorCode={error_code}, errorMessage={error_message}")
+                    return self._build_upstream_congested_result()
                 self.logger.warning(f"Digital Human API returned error: errorCode={error_code}, errorMessage={error_message}")
                 return {
                     "success": False,

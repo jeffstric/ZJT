@@ -144,6 +144,7 @@ class RunningHubAudioDriver(BaseAsyncDriver):
             return {
                 'success': False,
                 'error': error_message,
+                'error_code': submit_response.get('errorCode', ''),
                 'error_type': 'SYSTEM',
                 'error_detail': f"RunningHub response: {submit_response}",
                 'retry': False
