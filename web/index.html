@@ -5160,9 +5160,6 @@
         return getGenerationModeLabel(item);
       },
       
-      goToCharacterCard(projectId) {
-        window.location.href = '/character_card.html?task_id=' + projectId;
-      },
     },
     
     beforeUnmount() {
@@ -5423,7 +5420,7 @@
             </div>
             
             <div v-else style="padding: 16px;">
-              <div v-for="item in historyList" :key="item.id" style="margin-bottom: 16px; padding: 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 8px;">
+              <div v-for="(item, idx) in historyList" :key="item.id" style="margin-bottom: 16px; padding: 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 8px;">
                 <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
                   <div>
                     <strong>{{ $t('prompt_label') }}</strong> {{ item.prompt }}
@@ -5442,7 +5439,7 @@
                 <div v-if="item.image_path" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">
                   <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">{{ $t('input_images_label') || '输入图片' }}:</div>
                   <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                    <template v-for="(img, idx) in item.image_path.split(',')" :key="idx">
+                    <template v-for="(img, imgIdx) in item.image_path.split(',')" :key="imgIdx">
                       <div v-if="img" style="display: flex; align-items: center; gap: 12px;">
                         <img :src="img" style="max-width: 120px; max-height: 80px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border);" />
                         <a :href="img" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">{{ $t('view_original') || '查看原图' }}</a>
@@ -5453,7 +5450,7 @@
                 <div v-if="item.reference_images" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">
                   <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">{{ $t('reference_images_display') || '参考图' }}:</div>
                   <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                    <template v-for="(img, idx) in (typeof item.reference_images === 'string' ? JSON.parse(item.reference_images) : item.reference_images)" :key="idx">
+                    <template v-for="(img, imgIdx) in (typeof item.reference_images === 'string' ? JSON.parse(item.reference_images) : item.reference_images)" :key="imgIdx">
                       <div v-if="img" style="display: flex; align-items: center; gap: 12px;">
                         <img :src="img" style="max-width: 120px; max-height: 80px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border);" />
                         <a :href="img" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">{{ $t('view_original') || '查看原图' }}</a>
@@ -5471,10 +5468,10 @@
                     </template>
                   </div>
                 </div>
-                <div v-if="item.result_url" style="margin-top: 8px;">
-                  <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">{{ $t('view_result') }}</a>
-                  <button v-if="item.status == 2 && item.type == 3" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="margin-left: 8px;">{{ enhancingVideos[item.id] ? ($t('enhanced_button') || '已修复') : ($t('generate_hd_video') || '生成高清视频') }}</button>
-                  <button v-if="item.status == 2 && item.project_id" class="btn" @click="goToCharacterCard(item.project_id)" style="margin-left: 8px;">{{ $t('create_character_card') || '创建角色卡' }}</button>
+                <div v-if="item.result_url" style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                  <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">{{ $t('btn_view') || '查看' }}</a>
+                  <button class="btn secondary" @click="downloadVideo(item.result_url, idx)">{{ $t('btn_download') || '下载' }}</button>
+                  <button v-if="item.status == 2 && item.type == 3" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]">{{ enhancingVideos[item.id] ? ($t('enhanced_button') || '已修复') : ($t('generate_hd_video') || '生成高清视频') }}</button>
                 </div>
               </div>
 
