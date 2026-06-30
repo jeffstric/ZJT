@@ -71,6 +71,18 @@
 
 Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可自主调用图片/视频生成工具。图片/视频模式为直接生成模式，前端直接调用生成 API 并轮询状态。
 
+#### Agent 视频意图路由（企业版）
+
+Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版加载后，`enterprise/sops/sop-video-generation.md` 和 `enterprise/skills/marketing-video/SKILL.md` 会覆盖开源目录中的同名占位 SOP/skill，并注册 `generate_text_to_video`、`image_to_video` 工具。社区版没有视频生成工具，开源目录中的 `sop-video-generation` 只负责提示用户视频生成功能为商业版专属。
+
+企业版 Agent 模式中的视频请求分为普通视频和营销视频：
+
+- **普通视频**：用户只描述主体、动作、场景或镜头，例如"生成一个视频，一个女孩在跳舞"、"赛博城市航拍镜头"。这类请求应直接进入视频生成流程，不应询问商品展示、广告宣传、品牌宣传等营销用途。
+- **营销视频**：用户明确提到商品、广告、品牌、带货、产品宣传、社交媒体投放、本地生活推广等商业目的。只有这类请求才需要补充商品、品牌、卖点、投放平台等营销信息；其中餐饮、酒旅、旅游、丽人、休闲娱乐、到店零售、生活服务等按本地生活规则处理，非本地生活则按普通营销视频处理。
+- **图生视频**：用户上传图片并要求图片动起来、生成动作或镜头运动时，保留真实图片上下文并进入视频生成流程，不得编造图片 URL。
+
+当用户的普通视频描述已经足够明确时，PM Agent 应直接调用视频专家提交生成任务；只有缺少主体、动作、场景或必要素材时，才使用 `ask_user` 补充关键生成信息。
+
 ### 会话管理
 
 #### 创建会话
@@ -657,3 +669,12 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`marketing_agent.html` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。
 
 生成结果卡片、历史 Markdown 图片、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过 `proxyImageUrl()`。这样旧会话重新打开、图床签名超时或点击放大时，图片仍会自动走代理刷新并显示。
+
+## 视频分辨率选择
+
+`web/marketing_agent.html` 在直接“视频生成”模式和 Agent 模式的视频设置区都会根据当前视频模型展示分辨率选项。
+
+- 选项来源优先使用 `TaskConfig.getVideoResolutionOptions(selectedModelKey)`，保证 `seedance_2_0_image_to_video`、`seedance_2_0_fast_image_to_video`、`seedance_2_0_mini_image_to_video` 等完整模型 key 能直接读取后端统一配置下发的 `supported_video_resolutions`。
+- 默认值优先使用 `TaskConfig.getDefaultVideoResolution(selectedModelKey)`，无默认值时回退到模型配置缓存里的 `default_video_resolution` 或第一项。
+- 普通“生成视频”底部比例设置面板在视频模式下显示视频分辨率按钮组；图片模式仍显示图片分辨率。提交视频任务时使用 `selectedVideoResolution` 作为 `resolution` 参数。
+- Seedance 2.0 Fast / Mini 展示 `480P`、`720P`；Seedance 2.0 标准版展示 `480P`、`720P`、`1080P`、`4K`，具体支持范围以 `config/unified_config.py` 的实现方配置为准。

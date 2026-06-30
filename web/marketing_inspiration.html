@@ -152,6 +152,11 @@
                                     </div>
                                     <div class="agent-setting-desc" id="agentVideoModeDesc" data-i18n="first_last_frame_desc">上传首帧和尾帧图片生成视频</div>
                                 </div>
+                                <!-- 视频分辨率（视频模式，仅模型支持时显示） -->
+                                <div class="agent-setting-group hidden" id="agentVideoResolutionGroup">
+                                    <span class="agent-setting-label" data-i18n="video_resolution">分辨率</span>
+                                    <div id="agentVideoResolutionList" class="agent-resolution-list"></div>
+                                </div>
                                 <!-- 图片/视频模型选择 -->
                                 <div class="agent-setting-group">
                                     <span class="agent-setting-label" data-i18n="select_model">选择模型</span>
@@ -214,6 +219,18 @@
                                 <span id="durationLabel">5s</span>
                             </button>
                             <div class="marketing-dropdown-menu hidden" id="durationMenu" style="position: absolute; left: 0; background: #fff; border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); padding: 8px; min-width: 120px; z-index: 100;"></div>
+                        </div>
+
+                        <!-- 视频分辨率（仅视频模式且模型支持时显示） -->
+                        <div class="marketing-dropdown hidden" id="videoResolutionDropdown" style="position: relative;">
+                            <button class="marketing-bar-btn" id="videoResolutionBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="5" width="18" height="14" rx="2"/>
+                                    <path d="M3 10h18"/>
+                                </svg>
+                                <span id="videoResolutionLabel" data-i18n="video_resolution">分辨率</span>
+                            </button>
+                            <div class="marketing-dropdown-menu hidden" id="videoResolutionMenu" style="position: absolute; left: 0; background: #fff; border: 1px solid var(--border-color); border-radius: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); padding: 8px; min-width: 120px; z-index: 100;"></div>
                         </div>
                     </div>
 

@@ -18,6 +18,7 @@
   "video": "Video",
   "select_ratio": "Aspect Ratio",
   "select_resolution": "Resolution",
+  "video_resolution": "Resolution",
   "video_duration": "Video Duration",
   "generation_method": "Generation Method",
   "first_last_frame": "First-Last Frame",

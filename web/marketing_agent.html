@@ -548,7 +548,7 @@
                                             <rect x="3" y="3" width="18" height="18" rx="2"/>
                                             <path d="M3 9h18M9 21V9"/>
                                         </svg>
-                                        <span>{{ selectedRatio }} <template v-if="!isVideoMode">{{ selectedResolution }}</template></span>
+                                        <span>{{ selectedRatio }} <template v-if="!isVideoMode">{{ selectedResolution }}</template><template v-else-if="selectedVideoResolution">{{ selectedVideoResolution }}</template></span>
                                     </button>
                                     <!-- 比例选择弹窗 -->
                                     <div v-if="showRatioPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 20px; min-width: 380px; z-index: 100;">
@@ -568,6 +568,14 @@
                                             <span style="font-size: 13px; color: #999; display: block; margin-bottom: 10px;">{{ $t('select_resolution') }}</span>
                                             <div style="display: flex; gap: 8px;">
                                                 <div v-for="res in currentResolutions" :key="res" @click.stop="selectedResolution = res" style="flex: 1; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: selectedResolution === res ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: selectedResolution === res ? '#e6f7ff' : '#f5f5f5', color: selectedResolution === res ? '#00a8e6' : '#1a1a1a' }">{{ res }}</div>
+                                            </div>
+                                        </div>
+                                        <div v-if="isVideoMode && currentVideoResolutionOptions.length">
+                                            <span style="font-size: 13px; color: #999; display: block; margin-bottom: 10px;">{{ $t('video_resolution') || '分辨率' }}</span>
+                                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                                <div v-for="res in currentVideoResolutionOptions" :key="res.value" @click.stop="selectedVideoResolution = res.value" style="flex: 1; min-width: 70px; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: selectedVideoResolution === res.value ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: selectedVideoResolution === res.value ? '#e6f7ff' : '#f5f5f5', color: selectedVideoResolution === res.value ? '#00a8e6' : '#1a1a1a' }">
+                                                    {{ res.label || res.value }}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -1369,6 +1377,8 @@
             const selectedDuration = ref('auto');
             const videoImageMode = ref('first_last_frame'); // 'first_last_frame' | 'multi_reference'
             const selectedVideoResolution = ref('');
+            // 暂存从 URL 传入的视频分辨率，待模型 options 加载后由 ensureSelectedVideoResolution 消费
+            let pendingVideoResolution = '';
 
             // 参考图状态（全能参考模式使用）
             const referenceImageFiles = ref([]);
@@ -1520,6 +1530,10 @@
             }
 
             const currentVideoResolutionOptions = Vue.computed(() => {
+                if (isVideoMode.value && selectedModelKey.value && window.TaskConfig?.getVideoResolutionOptions) {
+                    const options = window.TaskConfig.getVideoResolutionOptions(selectedModelKey.value);
+                    if (options.length) return options;
+                }
                 const config = getCurrentVideoModelConfig();
                 return config?.video_resolutions || [];
             });
@@ -1530,9 +1544,18 @@
                     selectedVideoResolution.value = '';
                     return;
                 }
+                // 优先消费从 URL 传入的视频分辨率（须在当前模型支持列表内，否则降级默认）
+                if (pendingVideoResolution && options.some(option => option.value === pendingVideoResolution)) {
+                    selectedVideoResolution.value = pendingVideoResolution;
+                    pendingVideoResolution = '';
+                    return;
+                }
                 if (!options.some(option => option.value === selectedVideoResolution.value)) {
                     const config = getCurrentVideoModelConfig();
-                    selectedVideoResolution.value = config?.default_video_resolution || options[0].value;
+                    const defaultResolution = window.TaskConfig?.getDefaultVideoResolution
+                        ? window.TaskConfig.getDefaultVideoResolution(selectedModelKey.value)
+                        : null;
+                    selectedVideoResolution.value = defaultResolution || config?.default_video_resolution || options[0].value;
                 }
             }
 
@@ -3557,6 +3580,7 @@
                     ratio: selectedRatio.value,
                     duration: selectedDuration.value,
                     image_mode: videoImageMode.value,
+                    resolution: selectedVideoResolution.value || undefined,
                     model_name: model?.name || selectedVideoModelName.value || savedModelName || undefined,
                     task_id: taskId || undefined
                 };
@@ -4901,6 +4925,12 @@
                     selectedResolution.value = resolutionParam;
                 }
 
+                // 通用参数：视频分辨率（来自灵感页等入口，待模型 options 加载后消费）
+                const videoResolutionParam = getUrlParam('video_resolution');
+                if (videoResolutionParam) {
+                    pendingVideoResolution = videoResolutionParam;
+                }
+
                 // 通用参数：视频时长
                 const durationParam = getUrlParam('duration');
                 if (durationParam) {
@@ -4924,6 +4954,12 @@
                         const modelNameParam = getUrlParam('model_name');
                         if (modelNameParam) selectedImageModel.value = decodeURIComponent(modelNameParam);
                     }
+                }
+
+                // 所有 URL 参数已应用：视频模式下主动刷新一次模型设置，确保分辨率选项与 pending 分辨率生效
+                // （覆盖 mediaType 未变化导致 watch(mediaType) 不触发的边缘情况）
+                if (taskConfigReady.value && (selectedType.value === 'video' || mediaType.value === 'video')) {
+                    refreshModelSettings();
                 }
 
                 // LLM 模型参数（Agent 模式）

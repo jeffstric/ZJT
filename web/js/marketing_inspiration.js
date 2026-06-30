@@ -352,6 +352,7 @@ let toolbarState = {
   agentResolution: 'auto',
   agentDuration: 5,
   agentVideoMode: 'first_last_frame',
+  agentVideoResolution: '',
   agentModel: '',
   agentModelKey: '',
   agentLLMModel: '',
@@ -363,6 +364,7 @@ let toolbarState = {
   ratio: '1:1',
   resolution: 'auto',
   duration: 5,
+  videoResolution: '',
 };
 
 // ── 上传媒体文件状态
@@ -447,8 +449,10 @@ function initToolbar() {
   renderAgentRatioGrid();
   renderAgentResolutionList();
   renderAgentDurationList();
+  renderAgentVideoResolutionList();
   renderAgentModelList();
   renderAgentLLMList();
+  renderVideoResolutionMenu();
   bindToolbarEvents();
   updateToolbarUI();
 }
@@ -514,6 +518,34 @@ function renderDurationMenu() {
     return `
       <div class="mk-dur ${isActive ? 'active' : ''}" data-duration="${d}" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:8px;cursor:pointer;transition:background 0.2s;background:${isActive ? 'var(--accent-light)' : 'transparent'};">
         <span style="font-size:13px;font-weight:500;color:var(--text-primary);">${d}秒</span>
+        ${isActive ? '<span style="color:var(--accent-color);font-weight:bold;">✓</span>' : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+// 渲染非 Agent 视频模式分辨率下拉（根据当前视频模型动态生成）
+function renderVideoResolutionMenu() {
+  const container = document.getElementById('videoResolutionMenu');
+  if (!container) return;
+  const options = (window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function')
+    ? TaskConfig.getVideoResolutionOptions(toolbarState.modelKey)
+    : [];
+  if (!options.length) {
+    container.innerHTML = '';
+    toolbarState.videoResolution = '';
+    return;
+  }
+  if (!toolbarState.videoResolution || !options.some(o => o.value === toolbarState.videoResolution)) {
+    toolbarState.videoResolution = (typeof TaskConfig.getDefaultVideoResolution === 'function'
+      ? TaskConfig.getDefaultVideoResolution(toolbarState.modelKey)
+      : null) || options[0].value;
+  }
+  container.innerHTML = options.map(o => {
+    const isActive = o.value === toolbarState.videoResolution;
+    return `
+      <div class="mk-vres ${isActive ? 'active' : ''}" data-vres="${o.value}" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:8px;cursor:pointer;transition:background 0.2s;background:${isActive ? 'var(--accent-light)' : 'transparent'};">
+        <span style="font-size:13px;font-weight:500;color:var(--text-primary);">${o.label || o.value}</span>
         ${isActive ? '<span style="color:var(--accent-color);font-weight:bold;">✓</span>' : ''}
       </div>
     `;
@@ -612,6 +644,8 @@ function bindToolbarEvents() {
         document.getElementById('agentDurationGroup').classList.toggle('hidden', !isVid);
         document.getElementById('agentVideoModeGroup').classList.toggle('hidden', !isVid);
         document.getElementById('agentResolutionGroup').classList.toggle('hidden', isVid);
+        // 视频模式：根据当前模型刷新视频分辨率选项（含显示/隐藏）
+        renderAgentVideoResolutionList();
         return;
       }
       // 视频生成方式切换
@@ -636,11 +670,18 @@ function bindToolbarEvents() {
         renderAgentRatioGrid();
         return;
       }
-      // 分辨率选择
+      // 图片分辨率选择
       const resItem = e.target.closest('.mk-agent-res');
       if (resItem) {
         toolbarState.agentResolution = resItem.dataset.resolution;
         renderAgentResolutionList();
+        return;
+      }
+      // 视频分辨率选择
+      const vresItem = e.target.closest('.mk-agent-vres');
+      if (vresItem) {
+        toolbarState.agentVideoResolution = vresItem.dataset.vres;
+        renderAgentVideoResolutionList();
         return;
       }
       // 时长选择
@@ -656,6 +697,8 @@ function bindToolbarEvents() {
         toolbarState.agentModel = modelItem.dataset.model;
         toolbarState.agentModelKey = modelItem.dataset.key;
         renderAgentModelList();
+        // 模型切换后刷新视频分辨率选项（不同模型支持的分辨率不同）
+        renderAgentVideoResolutionList();
         return;
       }
       // LLM 模型选择
@@ -685,6 +728,8 @@ function bindToolbarEvents() {
       toolbarState.modelKey = item.dataset.key || '';
       updateToolbarUI();
       renderModelList();
+      // 模型切换后刷新视频分辨率选项
+      renderVideoResolutionMenu();
       modelPanel.classList.add('hidden');
     });
   }
@@ -728,6 +773,24 @@ function bindToolbarEvents() {
       updateToolbarUI();
       renderDurationMenu();
       durationMenu.classList.add('hidden');
+    });
+  }
+
+  const videoResolutionBtn = document.getElementById('videoResolutionBtn');
+  const videoResolutionMenuEl = document.getElementById('videoResolutionMenu');
+  if (videoResolutionBtn && videoResolutionMenuEl) {
+    videoResolutionBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      togglePanel(videoResolutionBtn, videoResolutionMenuEl);
+      closeOthers('videoResolutionMenu');
+    });
+    videoResolutionMenuEl.addEventListener('click', e => {
+      const item = e.target.closest('.mk-vres');
+      if (!item) return;
+      toolbarState.videoResolution = item.dataset.vres;
+      updateToolbarUI();
+      renderVideoResolutionMenu();
+      videoResolutionMenuEl.classList.add('hidden');
     });
   }
 
@@ -779,6 +842,18 @@ function updateToolbarUI() {
   if (durationLabel) durationLabel.textContent = toolbarState.duration + 's';
   if (durationDropdown) durationDropdown.classList.toggle('hidden', !isVideo);
   if (resolutionGroup) resolutionGroup.classList.toggle('hidden', isVideo);
+  // 视频模式分辨率下拉：仅在视频模式且当前模型支持分辨率时显示
+  const videoResolutionDropdown = document.getElementById('videoResolutionDropdown');
+  const videoResolutionLabel = document.getElementById('videoResolutionLabel');
+  if (videoResolutionDropdown) {
+    const hasVideoResOptions = (window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function')
+      ? TaskConfig.getVideoResolutionOptions(toolbarState.modelKey).length > 0
+      : false;
+    videoResolutionDropdown.classList.toggle('hidden', !(isVideo && hasVideoResOptions));
+  }
+  if (videoResolutionLabel && toolbarState.videoResolution) {
+    videoResolutionLabel.textContent = toolbarState.videoResolution;
+  }
   if (modelIconImg && modelIconVid) {
     modelIconImg.classList.toggle('hidden', isVideo);
     modelIconVid.classList.toggle('hidden', !isVideo);
@@ -808,6 +883,36 @@ function renderAgentResolutionList() {
     return `
       <div class="mk-agent-res ${isActive ? 'active' : ''}" data-resolution="${res}" style="flex:1;min-width:60px;text-align:center;padding:10px;border-radius:8px;cursor:pointer;transition:all 0.2s;font-size:14px;border:${isActive ? '2px solid var(--accent-color)' : '1px solid var(--border-color)'};background:${isActive ? 'var(--accent-light)' : '#f5f5f5'};color:${isActive ? 'var(--accent-color)' : 'var(--text-primary)'};">
         ${res === 'auto' ? '自动' : res}
+      </div>
+    `;
+  }).join('');
+}
+
+// 渲染 Agent 视频模式分辨率（根据当前视频模型动态生成，仅模型支持时显示）
+function renderAgentVideoResolutionList() {
+  const container = document.getElementById('agentVideoResolutionList');
+  if (!container) return;
+  const group = document.getElementById('agentVideoResolutionGroup');
+  const options = (window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function')
+    ? TaskConfig.getVideoResolutionOptions(toolbarState.agentModelKey)
+    : [];
+  if (!options.length) {
+    container.innerHTML = '';
+    if (group) group.classList.add('hidden');
+    toolbarState.agentVideoResolution = '';
+    return;
+  }
+  if (group) group.classList.remove('hidden');
+  if (!toolbarState.agentVideoResolution || !options.some(o => o.value === toolbarState.agentVideoResolution)) {
+    toolbarState.agentVideoResolution = (typeof TaskConfig.getDefaultVideoResolution === 'function'
+      ? TaskConfig.getDefaultVideoResolution(toolbarState.agentModelKey)
+      : null) || options[0].value;
+  }
+  container.innerHTML = options.map(o => {
+    const isActive = o.value === toolbarState.agentVideoResolution;
+    return `
+      <div class="mk-agent-vres ${isActive ? 'active' : ''}" data-vres="${o.value}" style="flex:1;min-width:60px;text-align:center;padding:10px;border-radius:8px;cursor:pointer;transition:all 0.2s;font-size:14px;border:${isActive ? '2px solid var(--accent-color)' : '1px solid var(--border-color)'};background:${isActive ? 'var(--accent-light)' : '#f5f5f5'};color:${isActive ? 'var(--accent-color)' : 'var(--text-primary)'};">
+        ${o.label || o.value}
       </div>
     `;
   }).join('');
@@ -1001,6 +1106,7 @@ function goToGenerate(prompt, options) {
     if (options.resolution) params.set('resolution', options.resolution);
     if (options.duration) params.set('duration', String(options.duration));
     if (options.video_mode) params.set('video_mode', options.video_mode);
+    if (options.video_resolution) params.set('video_resolution', options.video_resolution);
     if (options.llm_model_id) params.set('llm_model_id', String(options.llm_model_id));
     if (options.llm_vendor_id) params.set('llm_vendor_id', String(options.llm_vendor_id));
     if (options.has_media) params.set('has_media', String(options.has_media));
@@ -1176,6 +1282,7 @@ async function initPage() {
         } else {
           opts.duration = toolbarState.agentDuration;
           opts.video_mode = toolbarState.agentVideoMode;
+          opts.video_resolution = toolbarState.agentVideoResolution;
         }
         if (toolbarState.agentLLMModelId) {
           opts.llm_model_id = toolbarState.agentLLMModelId;
@@ -1191,6 +1298,7 @@ async function initPage() {
         opts.model_name = toolbarState.model;
         opts.ratio = toolbarState.ratio;
         opts.duration = toolbarState.duration;
+        opts.video_resolution = toolbarState.videoResolution;
       }
       goToGenerate(val, opts);
     });
