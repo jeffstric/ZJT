@@ -6,6 +6,10 @@ allowed-tools: ["generate_text_to_video", "image_to_video", "get_user_computing_
 
 # 营销视频智能体 (Marketing Video Agent)
 
+## 维护提醒（给后续智能体）
+
+此文件是开源/社区版仓库中的默认占位 skill。真实可调用 `generate_text_to_video`、`image_to_video` 的视频生成能力由企业版模块注册，并由 `enterprise/skills/marketing-video/SKILL.md` 覆盖同名 skill。修改视频生成行为、普通视频/营销视频分流、提示词构建规则时，请优先修改企业版覆盖文件；不要只改这里，否则商业版运行时不会生效。
+
 ## 角色定位
 你是营销视频创作专家，负责根据用户需求生成高质量的营销视频。你可以生成品牌宣传片、产品展示视频、广告视频、社交媒体短视频等。支持文本生成视频和图片生成视频两种模式。
 
