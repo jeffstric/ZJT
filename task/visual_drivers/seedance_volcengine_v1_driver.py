@@ -14,13 +14,18 @@ import json
 import uuid
 from .base_video_driver import BaseVideoDriver, ImageMode
 from config.config_util import get_config, get_dynamic_config_value
-from config.unified_config import DriverImplementation
+from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
+from config.unified_config import DriverImplementation, VideoResolution
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
 
 
 # 接口文档 https://www.volcengine.com/docs/82379/1520757?lang=zh
+
+# 各分辨率标准值 → 火山 API 下发值（统一由 VideoResolution 维护）
+SEEDANCE_RESOLUTION_DRIVER_VALUES = VideoResolution.SEEDANCE_DRIVER_VALUES
+
 
 class SeedanceVolcengineV1Driver(BaseVideoDriver):
     """
@@ -137,6 +142,16 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
         except (json.JSONDecodeError, TypeError):
             self.logger.warning(f"无法解析 extra_config: {ai_tool.extra_config}")
             return {}
+
+    def _get_resolution_for_payload(self, extra_config: Dict[str, Any]) -> Optional[str]:
+        """获取火山 API 的 resolution 参数值，优先使用新 video_resolution 字段。"""
+        resolution = (
+            extra_config.get(VIDEO_RESOLUTION_EXTRA_CONFIG_KEY)
+            or extra_config.get(LEGACY_RESOLUTION_EXTRA_CONFIG_KEY)
+        )
+        if not resolution:
+            return None
+        return SEEDANCE_RESOLUTION_DRIVER_VALUES.get(str(resolution).upper())
 
     def _validate_submit_response(self, result: Any) -> tuple[bool, Optional[str]]:
         """
@@ -400,6 +415,10 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
 
         if extra_config.get('watermark') is not None:
             payload["watermark"] = extra_config['watermark']
+
+        resolution = self._get_resolution_for_payload(extra_config)
+        if resolution:
+            payload["resolution"] = resolution
 
         ratio = extra_config.get('ratio') or ai_tool.ratio
         if ratio:

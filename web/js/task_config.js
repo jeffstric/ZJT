@@ -256,6 +256,58 @@
   }
 
   /**
+   * 获取指定模型/实现方支持的视频分辨率选项
+   * @param {string} modelKey 模型标识符
+   * @param {string} implName 实现方名称（可选）
+   * @returns {Array<{value: string, label: string}>}
+   */
+  function getVideoResolutionOptions(modelKey, implName) {
+    const task = getTaskByKey(modelKey);
+    if (!task || !task.implementations || task.implementations.length === 0) {
+      return [];
+    }
+
+    const impl = implName
+      ? task.implementations.find(item => item.name === implName)
+      : task.implementations[0];
+
+    if (!impl || !Array.isArray(impl.supported_video_resolutions)) {
+      return [];
+    }
+
+    return impl.supported_video_resolutions
+      .filter(item => item && item.value)
+      .map(item => ({
+        value: item.value,
+        label: item.label || item.value
+      }));
+  }
+
+  /**
+   * 获取默认视频分辨率
+   * @param {string} modelKey 模型标识符
+   * @param {string} implName 实现方名称（可选）
+   * @returns {string|null}
+   */
+  function getDefaultVideoResolution(modelKey, implName) {
+    const task = getTaskByKey(modelKey);
+    if (!task || !task.implementations || task.implementations.length === 0) {
+      return null;
+    }
+
+    const impl = implName
+      ? task.implementations.find(item => item.name === implName)
+      : task.implementations[0];
+
+    if (impl && impl.default_video_resolution) {
+      return impl.default_video_resolution;
+    }
+
+    const options = getVideoResolutionOptions(modelKey, implName);
+    return options.length > 0 ? options[0].value : null;
+  }
+
+  /**
    * 获取所有视频模型的时长选项（兼容旧格式）
    * @returns {Object} { modelKey: [durations] }
    */
@@ -298,7 +350,10 @@
         // 是否支持参考音频和视频
         supports_ref_audio_video: task.supports_ref_audio_video === true,
         // 多参考图模式最大图片数量
-        max_multi_ref_images: task.max_multi_ref_images || 5
+        max_multi_ref_images: task.max_multi_ref_images || 5,
+        // 视频分辨率配置
+        video_resolutions: getVideoResolutionOptions(shortKey),
+        default_video_resolution: getDefaultVideoResolution(shortKey)
       };
     });
     return result;
@@ -449,6 +504,8 @@
     getDefaultDuration,
     getDefaultRatio,
     getDefaultSize,
+    getVideoResolutionOptions,
+    getDefaultVideoResolution,
 
     // 算力
     getComputingPower,

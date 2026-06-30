@@ -25,6 +25,63 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+class VideoResolution:
+    """视频分辨率标准值与各驱动参数值映射
+
+    标准值（value / label / power_modifiers 键 / 校验 / 落库）统一使用大写常量。
+    各供应商驱动实际下发的参数值通过 SEEDANCE_DRIVER_VALUES / HAPPY_HORSE_DRIVER_VALUES 转换。
+    """
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'P480': '480P',
+        'P720': '720P',
+        'P1080': '1080P',
+        'P4K': '4K',
+    }
+
+    # 标准值（大写）
+    P480 = '480P'
+    P720 = '720P'
+    P1080 = '1080P'
+    P4K = '4K'
+
+    # 全部标准值（按档位升序）
+    ALL = [P480, P720, P1080, P4K]
+
+    # Seedance 火山驱动下发值（小写）
+    SEEDANCE_DRIVER_VALUES = {
+        P480: '480p',
+        P720: '720p',
+        P1080: '1080p',
+        P4K: '4k',
+    }
+
+    # Happy Horse 阿里云驱动下发值（直接等于标准值，仅支持 720P/1080P）
+    HAPPY_HORSE_DRIVER_VALUES = {
+        P720: P720,
+        P1080: P1080,
+    }
+
+
+# Seedance 分辨率算力倍率（基价为 720P，其余档位为相对 720P 的价格比）
+SEEDANCE_480P_PRICE_MULTIPLIER = 200880 / 432000
+SEEDANCE_2_0_1080P_PRICE_MULTIPLIER = (972000 * 31) / (432000 * 28)
+SEEDANCE_2_0_4K_PRICE_MULTIPLIER = (3888000 * 16) / (432000 * 28)
+
+# Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
+SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
+    {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+    {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+]
+
+# Seedance 2.0 标准版支持 480P / 720P / 1080P / 4K
+SEEDANCE_2_0_VIDEO_RESOLUTIONS = [
+    {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+    {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+    {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+    {'value': VideoResolution.P4K, 'label': VideoResolution.P4K},
+]
+
 
 class TaskCategory:
     """任务分类"""
@@ -173,6 +230,8 @@ class ImplementationConfig:
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
     required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
+    supported_video_resolutions: List[Dict[str, Any]] = field(default_factory=list)  # 视频分辨率选项
+    default_video_resolution: str = ''  # 默认视频分辨率 value
 
     def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
@@ -271,6 +330,8 @@ class ImplementationConfig:
             'description': self.description,
             'driver_params': self.driver_params,
             'sync_mode': self.sync_mode,
+            'supported_video_resolutions': self.supported_video_resolutions,
+            'default_video_resolution': self.default_video_resolution,
         }
 
 
@@ -509,6 +570,8 @@ class UnifiedTaskConfig:
                     'description': impl_config.description,
                     'is_default': impl_name == self.implementation,
                     'sort_order': sort_order,
+                    'supported_video_resolutions': impl_config.supported_video_resolutions,
+                    'default_video_resolution': impl_config.default_video_resolution,
                 })
 
         # 按 sort_order 排序（排序值小的在前）
@@ -1667,6 +1730,16 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_ref_audio_video=True,  # 支持参考音频和视频
         max_multi_ref_images=9,
         supports_grid_merge=True,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                },
+                default=1.0
+            )
+        ],
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO,
@@ -1692,6 +1765,18 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_ref_audio_video=True,  # 支持参考音频和视频
         max_multi_ref_images=9,
         supports_grid_merge=True,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                    VideoResolution.P1080: SEEDANCE_2_0_1080P_PRICE_MULTIPLIER,
+                    VideoResolution.P4K: SEEDANCE_2_0_4K_PRICE_MULTIPLIER,
+                },
+                default=1.0
+            )
+        ],
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
@@ -1717,6 +1802,16 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_ref_audio_video=True,  # 支持参考音频和视频
         max_multi_ref_images=9,
         supports_grid_merge=True,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                },
+                default=1.0
+            )
+        ],
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.HAPPY_HORSE_IMAGE_TO_VIDEO,
@@ -1735,6 +1830,13 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 仅支持首帧（API限制有且仅有1张）
         supports_last_frame=False,  # 不支持尾帧
         supports_ref_audio_video=False,  # 支持参考音频和视频
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P720: 1.0, VideoResolution.P1080: 1.5},
+                default=1.0
+            )
+        ],
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.HAPPY_HORSE_REFERENCE_TO_VIDEO,
@@ -1754,6 +1856,13 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_last_frame=False,  # 不支持尾帧
         supports_ref_audio_video=False,  # 不支持参考音频和视频
         max_multi_ref_images=9,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P720: 1.0, VideoResolution.P1080: 1.5},
+                default=1.0
+            )
+        ],
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.HAPPY_HORSE_TEXT_TO_VIDEO,
@@ -1769,6 +1878,13 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='16:9',
         default_duration=5,
         sort_order=43,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P720: 1.0, VideoResolution.P1080: 1.5},
+                default=1.0
+            )
+        ],
     ),
 
     # ==================== 数字人 ====================
@@ -2365,7 +2481,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='火山引擎 Seedance 2.0 Fast 图生视频接口',
         sort_order=10600.0,
-        required_config_keys=['volcengine.api_key']
+        required_config_keys=['volcengine.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='seedance_2_0_volcengine_v1',
@@ -2375,7 +2493,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='火山引擎 Seedance 2.0 图生视频接口',
         sort_order=10700.0,
-        required_config_keys=['volcengine.api_key']
+        required_config_keys=['volcengine.api_key'],
+        supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='seedance_2_0_mini_volcengine_v1',
@@ -2385,7 +2505,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='火山引擎 Seedance 2.0 Mini 图生视频接口',
         sort_order=10650.0,
-        required_config_keys=['volcengine.api_key']
+        required_config_keys=['volcengine.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
     ),
 
     # ==================== 火山引擎海外版供应商 ====================
@@ -2408,7 +2530,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='火山引擎海外版 Seedance 2.0 Fast 图生视频接口',
         sort_order=10650.0,
-        required_config_keys=['volcengine_oversea.api_key']
+        required_config_keys=['volcengine_oversea.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='seedance_2_0_volcengine_oversea_v1',
@@ -2418,7 +2542,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='火山引擎海外版 Seedance 2.0 图生视频接口',
         sort_order=10750.0,
-        required_config_keys=['volcengine_oversea.api_key']
+        required_config_keys=['volcengine_oversea.api_key'],
+        supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='seedance_2_0_mini_volcengine_oversea_v1',
@@ -2428,7 +2554,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='火山引擎海外版 Seedance 2.0 Mini 图生视频接口',
         sort_order=10680.0,
-        required_config_keys=['volcengine_oversea.api_key']
+        required_config_keys=['volcengine_oversea.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='happy_horse_dashscope_v1',
@@ -2438,7 +2566,12 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 Happy Horse 图生视频接口',
         sort_order=10800.0,
-        required_config_keys=['llm.qwen.api_key']
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='happy_horse_dashscope_r2v_v1',
@@ -2448,7 +2581,12 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 Happy Horse 参考生视频接口',
         sort_order=10810.0,
-        required_config_keys=['llm.qwen.api_key']
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
     ),
     ImplementationConfig(
         name='happy_horse_dashscope_t2v_v1',
@@ -2458,7 +2596,12 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='阿里云百炼 Happy Horse 文生视频接口',
         sort_order=10820.0,
-        required_config_keys=['llm.qwen.api_key']
+        required_config_keys=['llm.qwen.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+            {'value': VideoResolution.P1080, 'label': VideoResolution.P1080},
+        ],
+        default_video_resolution=VideoResolution.P720
     ),
 
     # ==================== 本地处理 ====================

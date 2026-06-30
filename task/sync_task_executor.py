@@ -13,11 +13,15 @@ import os
 import sys
 import time
 import uuid
+import threading
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, Future
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from typing import Dict, Optional, Any
 from multiprocessing import Manager
+
+from config.constant import get_sync_task_stale_timeout
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SyncTaskResult:
-    """同步任务结果"""
+    """Result returned by a sync task worker."""
     task_id: int
     ai_tool_type: int
     success: bool
@@ -35,13 +39,14 @@ class SyncTaskResult:
     error_type: Optional[str] = None
 
 
-def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
+def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> SyncTaskResult:
     """
     子进程入口函数 - 执行同步任务
 
     Args:
         task_id: AI工具ID
         ai_tool_type: AI工具类型
+        worker_pids: 工作进程PID字典（可选）
 
     Returns:
         SyncTaskResult: 任务执行结果
@@ -60,6 +65,11 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
     )
 
     logger.info(f"[SyncTask] Starting task {task_id} (type: {ai_tool_type})")
+    if worker_pids is not None:
+        try:
+            worker_pids[task_id] = os.getpid()
+        except Exception as exc:
+            logger.warning(f"[SyncTask] Failed to record worker pid for task {task_id}: {exc}")
 
     try:
         # 更新状态为处理中
@@ -87,7 +97,7 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
                 task_id=task_id,
                 ai_tool_type=ai_tool_type,
                 success=False,
-                error="任务不存在",
+                error="task not found",
                 error_type="SYSTEM"
             )
 
@@ -127,7 +137,7 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
 
         # 处理提交结果
         if not result.get("success"):
-            error = result.get("error", "未知错误")
+            error = result.get("error", "unknown error")
             error_type = result.get("error_type", "SYSTEM")
             logger.error(f"[SyncTask] Task {task_id} failed: {error}")
             return SyncTaskResult(
@@ -173,7 +183,7 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
             task_id=task_id,
             ai_tool_type=ai_tool_type,
             success=False,
-            error="异步模式任务不应提交到同步执行器",
+            error="async mode task submitted to sync executor",
             error_type="SYSTEM"
         )
 
@@ -196,7 +206,6 @@ class SyncTaskExecutor:
 
     管理进程池生命周期，处理同步API请求
     """
-
     _instance: Optional['SyncTaskExecutor'] = None
     _lock = multiprocessing.Lock()
 
@@ -215,14 +224,21 @@ class SyncTaskExecutor:
         self._executor: Optional[ProcessPoolExecutor] = None
         self._futures: Dict[int, Future] = {}  # task_id -> Future
         self._results: Dict[int, SyncTaskResult] = {}  # task_id -> result
+        self._submit_times: Dict[int, float] = {}
+        self._task_drivers: Dict[int, str] = {}
+        self._task_types: Dict[int, int] = {}
+        self._manager = None
+        self._worker_pids: Dict[int, int] = {}
+        self._pool_broken = False
         self._running = False
+        self._state_lock = threading.RLock()
 
         # 配置参数
         self._max_workers = self._get_max_workers()
         self._check_interval = self._get_check_interval()
 
     def _get_max_workers(self) -> int:
-        """获取进程池最大并发数"""
+        """Return the configured maximum number of sync workers."""
         try:
             from config.config_util import get_dynamic_config_value
             return get_dynamic_config_value("sync_task", "max_workers", default=4)
@@ -230,26 +246,48 @@ class SyncTaskExecutor:
             return 4
 
     def _get_check_interval(self) -> int:
-        """获取结果检查间隔（秒）"""
+        """Return the result check interval in seconds."""
         try:
             from config.config_util import get_dynamic_config_value
             return get_dynamic_config_value("sync_task", "check_interval", default=5)
         except Exception:
             return 5
 
-    def start(self) -> bool:
-        """
-        启动同步任务执行器
+    def _is_stale_detection_enabled(self) -> bool:
+        try:
+            from config.config_util import get_dynamic_config_value
 
-        Returns:
-            bool: 是否启动成功
-        """
+            value = get_dynamic_config_value("sync_task", "stale_detection_enabled", default=True)
+            return self._parse_bool_config(value, default=True)
+        except Exception:
+            return True
+
+    @staticmethod
+    def _parse_bool_config(value, default: bool = True) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"", "0", "false", "no", "off", "none", "null"}:
+                return False
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            return default
+        return bool(value)
+
+    def start(self) -> bool:
+        """Start the sync task executor."""
         if self._running:
             logger.warning("[SyncTaskExecutor] Already running")
             return True
 
         try:
+            self._manager = Manager()
+            self._worker_pids = self._manager.dict()
             self._executor = ProcessPoolExecutor(max_workers=self._max_workers)
+            self._pool_broken = False
             self._running = True
             logger.info(f"[SyncTaskExecutor] Started with max_workers={self._max_workers}")
             return True
@@ -258,12 +296,7 @@ class SyncTaskExecutor:
             return False
 
     def shutdown(self, wait: bool = True) -> None:
-        """
-        关闭同步任务执行器
-
-        Args:
-            wait: 是否等待所有任务完成
-        """
+        """Shut down the sync task executor."""
         if not self._running:
             return
 
@@ -274,85 +307,254 @@ class SyncTaskExecutor:
             self._executor = None
 
         self._futures.clear()
+        self._submit_times.clear()
+        self._task_drivers.clear()
+        self._task_types.clear()
+        self._worker_pids.clear()
+        if self._manager:
+            try:
+                self._manager.shutdown()
+            except Exception as exc:
+                logger.warning(f"[SyncTaskExecutor] Failed to shutdown manager: {exc}")
+            self._manager = None
+        self._pool_broken = False
         logger.info("[SyncTaskExecutor] Shutdown complete")
 
     def is_running(self) -> bool:
-        """检查执行器是否运行中"""
+        """Return whether the executor is running."""
         return self._running and self._executor is not None
 
     def is_task_running(self, task_id: int) -> bool:
-        """
-        检查指定任务是否正在同步执行器中运行
-        
-        Args:
-            task_id: AI工具ID
-            
-        Returns:
-            bool: 任务是否正在运行中
-        """
+        """Return whether a task is tracked by this executor."""
+        return task_id in self._futures
         return task_id in self._futures
 
-    def submit(self, task_id: int, ai_tool_type: int) -> bool:
+    def _rebuild_pool_locked(self) -> None:
+        old_executor = self._executor
+        if old_executor:
+            try:
+                old_executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                old_executor.shutdown(wait=False)
+            except Exception as exc:
+                logger.warning(f"[SyncTaskExecutor] Error shutting down broken pool: {exc}")
+
+        self._executor = ProcessPoolExecutor(max_workers=self._max_workers)
+        self._pool_broken = False
+        logger.warning("[SyncTaskExecutor] Process pool rebuilt")
+
+    def _cleanup_task_metadata(self, task_id: int) -> None:
+        self._futures.pop(task_id, None)
+        self._submit_times.pop(task_id, None)
+        self._task_drivers.pop(task_id, None)
+        self._task_types.pop(task_id, None)
+        self._worker_pids.pop(task_id, None)
+
+    def _terminate_worker_for_task(self, task_id: int) -> bool:
+        pid = self._worker_pids.get(task_id)
+        if not pid:
+            return False
+        try:
+            from utils.process_utils import terminate_worker_process
+
+            return terminate_worker_process(pid, grace_seconds=2.0)
+        except Exception as exc:
+            logger.error(f"[SyncTaskExecutor] Failed to terminate worker pid={pid} task={task_id}: {exc}")
+            return False
+
+    def _kill_stale_worker(
+        self,
+        task_id: int,
+        driver: str,
+        elapsed: float,
+        refund: bool = True,
+    ) -> Optional[SyncTaskResult]:
+        ai_tool_type = self._task_types.get(task_id)
+        logger.error(
+            "[SyncTaskExecutor] Killing stale sync task task_id=%s driver=%s elapsed=%.0fs refund=%s",
+            task_id,
+            driver,
+            elapsed,
+            refund,
+        )
+        future = self._futures.get(task_id)
+        terminated = self._terminate_worker_for_task(task_id)
+        cancelled = False
+        if future is not None:
+            try:
+                cancelled = future.cancel()
+            except Exception as exc:
+                logger.warning("[SyncTaskExecutor] Failed to cancel stale future task_id=%s: %s", task_id, exc)
+
+        if not terminated and not cancelled:
+            logger.error(
+                "[SyncTaskExecutor] Stale task task_id=%s was not released; keep future for next check",
+                task_id,
+            )
+            return None
+
+        self._cleanup_task_metadata(task_id)
+        if terminated:
+            self._pool_broken = True
+
+        if not refund:
+            return None
+        return SyncTaskResult(
+            task_id=task_id,
+            ai_tool_type=ai_tool_type or 0,
+            success=False,
+            error=f"stale timeout after {elapsed:.0f}s",
+            error_type="SYSTEM",
+        )
+
+    def force_release_task(self, task_id: int, refund: bool = False) -> bool:
+        result = None
+        with self._state_lock:
+            if task_id not in self._futures:
+                return False
+            driver = self._task_drivers.get(task_id, "unknown")
+            submitted_at = self._submit_times.get(task_id)
+            elapsed = time.time() - submitted_at if submitted_at else -1
+            result = self._kill_stale_worker(task_id, driver, elapsed, refund=refund)
+            released = task_id not in self._futures
+        if result:
+            self._safe_handle_task_result(result)
+        return released
+
+    def submit(self, task_id: int, ai_tool_type: int, implementation_name: str = None) -> bool:
         """
         提交同步任务到进程池
 
         Args:
             task_id: AI工具ID
             ai_tool_type: AI工具类型
+            implementation_name: 实现方名称（可选）
 
         Returns:
             bool: 是否提交成功
         """
-        if not self.is_running():
-            logger.error("[SyncTaskExecutor] Executor not running")
-            return False
+        with self._state_lock:
+            if self._pool_broken and self._running:
+                self._rebuild_pool_locked()
 
-        if task_id in self._futures:
-            logger.warning(f"[SyncTaskExecutor] Task {task_id} already submitted")
-            return False
+            if not self.is_running():
+                logger.error("[SyncTaskExecutor] Executor not running")
+                return False
 
-        try:
-            future = self._executor.submit(_execute_sync_task, task_id, ai_tool_type)
-            self._futures[task_id] = future
-            logger.info(f"[SyncTaskExecutor] Submitted task {task_id}")
-            return True
-        except Exception as e:
-            logger.error(f"[SyncTaskExecutor] Failed to submit task {task_id}: {e}")
-            return False
+            if task_id in self._futures:
+                logger.warning(f"[SyncTaskExecutor] Task {task_id} already submitted")
+                return False
+
+            try:
+                future = self._executor.submit(_execute_sync_task, task_id, ai_tool_type, self._worker_pids)
+                self._futures[task_id] = future
+                self._submit_times[task_id] = time.time()
+                self._task_drivers[task_id] = implementation_name or "unknown"
+                self._task_types[task_id] = ai_tool_type
+                logger.info(
+                    "[SyncTaskExecutor] Submitted task %s implementation=%s",
+                    task_id,
+                    implementation_name,
+                )
+                return True
+            except BrokenProcessPool as e:
+                self._pool_broken = True
+                logger.error(f"[SyncTaskExecutor] Process pool broken while submitting task {task_id}: {e}")
+                return False
+            except Exception as e:
+                logger.error(f"[SyncTaskExecutor] Failed to submit task {task_id}: {e}")
+                return False
 
     def check_results(self) -> None:
         """
         检查已完成任务的结果并处理
         """
-        if not self._futures:
-            return
+        failure_results = []
 
-        completed_task_ids = []
+        with self._state_lock:
+            if not self._futures:
+                return
 
-        for task_id, future in self._futures.items():
-            if future.done():
+            completed_task_ids = []
+            now = time.time()
+            stale_detection_enabled = self._is_stale_detection_enabled()
+
+            for task_id, future in list(self._futures.items()):
+                if not future.done():
+                    if not stale_detection_enabled:
+                        continue
+                    driver = self._task_drivers.get(task_id, "unknown")
+                    stale_timeout = get_sync_task_stale_timeout(driver)
+                    submitted_at = self._submit_times.get(task_id, now)
+                    elapsed = now - submitted_at
+                    if stale_timeout is not None and elapsed >= stale_timeout:
+                        result = self._kill_stale_worker(task_id, driver, elapsed, refund=True)
+                        if result:
+                            failure_results.append(result)
+                    continue
+
                 completed_task_ids.append(task_id)
                 try:
-                    result = future.result()
-                    self._handle_task_result(result)
+                    result = future.result(timeout=0)
+                    failure_results.append(result)
+                except BrokenProcessPool as e:
+                    self._pool_broken = True
+                    logger.error(f"[SyncTaskExecutor] BrokenProcessPool while reading task {task_id}: {e}")
+                    result = SyncTaskResult(
+                        task_id=task_id,
+                        ai_tool_type=self._task_types.get(task_id, 0),
+                        success=False,
+                        error=str(e),
+                        error_type="SYSTEM",
+                    )
+                    failure_results.append(result)
                 except Exception as e:
                     logger.error(f"[SyncTaskExecutor] Task {task_id} raised exception: {e}")
-                    try:
-                        self._handle_task_failure(task_id, str(e))
-                    except Exception as e2:
-                        logger.error(f"[SyncTaskExecutor] Failed to handle failure for task {task_id}: {e2}")
-                        # 最后兜底：确保 status 被更新，防止任务永久卡在 PROCESSING
-                        try:
-                            from model import AIToolsModel, TasksModel
-                            from config.constant import AI_TOOL_STATUS_FAILED, TASK_STATUS_FAILED
-                            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=f"系统异常: {str(e)}", completed_time=datetime.now())
-                            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
-                        except Exception as e3:
-                            logger.critical(f"[SyncTaskExecutor] CRITICAL: Cannot update status for task {task_id}: {e3}")
+                    result = SyncTaskResult(
+                        task_id=task_id,
+                        ai_tool_type=self._task_types.get(task_id, 0),
+                        success=False,
+                        error=str(e),
+                        error_type="SYSTEM",
+                    )
+                    failure_results.append(result)
+                    continue
 
-        # 清理已完成的future
-        for task_id in completed_task_ids:
-            del self._futures[task_id]
+            # 清理已完成的future
+            for task_id in completed_task_ids:
+                self._cleanup_task_metadata(task_id)
+
+        for result in failure_results:
+            self._safe_handle_task_result(result)
+
+    def _safe_handle_task_result(self, result: SyncTaskResult) -> None:
+        handling_error = None
+        try:
+            self._handle_task_result(result)
+            return
+        except Exception as exc:
+            handling_error = exc
+            logger.error(
+                "[SyncTaskExecutor] Failed to handle result for task %s: %s",
+                result.task_id,
+                exc,
+                exc_info=True,
+            )
+
+        try:
+            self._handle_task_failure(
+                result.task_id,
+                str(handling_error),
+                "SYSTEM",
+                result.ai_tool_type,
+            )
+        except Exception as fallback_exc:
+            logger.critical(
+                "[SyncTaskExecutor] CRITICAL: fallback failure handling failed for task %s: %s",
+                result.task_id,
+                fallback_exc,
+                exc_info=True,
+            )
 
     def _handle_task_result(self, result: SyncTaskResult) -> None:
         """
@@ -438,14 +640,24 @@ class SyncTaskExecutor:
         logger.info(f"[SyncTaskExecutor] Task {task_id} marked as failed: {error}")
 
     def get_pending_count(self) -> int:
-        """获取待处理任务数量"""
+        """Return the number of tracked futures."""
         return len(self._futures)
+
+    def get_metrics(self) -> Dict[str, Any]:
+        oldest_submit_age = 0
+        if self._submit_times:
+            oldest_submit_age = time.time() - min(self._submit_times.values())
+        return {
+            "running": self.is_running(),
+            "pending_count": len(self._futures),
+            "pool_broken": self._pool_broken,
+            "oldest_submit_age": oldest_submit_age,
+            "worker_pids": dict(self._worker_pids),
+        }
 
 
 def process_sync_task_results():
-    """
-    处理已完成的同步任务结果 - 供调度器调用
-    """
+    """Process completed sync task results."""
     executor = SyncTaskExecutor.get_instance()
     if executor.is_running():
         executor.check_results()
@@ -453,7 +665,7 @@ def process_sync_task_results():
 
 # 单例获取方法
 def get_sync_task_executor() -> SyncTaskExecutor:
-    """获取同步任务执行器单例"""
+    """Return the singleton sync task executor."""
     return SyncTaskExecutor.get_instance()
 
 

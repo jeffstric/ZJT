@@ -389,6 +389,9 @@
             if (authToken) {
               form.append('auth_token', authToken);
             }
+            if (typeof appendVideoResolutionToForm === 'function') {
+              appendVideoResolutionToForm(form, getDigitalHumanModelKey());
+            }
 
             var res = await fetch('/api/ai-app-run-image', {
               method: 'POST',

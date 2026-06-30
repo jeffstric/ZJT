@@ -118,6 +118,24 @@ next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
 - **status = 2**: 处理完成（成功）
 - **status = -1**: 处理失败
 
+## 同步任务进程池恢复
+
+部分同步实现方会通过 `task/sync_task_executor.py` 进入独立 `ProcessPoolExecutor`，避免同步 API 请求阻塞主调度器。任务提交成功后：
+
+- `ai_tools.status = SYNC_QUEUED`
+- `tasks.status = SYNC_QUEUED`
+
+执行器保存 task id、implementation、提交时间和 future。结果检查时：
+
+- 已完成 future 使用 `future.result(timeout=0)` 读取结果。
+- 未完成 future 只对配置了 `sync_task.stale_timeout.<implementation>` 的白名单实现做 stale 检测。
+- 默认不 kill 未配置 timeout 的实现，避免误杀 GPT/Gemini 等合法长耗时任务。
+- Seedance、RunningHub、Happy Horse 等提交后轮询的异步任务不属于 SyncTask stale future 回收范围。
+
+stale timeout 触发时，执行器会释放对应 future/worker，标记进程池需要重建，并进入统一失败处理。如果 before_finish 或备用实现方重试接管，则保持原扣费继续重试；只有最终终态失败才退款。
+
+孤儿恢复与 stale timeout 不同。调度器启动或恢复 processing orphan 时，会先调用 `force_release_task(..., refund=False)` 释放执行器内残留 future/worker，再把数据库状态重置回 `PENDING / QUEUED`。该路径不退款，避免“退款后继续重试”的免费重执行。
+
 ## 日志输出
 
 系统会输出详细的任务处理日志：

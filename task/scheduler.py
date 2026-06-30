@@ -213,12 +213,24 @@ def _reset_orphan_processing_tasks():
         orphan_ids = [row['id'] for row in orphan_rows]
         logger.info(f"Found {len(orphan_ids)} orphan processing tasks: {orphan_ids}")
 
-        # 2. 重置 ai_tools 表
+        # 2. 先释放同步执行器中可能残留的 future/worker，不退款，不改 FAILED。
+        try:
+            from task.sync_task_executor import SyncTaskExecutor
+
+            executor = SyncTaskExecutor.get_instance()
+            if executor.is_running():
+                for tid in orphan_ids:
+                    if executor.force_release_task(tid, refund=False):
+                        logger.info(f"Force released orphan sync future without refund for task {tid}")
+        except Exception as exc:
+            logger.error(f"Failed to release orphan futures: {exc}")
+
+        # 3. 重置 ai_tools 表
         placeholders = ','.join(['%s'] * len(orphan_ids))
         ai_tools_sql = f"UPDATE ai_tools SET status = %s, update_time = NOW() WHERE id IN ({placeholders})"
         ai_tools_count = execute_update(ai_tools_sql, (AI_TOOL_STATUS_PENDING, *orphan_ids))
 
-        # 3. 重置 tasks 表（task_id 对应 ai_tools.id）
+        # 4. 重置 tasks 表（task_id 对应 ai_tools.id）
         tasks_sql = f"UPDATE tasks SET status = %s, next_trigger = NOW() WHERE task_id IN ({placeholders}) AND status = %s"
         tasks_count = execute_update(tasks_sql, (TASK_STATUS_QUEUED, *orphan_ids, TASK_STATUS_PROCESSING))
 

@@ -172,6 +172,10 @@ pay:
 sync_task:
   max_workers: 4
   check_interval: 5
+  stale_detection_enabled: true
+  stale_timeout:
+    seedream5_volcengine_v1: 180
+    seedream5_volcengine_oversea_v1: 180
 
 # Edition mode
 edition:
