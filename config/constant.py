@@ -390,6 +390,15 @@ IMAGE_EDIT_TYPES = TaskTypeRegistry.get_by_category(TaskCategory.IMAGE_EDIT)
 # RunningHub 平台任务类型列表（已废弃）
 RUNNINGHUB_TASK_TYPES = TaskTypeRegistry.get_by_provider(TaskProvider.RUNNINGHUB)
 
+# RunningHub 上游并发超限（队列上限）错误码
+# RunningHub 服务端在账号并发达上限时返回该 errorCode，判定为「上游拥堵」可重试错误，
+# 触发自动延迟重试（不消耗用户重试次数、不退算力）
+RUNNINGHUB_QUEUE_LIMIT_ERROR_CODE = '421'
+
+# RunningHub 上游拥堵自动重试的默认延迟（秒）
+# 可通过动态配置 runninghub.upstream_congest_retry_delay 覆盖
+RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
+
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 

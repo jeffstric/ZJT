@@ -26,7 +26,8 @@ from config.constant import (
     TASK_STATUS_SYNC_QUEUED,
     TASK_STATUS_WAITING_PARAM_PREPARE,
     TASK_STATUS_WAITING_BEFORE_FINISH,
-    RUNNINGHUB_TASK_TYPES
+    RUNNINGHUB_TASK_TYPES,
+    RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage
 
@@ -360,6 +361,25 @@ async def _submit_new_task(ai_tool):
             if error_detail:
                 logger.error(f"Error detail: {error_detail}")
             
+            # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
+            # 释放本地槽位、状态回 QUEUED、延迟重试，不消耗 try_count、不退算力、不切换实现方。
+            # 复用本地槽位满的延迟出队机制（list_by_type_and_status 带 next_trigger <= NOW 过滤）。
+            if result.get("retry") and result.get("retry_reason") == "UPSTREAM_CONGESTED" \
+                    and ai_tool_type in RUNNINGHUB_TASK_TYPES:
+                rh_task = TasksModel.get_by_task_id(task_id)
+                if rh_task:
+                    RunningHubSlotsModel.release_slot(rh_task.id, source=RunningHubSlot.SOURCE_TASK)
+                delay = get_dynamic_config_value(
+                    "runninghub", "upstream_congest_retry_delay",
+                    default=RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
+                )
+                next_trigger = datetime.now() + timedelta(seconds=delay)
+                TasksModel.update_by_task_id(
+                    task_id, status=TASK_STATUS_QUEUED, next_trigger=next_trigger
+                )
+                logger.info(f"Task {task_id} upstream congested, re-queued, will retry in {delay}s")
+                return True  # 返回 True → 外层 process_task_with_retry 不增加 try_count
+
             # 处理需要重试的情况（通常是网络异常）
             if result.get("retry"):
                 logger.warning(f"Task {task_id} will retry later due to network error")

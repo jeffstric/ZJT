@@ -7133,7 +7133,7 @@
           暂无历史记录
         </div>
         <div v-else style="padding: 16px;">
-          <div v-for="item in historyList" :key="item.id" style="margin-bottom: 16px; padding: 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 8px;">
+          <div v-for="(item, idx) in historyList" :key="item.id" style="margin-bottom: 16px; padding: 12px; background: #0b1220; border: 1px solid var(--border); border-radius: 8px;">
             <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
               <div>
                 <strong>提示词:</strong> {{ item.prompt }}
@@ -7167,9 +7167,10 @@
                 </template>
               </div>
             </div>
-            <div v-if="item.result_url" style="margin-top: 8px;">
-              <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">查看结果</a>
-              <button v-if="item.status == 2 && item.type == 3" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="margin-left: 8px;">
+            <div v-if="item.result_url" style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+              <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">{{ $t('btn_view') || '查看' }}</a>
+              <button class="btn secondary" @click="downloadVideo(item.result_url, idx)">{{ $t('btn_download') || '下载' }}</button>
+              <button v-if="item.status == 2 && item.type == 3" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]">
                 {{ enhancingVideos[item.id] ? '已修复' : '生成高清视频' }}
               </button>
             </div>

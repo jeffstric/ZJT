@@ -10,6 +10,7 @@ import traceback
 from datetime import datetime
 import httpx
 from utils.logger_config import DailyFileHandler
+from utils.runninghub_error import is_upstream_congested_error
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,14 @@ class BaseAsyncDriver(ABC):
 
                 if not result.get('success'):
                     RunningHubSlotsModel.release_slot(async_task_id, source=RunningHubSlot.SOURCE_ASYNC)
+                    # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
+                    # 安排延迟重试，不标记 FAILED（复用异步侧指数退避，与本地槽位满处理一致）
+                    if result.get('retry_reason') == 'UPSTREAM_CONGESTED' or \
+                            is_upstream_congested_error(result.get('error_code', '')):
+                        delay = self._calculate_retry_delay(0)
+                        AsyncTasksModel.schedule_retry(async_task_id, delay)
+                        logger.info(f"上游拥堵，异步任务 {async_task_id} 将在 {delay}s 后重试")
+                        return {**result, 'async_task_id': async_task_id}
                     AsyncTasksModel.update_status(
                         record_id=async_task_id,
                         status=AsyncTaskStatus.FAILED,
