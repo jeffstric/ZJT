@@ -120,6 +120,14 @@
                         <span>{{ t('nav_commission') }}</span>
                     </a>
                 </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'taskTimeline' }" @click.prevent="switchPage('taskTimeline')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>{{ t('nav_task_timeline') }}</span>
+                    </a>
+                </li>
             </ul>
         </aside>
 
@@ -137,6 +145,7 @@
                 <h2 v-else-if="currentPage === 'constants'">{{ t('nav_constants') }}</h2>
                 <h2 v-else-if="currentPage === 'marketingPublications'">{{ t('nav_marketing_publications') }}</h2>
                 <h2 v-else-if="currentPage === 'commission'">{{ t('nav_commission') }}</h2>
+                <h2 v-else-if="currentPage === 'taskTimeline'">{{ t('nav_task_timeline') }}</h2>
 
                 <div class="admin-user">
                     <span class="admin-user-name">{{ maskedPhone }}</span>
@@ -1259,6 +1268,64 @@
                         <button class="page-btn" @click="goToCommissionPage(commission.page + 1)" :disabled="commission.page >= commissionTotalPages">{{ t('page_next') }}</button>
                         <button class="page-btn" @click="goToCommissionPage(commissionTotalPages)" :disabled="commission.page >= commissionTotalPages">{{ t('page_last') }}</button>
                     </div>
+                </div>
+            </section>
+
+            <!-- 任务时间线 -->
+            <section v-if="currentPage === 'taskTimeline'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>{{ t('task_timeline') }}<span v-if="taskTimeline.meta && taskTimeline.meta.ai_tool_id" style="font-weight: 400; color: var(--muted); font-size: 14px; margin-left: 8px;">ai_tool_id: {{ taskTimeline.meta.ai_tool_id }}</span></h3>
+                    </div>
+                    <div class="table-filters">
+                        <select class="filter-select" v-model="taskTimeline.queryType">
+                            <option value="project_id">{{ t('timeline_query_by_project_id') }}</option>
+                            <option value="ai_tool_id">{{ t('timeline_query_by_ai_tool_id') }}</option>
+                        </select>
+                        <input class="filter-input" type="text" v-model="taskTimeline.keyword" :placeholder="taskTimeline.queryType === 'project_id' ? t('timeline_placeholder_project_id') : t('timeline_placeholder_ai_tool_id')" @keyup.enter="loadTaskTimeline" style="flex: 1; min-width: 260px;" />
+                        <button class="filter-btn" @click="loadTaskTimeline" :disabled="taskTimeline.loading">{{ taskTimeline.loading ? t('loading') : t('search') }}</button>
+                    </div>
+
+                    <div v-if="taskTimeline.error" class="status danger" style="margin: 12px 0;">{{ taskTimeline.error }}</div>
+
+                    <div v-if="taskTimeline.meta" style="margin: 8px 0; font-size: 13px; color: var(--muted);">
+                        ai_tool_id: <strong>{{ taskTimeline.meta.ai_tool_id }}</strong>
+                        <span v-if="taskTimeline.meta.project_id">　|　project_id: <strong>{{ taskTimeline.meta.project_id }}</strong></span>
+                        <span v-if="taskTimeline.meta.status != null">　|　status: <strong>{{ taskTimeline.meta.status }}</strong></span>
+                    </div>
+
+                    <div v-if="!taskTimeline.loading && taskTimeline.list.length === 0 && !taskTimeline.error" style="padding: 40px; text-align: center; color: var(--muted);">
+                        {{ t('no_timeline_records') }}
+                    </div>
+
+                    <table v-if="taskTimeline.list.length" class="admin-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 160px;">{{ t('timeline_col_time') }}</th>
+                                <th style="width: 140px;">{{ t('event') }}</th>
+                                <th>{{ t('timeline_col_message') }}</th>
+                                <th style="width: 100px;">{{ t('timeline_col_duration') }}</th>
+                                <th style="width: 80px;">{{ t('timeline_col_detail') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template v-for="(ev, idx) in taskTimeline.list" :key="idx">
+                                <tr>
+                                    <td style="font-family: monospace; font-size: 12px;">{{ ev.create_at }}</td>
+                                    <td><span class="provider-impl-id">{{ timelineEventLabel(ev.event_type) }}</span></td>
+                                    <td style="font-size: 13px;">{{ ev.message }}</td>
+                                    <td style="font-size: 12px;">{{ ev.duration_ms != null ? ev.duration_ms + 'ms' : '-' }}</td>
+                                    <td>
+                                        <a v-if="ev.detail && Object.keys(ev.detail).length" href="javascript:void(0)" @click="toggleTimelineDetail(idx)">{{ taskTimeline.expandedIdx === idx ? t('collapse') : t('view') }}</a>
+                                        <span v-else>-</span>
+                                    </td>
+                                </tr>
+                                <tr v-if="taskTimeline.expandedIdx === idx && ev.detail && Object.keys(ev.detail).length">
+                                    <td colspan="5" style="background: var(--admin-bg-alt, #f8fafc);"><pre style="margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-all;">{{ JSON.stringify(ev.detail, null, 2) }}</pre></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
                 </div>
             </section>
         </main>

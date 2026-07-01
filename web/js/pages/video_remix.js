@@ -18,6 +18,7 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        timelineAiToolId: null,
         statusInterval: null,
       }
     },
@@ -389,6 +390,9 @@
               </div>
               <div style="font-size: 11px; color: var(--muted); margin-top: 8px;">
                 {{ $t('created_time_display') || '创建时间' }}: {{ new Date(item.create_time).toLocaleString() }}
+              <div style="margin-top: 8px;">
+                <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>
+              </div>
               </div>
             </div>
             <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
@@ -396,6 +400,7 @@
             </div>
           </div>
         </div>
+        <timeline-modal v-if="timelineAiToolId" :ai-tool-id="timelineAiToolId" @close="timelineAiToolId = null"></timeline-modal>
       </div>
     `
   };

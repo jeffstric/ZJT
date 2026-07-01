@@ -16,6 +16,19 @@ import json
 logger = logging.getLogger(__name__)
 
 
+def _log_event(ai_tool_id, event_type, **kwargs):
+    """写入事件日志的薄封装（延迟导入避免循环依赖；best-effort，绝不抛异常）"""
+    try:
+        from .ai_tools_log import AIToolsLogModel
+        AIToolsLogModel.log(ai_tool_id, event_type, **kwargs)
+    except Exception:
+        pass
+
+
+# 事件类型常量（延迟导入，避免模块加载阶段循环依赖）
+from .ai_tools_log import AIToolsLogEvent  # noqa: E402
+
+
 class AITool:
     """AI Tool model class"""
 
@@ -138,6 +151,10 @@ class AIToolsModel:
         try:
             record_id = execute_insert(sql, params)
             logger.info(f"Created AI tool record with ID: {record_id}")
+            _log_event(record_id, AIToolsLogEvent.RECORD_CREATED, user_id=user_id,
+                       project_id=project_id, status_to=status, implementation=implementation,
+                       message="ai_tools 记录创建",
+                       detail={'type': type, 'ratio': ratio, 'duration': duration})
             return record_id
         except Exception as e:
             logger.error(f"Failed to create AI tool record: {e}")
@@ -274,10 +291,17 @@ class AIToolsModel:
                         if created_image_steps:
                             logger.info(f"Created {created_image_steps} image_face_mask pipeline steps for ai_tool {ai_tool_id}")
 
-                return ai_tool_id
+                committed_ai_tool_id = ai_tool_id
         except Exception as e:
             logger.error(f"Failed to create AI tool record with pipeline steps: {e}")
             raise
+
+        # 事务提交后再写日志（独立连接，不随业务回滚）
+        _log_event(committed_ai_tool_id, AIToolsLogEvent.RECORD_CREATED, user_id=user_id,
+                   project_id=project_id, status_to=status, implementation=implementation,
+                   message="ai_tools 记录创建（含流水线步骤）",
+                   detail={'type': type, 'ratio': ratio, 'duration': duration})
+        return committed_ai_tool_id
 
     @staticmethod
     def get_by_id(record_id: int) -> Optional[AITool]:
@@ -575,7 +599,13 @@ class AIToolsModel:
         if result_url is not None:
             kwargs['result_url'] = result_url
 
-        return AIToolsModel.update(record_id, **kwargs)
+        affected = AIToolsModel.update(record_id, **kwargs)
+        if media_mapping_id is not None:
+            _log_event(record_id, AIToolsLogEvent.CDN_UPLOADED,
+                       user_id=kwargs.get('user_id'),
+                       message="CDN 上传完成",
+                       detail={'mapping_id': media_mapping_id, 'result_url': result_url})
+        return affected
 
     @staticmethod
     def update_by_project_id(
@@ -714,7 +744,14 @@ class AIToolsModel:
         if result_url is not None:
             kwargs['result_url'] = result_url
 
-        return AIToolsModel.update_by_project_id(project_id, **kwargs)
+        affected = AIToolsModel.update_by_project_id(project_id, **kwargs)
+        if media_mapping_id is not None:
+            _log_event(record_id, AIToolsLogEvent.CDN_UPLOADED,
+                       project_id=project_id,
+                       user_id=kwargs.get('user_id') or tool.user_id,
+                       message="CDN 上传完成",
+                       detail={'mapping_id': media_mapping_id, 'result_url': result_url})
+        return affected
 
     @staticmethod
     def delete(record_id: int) -> int:

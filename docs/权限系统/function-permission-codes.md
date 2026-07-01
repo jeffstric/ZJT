@@ -89,7 +89,6 @@
 - **AI视频生成** - `video:ai_generate`
 - **图片生成视频** - `video:image_to_video`
 - **视频高清修复** - `video:enhance`
-- **视频Remix** - `video:remix`
 - **查看视频状态** - `video:view_status`
 - **查看视频历史** - `video:view_history`
 

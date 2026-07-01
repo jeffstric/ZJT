@@ -15,6 +15,7 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        timelineAiToolId: null
       }
     },
     mounted() {
@@ -327,10 +328,14 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <button class="btn secondary" @click="downloadHistoryVideo(item, idx)" style="display: inline-block; text-decoration: none; margin-top: 8px;">{{ $t('download_enhanced_video') || '下载修复视频' }}</button>
                 </div>
+                <div style="margin-top: 8px;">
+                  <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>
+                </div>
               </div>
             </div>
           </div>
         </div>
+        <timeline-modal v-if="timelineAiToolId" :ai-tool-id="timelineAiToolId" @close="timelineAiToolId = null"></timeline-modal>
       </div>
     `,
   };
