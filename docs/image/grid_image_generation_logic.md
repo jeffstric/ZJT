@@ -46,7 +46,7 @@ APScheduler 每 10 秒轮询 (task/scheduler.py)
 process_grid_image_tasks (task/grid_image_task.py)
     |
     v
-GET /api/get-status/{project_id}
+GET /api/get-status/{ai_tool_id}
     |
     v
 SUCCESS → 下载大图 → ImageGridSplitter 切分 2x2
@@ -234,13 +234,13 @@ cron_task_manager: item_type==7 分支
 4. 创建数据库记录：`AIToolsModel.create`、`TasksModel.create`
 5. 返回 `{"project_ids": [...]}`
 
-### GET /api/get-status/{project_id}
+### GET /api/get-status/{ai_tool_id}
 
 **用途**：后台调度器轮询查询任务状态
 
 **请求**：
 ```
-GET {comfyui_base_url}/api/get-status/{project_id}?auth_token={auth_token}
+GET {comfyui_base_url}/api/get-status/{ai_tool_id}?auth_token={auth_token}
 ```
 
 **响应关键字段**：
@@ -344,7 +344,7 @@ scheduler.add_job(
    - `try_count += 1`
    - 若 `try_count > max_attempts`（默认 60，约 10 分钟），标记为 `TIMEOUT`
    - 第一次尝试时更新状态为 `PROCESSING`
-   - 发送 HTTP GET 查询 `/api/get-status/{project_id}?auth_token={auth_token}`
+   - 发送 HTTP GET 查询 `/api/get-status/{ai_tool_id}?auth_token={auth_token}`
    - **SUCCESS** → 调用 `_handle_task_success(task, comfyui_task_data)`
    - **FAILED** → 记录 `reason`，更新为 `FAILED`
    - 网络异常（`requests.RequestException`）→ **不更新状态**，下次轮询继续重试
@@ -607,7 +607,7 @@ grid_image_tasks 标记为终态 FAILED
 
 | 文件 | 说明 |
 |---|---|
-| `server.py` | `POST /api/text-to-image`、`GET /api/get-status/{project_id}` |
+| `server.py` | `POST /api/text-to-image`、`GET /api/get-status/{ai_tool_id}` |
 | `api/script_writer.py` | FastAPI Router，Agent 任务入口 |
 
 ### 数据模型

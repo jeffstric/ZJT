@@ -303,11 +303,12 @@ class PipelineProcessor:
         waiting_steps = PipelineStepModel.get_all_waiting_steps(limit=50)
         if waiting_steps:
             logger.info(f"Dispatching {len(waiting_steps)} waiting pipeline steps")
+            # ⚠️ before_finish 去重：同一 ai_tool 的多个 before_finish 步骤是候选实现方（按优先级排序）
+            # 只需执行第一个，成功后其余标记为 skipped。避免并发提交多个实现方导致资源浪费
             dispatched_before_finish = set()  # (ai_tool_id, stage) 去重
             for step in waiting_steps:
                 try:
                     key = (step.ai_tool_id, step.stage)
-                    # before_finish 阶段：同一 ai_tool 只分发一个步骤，避免并发覆盖
                     if step.stage == PipelineStage.BEFORE_FINISH:
                         if key in dispatched_before_finish:
                             continue

@@ -43,6 +43,9 @@ def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> Syn
     """
     子进程入口函数 - 执行同步任务
 
+    ⚠️ 关键设计：此函数运行在独立子进程中（ProcessPoolExecutor），不能引用主进程的
+    数据库连接、锁、或任何可变全局状态。每次调用都需要重新导入模块和初始化连接。
+
     Args:
         task_id: AI工具ID
         ai_tool_type: AI工具类型
@@ -51,8 +54,7 @@ def _execute_sync_task(task_id: int, ai_tool_type: int, worker_pids=None) -> Syn
     Returns:
         SyncTaskResult: 任务执行结果
     """
-    # 子进程需要重新初始化数据库连接等
-    # 这里通过重新导入来实现
+    # ⚠️ 子进程必须重新导入所有模块，不能使用主进程的数据库连接和全局状态
     import asyncio
     from model import AIToolsModel, TasksModel
     from config.constant import (

@@ -1,6 +1,13 @@
 """
 图片压缩工具
 支持压缩图片到指定大小限制
+
+【函数族选择指南】
+  compress_image_to_limit(path,max_mb)       → 温和压缩，保留文件路径，适合通用场景
+  compress_local_image_to_base64(path,...)    → 激进压缩+转base64，专为 LLM 视觉输入设计（大幅缩小分辨率）
+  download_and_compress_to_base64(url,...)    → 下载远程图片后压缩+转base64
+  url_to_base64(url,max_mb)                  → 下载远程图片转base64（不主动压缩，仅超限时压缩）
+  resize_image_to_pixel_limit(path,max_pixels)→ 按像素数限制缩放（不压缩质量）
 """
 import os
 import io

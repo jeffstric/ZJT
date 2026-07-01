@@ -1,6 +1,10 @@
 """
 算力计算工具函数
 支持基于实现方的算力计算（从数据库读取，支持热更新）
+
+【函数族选择指南】
+  get_computing_power_for_task(task_type,...)       → 返回 int，实际扣费用的算力值
+  get_computing_power_config_for_task(task_type,...) → 返回 dict，包含配置详情（source/implementation/is_user_preference）
 """
 from typing import Optional, Union, Dict, Any
 import logging

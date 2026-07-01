@@ -250,6 +250,9 @@ class VoiceModel:
             raise
 
 
+# ⚠️ BUG：此处 CREATE_TABLE_SQL 创建的是 `ai_audio` 表而非 `voice` 表。
+# 本文件所有 SQL 操作的是 voice 表，但建表语句定义的是 ai_audio 表（历史遗留）。
+# 如果执行此 SQL，不会创建 voice 表。
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `ai_audio` (
   `id` int NOT NULL AUTO_INCREMENT,

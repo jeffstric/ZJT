@@ -193,8 +193,11 @@ class BaseVideoDriver(ABC):
     
     def _request(self, url: str, method: str = "POST", json: dict = None, headers: dict = None, timeout: float = None, **kwargs) -> dict:
         """
-        统一 HTTP 请求方法。所有外部 API 调用都通过此方法。
-        请求和响应会记录到 logs/api_requests.log
+        统一 HTTP 请求方法（同步 requests 库）
+
+        ⚠️ 设计说明：使用同步 requests 而非 httpx 异步，因为驱动在 scheduler 进程
+        或 sync_task_executor 子进程中运行（非 FastAPI 异步上下文）。
+        如果需要在异步上下文中调用，请使用 BaseAsyncDriver 的异步 _request。
 
         Args:
             url: 请求URL
@@ -474,15 +477,27 @@ class BaseVideoDriver(ABC):
             "driver_type": self.driver_type
         }
     
+    # 图片模式处理函数族（按需调用，不要直接组合使用）：
+    # - parse_image_mode(ai_tool): 解析 ai_tool.extra_config 中的 imageMode 字符串 → ImageMode 枚举值
+    # - get_first_last_frames(ai_tool): 从 ai_tool.image_path 提取首尾帧 URL（仅 FIRST_LAST_FRAME 模式使用）
+    # - get_reference_images(ai_tool): 获取 ai_tool.reference_images 关联的参考图列表（仅 MULTI_REFERENCE 模式使用）
+    # - get_all_images_by_mode(ai_tool): 统一入口，根据 imageMode 自动调用上述函数组合返回所有图片
+
     def parse_image_mode(self, ai_tool) -> str:
         """
-        从 extra_config 解析图片模式
-        
+        从 extra_config 解析图片模式字符串
+
+        解析 ai_tool.extra_config JSON 中的 'image_mode' 字段，
+        返回对应的 ImageMode 枚举值。解析失败时返回默认值 'first_last_frame'。
+
         Args:
-            ai_tool: AITool 对象
-        
+            ai_tool: AITool 对象，需要有 extra_config 属性
+
         Returns:
-            str: 图片模式，默认 'first_last_frame'
+            str: 图片模式字符串，取值见 ImageMode 类常量
+                - 'first_last_frame': 首尾帧模式（默认）
+                - 'multi_reference': 多参考图模式
+                - 'first_last_with_ref': 首尾帧+参考图模式
         """
         if not ai_tool.extra_config:
             return ImageMode.FIRST_LAST_FRAME
@@ -496,11 +511,16 @@ class BaseVideoDriver(ABC):
     
     def get_first_last_frames(self, ai_tool) -> Tuple[Optional[str], Optional[str]]:
         """
-        获取首尾帧图片URL
-        
+        获取首尾帧图片 URL（仅 FIRST_LAST_FRAME 模式使用）
+
+        从 ai_tool.image_path（逗号分隔的 URL 字符串）中解析首帧和尾帧。
+        - 1 张图片：作为首帧，尾帧为 None
+        - 2 张图片：第一张为首帧，第二张为尾帧
+        - 0 张：返回 (None, None)
+
         Args:
-            ai_tool: AITool 对象
-        
+            ai_tool: AITool 对象，需要有 image_path 属性（逗号分隔的图片 URL）
+
         Returns:
             Tuple[Optional[str], Optional[str]]: (首帧URL, 尾帧URL)
         """
@@ -518,13 +538,16 @@ class BaseVideoDriver(ABC):
     
     def get_reference_images(self, ai_tool) -> List[str]:
         """
-        获取参考图URL列表
-        
+        获取参考图 URL 列表（仅 MULTI_REFERENCE 模式使用）
+
+        从 ai_tool.reference_images（JSON 字符串或列表）中解析参考图列表。
+        解析失败时返回空列表。
+
         Args:
-            ai_tool: AITool 对象
-        
+            ai_tool: AITool 对象，需要有 reference_images 属性（JSON 数组字符串或 list）
+
         Returns:
-            List[str]: 参考图URL列表
+            List[str]: 参考图 URL 列表，无参考图时返回 []
         """
         if not ai_tool.reference_images:
             return []
@@ -538,17 +561,20 @@ class BaseVideoDriver(ABC):
     
     def get_all_images_by_mode(self, ai_tool) -> Dict[str, Any]:
         """
-        根据图片模式获取所有图片信息
+        根据图片模式获取所有图片信息（统一入口函数）
+
+        自动根据 imageMode 调用 parse_image_mode / get_first_last_frames / get_reference_images，
+        组合返回所有图片信息。子类在 submit_task 中调用此方法即可获取所需图片。
 
         Args:
             ai_tool: AITool 对象
 
         Returns:
             Dict[str, Any]: 图片信息字典
-                - mode: 图片模式
-                - first_frame: 首帧URL（可选）
-                - last_frame: 尾帧URL（可选）
-                - reference_images: 参考图URL列表（可选）
+                - mode: 图片模式（str，取值见 ImageMode）
+                - first_frame: 首帧 URL（可选，FIRST_LAST_FRAME 模式有值）
+                - last_frame: 尾帧 URL（可选，仅首尾帧模式且有两张图时有值）
+                - reference_images: 参考图 URL 列表（可选，MULTI_REFERENCE 模式有值）
         """
         mode = self.parse_image_mode(ai_tool)
         first_frame, last_frame = self.get_first_last_frames(ai_tool)

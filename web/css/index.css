@@ -1371,10 +1371,6 @@ header {
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 /* ICP备案信息 */
 .icp-footer {
   padding: 16px 20px;

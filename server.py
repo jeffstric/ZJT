@@ -203,6 +203,7 @@ def _ensure_world_access(world_id: int, user_id: int, action: str = Action.VIEW)
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = get_upload_dir()
+# 全局开关：是否启用认证和算力校验。设为 False 可跳过认证和扣费（开发/测试用）。
 CHECK_AUTH_TOKEN = True
 
 # 前端静态资源版本号 - 直接使用 pyproject.toml 中的版本号（如 1.9.2）
@@ -1646,6 +1647,9 @@ async def runninghub_status(
         raise HTTPException(status_code=500, detail=f"Failed to check runninghub status: {str(e)}")
 
 
+# 注意：路径参数名为 ai_tool_id，但实际接收的值是 project_id（ComfyUI 返回的任务 ID）。
+# 前端和后台调度器传入的都是 project_id，不是 ai_tools 表的主键 ID。
+# 历史原因导致参数名与实际含义不一致，调用时请注意。
 @app.get("/api/get-status/{ai_tool_id}")
 @require_permission("video:view_status")
 async def get_status(
@@ -1763,6 +1767,8 @@ async def get_status(
 async def ai_app_run(
     request: Request,
     prompt: str = Form(..., description="Text prompt for the AI app"),
+    # ⚠️ 命名陷阱：task_id 实际是任务类型配置 ID（如 TaskTypeId.SORA2_TEXT_TO_VIDEO），
+    # 不是运行时的任务 ID。来自 unified_config 中的配置项主键。
     task_id: int = Form(TaskTypeId.SORA2_TEXT_TO_VIDEO, description="Task type ID, defaults to SORA2_TEXT_TO_VIDEO"),
     ratio: str = Form("9:16", description="Aspect ratio: 9:16, 16:9"),
     duration_seconds: int = Form(15, description="Duration in seconds"),
@@ -1772,7 +1778,7 @@ async def ai_app_run(
     resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
 ):
     """
-    Submit text-to-video task.
+    文生视频任务提交接口。
     """
     try:
         # 通过 task_id 获取任务配置

@@ -523,7 +523,10 @@ class TaskManager:
         verification: VerificationRequest,
         timeout: int = 300
     ) -> Dict[str, Any]:
-        """阻塞等待人工验证结果（通过数据库轮询，支持多 Worker）"""
+        """阻塞等待人工验证结果（通过数据库轮询，支持多 Worker）
+        ⚠️ 阻塞风险：此函数会阻塞当前线程直到用户验证或超时（默认300秒）
+        仅在 Agent 独立线程中调用，禁止在 FastAPI 路由中直接调用
+        """
         logger.info(f"Waiting for verification {verification.verification_id}")
 
         # 在发送前快照验证数据（防止数据竞争）

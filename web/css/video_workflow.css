@@ -1969,7 +1969,7 @@ textarea:focus{ border-color: var(--primary); }
 .timeline-clip.drop-target {
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
-  animation: pulse 0.8s ease-in-out infinite;
+  animation: pulse-indicator 0.8s ease-in-out infinite;
 }
 .timeline-audio-clip:hover {
   border-color: #059669;
@@ -1999,7 +1999,7 @@ textarea:focus{ border-color: var(--primary); }
 .timeline-audio-clip:hover .timeline-clip-actions {
   display: flex;
 }
-@keyframes pulse {
+@keyframes pulse-indicator {
   0%, 100% { transform: translateY(-2px) scale(1); }
   50% { transform: translateY(-2px) scale(1.05); }
 }

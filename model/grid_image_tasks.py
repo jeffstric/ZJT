@@ -1,6 +1,14 @@
 """
 Grid Image Tasks Model - Database operations for grid_image_tasks table
 宫格生图任务模型 - 支持多进程环境下的任务状态共享
+
+⚠️ 与其他任务表的区别（易混淆，修改前请确认目标表）：
+  - tasks: ComfyUI 视频/图片生成轮询队列，task_id 为 int（指向 ai_tools.id）
+  - agent_tasks: Agent 对话任务（跨进程共享），task_id 为 UUID 字符串
+  - async_tasks: 外部服务异步任务（RunningHub 等），有 implementation 字段
+  - grid_image_tasks: 本表，宫格生图专用轮询，有 CANCELLED/DOWNLOAD_FAILED 状态
+
+注意：GridImageTaskStatus 比 AsyncTaskStatus 多了 CANCELLED(-3) 和 DOWNLOAD_FAILED(-4) 两个状态
 """
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta

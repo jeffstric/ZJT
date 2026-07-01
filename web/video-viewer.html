@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>视频查看</title>
+  <link rel="stylesheet" href="/css/common.css">
   <link rel="stylesheet" href="/css/index.css">
   <style>
     body {
@@ -72,7 +73,11 @@
           this.error = '缺少视频 URL 参数';
           return;
         }
-        this.videoUrl = decodeURIComponent(url);
+        try {
+          this.videoUrl = decodeURIComponent(url);
+        } catch (e) {
+          this.error = '视频 URL 参数格式无效';
+        }
       }
     }).mount('#app');
   </script>

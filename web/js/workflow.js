@@ -1837,7 +1837,7 @@
               const item = document.createElement('div');
               item.style.cssText = 'position: relative; width: 50px; height: 50px;';
               item.innerHTML = `
-                <img src="${url}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: pointer;" />
+                <img src="${escapeHtml(url)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: pointer;" />
                 <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; font-size: 10px; text-align: center; border-radius: 0 0 4px 4px; padding: 1px 0;">图${idx + 1}</div>
                 <button class="ref-remove-btn" data-idx="${idx}" style="position: absolute; top: -4px; right: -4px; width: 16px; height: 16px; border-radius: 50%; background: #ef4444; border: none; color: white; font-size: 10px; cursor: pointer; line-height: 1;">×</button>
               `;
@@ -1855,7 +1855,7 @@
                   node.data.referenceUrls.forEach((u, i) => {
                     const newItem = document.createElement('div');
                     newItem.style.cssText = 'position: relative; width: 50px; height: 50px;';
-                    newItem.innerHTML = `<img src="${u}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px;" /><div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; font-size: 10px; text-align: center; border-radius: 0 0 4px 4px; padding: 1px 0;">图${i + 1}</div>`;
+                    newItem.innerHTML = `<img src="${escapeHtml(u)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px;" /><div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; font-size: 10px; text-align: center; border-radius: 0 0 4px 4px; padding: 1px 0;">图${i + 1}</div>`;
                     newList.appendChild(newItem);
                   });
                 }
@@ -2046,7 +2046,8 @@
               thumbVideo.src = proxyDownloadUrl(node.data.url);
               thumbVideo.muted = true;
               thumbVideo.loop = true;
-              const displayName = node.data.name.length > 10 ? node.data.name.substring(0, 10) + '...' : node.data.name;
+              const name = node.data.name || '';
+              const displayName = name.length > 10 ? name.substring(0, 10) + '...' : name;
               nameEl.textContent = displayName;
               nameEl.title = node.data.name;
               previewField.style.display = 'block';
@@ -2518,7 +2519,7 @@
         }
       }
       
-      errorEl.innerHTML = `<strong>生成失败:</strong> ${errorMessage}`;
+      errorEl.innerHTML = `<strong>生成失败:</strong> ${escapeHtml(errorMessage)}`;
       
       // 给节点添加错误样式
       nodeEl.style.borderColor = '#f44';

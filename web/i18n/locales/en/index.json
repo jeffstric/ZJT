@@ -219,7 +219,7 @@
   "reference_audio": "Reference Audio",
   "audio_cloning_tip": "Upload reference audio file for voice cloning",
   "prompt_text": "Prompt",
-  "prompt_placeholder": "Enter prompt for video generation, e.g.: The character speaks to the camera with emotion, fixed shot.",
+  "dh_video_prompt_placeholder": "Enter prompt for video generation, e.g.: The character speaks to the camera with emotion, fixed shot.",
   "speaking_audio": "Speaking Audio",
   "speaking_audio_tip": "Upload audio file of the character speaking",
   "video_ratio": "Video Ratio",

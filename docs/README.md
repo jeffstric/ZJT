@@ -362,6 +362,8 @@ docker-compose -f docker-compose-test.yml down -v
 
 | 文档 | 说明 |
 |------|------|
+| [doc_index.md](doc_index.md) | **文档中心** — 所有文档总索引（含飞书在线链接） |
+| [user_manual.md](user_manual.md) | **用户使用手册**（面向终端用户） |
 | [scripts/build/README.md](../scripts/build/README.md) | Windows 托盘启动器打包工具使用指南 |
 | [Windows启动开发说明.md](Windows启动开发说明.md) | Windows 启动流程详解 |
 | [database_migration.md](database_migration.md) | 数据库迁移指南 |

@@ -1,6 +1,12 @@
 """
 Agent Tasks Model - Database operations for agent_tasks table
 用于跨进程共享任务状态，支持 gunicorn 多 worker 模式
+
+⚠️ 与其他任务表的区别（易混淆，修改前请确认目标表）：
+  - tasks: ComfyUI 视频/图片生成轮询队列，task_id 为 int（指向 ai_tools.id）
+  - agent_tasks: 本表，Agent 对话任务（跨进程共享），task_id 为 UUID 字符串
+  - async_tasks: 外部服务异步任务（RunningHub 等），有 implementation 字段
+  - grid_image_tasks: 宫格生图专用轮询，有 CANCELLED/DOWNLOAD_FAILED 状态
 """
 from typing import List, Optional, Dict, Any
 from datetime import datetime

@@ -14,6 +14,7 @@
           body: formData
         });
         
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         const result = await response.json();
         if(result.code === 0 && result.data && result.data.url){
           return result.data.url;
@@ -48,6 +49,7 @@
           body: formData
         });
         
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         const result = await response.json();
         if(result.code === 0 && result.data && result.data.url){
           return result.data.url;
@@ -145,6 +147,7 @@
         body: form
       });
 
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if(data.project_ids && data.project_ids.length > 0){
         return {
@@ -192,6 +195,7 @@
         body: form
       });
 
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if(data.project_ids && data.project_ids.length > 0){
         return { projectIds: data.project_ids, status: data.status };
@@ -226,8 +230,9 @@
       const authToken = getAuthToken();
       const projectIdsStr = projectIds.join(',');
       
-      const url = `/api/get-status/${projectIdsStr}` + (authToken ? `?auth_token=${authToken}` : '');
+      const url = `/api/get-status/${projectIdsStr}` + (authToken ? `?auth_token=${encodeURIComponent(authToken)}` : '');
       const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
 
       if(TEST_MODE){
@@ -284,6 +289,7 @@
     async function getEditionInfo() {
       try {
         const response = await fetch('/api/edition');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         const result = await response.json();
         if (result.code === 0 && result.data) {
           return result.data;
@@ -370,5 +376,10 @@
         'Authorization': getAuthToken(),
         'X-User-Id': getUserId()
       };
+    }
+
+    // ES Module exports（供 Vitest 测试使用，不影响浏览器全局变量）
+    if (typeof module !== 'undefined') {
+      module.exports = { getAuthHeaders, appendAuthToForm };
     }
 

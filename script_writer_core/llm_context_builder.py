@@ -182,6 +182,8 @@ class LLMContextBuilder:
 
         return normalized_messages, list(omitted_ids)
 
+        # ⚠️ 以下代码为死代码（return 之后永远不会执行）
+        # 是 _check_tool_call_groups 的旧实现，保留作为参考
         tool_call_msgs = []
         for msg in messages:
             if msg.message_type == 'tool_call':

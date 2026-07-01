@@ -209,7 +209,7 @@
   "reference_audio": "参考音频",
   "audio_cloning_tip": "上传参考音频文件，用于声音克隆",
   "prompt_text": "提示词",
-  "prompt_placeholder": "输入视频生成的提示词，如：角色面向镜头深情的说话，固定镜头。",
+  "dh_video_prompt_placeholder": "输入视频生成的提示词，如：角色面向镜头深情的说话，固定镜头。",
   "speaking_audio": "说话音频",
   "speaking_audio_tip": "上传角色说话的音频文件",
   "video_ratio": "视频比例",

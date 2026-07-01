@@ -122,7 +122,8 @@ class GeminiClient(BaseLLMClient):
         return url
 
     def _probe_url_format(self, url: str) -> bool:
-        """轻量级探测 URL 格式是否有效"""
+        """轻量级探测 URL 格式是否有效（不验证 API Key，仅验证 URL 路径格式）"""
+        # 探测逻辑：404 = URL 路径错误 → False；401/403 = URL 正确但未授权 → True；200 = 验证响应结构
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
@@ -564,7 +565,7 @@ class GeminiClient(BaseLLMClient):
         total_token = usage.get("total_token", 0)
 
         llm_logger.info(f"Gemini usage: {usage}")
-        logger.info(f"Gemini metadata - auth_token={auth_token}, vendor_id={vendor_id}, model_id={model_id}")
+        logger.info(f"Gemini metadata - auth_token={'***' if auth_token else None}, vendor_id={vendor_id}, model_id={model_id}")
 
         if auth_token and model_id:
             self._log_token_usage(usage, auth_token, vendor_id, model_id)

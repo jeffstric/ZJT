@@ -1007,12 +1007,25 @@ const AdminApp = {
 
     unmounted() {
         window.removeEventListener('resize', this.resizeModelAnalysisCharts);
+        if (this.notificationsPollTimer) clearInterval(this.notificationsPollTimer);
         Object.values(this.dashboard.modelAnalysis.charts || {}).forEach(chart => {
             if (chart) chart.dispose();
         });
     },
 
     methods: {
+        // 认证错误处理（清除本地存储并跳转登录）
+        handleAuthError(status) {
+            if (status === 401 || status === 403) {
+                localStorage.removeItem('auth_token');
+                localStorage.removeItem('phone');
+                localStorage.removeItem('email');
+                localStorage.removeItem('user_id');
+                localStorage.removeItem('invite_code');
+                window.location.href = '/index.html';
+            }
+        },
+
         // i18n 翻译方法（引用 this.locale 使其响应式）
         t(key, params = {}) {
             // this.locale 是响应式依赖，语言切换时会触发模板重新渲染
@@ -1936,7 +1949,7 @@ const AdminApp = {
                 }
             } catch (error) {
                 console.error('Toggle ZJT token failed:', error);
-                const detail = error?.response?.data?.detail || `${action}失败`;
+                const detail = error?.response?.data?.detail || this.t('error_action_failed', { action: this.t(actionKey) });
                 this.showToast(detail, 'error');
             }
         },
