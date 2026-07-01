@@ -442,6 +442,8 @@ class WechatPayUtil:
         except FileNotFoundError:
             logger.error(f"Private key file not found: {private_key_path}")
             logger.warning("Using mock signature for development")
+            # ⚠️ 安全隐患：mock 签名仅用于开发环境，生产环境必须配置正确的私钥文件
+            # 微信支付会验证签名，mock 签名会导致支付回调验证失败
             return "mock_signature"
         except Exception as e:
             logger.error(f"Failed to generate signature: {str(e)}")
@@ -525,7 +527,9 @@ class WechatPayUtil:
         except FileNotFoundError:
             logger.error(f"Public key file not found: {public_key_path}")
             logger.warning("Skipping signature verification for development")
-            return True  # 开发环境下如果没有公钥文件，跳过验签
+            # ⚠️ 安全隐患：开发环境跳过验签（return True），生产环境必须配置正确的公钥文件
+            # 攻击者可伪造微信支付回调请求，绕过验签直接触发业务逻辑
+            return True
         except Exception as e:
             logger.error(f"Failed to verify callback signature: {str(e)}")
             return False

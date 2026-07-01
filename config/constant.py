@@ -402,8 +402,21 @@ RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 
+# 注意：以下四个状态类用于不同的数据库表，数值含义有差异，请勿混用：
+# - AIToolStatus: ai_tools 表（图片/视频生成任务）
+# - TaskStatus: tasks 表（定时任务队列）
+# - GridImageTaskStatus: grid_image_tasks 表（宫格生图任务，独有 TIMEOUT/CANCELLED/DOWNLOAD_FAILED 状态）
+# - AIAudioStatus: ai_audio 表（音频/TTS 生成任务）
+#
+# 数值对比：
+#                  PENDING/QUEUED  PROCESSING  COMPLETED  FAILED  特有状态
+# AIToolStatus:    0               1           2          -1      SYNC_QUEUED(3), WAITING_PARAM_PREPARE(4), WAITING_BEFORE_FINISH(5)
+# TaskStatus:      0               1           2          -1      SYNC_QUEUED(3), WAITING_PARAM_PREPARE(4), WAITING_BEFORE_FINISH(5)
+# GridImageTaskStatus: 0           1           2          -1      TIMEOUT(-2), CANCELLED(-3), DOWNLOAD_FAILED(-4)
+# AIAudioStatus:   0               1           2          -1      （无特有状态）
+
 class AIToolStatus:
-    """AI工具任务状态"""
+    """AI工具任务状态（用于 ai_tools 表，跟踪图片/视频生成任务）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'PENDING': '未处理',
@@ -424,7 +437,7 @@ class AIToolStatus:
 
 
 class TaskStatus:
-    """任务状态"""
+    """任务状态（用于 tasks 表，跟踪定时任务队列）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'QUEUED': '队列中',
@@ -445,7 +458,7 @@ class TaskStatus:
 
 
 class GridImageTaskStatus:
-    """宫格生图任务状态"""
+    """宫格生图任务状态（用于 grid_image_tasks 表，独有 TIMEOUT(-2)/CANCELLED(-3)/DOWNLOAD_FAILED(-4) 状态）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'QUEUED': '队列中',
@@ -466,7 +479,7 @@ class GridImageTaskStatus:
 
 
 class AIAudioStatus:
-    """AI音频任务状态"""
+    """AI音频任务状态（用于 ai_audio 表，跟踪 TTS/音频生成任务，无特有状态）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'PENDING': '未处理',

@@ -117,8 +117,11 @@ def calculate_computing_power_from_tokens(
 def process_token_logs():
     """
     处理未处理的token日志
-    对应Go的ProcessTokenLogs函数
-    
+
+    ⚠️ 非原子操作：扣减算力、写日志、标记已处理三步不在事务中。
+    如果中间失败，可能导致算力已扣但日志未标记，下次调度会重复扣减。
+    当前通过 uncalculated_power 表的百分位累积机制缓解（满100才扣减）。
+
     Returns:
         处理结果字典
     """

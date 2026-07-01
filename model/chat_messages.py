@@ -64,7 +64,9 @@ class ChatMessageEntity:
         self.tool_name = kwargs.get('tool_name')
         self.verification_id = kwargs.get('verification_id')
 
+        # visibility 控制消息对谁可见：'user'(仅用户) / 'llm'(仅LLM上下文) / 'both'(两者) / 'internal'(内部，如tool_definitions)
         self.visibility = kwargs.get('visibility', 'both')
+        # context_state 控制消息是否参与 LLM 上下文：'active'(正常) / 'summarized'(已被摘要替代) / 'deleted'(软删除)
         self.context_state = kwargs.get('context_state', 'active')
         self.generated_summary_id = kwargs.get('generated_summary_id')
         self.covered_by_summary_id = kwargs.get('covered_by_summary_id')

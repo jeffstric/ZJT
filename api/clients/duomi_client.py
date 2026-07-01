@@ -1,3 +1,7 @@
+"""
+⚠️ 同步阻塞风险：本模块所有函数均使用 requests 库（同步），在 FastAPI 异步路由中调用会阻塞事件循环。
+仅应在同步上下文（如 scheduler 定时任务、后台线程）中调用，禁止在 async def 路由中直接调用。
+"""
 import requests
 from config.config_util import get_dynamic_config_value
 import uuid

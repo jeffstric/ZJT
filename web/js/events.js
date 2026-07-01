@@ -331,7 +331,7 @@
     window.addEventListener('keydown', (e) => {
       if(e.key === 'Delete' || e.key === 'Backspace'){
         // 不在输入框内时才响应
-        if(document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+        if(document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) return;
 
         if(deleteSelectedConnection()){
           e.preventDefault();
@@ -358,7 +358,7 @@
       const isCtrl = e.ctrlKey || e.metaKey;
       if(!isCtrl) return;
       // 不在输入框内时才响应
-      if(document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+      if(document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) return;
 
       if(e.key === '+' || e.key === '=' ){
         e.preventDefault();
@@ -562,16 +562,16 @@
           let nearestPort = null;
           let nearestDist = 50;
           const targetType = fromNode.type === 'script' ? 'shot_group' : 'video';
-          for(const node of state.nodes){
-            if(node.type !== targetType) continue;
-            const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+          for(const targetNode of state.nodes){
+            if(targetNode.type !== targetType) continue;
+            const toEl = canvasEl.querySelector(`.node[data-node-id="${targetNode.id}"]`);
             if(!toEl) continue;
             const portEl = toEl.querySelector('.port.input');
             if(!portEl) continue;
             const { dist, x: portX, y: portY } = getPortDistance(portEl, toX, toY);
             if(dist < nearestDist){
               nearestDist = dist;
-              nearestPort = { nodeId: node.id, x: portX, y: portY };
+              nearestPort = { nodeId: targetNode.id, x: portX, y: portY };
             }
           }
         }
@@ -1336,9 +1336,9 @@
           }
           
           listEl.innerHTML = result.data.data.map(character => `
-            <div class="character-item" data-character-id="${character.id}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+            <div class="character-item" data-character-id="${escapeHtml(String(character.id))}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
               <div style="display: flex; gap: 12px; align-items: start;">
-                ${character.reference_image ? `<img src="${character.reference_image}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                ${character.reference_image ? `<img src="${escapeHtml(character.reference_image)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
                 <div style="flex: 1;">
                   <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(character.name)}</div>
                   ${character.age ? `<div style="font-size: 12px; color: #666; margin-bottom: 2px;">年龄: ${escapeHtml(character.age)}</div>` : ''}
@@ -1419,9 +1419,9 @@
           }
           
           listEl.innerHTML = result.data.data.map(location => `
-            <div class="location-item" data-location-id="${location.id}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+            <div class="location-item" data-location-id="${escapeHtml(String(location.id))}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
               <div style="display: flex; gap: 12px; align-items: start;">
-                ${location.reference_image ? `<img src="${location.reference_image}" style="width: 80px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 80px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                ${location.reference_image ? `<img src="${escapeHtml(location.reference_image)}" style="width: 80px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 80px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
                 <div style="flex: 1;">
                   <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(location.name)}</div>
                   ${location.description ? `<div style="font-size: 12px; color: #666; line-height: 1.4;">${escapeHtml(location.description.slice(0, 100))}${location.description.length > 100 ? '...' : ''}</div>` : ''}
@@ -1510,9 +1510,9 @@
           }
           
           listEl.innerHTML = result.data.data.map(props => `
-            <div class="props-item" data-props-id="${props.id}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
+            <div class="props-item" data-props-id="${escapeHtml(String(props.id))}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.15s;">
               <div style="display: flex; gap: 12px; align-items: start;">
-                ${props.reference_image ? `<img src="${props.reference_image}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
+                ${props.reference_image ? `<img src="${escapeHtml(props.reference_image)}" style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid #e5e7eb;" />` : '<div style="width: 60px; height: 60px; background: #f3f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 12px;">无图片</div>'}
                 <div style="flex: 1;">
                   <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">${escapeHtml(props.name)}</div>
                   ${props.content ? `<div style="font-size: 12px; color: #666; line-height: 1.4;">${escapeHtml(props.content.slice(0, 100))}${props.content.length > 100 ? '...' : ''}</div>` : ''}
@@ -1600,9 +1600,9 @@
           ${character.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${character.reference_image}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${escapeHtml(character.reference_image)}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
               <div style="display: flex; gap: 8px; margin-top: 8px;">
-                <button class="mini-btn character-download-btn" type="button" data-img-url="${character.reference_image}">下载图片</button>
+                <button class="mini-btn character-download-btn" type="button" data-img-url="${escapeHtml(character.reference_image)}">下载图片</button>
               </div>
             </div>
           ` : ''}
@@ -1611,7 +1611,7 @@
               <div class="label">多服装参考图</div>
               <div style="display: flex; flex-wrap: wrap; gap: 4px;">
                 ${character.reference_images.map((img, idx) => `
-                  <img src="${img.url}" class="preview character-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.label || '服装'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                  <img src="${escapeHtml(img.url)}" class="preview character-multi-preview-img" data-ref-img="${escapeHtml(img.url)}" data-ref-label="${escapeHtml(img.label || '服装')}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
                 `).join('')}
               </div>
             </div>
@@ -1751,7 +1751,7 @@
           ${character.reference_image ? `
             <div class="field field-always-visible">
               <div class="label">参考图</div>
-              <img src="${character.reference_image}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${escapeHtml(character.reference_image)}" class="preview character-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
             </div>
           ` : ''}
           ${character.reference_images && Array.isArray(character.reference_images) && character.reference_images.length > 0 ? `
@@ -1759,7 +1759,7 @@
               <div class="label">多服装参考图</div>
               <div style="display: flex; flex-wrap: wrap; gap: 4px;">
                 ${character.reference_images.map((img, idx) => `
-                  <img src="${img.url}" class="preview character-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.label || '服装'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                  <img src="${escapeHtml(img.url)}" class="preview character-multi-preview-img" data-ref-img="${escapeHtml(img.url)}" data-ref-label="${escapeHtml(img.label || '服装')}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
                 `).join('')}
               </div>
             </div>
@@ -1772,11 +1772,11 @@
           ${character.default_voice ? `
             <div class="field field-always-visible">
               <div class="label">参考音频</div>
-              <audio controls style="width: 100%; height: 32px; border-radius: 4px;" src="${character.default_voice}" preload="none"></audio>
+              <audio controls style="width: 100%; height: 32px; border-radius: 4px;" src="${escapeHtml(character.default_voice)}" preload="none"></audio>
             </div>
           ` : ''}
           <div class="field field-collapsible">
-            <button class="mini-btn character-download-btn" type="button" data-img-url="${character.reference_image}" style="width: 100%;">下载图片</button>
+            <button class="mini-btn character-download-btn" type="button" data-img-url="${escapeHtml(character.reference_image)}" style="width: 100%;">下载图片</button>
           </div>
           <div class="field field-collapsible btn-row">
             <button class="mini-btn character-edit-btn" type="button">编辑</button>
@@ -1913,9 +1913,9 @@
           ${location.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${location.reference_image}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${escapeHtml(location.reference_image)}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
               <div style="display: flex; gap: 8px; margin-top: 8px;">
-                <button class="mini-btn location-download-btn" type="button" data-img-url="${location.reference_image}">下载图片</button>
+                <button class="mini-btn location-download-btn" type="button" data-img-url="${escapeHtml(location.reference_image)}">下载图片</button>
               </div>
             </div>
           ` : ''}
@@ -1924,7 +1924,7 @@
               <div class="label">多角度参考图</div>
               <div style="display: flex; flex-wrap: wrap; gap: 4px;">
                 ${location.reference_images.map((img, idx) => `
-                  <img src="${img.url}" class="preview location-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.angle || img.label || '角度'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                  <img src="${escapeHtml(img.url)}" class="preview location-multi-preview-img" data-ref-img="${escapeHtml(img.url)}" data-ref-label="${escapeHtml(img.angle || img.label || '角度')}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
                 `).join('')}
               </div>
             </div>
@@ -2060,9 +2060,9 @@
           ${location.reference_image ? `
             <div class="field">
               <div class="label">参考图</div>
-              <img src="${location.reference_image}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+              <img src="${escapeHtml(location.reference_image)}" class="preview location-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
               <div style="display: flex; gap: 8px; margin-top: 8px;">
-                <button class="mini-btn location-download-btn" type="button" data-img-url="${location.reference_image}">下载图片</button>
+                <button class="mini-btn location-download-btn" type="button" data-img-url="${escapeHtml(location.reference_image)}">下载图片</button>
               </div>
             </div>
           ` : ''}
@@ -2071,7 +2071,7 @@
               <div class="label">多角度参考图</div>
               <div style="display: flex; flex-wrap: wrap; gap: 4px;">
                 ${location.reference_images.map((img, idx) => `
-                  <img src="${img.url}" class="preview location-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.angle || img.label || '角度'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                  <img src="${escapeHtml(img.url)}" class="preview location-multi-preview-img" data-ref-img="${escapeHtml(img.url)}" data-ref-label="${escapeHtml(img.angle || img.label || '角度')}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
                 `).join('')}
               </div>
             </div>
@@ -2171,9 +2171,9 @@
         ${props.reference_image ? `
           <div class="field">
             <div class="label">参考图</div>
-            <img src="${props.reference_image}" class="preview props-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+            <img src="${escapeHtml(props.reference_image)}" class="preview props-preview-img" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
             <div style="display: flex; gap: 8px; margin-top: 8px;">
-              <button class="mini-btn props-download-btn" type="button" data-img-url="${props.reference_image}">下载图片</button>
+              <button class="mini-btn props-download-btn" type="button" data-img-url="${escapeHtml(props.reference_image)}">下载图片</button>
             </div>
           </div>
         ` : ''}
@@ -2768,7 +2768,7 @@
         imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
         imgWrapper.innerHTML = `
           <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
-          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</div>
           <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
         `;
         imgWrapper.querySelector('button').addEventListener('click', () => {
@@ -3502,8 +3502,8 @@
               const imgContainer = document.createElement('div');
               imgContainer.style.cssText = 'position: relative; display: inline-block;';
               imgContainer.innerHTML = `
-                <img src="${img.url}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid #d1d5db;" />
-                <button type="button" class="remove-img-btn" data-img-url="${img.url}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #ef4444; color: white; border: none; cursor: pointer; font-size: 12px; line-height: 18px; text-align: center;">×</button>
+                <img src="${escapeHtml(img.url)}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid #d1d5db;" />
+                <button type="button" class="remove-img-btn" data-img-url="${escapeHtml(img.url)}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #ef4444; color: white; border: none; cursor: pointer; font-size: 12px; line-height: 18px; text-align: center;">×</button>
                 ${img.angle ? `<div style="position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #6b7280; white-space: nowrap;">${escapeHtml(img.angle)}</div>` : ''}
               `;
               imgContainer.querySelector('.remove-img-btn').addEventListener('click', () => {
@@ -3711,7 +3711,7 @@
         imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
         imgWrapper.innerHTML = `
           <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
-          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</div>
           <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
         `;
         imgWrapper.querySelector('button').addEventListener('click', () => {
@@ -3800,7 +3800,7 @@
         imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
         imgWrapper.innerHTML = `
           <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
-          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</div>
           <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
         `;
         imgWrapper.querySelector('button').addEventListener('click', () => {
@@ -3883,8 +3883,8 @@
           const imgContainer = document.createElement('div');
           imgContainer.style.cssText = 'position: relative; display: inline-block;';
           imgContainer.innerHTML = `
-            <img src="${img.url}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid #d1d5db;" />
-            <button type="button" class="remove-img-btn" data-img-url="${img.url}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #ef4444; color: white; border: none; cursor: pointer; font-size: 12px; line-height: 18px; text-align: center;">×</button>
+            <img src="${escapeHtml(img.url)}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; border: 1px solid #d1d5db;" />
+            <button type="button" class="remove-img-btn" data-img-url="${escapeHtml(img.url)}" style="position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; background: #ef4444; color: white; border: none; cursor: pointer; font-size: 12px; line-height: 18px; text-align: center;">×</button>
             ${img.label ? `<div style="position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #6b7280; white-space: nowrap;">${escapeHtml(img.label)}</div>` : ''}
           `;
           imgContainer.querySelector('.remove-img-btn').addEventListener('click', () => {
@@ -4007,7 +4007,7 @@
                 ${character.reference_image ? `
                   <div class="field field-always-visible">
                     <div class="label">参考图</div>
-                    <img src="${character.reference_image}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
+                    <img src="${escapeHtml(character.reference_image)}" class="preview" style="width: 100%; height: auto; border-radius: 8px; cursor: zoom-in;" />
                   </div>
                 ` : ''}
                 ${character.reference_images && Array.isArray(character.reference_images) && character.reference_images.length > 0 ? `
@@ -4015,7 +4015,7 @@
                     <div class="label">多服装参考图</div>
                     <div style="display: flex; flex-wrap: wrap; gap: 4px;">
                       ${character.reference_images.map((img, idx) => `
-                        <img src="${img.url}" class="preview character-multi-preview-img" data-ref-img="${img.url}" data-ref-label="${img.label || '服装'}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
+                        <img src="${escapeHtml(img.url)}" class="preview character-multi-preview-img" data-ref-img="${escapeHtml(img.url)}" data-ref-label="${escapeHtml(img.label || '服装')}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 4px; cursor: zoom-in;" />
                       `).join('')}
                     </div>
                   </div>
@@ -4026,7 +4026,7 @@
                 ${character.behavior ? `<div class="field field-always-visible"><div class="label">行为习惯</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.behavior.slice(0, 100))}${character.behavior.length > 100 ? '...' : ''}</div></div>` : ''}
                 ${character.other_info ? `<div class="field field-always-visible"><div class="label">其他信息</div><div style="font-size: 12px; line-height: 1.4;">${escapeHtml(character.other_info.slice(0, 100))}${character.other_info.length > 100 ? '...' : ''}</div></div>` : ''}
                 <div class="field field-collapsible">
-                  <button class="mini-btn character-download-btn" type="button" data-img-url="${character.reference_image}" style="width: 100%;">下载图片</button>
+                  <button class="mini-btn character-download-btn" type="button" data-img-url="${escapeHtml(character.reference_image)}" style="width: 100%;">下载图片</button>
                 </div>
                 <div class="field field-collapsible btn-row">
                   <button class="mini-btn character-edit-btn" type="button">编辑</button>
@@ -4120,7 +4120,7 @@
         imgWrapper.style.cssText = 'position:relative;width:80px;height:80px;border-radius:8px;overflow:hidden;border:1px solid #d1d5db;';
         imgWrapper.innerHTML = `
           <img src="${e.target.result}" style="width:100%;height:100%;object-fit:cover;" />
-          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${label}</div>
+          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.7);color:white;font-size:10px;padding:2px 6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(label)}</div>
           <button type="button" style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.8);border:none;border-radius:50%;width:20px;height:20px;cursor:pointer;color:white;font-size:12px;line-height:20px;" title="删除">&times;</button>
         `;
         imgWrapper.querySelector('button').addEventListener('click', () => {

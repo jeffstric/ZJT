@@ -80,6 +80,8 @@ class EditionAuthService:
             pass
 
     async def _verify_token(self, token: str) -> tuple:
+        # ⚠️ 设计意图：网络超时/异常时返回 True（fail-open），确保认证服务器不可用时不阻断业务
+        # 如果改为 fail-closed，认证服务器宕机会导致所有用户无法使用
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
@@ -107,6 +109,7 @@ class EditionAuthService:
             return True, f"auth_server_error: {e}"
 
     async def _report_system_info(self, token: Optional[str], reason: str):
+        # ⚠️ 隐私注意：此函数会向远程服务器上报用户数量、IP地址、首个用户手机号等敏感信息
         try:
             user_count = UsersModel.get_total_count()
             phone = self._get_first_user_phone()

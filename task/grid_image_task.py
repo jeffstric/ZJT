@@ -33,6 +33,9 @@ def _download_and_store_image(file_url: str, item_type: int, comfyui_base_url: s
         (local_image_url, local_file_path) 元组
     """
     # 确定存储目录
+    # ⚠️ item_type 魔数映射（与 script_writer_core/constant.py ItemType 对应）：
+    #   0=营销通用, 1=角色, 2=场景, 3=道具, 4=角色四宫格, 5=场景四宫格, 6=道具四宫格, 7=角色变体图
+    #   四宫格类型(4/5/6)存入 temp 目录（后续会被拆分），单图类型存入 pic 目录
     if item_type == 0:  # 通用生图（营销等场景）
         upload_dir = 'upload/marketing/pic'
         local_url_path = 'upload/marketing/pic'
@@ -449,8 +452,9 @@ def process_grid_image_tasks(app=None):
                     failure_reason = comfyui_task.get('reason', '生成失败')
                     logger.error(f"ComfyUI任务失败: {task.task_key}, 原因: {failure_reason}")
 
-                    # 检查 ai_tools 是否已被 pipeline 重试接管（visual_task.py 的 enterprise retry）
-                    # 两个调度器同时轮询同一任务，避免竞争
+                    # ⚠️ 竞态防护：grid_image_task(每10秒) 和 visual_task(每5秒) 同时轮询同一任务
+                    # 当 visual_task 触发 before_finish 重试时，ai_tools.status 会变为 WAITING_BEFORE_FINISH
+                    # 此时 grid_image_task 必须跳过，否则会覆盖状态导致重试失败
                     try:
                         ai_tool_record = AIToolsModel.get_by_id(int(task.project_id))
                         if ai_tool_record and ai_tool_record.status == AI_TOOL_STATUS_WAITING_BEFORE_FINISH:

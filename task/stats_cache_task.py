@@ -19,9 +19,11 @@ def refresh_implementation_stats_cache():
     """
     logger.info("[StatsCache] Starting implementation stats cache refresh")
 
+    # ⚠️ 非原子操作：先清除旧缓存再写入新缓存，中间存在窗口期（可能几十秒）
+    # 缓存表中无数据。如果有 API 此时读取缓存，会得到空结果。
+    # 此任务每小时执行一次，窗口期影响有限。
     for days in [7, 30]:
         try:
-            # 清除旧缓存
             ImplementationStatsCacheModel.clear_by_days(days)
 
             # 计算新统计（从 implementation_attempts 表）

@@ -141,6 +141,8 @@ class RunningHubFileStorage(BaseFileStorage):
                 success=True,
                 key=data.get("fileName", ""),      # comfyUI 节点使用
                 url=data.get("download_url", ""),  # 临时下载链接（有效期1天）
+                # ⚠️ 字段复用：UploadResult.hash 字段在此处存储文件类型（如 "image"/"video"）而非哈希值
+                # 因为 RunningHub 上传接口不返回文件哈希，但调用方需要文件类型信息
                 hash=data.get("type", "")          # 复用 hash 字段存储文件类型
             )
         except Exception as e:

@@ -260,7 +260,7 @@ GET /api/ai-tools/{ai_tools_id}/grid-split?grid_index={index}&user_id={user_id}
 ### 2. 查询AI工具状态
 
 ```
-GET /api/ai-tools/{ai_tools_id}/status?user_id={user_id}
+GET /api/get-status/{ai_tool_id}
 ```
 
 **响应**：

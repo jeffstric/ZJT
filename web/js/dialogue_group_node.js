@@ -344,7 +344,7 @@
                 '<div style="font-size: 12px; font-weight: 600; color: #374151;">' + escapeHtml(item.characterName || '未命名角色') + '</div>' +
                 '<button class="mini-btn ref-audio-delete-btn" data-index="' + ri + '" type="button" style="font-size: 10px; padding: 2px 6px; background: #ef4444; color: white;" data-i18n="dialogue_delete_btn">' + (window.t ? window.t('dialogue_delete_btn') : '删除') + '</button>' +
               '</div>' +
-              '<audio controls style="width: 100%; max-height: 28px;" src="' + proxyDownloadUrl(item.url) + '"></audio>' +
+              '<audio controls style="width: 100%; max-height: 28px;" src="' + escapeHtml(proxyDownloadUrl(item.url)) + '"></audio>' +
             '</div>';
           }
 
@@ -384,7 +384,7 @@
 
           input.addEventListener('change', async function(e) {
             var file = e.target.files[0];
-            if (!file) return;
+            if (!file) { input.remove(); return; }
 
             var isValid = await validateAudioFile(file);
             if (!isValid) return;
@@ -413,6 +413,8 @@
             } catch (error) {
               console.error('上传音频失败:', error);
               showToast((window.t ? window.t('ref_audio_upload_failed') : '音频上传失败') + ': ' + error.message, 'error');
+            } finally {
+              input.remove();
             }
           });
 
@@ -449,6 +451,8 @@
           attributes: true,
           attributeFilter: ['class']
         });
+        el._cleanupHandlers = el._cleanupHandlers || [];
+        el._cleanupHandlers.push(function() { nodeObserver.disconnect(); });
 
         // 更新对话列表
         function updateDialogueList() {
@@ -1064,6 +1068,7 @@
         }
 
         // 生成全部按钮
+        if (generateAllBtn) {
         generateAllBtn.addEventListener('click', async function(e) {
           e.stopPropagation();
 
@@ -1082,6 +1087,7 @@
           setBtnReady(generateAllBtn, window.t ? window.t('dialogue_generate_all') : '生成全部');
           showToast(window.t ? window.t('dialogue_all_generated') : '全部对话音频生成完成', 'success');
         });
+        }
 
         updateDialogueList();
 

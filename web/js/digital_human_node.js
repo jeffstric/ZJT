@@ -226,17 +226,21 @@
         }
 
         // 点击外部关闭抽卡菜单
-        document.addEventListener('click', function(e) {
+        var _closeDrawMenuHandler = function(e) {
           if (!e.target.closest || !e.target.closest('.gen-container')) {
             drawMenu.classList.remove('show');
           }
-        });
+        };
+        document.addEventListener('click', _closeDrawMenuHandler);
+        el._cleanupHandlers = el._cleanupHandlers || [];
+        el._cleanupHandlers.push(function() { document.removeEventListener('click', _closeDrawMenuHandler); });
 
         // 图片上传
         imageEl.addEventListener('change', function() {
           var file = imageEl.files && imageEl.files[0];
           if (!file) return;
           node.data.imageFile = file;
+          if (imageThumb.src && imageThumb.src.startsWith('blob:')) URL.revokeObjectURL(imageThumb.src);
           var localUrl = URL.createObjectURL(file);
           imageThumb.src = localUrl;
           imagePreview.style.display = 'block';
@@ -266,6 +270,7 @@
           var file = audioEl.files && audioEl.files[0];
           if (!file) return;
           node.data.audioFile = file;
+          if (audioPlayer.src && audioPlayer.src.startsWith('blob:')) URL.revokeObjectURL(audioPlayer.src);
           var localUrl = URL.createObjectURL(file);
           audioPlayer.src = localUrl;
           audioPreview.style.display = 'block';

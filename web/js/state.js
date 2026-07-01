@@ -115,7 +115,7 @@
         const u = new URL(url, window.location.href);
         return u.origin === window.location.origin;
       } catch(e){
-        return true;
+        return false;
       }
     }
 
@@ -262,3 +262,8 @@
         confirmBtn.focus();
       });
     }
+
+// ES Module exports（供 Vitest 测试使用，不影响浏览器全局变量）
+if (typeof module !== 'undefined') {
+  module.exports = { getAuthToken, getUserId, showToast, showConfirmModal, state, normalizeVideoUrl, extractResultsArray, isSameOriginUrl, normalizeImageUrl, proxyImageUrl, proxyDownloadUrl, getWorkflowIdFromUrl };
+}

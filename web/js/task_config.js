@@ -60,6 +60,7 @@
         console.error('[任务配置] 加载失败:', error);
         // 返回空配置
         taskConfigCache = { tasks: [], categories: {}, providers: {} };
+        configLoaded = true;
         return taskConfigCache;
       } finally {
         loadingPromise = null;
@@ -244,7 +245,7 @@
       let totalMultiplier = 1.0;
       for (const modifier of task.power_modifiers) {
         const attrValue = context[modifier.attribute];
-        const multiplier = attrValue && modifier.values[attrValue]
+        const multiplier = attrValue && modifier.values && modifier.values[attrValue]
             ? modifier.values[attrValue]
             : (modifier.default || 1.0);
         totalMultiplier *= multiplier;
@@ -478,6 +479,7 @@
   async function reloadConfigs() {
     configLoaded = false;
     taskConfigCache = null;
+    loadingPromise = null;
     return loadTaskConfigs();
   }
 
@@ -529,3 +531,8 @@
   };
 
 })(window);
+
+// ES Module exports（供 Vitest 测试使用，不影响浏览器全局变量）
+if (typeof module !== 'undefined') {
+  module.exports = window.TaskConfig;
+}

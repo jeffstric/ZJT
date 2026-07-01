@@ -23,6 +23,9 @@ _LOCK_FILE = None
 def _run_async_task(async_func, *args, **kwargs):
     """
     在同步调度器中运行异步任务的包装函数
+
+    ⚠️ 每次调用创建新的事件循环，不复用。loop.close() 会释放所有关联资源。
+    仅适用于短生命周期的异步任务，不要在此运行持续性连接池或后台任务。
     """
     try:
         loop = asyncio.new_event_loop()
@@ -292,7 +295,7 @@ def init_scheduler(app):
         func=task_with_app_video,
         trigger=IntervalTrigger(seconds=5),
         id='generate_video',
-        name='Generate video every 11 seconds',
+        name='Generate video every 5 seconds',  # ⚠️ 实际间隔5秒，之前name描述错误
         replace_existing=True,
         max_instances=1,
         coalesce=True
@@ -303,7 +306,7 @@ def init_scheduler(app):
         func=task_with_app_audio,
         trigger=IntervalTrigger(seconds=13),
         id='generate_audio',
-        name='Generate audio every 7 seconds',
+        name='Generate audio every 13 seconds',  # ⚠️ 实际间隔13秒，之前name描述错误
         replace_existing=True,
         max_instances=1,
         coalesce=True

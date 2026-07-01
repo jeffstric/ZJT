@@ -117,6 +117,7 @@
           var file = refAudioEl.files && refAudioEl.files[0];
           if (!file) return;
           node.data.refAudioFile = file;
+          if (refAudioPlayer.src && refAudioPlayer.src.startsWith('blob:')) URL.revokeObjectURL(refAudioPlayer.src);
           var localUrl = URL.createObjectURL(file);
           refAudioPlayer.src = localUrl;
           refPreviewEl.style.display = 'block';
@@ -145,6 +146,7 @@
           var file = emoRefAudioEl.files && emoRefAudioEl.files[0];
           if (!file) return;
           node.data.emoRefAudioFile = file;
+          if (emoRefAudioPlayer.src && emoRefAudioPlayer.src.startsWith('blob:')) URL.revokeObjectURL(emoRefAudioPlayer.src);
           var localUrl = URL.createObjectURL(file);
           emoRefAudioPlayer.src = localUrl;
           emoRefPreviewEl.style.display = 'block';

@@ -91,6 +91,9 @@ class BaseLLMClient(ABC):
                 method='POST',
                 headers=headers,
                 data={
+                    # ⚠️ input_token 使用 total_token - output_token 而非原始 input_token
+                    # 因为部分供应商的 total_token 包含 cache_read，而 input_token 不含
+                    # 用差值可确保 input + output = total 的一致性
                     "input_token": total_token - output_token,
                     "output_token": output_token,
                     "cache_creation": 0,

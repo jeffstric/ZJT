@@ -4,6 +4,23 @@
 
 'use strict';
 
+function escapeHtmlAttr(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 let publishedInspirationData = [];
 let inspirationPage = 1;
 const INSPIRATION_PAGE_SIZE = 40;
@@ -469,13 +486,13 @@ function renderModelList() {
       ? '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/>'
       : '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 15l-5-5L5 19"/>';
     return `
-      <div class="mk-model ${isActive ? 'active' : ''}" data-model="${m.name}" data-key="${m.key || ''}" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
+      <div class="mk-model ${isActive ? 'active' : ''}" data-model="${escapeHtmlAttr(m.name)}" data-key="${escapeHtmlAttr(m.key || '')}" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
         <div style="width:36px;height:36px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:500;color:var(--text-primary);">${m.name}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${m.desc}</div>
+          <div style="font-size:14px;font-weight:500;color:var(--text-primary);">${escapeHtml(m.name)}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escapeHtml(m.desc)}</div>
         </div>
         ${isActive ? '<span style="color:var(--text-primary);font-size:18px;">✓</span>' : ''}
       </div>
@@ -943,13 +960,13 @@ function renderAgentModelList() {
       ? '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/>'
       : '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 15l-5-5L5 19"/>';
     return `
-      <div class="mk-agent-model ${isActive ? 'active' : ''}" data-model="${m.name}" data-key="${m.key || ''}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
+      <div class="mk-agent-model ${isActive ? 'active' : ''}" data-model="${escapeHtmlAttr(m.name)}" data-key="${escapeHtmlAttr(m.key || '')}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
         <div style="width:32px;height:32px;background:#f0f0f0;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5">${iconSvg}</svg>
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:500;color:var(--text-primary);">${m.name}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${m.desc}</div>
+          <div style="font-size:13px;font-weight:500;color:var(--text-primary);">${escapeHtml(m.name)}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(m.desc)}</div>
         </div>
         ${isActive ? '<span style="color:var(--accent-color);font-size:16px;">✓</span>' : ''}
       </div>
@@ -970,11 +987,11 @@ function renderAgentLLMList() {
     if (m.supportsVl) badges.push('<span style="font-size:10px;color:#7c3aed;background:#f3e8ff;padding:1px 6px;border-radius:4px;">VL</span>');
     if (m.supportsThinking) badges.push('<span style="font-size:10px;color:#059669;background:#d1fae5;padding:1px 6px;border-radius:4px;">深度思考</span>');
     return `
-      <div class="mk-agent-llm ${isActive ? 'active' : ''}" data-model="${m.name}" data-id="${m.id}" data-vendor="${m.vendor_id || ''}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
+      <div class="mk-agent-llm ${isActive ? 'active' : ''}" data-model="${escapeHtmlAttr(m.name)}" data-id="${escapeHtmlAttr(m.id)}" data-vendor="${escapeHtmlAttr(m.vendor_id || '')}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
         <div style="width:32px;height:32px;background:#f0f0f0;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;">🤖</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:500;color:var(--text-primary);display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${m.name} ${badges.join(' ')}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${m.vendor || ''}</div>
+          <div style="font-size:13px;font-weight:500;color:var(--text-primary);display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${escapeHtml(m.name)} ${badges.join(' ')}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(m.vendor || '')}</div>
         </div>
         ${isActive ? '<span style="color:var(--accent-color);font-size:16px;">✓</span>' : ''}
       </div>
@@ -993,13 +1010,13 @@ function addMediaPreview(item) {
 
   if (item.type === 'video') {
     el.innerHTML = `
-      <video src="${item.previewUrl}" muted playsinline></video>
+      <video src="${escapeHtmlAttr(item.previewUrl)}" muted playsinline></video>
       <div class="video-icon"><svg width="10" height="10" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>
       ${item.uploading ? '<div class="upload-status"><div class="upload-status-bar" style="width:0%"></div></div>' : ''}
       <button class="media-preview-remove" data-remove-id="${item.id}">&times;</button>`;
   } else {
     el.innerHTML = `
-      <img src="${item.previewUrl}" alt="">
+      <img src="${escapeHtmlAttr(item.previewUrl)}" alt="">
       ${item.uploading ? '<div class="upload-status"><div class="upload-status-bar" style="width:0%"></div></div>' : ''}
       <button class="media-preview-remove" data-remove-id="${item.id}">&times;</button>`;
   }

@@ -121,8 +121,20 @@ class ImageMode:
     ALL_MODES = [FIRST_LAST_FRAME, MULTI_REFERENCE, FIRST_LAST_WITH_REF]
 
 
+# 注意：以下四个常量类虽然都与"驱动"相关，但层级不同，请勿混用：
+# - TaskProvider: 高层供应商分类（duomi/runninghub/vidu/volcengine/local/zjt），
+#   用于 UnifiedTaskConfig.provider 字段，决定任务属于哪个供应商平台
+# - DriverKey: 业务层驱动名称（如 'kling_image_to_video'、'gemini_image_edit'），
+#   用于 implementation_power 表的 driver_key 列，是任务类型到实现方的桥梁
+# - DriverImplementation: 实际 Python 驱动类的标识字符串（如 'kling_duomi_v1'、'gemini_image_preview_site0_v1'），
+#   用于 VideoDriverFactory 注册和实例化具体的驱动类
+# - DriverImplementationId: 每个 DriverImplementation 在数据库中的数字 ID（如 kling_duomi_v1=2），
+#   用于数据库存储和前端传输，比字符串更高效
+#
+# 层级关系：TaskProvider (1) → DriverKey (N) → DriverImplementation (N) → DriverImplementationId (1:1)
+
 class TaskProvider:
-    """任务供应商"""
+    """任务供应商（高层分类，决定任务属于哪个平台）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'DUOMI': '多米供应商',
@@ -377,6 +389,8 @@ class UnifiedTaskConfig:
     default_size: Optional[str] = None
     default_duration: Optional[int] = None
     enabled: bool = True
+    # sort_order 设计：使用间隔编号（10, 11, 12...），便于在中间插入新任务而不用全部重排
+    # 范围：10-99 为内置任务，1000+ 为高级/特殊任务，3000+ 为营销任务，4000+ 为剧本创作任务
     sort_order: int = 0
     categories: List[str] = field(default_factory=list)  # 额外分类列表
     supported_image_modes: List[str] = field(default_factory=lambda: ['first_last_frame'])  # 支持的图片模式（图生视频任务）
@@ -385,7 +399,9 @@ class UnifiedTaskConfig:
     supports_grid_merge: bool = False  # 是否支持宫格合并生成视频
     supports_grid_image: bool = False  # 是否支持宫格生图（一次生成多张图片）
     supports_last_frame: bool = True  # 是否支持尾帧（某些模型虽然支持首尾帧模式，但只使用首帧，忽略尾帧）
-    hidden: bool = False  # 是否隐藏（隐藏的任务不在前端模型选择器中显示，仅通过API调用）
+    # hidden=True 的任务：前端模型选择器不显示，但仍可通过 API 调用
+    # 常见用途：功能下线但保留配置常量、仅内部使用、测试任务
+    hidden: bool = False
     power_modifiers: List[PowerModifier] = field(default_factory=list)  # 算力修饰符列表
     supports_ref_audio_video: bool = False  # 是否支持参考音频和视频
     max_multi_ref_images: int = 5  # 多参考图模式最大图片数量
@@ -892,7 +908,7 @@ class UnifiedConfigRegistry:
 
 # ============ 驱动实现类名常量 ============
 class DriverImplementation:
-    """驱动实现类名"""
+    """驱动实现类名（实际 Python 驱动类的标识字符串，用于 VideoDriverFactory 注册和实例化）"""
     _CONSTANT_GROUP = True
     # Sora2
     SORA2_DUOMI_V1 = 'sora2_duomi_v1'
@@ -986,7 +1002,7 @@ class DriverImplementation:
 
 # ============ 驱动实现 ID 常量（用于数据库存储） ============
 class DriverImplementationId:
-    """驱动实现ID（数据库存储）"""
+    """驱动实现 ID（每个 DriverImplementation 在数据库中的数字 ID，用于存储和前端传输）"""
     _CONSTANT_GROUP = True
     UNKNOWN = 0
     SORA2_DUOMI_V1 = 1
@@ -1130,7 +1146,7 @@ def get_implementation_name(id: int) -> str:
 
 # ============ 业务驱动名称常量 ============
 class DriverKey:
-    """业务驱动名称"""
+    """业务驱动名称（任务类型到实现方的桥梁，用于 implementation_power 表的 driver_key 列）"""
     _CONSTANT_GROUP = True
     # Sora2 相关
     SORA2_TEXT_TO_VIDEO = 'sora2_text_to_video'
@@ -1205,7 +1221,7 @@ COMPUTING_POWER_CHECK_THRESHOLD = 1  # Agent 循环算力检查阈值，低于�
 
 # ============ 任务类型 ID 常量 ============
 class TaskTypeId:
-    """任务类型ID"""
+    """任务类型 ID（对应 ai_tools/tasks 表的 type 字段，每个任务类型有唯一的数字 ID）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'GEMINI_2_5_FLASH_IMAGE': 'Gemini 2.5 Flash 图片编辑',
