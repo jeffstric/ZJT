@@ -19,7 +19,8 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
-        modelConfigs: {}
+        modelConfigs: {},
+        timelineAiToolId: null
       }
     },
     mounted() {
@@ -448,12 +449,16 @@
               <div style="font-size: 11px; color: var(--muted); margin-top: 8px;">
                 {{ $t('create_time') }}: {{ new Date(item.create_time).toLocaleString() }}
               </div>
+              <div style="margin-top: 8px;">
+                <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>
+              </div>
             </div>
             <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
               {{ $t('loading') }}
             </div>
           </div>
         </div>
+        <timeline-modal v-if="timelineAiToolId" :ai-tool-id="timelineAiToolId" @close="timelineAiToolId = null"></timeline-modal>
       </div>
     `
   };

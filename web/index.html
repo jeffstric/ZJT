@@ -927,6 +927,82 @@
   ZJTi18n.init(['common', 'index', 'video_workflow', 'marketing_agent']).then(() => {
     // 初始化完成后创建 Vue 应用
     const app = Vue.createApp(App);
+
+    // 任务事件时间线弹窗（全局复用，避免在各历史组件重复实现）
+    app.component('timeline-modal', {
+      props: { aiToolId: { type: Number, required: true } },
+      data() {
+        return { timeline: [], loading: false, error: '', expandedIdx: null };
+      },
+      computed: {
+        eventLabels() {
+          return {
+            record_created: '记录创建', task_started: '开始处理', slot_delayed: '槽位延迟',
+            implementation_selected: '选定实现方', submitted: '已提交', status_check: '状态轮询',
+            upstream_succeeded: '上游成功', upstream_failed: '上游失败', download_started: '开始下载',
+            download_completed: '下载完成', cdn_uploaded: 'CDN上传', retry_scheduled: '安排重试',
+            max_retry_exceeded: '重试上限', task_completed: '任务完成', exception: '异常', pipeline_step: '流水线步骤'
+          };
+        }
+      },
+      async mounted() { await this.fetchTimeline(); },
+      methods: {
+        async fetchTimeline() {
+          this.loading = true; this.error = '';
+          try {
+            const userId = localStorage.getItem('user_id');
+            const authToken = localStorage.getItem('auth_token');
+            const res = await axios.get(`/api/ai-tools/${this.aiToolId}/timeline`, {
+              params: { user_id: userId ? parseInt(userId, 10) : undefined, auth_token: authToken || undefined }
+            });
+            if (res.data.success) { this.timeline = (res.data.data && res.data.data.timeline) || []; }
+            else { this.error = res.data.message || '获取失败'; }
+          } catch (err) {
+            this.error = (err && err.response && err.response.data && err.response.data.detail) || '获取时间线失败';
+          } finally { this.loading = false; }
+        },
+        close() { this.$emit('close'); },
+        labelOf(t) { return this.eventLabels[t] || t; },
+        toggleDetail(i) { this.expandedIdx = (this.expandedIdx === i) ? null : i; },
+        formatTime(s) {
+          if (!s) return '-';
+          try {
+            const d = new Date(s);
+            const pad = n => String(n).padStart(2, '0');
+            const ms = String(d.getMilliseconds()).padStart(3, '0');
+            return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${ms}`;
+          } catch (e) { return s; }
+        }
+      },
+      template: `
+        <div class="modal-overlay" @click.self="close" style="z-index: 10001;">
+          <div class="modal" style="max-width: 720px; max-height: 82vh; overflow-y: auto;">
+            <button class="modal-close" @click="close">×</button>
+            <div class="modal-title">{{ $t('task_timeline') }} <span style="font-weight: 400; color: var(--muted); font-size: 14px;">ID: {{ aiToolId }}</span></div>
+            <div v-if="loading" style="text-align:center;padding:30px;color:var(--muted);">{{ $t('timeline_loading') }}</div>
+            <div v-else-if="error" style="text-align:center;padding:30px;color:#e53935;">{{ error }}</div>
+            <div v-else-if="timeline.length === 0" style="text-align:center;padding:30px;color:var(--muted);">{{ $t('no_timeline_records') }}</div>
+            <div v-else>
+              <div v-for="(ev, idx) in timeline" :key="idx" style="display:flex;padding:10px 4px;border-bottom:1px solid var(--border);">
+                <div style="width:130px;flex-shrink:0;font-size:12px;color:var(--muted);font-family:monospace;">{{ formatTime(ev.create_at) }}</div>
+                <div style="flex:1;">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <span style="font-size:12px;font-weight:600;background:var(--border);padding:1px 8px;border-radius:10px;">{{ labelOf(ev.event_type) }}</span>
+                    <span style="font-size:13px;color:var(--text);">{{ ev.message }}</span>
+                    <span v-if="ev.duration_ms != null" style="font-size:11px;color:var(--muted);">{{ ev.duration_ms }}ms</span>
+                  </div>
+                  <div v-if="ev.detail && Object.keys(ev.detail).length" style="margin-top:4px;">
+                    <a href="javascript:void(0)" @click="toggleDetail(idx)" style="font-size:11px;">{{ expandedIdx === idx ? '收起' : '详情' }}</a>
+                    <pre v-if="expandedIdx === idx" style="margin:4px 0 0;font-size:11px;background:var(--border);padding:8px;border-radius:4px;white-space:pre-wrap;word-break:break-all;">{{ JSON.stringify(ev.detail, null, 2) }}</pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `
+    });
+
     app.use(router);
     // 注册 Vue i18n 插件
     app.use(window.ZJTi18nVue);

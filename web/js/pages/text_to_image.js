@@ -20,6 +20,7 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        timelineAiToolId: null,
         driverStatus: {},  // 驱动可用状态
         taskTypeConfig: null,  // 从后端获取的任务类型配置
         modelConfigs: {},  // 从后端获取的模型配置
@@ -526,6 +527,9 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">{{ $t('view_result') }}</a>
                 </div>
+                <div style="margin-top: 8px;">
+                  <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>
+                </div>
               </div>
               
               <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
@@ -538,6 +542,7 @@
             </div>
           </div>
         </div>
+        <timeline-modal v-if="timelineAiToolId" :ai-tool-id="timelineAiToolId" @close="timelineAiToolId = null"></timeline-modal>
       </div>
     `
   };

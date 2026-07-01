@@ -19,6 +19,7 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        timelineAiToolId: null,
         enhancingVideos: {},  // Track enhancement status by item id
         enhanceTaskIds: {},
         enhanceStatusTimers: {},
@@ -717,6 +718,9 @@
                   <button class="btn secondary" @click="downloadHistoryResult(item)" style="display: inline-block; margin-right: 8px;">{{ $t('view_result') }}</button>
                   <button v-if="item.status == 2 && item.type == 2" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="display: inline-block;">{{ enhancingVideos[item.id] ? $t('fixed') : $t('generate_hd_video') }}</button>
                 </div>
+                <div style="margin-top: 8px;">
+                  <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>
+                </div>
               </div>
 
               <!-- Loading indicator -->
@@ -731,6 +735,7 @@
             </div>
           </div>
         </div>
+        <timeline-modal v-if="timelineAiToolId" :ai-tool-id="timelineAiToolId" @close="timelineAiToolId = null"></timeline-modal>
       </div>
     `
   };

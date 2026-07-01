@@ -26,6 +26,7 @@ from config.config_util import resolve_bin_path
 from config.version import get_app_version
 from perseids_server.client import make_perseids_request, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
 from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
+from model.ai_tools_log import AIToolsLogModel
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
 from model.world import WorldModel
@@ -34,7 +35,6 @@ from model.location import LocationModel
 from model.script import ScriptModel
 from model.props import PropsModel
 import uuid
-from api.clients.duomi_client import create_video_remix
 from PIL import Image
 from task.scheduler import init_scheduler
 from model.migration import run_migrations, get_alembic_config
@@ -3377,6 +3377,76 @@ async def get_ai_tool_detail(
         )
 
 
+@app.get('/api/ai-tools/{ai_tool_id}/timeline')
+@require_permission("ai_tools:view_history")
+async def get_ai_tool_timeline(
+    request: Request,
+    ai_tool_id: int,
+    user_id: int = Query(None, description="User ID（弱信任回退）"),
+    auth_token: str = Query(None, description="Authentication token")
+):
+    """
+    获取某个 AI 工具任务的事件时间线（用于排查任务耗时/卡点/轮询节奏）
+
+    访问控制：管理员可查看任意任务；非管理员仅能查看本人任务。
+    优先以 auth_token 解析真实身份；无 token 时回退到 user_id。
+    """
+    try:
+        record = AIToolsModel.get_by_id(ai_tool_id)
+
+        if not record:
+            raise HTTPException(status_code=404, detail="记录不存在")
+
+        # 解析真实身份 + 管理员判定
+        viewer_id = None
+        is_admin = False
+        token = (auth_token or '').strip()
+        if token.startswith('Bearer '):
+            token = token[7:]
+        if token:
+            try:
+                from model.user_tokens import UserTokensModel
+                from model.users import UsersModel
+                token_uid = UserTokensModel.get_user_id_by_token(token)
+                if token_uid:
+                    viewer_id = token_uid
+                    viewer = UsersModel.get_by_id(token_uid)
+                    is_admin = bool(viewer and getattr(viewer, 'role', None) == 'admin')
+            except Exception as e:
+                logger.warning(f'timeline auth token resolve failed: {e}')
+        # 无 token 时回退到客户端传入的 user_id（保持与 history 一致的弱信任）
+        if viewer_id is None:
+            viewer_id = user_id
+
+        # 归属校验：管理员放行；否则必须为本人
+        if not is_admin:
+            if viewer_id is None:
+                raise HTTPException(status_code=401, detail="请先登录")
+            if record.user_id != viewer_id:
+                raise HTTPException(status_code=403, detail="无权访问该记录")
+
+        logs = AIToolsLogModel.list_by_ai_tool(ai_tool_id)
+        return JSONResponse({
+            'success': True,
+            'data': {
+                'ai_tool_id': ai_tool_id,
+                'project_id': record.project_id,
+                'status': record.status,
+                'timeline': [log.to_dict() for log in logs]
+            }
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'获取任务时间线失败: {str(e)}')
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'message': '服务器错误'}
+        )
+
+
 @app.post("/api/image-upscale")
 @require_permission("image:upscale")
 async def image_upscale(
@@ -3748,172 +3818,6 @@ async def video_enhance(
         logger.error(f"Video enhancement failed: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"视频高清修复失败: {str(e)}")
-
-
-@app.post("/api/video-remix")
-@require_permission("video:remix")
-async def video_remix(
-    request: Request,
-    video_id: str = Form(..., description="视频ID"),
-    prompt: str = Form(..., description="重新编辑的提示词"),
-    aspect_ratio: str = Form("16:9", description="视频比例: 16:9, 9:16, 1:1"),
-    duration: int = Form(15, description="视频时长（秒）"),
-    count: int = Form(1, ge=1, le=4, description="生成数量 (1-4)"),
-    user_id: int = Form(None, description="用户ID"),
-    auth_token: str = Form(None, description="认证令牌")
-):
-    """
-    Sora2 视频重新编辑接口 - 基于现有视频ID进行重新编辑
-    
-    Args:
-        video_id: 要重新编辑的视频ID
-        prompt: 重新编辑的提示词
-        aspect_ratio: 视频比例 (16:9, 9:16, 1:1)
-        duration: 视频时长（秒）
-        count: 生成数量 (1-4)
-        user_id: 用户ID
-        auth_token: 认证令牌
-    
-    Returns:
-        JSON响应，包含任务ID列表
-    """
-    try:
-        logger.info(f"Video remix request received - video_id: {video_id}, prompt: {prompt}")
-          
-        # 计算所需算力（使用视频生成的算力标准）
-        task_config = TaskTypeRegistry.get(TaskTypeId.SORA2_TEXT_TO_VIDEO)  # AI视频生成
-        computing_power = task_config.computing_power if task_config else 0
-        
-        if CHECK_AUTH_TOKEN:
-            headers = {'Authorization': f'Bearer {auth_token}'}
-            
-            # 检查算力是否充足
-            success, message, response_data = await async_make_perseids_request(
-                endpoint='user/check_computing_power',
-                method='GET',
-                headers=headers
-            )
-            if not success:
-                raise HTTPException(
-                    status_code=400,
-                    detail=message
-                )
-            
-            # 检查算力是否足够生成所有视频
-            user_computing_power = response_data.get('computing_power', 0)
-            total_computing_power = computing_power * count
-            user_id_from_token = response_data.get('user_id')
-            if user_computing_power < total_computing_power:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
-                )
-            if user_id_from_token != user_id:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="用户ID不匹配"
-                )
-        project_ids = []
-        
-        # 循环创建多个任务
-        for i in range(count):
-            try:
-                # 为每个任务生成唯一的交易ID
-                transaction_id = str(uuid.uuid4())
-                
-                # 调用remix API
-                try:
-                    result = await asyncio.to_thread(
-                        create_video_remix,
-                        video_id=video_id,
-                        prompt=prompt,
-                        aspect_ratio=aspect_ratio,
-                        duration=duration
-                    )
-                except Exception as api_error:
-                    error_msg = str(api_error)
-                    logger.error(f"Task {i+1} API call failed: {error_msg}")
-                    # 如果是第一个任务就失败，直接抛出错误
-                    if i == 0 and len(project_ids) == 0:
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"Remix API调用失败: {error_msg}"
-                        )
-                    continue
-                
-                logger.info(f"Remix task {i+1} result: {result}")
-                
-                # 从响应中获取project_id
-                project_id = result.get("id")
-                if not project_id:
-                    logger.error(f"Task {i+1}: No project ID received from remix API. Response: {result}")
-                    # 如果是第一个任务就失败，直接抛出错误
-                    if i == 0 and len(project_ids) == 0:
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"API返回格式错误: 未获取到任务ID。响应: {result}"
-                        )
-                    continue
-                
-                project_ids.append(project_id)
-                
-                # 扣除算力
-                if CHECK_AUTH_TOKEN:
-                    success, message, response_data = await async_make_perseids_request(
-                        endpoint='user/calculate_computing_power',
-                        method='POST',
-                        headers=headers,
-                        data={
-                            "computing_power": computing_power,
-                            "behavior": "deduct",
-                            "transaction_id": transaction_id
-                        }
-                    )
-                    if not success:
-                        logger.error(f"Task {i+1} computing power deduction failed: {message}")
-                        # 继续执行，因为任务已经提交
-                
-                # 创建数据库记录
-                if user_id:
-                    try:
-                        from config.unified_config import get_implementation_id
-                        AIToolsModel.create(
-                            prompt=f"Remix: {prompt}",
-                            user_id=user_id,
-                            type=2,  # 2-AI视频生成
-                            ratio=aspect_ratio,
-                            duration=duration,
-                            project_id=project_id,
-                            transaction_id=transaction_id,
-                            status=AI_TOOL_STATUS_PROCESSING,
-                            message=f"原视频ID: {video_id}",
-                            implementation=get_implementation_id('sora2_duomi_v1')
-                        )
-                    except Exception as db_error:
-                        logger.error(f"Failed to create database record for task {i+1}: {db_error}")
-                        # 不因数据库插入失败而中断请求
-                
-            except Exception as task_error:
-                logger.error(f"Task {i+1} failed: {task_error}")
-                logger.error(traceback.format_exc())
-                continue  # 继续处理下一个任务
-        
-        if not project_ids:
-            raise HTTPException(status_code=500, detail="所有任务都提交失败")
-        
-        return JSONResponse({
-            "success": True,
-            "project_ids": project_ids,
-            "status": "submitted",
-            "video_id": video_id
-        })
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Video remix failed: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"视频重新编辑失败: {str(e)}")
 
 
 @app.post("/api/digital-human")

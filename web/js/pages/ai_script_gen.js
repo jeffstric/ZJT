@@ -36,6 +36,7 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        timelineAiToolId: null,
         videoRatio: '9:16',
         enhancingVideos: {}, 
         enhanceTaskIds: {},
@@ -884,6 +885,9 @@
                 {{ enhancingVideos[item.id] ? '已修复' : '生成高清视频' }}
               </button>
             </div>
+            <div style="margin-top: 8px;">
+              <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>
+            </div>
           </div>
           <div v-if="historyLoading" style="text-align: center; padding: 20px; color: var(--muted);">
             加载中...
@@ -894,6 +898,7 @@
         </div>
       </div>
     </div>
+    <timeline-modal v-if="timelineAiToolId" :ai-tool-id="timelineAiToolId" @close="timelineAiToolId = null"></timeline-modal>
   </div>
 `
   };

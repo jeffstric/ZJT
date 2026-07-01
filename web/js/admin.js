@@ -620,6 +620,17 @@ const AdminApp = {
                 loading: false
             },
 
+            // 任务时间线（管理员排查用）
+            taskTimeline: {
+                queryType: 'project_id',  // project_id | ai_tool_id
+                keyword: '',
+                list: [],
+                meta: null,
+                expandedIdx: null,
+                loading: false,
+                error: ''
+            },
+
             // 智剧通Token有效期调整弹窗
             zjtExpireModal: {
                 show: false,
@@ -1206,7 +1217,67 @@ const AdminApp = {
                     this.loadCommissionWithdrawals();
                     this.loadCommissionMaxRate();
                 }
+            } else if (page === 'taskTimeline') {
+                // 任务时间线：按需手动查询，不自动加载
             }
+        },
+
+        async loadTaskTimeline() {
+            const kw = (this.taskTimeline.keyword || '').trim();
+            if (!kw) {
+                this.taskTimeline.error = this.t('timeline_input_required');
+                this.taskTimeline.list = [];
+                this.taskTimeline.meta = null;
+                return;
+            }
+            this.taskTimeline.loading = true;
+            this.taskTimeline.error = '';
+            this.taskTimeline.expandedIdx = null;
+            try {
+                const params = {};
+                if (this.taskTimeline.queryType === 'project_id') {
+                    params.project_id = kw;
+                } else {
+                    const id = parseInt(kw, 10);
+                    if (isNaN(id) || id <= 0) {
+                        this.taskTimeline.error = this.t('timeline_invalid_ai_tool_id');
+                        this.taskTimeline.list = [];
+                        this.taskTimeline.meta = null;
+                        return;
+                    }
+                    params.ai_tool_id = id;
+                }
+                const response = await axios.get('/api/admin/ai-tools/timeline', {
+                    params,
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+                const data = (response.data && response.data.data) || {};
+                this.taskTimeline.list = data.timeline || [];
+                this.taskTimeline.meta = {
+                    ai_tool_id: data.ai_tool_id,
+                    project_id: data.project_id,
+                    status: data.status
+                };
+            } catch (err) {
+                this.taskTimeline.error = (err && err.response && err.response.data && (err.response.data.detail || err.response.data.message)) || this.t('timeline_load_failed');
+                this.taskTimeline.list = [];
+                this.taskTimeline.meta = null;
+            } finally {
+                this.taskTimeline.loading = false;
+            }
+        },
+        toggleTimelineDetail(idx) {
+            this.taskTimeline.expandedIdx = (this.taskTimeline.expandedIdx === idx) ? null : idx;
+        },
+        timelineEventLabel(type) {
+            const map = {
+                record_created: '记录创建', task_started: '开始处理', slot_delayed: '槽位延迟',
+                implementation_selected: '选定实现方', submitted: '已提交', status_check: '状态轮询',
+                upstream_succeeded: '上游成功', upstream_failed: '上游失败', download_started: '开始下载',
+                download_completed: '下载完成', cdn_uploaded: 'CDN上传', retry_scheduled: '安排重试',
+                max_retry_exceeded: '重试上限', task_completed: '任务完成', exception: '异常', pipeline_step: '流水线步骤'
+            };
+            return map[type] || type;
         },
 
         async loadMarketingPublications(page = 1) {

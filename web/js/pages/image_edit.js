@@ -23,6 +23,7 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
+        timelineAiToolId: null,
         upscalingImages: {},
         upscaleProjectIds: {},
         upscaleResults: {},
@@ -830,6 +831,9 @@
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">{{ $t('view_result') }}</a>
                   <button v-if="item.type == 1" class="btn" @click="upscaleHistoryImage(item)" style="margin-left: 8px; display: none;">{{ $t('download_image_hd') }}</button>
                 </div>
+                <div style="margin-top: 8px;">
+                  <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>
+                </div>
               </div>
 
               <!-- Loading indicator -->
@@ -844,6 +848,7 @@
             </div>
           </div>
         </div>
+        <timeline-modal v-if="timelineAiToolId" :ai-tool-id="timelineAiToolId" @close="timelineAiToolId = null"></timeline-modal>
       </div>
     `
   };

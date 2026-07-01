@@ -53,6 +53,7 @@ from config.constant import (
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage
+from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -300,6 +301,11 @@ async def _submit_new_task(ai_tool):
             if implementation_id > 0:
                 AIToolsModel.update(task_id, implementation=implementation_id)
                 logger.info(f"Recorded implementation {implementation_name} (id: {implementation_id}) for task {task_id}")
+                AIToolsLogModel.log(task_id, AIToolsLogEvent.IMPLEMENTATION_SELECTED,
+                                   user_id=ai_tool.user_id,
+                                   implementation=implementation_id,
+                                   message=f"选用实现方: {implementation_name}",
+                                   detail={'impl_name': implementation_name, 'impl_id': implementation_id})
 
                 # 仅在首次提交时记录实现方尝试（attempt_number=1）
                 # 重试由 ImplementationRetryPipelineDriver 记录（attempt_number>=2）
@@ -394,10 +400,15 @@ async def _submit_new_task(ai_tool):
             error = result.get("error", "未知错误")
             error_type = result.get("error_type", "SYSTEM")
             error_detail = result.get("error_detail", "")
-            
+
             logger.error(f"Task {task_id} submission failed: {error}")
             if error_detail:
                 logger.error(f"Error detail: {error_detail}")
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.UPSTREAM_FAILED,
+                               user_id=ai_tool.user_id,
+                               message=f"提交失败: {error}",
+                               detail={'error': error, 'error_type': error_type,
+                                       'error_detail': error_detail})
             
             # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
             # 释放本地槽位、状态回 QUEUED、延迟重试，不消耗 try_count、不退算力、不切换实现方。
@@ -457,11 +468,22 @@ async def _submit_new_task(ai_tool):
                     if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
                         media_type = "image"
 
+                AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_STARTED,
+                                   user_id=ai_tool.user_id,
+                                   message="开始下载结果文件（同步任务）",
+                                   detail={'source_url': result_url, 'media_type': media_type})
+                download_start = datetime.now()
                 # 下载并缓存，如果失败则使用原URL
                 cached_url = await download_and_cache(result_url, task_id, media_type)
                 final_url = cached_url if cached_url else result_url
+                download_ms = int((datetime.now() - download_start).total_seconds() * 1000)
 
                 logger.info(f"Sync task media cached: {result_url} -> {final_url}")
+                AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_COMPLETED,
+                                   user_id=ai_tool.user_id,
+                                   message="下载/缓存完成（同步任务）",
+                                   duration_ms=download_ms,
+                                   detail={'source_url': result_url, 'final_url': final_url})
 
             AIToolsModel.update_with_cdn_sync(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
@@ -474,6 +496,10 @@ async def _submit_new_task(ai_tool):
                 logger.warning(f"Failed to mark attempt as success for sync task {task_id}: {e}")
 
             logger.info(f"Sync task {task_id} completed with result: {final_url}")
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.TASK_COMPLETED,
+                               user_id=ai_tool.user_id, status_to=AI_TOOL_STATUS_COMPLETED,
+                               message="任务完成（同步任务）",
+                               detail={'result_url': final_url})
             return True
 
         # 5. 异步模式，更新数据库
@@ -501,13 +527,22 @@ async def _submit_new_task(ai_tool):
                 logger.info(f"Updated RunningHub slot project_id for task {task_id}")
         
         logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.SUBMITTED,
+                           user_id=ai_tool.user_id, project_id=project_id,
+                           status_to=AI_TOOL_STATUS_PROCESSING,
+                           implementation=ai_tool.implementation,
+                           message=f"已提交到上游，project_id={project_id}",
+                           detail={'project_id': project_id, 'driver': driver.driver_name})
         return True
-        
+
     except Exception as e:
         # 捕获所有未预期的异常
         logger.error(f"Unexpected exception in _submit_new_task_with_driver for task {task_id}: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.EXCEPTION,
+                           user_id=getattr(ai_tool, 'user_id', None),
+                           message=f"提交流程异常: {str(e)}")
         
         # 更新任务状态为失败
         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，请联系技术支持", completed_time=datetime.now())
@@ -615,7 +650,17 @@ async def _check_task_status(ai_tool):
         
         # 2. 调用驱动检查状态
         result = driver.check_status(project_id)
-        
+
+        # 记录每次状态轮询（含 running），便于排查轮询静默/调度积压
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.STATUS_CHECK,
+                           user_id=ai_tool.user_id, project_id=project_id,
+                           implementation=ai_tool.implementation,
+                           message=f"状态轮询: {result.get('status')}",
+                           detail={'state': result.get('status'),
+                                   'progress': result.get('progress'),
+                                   'message': result.get('message'),
+                                   'error': result.get('error')})
+
         # 3. 处理状态检查结果
         status = result.get("status")
         
@@ -627,14 +672,24 @@ async def _check_task_status(ai_tool):
                 return _handle_task_failure(task_id, ai_tool_type, "任务成功但未返回结果URL", ai_tool.user_id, project_id=project_id)
             
             logger.info(f"Task {task_id} completed successfully, result_url: {result_url}")
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.UPSTREAM_SUCCEEDED,
+                               user_id=ai_tool.user_id, project_id=project_id,
+                               implementation=ai_tool.implementation,
+                               message="上游返回成功",
+                               detail={'result_url': result_url})
             return await _handle_task_success(project_id, task_id, result_url)
-            
+
         elif status == "FAILED":
             # 任务失败
             error = result.get("error", "任务失败")
             error_type = result.get("error_type", "SYSTEM")
-            
+
             logger.error(f"Task {task_id} failed: {error} (type: {error_type})")
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.UPSTREAM_FAILED,
+                               user_id=ai_tool.user_id, project_id=project_id,
+                               implementation=ai_tool.implementation,
+                               message=f"上游返回失败: {error}",
+                               detail={'error': error, 'error_type': error_type})
             return _handle_task_failure(task_id, ai_tool_type, error, ai_tool.user_id, project_id=project_id)
             
         elif status == "RUNNING":
@@ -653,7 +708,10 @@ async def _check_task_status(ai_tool):
         logger.error(f"Unexpected exception in _check_task_status_with_driver for task {task_id}: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
-        
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.EXCEPTION,
+                           user_id=getattr(ai_tool, 'user_id', None), project_id=project_id,
+                           message=f"状态检查异常: {str(e)}")
+
         # 不立即标记为失败，继续重试
         return False
 
@@ -781,14 +839,26 @@ async def _handle_task_success(project_id, task_id, media_url):
         # 下载并缓存，如果失败则使用原URL
         # mock 本地路径短路（download_and_cache 不识别 /upload/ 本地路径，见方案 §5.1 改动 C）
         is_local_path = media_url and media_url.startswith("/upload/")
+        download_ms = None
         if is_local_path:
             final_url = media_url
             logger.info(f"[MOCK] local path, skip download_and_cache: {media_url}")
         else:
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_STARTED,
+                               project_id=project_id,
+                               message="开始下载结果文件",
+                               detail={'source_url': media_url, 'media_type': media_type})
+            download_start = datetime.now()
             cached_url = await download_and_cache(media_url, task_id, media_type)
             final_url = cached_url if cached_url else media_url
-        
+            download_ms = int((datetime.now() - download_start).total_seconds() * 1000)
+
         logger.info(f"Media cached: {media_url} -> {final_url}")
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_COMPLETED,
+                           project_id=project_id,
+                           message="下载/缓存完成",
+                           duration_ms=download_ms,
+                           detail={'source_url': media_url, 'final_url': final_url})
         
         AIToolsModel.update_by_project_id_with_cdn_sync(
             project_id=project_id,
@@ -806,6 +876,10 @@ async def _handle_task_success(project_id, task_id, media_url):
             logger.warning(f"Failed to mark attempt as success for task {task_id}: {e}")
 
         logger.info(f"Task {project_id} completed successfully")
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.TASK_COMPLETED,
+                           project_id=project_id, status_to=AI_TOOL_STATUS_COMPLETED,
+                           message="任务完成",
+                           detail={'result_url': final_url})
         return True
     except Exception as db_error:
         logger.error(f"Failed to update records for success task {project_id}: {db_error}")
@@ -1113,6 +1187,7 @@ def process_task_with_retry(task_type, process_func):
         for task in tasks:
             try:
                 logger.info(f"Start processing task: task_id={task.task_id}, table_id={task.id}, status={task.status}, try_count={task.try_count}")
+                ai_tool = None  # 预初始化，保证下方 except 中可安全引用
                 
                 # 检查任务是否过期
                 if _check_task_expiration(task):
@@ -1230,6 +1305,10 @@ def process_task_with_retry(task_type, process_func):
                     
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as failed due to max retry exceeded")
+                    AIToolsLogModel.log(task.task_id, AIToolsLogEvent.MAX_RETRY_EXCEEDED,
+                                       user_id=ai_tool.user_id, project_id=ai_tool.project_id,
+                                       status_to=AI_TOOL_STATUS_FAILED,
+                                       message=f"超过最大重试次数({_get_max_retry_count()})，终态失败")
                     continue
                 
                 # 获取 AI 工具详情
@@ -1260,15 +1339,26 @@ def process_task_with_retry(task_type, process_func):
                             next_trigger=next_trigger
                         )
                         logger.info(f"Task {task.task_id} delayed by {delay_seconds}s due to slot limit, next_trigger: {next_trigger}")
+                        AIToolsLogModel.log(task.task_id, AIToolsLogEvent.SLOT_DELAYED,
+                                           user_id=ai_tool.user_id, project_id=ai_tool.project_id,
+                                           message=f"槽位已满，延迟 {delay_seconds}s",
+                                           detail={'delay_seconds': delay_seconds})
                         delayed_count += 1
                         continue  # 跳过此任务，处理下一个
-                
+
                 # ⚠️ 关键状态转换：QUEUED → PROCESSING
                 # 此处仅更新 tasks 表，ai_tools 表的状态由 _submit_new_task / _check_task_status 内部更新
                 # 两表状态必须同步，否则会导致调度器重复提交或遗漏任务
                 if task.status == TASK_STATUS_QUEUED:
                     TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_PROCESSING)
                     logger.info(f"Updated task {task.task_id} status to TASK_STATUS_PROCESSING (处理中)")
+                    AIToolsLogModel.log(task.task_id, AIToolsLogEvent.TASK_STARTED,
+                                       user_id=ai_tool.user_id, project_id=ai_tool.project_id,
+                                       implementation=ai_tool.implementation,
+                                       try_count=task.try_count,
+                                       status_to=AI_TOOL_STATUS_PROCESSING,
+                                       message="调度器接管，开始处理",
+                                       detail={'task_table_id': task.id, 'try_count': task.try_count})
                 
                 # Call the specific processing function
                 # 检查是否为协程函数
@@ -1297,7 +1387,15 @@ def process_task_with_retry(task_type, process_func):
                         next_trigger=next_trigger
                     )
                     logger.info(f"Task failed: {task.task_id}, retry count: {new_try_count}, next trigger: {next_trigger}")
-                    
+                    AIToolsLogModel.log(task.task_id, AIToolsLogEvent.RETRY_SCHEDULED,
+                                       user_id=ai_tool.user_id if ai_tool else None,
+                                       project_id=ai_tool.project_id if ai_tool else None,
+                                       try_count=new_try_count,
+                                       message=f"处理失败，安排重试（第 {new_try_count} 次）",
+                                       detail={'try_count': new_try_count,
+                                               'delay_seconds': delay_seconds,
+                                               'next_trigger': next_trigger.isoformat() if next_trigger else None})
+
             except Exception as e:
                 logger.error(f"Error processing task {task.task_id}: {str(e)}")
                 import traceback
@@ -1313,6 +1411,14 @@ def process_task_with_retry(task_type, process_func):
                 logger.info(
                     f"Task exception backoff: {task.task_id}, retry count: {new_try_count}, next trigger: {next_trigger}"
                 )
+                AIToolsLogModel.log(task.task_id, AIToolsLogEvent.EXCEPTION,
+                                   user_id=ai_tool.user_id if ai_tool else None,
+                                   project_id=ai_tool.project_id if ai_tool else None,
+                                   try_count=new_try_count,
+                                   message=f"处理异常退避: {str(e)}",
+                                   detail={'try_count': new_try_count,
+                                           'delay_seconds': delay_seconds,
+                                           'next_trigger': next_trigger.isoformat() if next_trigger else None})
                 
         logger.info(f"Summary: processed={processed_count}, succeeded={success_count}, delayed={delayed_count}, expired={expired_count}")
 

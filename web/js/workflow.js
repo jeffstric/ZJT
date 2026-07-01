@@ -428,28 +428,41 @@
     });
 
     // 轮询视频状态
+    // 两阶段轮询策略：前20分钟每10秒一次(120次)，后40分钟每30秒一次(80次)，总计60分钟
     function pollVideoStatus(projectIds, onProgress, onComplete, onError, onTaskUpdate){
       let pollCount = 0;
-      const maxPolls = 120; // 最多轮询120次（20分钟）
-      
+      const stage1Polls = 120; // 阶段一最大轮询次数：120次 × 10秒 = 20分钟
+      const maxPolls = 200;    // 总最大轮询次数：120 + 80 = 200，合计60分钟
+
+      // 根据当前已轮询次数返回下一次轮询的间隔(ms)：阶段一10秒，阶段二30秒
+      const getNextInterval = () => pollCount < stage1Polls ? 10000 : 30000;
+
+      // 根据当前已轮询次数返回累计已等待的秒数(用于进度展示)
+      const getElapsedSeconds = () => {
+        if(pollCount <= stage1Polls){
+          return pollCount * 10;
+        }
+        return stage1Polls * 10 + (pollCount - stage1Polls) * 30;
+      };
+
       const poll = async () => {
         pollCount++;
         try {
           const result = await checkVideoStatus(projectIds);
-          
+
           // 如果有任务更新回调，实时更新每个任务的状态
           if(onTaskUpdate && result.tasks){
             onTaskUpdate(result.tasks);
           }
-          
+
           if(result.status === 'SUCCESS' || result.status === 'FAILED'){
             // SUCCESS或FAILED都表示所有任务已完成，调用onComplete处理
             // onComplete会根据每个任务的详细状态来更新视频节点
             onComplete(result);
           } else {
-            onProgress(`生成中... (${pollCount * 10}秒)`);
+            onProgress(`生成中... (${getElapsedSeconds()}秒)`);
             if(pollCount < maxPolls){
-              setTimeout(poll, 10000);
+              setTimeout(poll, getNextInterval());
             } else {
               onError('等待超时，但视频仍在生成中。你可以通过刷新页面后查看是否生成成功。');
             }
@@ -457,13 +470,13 @@
         } catch(e){
           console.error('Poll error:', e);
           if(pollCount < maxPolls){
-            setTimeout(poll, 10000);
+            setTimeout(poll, getNextInterval());
           } else {
             onError('查询状态失败');
           }
         }
       };
-      
+
       poll();
     }
 
