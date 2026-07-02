@@ -3,9 +3,13 @@
 实现生成完成的图片/视频自动缓存到本地，按日期目录组织，并支持超时/容量限制自动清理
 """
 import hashlib
+import socket
 import aiohttp
 import asyncio
 from pathlib import Path
+
+from config.constant import DOWNLOAD_WRITE_CHUNK_TIMEOUT
+from utils.download_io_pool import get_download_io_executor
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from config.config_util import get_dynamic_config_value, get_config
@@ -220,13 +224,23 @@ class MediaCacheManager:
         file_path = date_dir / filename
 
         last_error = None
+        # 拆分超时：connect 阶段快速失败；单次 sock_read 60s；整体 total 5 分钟兜底
+        timeout = aiohttp.ClientTimeout(total=300, connect=10, sock_connect=10, sock_read=60)
+        # 写盘丢线程池（模块级长寿 executor），避免阻塞事件循环（CLAUDE.md 第1条）；
+        # await 串行化保证同一文件对象 open/write/close 顺序访问安全
+        loop = asyncio.get_running_loop()
+        _io_executor = get_download_io_executor()
+
         for attempt in range(1, max_retries + 1):
+            expected_size = None
+            file_size = 0
             try:
-                # 下载文件
                 logger.info(f"开始下载媒体文件 (第{attempt}/{max_retries}次): {url} -> {file_path}")
 
-                timeout = aiohttp.ClientTimeout(total=120)  # 2分钟超时
-                async with aiohttp.ClientSession(timeout=timeout) as session:
+                # 每个 attempt 独立 connector，session 退出自动关闭（connector_owner 默认 True），
+                # 杜绝成功 return 路径泄漏 connector（原 connector_owner=False + 循环后手动 close 会被 return 跳过，P6）
+                connector = aiohttp.TCPConnector(family=socket.AF_INET, limit=32, force_close=True)
+                async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
                     async with session.get(url) as response:
                         if response.status != 200:
                             logger.error(f"下载失败，HTTP状态码: {response.status}")
@@ -240,34 +254,102 @@ class MediaCacheManager:
                                 continue
                             return None
 
-                        # 写入文件
-                        with open(file_path, 'wb') as f:
-                            async for chunk in response.content.iter_chunked(65536):
-                                f.write(chunk)
+                        # 读取期望大小（Content-Length），用于下载后完整性校验
+                        cl_header = response.headers.get('Content-Length')
+                        if cl_header:
+                            try:
+                                expected_size = int(cl_header)
+                            except (TypeError, ValueError):
+                                expected_size = None
 
-                # 获取文件大小
+                        # 写入文件（写盘丢线程池，避免阻塞事件循环 CLAUDE.md 第1条；
+                        # await 串行化保证同一文件对象 open/write/close 顺序访问安全，P3）
+                        f = await asyncio.wait_for(
+                            loop.run_in_executor(_io_executor, open, file_path, 'wb'),
+                            timeout=DOWNLOAD_WRITE_CHUNK_TIMEOUT,
+                        )
+                        try:
+                            async for chunk in response.content.iter_chunked(65536):
+                                await asyncio.wait_for(
+                                    loop.run_in_executor(_io_executor, f.write, chunk),
+                                    timeout=DOWNLOAD_WRITE_CHUNK_TIMEOUT,
+                                )
+                        finally:
+                            # close 走 asyncio 默认线程池（非 download_io_pool），避免磁盘卡死时
+                            # write 占满 download_io_pool→close 排不上→连锁超时→fd 泄漏（建议#2）；
+                            # 用 wait_for 兜底，不阻塞事件循环（CLAUDE.md 第1条——故不采用同步 close）
+                            await asyncio.wait_for(
+                                loop.run_in_executor(None, f.close),
+                                timeout=DOWNLOAD_WRITE_CHUNK_TIMEOUT,
+                            )
+
+                # 获取实际写入大小
                 file_size = file_path.stat().st_size
+
+                # 完整性校验：Content-Length 不匹配视为下载不完整，触发重试
+                if expected_size is not None and file_size != expected_size:
+                    last_error = f"incomplete: got {file_size} bytes, expected {expected_size}"
+                    logger.warning(
+                        f"下载不完整 (第{attempt}/{max_retries}次): {url}, "
+                        f"actual={file_size}, expected={expected_size}, 短缺={expected_size - file_size} bytes"
+                    )
+                    if file_path.exists():
+                        file_path.unlink()
+                    if attempt < max_retries:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+
+                # 空文件保护
+                if file_size == 0:
+                    last_error = "empty file"
+                    logger.warning(f"下载文件为空 (第{attempt}/{max_retries}次): {url}")
+                    if file_path.exists():
+                        file_path.unlink()
+                    if attempt < max_retries:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
 
                 # 生成本地URL（相对于upload目录）
                 relative_path = file_path.relative_to(self.root_dir)
                 local_url = f"/{relative_path.as_posix()}"
 
-                logger.info(f"媒体文件缓存成功: {local_url} (大小: {file_size} bytes)")
+                logger.info(
+                    f"媒体文件缓存成功: {local_url} (大小: {file_size} bytes"
+                    + (f", 期望: {expected_size} bytes" if expected_size is not None else "")
+                    + ")"
+                )
                 return local_url
 
             except asyncio.TimeoutError:
                 last_error = "超时"
                 logger.error(f"下载超时 (第{attempt}/{max_retries}次): {url}")
-                # 清理可能的不完整文件
                 if file_path.exists():
                     file_path.unlink()
                 if attempt < max_retries:
                     await asyncio.sleep(5)
                     continue
+            except aiohttp.ClientPayloadError as e:
+                # upstream 中途关闭连接（CF 常见"upstream prematurely closed"）
+                last_error = f"payload error (upstream closed early): {e}"
+                logger.warning(f"下载被中途截断 (第{attempt}/{max_retries}次): {url}, err={e}")
+                if file_path.exists():
+                    file_path.unlink()
+                if attempt < max_retries:
+                    await asyncio.sleep(3)
+                    continue
+            except aiohttp.ClientConnectionError as e:
+                last_error = f"connection error: {e}"
+                logger.warning(f"下载连接异常 (第{attempt}/{max_retries}次): {url}, err={e}")
+                if file_path.exists():
+                    file_path.unlink()
+                if attempt < max_retries:
+                    await asyncio.sleep(3)
+                    continue
             except Exception as e:
                 last_error = str(e)
-                logger.error(f"下载媒体文件失败 (第{attempt}/{max_retries}次): {e}")
-                # 清理可能的不完整文件
+                logger.error(f"下载媒体文件失败 (第{attempt}/{max_retries}次): {e}", exc_info=True)
                 if file_path.exists():
                     file_path.unlink()
                 if attempt < max_retries:
@@ -315,9 +397,6 @@ class MediaCacheManager:
             }
             ext = ext_map.get(mime_part, ".bin")
 
-            # 判断媒体类型
-            media_type = "image" if mime_part.startswith("image/") else "video"
-
             # 使用同一个时间戳生成日期目录和文件名
             current_time = datetime.now()
 
@@ -335,9 +414,6 @@ class MediaCacheManager:
             file_bytes = b64.b64decode(data)
             with open(file_path, 'wb') as f:
                 f.write(file_bytes)
-
-            # 获取文件大小
-            file_size = file_path.stat().st_size
 
             # 生成本地URL（相对于项目根目录）
             relative_path = file_path.relative_to(self.root_dir)
