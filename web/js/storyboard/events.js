@@ -6,6 +6,7 @@ import state, {
     removeDialogueFromState,
     replaceSceneInState,
     serializeUiConfig,
+    loadStoryboardData,
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
@@ -47,6 +48,36 @@ function patchDialogueInState(dialogueId, patch) {
 
 async function handleAction(action, target) {
     const current = getCurrentScene();
+
+    if (action === 'generate-from-script-cancel') {
+        if (state.isGeneratingFromScript) return;
+        state.showGenerateFromScriptDialog = false;
+        state.generateFromScriptError = '';
+        rerender();
+        return;
+    }
+
+    if (action === 'generate-from-script-confirm') {
+        if (state.isGeneratingFromScript || !state.storyboardId) return;
+        state.isGeneratingFromScript = true;
+        state.generateFromScriptError = '';
+        rerender();
+        try {
+            const response = await api.generateFromScript(state.storyboardId, {
+                max_group_duration: 15,
+                split_multi_dialogue: false,
+            });
+            loadStoryboardData(response);
+            state.showGenerateFromScriptDialog = false;
+            notify(`已生成 ${response.generated_count || state.scenes.length} 个分镜`);
+        } catch (error) {
+            state.generateFromScriptError = error.message || '生成分镜失败';
+        } finally {
+            state.isGeneratingFromScript = false;
+            rerender();
+        }
+        return;
+    }
 
     if (action === 'add-scene') {
         const response = await api.addScene(state.storyboardId, {

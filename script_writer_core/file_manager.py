@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Set, Tuple
-from config.constant import FilePathConstants, UploadPathConstants
+from config.constant import FilePathConstants, StoryType, UploadPathConstants
 from utils.project_path import get_project_root
 
 logger = logging.getLogger(__name__)
@@ -694,6 +694,7 @@ class FileManager:
             try:
                 json_content = file_path.read_text(encoding='utf-8')
                 world_data = json.loads(json_content)
+                world_data['story_type'] = StoryType.normalize(world_data.get('story_type'))
                 return world_data
             except Exception as e:
                 print(f"读取世界JSON失败 world_id={world_id}: {e}")
@@ -717,6 +718,7 @@ class FileManager:
         file_path = worlds_dir / f"world_{world_id}.json"
         
         try:
+            world_data['story_type'] = StoryType.normalize(world_data.get('story_type'))
             world_json = json.dumps(world_data, ensure_ascii=False, indent=2)
             file_path.write_text(world_json, encoding='utf-8')
             print(f"✓ 世界信息已保存: {file_path}")
@@ -921,6 +923,14 @@ class FileManager:
             context += f"## 世界信息\n\n"
             context += f"**世界名称**: {world_data.get('name', '未命名')}\n\n"
             
+            story_type = world_data.get('story_type') or 'dialogue'
+            story_type_labels = {
+                'dialogue': '对话剧情',
+                'narration': '旁白解说',
+                'music_mv': '音乐MV',
+            }
+            context += f"**故事类型**: {story_type_labels.get(story_type, '对话剧情')} ({story_type})\n\n"
+
             if world_data.get('story_outline'):
                 context += f"**故事大纲**:\n{world_data.get('story_outline')}\n\n"
             

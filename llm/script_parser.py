@@ -5,7 +5,8 @@
 """
 
 import json
-from typing import Dict, Any, Optional
+import re
+from typing import Dict, Any, Optional, List, Tuple
 from llm.llm_client_factory import get_llm_client
 
 # ============================================================
@@ -66,6 +67,7 @@ SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和�
 12. 确保所有ID引用关系正确（如shot中的location_id、character_id、props_present要对应）
 13. 只输出纯JSON内容,不要添加```json```标记或任何解释性文字
 14. **【重要】在shot节点的所有文本字段中,只要涉及角色名称,必须用【【角色名】】格式包裹,便于后续匹配角色库。注意：只对角色名称使用【【】】包裹,场景名称、物品名称等其他内容不要使用【【】】包裹**
+15. 每个shot必须有明确的narrative_purpose，说明这个镜头为什么存在，且必须具体到视听手段
 
 ID格式规范：
 - shot_id: s001-s999（最多10位字符）
@@ -74,16 +76,145 @@ ID格式规范：
 - group_id: grp_001-grp_999
 """
 
+STORY_WRITER_SCENE_MARKER_RE = re.compile(
+    r"(\[场景[^\]\n]*\]|场景编号\s*[:：]\s*[A-Z]\d+|^\s*#*\s*场景\s*[:：])",
+    re.IGNORECASE | re.MULTILINE,
+)
+STORY_WRITER_ACT_MARKER_RE = re.compile(
+    r"(\bact\s*\d+\b|第\s*[一二三四五六七八九十百千万\d]+\s*[幕场])",
+    re.IGNORECASE,
+)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _shot_sort_key(shot: Dict[str, Any]) -> Tuple[int, Any]:
+    raw_number = shot.get("shot_number", 0)
+    try:
+        return (0, int(raw_number))
+    except (TypeError, ValueError):
+        match = re.search(r"\d+", str(raw_number))
+        if match:
+            return (0, int(match.group(0)))
+        return (1, str(raw_number))
+
+
+def _group_duration(group: Dict[str, Any]) -> float:
+    return sum(_safe_float(shot.get("duration", 0)) for shot in group.get("shots", []))
+
+
+def _semantic_marker_text(group: Dict[str, Any]) -> str:
+    marker_keys = (
+        "group_name",
+        "scene_title",
+        "scene_name",
+        "scene_number",
+        "scene_id",
+        "source_scene_id",
+        "act_title",
+        "act",
+    )
+    parts: List[str] = []
+    for key in marker_keys:
+        value = group.get(key)
+        if value:
+            parts.append(str(value))
+    for shot in group.get("shots", []):
+        for key in marker_keys:
+            value = shot.get(key)
+            if value:
+                parts.append(str(value))
+    return "\n".join(parts)
+
+
+def _detect_grouping_basis(shot_groups: List[Dict[str, Any]]) -> str:
+    marker_texts = [_semantic_marker_text(group) for group in shot_groups]
+    if any(STORY_WRITER_SCENE_MARKER_RE.search(text) for text in marker_texts):
+        return "story_writer_scene_markers"
+    if any(STORY_WRITER_ACT_MARKER_RE.search(text) for text in marker_texts):
+        return "story_writer_act_markers"
+    return "original_llm_groups"
+
+
+def _append_shot_group(
+    new_shot_groups: List[Dict[str, Any]],
+    group_counter: int,
+    shots: List[Dict[str, Any]],
+    source_group_name: Optional[str],
+    part_index: int,
+    total_parts: int,
+) -> int:
+    if not shots:
+        return group_counter
+
+    group_name = source_group_name or f"分镜组{group_counter}"
+    if total_parts > 1:
+        group_name = f"{group_name} - 片段{part_index}"
+
+    new_shot_groups.append({
+        "group_id": f"grp_{group_counter:03d}",
+        "group_name": group_name,
+        "shots": shots,
+    })
+    return group_counter + 1
+
+
+def _split_semantic_group_by_duration(
+    group: Dict[str, Any],
+    max_group_duration: int,
+    group_counter: int,
+    new_shot_groups: List[Dict[str, Any]],
+) -> int:
+    shots = sorted(group.get("shots", []), key=_shot_sort_key)
+    if not shots:
+        return group_counter
+
+    chunks: List[List[Dict[str, Any]]] = []
+    current_chunk: List[Dict[str, Any]] = []
+    current_duration = 0.0
+
+    for shot in shots:
+        shot_duration = _safe_float(shot.get("duration", 0))
+        if current_chunk and (current_duration + shot_duration) > max_group_duration:
+            chunks.append(current_chunk)
+            current_chunk = [shot]
+            current_duration = shot_duration
+        else:
+            current_chunk.append(shot)
+            current_duration += shot_duration
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    source_group_name = group.get("group_name")
+    total_parts = len(chunks)
+    for index, chunk in enumerate(chunks, start=1):
+        group_counter = _append_shot_group(
+            new_shot_groups,
+            group_counter,
+            chunk,
+            source_group_name,
+            index,
+            total_parts,
+        )
+    return group_counter
+
+
 # JSON格式示例模板
 def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int, log_dir=None, timestamp=None) -> Dict[str, Any]:
     """
     重新组合分镜组，确保每个分镜组的总时长不超过max_group_duration秒
     
     策略：
-    1. 提取所有shots并按shot_number排序（保持全局顺序）
-    2. 按顺序遍历shots，根据时长限制进行分组
-    3. 尽量让每个分镜组接近max_group_duration秒（贪心算法）
-    4. 保证输出的分镜组中shots的shot_number是递增的
+    1. 优先保留story-writer预留的场景边界（如[场景 ...]、场景编号：A1）
+    2. 如果没有场景标记，保留“第X幕/第X场”等幕/场边界
+    3. 不为了填满max_group_duration跨场景、跨幕合并镜头
+    4. 仅当单个语义分组超过max_group_duration时，在该分组内部按顺序拆分
     
     Args:
         parsed_data: 解析后的剧本数据
@@ -101,52 +232,17 @@ def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int,
     if not shot_groups:
         return parsed_data
     
-    # 提取所有shots并按shot_number排序（保持全局顺序）
-    all_shots = []
-    for group in shot_groups:
-        shots = group.get("shots", [])
-        all_shots.extend(shots)
-    
-    # 按shot_number排序，确保顺序正确
-    all_shots.sort(key=lambda s: s.get("shot_number", 0))
-    
-    # 重新组合分镜组
     new_shot_groups = []
     group_counter = 1
-    current_group_shots = []
-    current_group_duration = 0.0
-    
-    for shot in all_shots:
-        shot_duration = float(shot.get("duration", 0))
-        
-        # 如果加入当前镜头会超过限制，则创建新组
-        if current_group_shots and (current_group_duration + shot_duration) > max_group_duration:
-            # 保存当前组
-            group_name = f"分镜组{group_counter}"
-            new_shot_groups.append({
-                "group_id": f"grp_{group_counter:03d}",
-                "group_name": group_name,
-                "shots": current_group_shots
-            })
-            group_counter += 1
-            
-            # 开始新组
-            current_group_shots = [shot]
-            current_group_duration = shot_duration
-        else:
-            # 加入当前组
-            current_group_shots.append(shot)
-            current_group_duration += shot_duration
-    
-    # 保存最后一组
-    if current_group_shots:
-        group_name = f"分镜组{group_counter}"
-        new_shot_groups.append({
-            "group_id": f"grp_{group_counter:03d}",
-            "group_name": group_name,
-            "shots": current_group_shots
-        })
-        group_counter += 1
+    grouping_basis = _detect_grouping_basis(shot_groups)
+
+    for group in shot_groups:
+        group_counter = _split_semantic_group_by_duration(
+            group,
+            max_group_duration,
+            group_counter,
+            new_shot_groups,
+        )
     
     # 统计重组信息
     original_group_count = len(shot_groups)
@@ -155,7 +251,7 @@ def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int,
     # 检查是否有超过限制的分镜组
     over_limit_groups = []
     for group in new_shot_groups:
-        group_duration = sum(float(s.get("duration", 0)) for s in group.get("shots", []))
+        group_duration = _group_duration(group)
         if group_duration > max_group_duration:
             over_limit_groups.append({
                 "group_id": group.get("group_id"),
@@ -169,12 +265,13 @@ def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int,
 原始分镜组数量: {original_group_count}
 重组后分镜组数量: {new_group_count}
 最大时长限制: {max_group_duration}秒
+分组依据: {grouping_basis}
 
 重组后各分镜组时长:
 """
     
     for group in new_shot_groups:
-        group_duration = sum(float(s.get("duration", 0)) for s in group.get("shots", []))
+        group_duration = _group_duration(group)
         shot_count = len(group.get("shots", []))
         status = "超限" if group_duration > max_group_duration else "正常"
         reorganize_info += f"  - {group.get('group_id')}: {group_duration:.1f}秒 ({shot_count}个镜头) [{status}]\n"
@@ -258,6 +355,7 @@ JSON_FORMAT_EXAMPLE = """{
     {
       "group_id": "grp_001",
       "group_name": "开场镜头",
+      "group_type": "蒙太奇组/递进组/因果组/对比组",
       "shots": [
         {
           "shot_id": "s001",
@@ -266,6 +364,7 @@ JSON_FORMAT_EXAMPLE = """{
           "location_id": "loc_001",
           "time_of_day": "具体时间段（如'下午3点左右'、'傍晚日落时分'）",
           "weather": "天气（室外必填，室内填null）",
+          "camera_angle": "平视/俯拍/仰拍/微俯拍/荷兰角",
           "shot_type": "远景/中景/近景/特写",
           "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
           "description": "镜头简要描述（涉及角色时用【【角色名】】格式）",
@@ -284,6 +383,7 @@ JSON_FORMAT_EXAMPLE = """{
           "mood": "情绪氛围",
           "environment_sound": "环境音（场景中的自然声音，如脚步声、车辆声等）",
           "background_music": "背景音乐（配乐，如钢琴曲、爵士乐等）",
+          "narrative_purpose": "建立/推进/揭示/强调/过渡/情绪/反射：具体说明该镜头通过什么可见动作、构图、声音或转场完成叙事功能",
           "audio_notes": "音频备注"
         },
         {
@@ -293,6 +393,7 @@ JSON_FORMAT_EXAMPLE = """{
           "location_id": "loc_001",
           "time_of_day": "具体时间段",
           "weather": "天气",
+          "camera_angle": "平视",
           "shot_type": "中景",
           "camera_movement": "推进",
           "description": "第二个镜头描述",
@@ -304,6 +405,7 @@ JSON_FORMAT_EXAMPLE = """{
           "mood": "情绪氛围",
           "environment_sound": "环境音",
           "background_music": "背景音乐",
+          "narrative_purpose": "推进：通过角色递出关键道具的可见动作，让观众获得下一步信息",
           "audio_notes": "音频备注"
         }
       ]
@@ -321,129 +423,6 @@ JSON_FORMAT_EXAMPLE = """{
 }"""
 
 
-# 解说剧转换系统提示词
-NARRATION_CONVERSION_SYSTEM_PROMPT = """你是一个专业的影视剧本改编专家，擅长将包含角色对话的剧本转换为纯旁白解说风格的剧本。
-
-你的任务是将输入的剧本（可能包含角色对话、动作描写、镜头提示等）转换为"解说剧"格式，即：
-- 所有角色对话和动作都转化为画面描述和旁白解说
-- 不再有角色直接说话，而是通过旁白来叙述故事
-- 保持原剧本的故事情节、场景结构和戏剧张力
-
-输出格式要求：
-1. 保留原剧本的场景划分结构
-2. 每个场景包含两部分：
-   - 【画面描述】：详细描述该场景中的画面内容，包括人物动作、表情、环境细节等
-   - 【旁白台本】：用第三人称旁白的方式叙述故事，语气生动有吸引力，适合短视频解说风格
-3. 画面描述要非常详细，包含人物的动作、表情、位置、环境细节等，方便后续生成画面
-4. 旁白台本要流畅自然，有叙事节奏感，适合配音朗读
-5. 将角色的对话内容融入旁白叙述中，而不是直接引用
-6. 保持原文的情绪和戏剧冲突
-7. 只输出转换后的剧本文本，不要添加任何解释性文字"""
-
-
-async def convert_script_to_narration(
-    script_content: str,
-    model: Optional[str] = None,
-    temperature: float = 0.5,
-    auth_token: Optional[str] = None,
-    vendor_id: Optional[int] = None,
-    model_id: Optional[int] = None
-) -> str:
-    """
-    将包含角色对话的剧本转换为纯旁白解说格式的剧本
-    
-    Args:
-        script_content: 原始剧本文本内容
-        model: 使用的LLM模型
-        temperature: 温度参数
-        auth_token: 认证token
-        vendor_id: 商家ID
-        model_id: 模型ID
-    
-    Returns:
-        转换后的纯旁白解说格式剧本文本
-    
-    Raises:
-        Exception: 当API调用失败时
-    """
-    import asyncio
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    logger.info("开始将剧本转换为解说剧（纯旁白）格式...")
-    
-    # 保存转换日志
-    from pathlib import Path
-    from datetime import datetime
-    
-    if ENABLE_SCRIPT_PARSER_LOGGING:
-        log_dir = Path("logs/script_parser")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    else:
-        log_dir = None
-        timestamp = None
-    
-    user_prompt = f"""请将以下包含角色对话的剧本转换为纯旁白解说风格的剧本。
-
-原始剧本：
-```
-{script_content}
-```
-
-转换要求：
-1. 保留原剧本的场景划分（如"场景1"、"场景2"等）
-2. 每个场景输出两部分：
-   - 【画面描述】：详细描述画面中发生的一切，包括人物的动作、表情、肢体语言、环境变化等，要非常具体和生动，方便后续AI生成画面
-   - 【旁白台本】：用旁白的方式讲述这个场景发生了什么，语气要像短视频解说一样引人入胜
-3. 将所有角色对话转化为旁白叙述，不要保留任何角色直接说话的形式
-4. 画面描述中不要出现角色说的具体台词，而是描述角色说话时的动作和表情
-5. 旁白台本中可以概括角色说了什么，但要用第三人称叙述
-6. 保持故事的完整性和戏剧张力
-
-请直接输出转换后的剧本，不要添加任何额外的说明文字。"""
-
-    messages = [
-        {"role": "system", "content": NARRATION_CONVERSION_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt}
-    ]
-    
-    # 保存转换请求日志
-    _save_log_file(log_dir, f"script_parser_{timestamp}_narration_convert_system_prompt.txt", NARRATION_CONVERSION_SYSTEM_PROMPT)
-    _save_log_file(log_dir, f"script_parser_{timestamp}_narration_convert_user_prompt.txt", user_prompt)
-    
-    # 获取 LLM 客户端（传入 vendor_id 确保正确路由）
-    llm_client = get_llm_client(model, vendor_id=vendor_id)
-    
-    if not model:
-        model = "gemini-3-flash-preview"
-    
-    # 使用 asyncio.to_thread 包装同步调用
-    response = await asyncio.to_thread(
-        llm_client.call_api,
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        max_tokens=65536,
-        auth_token=auth_token,
-        vendor_id=vendor_id,
-        model_id=model_id
-    )
-    
-    # 提取响应内容
-    converted_script = response.choices[0].message.content if response.choices else ""
-    
-    logger.info(f"剧本转换完成，转换后长度: {len(converted_script)} 字符")
-    
-    # 保存转换结果日志
-    _save_log_file(log_dir, f"script_parser_{timestamp}_narration_convert_result.txt", converted_script)
-    
-    if not converted_script.strip():
-        raise Exception("剧本转换失败：LLM返回空内容")
-    
-    return converted_script
-
-
 async def parse_script_to_shots(
     script_content: str,
     max_group_duration: int = 15,
@@ -453,7 +432,6 @@ async def parse_script_to_shots(
     force_medium_shot: bool = False,
     no_bg_music: bool = False,
     split_multi_dialogue: bool = False,
-    narration_as_dialogue: bool = False,
     language: Optional[str] = None,
     dialogue_language: Optional[str] = None,
     prompt_language: Optional[str] = None,
@@ -473,7 +451,6 @@ async def parse_script_to_shots(
         force_medium_shot: 是否强制对话内容使用中景(半身像)，默认False
         no_bg_music: 是否不生成背景音乐，默认False
         split_multi_dialogue: 是否将多人对话镜头拆分为单人对话镜头，默认False
-        narration_as_dialogue: 是否为解说剧模式（先将对话剧本转为纯旁白剧本，再解析），默认False
         language: 解析结果输出语言（如'中文'、'English'、'Deutsch'等），为空则默认中文（兼容旧版，新版优先使用dialogue_language和prompt_language）
         dialogue_language: 对话文本输出语言（dialogue.text等），为空则回退到language
         prompt_language: 描述性文本输出语言（description、action等），为空则回退到language
@@ -502,23 +479,6 @@ async def parse_script_to_shots(
         else:
             log_dir = None
             timestamp = None
-
-        # 解说剧模式：先将对话剧本转换为纯旁白剧本
-        if narration_as_dialogue:
-            logger.info("解说剧模式已启用，先将剧本转换为纯旁白格式...")
-            _save_log_file(log_dir, f"script_parser_{timestamp}_00_original_script_before_narration_convert.txt", script_content)
-            
-            script_content = await convert_script_to_narration(
-                script_content=script_content,
-                model=model,
-                temperature=0.5,
-                auth_token=auth_token,
-                vendor_id=vendor_id,
-                model_id=model_id
-            )
-            
-            logger.info(f"剧本已转换为纯旁白格式，新内容长度: {len(script_content)} 字符")
-            _save_log_file(log_dir, f"script_parser_{timestamp}_00_converted_narration_script.txt", script_content)
 
         # 获取数据库中的场景列表（如果提供了world_id）
         db_locations_text = ""
@@ -636,7 +596,7 @@ async def parse_script_to_shots(
 
         # 构建特殊要求文本
         special_requirements = ""
-        logger.info(f"Script parser parameters - force_medium_shot: {force_medium_shot}, no_bg_music: {no_bg_music}, split_multi_dialogue: {split_multi_dialogue}, narration_as_dialogue: {narration_as_dialogue}, language: {language}, dialogue_language: {dialogue_language}, prompt_language: {prompt_language}")
+        logger.info(f"Script parser parameters - force_medium_shot: {force_medium_shot}, no_bg_music: {no_bg_music}, split_multi_dialogue: {split_multi_dialogue}, language: {language}, dialogue_language: {dialogue_language}, prompt_language: {prompt_language}")
         
         if force_medium_shot:
             special_requirements += """
@@ -730,63 +690,6 @@ async def parse_script_to_shots(
 
 """
         
-        if narration_as_dialogue:
-            logger.info("narration_as_dialogue is True, adding narration-as-dialogue requirements to prompt")
-            special_requirements += """
-**【旁白视为对话特殊要求】**
-- **将剧本中的旁白内容视为角色"旁白"的对话**
-- 在characters数组中自动创建一个特殊角色：
-  * id: "char_narrator"
-  * name: "旁白"
-  * role: "旁白"
-  * description: "剧本旁白角色，用于叙述画面描述和背景信息"
-  * gender: "中性"
-  * age_range: "不适用"
-  
-- **旁白内容识别规则：**
-  * 剧本中标注为"旁白台本"、"旁白"、"narration"等的内容
-  * 剧本中标注为"画面描述"但包含叙述性文字的内容
-  * 非角色对话的叙述性文字
-  
-- **旁白对话处理：**
-  * 将识别到的旁白内容添加到对应镜头的dialogue数组中
-  * dialogue格式：{"character_id": "char_narrator", "character_name": "【【旁白】】", "text": "旁白内容"}
-  * 旁白对话应该与画面描述相匹配，增强叙事效果
-  
-- **【解说模式建议 - 鼓励每个镜头都有旁白台词】：**
-  * 当开启"解说剧（仅旁白说话）"模式时，**鼓励每一个分镜(shot)的dialogue数组中包含旁白台词**
-  * 如果原剧本中某个画面没有对应的旁白文本，建议根据该画面的内容自行撰写一段旁白台词
-  * 旁白台词应该自然地描述画面内容、补充背景信息或推动叙事
-  
-- **示例：**
-  * 原剧本：
-    ```
-    **【画面描述】**
-    航拍视角。清晨的阳光洒在如森林般的摩天大楼上。
-    **【旁白台本】**
-    注意看，这个男人叫苏晨。他刚刚发现，自己穿越到了一个疯掉的世界。
-    ```
-  
-  * 解析后的shot节点：
-    ```json
-    {
-      "shot_id": "s001",
-      "description": "航拍城市摩天大楼",
-      "opening_frame_description": "航拍视角：清晨的阳光洒在如森林般的摩天大楼上...",
-      "scene_detail": "城市天际线，晨光照耀...",
-      "characters_present": ["char_narrator"],
-      "dialogue": [
-        {
-          "character_id": "char_narrator",
-          "character_name": "【【旁白】】",
-          "text": "注意看，这个男人叫苏晨。他刚刚发现，自己穿越到了一个疯掉的世界。"
-        }
-      ]
-    }
-    ```
-
-"""
-
         # 语言设置
         LANGUAGE_MAP = {
             'English': 'English',
@@ -857,21 +760,22 @@ async def parse_script_to_shots(
 
 **【核心要求 - 必须严格遵守】**
 
-1. **镜头组时长限制与分组规则（最重要 - 违反此规则将导致严重成本浪费）**：
+1. **镜头组时长限制与分组规则（最重要）**：
    - **【硬性规则】每个shot_group内所有shots的duration总和绝对不能超过{max_group_duration}秒**
-   - **【强制分组规则】相同地点(location_id相同)的连续镜头，只要总时长不超过{max_group_duration}秒，必须强制放在同一个shot_group中，禁止拆分**
-   - **【成本优化要求】每个shot_group的总时长应该尽可能接近{max_group_duration}秒（建议≥12秒），避免浪费**
-   - **【禁止行为】严禁将相同地点、总时长未超限的镜头拆分到不同的shot_group中**
-   - 只有当一个地点的镜头总时长超过{max_group_duration}秒时，才允许拆分成多个shot_group
+   - **【场景优先规则】如果剧本包含story-writer标准场景标记（如`[场景 地点 时间段]`、`场景编号：A1`），必须优先按这些场景边界划分shot_group**
+   - **【幕/场兜底规则】如果没有识别到标准场景标记，但有“第一幕/第二幕/第X场”等结构标记，必须按幕/场边界划分shot_group**
+   - **【禁止行为】不要为了让shot_group接近{max_group_duration}秒，跨不同场景、不同幕或不同场强行合并镜头**
+   - 只有当同一个场景、同一幕或同一场内部的镜头总时长超过{max_group_duration}秒时，才允许在该语义分组内部拆成多个shot_group
    
    **正确示例：**
-   - 示例1：镜头1(地点A, 8秒) + 镜头2(地点A, 7秒) = 15秒 → 必须放在同一个shot_group中 ✓
-   - 示例2：镜头1(地点A, 5秒) + 镜头2(地点A, 6秒) + 镜头3(地点A, 4秒) = 15秒 → 必须放在同一个shot_group中 ✓
-   - 示例3：镜头1(地点A, 8秒) + 镜头2(地点B, 7秒) = 15秒 → 因为地点不同，可以分成两个shot_group ✓
+   - 示例1：A1场景镜头1(6秒)，B1场景镜头2(6秒)，总计未超过{max_group_duration}秒 → 仍然必须分成两个shot_group ✓
+   - 示例2：A1场景镜头1(8秒) + A1场景镜头2(8秒)超过{max_group_duration}秒 → 只能在A1内部拆成两个shot_group ✓
+   - 示例3：同一幕内连续镜头总时长未超过{max_group_duration}秒 → 可以放在同一个shot_group，但不能跨到下一幕 ✓
    
    **错误示例（严禁）：**
-   - 错误1：镜头1(地点A, 8秒)单独一组，镜头2(地点A, 7秒)单独一组 → 违反规则，浪费成本 ✗
-   - 错误2：镜头1(地点A, 5秒) + 镜头2(地点A, 6秒)一组，镜头3(地点A, 4秒)单独一组 → 违反规则，应该合并 ✗
+   - 错误1：A1场景镜头1(6秒) + B1场景镜头2(6秒)合并成一组 → 跨场景合并 ✗
+   - 错误2：第一幕镜头和第二幕镜头合并成一组 → 跨幕合并 ✗
+   - 错误3：A1场景超长拆分后，把B1场景第一个镜头拉进A1的最后一组补时长 → 跨场景填充 ✗
 
 2. **镜头时长必须合理**：
    - 禁止每个镜头都是{max_group_duration}秒，这不切实际
@@ -882,8 +786,20 @@ async def parse_script_to_shots(
      * 对话镜头：根据台词长度，通常3-8秒
      * 动作镜头：根据动作复杂度，通常5-12秒
    - 每个shot_group内的镜头时长应该有变化，不要都一样
+   - 短镜优先并入同一场景或同一幕内的相邻镜头（短镜通常为1-3秒），形成更稳定的shot_group；但不得为了合并短镜跨场景、跨幕或超过{max_group_duration}秒
+   - 每个shot_group可尽量接近4秒以上，但这是软目标；场景/幕边界和{max_group_duration}硬上限优先
 
-3. **结构要求（非常重要）**：
+3. **分镜设计质量要求（非常重要）**：
+   - **九列分镜表映射**：镜号对应shot_number，时长对应duration，摄影角度对应camera_angle，景别对应shot_type，画面内容对应description/scene_detail/action，场景对应location_id，声音对应dialogue/environment_sound/background_music/audio_notes，备注对应camera_movement/audio_notes，叙事目的对应narrative_purpose
+   - **画面内容必须写可见动作**：只写观众能看到或听到的动作、环境、效果和关键道具；不要写心理活动、抽象判断或无法被画面表现的内容
+   - **关键道具必须点名**：如果道具推动剧情或承载意象，必须在description、opening_frame_description、scene_detail或action中使用真实道具名称
+   - **叙事目的必须从以下七类中选择**：建立、推进、揭示、强调、过渡、情绪、反射
+   - narrative_purpose不能写“推进剧情”“烘托气氛”这类空话，必须写成“类别：通过具体视听手段达成的功能”，例如“揭示：通过特写展示桌面上的断裂钥匙，让观众发现角色隐瞒的证据”
+   - **镜头组类型**：每个shot_group的group_type从蒙太奇组、递进组、因果组、对比组中选择；对话和动作优先使用动作-反应结构（动作→反应、反应前置、声画分离、反应链、反应省略等）
+   - **镜头技巧选择**：根据剧情选择构图、运动、衔接和转场，例如视线匹配、过肩镜头、反应镜头、插入镜头、动作匹配、声音桥接、J切/L切、跳切、慢动作、定格、主观POV等；不要为了炫技牺牲清晰叙事
+   - **景别与运动含义**：特写用于强调表情/道具/压力，中景用于对话和社会距离，全景/远景用于交代空间；推近用于逼近/揭秘，拉远用于抽离/揭示环境，固定镜头用于压抑或等待
+
+4. **结构要求（非常重要）**：
    - 【必须】使用 "shot_groups" 数组结构，不能直接返回 "shots" 数组
    - 每个shot_group包含 "group_id"、"group_name" 和 "shots" 数组
    - 每个shot必须嵌套在某个shot_group的shots数组中
@@ -900,11 +816,11 @@ async def parse_script_to_shots(
    错误示例（禁止）：
    "shots": [{{"shot_id": "s001", ...}}]
 
-4. **时长要求（非常重要）**：
+5. **时长要求（非常重要）**：
    - 每个shot必须包含duration字段，单位为秒，类型为float
    - 每个shot_group的总时长不得超过max_group_duration秒
 
-5. **opening_frame_description要求（最关键）**：
+6. **opening_frame_description要求（最关键）**：
    - 这是用于AI生成首帧图像的最关键字段
    - 必须详细描述镜头开始时的静态画面
    - 必须包含：人物位置、姿态、表情、服装
@@ -913,7 +829,7 @@ async def parse_script_to_shots(
    - 描述要具体到能让AI准确还原画面
    - **涉及角色名称时必须用【【角色名】】格式包裹（注意：只对角色名称使用，场景名称不要使用）**
 
-6. **角色名称格式要求（非常重要）**：
+7. **角色名称格式要求（非常重要）**：
    - 在shot节点的所有文本字段中（description、opening_frame_description、scene_detail、action、dialogue.character_name等）
    - **只要涉及角色名称，必须用【【角色名】】格式包裹**
    - **重要：只对角色名称使用【【】】，场景名称、地点名称、物品名称等其他内容都不要使用【【】】**
@@ -923,7 +839,7 @@ async def parse_script_to_shots(
    - 例如：如果数据库中角色名称是"阿方索戴维斯_AlphonsoDavies"，则使用"【【阿方索戴维斯_AlphonsoDavies】】"，而不是"【【布冯】】"
    - 这样便于后续系统匹配角色库
 
-7. **道具名称格式要求（极其重要 - 严禁违反）**：
+8. **道具名称格式要求（极其重要 - 严禁违反）**：
    - **严禁在 opening_frame_description、scene_detail、description、action 等所有画面描述文本字段中使用 prop_001、prop_002 等道具ID来替代道具的实际名称**
    - 道具在画面描述中必须使用其真实名称（如"百元大钞"、"手机"、"钥匙"等），而不是其ID（如"prop_002"）
    - props_present 字段使用道具ID引用，但所有画面描述文本字段中必须使用道具的真实名称
@@ -931,7 +847,7 @@ async def parse_script_to_shots(
    - 错误示例："【【服务员】】将一张【【prop_002】】拍在桌上" ❌ 严禁这样做
    - **【关键】道具名称不要用【【】】包裹，直接使用道具的真实名称即可**
 
-{special_requirements}8. **输出格式**：
+{special_requirements}9. **输出格式**：
    - 必须严格按照以下JSON格式输出
    - 确保所有ID引用关系正确
    - 只输出纯JSON内容
@@ -1063,38 +979,6 @@ JSON格式示例：
         missing_keys = [key for key in required_keys if key not in parsed_data]
         if missing_keys:
             raise Exception(f"返回的JSON缺少必需字段: {', '.join(missing_keys)}")
-        
-        # 解说模式后处理：确保每个分镜都有旁白台词
-        if narration_as_dialogue:
-            shots_without_narration = 0
-            for group in parsed_data.get("shot_groups", []):
-                for shot in group.get("shots", []):
-                    dialogues = shot.get("dialogue", [])
-                    has_narration = any(
-                        d.get("character_id") == "char_narrator" or
-                        d.get("character_name", "").startswith("【【旁白】】")
-                        for d in dialogues
-                    )
-                    if not has_narration:
-                        shots_without_narration += 1
-                        # 根据画面描述生成兜底旁白台词
-                        desc = shot.get("description", "") or shot.get("opening_frame_description", "") or "画面展示"
-                        fallback_text = f"{desc}"
-                        dialogues.append({
-                            "character_id": "char_narrator",
-                            "character_name": "【【旁白】】",
-                            "text": fallback_text
-                        })
-                        shot["dialogue"] = dialogues
-                        # 确保 characters_present 包含旁白角色
-                        chars_present = shot.get("characters_present", [])
-                        if "char_narrator" not in chars_present:
-                            chars_present.append("char_narrator")
-                            shot["characters_present"] = chars_present
-            if shots_without_narration > 0:
-                logger.warning(f"解说模式后处理：为 {shots_without_narration} 个缺少旁白台词的分镜添加了兜底旁白")
-                _save_log_file(log_dir, f"script_parser_{timestamp}_narration_fallback.txt",
-                              f"为 {shots_without_narration} 个分镜添加了兜底旁白台词")
         
         # 重新组合分镜组，确保每组不超过max_group_duration秒
         parsed_data = reorganize_shot_groups(parsed_data, max_group_duration, log_dir, timestamp)

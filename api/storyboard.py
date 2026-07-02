@@ -8,7 +8,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Request, Header
 from fastapi.responses import JSONResponse
@@ -79,6 +79,139 @@ def build_storyboard_defaults(world, data: dict) -> dict:
             getattr(world, 'composition_preference', None) if world else None
         ),
     }
+
+
+def _compact_join(parts: List[Optional[str]], sep: str = "\n") -> str:
+    return sep.join(str(part).strip() for part in parts if str(part or '').strip())
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_character_db_map(parsed_data: dict) -> Dict[str, Optional[int]]:
+    character_map: Dict[str, Optional[int]] = {}
+    for character in parsed_data.get('characters') or []:
+        character_id = character.get('id')
+        if character_id:
+            character_map[str(character_id)] = character.get('character_db_id')
+    return character_map
+
+
+def _build_character_name_map(parsed_data: dict) -> Dict[str, str]:
+    return {
+        str(character.get('id')): character.get('name') or ''
+        for character in (parsed_data.get('characters') or [])
+        if character.get('id')
+    }
+
+
+def _build_location_map(parsed_data: dict) -> Dict[str, dict]:
+    return {
+        str(location.get('id')): location
+        for location in (parsed_data.get('locations') or [])
+        if location.get('id')
+    }
+
+
+def _dialogue_character_id(dialogue: dict, character_db_map: Dict[str, Optional[int]]) -> Optional[int]:
+    raw_character_id = dialogue.get('character_id')
+    if raw_character_id is None:
+        return None
+    db_character_id = character_db_map.get(str(raw_character_id))
+    if db_character_id is None:
+        return None
+    return _safe_int(db_character_id, None)
+
+
+def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '') -> List[dict]:
+    """
+    Convert llm.script_parser output into StoryboardModel.create_scenes payload.
+
+    One parsed shot becomes one storyboard_scene; dialogue entries under the shot
+    become storyboard_dialogue rows.
+    """
+    character_db_map = _build_character_db_map(parsed_data)
+    character_name_map = _build_character_name_map(parsed_data)
+    location_map = _build_location_map(parsed_data)
+    scenes: List[dict] = []
+
+    for group in parsed_data.get('shot_groups') or []:
+        group_name = group.get('group_name') or ''
+        group_type = group.get('group_type') or ''
+        for shot in group.get('shots') or []:
+            scene_index = len(scenes) + 1
+            location = location_map.get(str(shot.get('location_id'))) or {}
+            location_name = shot.get('location_name') or location.get('name') or ''
+            location_db_id = shot.get('db_location_id', location.get('location_db_id'))
+            camera_angle = shot.get('camera_angle') or ''
+            shot_type = shot.get('shot_type') or ''
+            perspective = _compact_join([camera_angle, shot_type], ' / ')
+            scene_desc = _compact_join([
+                shot.get('opening_frame_description'),
+                shot.get('scene_detail'),
+            ])
+            character_names = []
+            for raw_character_id in shot.get('characters_present') or []:
+                name = character_name_map.get(str(raw_character_id))
+                if name:
+                    character_names.append(name)
+            character_desc = '、'.join(dict.fromkeys(character_names))
+
+            video_prompt = _compact_join([
+                shot.get('description'),
+                shot.get('scene_detail'),
+                shot.get('action'),
+                f"镜头运动：{shot.get('camera_movement')}" if shot.get('camera_movement') else None,
+                f"叙事目的：{shot.get('narrative_purpose')}" if shot.get('narrative_purpose') else None,
+            ])
+
+            dialogues = []
+            for dialogue in shot.get('dialogue') or []:
+                text = str(dialogue.get('text') or '').strip()
+                if not text:
+                    continue
+                dialogues.append({
+                    'character_id': _dialogue_character_id(dialogue, character_db_map),
+                    'text': text,
+                    'speed': 1.0,
+                    'volume': 100,
+                })
+
+            scenes.append({
+                'title': f"分镜{scene_index}",
+                'duration': max(1, _safe_int(shot.get('duration'), 5)),
+                'prompt': {
+                    'perspective': perspective,
+                    'style': style or parsed_data.get('style') or '',
+                    'scene_desc': scene_desc,
+                    'character_desc': character_desc,
+                    'source': {
+                        'group_id': group.get('group_id'),
+                        'group_name': group_name,
+                        'group_type': group_type,
+                        'shot_id': shot.get('shot_id'),
+                        'shot_number': shot.get('shot_number'),
+                        'location_id': shot.get('location_id'),
+                        'location_name': location_name,
+                        'location_db_id': location_db_id,
+                        'narrative_purpose': shot.get('narrative_purpose'),
+                    },
+                },
+                'video_prompt': video_prompt,
+                'video_type': SceneVideoType.VIDEO,
+                'video_config': {
+                    'shot_type': shot_type,
+                    'camera_angle': camera_angle,
+                    'camera_movement': shot.get('camera_movement') or '',
+                },
+                'dialogues': dialogues,
+            })
+
+    return scenes
 
 
 def _storyboard_folder_key(item: dict) -> str:
@@ -373,31 +506,13 @@ async def create_storyboard(
     world = await asyncio.to_thread(WorldModel.get_by_id, world_id)
     defaults = build_storyboard_defaults(world, data)
 
-    # 如果关联了剧本，尝试自动拆分分镜
-    auto_split_scenes = []
-    if script_id:
-        script = await asyncio.to_thread(ScriptModel.get_by_id, script_id)
-        if script and script.content:
-            # 简单拆分：按段落分割（后续可替换为 LLM 智能拆分）
-            paragraphs = [p.strip() for p in script.content.split('\n') if p.strip()]
-            for i, para in enumerate(paragraphs[:20]):  # 最多 20 个分镜
-                auto_split_scenes.append({
-                    'title': f'分镜{i + 1}',
-                    'duration': 5,
-                    'video_type': SceneVideoType.VIDEO,
-                    # 每段先作为一句旁白对话，后续可由 LLM 解析出角色台词
-                    'dialogues': [
-                        {'character_id': None, 'text': para[:200], 'speed': 1.0, 'volume': 100}
-                    ],
-                })
-
     # 不存在 → 事务创建（同步函数，asyncio.to_thread 会把同步函数放进线程执行）
     def _create():
         return StoryboardModel.create_with_scenes(
             user_id=user_id,
             world_id=world_id,
             episode_number=episode_number,
-            scenes=auto_split_scenes,
+            scenes=[],
             workflow_id=data.get('workflow_id'),
             script_id=script_id,
             title=data.get('title', ''),
@@ -405,6 +520,7 @@ async def create_storyboard(
             style_reference_image=defaults['style_reference_image'],
             workflow_ratio=defaults['workflow_ratio'],
             composition_preference=defaults['composition_preference'],
+            version=data.get('version', 1),
         )
 
     try:
@@ -516,6 +632,116 @@ async def update_storyboard(
     data = await request.json()
     affected = await asyncio.to_thread(StoryboardModel.update, storyboard_id, **data)
     return JSONResponse({'success': True, 'affected': affected})
+
+
+@router.post('/{storyboard_id}/generate-from-script')
+@require_permission("storyboard:update")
+async def generate_storyboard_from_script(
+    request: Request,
+    storyboard_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """Parse linked script and create storyboard scenes/dialogues in one backend flow."""
+    user_id = get_user_id_from_header(user_id)
+    sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+    if not sb:
+        return JSONResponse(status_code=404, content={'error': '故事板不存在'})
+
+    ensure_resource_access(sb, user_id, Action.EDIT, "故事板")
+
+    existing_scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
+    if existing_scenes:
+        return JSONResponse(status_code=409, content={'error': '故事板已存在分镜，不能重复生成'})
+
+    script_id = sb.script_id or await asyncio.to_thread(
+        resolve_storyboard_script_id,
+        None,
+        sb.world_id,
+        sb.episode_number,
+    )
+    if not script_id:
+        return JSONResponse(status_code=400, content={'error': '未找到可用于生成分镜的剧本'})
+
+    script = await asyncio.to_thread(ScriptModel.get_by_id, script_id)
+    if not script or not str(script.content or '').strip():
+        return JSONResponse(status_code=400, content={'error': '剧本内容为空，无法生成分镜'})
+
+    data = await request.json()
+
+    real_vendor_id = data.get('vendor_id')
+    model_id = data.get('model_id')
+    if not real_vendor_id and model_id:
+        try:
+            from model.vendor_model import VendorModelModel
+            real_vendor_id = await asyncio.to_thread(
+                VendorModelModel.get_vendor_id_by_model_id,
+                int(model_id),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to resolve vendor for model {model_id}: {e}")
+
+    try:
+        from llm.script_parser import parse_script_to_shots
+
+        parsed_data = await parse_script_to_shots(
+            script_content=script.content,
+            max_group_duration=data.get('max_group_duration', 15),
+            world_id=sb.world_id,
+            model=data.get('model') or 'gemini-3-flash-preview',
+            temperature=0.5,
+            force_medium_shot=bool(data.get('force_medium_shot', False)),
+            no_bg_music=bool(data.get('no_bg_music', False)),
+            split_multi_dialogue=bool(data.get('split_multi_dialogue', False)),
+            language=data.get('language') or '',
+            dialogue_language=data.get('dialogue_language') or data.get('language') or '',
+            prompt_language=data.get('prompt_language') or data.get('language') or '',
+            auth_token=auth_token,
+            vendor_id=int(real_vendor_id) if real_vendor_id else None,
+            model_id=int(model_id) if model_id else None,
+        )
+    except Exception as e:
+        logger.error(f"Failed to parse script for storyboard {storyboard_id}: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={'error': f'剧本解析失败: {str(e)}'})
+
+    if not parsed_data or not parsed_data.get('shot_groups'):
+        return JSONResponse(status_code=500, content={'error': '剧本解析未返回可用分镜'})
+
+    scenes_payload = build_storyboard_scenes_from_parsed_script(
+        parsed_data,
+        style=sb.style or '',
+    )
+    if not scenes_payload:
+        return JSONResponse(status_code=500, content={'error': '未能从解析结果生成故事板分镜'})
+
+    existing_scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
+    if existing_scenes:
+        return JSONResponse(status_code=409, content={'error': '故事板已存在分镜，不能重复生成'})
+
+    try:
+        generated_count = await asyncio.to_thread(
+            StoryboardModel.create_scenes,
+            storyboard_id,
+            user_id,
+            scenes_payload,
+        )
+    except Exception as e:
+        logger.error(f"Failed to create storyboard scenes from script: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={'error': f'生成分镜失败: {str(e)}'})
+
+    sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+    scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
+    await _attach_dialogues(scenes)
+    if script_id != sb.script_id:
+        await asyncio.to_thread(StoryboardModel.update, storyboard_id, script_id=script_id)
+        sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+
+    return JSONResponse({
+        'success': True,
+        'storyboard': sb.to_dict(),
+        'scenes': scenes,
+        'generated_count': generated_count,
+    })
 
 
 @router.delete('/{storyboard_id}')

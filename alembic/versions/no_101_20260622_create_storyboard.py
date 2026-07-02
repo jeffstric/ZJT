@@ -5,7 +5,7 @@
 - storyboard_scene: 分镜表（独立任务状态：图片/视频/配音）
 
 Revision ID: 20260622_storyboard
-Revises: 20260618_seed_img_mask
+Revises: 20260624_marketing_publications
 Create Date: 2026-06-22
 """
 from typing import Sequence, Union
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '20260622_storyboard'
-down_revision: Union[str, None] = '20260618_seed_img_mask'
+down_revision: Union[str, None] = '20260624_marketing_publications'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

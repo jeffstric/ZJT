@@ -15,7 +15,7 @@ from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
 from config.config_util import get_config
-from config.constant import FilePathConstants
+from config.constant import FilePathConstants, StoryType
 
 # 模块级日志
 logger = logging.getLogger(__name__)
@@ -1102,6 +1102,7 @@ def create_world_json(user_id: str, world_id: str, auth_token: str, name: str, d
         world_data = {
             'name': validated_name,
             'user_id': user_id,
+            'story_type': StoryType.normalize(additional_fields.pop('story_type', None)),
             'created_at': datetime.now().isoformat()
         }
         
@@ -1200,6 +1201,7 @@ def read_world(user_id: str, world_id: str, auth_token: str, limit: Optional[int
             'success': True,
             'world_id': world_id,
             'world_name': world_data.get('name', ''),
+            'story_type': StoryType.normalize(world_data.get('story_type')),
             'story_outline': _truncate_content(world_data.get('story_outline', ''), limit),
             'visual_style': _truncate_content(world_data.get('visual_style', ''), limit),
             'era_environment': _truncate_content(world_data.get('era_environment', ''), limit),
@@ -1218,6 +1220,7 @@ def read_world(user_id: str, world_id: str, auth_token: str, limit: Optional[int
 def update_world(
     user_id: str, world_id: str, auth_token: str,
     story_outline: str = None,
+    story_type: str = None,
     visual_style: str = None,
     era_environment: str = None,
     color_language: str = None,
@@ -1241,7 +1244,7 @@ def update_world(
     """
     try:
         # 验证至少有一个字段需要更新
-        if all(v is None for v in [story_outline, visual_style, era_environment, color_language, composition_preference]):
+        if all(v is None for v in [story_outline, story_type, visual_style, era_environment, color_language, composition_preference]):
             return {
                 'success': False,
                 'error': '至少需要提供一个字段进行更新'
@@ -1262,6 +1265,8 @@ def update_world(
         # 更新提供的字段
         if story_outline is not None:
             world_data['story_outline'] = story_outline
+        if story_type is not None:
+            world_data['story_type'] = StoryType.normalize(story_type)
         if visual_style is not None:
             world_data['visual_style'] = visual_style
         if era_environment is not None:
@@ -1283,6 +1288,8 @@ def update_world(
         updated_fields = []
         if story_outline is not None:
             updated_fields.append('story_outline')
+        if story_type is not None:
+            updated_fields.append('story_type')
         if visual_style is not None:
             updated_fields.append('visual_style')
         if era_environment is not None:
@@ -2754,6 +2761,11 @@ MCP_TOOLS = [
                 "story_outline": {
                     "type": "string",
                     "description": "故事大纲内容（可选）"
+                },
+                "story_type": {
+                    "type": "string",
+                    "enum": ["dialogue", "narration", "music_mv"],
+                    "description": "故事类型：dialogue=对话剧情，narration=旁白解说，music_mv=音乐MV"
                 },
                 "visual_style": {
                     "type": "string",

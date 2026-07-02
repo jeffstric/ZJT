@@ -66,10 +66,27 @@
             QWEN_PLUS: 'qwen-plus',
             OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b'
         };
+        const STORY_TYPE_LABELS = {
+            dialogue: '对话剧情',
+            narration: '旁白解说',
+            music_mv: '音乐MV'
+        };
+
+        function normalizeStoryType(storyType) {
+            return Object.prototype.hasOwnProperty.call(STORY_TYPE_LABELS, storyType)
+                ? storyType
+                : 'dialogue';
+        }
+
+        function getStoryTypeLabel(storyType) {
+            const normalized = normalizeStoryType(storyType);
+            const key = `story_type_${normalized}`;
+            return window.t ? window.t(key) : (STORY_TYPE_LABELS[normalized] || STORY_TYPE_LABELS.dialogue);
+        }
         let isCommunityEdition = false;  // 默认为商业版，页面初始化时通过API更新
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
-        let currentEditWorld = { id: '', name: '', description: '' };
+        let currentEditWorld = { id: '', name: '', description: '', story_type: 'dialogue' };
         let driverStatus = {};  // 驱动可用状态
 
         function handleTokenExpired() {
@@ -3058,10 +3075,12 @@
         }
 
         function showWorldViewer(fileName, data) {
+            data.story_type = normalizeStoryType(data.story_type);
             document.getElementById('view-modal-title').textContent = `🌍 查看世界 - ${fileName}`;
             document.getElementById('world-view-form').style.display = 'block';
             document.getElementById('view-world-name').textContent = data.name || '未设置';
             document.getElementById('view-world-user-id').textContent = data.user_id || '未设置';
+            document.getElementById('world-story-type-view').textContent = getStoryTypeLabel(data.story_type);
             document.getElementById('view-world-description').textContent = data.description || '未设置';
             document.getElementById('view-world-story-outline').textContent = data.story_outline || '未设置';
             document.getElementById('view-world-visual-style').textContent = data.visual_style || '未设置';
@@ -4845,12 +4864,14 @@
 
         function showWorldEditor(fileName, data) {
             console.log('showWorldEditor called with data:', data); // 调试日志
+            data.story_type = normalizeStoryType(data.story_type);
             document.getElementById('edit-modal-title').textContent = `✏️ 编辑世界 - ${fileName}`;
             document.getElementById('world-edit-form').style.display = 'block';
             
             // 确保所有字段都有值，使用空字符串作为默认值
             document.getElementById('world-name').value = data.name || '';
             document.getElementById('world-user-id').value = data.user_id || USER_ID;
+            document.getElementById('world-story-type').value = data.story_type;
             document.getElementById('world-description').value = data.description || '';
             document.getElementById('world-story-outline').value = data.story_outline || '';
             document.getElementById('world-visual-style').value = data.visual_style || '';
@@ -4867,6 +4888,7 @@
                 id: parseInt(WORLD_ID),
                 name: document.getElementById('world-name').value.trim(),
                 user_id: parseInt(document.getElementById('world-user-id').value) || parseInt(USER_ID),
+                story_type: normalizeStoryType(document.getElementById('world-story-type').value),
                 description: document.getElementById('world-description').value.trim(),
                 story_outline: document.getElementById('world-story-outline').value.trim(),
                 visual_style: document.getElementById('world-visual-style').value.trim(),
@@ -4928,7 +4950,7 @@
                         editBtn.title = '编辑世界';
                         editBtn.onclick = (e) => {
                             e.stopPropagation();
-                            showEditWorldModal(world.id, world.name, world.description || '');
+                            showEditWorldModal(world.id, world.name, world.description || '', world.story_type);
                         };
                         editBtn.innerHTML = `
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -5008,6 +5030,7 @@
         function showNewWorldModal() {
             document.getElementById('new-world-name').value = '';
             document.getElementById('new-world-description').value = '';
+            document.getElementById('new-world-story-type').value = 'dialogue';
             document.getElementById('new-world-modal').classList.add('show');
             document.getElementById('new-world-name').focus();
         }
@@ -5019,6 +5042,7 @@
         async function createNewWorld() {
             const name = document.getElementById('new-world-name').value.trim();
             const description = document.getElementById('new-world-description').value.trim();
+            const storyType = normalizeStoryType(document.getElementById('new-world-story-type').value);
             
             if (!name) {
                 showError(window.t ? window.t('error_enter_world_name') : '请输入世界名称');
@@ -5036,7 +5060,8 @@
                     },
                     body: JSON.stringify({
                         name: name,
-                        description: description
+                        description: description,
+                        story_type: storyType
                     })
                 });
                 
@@ -5437,20 +5462,22 @@
         }
 
         // 编辑世界相关函数
-        function showEditWorldModal(worldId, worldName, worldDescription = '') {
+        function showEditWorldModal(worldId, worldName, worldDescription = '', storyType = 'dialogue') {
             currentEditWorld.id = worldId;
             currentEditWorld.name = worldName;
             currentEditWorld.description = worldDescription;
+            currentEditWorld.story_type = normalizeStoryType(storyType);
             
             document.getElementById('edit-world-name').value = worldName;
             document.getElementById('edit-world-description').value = worldDescription;
+            document.getElementById('edit-world-story-type').value = currentEditWorld.story_type;
             document.getElementById('edit-world-modal').classList.add('show');
             document.getElementById('edit-world-name').focus();
         }
 
         function closeEditWorldModal() {
             document.getElementById('edit-world-modal').classList.remove('show');
-            currentEditWorld = { id: '', name: '', description: '' };
+            currentEditWorld = { id: '', name: '', description: '', story_type: 'dialogue' };
         }
 
         function openComputingPowerLogsModal() {
@@ -5618,6 +5645,7 @@
         async function saveEditedWorld() {
             const name = document.getElementById('edit-world-name').value.trim();
             const description = document.getElementById('edit-world-description').value.trim();
+            const storyType = normalizeStoryType(document.getElementById('edit-world-story-type').value);
             
             if (!name) {
                 showError(window.t ? window.t('error_enter_world_name') : '请输入世界名称');
@@ -5637,6 +5665,7 @@
                     body: JSON.stringify({
                         name: name,
                         description: description,
+                        story_type: storyType,
                         user_id: USER_ID,
                         auth_token: AUTH_TOKEN
                     })

@@ -41,3 +41,5 @@ console-errors.txt
 tests/e2e/
 playwright.config.js
 
+auto_test/test_assets/*
+auto_test/samples/*

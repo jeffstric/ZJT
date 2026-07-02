@@ -350,7 +350,6 @@
   "script_force_medium_shot": "对话禁止全景",
   "script_no_bg_music": "不生成背景音乐",
   "script_split_multi_dialogue": "拆分多人对话镜头",
-  "script_narration_as_dialogue": "解说剧（仅旁白说话）",
   "script_split_btn": "拆分幕",
   "script_grid_only_btn": "宫格生图",
   "script_split_grid_btn": "拆分幕 + 宫格生图",

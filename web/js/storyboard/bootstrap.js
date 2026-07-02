@@ -43,6 +43,12 @@ async function initI18n() {
     }
 }
 
+function maybePromptGenerateFromScript() {
+    if (!state.storyboardId || state.scenes.length > 0) return;
+    state.showGenerateFromScriptDialog = true;
+    state.generateFromScriptError = '';
+}
+
 async function main() {
     bindEvents();
     initStateFromUrl();
@@ -65,6 +71,7 @@ async function main() {
         api.fetchStoryboardModels().then(setModels).catch(() => {}),
     ]);
 
+    maybePromptGenerateFromScript();
     renderApp();
     resumePollingTasks();
 }

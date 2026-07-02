@@ -350,7 +350,6 @@
   "script_force_medium_shot": "Disable Wide Shots in Dialogue",
   "script_no_bg_music": "No Background Music",
   "script_split_multi_dialogue": "Split Multi-Character Dialogue",
-  "script_narration_as_dialogue": "Narration Mode (Voiceover Only)",
   "script_split_btn": "Split Acts",
   "script_grid_only_btn": "Grid Generation Only",
   "script_split_grid_btn": "Split Acts + Grid Generate",

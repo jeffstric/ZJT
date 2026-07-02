@@ -44,6 +44,9 @@ export async function getStoryboard(storyboardId) {
 export async function updateStoryboard(storyboardId, data) {
     return request(`/${storyboardId}`, { method: 'PUT', body: JSON.stringify(data) });
 }
+export async function generateFromScript(storyboardId, data = {}) {
+    return request(`/${storyboardId}/generate-from-script`, { method: 'POST', body: JSON.stringify(data) });
+}
 
 // ==================== 分镜 ====================
 export async function addScene(storyboardId, data) {

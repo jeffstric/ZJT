@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
 from config.config_util import get_dynamic_config_value, get_config
+from config.constant import StoryType
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
 from llm.llm_client_factory import get_llm_client
 
@@ -512,6 +513,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                 'id': world.id,
                 'name': world.name,
                 'story_outline': world.story_outline,
+                'story_type': getattr(world, 'story_type', 'dialogue'),
                 'visual_style': world.visual_style,
                 'era_environment': world.era_environment,
                 'color_language': world.color_language,
@@ -2142,6 +2144,8 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                             update_data['description'] = world_data['description']
                         if 'story_outline' in world_data:
                             update_data['story_outline'] = world_data['story_outline']
+                        if 'story_type' in world_data:
+                            update_data['story_type'] = world_data['story_type']
                         if 'visual_style' in world_data:
                             update_data['visual_style'] = world_data['visual_style']
                         if 'era_environment' in world_data:
@@ -2603,10 +2607,12 @@ async def get_world_file(
         # 读取文件内容
         with open(world_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
+        json_data = json.loads(content)
+        json_data['story_type'] = StoryType.normalize(json_data.get('story_type'))
+        content = json.dumps(json_data, ensure_ascii=False, indent=2)
         
         if raw_json:
             # 返回JSON数据用于编辑
-            json_data = json.loads(content)
             return JSONResponse({
                 'success': True,
                 'world': {
@@ -2653,6 +2659,8 @@ async def save_world_file(
         # 验证JSON格式
         try:
             world_data = json.loads(content)
+            world_data['story_type'] = StoryType.normalize(world_data.get('story_type'))
+            content = json.dumps(world_data, ensure_ascii=False, indent=2)
         except json.JSONDecodeError as e:
             return JSONResponse({
                 'success': False,

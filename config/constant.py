@@ -152,6 +152,27 @@ class Action:
     DELETE = "delete"
 
 
+class StoryType:
+    """World story type."""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'DIALOGUE': '对话剧情',
+        'NARRATION': '旁白解说',
+        'MUSIC_MV': '音乐MV',
+    }
+    DIALOGUE = "dialogue"
+    NARRATION = "narration"
+    MUSIC_MV = "music_mv"
+    VALID_TYPES = (DIALOGUE, NARRATION, MUSIC_MV)
+
+    @classmethod
+    def normalize(cls, value: str) -> str:
+        if not value:
+            return cls.DIALOGUE
+        normalized = str(value).strip()
+        return normalized if normalized in cls.VALID_TYPES else cls.DIALOGUE
+
+
 class Edition:
     """版本模式"""
     _CONSTANT_GROUP = True

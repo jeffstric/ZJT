@@ -140,10 +140,6 @@
                 <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
                 <span data-i18n="script_split_multi_dialogue">${window.t ? window.t('script_split_multi_dialogue') : '拆分多人对话镜头'}</span>
               </label>
-              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                <input type="checkbox" class="script-narration-as-dialogue" style="cursor: pointer;" />
-                <span data-i18n="script_narration_as_dialogue">${window.t ? window.t('script_narration_as_dialogue') : '解说剧（仅旁白说话）'}</span>
-              </label>
             </div>
           </div>
 
@@ -185,7 +181,6 @@
       const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
       const noBgMusicEl = el.querySelector('.script-no-bg-music');
       const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
-      const narrationAsDialogueEl = el.querySelector('.script-narration-as-dialogue');
       const dialogueLanguageSelectEl = el.querySelector('.script-dialogue-language');
       const dialogueLanguageCustomEl = el.querySelector('.script-dialogue-language-custom');
       const promptLanguageSelectEl = el.querySelector('.script-prompt-language');
@@ -560,7 +555,6 @@
       if(node.data.forceMediumShot === undefined) node.data.forceMediumShot = true;
       if(node.data.noBgMusic === undefined) node.data.noBgMusic = true;
       if(node.data.splitMultiDialogue === undefined) node.data.splitMultiDialogue = false;
-      if(node.data.narrationAsDialogue === undefined) node.data.narrationAsDialogue = false;
       if(!node.data.dialogueLanguage) node.data.dialogueLanguage = node.data.language || '';
       if(!node.data.promptLanguage) node.data.promptLanguage = node.data.language || '';
       if(!node.data.gridModel) node.data.gridModel = 'auto';
@@ -653,10 +647,6 @@
         node.data.splitMultiDialogue = splitMultiDialogueEl.checked;
       });
 
-      // 解说剧（仅旁白说话）选项监听
-      narrationAsDialogueEl.addEventListener('change', () => {
-        node.data.narrationAsDialogue = narrationAsDialogueEl.checked;
-      });
 
       // 语言选择监听 - 对话语言
       function bindLanguageSelect(selectEl, customEl, dataKey) {
@@ -822,7 +812,7 @@
         splitBtn.disabled = true;
         splitGridBtn.disabled = true;
         statusEl.style.display = 'block';
-        setStatusEl(statusEl, node.data.narrationAsDialogue ? '正在将剧本转换为解说剧格式，再解析分镜...' : '正在调用LLM解析剧本...', '#666');
+        setStatusEl(statusEl, '正在调用LLM解析剧本...', '#666');
 
         try {
           const response = await fetch('/api/parse-script', {
@@ -838,7 +828,6 @@
               force_medium_shot: node.data.forceMediumShot || false,
               no_bg_music: node.data.noBgMusic || false,
               split_multi_dialogue: node.data.splitMultiDialogue || false,
-              narration_as_dialogue: node.data.narrationAsDialogue || false,
               dialogue_language: node.data.dialogueLanguage || '',
               prompt_language: node.data.promptLanguage || '',
               model: node.data.splitModel || 'gemini-3-flash-preview',
@@ -1301,7 +1290,7 @@
 
         gridStatusEl.style.display = 'block';
         gridStatusEl.style.color = '#666';
-        gridStatusEl.textContent = node.data.narrationAsDialogue ? '正在将剧本转换为解说剧格式，再解析分镜...' : '正在调用LLM解析剧本...';
+        gridStatusEl.textContent = '正在调用LLM解析剧本...';
 
         try {
           // 第一步：解析剧本
@@ -1318,7 +1307,6 @@
               force_medium_shot: node.data.forceMediumShot || false,
               no_bg_music: node.data.noBgMusic || false,
               split_multi_dialogue: node.data.splitMultiDialogue || false,
-              narration_as_dialogue: node.data.narrationAsDialogue || false,
               dialogue_language: node.data.dialogueLanguage || '',
               prompt_language: node.data.promptLanguage || '',
               model: node.data.splitModel || 'gemini-3-flash-preview',

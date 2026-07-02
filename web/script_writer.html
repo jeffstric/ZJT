@@ -601,6 +601,10 @@
                             <label class="form-label"><span data-i18n="label_user_id">用户ID</span></label>
                             <div class="view-field" id="view-world-user-id"></div>
                         </div>
+                        <div class="form-group">
+                            <label class="form-label"><span data-i18n="label_story_type">故事类型</span></label>
+                            <div class="view-field" id="world-story-type-view"></div>
+                        </div>
                         <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
                             <div class="view-field" id="view-world-description"></div>
@@ -999,6 +1003,14 @@
                             <label class="form-label"><span data-i18n="label_user_id">用户ID</span></label>
                             <input type="text" id="world-user-id" class="form-input" readonly>
                         </div>
+                        <div class="form-group">
+                            <label class="form-label"><span data-i18n="label_story_type">故事类型</span></label>
+                            <select id="world-story-type" class="form-input">
+                                <option value="dialogue" data-i18n="story_type_dialogue">对话剧情</option>
+                                <option value="narration" data-i18n="story_type_narration">旁白解说</option>
+                                <option value="music_mv" data-i18n="story_type_music_mv">音乐MV</option>
+                            </select>
+                        </div>
                         <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
                             <textarea id="world-description" class="form-textarea" rows="4" placeholder="描述这个世界的背景、设定等" data-i18n-placeholder="placeholder_world_desc"></textarea>
@@ -1063,6 +1075,14 @@
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_world_name">世界名称</span> *</label>
                         <input type="text" id="new-world-name" class="form-input" placeholder="输入世界名称" data-i18n-placeholder="placeholder_world_name" maxlength="100">
+                    </div>
+                    <div class="form-group full-width">
+                        <label class="form-label"><span data-i18n="label_story_type">故事类型</span></label>
+                        <select id="new-world-story-type" class="form-input">
+                            <option value="dialogue" data-i18n="story_type_dialogue">对话剧情</option>
+                            <option value="narration" data-i18n="story_type_narration">旁白解说</option>
+                            <option value="music_mv" data-i18n="story_type_music_mv">音乐MV</option>
+                        </select>
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
@@ -1248,6 +1268,14 @@
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_world_name">世界名称</span> *</label>
                         <input type="text" id="edit-world-name" class="form-input" placeholder="输入世界名称" data-i18n-placeholder="placeholder_world_name" maxlength="100">
+                    </div>
+                    <div class="form-group full-width">
+                        <label class="form-label"><span data-i18n="label_story_type">故事类型</span></label>
+                        <select id="edit-world-story-type" class="form-input">
+                            <option value="dialogue" data-i18n="story_type_dialogue">对话剧情</option>
+                            <option value="narration" data-i18n="story_type_narration">旁白解说</option>
+                            <option value="music_mv" data-i18n="story_type_music_mv">音乐MV</option>
+                        </select>
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>

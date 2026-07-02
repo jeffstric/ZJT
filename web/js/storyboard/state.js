@@ -37,6 +37,9 @@ const state = {
     mentionTab: 'character',
     isSaving: false,
     error: '',
+    showGenerateFromScriptDialog: false,
+    isGeneratingFromScript: false,
+    generateFromScriptError: '',
 
     characters: [],
     locations: [],
@@ -74,6 +77,9 @@ export function loadStoryboardData(data) {
     state.workflowRatio = storyboard.workflow_ratio || '16:9';
     state.compositionPreference = storyboard.composition_preference || '';
     state.scenes = scenesFromApi(data.scenes || []);
+    state.showGenerateFromScriptDialog = false;
+    state.isGeneratingFromScript = false;
+    state.generateFromScriptError = '';
 
     if (!state.currentSceneId && state.scenes.length > 0) {
         state.currentSceneId = state.scenes[0].id;

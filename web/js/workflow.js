@@ -2231,7 +2231,6 @@
         node.data.forceMediumShot = nodeData.data.forceMediumShot !== undefined ? nodeData.data.forceMediumShot : true;
         node.data.noBgMusic = nodeData.data.noBgMusic !== undefined ? nodeData.data.noBgMusic : true;
         node.data.splitMultiDialogue = nodeData.data.splitMultiDialogue !== undefined ? nodeData.data.splitMultiDialogue : false;
-        node.data.narrationAsDialogue = nodeData.data.narrationAsDialogue !== undefined ? nodeData.data.narrationAsDialogue : false;
         // 恢复语言设置（兼容旧数据：旧的 language 字段作为两个新字段的默认值）
         const legacyLanguage = nodeData.data.language || '';
         node.data.dialogueLanguage = nodeData.data.dialogueLanguage !== undefined ? nodeData.data.dialogueLanguage : legacyLanguage;
@@ -2252,7 +2251,6 @@
           const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
           const noBgMusicEl = el.querySelector('.script-no-bg-music');
           const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
-          const narrationAsDialogueEl = el.querySelector('.script-narration-as-dialogue');
           const splitBtn = el.querySelector('.script-split-btn');
           const infoField = el.querySelector('.script-info-field');
           const nameEl = el.querySelector('.script-name');
@@ -2264,7 +2262,6 @@
           if(forceMediumShotEl) forceMediumShotEl.checked = node.data.forceMediumShot;
           if(noBgMusicEl) noBgMusicEl.checked = node.data.noBgMusic;
           if(splitMultiDialogueEl) splitMultiDialogueEl.checked = node.data.splitMultiDialogue;
-          if(narrationAsDialogueEl) narrationAsDialogueEl.checked = node.data.narrationAsDialogue;
 
           // 恢复模型选择器的显示状态
           const videoModelEl = el.querySelector('.script-video-model');

@@ -4,7 +4,7 @@
 用于排查任务耗时、轮询静默、卡死等问题。
 
 Revision ID: 20260701_ai_tools_log
-Revises: 20260624_marketing_publications
+Revises: 20260624_storyboard_v2
 Create Date: 2026-07-01
 """
 from typing import Sequence, Union
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
 revision: str = '20260701_ai_tools_log'
-down_revision: Union[str, None] = '20260624_marketing_publications'
+down_revision: Union[str, None] = '20260624_storyboard_v2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

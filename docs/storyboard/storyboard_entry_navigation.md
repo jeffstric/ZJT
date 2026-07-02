@@ -61,6 +61,9 @@
 - Web 接口内的同步 DB 查询必须使用 `asyncio.to_thread()` 包装，避免阻塞事件循环。
 - 不通过 URL 传递 `auth_token`，前端从 `localStorage` 读取并通过 Header 发送。
 - `storyboard.composition_preference` 是主表字段，首次创建时从 `world.composition_preference` 继承，用于后续生成图片提示词。
+- `storyboard.version` 是主表版本字段，默认 `1`，用于后续故事板结构升级和兼容判断。
+- `storyboard_scene`、`storyboard_dialogue`、`storyboard_dialogue_audio`、`storyboard_scene_asset` 表对应的实体和 CRUD 分别拆分到同名 model 文件；`model/storyboard.py` 只保留主表模型，并继续 re-export 这些子表模型以兼容旧导入。
+- 故事板首次创建不再按段落自动拆分剧本；只有用户在空故事板弹框中确认后，才调用后端接口解析剧本并事务写入分镜/对话数据。
 
 ## 入口行为
 
@@ -81,9 +84,34 @@
 3. 跳转 `/storyboard?world_id=...&episode_number=...&script_id=...`。
 4. 故事板页调用 `POST /api/storyboard/create` 幂等创建或打开。
 
+### 空故事板生成分镜
+
+进入 `web/storyboard.html` 后，如果当前故事板没有任何 `storyboard_scene`，前端会显示确认弹框：
+
+- 取消：关闭弹框，保留空故事板，用户仍可手动添加分镜。
+- 确认：调用 `POST /api/storyboard/{storyboard_id}/generate-from-script`，由后端一次性完成剧本解析和数据落库。
+
+接口行为：
+
+1. 后端校验故事板归属和编辑权限。
+2. 如果故事板已存在分镜，返回 `409`，防止重复生成。
+3. 根据 `storyboard.script_id` 或 `world_id + episode_number` 解析出剧本。
+4. 调用 `llm.script_parser.parse_script_to_shots()`，复用视频工作流的剧本拆分核心逻辑。
+5. 将解析出的 `shot_groups[].shots[]` 转换为 `storyboard_scene`，将 `shot.dialogue[]` 转换为 `storyboard_dialogue`。
+6. 使用 `StoryboardModel.create_scenes()` 在一个事务中写入所有分镜和对话，并更新 `storyboard.total_duration`。
+
+字段映射：
+
+- `shot.duration` → `storyboard_scene.duration`
+- `shot.opening_frame_description` + `shot.scene_detail` → `prompt_json.scene_desc`
+- `shot.camera_angle` + `shot.shot_type` → `prompt_json.perspective`
+- `shot.description` + `shot.scene_detail` + `shot.action` + `shot.narrative_purpose` → `storyboard_scene.video_prompt`
+- `dialogue.character_id` 通过解析结果中的 `character_db_id` 映射到 `storyboard_dialogue.character_id`
+
 ## 验证
 
 相关测试：
 
 - `tests/storyboard/test_storyboard_folders.py`
+- `tests/storyboard/test_storyboard_generate_from_script.py`
 - `tests/js/test_storyboard_list_static.js`

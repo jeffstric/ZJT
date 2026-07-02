@@ -74,7 +74,7 @@ from utils.project_path import (
     get_upload_dir, get_upload_subdir, get_upload_temp_dir,
     generate_upload_filename, build_upload_url, resolve_upload_url_to_local_path,
 )
-from config.constant import Edition, Action
+from config.constant import Edition, Action, StoryType
 from utils.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
@@ -5714,7 +5714,6 @@ async def parse_script(
         force_medium_shot = body.get('force_medium_shot', False)
         no_bg_music = body.get('no_bg_music', False)
         split_multi_dialogue = body.get('split_multi_dialogue', False)
-        narration_as_dialogue = body.get('narration_as_dialogue', False)
         language = body.get('language', '')  # 兼容旧版单一语言参数
         dialogue_language = body.get('dialogue_language', '') or language
         prompt_language = body.get('prompt_language', '') or language
@@ -5787,7 +5786,6 @@ async def parse_script(
             force_medium_shot=force_medium_shot,
             no_bg_music=no_bg_music,
             split_multi_dialogue=split_multi_dialogue,
-            narration_as_dialogue=narration_as_dialogue,
             language=language,
             dialogue_language=dialogue_language,
             prompt_language=prompt_language,
@@ -6192,11 +6190,13 @@ async def get_worlds(
 class CreateWorldRequest(BaseModel):
     name: str
     description: Optional[str] = None
+    story_type: Optional[str] = None
 
 
 class UpdateWorldRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    story_type: Optional[str] = None
 
 
 @app.post('/api/worlds')
@@ -6240,7 +6240,8 @@ async def create_world(
         world_id = WorldModel.create(
             name=request.name.strip(),
             user_id=user_id,
-            description=request.description
+            description=request.description,
+            story_type=StoryType.normalize(request.story_type)
         )
         
         world = WorldModel.get_by_id(world_id)
@@ -6306,6 +6307,9 @@ async def update_world(
 
         if request.description is not None:
             update_fields['description'] = request.description.strip() if request.description else None
+
+        if request.story_type is not None:
+            update_fields['story_type'] = StoryType.normalize(request.story_type)
 
         if not update_fields:
             return JSONResponse(

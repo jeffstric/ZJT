@@ -314,6 +314,30 @@ function renderExportDialog() {
         </div>`;
 }
 
+function renderGenerateFromScriptDialog() {
+    if (!state.showGenerateFromScriptDialog) return '';
+    const busy = state.isGeneratingFromScript;
+    return `
+        <div class="modal-overlay">
+            <div class="export-dialog generate-from-script-dialog">
+                <header>
+                    <h2>当前故事板还没有分镜</h2>
+                    <button data-action="generate-from-script-cancel" ${busy ? 'disabled' : ''}>${icon('close', 18)}</button>
+                </header>
+                <div class="empty-note">
+                    是否根据本集剧本自动拆分并生成分镜、对话数据？
+                    ${state.generateFromScriptError ? `<p class="dialog-error">${escapeHtml(state.generateFromScriptError)}</p>` : ''}
+                </div>
+                <footer class="dialog-footer">
+                    <button class="btn-ghost" data-action="generate-from-script-cancel" ${busy ? 'disabled' : ''}>暂不生成</button>
+                    <button class="btn-primary" data-action="generate-from-script-confirm" ${busy ? 'disabled' : ''}>
+                        ${busy ? '正在生成...' : '生成分镜'}
+                    </button>
+                </footer>
+            </div>
+        </div>`;
+}
+
 function renderMentionPopup() {
     if (!state.showMentionPopup) return '';
     const groups = {
@@ -355,5 +379,6 @@ export function renderApp() {
         </div>
         ${renderEditDialog(scene)}
         ${renderExportDialog()}
+        ${renderGenerateFromScriptDialog()}
         ${renderMentionPopup()}`;
 }

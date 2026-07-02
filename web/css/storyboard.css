@@ -422,6 +422,17 @@ button {
 .edit-dialog textarea { min-height: 92px; }
 .edit-dialog footer { margin-top: 14px; justify-content: flex-end; }
 .export-option { width: 100%; margin-top: 12px; padding: 12px; border-radius: 8px; background: var(--panel-soft); color: var(--foreground); text-align: left; }
+.generate-from-script-dialog .dialog-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 14px;
+}
+.dialog-error {
+    margin: 10px 0 0;
+    color: #dc2626;
+    font-size: 12px;
+}
 
 .mention-popup {
     position: fixed;

@@ -27,6 +27,9 @@ from .commission_log import CommissionLogModel, CommissionLog
 from .commission_withdraw import CommissionWithdrawModel, CommissionWithdraw
 from .marketing_publications import MarketingPublicationModel, MarketingPublication, PublicationStatus
 from .storyboard import StoryboardModel, Storyboard, StoryboardSceneModel, StoryboardScene
+from .storyboard_dialogue import StoryboardDialogueModel, StoryboardDialogue
+from .storyboard_dialogue_audio import StoryboardDialogueAudioModel, StoryboardDialogueAudio
+from .storyboard_scene_asset import StoryboardSceneAssetModel, StoryboardSceneAsset
 
 __all__ = [
     'AIToolsModel',
@@ -95,4 +98,10 @@ __all__ = [
     'Storyboard',
     'StoryboardSceneModel',
     'StoryboardScene',
+    'StoryboardDialogueModel',
+    'StoryboardDialogue',
+    'StoryboardDialogueAudioModel',
+    'StoryboardDialogueAudio',
+    'StoryboardSceneAssetModel',
+    'StoryboardSceneAsset',
 ]
