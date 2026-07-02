@@ -844,14 +844,36 @@ async def _handle_task_success(project_id, task_id, media_url):
             final_url = media_url
             logger.info(f"[MOCK] local path, skip download_and_cache: {media_url}")
         else:
+            # 派发到下载队列，解耦主循环：置 DOWNLOADING + tasks 退出主队列 + 入队。
+            # M1：仅 DB 异常才 fallback 同步下载；正在处理/正常入队都直接 return True
+            # （终态 COMPLETED + mark attempt + TASK_COMPLETED 日志由 worker 完成）
+            from config.constant import AI_TOOL_STATUS_DOWNLOADING
+            from model.download_queue import DownloadQueueModel
+            AIToolsModel.update_by_project_id(project_id=project_id, status=AI_TOOL_STATUS_DOWNLOADING)
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
             AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_STARTED,
                                project_id=project_id,
-                               message="开始下载结果文件",
+                               message="上游成功，已派发到下载队列",
                                detail={'source_url': media_url, 'media_type': media_type})
-            download_start = datetime.now()
-            cached_url = await download_and_cache(media_url, task_id, media_type)
-            final_url = cached_url if cached_url else media_url
-            download_ms = int((datetime.now() - download_start).total_seconds() * 1000)
+            try:
+                enqueue_result = DownloadQueueModel.enqueue(
+                    ai_tool_id=task_id,
+                    task_id=task_id,
+                    remote_url=media_url,
+                    media_type=media_type,
+                    project_id=project_id,
+                )
+                logger.info(f"Task {task_id} dispatched to download_queue (result={enqueue_result})，"
+                            f"ai_tools -> DOWNLOADING，主循环立即返回")
+                return True
+            except Exception as dispatch_err:
+                # DB 异常：fallback 同步下载，任务不丢（state 已是 DOWNLOADING，下方共用更新会改回 COMPLETED）
+                logger.warning(f"dispatch to download_queue failed for task {task_id}, "
+                               f"fallback to sync download: {dispatch_err}")
+                download_start = datetime.now()
+                cached_url = await download_and_cache(media_url, task_id, media_type)
+                final_url = cached_url if cached_url else media_url
+                download_ms = int((datetime.now() - download_start).total_seconds() * 1000)
 
         logger.info(f"Media cached: {media_url} -> {final_url}")
         AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_COMPLETED,

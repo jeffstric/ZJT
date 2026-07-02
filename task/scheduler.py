@@ -7,7 +7,10 @@ import sys
 from task.visual_task import generate_video_task
 from task.audio_task import generate_audio_task
 from task.token_task import process_token_task
+from task.download_queue_task import process_download_queue
 from functools import partial
+
+from config.constant import DOWNLOAD_POLL_INTERVAL
 
 
 logging.basicConfig(level=logging.INFO)
@@ -299,6 +302,20 @@ def init_scheduler(app):
         replace_existing=True,
         max_instances=1,
         coalesce=True
+    )
+
+    # 下载队列消费者：异步消费 download_queue，解耦主循环的分钟级 IO 下载
+    task_with_app_download = partial(_run_async_task, process_download_queue)
+    logger.info(f'启用下载队列消费者任务（间隔 {DOWNLOAD_POLL_INTERVAL} 秒）')
+    scheduler.add_job(
+        func=task_with_app_download,
+        trigger=IntervalTrigger(seconds=DOWNLOAD_POLL_INTERVAL),
+        id='download_queue_worker',
+        name=f'Consume download_queue every {DOWNLOAD_POLL_INTERVAL} seconds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
     )
 
     logger.info('启用音频生成任务')

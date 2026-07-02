@@ -426,6 +426,7 @@ class AIToolStatus:
         'COMPLETED': '处理完成',
         'WAITING_PARAM_PREPARE': '等待参数预处理',
         'WAITING_BEFORE_FINISH': '等待结束前处理',
+        'DOWNLOADING': '结果下载中',
     }
     PENDING = 0
     PROCESSING = 1
@@ -434,6 +435,7 @@ class AIToolStatus:
     COMPLETED = 2
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
+    DOWNLOADING = 6
 
 
 class TaskStatus:
@@ -502,6 +504,22 @@ AI_TOOL_STATUS_COMPLETED = AIToolStatus.COMPLETED
 AI_TOOL_STATUS_SYNC_QUEUED = AIToolStatus.SYNC_QUEUED
 AI_TOOL_STATUS_WAITING_PARAM_PREPARE = AIToolStatus.WAITING_PARAM_PREPARE
 AI_TOOL_STATUS_WAITING_BEFORE_FINISH = AIToolStatus.WAITING_BEFORE_FINISH
+AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
+
+
+# ===== 下载队列（download_queue）解耦配置 =====
+# visual_task 主循环检测到上游生成完成后，不再同步 await 分钟级下载，而是把下载意图
+# 写入 download_queue 表、状态置 DOWNLOADING，由独立 job download_queue_worker 异步消费。
+# 详见 docs/backend/download_queue_decouple.md
+DOWNLOAD_POLL_INTERVAL = 5                    # 消费者 job 轮询间隔（秒）
+DOWNLOAD_DISPATCHER_CONCURRENCY = 6           # 单批并发下载数（asyncio.gather）
+DOWNLOAD_MAX_BATCHES_PER_TICK = 20            # 单次 job 最多处理批数，防 while 无界阻塞（M2）
+DOWNLOAD_PER_ATTEMPT_TIMEOUT = 300            # 单次下载外层 wait_for 超时（秒）
+DOWNLOAD_LEASE_SECONDS = 1200                 # 抢占租约（秒）。⚠️硬约束：必须 > DOWNLOAD_PER_ATTEMPT_TIMEOUT，否则正在跑的下载会被下个 tick 误回收导致重复处理（M3）
+DOWNLOAD_MAX_TRY = 3                          # 单条下载最大尝试次数（达上限后用 remote_url 兜底 COMPLETED，H3）
+DOWNLOAD_BACKOFF_SECONDS = (20, 60, 180)      # 重试指数退避（秒），按 try_count 取，越界取末值
+DOWNLOAD_WRITE_CHUNK_TIMEOUT = 30             # 单次写盘 chunk 的 wait_for 超时（秒）
+DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（模块级长寿 executor，禁止 with，CLAUDE.md 第10条）
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED
