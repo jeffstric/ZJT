@@ -4,6 +4,23 @@
 
 'use strict';
 
+function escapeHtmlAttr(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function escapeHtml(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 let publishedInspirationData = [];
 let inspirationPage = 1;
 const INSPIRATION_PAGE_SIZE = 40;
@@ -352,6 +369,7 @@ let toolbarState = {
   agentResolution: 'auto',
   agentDuration: 5,
   agentVideoMode: 'first_last_frame',
+  agentVideoResolution: '',
   agentModel: '',
   agentModelKey: '',
   agentLLMModel: '',
@@ -363,6 +381,7 @@ let toolbarState = {
   ratio: '1:1',
   resolution: 'auto',
   duration: 5,
+  videoResolution: '',
 };
 
 // ── 上传媒体文件状态
@@ -447,8 +466,10 @@ function initToolbar() {
   renderAgentRatioGrid();
   renderAgentResolutionList();
   renderAgentDurationList();
+  renderAgentVideoResolutionList();
   renderAgentModelList();
   renderAgentLLMList();
+  renderVideoResolutionMenu();
   bindToolbarEvents();
   updateToolbarUI();
 }
@@ -465,13 +486,13 @@ function renderModelList() {
       ? '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/>'
       : '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 15l-5-5L5 19"/>';
     return `
-      <div class="mk-model ${isActive ? 'active' : ''}" data-model="${m.name}" data-key="${m.key || ''}" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
+      <div class="mk-model ${isActive ? 'active' : ''}" data-model="${escapeHtmlAttr(m.name)}" data-key="${escapeHtmlAttr(m.key || '')}" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
         <div style="width:36px;height:36px;background:#f0f0f0;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${iconSvg}</svg>
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:500;color:var(--text-primary);">${m.name}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${m.desc}</div>
+          <div style="font-size:14px;font-weight:500;color:var(--text-primary);">${escapeHtml(m.name)}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${escapeHtml(m.desc)}</div>
         </div>
         ${isActive ? '<span style="color:var(--text-primary);font-size:18px;">✓</span>' : ''}
       </div>
@@ -514,6 +535,34 @@ function renderDurationMenu() {
     return `
       <div class="mk-dur ${isActive ? 'active' : ''}" data-duration="${d}" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:8px;cursor:pointer;transition:background 0.2s;background:${isActive ? 'var(--accent-light)' : 'transparent'};">
         <span style="font-size:13px;font-weight:500;color:var(--text-primary);">${d}秒</span>
+        ${isActive ? '<span style="color:var(--accent-color);font-weight:bold;">✓</span>' : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+// 渲染非 Agent 视频模式分辨率下拉（根据当前视频模型动态生成）
+function renderVideoResolutionMenu() {
+  const container = document.getElementById('videoResolutionMenu');
+  if (!container) return;
+  const options = (window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function')
+    ? TaskConfig.getVideoResolutionOptions(toolbarState.modelKey)
+    : [];
+  if (!options.length) {
+    container.innerHTML = '';
+    toolbarState.videoResolution = '';
+    return;
+  }
+  if (!toolbarState.videoResolution || !options.some(o => o.value === toolbarState.videoResolution)) {
+    toolbarState.videoResolution = (typeof TaskConfig.getDefaultVideoResolution === 'function'
+      ? TaskConfig.getDefaultVideoResolution(toolbarState.modelKey)
+      : null) || options[0].value;
+  }
+  container.innerHTML = options.map(o => {
+    const isActive = o.value === toolbarState.videoResolution;
+    return `
+      <div class="mk-vres ${isActive ? 'active' : ''}" data-vres="${o.value}" style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-radius:8px;cursor:pointer;transition:background 0.2s;background:${isActive ? 'var(--accent-light)' : 'transparent'};">
+        <span style="font-size:13px;font-weight:500;color:var(--text-primary);">${o.label || o.value}</span>
         ${isActive ? '<span style="color:var(--accent-color);font-weight:bold;">✓</span>' : ''}
       </div>
     `;
@@ -612,6 +661,8 @@ function bindToolbarEvents() {
         document.getElementById('agentDurationGroup').classList.toggle('hidden', !isVid);
         document.getElementById('agentVideoModeGroup').classList.toggle('hidden', !isVid);
         document.getElementById('agentResolutionGroup').classList.toggle('hidden', isVid);
+        // 视频模式：根据当前模型刷新视频分辨率选项（含显示/隐藏）
+        renderAgentVideoResolutionList();
         return;
       }
       // 视频生成方式切换
@@ -636,11 +687,18 @@ function bindToolbarEvents() {
         renderAgentRatioGrid();
         return;
       }
-      // 分辨率选择
+      // 图片分辨率选择
       const resItem = e.target.closest('.mk-agent-res');
       if (resItem) {
         toolbarState.agentResolution = resItem.dataset.resolution;
         renderAgentResolutionList();
+        return;
+      }
+      // 视频分辨率选择
+      const vresItem = e.target.closest('.mk-agent-vres');
+      if (vresItem) {
+        toolbarState.agentVideoResolution = vresItem.dataset.vres;
+        renderAgentVideoResolutionList();
         return;
       }
       // 时长选择
@@ -656,6 +714,8 @@ function bindToolbarEvents() {
         toolbarState.agentModel = modelItem.dataset.model;
         toolbarState.agentModelKey = modelItem.dataset.key;
         renderAgentModelList();
+        // 模型切换后刷新视频分辨率选项（不同模型支持的分辨率不同）
+        renderAgentVideoResolutionList();
         return;
       }
       // LLM 模型选择
@@ -685,6 +745,8 @@ function bindToolbarEvents() {
       toolbarState.modelKey = item.dataset.key || '';
       updateToolbarUI();
       renderModelList();
+      // 模型切换后刷新视频分辨率选项
+      renderVideoResolutionMenu();
       modelPanel.classList.add('hidden');
     });
   }
@@ -728,6 +790,24 @@ function bindToolbarEvents() {
       updateToolbarUI();
       renderDurationMenu();
       durationMenu.classList.add('hidden');
+    });
+  }
+
+  const videoResolutionBtn = document.getElementById('videoResolutionBtn');
+  const videoResolutionMenuEl = document.getElementById('videoResolutionMenu');
+  if (videoResolutionBtn && videoResolutionMenuEl) {
+    videoResolutionBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      togglePanel(videoResolutionBtn, videoResolutionMenuEl);
+      closeOthers('videoResolutionMenu');
+    });
+    videoResolutionMenuEl.addEventListener('click', e => {
+      const item = e.target.closest('.mk-vres');
+      if (!item) return;
+      toolbarState.videoResolution = item.dataset.vres;
+      updateToolbarUI();
+      renderVideoResolutionMenu();
+      videoResolutionMenuEl.classList.add('hidden');
     });
   }
 
@@ -779,6 +859,18 @@ function updateToolbarUI() {
   if (durationLabel) durationLabel.textContent = toolbarState.duration + 's';
   if (durationDropdown) durationDropdown.classList.toggle('hidden', !isVideo);
   if (resolutionGroup) resolutionGroup.classList.toggle('hidden', isVideo);
+  // 视频模式分辨率下拉：仅在视频模式且当前模型支持分辨率时显示
+  const videoResolutionDropdown = document.getElementById('videoResolutionDropdown');
+  const videoResolutionLabel = document.getElementById('videoResolutionLabel');
+  if (videoResolutionDropdown) {
+    const hasVideoResOptions = (window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function')
+      ? TaskConfig.getVideoResolutionOptions(toolbarState.modelKey).length > 0
+      : false;
+    videoResolutionDropdown.classList.toggle('hidden', !(isVideo && hasVideoResOptions));
+  }
+  if (videoResolutionLabel && toolbarState.videoResolution) {
+    videoResolutionLabel.textContent = toolbarState.videoResolution;
+  }
   if (modelIconImg && modelIconVid) {
     modelIconImg.classList.toggle('hidden', isVideo);
     modelIconVid.classList.toggle('hidden', !isVideo);
@@ -813,6 +905,36 @@ function renderAgentResolutionList() {
   }).join('');
 }
 
+// 渲染 Agent 视频模式分辨率（根据当前视频模型动态生成，仅模型支持时显示）
+function renderAgentVideoResolutionList() {
+  const container = document.getElementById('agentVideoResolutionList');
+  if (!container) return;
+  const group = document.getElementById('agentVideoResolutionGroup');
+  const options = (window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function')
+    ? TaskConfig.getVideoResolutionOptions(toolbarState.agentModelKey)
+    : [];
+  if (!options.length) {
+    container.innerHTML = '';
+    if (group) group.classList.add('hidden');
+    toolbarState.agentVideoResolution = '';
+    return;
+  }
+  if (group) group.classList.remove('hidden');
+  if (!toolbarState.agentVideoResolution || !options.some(o => o.value === toolbarState.agentVideoResolution)) {
+    toolbarState.agentVideoResolution = (typeof TaskConfig.getDefaultVideoResolution === 'function'
+      ? TaskConfig.getDefaultVideoResolution(toolbarState.agentModelKey)
+      : null) || options[0].value;
+  }
+  container.innerHTML = options.map(o => {
+    const isActive = o.value === toolbarState.agentVideoResolution;
+    return `
+      <div class="mk-agent-vres ${isActive ? 'active' : ''}" data-vres="${o.value}" style="flex:1;min-width:60px;text-align:center;padding:10px;border-radius:8px;cursor:pointer;transition:all 0.2s;font-size:14px;border:${isActive ? '2px solid var(--accent-color)' : '1px solid var(--border-color)'};background:${isActive ? 'var(--accent-light)' : '#f5f5f5'};color:${isActive ? 'var(--accent-color)' : 'var(--text-primary)'};">
+        ${o.label || o.value}
+      </div>
+    `;
+  }).join('');
+}
+
 function renderAgentDurationList() {
   const container = document.getElementById('agentDurationList');
   if (!container) return;
@@ -838,13 +960,13 @@ function renderAgentModelList() {
       ? '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3V9z"/>'
       : '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M21 15l-5-5L5 19"/>';
     return `
-      <div class="mk-agent-model ${isActive ? 'active' : ''}" data-model="${m.name}" data-key="${m.key || ''}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
+      <div class="mk-agent-model ${isActive ? 'active' : ''}" data-model="${escapeHtmlAttr(m.name)}" data-key="${escapeHtmlAttr(m.key || '')}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
         <div style="width:32px;height:32px;background:#f0f0f0;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="1.5">${iconSvg}</svg>
         </div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:500;color:var(--text-primary);">${m.name}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${m.desc}</div>
+          <div style="font-size:13px;font-weight:500;color:var(--text-primary);">${escapeHtml(m.name)}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(m.desc)}</div>
         </div>
         ${isActive ? '<span style="color:var(--accent-color);font-size:16px;">✓</span>' : ''}
       </div>
@@ -865,11 +987,11 @@ function renderAgentLLMList() {
     if (m.supportsVl) badges.push('<span style="font-size:10px;color:#7c3aed;background:#f3e8ff;padding:1px 6px;border-radius:4px;">VL</span>');
     if (m.supportsThinking) badges.push('<span style="font-size:10px;color:#059669;background:#d1fae5;padding:1px 6px;border-radius:4px;">深度思考</span>');
     return `
-      <div class="mk-agent-llm ${isActive ? 'active' : ''}" data-model="${m.name}" data-id="${m.id}" data-vendor="${m.vendor_id || ''}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
+      <div class="mk-agent-llm ${isActive ? 'active' : ''}" data-model="${escapeHtmlAttr(m.name)}" data-id="${escapeHtmlAttr(m.id)}" data-vendor="${escapeHtmlAttr(m.vendor_id || '')}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer;transition:background 0.2s;margin-bottom:4px;border:1px solid ${isActive ? 'var(--border-color)' : 'transparent'};background:${isActive ? '#fff' : 'transparent'};box-shadow:${isActive ? '0 1px 4px rgba(0,0,0,0.05)' : 'none'};">
         <div style="width:32px;height:32px;background:#f0f0f0;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px;">🤖</div>
         <div style="flex:1;min-width:0;">
-          <div style="font-size:13px;font-weight:500;color:var(--text-primary);display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${m.name} ${badges.join(' ')}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${m.vendor || ''}</div>
+          <div style="font-size:13px;font-weight:500;color:var(--text-primary);display:flex;align-items:center;gap:4px;flex-wrap:wrap;">${escapeHtml(m.name)} ${badges.join(' ')}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${escapeHtml(m.vendor || '')}</div>
         </div>
         ${isActive ? '<span style="color:var(--accent-color);font-size:16px;">✓</span>' : ''}
       </div>
@@ -888,13 +1010,13 @@ function addMediaPreview(item) {
 
   if (item.type === 'video') {
     el.innerHTML = `
-      <video src="${item.previewUrl}" muted playsinline></video>
+      <video src="${escapeHtmlAttr(item.previewUrl)}" muted playsinline></video>
       <div class="video-icon"><svg width="10" height="10" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>
       ${item.uploading ? '<div class="upload-status"><div class="upload-status-bar" style="width:0%"></div></div>' : ''}
       <button class="media-preview-remove" data-remove-id="${item.id}">&times;</button>`;
   } else {
     el.innerHTML = `
-      <img src="${item.previewUrl}" alt="">
+      <img src="${escapeHtmlAttr(item.previewUrl)}" alt="">
       ${item.uploading ? '<div class="upload-status"><div class="upload-status-bar" style="width:0%"></div></div>' : ''}
       <button class="media-preview-remove" data-remove-id="${item.id}">&times;</button>`;
   }
@@ -1001,6 +1123,7 @@ function goToGenerate(prompt, options) {
     if (options.resolution) params.set('resolution', options.resolution);
     if (options.duration) params.set('duration', String(options.duration));
     if (options.video_mode) params.set('video_mode', options.video_mode);
+    if (options.video_resolution) params.set('video_resolution', options.video_resolution);
     if (options.llm_model_id) params.set('llm_model_id', String(options.llm_model_id));
     if (options.llm_vendor_id) params.set('llm_vendor_id', String(options.llm_vendor_id));
     if (options.has_media) params.set('has_media', String(options.has_media));
@@ -1176,6 +1299,7 @@ async function initPage() {
         } else {
           opts.duration = toolbarState.agentDuration;
           opts.video_mode = toolbarState.agentVideoMode;
+          opts.video_resolution = toolbarState.agentVideoResolution;
         }
         if (toolbarState.agentLLMModelId) {
           opts.llm_model_id = toolbarState.agentLLMModelId;
@@ -1191,6 +1315,7 @@ async function initPage() {
         opts.model_name = toolbarState.model;
         opts.ratio = toolbarState.ratio;
         opts.duration = toolbarState.duration;
+        opts.video_resolution = toolbarState.videoResolution;
       }
       goToGenerate(val, opts);
     });

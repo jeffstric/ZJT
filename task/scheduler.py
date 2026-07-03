@@ -7,7 +7,10 @@ import sys
 from task.visual_task import generate_video_task
 from task.audio_task import generate_audio_task
 from task.token_task import process_token_task
+from task.download_queue_task import process_download_queue
 from functools import partial
+
+from config.constant import DOWNLOAD_POLL_INTERVAL
 
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +26,9 @@ _LOCK_FILE = None
 def _run_async_task(async_func, *args, **kwargs):
     """
     在同步调度器中运行异步任务的包装函数
+
+    ⚠️ 每次调用创建新的事件循环，不复用。loop.close() 会释放所有关联资源。
+    仅适用于短生命周期的异步任务，不要在此运行持续性连接池或后台任务。
     """
     try:
         loop = asyncio.new_event_loop()
@@ -213,12 +219,24 @@ def _reset_orphan_processing_tasks():
         orphan_ids = [row['id'] for row in orphan_rows]
         logger.info(f"Found {len(orphan_ids)} orphan processing tasks: {orphan_ids}")
 
-        # 2. 重置 ai_tools 表
+        # 2. 先释放同步执行器中可能残留的 future/worker，不退款，不改 FAILED。
+        try:
+            from task.sync_task_executor import SyncTaskExecutor
+
+            executor = SyncTaskExecutor.get_instance()
+            if executor.is_running():
+                for tid in orphan_ids:
+                    if executor.force_release_task(tid, refund=False):
+                        logger.info(f"Force released orphan sync future without refund for task {tid}")
+        except Exception as exc:
+            logger.error(f"Failed to release orphan futures: {exc}")
+
+        # 3. 重置 ai_tools 表
         placeholders = ','.join(['%s'] * len(orphan_ids))
         ai_tools_sql = f"UPDATE ai_tools SET status = %s, update_time = NOW() WHERE id IN ({placeholders})"
         ai_tools_count = execute_update(ai_tools_sql, (AI_TOOL_STATUS_PENDING, *orphan_ids))
 
-        # 3. 重置 tasks 表（task_id 对应 ai_tools.id）
+        # 4. 重置 tasks 表（task_id 对应 ai_tools.id）
         tasks_sql = f"UPDATE tasks SET status = %s, next_trigger = NOW() WHERE task_id IN ({placeholders}) AND status = %s"
         tasks_count = execute_update(tasks_sql, (TASK_STATUS_QUEUED, *orphan_ids, TASK_STATUS_PROCESSING))
 
@@ -280,10 +298,24 @@ def init_scheduler(app):
         func=task_with_app_video,
         trigger=IntervalTrigger(seconds=5),
         id='generate_video',
-        name='Generate video every 11 seconds',
+        name='Generate video every 5 seconds',  # ⚠️ 实际间隔5秒，之前name描述错误
         replace_existing=True,
         max_instances=1,
         coalesce=True
+    )
+
+    # 下载队列消费者：异步消费 download_queue，解耦主循环的分钟级 IO 下载
+    task_with_app_download = partial(_run_async_task, process_download_queue)
+    logger.info(f'启用下载队列消费者任务（间隔 {DOWNLOAD_POLL_INTERVAL} 秒）')
+    scheduler.add_job(
+        func=task_with_app_download,
+        trigger=IntervalTrigger(seconds=DOWNLOAD_POLL_INTERVAL),
+        id='download_queue_worker',
+        name=f'Consume download_queue every {DOWNLOAD_POLL_INTERVAL} seconds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
     )
 
     logger.info('启用音频生成任务')
@@ -291,7 +323,7 @@ def init_scheduler(app):
         func=task_with_app_audio,
         trigger=IntervalTrigger(seconds=13),
         id='generate_audio',
-        name='Generate audio every 7 seconds',
+        name='Generate audio every 13 seconds',  # ⚠️ 实际间隔13秒，之前name描述错误
         replace_existing=True,
         max_instances=1,
         coalesce=True

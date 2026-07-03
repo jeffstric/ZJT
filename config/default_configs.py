@@ -314,6 +314,13 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
     {
+        'key': 'runninghub.upstream_congest_retry_delay',
+        'value_type': 'int',
+        'description': 'RunningHub 上游并发超限(api queue limit reached / TASK_QUEUE_MAXED 等)时的自动重试延迟秒数，命中即不消耗用户重试次数、不退算力，仅延迟后重新排队提交。默认30秒。',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
         'key': 'pipeline.seedance_face_mask_enabled',
         'value_type': 'bool',
         'description': '是否启用 Seedance 2.0 / 2.0 Fast 图片和视频输入的人脸遮盖前置处理',
@@ -826,6 +833,27 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'sync_task.check_interval',
         'value_type': 'int',
         'description': '同步任务结果检查间隔（秒）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'sync_task.stale_detection_enabled',
+        'value_type': 'bool',
+        'description': '是否启用同步任务 stale future 检测与 worker 回收',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'sync_task.stale_timeout.seedream5_volcengine_v1',
+        'value_type': 'int',
+        'description': 'Seedream 国内同步任务 stale 超时时间（秒），0 表示禁用',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'sync_task.stale_timeout.seedream5_volcengine_oversea_v1',
+        'value_type': 'int',
+        'description': 'Seedream 海外同步任务 stale 超时时间（秒），0 表示禁用',
         'editable': True,
         'is_sensitive': False
     },

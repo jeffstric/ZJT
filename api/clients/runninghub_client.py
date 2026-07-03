@@ -55,7 +55,10 @@ class RunningHubClient:
     
     def _make_request(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Make HTTP POST request to RunningHub API
+        Make HTTP POST request to RunningHub API（同步版本，使用 requests 库）
+        ⚠️ 与 _make_v2_request 的区别：
+          - _make_request: 同步（requests），用于 scheduler/后台任务
+          - _make_v2_request: 异步（httpx），用于 FastAPI 路由中
         
         Args:
             endpoint: API endpoint path
@@ -338,10 +341,12 @@ class RunningHubClient:
             TimeoutError: If task doesn't complete within timeout
         """
         # Submit task
+        # ⚠️ BUG：run_task 在循环前已被调用一次（第341行），但结果未使用。
+        # 循环内又重新提交任务，导致第一次调用被浪费。
         response = self.run_task(node_info_list, None)
         task_id = response["data"]["taskId"]
 
-        
+
         for attempt in range(max_retries):
             try:
                 # Submit task

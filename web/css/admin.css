@@ -899,15 +899,6 @@ body {
     animation: pulse 2s infinite;
 }
 
-@keyframes pulse {
-    0%, 100% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.5;
-    }
-}
-
 /* 操作按钮 */
 .action-btn {
     padding: 6px 12px;
@@ -1135,10 +1126,6 @@ body {
     border-top-color: var(--admin-primary);
     border-radius: 50%;
     animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-    to { transform: rotate(360deg); }
 }
 
 /* 空状态 */

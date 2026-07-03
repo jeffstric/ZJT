@@ -46,6 +46,8 @@ POST /api/ai-app-run-image
 FormData: prompt, ratio, duration_seconds, count, task_id, image_urls, image_mode, ...
 ```
 
+可选字段 `resolution` 来自 `node.data.videoResolution`。未传入时后端按当前 implementation 的默认分辨率处理。
+
 ### 文生视频
 
 ```
@@ -54,12 +56,14 @@ FormData: prompt, ratio, duration_seconds, count, task_id, user_id, auth_token
 ```
 
 task_id 通过 `TaskConfig.getTaskIdByKey(model, 'text_to_video')` 获取。
+文生视频同样支持可选字段 `resolution`。
 
 ## 数据字段
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `node.data.imageMode` | `'first_last_frame'` / `'multi_reference'` / `'text_to_video'` | 图片模式 |
+| `node.data.videoResolution` | `string` | 当前视频模型支持的分辨率选择值；工作流重新加载后恢复，并参与算力预估 |
 | `node.data.videoUrls` | `Array<{name, url}>` | 通过上传或视频节点连线添加的参考视频列表 |
 
 ## 端口与国际化
@@ -75,7 +79,7 @@ task_id 通过 `TaskConfig.getTaskIdByKey(model, 'text_to_video')` 获取。
 
 ## 相关文件
 
-- `web/js/nodes.js` — createImageToVideoNode(): 节点创建、模式 UI、生成逻辑
+- `web/js/image_to_video_node.js` — createImageToVideoNode(): 节点创建、模式 UI、分辨率选择和生成逻辑
 - `web/js/api.js` — generateVideoFromImage() / generateVideoFromText(): API 调用
 - `web/js/workflow.js` — createImageToVideoNodeWithData(): 状态恢复
 - `web/video_workflow.html` — 工具栏按钮

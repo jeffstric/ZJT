@@ -212,7 +212,7 @@ GET /api/admin/dashboard
 ### 月活用户查询
 
 ```
-GET /api/admin/monthly-active-users
+GET /api/admin/dashboard/monthly-active-users
 ```
 
 响应示例：
@@ -307,20 +307,38 @@ Content-Type: application/json
 
 ### 审批用户登录
 
+通过更新用户状态实现（将待审核用户 status=2 改为正常 status=1）：
+
 ```
-POST /api/admin/users/{user_id}/approve
+PUT /api/admin/users/{user_id}/status
+Content-Type: application/json
+
+{
+    "status": 1  // 1=正常
+}
 ```
 
 ### 切换智剧通Token
 
 ```
-POST /api/admin/users/{user_id}/toggle-zjt-token
+PUT /api/admin/users/{user_id}/zjt-token
+Content-Type: application/json
+
+{
+    "zjt_token_enabled": true
+}
+```
+
+### 获取智剧通Token状态
+
+```
+GET /api/admin/users/{user_id}/zjt-token
 ```
 
 ### 调整Token有效期
 
 ```
-POST /api/admin/users/{user_id}/zjt-expire
+PUT /api/admin/users/{user_id}/zjt-token-expire
 Content-Type: application/json
 
 {
@@ -331,13 +349,13 @@ Content-Type: application/json
 ### 系统配置列表
 
 ```
-GET /api/admin/configs?page=1&page_size=20&keyword=search
+GET /api/admin/config?page=1&page_size=20&keyword=search
 ```
 
 ### 更新配置
 
 ```
-PUT /api/admin/configs/{config_id}
+PUT /api/admin/config/{config_key}
 Content-Type: application/json
 
 {
@@ -348,36 +366,46 @@ Content-Type: application/json
 ### 配置历史
 
 ```
-GET /api/admin/configs/{config_id}/history
+GET /api/admin/config-history?key={config_key}
 ```
 
 ### 初始化配置
 
 ```
-POST /api/admin/configs/init
+POST /api/admin/config/init
 ```
 
 ### 刷新配置缓存
 
 ```
-POST /api/admin/configs/reload
+POST /api/admin/config/reload
 ```
 
 ### 签到配置
 
+签到配置通过通用的系统配置接口管理，配置键以 `checkin.` 为前缀：
+
 ```
-GET /api/admin/checkin/config
-PUT /api/admin/checkin/config
+GET /api/admin/config?keyword=checkin    # 查看签到相关配置
+PUT /api/admin/config/{config_key}       # 修改单个配置项
+PUT /api/admin/config/batch              # 批量修改配置
 ```
+
+相关配置键：
+- `checkin.enabled` - 是否启用签到功能
+- `checkin.base_reward` - 每次签到基础奖励算力
+- `checkin.streak_bonus_enabled` - 是否启用连续签到奖励
+- `checkin.streak_bonus_config` - 连续签到阶梯奖励配置（JSON）
 
 ### 实现方管理
 
 ```
-GET /api/admin/implementations
-PUT /api/admin/implementations/{name}/sort-order
-PUT /api/admin/implementations/{name}/default-power
-PUT /api/admin/implementations/{name}/duration-power
-POST /api/admin/implementations/{name}/reset-power
+GET /api/admin/implementation-configs          # 获取实现方配置列表
+GET /api/admin/implementation-powers           # 获取实现方算力配置
+PUT /api/admin/implementation-config           # 更新实现方配置（排序、启用等）
+POST /api/admin/implementation-power           # 设置实现方算力
+DELETE /api/admin/implementation-power         # 删除实现方算力配置
+POST /api/admin/implementation-configs/sort-order  # 批量更新排序
 ```
 
 ### 通知管理

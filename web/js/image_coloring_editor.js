@@ -32,7 +32,10 @@
   }
 
   // Initialize the coloring editor
+  var _coloringInitialized = false;
   function initImageColoringEditor() {
+    if (_coloringInitialized) return;
+    _coloringInitialized = true;
     setupModal();
     setupEventListeners();
   }
@@ -366,6 +369,8 @@
     coloringState.currentNodeId = null;
     coloringState.onComplete = null;
     coloringState.originalImage = null;
+    coloringState.history = [];
+    coloringState.historyStep = -1;
   }
 
   // Confirm and get the edited image

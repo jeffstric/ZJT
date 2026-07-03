@@ -137,7 +137,7 @@ class QiniuFileStorage(BaseFileStorage):
         try:
             logger.info(f"[七牛云] 开始上传文件, key={key}, file_path={file_path}")
             token = self._get_upload_token(key)
-            logger.debug(f"[七牛云] 获取token成功, token={token}, key={key}, file_path={file_path}, bucket={self.bucket_name}")
+            logger.debug(f"[七牛云] 获取token成功, key={key}, file_path={file_path}, bucket={self.bucket_name}")
             ret, info = qiniu.put_file(token, key, file_path) #qiniu 来自于 pip install qiniu
 
             logger.info(f"[七牛云] 上传响应: ret={ret}, status_code={info.status_code}, "

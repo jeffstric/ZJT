@@ -667,8 +667,8 @@
                data-clip-id="${clip.id}" 
                draggable="true"
                style="position: absolute; left: ${startTime * 10}px; width: ${width}px;">
-            <video class="timeline-clip-thumb" src="${proxyDownloadUrl(clip.url)}" muted preload="metadata"></video>
-            <div class="timeline-clip-name" title="${clip.name}">${clip.name}</div>
+            <video class="timeline-clip-thumb" src="${escapeHtml(proxyDownloadUrl(clip.url))}" muted preload="metadata"></video>
+            <div class="timeline-clip-name" title="${escapeHtml(clip.name)}">${escapeHtml(clip.name)}</div>
             <div class="timeline-clip-duration">${durationText}</div>
             <div class="timeline-clip-actions">
               <button class="vp-btn clip-trim-btn" title="剪切">✂</button>
@@ -677,7 +677,7 @@
           </div>
         `;
       }).join('');
-      
+
       // 设置轨道最小宽度以容纳所有片段
       track.style.minWidth = (totalDuration * 10 + 24) + 'px'; // 24px for padding
       
@@ -737,8 +737,8 @@
 
         videoTrackHTML += `
           <div class="timeline-pillar-bg"
-               data-pillar-id="${pillar.id}"
-               data-script-id="${pillar.scriptId || ''}"
+               data-pillar-id="${escapeHtml(pillar.id)}"
+               data-script-id="${escapeHtml(pillar.scriptId || '')}"
                data-shot-number="${pillar.shotNumber || ''}"
                style="position: absolute;
                       left: ${pos.startTime * 10}px;
@@ -784,8 +784,8 @@
                  data-pillar-id="${pillar.id}"
                  draggable="true"
                  style="position: absolute; left: ${absoluteLeft}px; width: ${width}px; z-index: 1;">
-              <video class="timeline-clip-thumb" src="${proxyDownloadUrl(clip.url)}" muted preload="metadata"></video>
-              <div class="timeline-clip-name" title="${clip.name}">${clip.name}</div>
+              <video class="timeline-clip-thumb" src="${escapeHtml(proxyDownloadUrl(clip.url))}" muted preload="metadata"></video>
+              <div class="timeline-clip-name" title="${escapeHtml(clip.name)}">${escapeHtml(clip.name)}</div>
               <div class="timeline-clip-duration">${durationText}</div>
               <div class="timeline-clip-actions">
                 <button class="vp-btn clip-trim-btn" title="剪切">✂</button>
@@ -795,7 +795,7 @@
           `;
         });
       });
-      
+
       track.innerHTML = videoTrackHTML;
       track.style.minWidth = (totalDuration * 10 + 24) + 'px';
       
@@ -831,7 +831,7 @@
                 }).join(' ')} L100,20" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="1"/>
               </svg>
             </div>
-            <div class="timeline-clip-name" title="${clip.name}">${clip.name}</div>
+            <div class="timeline-clip-name" title="${escapeHtml(clip.name)}">${escapeHtml(clip.name)}</div>
             <div class="timeline-clip-duration">${durationText}</div>
             <div class="timeline-clip-actions">
               <button class="vp-btn audio-clip-remove-btn" title="移除">×</button>
@@ -860,8 +860,8 @@
 
         audioTrackHTML += `
           <div class="timeline-pillar-bg"
-               data-pillar-id="${pillar.id}"
-               data-script-id="${pillar.scriptId || ''}"
+               data-pillar-id="${escapeHtml(pillar.id)}"
+               data-script-id="${escapeHtml(pillar.scriptId || '')}"
                data-shot-number="${pillar.shotNumber || ''}"
                style="position: absolute;
                       left: ${pos.startTime * 10}px;
@@ -912,7 +912,7 @@
                   }).join(' ')} L100,20" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="1"/>
                 </svg>
               </div>
-              <div class="timeline-clip-name" title="${clip.name}">${clip.name}</div>
+              <div class="timeline-clip-name" title="${escapeHtml(clip.name)}">${escapeHtml(clip.name)}</div>
               <div class="timeline-clip-duration">${durationText}</div>
               <div class="timeline-clip-actions">
                 <button class="vp-btn audio-clip-remove-btn" title="移除">×</button>
@@ -1299,7 +1299,7 @@
       dialog.innerHTML = `
         <div class="modal-card" style="max-width: 900px;">
           <div class="modal-header">
-            <div class="modal-title">剪切视频片段 - ${clip.name}</div>
+            <div class="modal-title">剪切视频片段 - ${escapeHtml(clip.name)}</div>
             <button class="modal-close" type="button" aria-label="关闭">×</button>
           </div>
           <div class="modal-body" style="padding: 20px;">
@@ -1814,7 +1814,7 @@
             <div style="margin-bottom: 20px;">
               <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #111827;">剪影草稿路径前缀</label>
               <input type="text" id="draftPathInput" class="input" 
-                     value="${savedPath}"
+                     value="${escapeHtml(savedPath)}"
                      placeholder="例如: C:\\Users\\Administrator\\AppData\\Local\\JianyingPro\\User Data\\Projects\\com.lveditor.draft"
                      style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; background: white; color: #111827;">
               <div style="margin-top: 8px; font-size: 12px; color: #6b7280;">
@@ -1938,9 +1938,16 @@
             if (result.download_url) {
               console.log('下载URL:', result.download_url);
               console.log('文件名:', result.zip_filename);
-              
+
+              // 验证下载URL协议，防止open redirect
+              var downloadUrl = result.download_url;
+              if (!/^https?:\/\//i.test(downloadUrl) && !downloadUrl.startsWith('/')) {
+                console.error('Invalid download URL protocol:', downloadUrl);
+                showToast('下载链接无效', 'error');
+                return;
+              }
               // 使用window.location.href直接下载，更可靠
-              window.location.href = result.download_url;
+              window.location.href = downloadUrl;
               
               setTimeout(() => {
                 showToast('草稿已下载: ' + result.zip_filename, 'success');

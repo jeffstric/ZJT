@@ -24,6 +24,9 @@ from config.unified_config import (
 
 logger = logging.getLogger(__name__)
 
+# ⚠️ 命名陷阱：此 DRIVER_MAP 存储字符串路径（延迟导入），而 runninghub_async_task.py 的
+# DRIVER_MAP 存储类引用（直接导入）。两处都叫 DRIVER_MAP 但值类型不同。
+# 此设计避免同步调度器进程中导入不必要的异步模块。
 DRIVER_MAP = {
     AsyncTaskImplementationId.RUNNINGHUB_AUDIO: 'task.async_drivers.runninghub_audio_driver.RunningHubAudioDriver',
     AsyncTaskImplementationId.RUNNINGHUB_FACE_MASK: 'task.async_drivers.runninghub_face_mask_driver.RunningHubFaceMaskDriver',

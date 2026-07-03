@@ -6,6 +6,10 @@ allowed-tools: ["generate_text_to_video", "image_to_video", "get_user_computing_
 
 # 营销视频智能体 (Marketing Video Agent)
 
+## 维护提醒（给后续智能体）
+
+此文件是开源/社区版仓库中的默认占位 skill。真实可调用 `generate_text_to_video`、`image_to_video` 的视频生成能力由企业版模块注册，并由 `enterprise/skills/marketing-video/SKILL.md` 覆盖同名 skill。修改视频生成行为、普通视频/营销视频分流、提示词构建规则时，请优先修改企业版覆盖文件；不要只改这里，否则商业版运行时不会生效。
+
 ## 角色定位
 你是营销视频创作专家，负责根据用户需求生成高质量的营销视频。你可以生成品牌宣传片、产品展示视频、广告视频、社交媒体短视频等。支持文本生成视频和图片生成视频两种模式。
 
@@ -72,6 +76,22 @@ allowed-tools: ["generate_text_to_video", "image_to_video", "get_user_computing_
 - 使用英文编写
 - 越具体越好，明确描述运动和变化
 - 包含视频风格关键词（如 cinematic, commercial, dynamic motion 等）
+
+## ⚠️ 高算力操作确认（强制规则）
+
+在提交视频生成请求之前，必须根据 `get_user_computing_power()` 和当前参数（时长、数量、模式等）预估本次操作的总算力消耗：
+
+- **算力消耗 ≤ 35**：直接执行生成，无需额外确认
+- **算力消耗 > 35**：**必须**先使用 `ask_user` 向用户确认，明确告知预计消耗的算力数值，获得用户同意后才能执行生成
+- **免确认条件**：如果用户在之前的对话中明确表示过"无需确认"、"直接生成"、"不用问我"等类似意图，可跳过确认直接执行
+
+确认示例：
+```
+ask_user(
+    question="本次视频生成预计消耗 X 算力（Y秒 × Z个），是否确认生成？",
+    options=["确认生成", "减少时长", "减少数量"]
+)
+```
 
 ### 步骤 3：提交生成视频请求
 

@@ -26,6 +26,7 @@ from config.config_util import resolve_bin_path
 from config.version import get_app_version
 from perseids_server.client import make_perseids_request, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
 from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
+from model.ai_tools_log import AIToolsLogModel
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
 from model.world import WorldModel
@@ -34,12 +35,10 @@ from model.location import LocationModel
 from model.script import ScriptModel
 from model.props import PropsModel
 import uuid
-from api.clients.duomi_client import create_video_remix
 from PIL import Image
-from llm import call_ernie_vl_api
 from task.scheduler import init_scheduler
 from model.migration import run_migrations, get_alembic_config
-from config.unified_config import UnifiedConfigRegistry
+from config.unified_config import UnifiedConfigRegistry, IMPLEMENTATION_TO_ID, get_implementation_name
 from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
@@ -66,7 +65,9 @@ from config.constant import (
     FilePathConstants,
     UploadPathConstants,
     JIANYING_RATIO_RESOLUTION,
-    JIANYING_DEFAULT_RATIO
+    JIANYING_DEFAULT_RATIO,
+    IMAGE_MODE_EXTRA_CONFIG_KEY,
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
@@ -78,7 +79,8 @@ from utils.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
 from utils import file_lock
-from utils.computing_power import build_context_from_task_record
+from utils.computing_power import build_context_from_task_record, get_implementation_for_user
+from utils.video_resolution import validate_video_resolution
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
@@ -201,6 +203,7 @@ def _ensure_world_access(world_id: int, user_id: int, action: str = Action.VIEW)
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = get_upload_dir()
+# 全局开关：是否启用认证和算力校验。设为 False 可跳过认证和扣费（开发/测试用）。
 CHECK_AUTH_TOKEN = True
 
 # 前端静态资源版本号 - 直接使用 pyproject.toml 中的版本号（如 1.9.2）
@@ -1603,7 +1606,18 @@ async def runninghub_status(
                 task_config = TaskTypeRegistry.get(type)
                 # 使用任务记录中的时长和 context 来计算正确的算力（支持按时长计费的任务和修饰符）
                 context = build_context_from_task_record(task_record)
-                computing_power = task_config.get_computing_power(duration=task_record.duration, context=context) if task_config else 0
+                impl_id = getattr(task_record, 'implementation', None)
+                impl_name = get_implementation_name(impl_id) if impl_id else None
+                implementation = (
+                    impl_name
+                    if impl_name and impl_name != 'unknown'
+                    else get_implementation_for_user(type, task_record.user_id)
+                )
+                computing_power = task_config.get_computing_power(
+                    duration=task_record.duration,
+                    implementation=implementation,
+                    context=context
+                ) if task_config else 0
                 success, message, response_data = await async_make_perseids_request(
                     endpoint='user/calculate_computing_power',
                     method='POST',
@@ -1633,6 +1647,9 @@ async def runninghub_status(
         raise HTTPException(status_code=500, detail=f"Failed to check runninghub status: {str(e)}")
 
 
+# 注意：路径参数名为 ai_tool_id，但实际接收的值是 project_id（ComfyUI 返回的任务 ID）。
+# 前端和后台调度器传入的都是 project_id，不是 ai_tools 表的主键 ID。
+# 历史原因导致参数名与实际含义不一致，调用时请注意。
 @app.get("/api/get-status/{ai_tool_id}")
 @require_permission("video:view_status")
 async def get_status(
@@ -1750,15 +1767,18 @@ async def get_status(
 async def ai_app_run(
     request: Request,
     prompt: str = Form(..., description="Text prompt for the AI app"),
+    # ⚠️ 命名陷阱：task_id 实际是任务类型配置 ID（如 TaskTypeId.SORA2_TEXT_TO_VIDEO），
+    # 不是运行时的任务 ID。来自 unified_config 中的配置项主键。
     task_id: int = Form(TaskTypeId.SORA2_TEXT_TO_VIDEO, description="Task type ID, defaults to SORA2_TEXT_TO_VIDEO"),
     ratio: str = Form("9:16", description="Aspect ratio: 9:16, 16:9"),
     duration_seconds: int = Form(15, description="Duration in seconds"),
     count: int = Form(1, ge=1, le=4, description="Generation count (1-4)"),
     user_id: int = Form(None, description="User ID"),
-    auth_token: str = Form(None, description="Authentication token")
+    auth_token: str = Form(None, description="Authentication token"),
+    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
 ):
     """
-    Submit text-to-video task.
+    文生视频任务提交接口。
     """
     try:
         # 通过 task_id 获取任务配置
@@ -1771,8 +1791,19 @@ async def ai_app_run(
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是文生视频任务")
         
         text_to_video_type = task_id
+        from task.visual_drivers.driver_factory import VideoDriverFactory
+        actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        resolution = validate_video_resolution(resolution, actual_impl)
+        context = {}
+        if resolution:
+            context['resolution'] = resolution
+
         # 根据时长获取算力（优先任务配置，回退到实现方配置）
-        computing_power = task_config.get_computing_power(duration=duration_seconds)
+        computing_power = task_config.get_computing_power(
+            duration=duration_seconds,
+            implementation=actual_impl,
+            context=context
+        )
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
             #发起请求，检查算力是否充足
@@ -1830,6 +1861,12 @@ async def ai_app_run(
             # Create database record for each project
             if user_id:
                 try:
+                    extra_config_data = {}
+                    if resolution:
+                        extra_config_data[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
+                    extra_config_json = json.dumps(extra_config_data) if extra_config_data else None
+                    impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
+
                     id = AIToolsModel.create(
                         prompt=prompt,
                         user_id=user_id,
@@ -1837,7 +1874,9 @@ async def ai_app_run(
                         ratio=ratio,
                         transaction_id=transaction_id,
                         duration=duration_seconds,
-                        status=AI_TOOL_STATUS_PENDING
+                        status=AI_TOOL_STATUS_PENDING,
+                        extra_config=extra_config_json,
+                        implementation=impl_id
                     )
                     TasksModel.create(
                         task_type=TASK_TYPE_GENERATE_VIDEO,
@@ -1886,7 +1925,8 @@ async def ai_app_run_image(
     video: UploadFile = File(None, description="Reference video file (optional)"),
     audio_urls: str = Form(None, description="Comma-separated reference audio URLs (alternative to uploading audio file)"),
     video_urls: str = Form(None, description="Comma-separated reference video URLs (alternative to uploading video file)"),
-    media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution")
+    media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution"),
+    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
 ):
     """
     Submit image to video task.
@@ -1919,8 +1959,12 @@ async def ai_app_run_image(
         if image_mode not in valid_image_modes:
             raise HTTPException(status_code=400, detail=f"无效的 image_mode: {image_mode}，合法值: {valid_image_modes}")
 
+        from task.visual_drivers.driver_factory import VideoDriverFactory
+        actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        resolution = validate_video_resolution(resolution, actual_impl)
+
         # 记录输入的图片信息
-        logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}")
+        logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}, resolution: {resolution}")
 
         # 解析 @ 引用（如果有 media_references）
         media_refs_map = {}  # {displayName: fileUrl}
@@ -2027,9 +2071,15 @@ async def ai_app_run_image(
             context['image_mode'] = 'first_last_with_tail'
         elif image_mode:
             context['image_mode'] = image_mode
+        if resolution:
+            context['resolution'] = resolution
 
         # 根据时长和 context 获取算力（优先任务配置，回退到实现方配置）
-        computing_power = task_config.get_computing_power(duration=duration_seconds, context=context)
+        computing_power = task_config.get_computing_power(
+            duration=duration_seconds,
+            implementation=actual_impl,
+            context=context
+        )
 
         # 为了向后兼容，设置 image_url 用于日志和响应
         image_url = image_path or (main_image_list[0] if main_image_list else None)
@@ -2093,9 +2143,12 @@ async def ai_app_run_image(
                 # Create database record for each task
                 if user_id:
                     try:
-                        # 构建 extra_config，包含 image_mode
-                        extra_config_data = {'image_mode': image_mode}
+                        # 构建 extra_config，包含 image_mode 和视频分辨率
+                        extra_config_data = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
+                        if resolution:
+                            extra_config_data[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
                         extra_config_json = json.dumps(extra_config_data)
+                        impl_id = IMPLEMENTATION_TO_ID.get(actual_impl, 0) if actual_impl else 0
 
                         # 判断是否需要创建 pipeline steps（Seedance 2.0 系列 + RunningHub 配置）
                         # 适配模型清单为单一来源：config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS
@@ -2133,6 +2186,7 @@ async def ai_app_run_image(
                                 status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
                                 extra_config=extra_config_json,
                                 reference_images=reference_images_json,
+                                implementation=impl_id,
                                 audio_path=audio_path,
                                 video_path=video_path
                             )
@@ -2149,6 +2203,7 @@ async def ai_app_run_image(
                                 status=AI_TOOL_STATUS_PENDING,
                                 extra_config=extra_config_json,
                                 reference_images=reference_images_json,
+                                implementation=impl_id,
                                 audio_path=audio_path,
                                 video_path=video_path
                             )
@@ -3322,98 +3377,74 @@ async def get_ai_tool_detail(
         )
 
 
-@app.post("/api/ai-script-generate")
-@require_permission("video:ai_script_gen")
-async def ai_script_generate(
+@app.get('/api/ai-tools/{ai_tool_id}/timeline')
+@require_permission("ai_tools:view_history")
+async def get_ai_tool_timeline(
     request: Request,
-    image1: UploadFile = File(..., description="第一张图片（必传）"),
-    image2: UploadFile = File(None, description="第二张图片（可选）"),
-    image3: UploadFile = File(None, description="第三张图片（可选）"),
-    image4: UploadFile = File(None, description="第四张图片（可选）"),
-    image5: UploadFile = File(None, description="第五张图片（可选）"),
-    extra_prompt: str = Form("", description="额外提示词"),
-    add_detail: str = Form("否", description="是否添加细节描写"),
-    need_narration: str = Form("否", description="是否需要旁白"),
-    user_id: int = Form(None, description="User ID"),
-    auth_token: str = Form(None, description="Authentication token")
+    ai_tool_id: int,
+    user_id: int = Query(None, description="User ID（弱信任回退）"),
+    auth_token: str = Query(None, description="Authentication token")
 ):
     """
-    图生视频智能体- 上传1-5张图片，调用百度千帆API生成视频脚本
+    获取某个 AI 工具任务的事件时间线（用于排查任务耗时/卡点/轮询节奏）
+
+    访问控制：管理员可查看任意任务；非管理员仅能查看本人任务。
+    优先以 auth_token 解析真实身份；无 token 时回退到 user_id。
     """
     try:
-        if CHECK_AUTH_TOKEN and auth_token is None:
-            raise HTTPException(
-                status_code=400, 
-                detail="请登录"
-            )
-        # 保存上传的图片并获取URL
-        image_url1 = await asyncio.to_thread(_save_uploaded_image, image1)
-        image_url2 = (await asyncio.to_thread(_save_uploaded_image, image2)) if image2 else None
-        image_url3 = (await asyncio.to_thread(_save_uploaded_image, image3)) if image3 else None
-        image_url4 = (await asyncio.to_thread(_save_uploaded_image, image4)) if image4 else None
-        image_url5 = (await asyncio.to_thread(_save_uploaded_image, image5)) if image5 else None
-        
-        logger.info(f"AI script generation started with images: {image_url1}, {image_url2}, {image_url3}, {image_url4}, {image_url5}")
-        
-        # 调用百度千帆API
-        result = await call_ernie_vl_api(
-            image_url1=image_url1,
-            image_url2=image_url2,
-            image_url3=image_url3,
-            image_url4=image_url4,
-            image_url5=image_url5,
-            prompt="",
-            add_detail=add_detail,
-            need_narration=need_narration,
-            extra_prompt=extra_prompt
-        )
-        
-        # 检查是否有错误
-        if "error" in result:
-            raise HTTPException(status_code=500, detail=result["error"])
-        
-        # 解析返回的脚本内容
-        try:
-            # 百度API返回格式: {"result": "...", "choices": [...]}
-            script_content = result.get("result", "")
-            if not script_content and "choices" in result:
-                script_content = result["choices"][0]["message"]["content"]
-            
-            logger.info(f"Script content extracted: {script_content[:200]}...")
-            
-            # 尝试解析JSON脚本
-            import re
-            json_match = re.search(r'\{.*\}', script_content, re.DOTALL)
-            if json_match:
-                script_json = json.loads(json_match.group())    
-                logger.info(f"Successfully parsed script JSON with {len(script_json.get('ScriptScenes', []))} scenes")
-            else:
-                script_json = {"raw_content": script_content}
-                logger.warning("Could not extract JSON from script content")
-                
-        except Exception as parse_error:
-            logger.warning(f"Failed to parse script JSON: {parse_error}")
-            script_json = {"raw_content": script_content if 'script_content' in locals() else str(result)}
-        
+        record = AIToolsModel.get_by_id(ai_tool_id)
+
+        if not record:
+            raise HTTPException(status_code=404, detail="记录不存在")
+
+        # 解析真实身份 + 管理员判定
+        viewer_id = None
+        is_admin = False
+        token = (auth_token or '').strip()
+        if token.startswith('Bearer '):
+            token = token[7:]
+        if token:
+            try:
+                from model.user_tokens import UserTokensModel
+                from model.users import UsersModel
+                token_uid = UserTokensModel.get_user_id_by_token(token)
+                if token_uid:
+                    viewer_id = token_uid
+                    viewer = UsersModel.get_by_id(token_uid)
+                    is_admin = bool(viewer and getattr(viewer, 'role', None) == 'admin')
+            except Exception as e:
+                logger.warning(f'timeline auth token resolve failed: {e}')
+        # 无 token 时回退到客户端传入的 user_id（保持与 history 一致的弱信任）
+        if viewer_id is None:
+            viewer_id = user_id
+
+        # 归属校验：管理员放行；否则必须为本人
+        if not is_admin:
+            if viewer_id is None:
+                raise HTTPException(status_code=401, detail="请先登录")
+            if record.user_id != viewer_id:
+                raise HTTPException(status_code=403, detail="无权访问该记录")
+
+        logs = AIToolsLogModel.list_by_ai_tool(ai_tool_id)
         return JSONResponse({
-            "success": True,
-            "script": script_json,
-            "raw_response": result,
-            "images": {
-                "image1": image_url1,
-                "image2": image_url2,
-                "image3": image_url3,
-                "image4": image_url4,
-                "image5": image_url5
+            'success': True,
+            'data': {
+                'ai_tool_id': ai_tool_id,
+                'project_id': record.project_id,
+                'status': record.status,
+                'timeline': [log.to_dict() for log in logs]
             }
         })
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"AI script generation failed: {str(e)}")
+        logger.error(f'获取任务时间线失败: {str(e)}')
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'message': '服务器错误'}
+        )
 
 
 @app.post("/api/image-upscale")
@@ -3787,172 +3818,6 @@ async def video_enhance(
         logger.error(f"Video enhancement failed: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"视频高清修复失败: {str(e)}")
-
-
-@app.post("/api/video-remix")
-@require_permission("video:remix")
-async def video_remix(
-    request: Request,
-    video_id: str = Form(..., description="视频ID"),
-    prompt: str = Form(..., description="重新编辑的提示词"),
-    aspect_ratio: str = Form("16:9", description="视频比例: 16:9, 9:16, 1:1"),
-    duration: int = Form(15, description="视频时长（秒）"),
-    count: int = Form(1, ge=1, le=4, description="生成数量 (1-4)"),
-    user_id: int = Form(None, description="用户ID"),
-    auth_token: str = Form(None, description="认证令牌")
-):
-    """
-    Sora2 视频重新编辑接口 - 基于现有视频ID进行重新编辑
-    
-    Args:
-        video_id: 要重新编辑的视频ID
-        prompt: 重新编辑的提示词
-        aspect_ratio: 视频比例 (16:9, 9:16, 1:1)
-        duration: 视频时长（秒）
-        count: 生成数量 (1-4)
-        user_id: 用户ID
-        auth_token: 认证令牌
-    
-    Returns:
-        JSON响应，包含任务ID列表
-    """
-    try:
-        logger.info(f"Video remix request received - video_id: {video_id}, prompt: {prompt}")
-          
-        # 计算所需算力（使用视频生成的算力标准）
-        task_config = TaskTypeRegistry.get(TaskTypeId.SORA2_TEXT_TO_VIDEO)  # AI视频生成
-        computing_power = task_config.computing_power if task_config else 0
-        
-        if CHECK_AUTH_TOKEN:
-            headers = {'Authorization': f'Bearer {auth_token}'}
-            
-            # 检查算力是否充足
-            success, message, response_data = await async_make_perseids_request(
-                endpoint='user/check_computing_power',
-                method='GET',
-                headers=headers
-            )
-            if not success:
-                raise HTTPException(
-                    status_code=400,
-                    detail=message
-                )
-            
-            # 检查算力是否足够生成所有视频
-            user_computing_power = response_data.get('computing_power', 0)
-            total_computing_power = computing_power * count
-            user_id_from_token = response_data.get('user_id')
-            if user_computing_power < total_computing_power:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"您的算力不足，需要 {total_computing_power} 算力，当前仅有 {user_computing_power} 算力"
-                )
-            if user_id_from_token != user_id:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="用户ID不匹配"
-                )
-        project_ids = []
-        
-        # 循环创建多个任务
-        for i in range(count):
-            try:
-                # 为每个任务生成唯一的交易ID
-                transaction_id = str(uuid.uuid4())
-                
-                # 调用remix API
-                try:
-                    result = await asyncio.to_thread(
-                        create_video_remix,
-                        video_id=video_id,
-                        prompt=prompt,
-                        aspect_ratio=aspect_ratio,
-                        duration=duration
-                    )
-                except Exception as api_error:
-                    error_msg = str(api_error)
-                    logger.error(f"Task {i+1} API call failed: {error_msg}")
-                    # 如果是第一个任务就失败，直接抛出错误
-                    if i == 0 and len(project_ids) == 0:
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"Remix API调用失败: {error_msg}"
-                        )
-                    continue
-                
-                logger.info(f"Remix task {i+1} result: {result}")
-                
-                # 从响应中获取project_id
-                project_id = result.get("id")
-                if not project_id:
-                    logger.error(f"Task {i+1}: No project ID received from remix API. Response: {result}")
-                    # 如果是第一个任务就失败，直接抛出错误
-                    if i == 0 and len(project_ids) == 0:
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"API返回格式错误: 未获取到任务ID。响应: {result}"
-                        )
-                    continue
-                
-                project_ids.append(project_id)
-                
-                # 扣除算力
-                if CHECK_AUTH_TOKEN:
-                    success, message, response_data = await async_make_perseids_request(
-                        endpoint='user/calculate_computing_power',
-                        method='POST',
-                        headers=headers,
-                        data={
-                            "computing_power": computing_power,
-                            "behavior": "deduct",
-                            "transaction_id": transaction_id
-                        }
-                    )
-                    if not success:
-                        logger.error(f"Task {i+1} computing power deduction failed: {message}")
-                        # 继续执行，因为任务已经提交
-                
-                # 创建数据库记录
-                if user_id:
-                    try:
-                        from config.unified_config import get_implementation_id
-                        AIToolsModel.create(
-                            prompt=f"Remix: {prompt}",
-                            user_id=user_id,
-                            type=2,  # 2-AI视频生成
-                            ratio=aspect_ratio,
-                            duration=duration,
-                            project_id=project_id,
-                            transaction_id=transaction_id,
-                            status=AI_TOOL_STATUS_PROCESSING,
-                            message=f"原视频ID: {video_id}",
-                            implementation=get_implementation_id('sora2_duomi_v1')
-                        )
-                    except Exception as db_error:
-                        logger.error(f"Failed to create database record for task {i+1}: {db_error}")
-                        # 不因数据库插入失败而中断请求
-                
-            except Exception as task_error:
-                logger.error(f"Task {i+1} failed: {task_error}")
-                logger.error(traceback.format_exc())
-                continue  # 继续处理下一个任务
-        
-        if not project_ids:
-            raise HTTPException(status_code=500, detail="所有任务都提交失败")
-        
-        return JSONResponse({
-            "success": True,
-            "project_ids": project_ids,
-            "status": "submitted",
-            "video_id": video_id
-        })
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Video remix failed: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"视频重新编辑失败: {str(e)}")
 
 
 @app.post("/api/digital-human")

@@ -4,6 +4,12 @@ Async Tasks Model - Database operations for async_tasks table
 
 参考 ai_tools 的 implementation 模式，通过 implementation (数字 ID) 区分不同的异步驱动，
 每个驱动负责自己的 params 序列化/反序列化和业务逻辑。
+
+⚠️ 与其他任务表的区别（易混淆，修改前请确认目标表）：
+  - tasks: ComfyUI 视频/图片生成轮询队列，task_id 为 int（指向 ai_tools.id）
+  - agent_tasks: Agent 对话任务（跨进程共享），task_id 为 UUID 字符串
+  - async_tasks: 本表，外部服务异步任务（RunningHub 等），有 implementation 字段
+  - grid_image_tasks: 宫格生图专用轮询，有 CANCELLED/DOWNLOAD_FAILED 状态
 """
 from typing import List, Optional, Dict, Any
 from .database import execute_query, execute_update, execute_insert

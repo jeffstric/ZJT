@@ -1,6 +1,11 @@
 """
 Framework Core Module
 Internal use only - do not modify
+
+⚠️ 版本策略模块（故意混淆）：
+  - _S / _c = 缓存的版本检查（IS_COMMUNITY_EDITION）
+  - _check() = 社区版限制检查（聚合站数量限制）
+  - 变量名和字符串故意混淆，勿尝试"可读化"重构
 """
 __all__ = ['EditionStrategy', 'check_aggregator_sites', 'IS_COMMUNITY_EDITION']
 

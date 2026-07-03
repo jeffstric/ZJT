@@ -466,6 +466,8 @@ class PMAgent(BaseAgent, AskUserMixin):
         self.add_to_history("assistant", history_entry)
 
         deferred_user_inputs = []
+        # ⚠️ deferred 机制：专家输出和用户输入延迟到所有 tool_calls 执行完毕后才注入历史
+        # 顺序：所有 tool 消息 → 专家输出 → 用户输入（确保 LLM 看到正确的上下文顺序）
         deferred_expert_outputs = []  # 专家输出延迟添加，确保在所有 tool 消息之后
 
         for tool_call in tool_calls:
@@ -497,6 +499,19 @@ class PMAgent(BaseAgent, AskUserMixin):
             if tool_name == "ask_user" and isinstance(result, dict) and "_verification_meta" in result:
                 meta = result.pop("_verification_meta")
                 verification_id_for_answer = meta.get("verification_id")
+                for attr, key in (
+                    ("image_urls", "image_urls"),
+                    ("video_urls", "video_urls"),
+                    ("audio_urls", "audio_urls"),
+                    ("thumbnail_urls", "thumbnail_urls"),
+                ):
+                    incoming_urls = result.get(key) or []
+                    if incoming_urls:
+                        existing_urls = list(getattr(task, attr, None) or [])
+                        for url in incoming_urls:
+                            if isinstance(url, str) and url and url not in existing_urls:
+                                existing_urls.append(url)
+                        setattr(task, attr, existing_urls)
                 agent_name = self._get_agent_display_name()
                 self.add_to_history("verification", {
                     "verification_id": verification_id_for_answer,
@@ -859,7 +874,10 @@ class PMAgent(BaseAgent, AskUserMixin):
         return self._truncate_context(env_context, user_id, world_id, max_chars)
 
     def _truncate_context(self, full_context: str, user_id: str, world_id: str, max_chars: int) -> str:
-        """截断上下文，保留前25000和后25000个字符"""
+        """截断上下文，保留前25000和后25000个字符
+        ⚠️ 命名陷阱：参数 max_chars 控制是否触发截断，但实际截断大小由 half_size=25000 决定
+        例如 max_chars=10000 时，即使 len=15000 也会截断为 50000 字符（前25000+后25000）
+        """
         if len(full_context) <= max_chars:
             return full_context
 

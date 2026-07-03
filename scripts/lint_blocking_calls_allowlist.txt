@@ -1,0 +1,6 @@
+# Existing blocking-call lint allowlist.
+# Format:
+#   path/to/file.py:RULE
+#   path/to/file.py:line:RULE
+#
+# Keep this file as small as possible. New violations should fail CI.

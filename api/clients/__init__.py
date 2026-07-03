@@ -8,7 +8,6 @@ from api.clients.duomi_client import (
     create_image_to_video_veo,
     create_ai_image,
     create_text_to_image,
-    create_video_remix,
     create_character,
     get_character_task_result,
     get_ai_task_result,

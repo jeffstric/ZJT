@@ -420,7 +420,7 @@
             showToast(window.t ? window.t('camera_control_connect_image') : '请连接图片节点', 'warning');
             return;
           }
-          var sourceImageUrl = sourceNode.data.url;
+          var sourceImageUrl = sourceNode.data ? sourceNode.data.url : null;
           if (!sourceImageUrl) {
             showToast(window.t ? window.t('camera_control_no_image') : '源图片节点没有图片', 'warning');
             return;

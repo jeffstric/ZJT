@@ -186,7 +186,7 @@ def create_vidu_start_end_to_video(
     """
     url = f"{BASE_URL}/ent/v2/start-end2video"
     api_key = _get_api_key()
-    logger.info(f"[Vidu API] API_KEY: {api_key}")
+    logger.info(f"[Vidu API] API_KEY: {api_key[:8]}***")
     headers = {
         "Authorization": f"Token {api_key}",
         "Content-Type": "application/json"

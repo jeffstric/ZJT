@@ -11,8 +11,10 @@ from config.unified_config import DriverImplementation
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.network_utils import is_local_file_path, is_local_or_private_url
 from utils.image_compressor import compress_local_image_to_base64, url_to_base64
+from utils.image_upload_utils import ensure_fresh_image_url_sync
 from utils.media_mapping_util import extract_local_path_from_url
 from utils.project_path import get_project_root
+from .exceptions import ImageExpiredError
 
 
 class GrokCommonV1Driver(BaseVideoDriver):
@@ -203,6 +205,10 @@ class GrokCommonV1Driver(BaseVideoDriver):
         """
         if not source:
             return None
+
+        # 刷新图片URL（自有CDN重签名 / 第三方探测），避免过期URL透传给x.ai或下载失败。
+        # 对 data: URI、本地路径原样返回（ensure_fresh_image_url_sync 仅处理 http(s) URL）。
+        source = ensure_fresh_image_url_sync(source, self._config)
 
         # 已是 data URI：直接透传，避免重复编码
         if source.startswith("data:"):
@@ -470,6 +476,16 @@ class GrokCommonV1Driver(BaseVideoDriver):
             return {
                 "success": True,
                 "project_id": project_id
+            }
+
+        except ImageExpiredError as e:
+            # 第三方图床签名过期，无法恢复：友好提示用户重新上传
+            self.logger.warning(f"输入图片已过期: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "USER",
+                "retry": False
             }
 
         except Exception as e:

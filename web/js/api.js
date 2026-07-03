@@ -14,6 +14,7 @@
           body: formData
         });
         
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         const result = await response.json();
         if(result.code === 0 && result.data && result.data.url){
           return result.data.url;
@@ -48,6 +49,7 @@
           body: formData
         });
         
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         const result = await response.json();
         if(result.code === 0 && result.data && result.data.url){
           return result.data.url;
@@ -61,8 +63,24 @@
       }
     }
 
+    function getVideoResolutionForModel(videoModel, resolution) {
+      if(resolution) return resolution;
+      if(window.TaskConfig && typeof TaskConfig.getDefaultVideoResolution === 'function') {
+        return TaskConfig.getDefaultVideoResolution(videoModel);
+      }
+      return null;
+    }
+
+    function appendVideoResolutionToForm(form, videoModel, resolution) {
+      const resolvedResolution = getVideoResolutionForModel(videoModel, resolution);
+      if(resolvedResolution) {
+        form.append('resolution', resolvedResolution);
+      }
+      return resolvedResolution;
+    }
+
     // 生成视频API调用
-    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences){
+    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences, resolution){
       // 测试模式：模拟API响应
       if(TEST_MODE){
         console.log('[TEST MODE] 模拟生成视频API调用', { imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences });
@@ -95,6 +113,7 @@
       form.append('duration_seconds', duration || 5);
       form.append('count', count || 1);
       form.append('task_id', taskId);
+      appendVideoResolutionToForm(form, videoModel || 'wan22', resolution);
 
       // 图片模式和参考图
       if(imageMode){
@@ -128,6 +147,7 @@
         body: form
       });
 
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if(data.project_ids && data.project_ids.length > 0){
         return {
@@ -140,7 +160,7 @@
     }
 
     // 文生视频 API
-    async function generateVideoFromText(prompt, duration, count, ratio, videoModel){
+    async function generateVideoFromText(prompt, duration, count, ratio, videoModel, resolution){
       if(TEST_MODE){
         console.log('[TEST MODE] 模拟文生视频API调用', { prompt, duration, count, ratio, videoModel });
         await new Promise(r => setTimeout(r, 500));
@@ -165,6 +185,7 @@
       form.append('duration_seconds', duration || 5);
       form.append('count', count || 1);
       form.append('task_id', taskId);
+      appendVideoResolutionToForm(form, videoModel, resolution);
 
       if(userId) form.append('user_id', userId);
       if(authToken) form.append('auth_token', authToken);
@@ -174,6 +195,7 @@
         body: form
       });
 
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if(data.project_ids && data.project_ids.length > 0){
         return { projectIds: data.project_ids, status: data.status };
@@ -208,8 +230,9 @@
       const authToken = getAuthToken();
       const projectIdsStr = projectIds.join(',');
       
-      const url = `/api/get-status/${projectIdsStr}` + (authToken ? `?auth_token=${authToken}` : '');
+      const url = `/api/get-status/${projectIdsStr}` + (authToken ? `?auth_token=${encodeURIComponent(authToken)}` : '');
       const res = await fetch(url);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
 
       if(TEST_MODE){
@@ -266,6 +289,7 @@
     async function getEditionInfo() {
       try {
         const response = await fetch('/api/edition');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
         const result = await response.json();
         if (result.code === 0 && result.data) {
           return result.data;
@@ -352,5 +376,10 @@
         'Authorization': getAuthToken(),
         'X-User-Id': getUserId()
       };
+    }
+
+    // ES Module exports（供 Vitest 测试使用，不影响浏览器全局变量）
+    if (typeof module !== 'undefined') {
+      module.exports = { getAuthHeaders, appendAuthToForm };
     }
 

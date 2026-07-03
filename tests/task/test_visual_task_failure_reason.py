@@ -54,6 +54,7 @@ constant.TASK_STATUS_SYNC_QUEUED = 3
 constant.TASK_STATUS_WAITING_PARAM_PREPARE = 4
 constant.TASK_STATUS_WAITING_BEFORE_FINISH = 5
 constant.RUNNINGHUB_TASK_TYPES = []
+constant.RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
 sys.modules['config.constant'] = constant
 
 config_util = types.ModuleType('config.config_util')

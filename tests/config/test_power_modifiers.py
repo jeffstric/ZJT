@@ -210,6 +210,64 @@ class TestTaskConfigToFrontendWithModifiers(unittest.TestCase):
             self.assertIn('values', modifier)
             self.assertIn('default', modifier)
 
+    def test_happy_horse_resolution_modifier_applies_1080p_multiplier(self):
+        """Happy Horse 三类视频任务应使用 resolution 修饰符计算 1080P 算力"""
+        from config.unified_config import TaskTypeId, UnifiedConfigRegistry
+
+        expected = {
+            TaskTypeId.HAPPY_HORSE_IMAGE_TO_VIDEO: 173,      # 115 * 1.5 向上取整
+            TaskTypeId.HAPPY_HORSE_REFERENCE_TO_VIDEO: 173,
+            TaskTypeId.HAPPY_HORSE_TEXT_TO_VIDEO: 173,
+        }
+
+        for task_id, expected_power in expected.items():
+            task = UnifiedConfigRegistry.get_by_id(task_id)
+            with self.subTest(task_id=task_id):
+                self.assertIsNotNone(task)
+                self.assertEqual(
+                    task.get_computing_power(
+                        duration=5,
+                        implementation=task.implementation,
+                        context={'resolution': '1080P'},
+                    ),
+                    expected_power,
+                )
+
+    def test_seedance_2_0_resolution_modifiers_apply_price_ratios(self):
+        """Seedance 2.0 系列应基于 720P 基价应用分辨率价格倍率"""
+        from config.unified_config import TaskTypeId, UnifiedConfigRegistry
+
+        cases = {
+            TaskTypeId.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO: {
+                '480P': 111,    # ceil(238 * 200880 / 432000)
+                '720P': 238,
+            },
+            TaskTypeId.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO: {
+                '480P': 71,     # ceil(152 * 200880 / 432000)
+                '720P': 152,
+            },
+            TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO: {
+                '480P': 141,    # ceil(303 * 200880 / 432000)
+                '720P': 303,
+                '1080P': 755,   # ceil(303 * 972000 * 31 / (432000 * 28))
+                '4K': 1559,     # ceil(303 * 3888000 * 16 / (432000 * 28))
+            },
+        }
+
+        for task_id, resolution_powers in cases.items():
+            task = UnifiedConfigRegistry.get_by_id(task_id)
+            self.assertIsNotNone(task)
+            for resolution, expected_power in resolution_powers.items():
+                with self.subTest(task_id=task_id, resolution=resolution):
+                    self.assertEqual(
+                        task.get_computing_power(
+                            duration=5,
+                            implementation=task.implementation,
+                            context={'resolution': resolution},
+                        ),
+                        expected_power,
+                    )
+
 
 class TestModifierCeilingBehavior(unittest.TestCase):
     """测试修饰符应用时的向上取整行为"""

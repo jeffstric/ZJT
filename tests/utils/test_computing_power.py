@@ -616,6 +616,19 @@ class TestBuildContextFromTaskRecord(unittest.TestCase):
 
         self.assertEqual(context['resolution'], '2K')
 
+    def test_video_resolution_from_extra_config_preferred_over_image_size(self):
+        """视频任务优先从 extra_config.video_resolution 提取分辨率"""
+        from utils.computing_power import build_context_from_task_record
+        import json
+
+        task_record = MagicMock()
+        task_record.extra_config = json.dumps({'video_resolution': '1080P'})
+        task_record.image_size = '2K'
+
+        context = build_context_from_task_record(task_record)
+
+        self.assertEqual(context['resolution'], '1080P')
+
     def test_combine_image_mode_and_resolution(self):
         """同时提取 image_mode 和 resolution"""
         from utils.computing_power import build_context_from_task_record

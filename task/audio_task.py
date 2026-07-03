@@ -319,6 +319,17 @@ async def process_task_with_retry(task_type, process_func):
                 logger.error(f"Error processing task {task.task_id}: {str(e)}")
                 import traceback
                 logger.error(traceback.format_exc())
+                new_try_count = (task.try_count or 0) + 1
+                delay_seconds = calculate_next_retry_delay(new_try_count)
+                next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
+                TasksModel.update_by_task_id(
+                    task.task_id,
+                    try_count=new_try_count,
+                    next_trigger=next_trigger,
+                )
+                logger.info(
+                    f"Task exception backoff: {task.task_id}, retry count: {new_try_count}, next trigger: {next_trigger}"
+                )
                 
         logger.info(f"Summary: processed={processed_count}, succeeded={success_count}, expired={expired_count}")
         return processed_count > 0, success_count > 0

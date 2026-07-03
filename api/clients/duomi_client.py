@@ -1,3 +1,7 @@
+"""
+⚠️ 同步阻塞风险：本模块所有函数均使用 requests 库（同步），在 FastAPI 异步路由中调用会阻塞事件循环。
+仅应在同步上下文（如 scheduler 定时任务、后台线程）中调用，禁止在 async def 路由中直接调用。
+"""
 import requests
 from config.config_util import get_dynamic_config_value
 import uuid
@@ -274,48 +278,6 @@ def create_text_to_image(model="gemini-3-pro-image-preview", prompt="", aspect_r
             logger.error(f"[Duomi NanoBanana API] Response Body: {e.response.text}")
         raise
 
-def create_video_remix(video_id, prompt, aspect_ratio="16:9", duration=15):
-    """
-    Remix/re-edit an existing video using Sora2 API
-    
-    Args:
-        video_id: ID of the video to remix
-        prompt: Text prompt for video remix
-        aspect_ratio: Video aspect ratio (default: "16:9")
-        duration: Video duration in seconds (default: 15)
-    
-    Returns:
-        Response from the API
-    """
-    url = f"https://duomiapi.com/v1/videos/{video_id}/remix"
-    
-    payload = {
-        "model": "sora-2",
-        "prompt": prompt,
-        "aspect_ratio": aspect_ratio,
-        "duration": duration
-    }
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": _get_token()
-    }
-    
-    logger.info(f"[Duomi Sora API] Request URL: {url}")
-    logger.info(f"[Duomi Sora API] Request Payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
-    
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        result = response.json()
-        logger.info(f"[Duomi Sora API] Response: {json.dumps(result, ensure_ascii=False, indent=2)}")
-        return result
-    except requests.exceptions.RequestException as e:
-        logger.error(f"[Duomi Sora API] Error creating video remix task: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            logger.error(f"[Duomi Sora API] Response Status Code: {e.response.status_code}")
-            logger.error(f"[Duomi Sora API] Response Body: {e.response.text}")
-        raise
 
 def create_character(timestamps, url=None, from_task=None, callback_url=None):
     """

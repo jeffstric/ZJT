@@ -697,11 +697,6 @@ a.marketing-nav-item {
   animation: fadeInUp 0.15s ease;
 }
 
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
 .hidden {
   display: none !important;
 }

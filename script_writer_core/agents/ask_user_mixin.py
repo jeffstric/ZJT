@@ -145,12 +145,33 @@ class AskUserMixin:
 
             # 成功，重置失败计数
             self._ask_fail_count = 0
+            raw_user_input = result.get("user_input", "") or ""
+
+            media_parts = []
+            for i, image_url in enumerate(result.get("image_urls") or []):
+                thumb = ""
+                thumbnail_urls = result.get("thumbnail_urls") or []
+                if i < len(thumbnail_urls) and thumbnail_urls[i]:
+                    thumb = f" thumb: {thumbnail_urls[i]}"
+                media_parts.append(f"[图片{i + 1}]（URL: {image_url}{thumb}）")
+            for i, video_url in enumerate(result.get("video_urls") or []):
+                media_parts.append(f"[视频{i + 1}]（URL: {video_url}）")
+            for i, audio_url in enumerate(result.get("audio_urls") or []):
+                media_parts.append(f"[音频{i + 1}]（URL: {audio_url}）")
+
+            user_input_with_media = raw_user_input
+            if media_parts:
+                user_input_with_media = "\n".join(media_parts) + "\n\n" + raw_user_input
 
             # 返回用户的回答（附带 verification 元数据，用于写入 conversation_history）
             return {
                 "success": True,
-                "user_input": result.get("user_input", ""),
-                "message": f"用户已回答: {result.get('user_input', '')}",
+                "user_input": user_input_with_media,
+                "message": f"用户已回答: {raw_user_input}",
+                "image_urls": result.get("image_urls"),
+                "video_urls": result.get("video_urls"),
+                "audio_urls": result.get("audio_urls"),
+                "thumbnail_urls": result.get("thumbnail_urls"),
                 "_verification_meta": {
                     "verification_id": verification.verification_id,
                     "question": question,

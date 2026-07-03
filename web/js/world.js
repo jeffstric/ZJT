@@ -38,7 +38,8 @@ async function populateWorldSelector() {
   const worlds = await loadWorlds();
   
   // Clear existing options except the first one
-  defaultWorldSelect.innerHTML = '<option value="">选择世界...</option>';
+  var defaultLabel = window.t ? window.t('select_world') : '选择世界...';
+  defaultWorldSelect.innerHTML = '<option value="">' + escapeHtml(defaultLabel) + '</option>';
   
   // Add world options
   worlds.forEach(world => {
@@ -93,9 +94,9 @@ function handleWorldSelectionChange(worldId) {
       if (world.composition_preference) {
         state.style.compositionPreference = world.composition_preference;
       }
-      // 异步保存画风到工作流
+      // 异步保存画风到工作流（等待 saveDefaultWorld 完成后再执行，避免竞态）
       if (workflowId) {
-        _saveWorldStyleToWorkflow(workflowId);
+        setTimeout(function() { _saveWorldStyleToWorkflow(workflowId); }, 100);
       }
     }
   }

@@ -275,7 +275,9 @@ SUCCESS_HANDLER_MAP = {
     AsyncTaskImplementationId.RUNNINGHUB_IMAGE_FACE_MASK: _handle_image_face_mask_task_success,
 }
 
-# 后处理必须成功的实现方列表。如果 success_handler 返回 None，任务应标记为 FAILED。
+# ⚠️ 后处理必须成功的实现方列表：audio 不在此列表（下载失败可回退到远程 URL），
+# 但 face_mask 和 image_face_mask 必须成功（需要本地融合视频）。
+# 如果 success_handler 返回 None，任务标记为 FAILED 而非回退。
 POST_PROCESSING_REQUIRED = {
     AsyncTaskImplementationId.RUNNINGHUB_FACE_MASK: True,
     AsyncTaskImplementationId.RUNNINGHUB_IMAGE_FACE_MASK: True,
@@ -285,6 +287,9 @@ POST_PROCESSING_REQUIRED = {
 def process_runninghub_async_tasks(app=None):
     """
     处理 RunningHub 异步任务（在 scheduler 进程中定时执行）
+
+    ⚠️ 此函数由 APScheduler 同步调度器调用，但内部创建 asyncio 事件循环来运行异步的
+    driver.check_status()。每个 implementation 轮询创建一个新循环，结束后自动清理。
 
     流程：
     1. 遍历所有已注册的 RunningHub 实现（音频、人脸遮盖视频等）

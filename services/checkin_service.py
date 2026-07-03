@@ -90,6 +90,8 @@ class CheckinService:
             )
         except Exception as create_err:
             err_msg = str(create_err).lower()
+            # ⚠️ 并发冲突检测：通过错误文本匹配而非 error code，兼容不同数据库驱动
+            # 1062 = MySQL duplicate entry, 'duplicate'/'unique' 作为通用兜底
             if 'duplicate' in err_msg or 'unique' in err_msg or '1062' in err_msg:
                 return {
                     'success': False,

@@ -9,7 +9,7 @@
 本文件保留向后兼容的常量别名，逐步废弃中。
 """
 
-from typing import Union, Dict, List
+from typing import Union, Dict, List, Optional
 
 # 从统一配置系统导入（新系统）
 from config.unified_config import (
@@ -21,6 +21,66 @@ from config.unified_config import (
     UnifiedConfigRegistry,
     UnifiedTaskConfig,
 )
+
+
+IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
+IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT = 120
+
+# ===== 图片 URL 过期保护（签名 URL 自动刷新/转存）=====
+# 探测只针对「非自有 CDN」的第三方 URL（自有 CDN 走重签名，不探测）。
+# 过期 URL 会立即返回 401（不等超时）；只有「不可达」(DNS/连接失败) 才卡满 connect。
+IMAGE_URL_PROBE_TOTAL_TIMEOUT = 3       # 第三方URL主动探测总超时(秒)，Range GET 1字节
+IMAGE_URL_PROBE_CONNECT_TIMEOUT = 2     # 探测连接超时(秒)：不可达URL在connect阶段快速失败
+IMAGE_URL_PROBE_CONCURRENCY = 5         # A类多图探测并发上限，避免串行累积卡住调度
+IMAGE_URL_REFRESH_SYNC_WRAPPER_TIMEOUT = 200  # 刷新(含探测/重签)同步包装超时
+
+SYNC_TASK_STALE_TIMEOUT_DEFAULT = None
+SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
+    DriverImplementation.SEEDREAM5_VOLCENGINE_V1: 180,
+    DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1: 180,
+}
+
+
+def _parse_optional_timeout(value) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "0", "none", "null", "false"}:
+            return None
+        return int(normalized)
+    if value == 0 or value is False:
+        return None
+    return int(value)
+
+
+def get_sync_task_stale_timeout(driver_name: str) -> Optional[int]:
+    if not driver_name:
+        return SYNC_TASK_STALE_TIMEOUT_DEFAULT
+    try:
+        from config.config_util import get_dynamic_config_value
+
+        value = get_dynamic_config_value(
+            "sync_task",
+            "stale_timeout",
+            driver_name,
+            default=SYNC_TASK_STALE_TIMEOUT_BY_DRIVER.get(
+                driver_name,
+                SYNC_TASK_STALE_TIMEOUT_DEFAULT,
+            ),
+        )
+    except Exception:
+        value = SYNC_TASK_STALE_TIMEOUT_BY_DRIVER.get(
+            driver_name,
+            SYNC_TASK_STALE_TIMEOUT_DEFAULT,
+        )
+    return _parse_optional_timeout(value)
+
+
+# extra_config 字段名
+IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
+VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
+LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
 
 
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
@@ -339,11 +399,33 @@ IMAGE_EDIT_TYPES = TaskTypeRegistry.get_by_category(TaskCategory.IMAGE_EDIT)
 # RunningHub 平台任务类型列表（已废弃）
 RUNNINGHUB_TASK_TYPES = TaskTypeRegistry.get_by_provider(TaskProvider.RUNNINGHUB)
 
+# RunningHub 上游并发超限（队列上限）错误码
+# RunningHub 服务端在账号并发达上限时返回该 errorCode，判定为「上游拥堵」可重试错误，
+# 触发自动延迟重试（不消耗用户重试次数、不退算力）
+RUNNINGHUB_QUEUE_LIMIT_ERROR_CODE = '421'
+
+# RunningHub 上游拥堵自动重试的默认延迟（秒）
+# 可通过动态配置 runninghub.upstream_congest_retry_delay 覆盖
+RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
+
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 
+# 注意：以下四个状态类用于不同的数据库表，数值含义有差异，请勿混用：
+# - AIToolStatus: ai_tools 表（图片/视频生成任务）
+# - TaskStatus: tasks 表（定时任务队列）
+# - GridImageTaskStatus: grid_image_tasks 表（宫格生图任务，独有 TIMEOUT/CANCELLED/DOWNLOAD_FAILED 状态）
+# - AIAudioStatus: ai_audio 表（音频/TTS 生成任务）
+#
+# 数值对比：
+#                  PENDING/QUEUED  PROCESSING  COMPLETED  FAILED  特有状态
+# AIToolStatus:    0               1           2          -1      SYNC_QUEUED(3), WAITING_PARAM_PREPARE(4), WAITING_BEFORE_FINISH(5)
+# TaskStatus:      0               1           2          -1      SYNC_QUEUED(3), WAITING_PARAM_PREPARE(4), WAITING_BEFORE_FINISH(5)
+# GridImageTaskStatus: 0           1           2          -1      TIMEOUT(-2), CANCELLED(-3), DOWNLOAD_FAILED(-4)
+# AIAudioStatus:   0               1           2          -1      （无特有状态）
+
 class AIToolStatus:
-    """AI工具任务状态"""
+    """AI工具任务状态（用于 ai_tools 表，跟踪图片/视频生成任务）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'PENDING': '未处理',
@@ -353,6 +435,7 @@ class AIToolStatus:
         'COMPLETED': '处理完成',
         'WAITING_PARAM_PREPARE': '等待参数预处理',
         'WAITING_BEFORE_FINISH': '等待结束前处理',
+        'DOWNLOADING': '结果下载中',
     }
     PENDING = 0
     PROCESSING = 1
@@ -361,10 +444,11 @@ class AIToolStatus:
     COMPLETED = 2
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
+    DOWNLOADING = 6
 
 
 class TaskStatus:
-    """任务状态"""
+    """任务状态（用于 tasks 表，跟踪定时任务队列）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'QUEUED': '队列中',
@@ -385,7 +469,7 @@ class TaskStatus:
 
 
 class GridImageTaskStatus:
-    """宫格生图任务状态"""
+    """宫格生图任务状态（用于 grid_image_tasks 表，独有 TIMEOUT(-2)/CANCELLED(-3)/DOWNLOAD_FAILED(-4) 状态）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'QUEUED': '队列中',
@@ -406,7 +490,7 @@ class GridImageTaskStatus:
 
 
 class AIAudioStatus:
-    """AI音频任务状态"""
+    """AI音频任务状态（用于 ai_audio 表，跟踪 TTS/音频生成任务，无特有状态）"""
     _CONSTANT_GROUP = True
     _LABELS = {
         'PENDING': '未处理',
@@ -429,6 +513,22 @@ AI_TOOL_STATUS_COMPLETED = AIToolStatus.COMPLETED
 AI_TOOL_STATUS_SYNC_QUEUED = AIToolStatus.SYNC_QUEUED
 AI_TOOL_STATUS_WAITING_PARAM_PREPARE = AIToolStatus.WAITING_PARAM_PREPARE
 AI_TOOL_STATUS_WAITING_BEFORE_FINISH = AIToolStatus.WAITING_BEFORE_FINISH
+AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
+
+
+# ===== 下载队列（download_queue）解耦配置 =====
+# visual_task 主循环检测到上游生成完成后，不再同步 await 分钟级下载，而是把下载意图
+# 写入 download_queue 表、状态置 DOWNLOADING，由独立 job download_queue_worker 异步消费。
+# 详见 docs/backend/download_queue_decouple.md
+DOWNLOAD_POLL_INTERVAL = 5                    # 消费者 job 轮询间隔（秒）
+DOWNLOAD_DISPATCHER_CONCURRENCY = 6           # 单批并发下载数（asyncio.gather）
+DOWNLOAD_MAX_BATCHES_PER_TICK = 20            # 单次 job 最多处理批数，防 while 无界阻塞（M2）
+DOWNLOAD_PER_ATTEMPT_TIMEOUT = 300            # 单次下载外层 wait_for 超时（秒）
+DOWNLOAD_LEASE_SECONDS = 1200                 # 抢占租约（秒）。⚠️硬约束：必须 > DOWNLOAD_PER_ATTEMPT_TIMEOUT，否则正在跑的下载会被下个 tick 误回收导致重复处理（M3）
+DOWNLOAD_MAX_TRY = 3                          # 单条下载最大尝试次数（达上限后用 remote_url 兜底 COMPLETED，H3）
+DOWNLOAD_BACKOFF_SECONDS = (20, 60, 180)      # 重试指数退避（秒），按 try_count 取，越界取末值
+DOWNLOAD_WRITE_CHUNK_TIMEOUT = 30             # 单次写盘 chunk 的 wait_for 超时（秒）
+DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（模块级长寿 executor，禁止 with，CLAUDE.md 第10条）
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED

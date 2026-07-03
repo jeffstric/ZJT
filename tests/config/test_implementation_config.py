@@ -184,6 +184,61 @@ class TestImplementationConfig(unittest.TestCase):
         self.assertEqual(impl.get_computing_power(duration=7), 10)  # 默认返回第一个
         self.assertEqual(impl.get_computing_power(), 10)  # 无时长参数
 
+    def test_video_resolution_fields_default_to_empty_values(self):
+        """实现方默认不支持视频分辨率选择"""
+        from config.unified_config import UnifiedConfigRegistry
+
+        impl = UnifiedConfigRegistry.get_implementation('test_impl')
+
+        self.assertEqual(impl.supported_video_resolutions, [])
+        self.assertEqual(impl.default_video_resolution, '')
+
+    def test_video_resolution_fields_can_be_configured(self):
+        """实现方可配置结构化视频分辨率选项"""
+        from config.unified_config import ImplementationConfig
+
+        impl = ImplementationConfig(
+            name='test_video_resolution_impl',
+            display_name='测试分辨率实现',
+            driver_class='TestDriver',
+            supported_video_resolutions=[
+                {'value': '720P', 'label': '720P'},
+                {'value': '1080P', 'label': '1080P'},
+            ],
+            default_video_resolution='720P',
+        )
+
+        self.assertEqual(impl.default_video_resolution, '720P')
+        self.assertEqual(impl.supported_video_resolutions[1]['value'], '1080P')
+
+    def test_seedance_2_0_implementations_expose_video_resolutions(self):
+        """Seedance 2.0 系列实现方应暴露可选视频分辨率"""
+        from config.unified_config import UnifiedConfigRegistry, init_unified_config
+
+        UnifiedConfigRegistry._configs.clear()
+        UnifiedConfigRegistry._id_map.clear()
+        UnifiedConfigRegistry._implementations.clear()
+        init_unified_config()
+
+        expected = {
+            'seedance_2_0_fast_volcengine_v1': ['480P', '720P'],
+            'seedance_2_0_fast_volcengine_oversea_v1': ['480P', '720P'],
+            'seedance_2_0_mini_volcengine_v1': ['480P', '720P'],
+            'seedance_2_0_mini_volcengine_oversea_v1': ['480P', '720P'],
+            'seedance_2_0_volcengine_v1': ['480P', '720P', '1080P', '4K'],
+            'seedance_2_0_volcengine_oversea_v1': ['480P', '720P', '1080P', '4K'],
+        }
+
+        for impl_name, expected_values in expected.items():
+            impl = UnifiedConfigRegistry.get_implementation(impl_name)
+            with self.subTest(impl_name=impl_name):
+                self.assertIsNotNone(impl)
+                self.assertEqual(impl.default_video_resolution, '720P')
+                self.assertEqual(
+                    [item['value'] for item in impl.supported_video_resolutions],
+                    expected_values,
+                )
+
     def test_is_enabled_default(self):
         """测试默认启用状态"""
         from config.unified_config import UnifiedConfigRegistry

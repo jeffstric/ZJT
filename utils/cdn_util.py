@@ -1,5 +1,11 @@
 """
 CDN 工具类 - 统一处理 CDN 配置和 URL 获取逻辑
+
+【函数族选择指南】
+  get_cdn_url(media_mapping_id)      → 根据 media_file_mapping ID 获取公开 CDN URL
+  get_signed_download_url(url,name)  → 为 CDN URL 生成带 Content-Disposition 的签名下载链接
+  refresh_url_if_needed(url)         → 查数据库确认映射后刷新签名，返回 Optional[str]
+  refresh_cdn_signed_url(url)        → 仅根据域名判断 + 直接重签名，始终返回 str（不查DB）
 """
 import logging
 from typing import Optional, Tuple
@@ -203,6 +209,15 @@ class CDNUtil:
         """
         检查 URL 是否需要刷新签名，如果是则返回新签名的 URL
 
+        用于后台定时任务或数据加载场景：先查询 media_file_mapping 表确认该文件
+        是否已上传到 CDN，再重新生成签名 URL。如果文件未上传到 CDN（无映射记录），
+        返回 None 表示不需要刷新。
+
+        与 refresh_cdn_signed_url 的区别：
+        - refresh_url_if_needed: 先查数据库确认映射关系，适合需要精确判断的场景
+        - refresh_cdn_signed_url: 仅根据 URL 域名判断是否为 CDN 链接并直接刷新签名，
+          适合导出剪影草稿等已知 URL 是 CDN 链接的场景
+
         Args:
             url: 原始 CDN URL（可能已过期）
 
@@ -245,8 +260,15 @@ class CDNUtil:
         """
         检查 URL 是否为 CDN 链接，如果是则重新生成签名（防止 token 过期导致 403）。
 
-        仅对匹配已配置 CDN 域名的 URL 进行刷新，非 CDN URL 原样返回。
-        常用于导出剪影草稿等需要下载 CDN 资源的场景。
+        仅根据 URL 的域名判断是否为 CDN 链接（通过 is_cdn_url 检查），
+        匹配则提取 cloud_path 直接重新签名，不查询数据库。
+        非 CDN URL 原样返回，刷新失败也返回原始 URL（不会返回 None）。
+
+        与 refresh_url_if_needed 的区别：
+        - refresh_cdn_signed_url: 不查数据库，仅根据域名判断 + 直接重签名，始终返回 str。
+          适合导出剪影草稿等批量刷新 URL 签名的场景。
+        - refresh_url_if_needed: 先查 media_file_mapping 确认映射关系，返回 Optional[str]。
+          适合需要精确判断文件是否已上传 CDN 的场景。
 
         Args:
             url: 原始媒体 URL（可能包含过期的 e/token 参数）

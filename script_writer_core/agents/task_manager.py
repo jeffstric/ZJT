@@ -334,6 +334,31 @@ class TaskManager:
 
         return None
 
+    def merge_task_media(
+        self,
+        task_id: str,
+        image_urls: Optional[List[str]] = None,
+        video_urls: Optional[List[str]] = None,
+        audio_urls: Optional[List[str]] = None,
+        thumbnail_urls: Optional[List[str]] = None,
+    ) -> None:
+        """Merge media URLs into the in-memory task used by the running worker."""
+        def _merge(existing, incoming):
+            merged = list(existing or [])
+            for url in incoming or []:
+                if isinstance(url, str) and url and url not in merged:
+                    merged.append(url)
+            return merged or None
+
+        with self._lock:
+            task = self.tasks.get(task_id)
+            if not task:
+                return
+            task.image_urls = _merge(task.image_urls, image_urls)
+            task.video_urls = _merge(task.video_urls, video_urls)
+            task.audio_urls = _merge(task.audio_urls, audio_urls)
+            task.thumbnail_urls = _merge(task.thumbnail_urls, thumbnail_urls)
+
     def task_exists(self, task_id: str) -> bool:
         """检查任务是否存在（数据库）"""
         try:
@@ -498,7 +523,10 @@ class TaskManager:
         verification: VerificationRequest,
         timeout: int = 300
     ) -> Dict[str, Any]:
-        """阻塞等待人工验证结果（通过数据库轮询，支持多 Worker）"""
+        """阻塞等待人工验证结果（通过数据库轮询，支持多 Worker）
+        ⚠️ 阻塞风险：此函数会阻塞当前线程直到用户验证或超时（默认300秒）
+        仅在 Agent 独立线程中调用，禁止在 FastAPI 路由中直接调用
+        """
         logger.info(f"Waiting for verification {verification.verification_id}")
 
         # 在发送前快照验证数据（防止数据竞争）

@@ -36,6 +36,10 @@ class OpenAIBaseClient(BaseLLMClient):
     - base_url: str
     - vendor_name: str
     - thinking_mode: str | None  ('enable_thinking' | 'reasoning_effort' | None)
+
+    【设计模式】单例 + 每次调用 _refresh_config()
+    - 各子类在 llm/__init__.py 中以模块级变量实例化（单例）
+    - 每次 API 调用前都会重新读取配置，支持运行时热更新 API Key / Base URL
     """
 
     def __init__(self):

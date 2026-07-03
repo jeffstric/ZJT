@@ -9,6 +9,7 @@
  * @returns {{x: number, y: number}} 世界坐标
  */
 function getPortWorldPos(portEl) {
+  if (!portEl || !canvasContainer) return { x: 0, y: 0 };
   var rect = portEl.getBoundingClientRect();
   var containerRect = canvasContainer.getBoundingClientRect();
   return {
@@ -94,6 +95,7 @@ function showConnDeleteBtnAtMidpoint(fromX, fromY, toX, toY, dx) {
   var bezierY = mt*mt*mt*fromY + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*toY;
   var screenX = bezierX * state.zoom + state.panX;
   var screenY = bezierY * state.zoom + state.panY;
+  if (!connDeleteBtn) return;
   connDeleteBtn.style.display = 'flex';
   connDeleteBtn.style.left = (screenX - 12) + 'px';
   connDeleteBtn.style.top = (screenY - 12) + 'px';
@@ -189,12 +191,7 @@ function renderConnectionType(cfg) {
           e.stopPropagation();
           clearAllConnSelections();
           state[selKey] = cId;
-          renderConnections();
-          renderConnectionType(CONNECTION_TYPES.image);
-          renderConnectionType(CONNECTION_TYPES.firstFrame);
-          renderConnectionType(CONNECTION_TYPES.video);
-          renderConnectionType(CONNECTION_TYPES.reference);
-          renderConnectionType(CONNECTION_TYPES.audio);
+          renderAllConnections();
         });
       })(connId);
 

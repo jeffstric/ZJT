@@ -240,7 +240,7 @@
 **问题：导出剪影草稿时视频下载 403 Forbidden**
 - **原因**：视频生成后，CDN URL 带有签名 token（`e` 过期时间戳 + `token` 签名），存入 `clip.url`。导出草稿时后端直接用 httpx 下载该 URL，但 token 已过期，CDN 返回 403。
 - **解决**：
-  - 新增 `_refresh_cdn_url_if_expired()` 辅助函数（`server.py`），在下载视频/音频前检测 CDN URL 并重新生成签名
+  - 使用 `CDNUtil.refresh_cdn_signed_url()` 辅助函数（`utils/cdn_util.py`），在下载视频/音频前检测 CDN URL 并重新生成签名
   - 仅对匹配已配置 CDN 域名的 URL 进行刷新，非 CDN URL 原样返回
   - 刷新签名有效期为 28 小时（100800 秒），使用七牛云 `private_download_url` 重新签名
   - 视频和音频下载流程均增加了此步骤

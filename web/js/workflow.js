@@ -221,9 +221,9 @@
     }
     
     // 计算视频生成算力（公共函数）
-    function calculateVideoGenerationPower(videoModel, duration){
+    function calculateVideoGenerationPower(videoModel, duration, context = {}){
       if(window.TaskConfig){
-        return window.TaskConfig.getComputingPower(videoModel, duration);
+        return window.TaskConfig.getComputingPower(videoModel, duration, context);
       }
       return 0;
     }
@@ -241,7 +241,21 @@
             if(computingPowerValue && computingPowerDetail){
               const videoModel = node.data.videoModel || 'sora2';
               const duration = node.data.duration || 10;
-              const singlePower = calculateVideoGenerationPower(videoModel, duration);
+              const context = {};
+              const imageMode = node.data.imageMode || 'first_last_frame';
+              if(imageMode === 'first_last_frame') {
+                const hasStartImage = !!node.data.startFile || !!node.data.startUrl ||
+                  state.imageConnections.some(c => c.to === node.id && c.portType === 'start');
+                const hasEndImage = !!node.data.endFile || !!node.data.endUrl ||
+                  state.imageConnections.some(c => c.to === node.id && c.portType === 'end');
+                context.image_mode = hasStartImage && hasEndImage ? 'first_last_with_tail' : 'first_last_frame';
+              } else if(imageMode) {
+                context.image_mode = imageMode;
+              }
+              if(node.data.videoResolution) {
+                context.resolution = node.data.videoResolution;
+              }
+              const singlePower = calculateVideoGenerationPower(videoModel, duration, context);
               const count = node.data.drawCount || 1;
               const totalPower = singlePower * count;
               computingPowerValue.textContent = window.t ? window.t('computing_power_value', { power: totalPower }) : `${totalPower} 算力`;
@@ -360,6 +374,10 @@
           ratioSelect.value = node.data.ratio;
         }
       }
+
+      if(typeof node.updateResolutionOptions === 'function') {
+        node.updateResolutionOptions(node.data.videoModel);
+      }
     }
 
     // 配置加载完成后，刷新所有已存在图生视频节点的 model/duration/ratio select 选项
@@ -385,7 +403,14 @@
             if(computingPowerValue && computingPowerDetail){
               const videoModel = node.data.videoModel || 'sora2';
               const duration = node.data.videoDuration || 10;
-              const singlePower = calculateVideoGenerationPower(videoModel, duration);
+              const context = {};
+              if(node.data.videoMode) {
+                context.image_mode = node.data.videoMode;
+              }
+              if(node.data.videoResolution) {
+                context.resolution = node.data.videoResolution;
+              }
+              const singlePower = calculateVideoGenerationPower(videoModel, duration, context);
               const count = node.data.videoDrawCount || 1;
               const totalPower = singlePower * count;
               computingPowerValue.textContent = window.t ? window.t('shot_frame_computing_power_value', { power: totalPower }) : `${totalPower} 算力`;
@@ -414,28 +439,41 @@
     });
 
     // 轮询视频状态
+    // 两阶段轮询策略：前20分钟每10秒一次(120次)，后40分钟每30秒一次(80次)，总计60分钟
     function pollVideoStatus(projectIds, onProgress, onComplete, onError, onTaskUpdate){
       let pollCount = 0;
-      const maxPolls = 120; // 最多轮询120次（20分钟）
-      
+      const stage1Polls = 120; // 阶段一最大轮询次数：120次 × 10秒 = 20分钟
+      const maxPolls = 200;    // 总最大轮询次数：120 + 80 = 200，合计60分钟
+
+      // 根据当前已轮询次数返回下一次轮询的间隔(ms)：阶段一10秒，阶段二30秒
+      const getNextInterval = () => pollCount < stage1Polls ? 10000 : 30000;
+
+      // 根据当前已轮询次数返回累计已等待的秒数(用于进度展示)
+      const getElapsedSeconds = () => {
+        if(pollCount <= stage1Polls){
+          return pollCount * 10;
+        }
+        return stage1Polls * 10 + (pollCount - stage1Polls) * 30;
+      };
+
       const poll = async () => {
         pollCount++;
         try {
           const result = await checkVideoStatus(projectIds);
-          
+
           // 如果有任务更新回调，实时更新每个任务的状态
           if(onTaskUpdate && result.tasks){
             onTaskUpdate(result.tasks);
           }
-          
+
           if(result.status === 'SUCCESS' || result.status === 'FAILED'){
             // SUCCESS或FAILED都表示所有任务已完成，调用onComplete处理
             // onComplete会根据每个任务的详细状态来更新视频节点
             onComplete(result);
           } else {
-            onProgress(`生成中... (${pollCount * 10}秒)`);
+            onProgress(`生成中... (${getElapsedSeconds()}秒)`);
             if(pollCount < maxPolls){
-              setTimeout(poll, 10000);
+              setTimeout(poll, getNextInterval());
             } else {
               onError('等待超时，但视频仍在生成中。你可以通过刷新页面后查看是否生成成功。');
             }
@@ -443,13 +481,13 @@
         } catch(e){
           console.error('Poll error:', e);
           if(pollCount < maxPolls){
-            setTimeout(poll, 10000);
+            setTimeout(poll, getNextInterval());
           } else {
             onError('查询状态失败');
           }
         }
       };
-      
+
       poll();
     }
 
@@ -978,6 +1016,11 @@
             }
           }
         }
+
+        // 刷新视频分辨率选项（配置加载后模型支持情况可能变化）
+        if (typeof node.updateShotGroupResolutionOptions === 'function') {
+          node.updateShotGroupResolutionOptions(node.data.videoModel);
+        }
       });
       console.log('[刷新模型] 已刷新所有分镜组节点的模型选择器');
     }
@@ -1043,6 +1086,11 @@
               videoModelEl.value = node.data.videoModel;
             }
           }
+        }
+
+        // 刷新视频分辨率选项（配置加载后模型支持情况可能变化）
+        if (typeof node.updateShotFrameResolutionOptions === 'function') {
+          node.updateShotFrameResolutionOptions(node.data.videoModel);
         }
       });
       console.log('[刷新模型] 已刷新所有分镜节点的模型选择器');
@@ -1813,7 +1861,7 @@
               const item = document.createElement('div');
               item.style.cssText = 'position: relative; width: 50px; height: 50px;';
               item.innerHTML = `
-                <img src="${url}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: pointer;" />
+                <img src="${escapeHtml(url)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: pointer;" />
                 <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; font-size: 10px; text-align: center; border-radius: 0 0 4px 4px; padding: 1px 0;">图${idx + 1}</div>
                 <button class="ref-remove-btn" data-idx="${idx}" style="position: absolute; top: -4px; right: -4px; width: 16px; height: 16px; border-radius: 50%; background: #ef4444; border: none; color: white; font-size: 10px; cursor: pointer; line-height: 1;">×</button>
               `;
@@ -1831,7 +1879,7 @@
                   node.data.referenceUrls.forEach((u, i) => {
                     const newItem = document.createElement('div');
                     newItem.style.cssText = 'position: relative; width: 50px; height: 50px;';
-                    newItem.innerHTML = `<img src="${u}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px;" /><div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; font-size: 10px; text-align: center; border-radius: 0 0 4px 4px; padding: 1px 0;">图${i + 1}</div>`;
+                    newItem.innerHTML = `<img src="${escapeHtml(u)}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px;" /><div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; font-size: 10px; text-align: center; border-radius: 0 0 4px 4px; padding: 1px 0;">图${i + 1}</div>`;
                     newList.appendChild(newItem);
                   });
                 }
@@ -2022,7 +2070,8 @@
               thumbVideo.src = proxyDownloadUrl(node.data.url);
               thumbVideo.muted = true;
               thumbVideo.loop = true;
-              const displayName = node.data.name.length > 10 ? node.data.name.substring(0, 10) + '...' : node.data.name;
+              const name = node.data.name || '';
+              const displayName = name.length > 10 ? name.substring(0, 10) + '...' : name;
               nameEl.textContent = displayName;
               nameEl.title = node.data.name;
               previewField.style.display = 'block';
@@ -2494,7 +2543,7 @@
         }
       }
       
-      errorEl.innerHTML = `<strong>生成失败:</strong> ${errorMessage}`;
+      errorEl.innerHTML = `<strong>生成失败:</strong> ${escapeHtml(errorMessage)}`;
       
       // 给节点添加错误样式
       nodeEl.style.borderColor = '#f44';
@@ -2725,6 +2774,11 @@
           if(videoModelEl && nodeData.data.videoModel){
             ensureSelectHasSavedOption(videoModelEl, nodeData.data.videoModel);
             videoModelEl.value = nodeData.data.videoModel;
+          }
+
+          // 恢复视频分辨率选项（基于已恢复的视频模型与保存的分辨率）
+          if(node.updateShotFrameResolutionOptions) {
+            node.updateShotFrameResolutionOptions(node.data.videoModel);
           }
 
           // 恢复模式相关 UI 状态

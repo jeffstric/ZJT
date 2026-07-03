@@ -1228,15 +1228,6 @@ body {
     animation: pulse 2s infinite;
 }
 
-@keyframes pulse {
-    0%, 100% {
-        opacity: 1;
-    }
-    50% {
-        opacity: 0.5;
-    }
-}
-
 /* World Sidebar - 覆盖层模式，独立于导览条 */
 .world-sidebar {
     position: fixed;
@@ -1865,16 +1856,6 @@ body {
     max-width: 900px;
 }
 
-@keyframes modalSlideIn {
-    from {
-        opacity: 0;
-        transform: translateY(-20px) scale(0.95);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0) scale(1);
-    }
-}
 
 .modal-header {
     display: flex;
