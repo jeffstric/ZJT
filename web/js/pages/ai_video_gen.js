@@ -760,9 +760,10 @@
                     </template>
                   </div>
                 </div>
-                <div v-if="item.result_url" style="margin-top: 8px;">
-                  <button class="btn secondary" @click="downloadHistoryResult(item)" style="display: inline-block; margin-right: 8px;">{{ $t('view_result') }}</button>
-                  <button v-if="item.status == 2 && item.type == 2" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="display: inline-block;">{{ enhancingVideos[item.id] ? $t('fixed') : $t('generate_hd_video') }}</button>
+                <div v-if="item.result_url" style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                  <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">{{ $t('btn_view') || '查看' }}</a>
+                  <button class="btn secondary" @click="downloadHistoryResult(item)">{{ $t('btn_download') || '下载' }}</button>
+                  <button v-if="item.status == 2 && item.type == 2" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]">{{ enhancingVideos[item.id] ? $t('fixed') : $t('generate_hd_video') }}</button>
                 </div>
                 <div style="margin-top: 8px;">
                   <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>
