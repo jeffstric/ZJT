@@ -5,6 +5,7 @@
         prompt: '',
         videoModel: null,  // 选中的视频模型 ID
         model: '9:16',
+        videoResolution: '',
         durationSeconds: 15,
         count: 1,
         loading: false,
@@ -82,6 +83,12 @@
         const durations = this.currentModel.durations || [10];
         return durations.map(d => ({ value: d, label: `${d}秒` }));
       },
+      videoResolutionOptions() {
+        if (!this.configLoaded || !this.videoModel || !window.TaskConfig || typeof TaskConfig.getVideoResolutionOptions !== 'function') {
+          return [];
+        }
+        return TaskConfig.getVideoResolutionOptions(this.videoModel);
+      },
       countOptions() {
         return [
           { value: 1, label: '1个' },
@@ -98,7 +105,11 @@
 
         // 使用 TaskConfig.getComputingPower 动态获取算力
         // 该方法会自动处理固定算力和按时长计费两种情况
-        return TaskConfig.getComputingPower(this.videoModel, this.durationSeconds, {});
+        const context = {};
+        if (this.videoResolution) {
+          context.resolution = this.videoResolution;
+        }
+        return TaskConfig.getComputingPower(this.videoModel, this.durationSeconds, context);
       },
       totalComputingPower() {
         // 总算力 = 单个算力 × 生成数量
@@ -122,6 +133,8 @@
           if (!supportedDurations.includes(this.durationSeconds)) {
             this.durationSeconds = config.default_duration || supportedDurations[0];
           }
+
+          this.ensureVideoResolution();
         }
       }
     },
@@ -154,10 +167,31 @@
               if (defaultConfig.default_duration) {
                 this.durationSeconds = defaultConfig.default_duration;
               }
+              this.ensureVideoResolution();
             }
           }
         } catch (err) {
           console.error('Failed to load model configs:', err);
+        }
+      },
+
+      ensureVideoResolution() {
+        if (!window.TaskConfig || typeof TaskConfig.getVideoResolutionOptions !== 'function') {
+          this.videoResolution = '';
+          return;
+        }
+        const options = TaskConfig.getVideoResolutionOptions(this.videoModel);
+        if (!options.length) {
+          this.videoResolution = '';
+          return;
+        }
+        const values = options.map(opt => opt.value);
+        if (!this.videoResolution || !values.includes(this.videoResolution)) {
+          this.videoResolution = (
+            typeof TaskConfig.getDefaultVideoResolution === 'function'
+              ? TaskConfig.getDefaultVideoResolution(this.videoModel)
+              : null
+          ) || options[0].value;
         }
       },
 
@@ -181,6 +215,9 @@
           form.append('prompt', this.prompt);
           form.append('task_id', taskId);  // Pass task_id (not model key)
           form.append('ratio', this.model);
+          if (this.videoResolution) {
+            form.append('resolution', this.videoResolution);
+          }
           form.append('duration_seconds', this.durationSeconds);
           form.append('count', this.count);
           form.append('timeout', '900'); // 15 minutes timeout
@@ -593,6 +630,15 @@
             <select class="input" v-model="model">
               <option v-for="opt in modelOptions" :key="opt.value" :value="opt.value">
                 {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field" v-if="videoResolutionOptions.length">
+            <label class="label">{{ $t('video_resolution') || '分辨率' }}</label>
+            <select class="input" v-model="videoResolution">
+              <option v-for="opt in videoResolutionOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label || opt.value }}
               </option>
             </select>
           </div>

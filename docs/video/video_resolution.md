@@ -54,6 +54,12 @@ Seedance 火山驱动优先读取 `extra_config.video_resolution`，兼容旧字
 
 制作工坊生视频节点会将选择值保存到 `node.data.videoResolution`，工作流重新加载后可恢复。首页和营销智能体仅在当前模型支持分辨率时显示选择器。
 
+`video_workflow.html` 的节点链路：
+
+- 生视频节点实现位于 `web/js/image_to_video_node.js`。节点在视频模型下方显示分辨率选择器，模型或图片模式变化时通过 `TaskConfig.getVideoResolutionOptions()` 重新生成选项；提交文生视频和图生视频时都会把 `node.data.videoResolution` 传给 `generateVideoFromText()` / `generateVideoFromImage()`，最终写入表单字段 `resolution`。
+- 分镜节点实现位于 `web/js/shot_frame_node.js`，视频生成提交位于 `web/js/shot_frame_video_generator.js`。分镜节点的选择值保存到 `node.data.videoResolution`，提交时通过 `appendVideoResolutionToForm(form, videoModel, node.data.videoResolution)` 下发。
+- 工作流配置延迟加载或重新加载时，`web/js/workflow.js` 会刷新生视频节点和分镜节点的分辨率选项，并在全局算力刷新时把 `context.resolution` 传给 `TaskConfig.getComputingPower()`。
+
 ## 退款
 
 退款算力通过任务记录恢复：

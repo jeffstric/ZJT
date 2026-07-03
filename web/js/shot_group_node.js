@@ -38,6 +38,7 @@
           model: shotGroupData.model || defaultImageModel,
           gridModel: normalizeGridImageModelValue(shotGroupData.gridModel || shotGroupData.grid_model),
           videoModel: resolvedVideoModel,
+          videoResolution: pickFirstDefinedValue(shotGroupData.videoResolution, shotGroupData.video_resolution) || '',
           videoDuration: pickFirstDefinedValue(shotGroupData.videoDuration, shotGroupData.video_duration) || 5,
           videoDrawCount: pickFirstDefinedValue(shotGroupData.videoDrawCount, shotGroupData.video_draw_count) || 1,
           videoGenMode: shotGroupData.videoGenMode || 'first_last_frame',
@@ -142,6 +143,10 @@
               <div class="field field-always-visible" style="margin-top:5px">
                 <div class="label" data-i18n="shot_group_video_model_label">${window.t ? window.t('shot_group_video_model_label') : '视频模型'}</div>
                 <select class="shot-group-video-model"></select>
+              </div>
+              <div class="field field-always-visible shot-group-video-resolution-field" style="display:none;">
+                <div class="label" data-i18n="video_resolution">${window.t ? window.t('video_resolution') : '分辨率'}</div>
+                <select class="shot-group-video-resolution-select video-resolution-select"></select>
               </div>
               <div class="field field-always-visible" style="margin-top:5px">
                 <div class="label" data-i18n="shot_group_video_duration_label">${window.t ? window.t('shot_group_video_duration_label') : '视频时长'}</div>
@@ -336,6 +341,8 @@
       // 视频生成相关元素
       const videoGenModeEl = el.querySelector('.shot-group-video-gen-mode');
       const videoModelEl = el.querySelector('.shot-group-video-model');
+      const resolutionField = el.querySelector('.shot-group-video-resolution-field');
+      const resolutionSelect = el.querySelector('.shot-group-video-resolution-select');
       const videoDurationEl = el.querySelector('.shot-group-video-duration');
       const generateVideoBtn = el.querySelector('.shot-group-generate-video-btn');
       const videoCaret = el.querySelector('.shot-group-video-caret');
@@ -397,6 +404,40 @@
       // 应用驱动状态禁用未配置的选项
       if(videoModelEl) applyDriverStatusToSelect(videoModelEl);
 
+      function updateShotGroupResolutionOptions(videoModel) {
+        if(!resolutionField || !resolutionSelect) return;
+        const options = window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function'
+          ? TaskConfig.getVideoResolutionOptions(videoModel)
+          : [];
+
+        resolutionSelect.innerHTML = '';
+        if(!options.length) {
+          resolutionField.style.display = 'none';
+          node.data.videoResolution = '';
+          return;
+        }
+
+        resolutionField.style.display = '';
+        options.forEach(option => {
+          const optEl = document.createElement('option');
+          optEl.value = option.value;
+          optEl.textContent = option.label || option.value;
+          resolutionSelect.appendChild(optEl);
+        });
+
+        const validValues = options.map(option => option.value);
+        if(!node.data.videoResolution || !validValues.includes(node.data.videoResolution)) {
+          node.data.videoResolution = (
+            typeof TaskConfig.getDefaultVideoResolution === 'function'
+              ? TaskConfig.getDefaultVideoResolution(videoModel)
+              : null
+          ) || options[0].value;
+        }
+        resolutionSelect.value = node.data.videoResolution;
+      }
+
+      node.updateShotGroupResolutionOptions = updateShotGroupResolutionOptions;
+
       // 根据模型更新时长选项
       function updateVideoDurationOptions(videoModel) {
         const currentDuration = node.data.videoDuration;
@@ -435,6 +476,7 @@
       }
 
       updateVideoDurationOptions(node.data.videoModel);
+      updateShotGroupResolutionOptions(node.data.videoModel);
 
       // 根据当前视频生成模式重新填充视频模型选项
       function populateShotGroupVideoModelOptions() {
@@ -489,6 +531,7 @@
         applyDriverStatusToSelect(videoModelEl);
         // 模型变更后联动更新时长选项和算力显示
         updateVideoDurationOptions(videoModelEl.value);
+        updateShotGroupResolutionOptions(videoModelEl.value);
         updateVideoComputingPowerDisplay();
       }
 
@@ -502,8 +545,16 @@
         const videoModel = node.data.videoModel || 'wan22';
         const duration = node.data.videoDuration || 5;
 
+        const context = {};
+        if(node.data.videoGenMode) {
+          context.image_mode = node.data.videoGenMode;
+        }
+        if(node.data.videoResolution) {
+          context.resolution = node.data.videoResolution;
+        }
+
         // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
-        return TaskConfig.getComputingPower(videoModel, duration);
+        return TaskConfig.getComputingPower(videoModel, duration, context);
       }
 
       // 更新视频算力显示
@@ -538,9 +589,17 @@
       videoModelEl.addEventListener('change', () => {
         node.data.videoModel = videoModelEl.value;
         updateVideoDurationOptions(videoModelEl.value);
+        updateShotGroupResolutionOptions(videoModelEl.value);
         updateVideoComputingPowerDisplay();
         updateMergeButtonVisibility(videoModelEl.value);
       });
+
+      if(resolutionSelect) {
+        resolutionSelect.addEventListener('change', () => {
+          node.data.videoResolution = resolutionSelect.value;
+          updateVideoComputingPowerDisplay();
+        });
+      }
 
       // 视频生成模式选择事件（切换模式时重新过滤视频模型列表）
       if(videoGenModeEl) {

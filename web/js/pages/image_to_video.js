@@ -6,6 +6,7 @@
         prompt: '',
         videoModel: 'wan22',
         model: '9:16',
+        videoResolution: '',
         durationSeconds: 5,
         count: 1,
         loading: false,
@@ -68,6 +69,7 @@
             this.durationSeconds = config.default_duration || config.durations[0] || 5;
           }
         }
+        this.ensureVideoResolution();
         // 如果不支持尾帧且当前有2张图片，移除尾帧
         const supportsLastFrame = config?.supports_last_frame !== false;
         if (!supportsLastFrame && this.imageMediaItems.length > 1) {
@@ -248,6 +250,12 @@
           label: this.videoModel === 'ltx2' ? (ltx2Labels[duration] || this.$t('duration_seconds', { dur: duration }) || `${duration}秒`) : (this.$t('duration_seconds', { dur: duration }) || `${duration}秒`)
         }));
       },
+      videoResolutionOptions() {
+        if (!this.configLoaded || !this.videoModel || !window.TaskConfig || typeof TaskConfig.getVideoResolutionOptions !== 'function') {
+          return [];
+        }
+        return TaskConfig.getVideoResolutionOptions(this.videoModel);
+      },
       countOptions() {
         return [
           { value: 1, label: `1${this.$t('items') || '个'}` },
@@ -271,6 +279,9 @@
           } else {
             context['image_mode'] = this.imageMode;
           }
+        }
+        if (this.videoResolution) {
+          context['resolution'] = this.videoResolution;
         }
 
         // 使用 TaskConfig.getComputingPower 动态获取算力
@@ -324,9 +335,30 @@
           if (config) {
             if (config.default_ratio) this.model = config.default_ratio;
             if (config.default_duration) this.durationSeconds = config.default_duration;
+            this.ensureVideoResolution();
           }
         } catch (err) {
           console.error('获取模型配置失败:', err);
+        }
+      },
+
+      ensureVideoResolution() {
+        if (!window.TaskConfig || typeof TaskConfig.getVideoResolutionOptions !== 'function') {
+          this.videoResolution = '';
+          return;
+        }
+        const options = TaskConfig.getVideoResolutionOptions(this.videoModel);
+        if (!options.length) {
+          this.videoResolution = '';
+          return;
+        }
+        const values = options.map(opt => opt.value);
+        if (!this.videoResolution || !values.includes(this.videoResolution)) {
+          this.videoResolution = (
+            typeof TaskConfig.getDefaultVideoResolution === 'function'
+              ? TaskConfig.getDefaultVideoResolution(this.videoModel)
+              : null
+          ) || options[0].value;
         }
       },
       
@@ -808,6 +840,9 @@
 
           form.append('prompt', this.prompt);
           form.append('ratio', this.model);
+          if (this.videoResolution) {
+            form.append('resolution', this.videoResolution);
+          }
           form.append('duration_seconds', this.durationSeconds);
           form.append('count', this.count);
           form.append('image_mode', this.imageMode);
@@ -1243,6 +1278,15 @@
             <div class="muted" v-if="videoModelOptions.filter(o => o.supportsMode).length === 0" style="margin-top:6px; color: #fca5a5;">
               {{ $t('no_model_support_mode') || '⚠️ 当前没有模型支持所选的图片模式' }}
             </div>
+          </div>
+
+          <div class="field" v-if="videoResolutionOptions.length">
+            <label class="label">{{ $t('video_resolution') || '分辨率' }}</label>
+            <select class="input" v-model="videoResolution">
+              <option v-for="opt in videoResolutionOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label || opt.value }}
+              </option>
+            </select>
           </div>
 
           <div class="field" v-if="videoModel !== 'vidu'">
