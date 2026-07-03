@@ -56,6 +56,10 @@
     "placeholder_chat_input": "输入描述，AI 帮你改图...",
     "title_prompt_editor": "画面提示词编辑器",
     "title_style_settings": "画风设置",
+    "label_composition": "构图倾向",
+    "style_placeholder": "赛博朋克、写实电影感...",
+    "composition_placeholder": "三分法、中心构图、电影运镜...",
+    "llm_pending": "对话改图模型（功能开发中）",
     "title_ai_assistant": "AI 智能助手",
     "computing_power_label": "算力"
 }

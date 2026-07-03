@@ -1,5 +1,10 @@
 # 故事板（Storyboard）页面设计方案 — 可执行版
 
+## 相关补充文档
+
+- [分镜助手对话生图](storyboard_agent_image_chat.md)
+- [分镜间插入分镜](storyboard_insert_scene_slots.md)
+
 ## 2026-06-24 更新：demo2 前端正式化
 
 本轮实现将 `demo2` 的原生前端页面作为正式故事板编辑器的视觉与交互基底，但不引入 `demo2` 的 Express 服务和静态样例数据。正式入口仍为 `/storyboard`，由 `server.py` 返回 `web/storyboard.html`，静态资源继续放在 `web/css/storyboard.css` 与 `web/js/storyboard/` 下，保持现有缓存版本号和部署方式。
@@ -468,6 +473,28 @@ CREATE TABLE storyboard_scene_asset (
 
 ---
 
+## 3.0 2026-07 更新：画风设置与模型选择 UI
+
+- 新增左侧“画风设置”卡片，支持直接编辑全局 `style`（画风）和 `composition_preference`（构图倾向），blur/Enter 自动持久化。
+- 后端 `/api/storyboard/models` 返回结构扩展为 4 类（text_to_image_models、image_edit_models、text_to_video_models、image_to_video_models），旧字段保留兼容。
+- 左下角分镜助手第一版**仅展示已支持类型**：
+  - 图片生成 → 文生图模型
+  - 视频生成 → 图生视频模型
+- 对话模型（LLM）选择器已加入（参考 script_writer，使用专用 localStorage key + persistUiConfig 写入 config_json + 启动 fallback），明确标注“功能开发中”。
+- 所有新状态纳入 config_json 保证重新加载复原（已修复 persist + localStorage 恢复逻辑）。
+- 详见独立设计文档：`docs/storyboard/storyboard_ui_style_and_models.md`
+
+---
+
+## 3.1 2026-07 更新：分镜间插入
+
+- 时间轴 `.scene-timeline-list` 在每两个分镜之间提供 hover/focus 插入槽，点击后在相邻分镜之间创建新分镜。
+- 网格 `.storyboard-grid` 使用卡片右侧浮层插入按钮表达“在此分镜后添加”，避免独立 grid item 打乱总览排版。
+- 前端通过 `prev_id` / `next_id` 调用 `POST /api/storyboard/{storyboard_id}/scene`，后端按浮点二分计算 `sort_order`，刷新后顺序稳定。
+- 详见独立设计文档：`docs/storyboard/storyboard_insert_scene_slots.md`
+
+---
+
 ## 3. 后端 API 设计
 
 ### 3.0 异步约束规范（P1 关键）
@@ -905,9 +932,9 @@ await ZJTi18n.init(['common', 'storyboard']);
 | 🎤 对话 | 对话列表：每行「角色下拉（取自 `state.characters`，空=旁白）+ 台词 + 语速/音量 + 试听 + 生成配音/保存/删除」；一个分镜多句对话 |
 
 **底部 AI 智能助手区域**（模型列表统一从 `GET /api/storyboard/models` 获取，按模式渲染 `<select>`，选中 `task_id` 作为 `task_type`）：
-- 对话改图模式：文本输入（LLM 模型待接入）
-- 图片生成模式：文本输入 + @提及角色/场景 + AI优化开关 + 图片模型选择（`task_type` 传入 `generate-image`）
-- 视频生成模式：按 `scene.video_type` 显示图生视频 / 数字人模型选择 + `video_prompt`（`task_type` 传入 `generate-video`；数字人音频取自当前说话角色配音、形象取角色 `reference_image`）
+- 对话改图模式：文本输入（LLM 模型待接入）。**不显示 AI 优化标识**。
+- 图片生成 / 视频生成模式：文本输入 + @提及角色/场景 + **魔法棒（wand）图标的 AI 优化开关**（仅此两模式出现；点击后使用大模型优化提示词） + 对应模型选择。
+- 视频生成模式额外：按 `scene.video_type` 显示图生视频 / 数字人模型选择 + `video_prompt`（`task_type` 传入 `generate-video`；数字人音频取自当前说话角色配音、形象取角色 `reference_image`）
 
 **生成状态来自任务表（不再冗余在 scene）**：图片/视频状态来自选中 asset 关联的 `ai_tools.status`，配音来自对话选中配音关联的 `ai_audio.status`，经 `task-status` 轮询填充 `scene.taskStatus`：
 - 0/1（待处理/处理中）：蓝色旋转
@@ -966,7 +993,7 @@ const state = {
     // AI 助手
     chatMode: 'image',            // 'dialogue' | 'image' | 'video'
     inputMessage: '',
-    aiOptimize: true,
+    aiOptimize: true,             // 魔法棒优化，仅图片/视频生成模式显示按钮（对话改图不显示）
     subtitleEnabled: true,
 
     // 资产数据（@提及）：avatar = reference_image || reference_images[0]?.url || ''

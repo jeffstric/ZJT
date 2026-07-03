@@ -56,6 +56,10 @@
     "placeholder_chat_input": "Describe what you want, AI will help...",
     "title_prompt_editor": "Prompt Editor",
     "title_style_settings": "Style Settings",
+    "label_composition": "Composition Tendency",
+    "style_placeholder": "Cyberpunk, realistic cinematic...",
+    "composition_placeholder": "Rule of thirds, centered, cinematic framing...",
+    "llm_pending": "Dialogue model (feature in development)",
     "title_ai_assistant": "AI Assistant",
     "computing_power_label": "Credits"
 }

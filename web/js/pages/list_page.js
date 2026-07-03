@@ -42,21 +42,6 @@
 
           <!-- 工作流入口卡片 -->
           <div class="feature-cards" v-if="$root.creationMode !== 'marketing'">
-            <div class="feature-card" @click="handleVideoWorkflowClick">
-              <div class="feature-card-header">
-                <div class="feature-card-icon blue">📹</div>
-                <div class="feature-card-info">
-                  <div class="feature-card-title">{{ $t('video_workflow') }}</div>
-                  <div class="feature-card-subtitle">{{ $t('video_workflow_desc') }}</div>
-                </div>
-              </div>
-              <div class="feature-card-body">
-                <p class="feature-card-desc">{{ $t('video_workflow_detail') }}</p>
-              </div>
-              <div class="feature-card-footer">
-                <span class="feature-card-link">→</span>
-              </div>
-            </div>
             <div class="feature-card" @click="handleScriptWriterClick">
               <div class="feature-card-header">
                 <div class="feature-card-icon purple">✨</div>
@@ -72,11 +57,26 @@
                 <span class="feature-card-link">→</span>
               </div>
             </div>
+            <div class="feature-card" @click="handleVideoWorkflowClick">
+              <div class="feature-card-header">
+                <div class="feature-card-icon blue">📹</div>
+                <div class="feature-card-info">
+                  <div class="feature-card-title">{{ $t('video_workflow') }}</div>
+                  <div class="feature-card-subtitle">{{ $t('video_workflow_desc') }}</div>
+                </div>
+              </div>
+              <div class="feature-card-body">
+                <p class="feature-card-desc">{{ $t('video_workflow_detail') }}</p>
+              </div>
+              <div class="feature-card-footer">
+                <span class="feature-card-link">→</span>
+              </div>
+            </div>
             <div class="feature-card" @click="handleStoryboardListClick">
               <div class="feature-card-header">
                 <div class="feature-card-icon storyboard">▦</div>
                 <div class="feature-card-info">
-                  <div class="feature-card-title">{{ $t('storyboard_system') }}</div>
+                  <div class="feature-card-title">{{ $t('storyboard_system') }} <span class="beta-tag">Beta</span></div>
                   <div class="feature-card-subtitle">{{ $t('storyboard_system_desc') }}</div>
                 </div>
               </div>

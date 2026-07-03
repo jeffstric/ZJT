@@ -6,7 +6,10 @@ const API_BASE = '/api/storyboard';
 function authHeaders(json = true) {
     const headers = {};
     if (json) headers['Content-Type'] = 'application/json';
-    if (state.userId) headers['X-User-Id'] = state.userId;
+    // 只在 userId 是有效数字时发送，避免后端 int 解析失败导致 422
+    if (state.userId && typeof state.userId === 'number' && !isNaN(state.userId) && state.userId > 0) {
+        headers['X-User-Id'] = state.userId;
+    }
     if (state.authToken) {
         headers.Authorization = state.authToken.startsWith('Bearer ')
             ? state.authToken
@@ -117,6 +120,62 @@ export async function getSceneTaskStatus(sceneId) {
     return request(`/scene/${sceneId}/task-status`);
 }
 
+export async function startSceneAgentChat(sceneId, data = {}) {
+    return request(`/scene/${sceneId}/ai-chat`, { method: 'POST', body: JSON.stringify(data) });
+}
+export async function fetchSceneAgentChatHistory(sceneId) {
+    return request(`/scene/${sceneId}/ai-chat/history`);
+}
+
+export function streamStoryboardAgentTask(taskId, handlers = {}) {
+    const controller = new AbortController();
+    const stream = async () => {
+        const resp = await fetch(`${API_BASE}/agent-task/${encodeURIComponent(taskId)}/stream`, {
+            headers: authHeaders(false),
+            signal: controller.signal,
+        });
+        if (!resp.ok || !resp.body) {
+            throw new Error(`HTTP ${resp.status}`);
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split(/\r?\n\r?\n/);
+            buffer = parts.pop() || '';
+            for (const part of parts) {
+                const dataLine = part.split('\n').find(line => line.startsWith('data:'));
+                if (!dataLine) continue;
+                let data = {};
+                try {
+                    data = JSON.parse(dataLine.slice(5).trim() || '{}');
+                } catch {
+                    data = { type: 'message', content: dataLine.slice(5).trim() };
+                }
+                if (handlers.onMessage) await handlers.onMessage(data);
+                if (data.type === 'done' || data.type === 'error') {
+                    if (handlers.onClose) handlers.onClose(data);
+                    controller.abort();
+                    return;
+                }
+            }
+        }
+        if (handlers.onClose) handlers.onClose({ type: 'done' });
+    };
+    stream().catch((error) => {
+        if (error.name === 'AbortError') return;
+        if (handlers.onError) handlers.onError(error);
+    });
+    return { close: () => controller.abort() };
+}
+
+export async function bindAgentImageTask(sceneId, data = {}) {
+    return request(`/scene/${sceneId}/bind-agent-image-task`, { method: 'POST', body: JSON.stringify(data) });
+}
+
 // 模型列表（图片 / 图生视频 / 数字人）
 export async function fetchStoryboardModels() {
     return request('/models');
@@ -143,13 +202,46 @@ export async function fetchLocations(worldId) {
     return fetchPaged(`/api/locations?world_id=${encodeURIComponent(worldId)}&page_size=100`);
 }
 export async function fetchProps(worldId) {
-    return fetchPaged(`/api/props?world_id=${encodeURIComponent(worldId)}&page_size=100`);
+    return fetchPaged(`/api/props?world_id=${encodeURIComponent(worldId)}&page_size=1000`);
 }
 
 export async function fetchComputingPower() {
-    if (!state.authToken) return { computing_power: null };
+    // 始终尝试请求；后端支持 token 优先 + X-User-Id 兜底（处理 localStorage 过期 token 场景）
     const resp = await fetch('/api/user/computing_power', { headers: authHeaders(false) });
     if (!resp.ok) return { computing_power: null };
     const data = await resp.json().catch(() => ({}));
     return data.data || data;
+}
+
+/**
+ * 加载对话模型（LLM 列表），参考 script_writer 的 /api/models
+ * 第一版仅用于 UI 展示选择，实际对话改图能力待后端接入。
+ */
+export async function fetchLlmModels() {
+    // /api/models 不强制需要 Authorization（参考 script_writer），但尽量带上 X-User-Id / token
+    try {
+        const resp = await fetch('/api/models', { headers: authHeaders(false) });
+        if (!resp.ok) return { success: false, models: [] };
+        const data = await resp.json().catch(() => ({}));
+        if (data.success && Array.isArray(data.models)) {
+            return { success: true, models: data.models };
+        }
+        return { success: false, models: [] };
+    } catch {
+        return { success: false, models: [] };
+    }
+}
+
+export async function fetchVendors() {
+    try {
+        const resp = await fetch('/api/vendors', { headers: authHeaders(false) });
+        if (!resp.ok) return { success: false, vendors: [] };
+        const data = await resp.json().catch(() => ({}));
+        if (data.success && Array.isArray(data.vendors)) {
+            return { success: true, vendors: data.vendors };
+        }
+        return { success: false, vendors: [] };
+    } catch {
+        return { success: false, vendors: [] };
+    }
 }

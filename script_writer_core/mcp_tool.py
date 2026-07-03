@@ -3046,7 +3046,7 @@ MCP_TOOLS = [
                 },
                 "image_url": {
                     "type": "string",
-                    "description": "原始图片URL（必填），支持多张图片用英文逗号分隔。对话中每张图片都有 [图片N]（URL: ...） 标签，请将所有需要编辑的图片 URL 用逗号拼接后传入。例如：'http://xxx/a.jpg,http://xxx/b.jpg'"
+                    "description": "原始图片URL（必填），仅支持 http/https URL；支持多张图片用英文逗号分隔。对话中每张图片都有 [图片N]（URL: ...） 标签，请将所有需要编辑的图片 URL 用逗号拼接后传入。例如：'http://xxx/a.jpg,http://xxx/b.jpg'。不要传入 /upload/...、upload/... 或本地文件路径。"
                 },
                 "aspect_ratio": {
                     "type": "string",

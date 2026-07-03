@@ -35,20 +35,27 @@ export function parseDurationSeconds(value) {
 export function mapAssetAvatar(item) {
     if (!item) return '';
     if (item.reference_image) return item.reference_image;
+    if (item.referenceImage) return item.referenceImage;
     if (Array.isArray(item.reference_images) && item.reference_images.length > 0) {
         const first = item.reference_images[0];
-        return typeof first === 'string' ? first : (first.url || first.file_url || '');
+        return typeof first === 'string' ? first : (first.url || first.file_url || first.image_url || '');
     }
     if (item.avatar) return item.avatar;
     if (item.image_url) return item.image_url;
+    if (item.imageUrl) return item.imageUrl;
+    if (item.cover_url) return item.cover_url;
+    if (item.pic_url) return item.pic_url;
     return '';
 }
 
 export function assetFromApi(item) {
+    const avatar = mapAssetAvatar(item);
     return {
         id: item.id,
         name: item.name || item.title || `#${item.id}`,
-        avatar: mapAssetAvatar(item),
+        avatar,
+        reference_image: item.reference_image || item.referenceImage || avatar,
+        reference_images: item.reference_images || [],
         raw: item,
     };
 }
@@ -92,6 +99,7 @@ export function sceneFromApi(raw = {}) {
         firstFrameUrl: raw.first_frame_url || '',
         lastFrameUrl: raw.last_frame_url || '',
         videoUrl: raw.video_url || '',
+        thumbnail: raw.preview_image_url || raw.thumbnail || raw.first_frame_url || '',
         // 画面提示词（key 与后端 prompt_json 对齐）
         promptJson: {
             perspective: prompt.perspective || '',
@@ -99,7 +107,20 @@ export function sceneFromApi(raw = {}) {
             scene_desc: prompt.scene_desc || '',
             character_desc: prompt.character_desc || '',
         },
+        sceneInfo: {
+            perspective: prompt.perspective || '',
+            style: prompt.style || '',
+            sceneDesc: prompt.scene_desc || '',
+            charDesc: prompt.character_desc || '',
+        },
+        status: {
+            image: raw.image_status,
+            video: raw.video_status,
+        },
         dialogues: dialoguesFromApi(raw.dialogues || []),
+        // 当前分镜关联的场景/道具（从 prompt_json 或顶层提取，后端创建时会放在 prompt 里）
+        location: raw.location || prompt.location || (prompt.source ? { id: prompt.source.location_db_id || prompt.source.location_id, name: prompt.source.location_name } : null),
+        props: raw.props || prompt.props || [],
         raw,
     };
 }
@@ -112,11 +133,20 @@ export function scenesFromApi(rawScenes = []) {
 
 export function sceneToPromptPayload(scene) {
     const p = scene.promptJson || {};
+    const info = scene.sceneInfo || {};
+    // 保留原始 prompt_json 中的额外字段（如 location, props, source）
+    let original = {};
+    if (scene.raw && scene.raw.prompt_json) {
+        original = typeof scene.raw.prompt_json === 'string' ? JSON.parse(scene.raw.prompt_json) : scene.raw.prompt_json;
+    } else if (scene._fullPrompt) {
+        original = scene._fullPrompt;
+    }
     return {
-        perspective: p.perspective || '',
-        style: p.style || '',
-        scene_desc: p.scene_desc || '',
-        character_desc: p.character_desc || '',
+        ...original,
+        perspective: p.perspective || info.perspective || '',
+        style: p.style || info.style || '',
+        scene_desc: p.scene_desc || info.sceneDesc || '',
+        character_desc: p.character_desc || info.charDesc || '',
     };
 }
 

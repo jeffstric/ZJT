@@ -7,11 +7,34 @@ import { renderApp } from './render.js';
 const POLL_INTERVAL = 4000;
 const pollTimers = {};
 
+function upsertSceneCandidateFromTask(sceneId, assetType, taskInfo) {
+    if (!taskInfo || !taskInfo.asset_id) return;
+    if (!state.sceneCandidates) state.sceneCandidates = {};
+    if (!state.sceneCandidates[sceneId]) state.sceneCandidates[sceneId] = { images: [], videos: [] };
+    const listKey = assetType === 'video' ? 'videos' : 'images';
+    const list = state.sceneCandidates[sceneId][listKey] || [];
+    const assetId = taskInfo.asset_id;
+    let candidate = list.find(item => String(item.id) === String(assetId));
+    if (!candidate) {
+        candidate = { id: assetId, url: '', selected: true };
+        list.unshift(candidate);
+    }
+    candidate.url = taskInfo.result_url || candidate.url || '';
+    list.forEach(item => {
+        item.selected = String(item.id) === String(assetId);
+    });
+    state.sceneCandidates[sceneId][listKey] = list;
+}
+
 function applyTaskStatus(scene, data) {
     if (!scene) return;
+    if (data.first_frame && data.first_frame.asset_id) scene.selectedFirstFrameId = data.first_frame.asset_id;
     if (data.first_frame && data.first_frame.result_url) scene.firstFrameUrl = data.first_frame.result_url;
     if (data.last_frame && data.last_frame.result_url) scene.lastFrameUrl = data.last_frame.result_url;
+    if (data.video && data.video.asset_id) scene.selectedVideoId = data.video.asset_id;
     if (data.video && data.video.result_url) scene.videoUrl = data.video.result_url;
+    upsertSceneCandidateFromTask(scene.id, 'first_frame', data.first_frame);
+    upsertSceneCandidateFromTask(scene.id, 'video', data.video);
     (data.dialogues || []).forEach(d => {
         const dialogue = (scene.dialogues || []).find(item => item.id === d.dialogue_id);
         if (dialogue) {

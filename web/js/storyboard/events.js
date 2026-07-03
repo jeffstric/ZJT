@@ -5,12 +5,14 @@ import state, {
     removeSceneFromState,
     removeDialogueFromState,
     replaceSceneInState,
+    resolveSelectedLlmModel,
+    resolveSelectedScriptSplitLlmModel,
     serializeUiConfig,
     loadStoryboardData,
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
-import { renderApp } from './render.js';
+import { renderApp, renderPromptWithInlineRoles, getThumbnailUrl } from './render.js';
 import { pollSceneTaskStatus } from './polling.js';
 
 function notify(message) {
@@ -30,6 +32,71 @@ function buildQuery(base, params) {
     return qs ? `${base}?${qs}` : base;
 }
 
+function getSceneAssetCandidateUrl(asset) {
+    if (!asset) return '';
+    return asset.result_url
+        || asset.url
+        || asset.image_url
+        || asset.video_url
+        || asset.ai_tool?.result_url
+        || asset.tool?.result_url
+        || '';
+}
+
+function mapSceneAssetCandidates(response, assetType) {
+    const selectedId = response?.selected?.[assetType];
+    const assets = response?.assets || response?.data || [];
+    return assets.map(asset => ({
+        id: asset.id,
+        url: getSceneAssetCandidateUrl(asset),
+        selected: selectedId !== null && selectedId !== undefined && String(asset.id) === String(selectedId),
+    }));
+}
+
+async function loadSceneCandidates(sceneId) {
+    const [imageRes, videoRes] = await Promise.all([
+        api.listSceneAssets(sceneId, 'first_frame').catch(() => null),
+        api.listSceneAssets(sceneId, 'video').catch(() => null),
+    ]);
+    if (!state.sceneCandidates) state.sceneCandidates = {};
+    state.sceneCandidates[sceneId] = {
+        images: mapSceneAssetCandidates(imageRes, 'first_frame'),
+        videos: mapSceneAssetCandidates(videoRes, 'video'),
+    };
+}
+
+function applySelectedCandidateToScene(scene, assetType, assetId, url) {
+    if (!scene) return;
+    if (assetType === 'first_frame') {
+        scene.selectedFirstFrameId = assetId;
+        if (url) scene.firstFrameUrl = url;
+    } else if (assetType === 'video') {
+        scene.selectedVideoId = assetId;
+        if (url) scene.videoUrl = url;
+    }
+}
+
+async function selectSceneCandidate(target) {
+    const current = getCurrentScene();
+    if (!current) return;
+    const candidateType = target.dataset.candidateType;
+    const assetType = candidateType === 'video' ? 'video' : 'first_frame';
+    const assetId = parseInt(target.dataset.candidateId, 10);
+    if (!Number.isFinite(assetId)) return;
+
+    await api.selectSceneAsset(current.id, assetType, assetId);
+
+    const listKey = assetType === 'video' ? 'videos' : 'images';
+    const candidates = state.sceneCandidates?.[current.id]?.[listKey] || [];
+    const selected = candidates.find(item => String(item.id) === String(assetId));
+    applySelectedCandidateToScene(current, assetType, assetId, selected?.url || '');
+    candidates.forEach(item => {
+        item.selected = String(item.id) === String(assetId);
+    });
+    pollSceneTaskStatus(current.id);
+    rerender();
+}
+
 async function persistUiConfig() {
     if (!state.storyboardId) return;
     await api.updateStoryboard(state.storyboardId, { config_json: serializeUiConfig() }).catch(() => {});
@@ -46,6 +113,164 @@ function patchDialogueInState(dialogueId, patch) {
     return false;
 }
 
+function pushAgentMessage(role, content, meta = {}) {
+    if (!content && !meta.status) return;
+    state.agentMessages = [
+        ...state.agentMessages.slice(-39),
+        {
+            role,
+            content: content || '',
+            status: meta.status || '',
+            createdAt: new Date().toISOString(),
+        },
+    ];
+}
+
+export async function loadSceneAgentMessages(sceneId) {
+    if (!sceneId) {
+        state.agentMessages = [];
+        return;
+    }
+    try {
+        const response = await api.fetchSceneAgentChatHistory(sceneId);
+        if (state.currentSceneId !== sceneId) return;
+        const rows = Array.isArray(response.messages) ? response.messages : [];
+        state.agentMessages = rows.map(item => ({
+            role: item.role || 'assistant',
+            content: typeof item.content === 'string'
+                ? item.content
+                : (item.content?.content || item.content?.message || ''),
+            status: item.status || '',
+            createdAt: item.timestamp || item.create_at || new Date().toISOString(),
+        }));
+        rerender();
+    } catch (error) {
+        console.warn('Failed to load storyboard agent chat history', error);
+    }
+}
+
+function getAgentContent(data) {
+    if (!data) return '';
+    if (typeof data.content === 'string') return data.content;
+    if (data.message) return data.message;
+    if (data.error) return data.error;
+    if (data.result && typeof data.result === 'string') return data.result;
+    if (data.result && data.result.result) return data.result.result;
+    return '';
+}
+
+async function bindSubmittedAgentTasks(sceneId, projectIds, assetType = 'first_frame') {
+    const ids = Array.isArray(projectIds) ? projectIds : [projectIds].filter(Boolean);
+    if (!ids.length) return;
+    const response = await api.bindAgentImageTask(sceneId, { project_ids: ids, asset_type: assetType });
+    const scene = state.scenes.find(item => item.id === sceneId);
+    if (response?.selected_asset_id) {
+        applySelectedCandidateToScene(scene, assetType, response.selected_asset_id, '');
+    }
+    await loadSceneCandidates(sceneId).catch(() => {});
+    pollSceneTaskStatus(sceneId);
+}
+
+async function sendStoryboardAgentMessage(current) {
+    const message = (state.inputMessage || '').trim();
+    if (!message) {
+        notify('请输入要调整的内容');
+        return;
+    }
+    const llm = resolveSelectedLlmModel();
+    const model = typeof llm === 'string' ? llm : (llm?.model || llm?.name || '');
+    const modelId = typeof llm === 'object' ? (llm.model_id || llm.id) : null;
+    const vendorId = typeof llm === 'object' ? llm.vendor_id : null;
+    if (!model || !modelId) {
+        notify('请先在模型配置中选择对话模型');
+        state.showModelConfigModal = true;
+        state.currentConfigTab = 'dialogue';
+        rerender();
+        return;
+    }
+
+    state.isAgentRunning = true;
+    pushAgentMessage('user', message);
+    state.inputMessage = '';
+    rerender();
+
+    try {
+        const response = await api.startSceneAgentChat(current.id, {
+            message,
+            model,
+            model_id: modelId,
+            vendor_id: vendorId,
+            generation_target: state.chatMode === 'video' ? 'video' : 'image',
+            image_task_id: state.selectedImageTaskId,
+            video_task_id: state.selectedVideoTaskId,
+            language: localStorage.getItem('zjt_locale') || 'zh-CN',
+        });
+        state.activeAgentTaskId = response.task_id;
+        pushAgentMessage('status', state.chatMode === 'video' ? '分镜视频智能体已开始处理' : '分镜图片智能体已开始处理');
+        rerender();
+
+        api.streamStoryboardAgentTask(response.task_id, {
+            onMessage: async (data) => {
+                if (data.type === 'connected' || data.type === 'heartbeat') return;
+                if (data.type === 'status') {
+                    pushAgentMessage('status', getAgentContent(data) || data.status || '任务状态已更新');
+                } else if (data.type === 'tool_call') {
+                    const names = Array.isArray(data.tool_names) ? data.tool_names.join(', ') : '';
+                    pushAgentMessage('status', names ? `正在调用工具：${names}` : '正在调用生成工具');
+                } else if (data.type === 'image_task_submitted') {
+                    const ids = data.project_ids || data.projectIds || [];
+                    pushAgentMessage('status', getAgentContent(data) || '图片生成任务已提交，正在绑定到当前分镜');
+                    try {
+                        await bindSubmittedAgentTasks(current.id, ids, 'first_frame');
+                        pushAgentMessage('status', '已绑定图片生成任务，右侧资产状态会自动刷新');
+                    } catch (error) {
+                        pushAgentMessage('assistant', `图片任务绑定失败：${error.message || error}`);
+                    }
+                } else if (data.type === 'video_task_submitted') {
+                    const ids = data.project_ids || data.projectIds || [];
+                    pushAgentMessage('status', getAgentContent(data) || '视频生成任务已提交，正在绑定到当前分镜');
+                    try {
+                        await bindSubmittedAgentTasks(current.id, ids, 'video');
+                        pushAgentMessage('status', '已绑定视频生成任务，右侧资产状态会自动刷新');
+                    } catch (error) {
+                        pushAgentMessage('assistant', `视频任务绑定失败：${error.message || error}`);
+                    }
+                } else if (data.type === 'message') {
+                    pushAgentMessage(data.role || 'assistant', getAgentContent(data));
+                } else if (data.type === 'error') {
+                    pushAgentMessage('assistant', getAgentContent(data) || (state.chatMode === 'video' ? '分镜视频智能体执行失败' : '分镜图片智能体执行失败'));
+                    state.isAgentRunning = false;
+                    state.activeAgentTaskId = null;
+                } else if (data.type === 'done') {
+                    const content = getAgentContent(data);
+                    if (content) pushAgentMessage('assistant', content);
+                    state.isAgentRunning = false;
+                    state.activeAgentTaskId = null;
+                    pollSceneTaskStatus(current.id);
+                    loadSceneAgentMessages(current.id).catch(() => {});
+                }
+                rerender();
+            },
+            onError: () => {
+                pushAgentMessage('assistant', '任务连接中断，请稍后查看生成结果或重新发送');
+                state.isAgentRunning = false;
+                state.activeAgentTaskId = null;
+                rerender();
+            },
+            onClose: () => {
+                state.isAgentRunning = false;
+                state.activeAgentTaskId = null;
+                rerender();
+            },
+        });
+    } catch (error) {
+        pushAgentMessage('assistant', `启动智能体失败：${error.message || error}`);
+        state.isAgentRunning = false;
+        state.activeAgentTaskId = null;
+        rerender();
+    }
+}
+
 async function handleAction(action, target) {
     const current = getCurrentScene();
 
@@ -59,6 +284,12 @@ async function handleAction(action, target) {
 
     if (action === 'generate-from-script-confirm') {
         if (state.isGeneratingFromScript || !state.storyboardId) return;
+        const splitModel = resolveSelectedScriptSplitLlmModel();
+        if (!splitModel || !splitModel.model || !splitModel.model_id) {
+            state.generateFromScriptError = '请先选择拆分剧本模型';
+            rerender();
+            return;
+        }
         state.isGeneratingFromScript = true;
         state.generateFromScriptError = '';
         rerender();
@@ -66,6 +297,9 @@ async function handleAction(action, target) {
             const response = await api.generateFromScript(state.storyboardId, {
                 max_group_duration: 15,
                 split_multi_dialogue: false,
+                model: splitModel.model,
+                model_id: splitModel.model_id,
+                vendor_id: splitModel.vendor_id,
             });
             loadStoryboardData(response);
             state.showGenerateFromScriptDialog = false;
@@ -84,6 +318,21 @@ async function handleAction(action, target) {
             title: `分镜${state.scenes.length + 1}`,
             duration: 5,
             prompt_json: {},
+        });
+        addSceneToState(response.scene);
+        rerender();
+        return;
+    }
+
+    if (action === 'insert-scene') {
+        const prevId = target.dataset.prevId ? parseInt(target.dataset.prevId, 10) : null;
+        const nextId = target.dataset.nextId ? parseInt(target.dataset.nextId, 10) : null;
+        const response = await api.addScene(state.storyboardId, {
+            title: `分镜${state.scenes.length + 1}`,
+            duration: 5,
+            prompt_json: {},
+            prev_id: prevId,
+            next_id: nextId,
         });
         addSceneToState(response.scene);
         rerender();
@@ -132,27 +381,22 @@ async function handleAction(action, target) {
         return;
     }
 
-    if (action === 'open-edit') {
-        state.showEditPrompt = true;
-        rerender();
-        return;
-    }
-
-    if (action === 'close-edit') {
-        state.showEditPrompt = false;
+    if (action === 'close-model-config') {
+        state.showModelConfigModal = false;
         rerender();
         return;
     }
 
     if (action === 'save-prompt' && current) {
+        const currentPrompt = current.promptJson || {};
+        const sceneDescEl = document.querySelector('[data-edit-field="scene_desc"]');
         current.promptJson = {
-            perspective: document.querySelector('[data-edit-field="perspective"]')?.value || '',
-            style: document.querySelector('[data-edit-field="style"]')?.value || '',
-            scene_desc: document.querySelector('[data-edit-field="scene_desc"]')?.value || '',
-            character_desc: document.querySelector('[data-edit-field="character_desc"]')?.value || '',
+            perspective: currentPrompt.perspective || '',
+            style: currentPrompt.style || '',
+            scene_desc: sceneDescEl ? sceneDescEl.value : (currentPrompt.scene_desc || ''),
+            character_desc: currentPrompt.character_desc || '',
         };
         await api.updateScenePrompt(current.id, sceneToPromptPayload(current));
-        state.showEditPrompt = false;
         rerender();
         return;
     }
@@ -165,6 +409,32 @@ async function handleAction(action, target) {
         await api.updateScene(current.id, sceneToUpdatePayload(current));
         rerender();
         return;
+    }
+
+    if (action === 'switch-location' || action === 'add-prop' || action === 'remove-location' || action === 'remove-prop') {
+        const sceneId = parseInt(target.dataset.sceneId || target.closest('[data-scene-id]')?.dataset.sceneId, 10);
+        const sc = state.scenes.find(s => s.id === sceneId);
+        if (!sc) return;
+
+        if (action === 'remove-location') {
+            sc.location = null;
+            await persistSceneLocationProps(sc);
+            return;
+        }
+        if (action === 'remove-prop') {
+            const pid = parseInt(target.dataset.propId, 10);
+            sc.props = (sc.props || []).filter(p => p.id !== pid);
+            await persistSceneLocationProps(sc);
+            return;
+        }
+        if (action === 'switch-location') {
+            showLocationDropdown(sc, target);
+            return;
+        }
+        if (action === 'add-prop') {
+            showPropDropdown(sc, target);
+            return;
+        }
     }
 
     // ==================== 对话操作 ====================
@@ -222,33 +492,20 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'open-model-config') {
+        state.showModelConfigModal = true;
+        // 默认根据当前助手模式
+        const mode = state.chatMode;
+        state.currentConfigTab = mode === 'video' ? 'video' : 'dialogue';
+        rerender();
+        return;
+    }
+
+    // 画风/构图全局编辑已移至 header .header-style-info 点击（data-action=edit-global-style）
+
     if (action === 'send-ai') {
         if (!current) return;
-        if (state.chatMode === 'image') {
-            const response = await api.generateSceneImage(current.id, {
-                prompt: state.inputMessage,
-                task_type: state.selectedImageTaskId,
-            });
-            if (response.success) {
-                state.inputMessage = '';
-                pollSceneTaskStatus(current.id);
-            }
-            notify(response.error || '图片生成任务已提交');
-        } else if (state.chatMode === 'video') {
-            const isDigitalHuman = current.videoType === 'digital_human';
-            const taskType = isDigitalHuman ? state.selectedDigitalHumanTaskId : state.selectedVideoTaskId;
-            const response = await api.generateSceneVideo(current.id, {
-                prompt: state.inputMessage,
-                task_type: taskType,
-            });
-            if (response.success) {
-                state.inputMessage = '';
-                pollSceneTaskStatus(current.id);
-            }
-            notify(response.error || '视频生成任务已提交');
-        } else {
-            notify('对话改图能力正在接入中');
-        }
+        await sendStoryboardAgentMessage(current);
         rerender();
         return;
     }
@@ -284,6 +541,41 @@ async function handleAction(action, target) {
     if (action === 'placeholder') {
         notify('该能力正在接入中');
     }
+
+    if (action === 'edit-global-style') {
+        state.showGlobalStyleDialog = true;
+        rerender();
+        return;
+    }
+
+    if (action === 'close-global-style') {
+        state.showGlobalStyleDialog = false;
+        rerender();
+        return;
+    }
+
+    if (action === 'save-global-style') {
+        const styleEl = document.querySelector('[data-global-field="style"]');
+        const compEl = document.querySelector('[data-global-field="composition"]');
+        const newStyle = styleEl ? styleEl.value.trim() : (state.style || '');
+        const newComp = compEl ? compEl.value.trim() : (state.compositionPreference || '');
+        try {
+            if (state.storyboardId) {
+                await api.updateStoryboard(state.storyboardId, {
+                    style: newStyle,
+                    composition_preference: newComp,
+                });
+            }
+            state.style = newStyle;
+            state.compositionPreference = newComp;
+            state.showGlobalStyleDialog = false;
+            rerender();
+            notify('画风和构图倾向已更新');
+        } catch (e) {
+            notify('更新失败: ' + (e.message || e));
+        }
+        return;
+    }
 }
 
 function handleRoute(route) {
@@ -317,9 +609,42 @@ export function bindEvents() {
 
         const sceneTarget = event.target.closest('[data-scene]');
         const actionTarget = event.target.closest('[data-action]');
+        const candidateTarget = event.target.closest('[data-candidate-id][data-candidate-type]');
+        if (candidateTarget) {
+            event.preventDefault();
+            try {
+                await selectSceneCandidate(candidateTarget);
+            } catch (error) {
+                notify(error.message || '选择候选图失败');
+            }
+            return;
+        }
+
         if (sceneTarget && !actionTarget) {
-            state.currentSceneId = parseInt(sceneTarget.dataset.scene, 10);
+            const sceneId = parseInt(sceneTarget.dataset.scene, 10);
+            state.currentSceneId = sceneId;
             state.currentTime = 0;
+            state.agentMessages = [];
+            rerender();
+            // 异步加载该 scene 的候选资产
+            (async () => {
+                try {
+                    const historyPromise = loadSceneAgentMessages(sceneId).catch(() => {});
+                    await loadSceneCandidates(sceneId);
+                    await historyPromise;
+                    rerender();
+                } catch (e) {
+                    // 静默失败，不影响主流程
+                }
+            })();
+            return;
+        }
+
+        // Handle model config tabs (must be before action guard since tabs have no data-action)
+        const configTabTarget = event.target.closest('[data-config-tab]');
+        if (configTabTarget) {
+            const tab = configTabTarget.dataset.configTab;
+            state.currentConfigTab = tab;
             rerender();
             return;
         }
@@ -340,6 +665,15 @@ export function bindEvents() {
         }
     });
 
+    document.addEventListener('keydown', (event) => {
+        const target = event.target;
+        if (target.id === 'chat-textarea' && event.key === 'Enter' && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
+            event.preventDefault();
+            const btn = document.querySelector('[data-action="send-ai"]');
+            if (btn) btn.click();
+        }
+    });
+
     document.addEventListener('change', async (event) => {
         const target = event.target;
         if (target.id === 'chat-mode-select') {
@@ -348,17 +682,84 @@ export function bindEvents() {
             await persistUiConfig();
             return;
         }
-        if (target.dataset.modelSelect) {
-            const value = parseInt(target.value, 10);
-            switch (target.dataset.modelSelect) {
-                case 'image': state.selectedImageTaskId = value; break;
-                case 'video': state.selectedVideoTaskId = value; break;
-                case 'digital_human': state.selectedDigitalHumanTaskId = value; break;
+
+        if (target.dataset.ratioSelect !== undefined) {
+            state.workflowRatio = target.value;
+            if (state.storyboardId) {
+                api.updateStoryboard(state.storyboardId, { workflow_ratio: state.workflowRatio })
+                    .then(() => notify('画面比例已更新'))
+                    .catch(err => notify('比例更新失败: ' + (err.message || err)));
             }
+            return;
         }
+
+        // 工具栏的图片/视频模型 select 已移除，仅在弹框配置中选择（data-config-select）
+        // 对话模型的 toolbar select 也已移除
+
+        if (target.dataset.configSelect) {
+            // 弹框内的模型选择，更新对应 state 并刷新
+            const type = target.dataset.configSelect;
+            const val = target.value;
+            if (type === 'dialogue') {
+                const selected = target.selectedOptions[0];
+                const modelId = selected?.dataset?.modelId;
+                const vendorId = selected?.dataset?.vendorId;
+                state.selectedLlmModel = modelId ? {
+                    model: val,
+                    model_id: modelId,
+                    vendor_id: vendorId ? parseInt(vendorId, 10) : null,
+                } : val;
+                resolveSelectedLlmModel();
+                try {
+                    localStorage.setItem('storyboard_lastSelectedLlmModel', JSON.stringify(state.selectedLlmModel));
+                } catch {}
+            } else if (type === 'scriptSplit') {
+                const selected = target.selectedOptions[0];
+                const modelId = selected?.dataset?.modelId;
+                const vendorId = selected?.dataset?.vendorId;
+                state.selectedScriptSplitLlmModel = modelId ? {
+                    model: val,
+                    model_id: modelId,
+                    vendor_id: vendorId ? parseInt(vendorId, 10) : null,
+                } : val;
+                resolveSelectedScriptSplitLlmModel();
+                try {
+                    localStorage.setItem('storyboard_lastScriptSplitLlmModel', JSON.stringify(state.selectedScriptSplitLlmModel));
+                } catch {}
+            } else if (type === 'image') {
+                state.selectedImageTaskId = parseInt(val, 10) || state.selectedImageTaskId;
+            } else if (type === 'video') {
+                state.selectedVideoTaskId = parseInt(val, 10) || state.selectedVideoTaskId;
+            }
+
+            // 如果当前助手模式匹配，也可视为立即生效
+            rerender();
+            if (state.storyboardId) {
+                persistUiConfig().catch(() => {});
+            }
+            return;
+        }
+
+        if (target.dataset.configTab) {
+            const tab = target.dataset.configTab;
+            state.currentConfigTab = tab;
+            rerender();
+            return;
+        }
+        // 画风/构图编辑入口已改为 header 点击（data-action="edit-global-style"）
     });
 
     document.addEventListener('click', (event) => {
+        const overlay = event.target.closest('.modal-overlay');
+        if (overlay && event.target === overlay) {
+            state.showModelConfigModal = false;
+            state.showExportDialog = false;
+            state.showGlobalStyleDialog = false;
+            state.showGenerateFromScriptDialog = false;
+            rerender();
+            return;
+        }
+
         const tab = event.target.closest('[data-tab]');
         if (tab) {
             state.activeTab = tab.dataset.tab;
@@ -378,5 +779,311 @@ export function bindEvents() {
             state.showMentionPopup = false;
             rerender();
         }
+
+        // 提示词框点击切换为编辑 (直接在左侧，角色图片以 <img>角色名 格式内联在内容中)
+        // 参考 video_workflow.html 分镜节点 prompt 显示
+        const promptDisplay = event.target.closest('.prompt-display');
+        if (promptDisplay && !promptDisplay.querySelector('textarea')) {
+            closeAllDropdowns();
+            const type = promptDisplay.dataset.promptType;
+            const scene = getCurrentScene();
+            if (!scene) return;
+            let raw = '';
+            if (type === 'scene') {
+                raw = scene.promptJson ? scene.promptJson.scene_desc || '' : '';
+            } else if (type === 'video') {
+                raw = scene.videoPrompt || '';
+            }
+            const ta = document.createElement('textarea');
+            ta.className = 'voice-textarea';
+            ta.value = raw;
+            ta.style.minHeight = '120px';
+            promptDisplay.innerHTML = '';
+            promptDisplay.appendChild(ta);
+            ta.focus();
+            ta.select();
+
+            // 支持输入 @ 弹出角色/道具选择
+            ta.addEventListener('keydown', (e) => {
+                if (e.key === '@') {
+                    e.preventDefault();
+                    showMentionDropdownForPrompt(ta, promptDisplay, type, scene);
+                }
+            });
+
+            // Do not use {once: true}. Dropdown clicks cause an early blur that we intentionally ignore
+            // (to keep editing UI). A later real blur (click away or Esc) must still be able to save + rerender.
+            const onFinish = async () => {
+                if (!ta.parentNode) return;
+                if (ta._skipPromptBlurRerender) {
+                    ta._skipPromptBlurRerender = false;
+                    return; // dropdown selection caused this blur; keep the textarea open
+                }
+                const val = ta.value;
+                await persistPromptValue(scene, type, val);
+                rerender();
+            };
+            ta.addEventListener('blur', () => {
+                // tiny delay lets dropdown mousedown/insert run and set/clear skip flag first
+                setTimeout(onFinish, 0);
+            });
+            ta.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    ta._skipPromptBlurRerender = false;
+                    ta.blur();
+                }
+                if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+                    ev.preventDefault();
+                    ta._skipPromptBlurRerender = false;
+                    ta.blur();
+                }
+            });
+        }
     });
+}
+
+async function persistSceneLocationProps(sc) {
+    const prompt = { ...(sc.promptJson || {}) };
+    prompt.location = sc.location ? { id: sc.location.id, name: sc.location.name } : null;
+    prompt.props = (sc.props || []).map(p => ({ id: p.id, name: p.name }));
+    await api.updateScenePrompt(sc.id, prompt);
+    sc.promptJson = prompt;
+    rerender();
+}
+
+async function persistPromptValue(scene, type, value) {
+    try {
+        if (type === 'scene') {
+            if (!scene.promptJson) scene.promptJson = {};
+            scene.promptJson.scene_desc = value;
+            await api.updateScenePrompt(scene.id, sceneToPromptPayload(scene));
+        } else if (type === 'video') {
+            scene.videoPrompt = value;
+            await api.updateScene(scene.id, sceneToUpdatePayload(scene));
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function showLocationDropdown(sc, anchorEl) {
+    closeAllDropdowns();
+    const dropdown = document.createElement('div');
+    dropdown.className = 'asset-dropdown';
+    dropdown.style.cssText = 'position:absolute; background:#fff; border:1px solid #ccc; border-radius:4px; max-height:200px; overflow:auto; z-index:10000; font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,0.15);';
+
+    const locs = state.locations || [];
+    if (locs.length === 0) {
+        dropdown.innerHTML = '<div style="padding:8px;">暂无场景</div>';
+    } else {
+        locs.forEach(loc => {
+            const isSel = sc.location && sc.location.id === loc.id;
+            const item = document.createElement('div');
+            item.className = 'asset-dropdown-item' + (isSel ? ' selected' : '');
+            const img = loc.avatar || loc.reference_image ? `<img src="${getThumbnailUrl(loc.avatar || loc.reference_image, 20)}" style="width:20px;height:20px;border-radius:3px;margin-right:6px;">` : '';
+            item.innerHTML = `${img}<span>${escapeHtml(loc.name)}</span>`;
+            item.onclick = async (e) => {
+                e.stopPropagation();
+                sc.location = {
+                    id: loc.id,
+                    name: loc.name,
+                    avatar: loc.avatar || loc.reference_image,
+                    reference_image: loc.reference_image || loc.avatar
+                };
+                await persistSceneLocationProps(sc);
+                dropdown.remove();
+            };
+            dropdown.appendChild(item);
+        });
+    }
+
+    positionDropdown(dropdown, anchorEl);
+    document.body.appendChild(dropdown);
+
+    const closeH = (e) => {
+        if (!dropdown.contains(e.target)) {
+            dropdown.remove();
+            document.removeEventListener('click', closeH, true);
+        }
+    };
+    setTimeout(() => document.addEventListener('click', closeH, true), 0);
+}
+
+function showPropDropdown(sc, anchorEl) {
+    closeAllDropdowns();
+    const dropdown = document.createElement('div');
+    dropdown.className = 'asset-dropdown';
+    dropdown.style.cssText = 'position:absolute; background:#fff; border:1px solid #ccc; border-radius:4px; max-height:200px; overflow:auto; z-index:10000; font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,0.15);';
+
+    const allProps = state.props || [];
+    const selectedIds = (sc.props || []).map(p => p.id);
+    if (allProps.length === 0) {
+        dropdown.innerHTML = '<div style="padding:8px;">暂无道具</div>';
+    } else {
+        allProps.forEach(prop => {
+            const isSel = selectedIds.includes(prop.id);
+            const item = document.createElement('div');
+            item.className = 'asset-dropdown-item' + (isSel ? ' selected' : '');
+            const img = prop.avatar || prop.reference_image ? `<img src="${getThumbnailUrl(prop.avatar || prop.reference_image, 20)}" style="width:20px;height:20px;border-radius:3px;margin-right:6px;">` : '';
+            item.innerHTML = `${isSel ? '✓ ' : ''}${img}<span>${escapeHtml(prop.name)}</span>`;
+            item.onclick = async (e) => {
+                e.stopPropagation();
+                sc.props = sc.props || [];
+                if (isSel) {
+                    sc.props = sc.props.filter(p => p.id !== prop.id);
+                } else {
+                    sc.props.push({
+                        id: prop.id,
+                        name: prop.name,
+                        avatar: prop.avatar || prop.reference_image,
+                        reference_image: prop.reference_image || prop.avatar
+                    });
+                }
+                await persistSceneLocationProps(sc);
+                dropdown.remove();
+            };
+            dropdown.appendChild(item);
+        });
+    }
+
+    positionDropdown(dropdown, anchorEl);
+    document.body.appendChild(dropdown);
+
+    const closeH = (e) => {
+        if (!dropdown.contains(e.target)) {
+            dropdown.remove();
+            document.removeEventListener('click', closeH, true);
+        }
+    };
+    setTimeout(() => document.addEventListener('click', closeH, true), 0);
+}
+
+function positionDropdown(dropdown, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    let top = rect.bottom + 2;
+    // 避免被固定高度的 .info-card / .sidebar-content 裁剪，确保完整可见（必要时上翻）
+    const estHeight = 200;
+    if (top + estHeight > window.innerHeight - 8) {
+        top = Math.max(4, rect.top - 4 - 180);
+    }
+    dropdown.style.top = `${top}px`;
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.minWidth = `${Math.max(140, rect.width)}px`;
+    // 允许下拉框横向溢出左侧栏，完整显示
+    dropdown.style.maxWidth = '360px';
+}
+
+function closeAllDropdowns() {
+    document.querySelectorAll('.asset-dropdown').forEach(d => d.remove());
+}
+
+function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, function(m) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m];
+    });
+}
+
+function insertAssetTag(textarea, name, kind) {
+    const start = textarea.selectionStart || 0;
+    const end = textarea.selectionEnd || 0;
+    const value = textarea.value;
+    const insert = kind === 'prop'
+        ? '〖〖' + name + '〗〗'
+        : '【【' + name + '】】';
+    textarea.value = value.substring(0, start) + insert + value.substring(end);
+    const pos = start + insert.length;
+    textarea.setSelectionRange(pos, pos);
+    textarea.focus();
+}
+
+function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
+    closeAllDropdowns();
+    const dropdown = document.createElement('div');
+    dropdown.className = 'asset-dropdown mention-dropdown';
+    dropdown.style.cssText = 'position:absolute; background:#fff; border:1px solid #ccc; border-radius:4px; max-height:240px; overflow:hidden; z-index:10000; font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,0.15); display:flex; flex-direction:column;';
+
+    let currentTab = 'character';
+
+    const buildTabs = () => {
+        const tabsDiv = document.createElement('div');
+        tabsDiv.className = 'asset-dropdown-tabs';
+        tabsDiv.style.cssText = 'display:flex; gap:2px; padding:4px; border-bottom:1px solid #eee; background:#f8f9fa;';
+        const tabs = [
+            { key: 'character', label: '角色' },
+            { key: 'prop', label: '道具' },
+        ];
+        tabs.forEach(t => {
+            const btn = document.createElement('button');
+            btn.textContent = t.label;
+            btn.style.cssText = `flex:1; padding:5px 4px; border:none; border-radius:3px; background:${currentTab === t.key ? 'var(--primary)' : 'transparent'}; color:${currentTab === t.key ? '#fff' : 'var(--muted)'}; cursor:pointer; font-size:12px;`;
+            btn.onmousedown = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                currentTab = t.key;
+                renderList();
+            };
+            tabsDiv.appendChild(btn);
+        });
+        return tabsDiv;
+    };
+
+    const renderList = () => {
+        const oldList = dropdown.querySelector('.mention-list');
+        if (oldList) oldList.remove();
+
+        const listDiv = document.createElement('div');
+        listDiv.className = 'mention-list';
+        listDiv.style.cssText = 'overflow:auto; max-height:180px; padding:4px;';
+
+        const items = currentTab === 'character' ? (state.characters || []) : (state.props || []);
+        if (!items.length) {
+            listDiv.innerHTML = `<div style="padding:8px; color:var(--muted);">暂无${currentTab === 'character' ? '角色' : '道具'}</div>`;
+        } else {
+            items.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'asset-dropdown-item';
+                const aurl = item.avatar || item.reference_image;
+                const img = aurl ? `<img src="${escapeHtml(getThumbnailUrl(aurl, 20))}" style="width:20px;height:20px;border-radius:3px;margin-right:6px;object-fit:cover;">` : '';
+                row.innerHTML = `${img}<span>${escapeHtml(item.name)}</span>`;
+                row.onmousedown = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    insertAssetTag(textarea, item.name, currentTab);
+                    dropdown.remove();
+                    persistPromptValue(scene, promptType, textarea.value).catch(console.error);
+                    textarea._skipPromptBlurRerender = true;
+                    setTimeout(() => {
+                        if (textarea) textarea._skipPromptBlurRerender = false;
+                    }, 120);
+                };
+                listDiv.appendChild(row);
+            });
+        }
+
+        // 更新 tabs 按钮颜色
+        const tabBtns = dropdown.querySelectorAll('.asset-dropdown-tabs button');
+        tabBtns.forEach((btn, idx) => {
+            const tabKey = idx === 0 ? 'character' : 'prop';
+            btn.style.background = currentTab === tabKey ? 'var(--primary)' : 'transparent';
+            btn.style.color = currentTab === tabKey ? '#fff' : 'var(--muted)';
+        });
+
+        dropdown.appendChild(listDiv);
+    };
+
+    dropdown.appendChild(buildTabs());
+    renderList();
+
+    positionDropdown(dropdown, textarea);
+    document.body.appendChild(dropdown);
+
+    const closeH = (e) => {
+        if (!dropdown.contains(e.target)) {
+            dropdown.remove();
+            document.removeEventListener('click', closeH, true);
+        }
+    };
+    setTimeout(() => document.addEventListener('click', closeH, true), 0);
 }

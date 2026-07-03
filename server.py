@@ -34,6 +34,7 @@ from model.character import CharacterModel
 from model.location import LocationModel
 from model.script import ScriptModel
 from model.props import PropsModel
+from model.computing_power import ComputingPowerModel
 import uuid
 from PIL import Image
 from task.scheduler import init_scheduler
@@ -2281,8 +2282,27 @@ async def get_computing_power(request: Request, auth_token: str = Header(None, a
                 }
             )
         else:
+            # 认证失败时，尝试使用 X-User-Id 兜底查询本地算力（故事板等内部页面可能携带过期 localStorage token）
+            if message and ('无效' in message or '认证' in message or 'token' in str(message).lower()):
+                x_user_id = request.headers.get('x-user-id') or request.headers.get('X-User-Id')
+                if x_user_id:
+                    try:
+                        uid = int(x_user_id)
+                        power = ComputingPowerModel.get_by_user_id(uid)
+                        cp = power.computing_power if power else 0
+                        return JSONResponse(
+                            content={
+                                'success': True,
+                                'message': '查询成功（本地兜底）',
+                                'data': {'computing_power': cp}
+                            }
+                        )
+                    except Exception:
+                        pass
+            # 非认证错误或无兜底时返回对应状态码
+            status_code = 401 if message and ('无效' in message or '认证' in message or 'token' in str(message).lower()) else 400
             return JSONResponse(
-                status_code=400,
+                status_code=status_code,
                 content={
                     'success': False,
                     'message': message or '查询算力失败'

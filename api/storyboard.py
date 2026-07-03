@@ -11,7 +11,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Request, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from perseids_server.utils.permission import require_permission
 from perseids_server.client import async_make_perseids_request
 
@@ -117,6 +117,14 @@ def _build_location_map(parsed_data: dict) -> Dict[str, dict]:
     }
 
 
+def _build_prop_map(parsed_data: dict) -> Dict[str, dict]:
+    return {
+        str(prop.get('id')): prop
+        for prop in (parsed_data.get('props') or [])
+        if prop.get('id')
+    }
+
+
 def _dialogue_character_id(dialogue: dict, character_db_map: Dict[str, Optional[int]]) -> Optional[int]:
     raw_character_id = dialogue.get('character_id')
     if raw_character_id is None:
@@ -137,6 +145,7 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
     character_db_map = _build_character_db_map(parsed_data)
     character_name_map = _build_character_name_map(parsed_data)
     location_map = _build_location_map(parsed_data)
+    prop_map = _build_prop_map(parsed_data)
     scenes: List[dict] = []
 
     for group in parsed_data.get('shot_groups') or []:
@@ -149,6 +158,17 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
             location_db_id = shot.get('db_location_id', location.get('location_db_id'))
             camera_angle = shot.get('camera_angle') or ''
             shot_type = shot.get('shot_type') or ''
+
+            # 提取当前分镜的道具
+            props_present = shot.get('props_present') or []
+            shot_props = []
+            for pid in props_present:
+                p = prop_map.get(str(pid)) or {}
+                shot_props.append({
+                    'id': p.get('id') or pid,
+                    'name': p.get('name') or '',
+                    'db_id': p.get('db_id') or p.get('props_db_id'),
+                })
             perspective = _compact_join([camera_angle, shot_type], ' / ')
             scene_desc = _compact_join([
                 shot.get('opening_frame_description'),
@@ -189,6 +209,11 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                     'style': style or parsed_data.get('style') or '',
                     'scene_desc': scene_desc,
                     'character_desc': character_desc,
+                    'location': {
+                        'id': location_db_id,
+                        'name': location_name,
+                    },
+                    'props': shot_props,
                     'source': {
                         'group_id': group.get('group_id'),
                         'group_name': group_name,
@@ -381,12 +406,77 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
     return info
 
 
+def _enrich_scene_asset_result_urls(assets: list) -> list:
+    """为候选资产补全 ai_tools 中的任务结果 URL/状态。需在 asyncio.to_thread 中调用。"""
+    enriched = []
+    for asset in assets or []:
+        item = asset.to_dict() if hasattr(asset, 'to_dict') else dict(asset)
+        ai_tool_id = item.get('ai_tool_id')
+        if not ai_tool_id:
+            enriched.append(item)
+            continue
+
+        try:
+            tool = AIToolsModel.get_by_id(int(ai_tool_id))
+        except Exception as exc:
+            logger.warning(f"Failed to enrich storyboard scene asset {item.get('id')} from ai_tools {ai_tool_id}: {exc}")
+            enriched.append(item)
+            continue
+
+        if not tool:
+            enriched.append(item)
+            continue
+
+        tool_info = tool.to_dict() if hasattr(tool, 'to_dict') else {}
+        result_url = (
+            tool_info.get('result_url')
+            or getattr(tool, 'result_url', None)
+            or tool_info.get('video_path')
+            or getattr(tool, 'video_path', None)
+            or tool_info.get('image_path')
+            or getattr(tool, 'image_path', None)
+        )
+        if result_url and not item.get('result_url'):
+            item['result_url'] = result_url
+
+        for key in ('status', 'message', 'project_id'):
+            value = tool_info.get(key, getattr(tool, key, None))
+            if value is not None and item.get(key) in (None, ''):
+                item[key] = value
+
+        enriched.append(item)
+    return enriched
+
+
 async def _attach_dialogues(scenes: list) -> list:
     """为每个分镜附加其对话列表（供前端直接渲染）"""
     for sc in scenes:
         sc['dialogues'] = await asyncio.to_thread(
             StoryboardDialogueModel.list_by_scene, sc['id']
         )
+    return scenes
+
+
+def _enrich_scene_location_props(scenes: list) -> list:
+    """后端返回补全：从 prompt_json 提取 location/props 到顶层，方便前端显示当前分镜的场景/道具（带头像）"""
+    for sc in scenes:
+        pj = sc.get('prompt_json') or {}
+        if isinstance(pj, str):
+            try:
+                pj = json.loads(pj)
+            except Exception:
+                pj = {}
+        if not sc.get('location'):
+            loc = pj.get('location') or (pj.get('source') and {
+                'id': pj['source'].get('location_db_id'),
+                'name': pj['source'].get('location_name'),
+            } or None)
+            if loc:
+                sc['location'] = loc
+        if not sc.get('props'):
+            pr = pj.get('props')
+            if pr:
+                sc['props'] = pr
     return scenes
 
 
@@ -403,6 +493,249 @@ def _compose_image_prompt(scene) -> str:
     parts = [prompt.get('perspective'), prompt.get('style'),
              prompt.get('scene_desc'), prompt.get('character_desc')]
     return '，'.join([p for p in parts if p])
+
+
+def _scene_prompt_dict(scene) -> Dict[str, Any]:
+    prompt = scene.prompt_json
+    if isinstance(prompt, str):
+        try:
+            prompt = json.loads(prompt)
+        except Exception:
+            prompt = {}
+    return prompt if isinstance(prompt, dict) else {}
+
+
+def _normalize_auth_token(token: Optional[str]) -> str:
+    token = (token or '').strip()
+    if token.lower().startswith('bearer '):
+        token = token[7:].strip()
+    return token
+
+
+def _storyboard_scene_chat_session_id(scene_id: int) -> str:
+    return f"storyboard-scene-{scene_id}"
+
+
+def _record_storyboard_agent_message(
+    scene_id: int,
+    role: str,
+    content: Any,
+    task_id: Optional[str] = None,
+    message_type: str = "text",
+    visibility: str = "both",
+    source: str = "storyboard_agent",
+) -> Optional[Dict[str, Any]]:
+    from model.chat_messages import ChatMessagesModel
+
+    message_id = str(uuid.uuid4())
+    entity = ChatMessagesModel.create(
+        message_id=message_id,
+        session_id=_storyboard_scene_chat_session_id(scene_id),
+        role=role,
+        message_type=message_type,
+        content=json.dumps(content if content is not None else "", ensure_ascii=False),
+        idempotency_key=f"storyboard_scene:{scene_id}:{task_id or message_id}:{role}:{source}",
+        source=source,
+        agent_scope="storyboard_scene",
+        context_state="active",
+        task_id=task_id,
+        agent_id="storyboard_image_agent",
+        visibility=visibility,
+    )
+    return entity.to_frontend_dict() if entity else None
+
+
+def _list_storyboard_agent_messages(scene_id: int, for_context: bool = False) -> List[Dict[str, Any]]:
+    from model.chat_messages import ChatMessagesModel
+
+    entities = ChatMessagesModel.list_for_session(
+        _storyboard_scene_chat_session_id(scene_id),
+        agent_scope="storyboard_scene",
+        visibility=["both", "llm"] if for_context else ["both", "user", "llm"],
+        exclude_context_state=["deleted"],
+        exclude_message_types=["tool_definitions"],
+        limit=100,
+    )
+    messages = []
+    for entity in entities:
+        data = entity.to_frontend_dict()
+        content = data.get("content")
+        if isinstance(content, dict):
+            content = content.get("content") or content.get("message") or json.dumps(content, ensure_ascii=False)
+        if for_context:
+            if entity.role not in ("user", "assistant"):
+                continue
+            messages.append({"role": entity.role, "content": str(content or "")})
+        else:
+            data["content"] = content or ""
+            messages.append(data)
+    return messages
+
+
+def _build_storyboard_agent_message(
+    user_message: str,
+    scene,
+    storyboard,
+    first_frame_url: Optional[str] = None,
+    reference_images: Optional[List[str]] = None,
+    reference_image_items: Optional[List[Dict[str, Any]]] = None,
+    generation_target: str = "image",
+) -> str:
+    prompt = _scene_prompt_dict(scene)
+    prompt_json = json.dumps(prompt, ensure_ascii=False, indent=2)
+    first_frame_line = first_frame_url or "无"
+    reference_images = reference_images or []
+    reference_image_items = reference_image_items or []
+    if reference_image_items:
+        reference_lines = [
+            f"- 图{idx}：{item.get('label') or item.get('url')}，URL：{item.get('url')}"
+            for idx, item in enumerate(reference_image_items, start=1)
+        ]
+    else:
+        reference_lines = [f"- 图{idx}：{url}" for idx, url in enumerate(reference_images, start=1)]
+    reference_block = "\n".join(reference_lines) if reference_lines else "无"
+    if generation_target == "video":
+        target_intro = "请基于当前分镜画面提示词、视频提示词与用户要求，生成该分镜视频。"
+        tool_instruction = (
+            "本次目标是生成视频。当前分镜有参考图或已有首帧时，必须调用 image_to_video，并把【参考图清单】中的 URL 按顺序用英文逗号拼接为 image_urls；"
+            "没有任何参考图时才调用 generate_text_to_video。不要调用图片生成工具。"
+        )
+    else:
+        target_intro = "请基于当前分镜画面提示词，与用户对话并生成/编辑该分镜首帧。"
+        tool_instruction = (
+            "当前分镜有参考图，必须调用 edit_image，并把【参考图清单】中的 URL 按顺序用英文逗号拼接为 image_url；"
+            "不要询问用户选择文生图还是图生图。"
+            if reference_images
+            else "当前分镜没有可用参考图，调用 generate_text_to_image。"
+        )
+    return f"""{target_intro}
+
+【用户要求】
+{user_message}
+
+【当前分镜】
+- 标题：{scene.title or ''}
+- 时长：{scene.duration or 5} 秒
+- 全局画风：{getattr(storyboard, 'style', '') or ''}
+- 构图倾向：{getattr(storyboard, 'composition_preference', '') or ''}
+- 画幅比例：{getattr(storyboard, 'workflow_ratio', '') or ''}
+- 已有首帧 URL：{first_frame_line}
+
+【参考图清单】
+{reference_block}
+
+【当前分镜 prompt_json】
+```json
+{prompt_json}
+```
+
+请严格围绕当前分镜创作，保留角色、场景、道具一致性，并结合全局画风、构图倾向和画幅比例。{tool_instruction} 提交成功后返回包含 project_ids 的工作总结。"""
+
+
+class StoryboardImageAgentRunner:
+    """Adapter so TaskManager can run storyboard-image ExpertAgent as a task."""
+
+    agent_id = "storyboard_image_agent"
+
+    def __init__(
+        self,
+        scene_id: int,
+        scene_context: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        generation_target: str = "image",
+    ):
+        self.scene_id = scene_id
+        self.scene_context = scene_context
+        self.conversation_history = conversation_history or []
+        self.generation_target = generation_target if generation_target == "video" else "image"
+
+    @staticmethod
+    def _resolve_storyboard_agent_model(default_model: str, model_id: Optional[int]) -> str:
+        if not model_id:
+            return default_model
+        try:
+            from model.model import ModelModel
+            task_model = ModelModel.get_by_id(int(model_id))
+            if task_model and task_model.model_name:
+                return task_model.model_name
+        except Exception as e:
+            logger.warning(f"Failed to resolve storyboard agent model name for model_id={model_id}: {e}")
+        return default_model
+
+    def execute(self, task, session_data: Dict[str, Any]) -> Dict[str, Any]:
+        from api.script_writer import file_manager, tool_executor, agents_config, task_manager
+        from script_writer_core.agents.expert_agent import ExpertAgent
+
+        config = dict(agents_config.get("expert_agents", {}).get("storyboard-image") or {})
+        allowed_tools = config.get("allowed_tools") or [
+            "generate_text_to_image",
+            "edit_image",
+            "get_text_to_image_model_info",
+            "get_user_computing_power",
+            "ask_user",
+        ]
+        model = self._resolve_storyboard_agent_model(
+            config.get("model") or "gemini/gemini-3-flash-preview",
+            task.model_id,
+        )
+        expert = ExpertAgent(
+            skill_names=["storyboard-image"],
+            model=model,
+            allowed_tools=allowed_tools,
+            context_from_pm=self.scene_context,
+            file_manager=file_manager,
+            user_id=str(task.user_id),
+            world_id=str(task.world_id),
+            auth_token=task.auth_token,
+            tool_executor=tool_executor,
+            vendor_id=task.vendor_id,
+            model_id=task.model_id,
+            enable_thinking=task.enable_thinking,
+            thinking_effort=task.thinking_effort,
+            task_manager=task_manager,
+            task_id=task.task_id,
+            max_iterations=int(config.get("max_iterations") or 20),
+            language=task.language or "zh-CN",
+        )
+
+        result = expert.execute_task({
+            "session_id": task.task_id,
+            "pm_session_id": task.session_id,
+            "pm_task_id": task.task_id,
+            "description": task.user_message,
+            "pm_context": self.scene_context,
+            "conversation_history": self.conversation_history,
+            "image_urls": task.image_urls or [],
+            "video_urls": task.video_urls or [],
+            "audio_urls": task.audio_urls or [],
+        })
+
+        project_ids = result.get("project_ids") or []
+        if project_ids:
+            is_video = self.generation_target == "video"
+            task_manager.push_message(task.task_id, "video_task_submitted" if is_video else "image_task_submitted", {
+                "scene_id": self.scene_id,
+                "project_ids": project_ids,
+                "asset_type": "video" if is_video else "first_frame",
+                "message": f"已提交 {len(project_ids)} 个分镜{'视频' if is_video else '图片'}生成任务",
+            })
+
+        content = result.get("result") or result.get("error") or "分镜图片智能体任务已结束"
+        task_manager.push_message(task.task_id, "message", {
+            "role": "assistant",
+            "content": content,
+        })
+        try:
+            _record_storyboard_agent_message(
+                self.scene_id,
+                "assistant",
+                content,
+                task_id=task.task_id,
+                source="storyboard_agent_result",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to record storyboard agent assistant message: {e}")
+        return result
 
 
 async def _deduct_computing_power(request: Request, computing_power: int, transaction_id: str):
@@ -590,7 +923,58 @@ async def list_storyboard_folders(
     return JSONResponse({'success': True, 'total': len(folders), 'folders': folders})
 
 
-@router.get('/{storyboard_id}')
+@router.get('/models')
+@require_permission("storyboard:view")
+async def get_storyboard_models(
+    request: Request,
+):
+    """
+    返回图片/视频/数字人模型列表（按 TaskCategory 分类）。
+    旧字段（image_models/video_models）保留向前兼容。
+    新增 text_to_image_models / image_edit_models / text_to_video_models / image_to_video_models
+    供未来 UI 按文生/图生动态显示使用（第一版前端保守仅使用已支持分类）。
+    生成接口接收 task_type（= 此处的 task_id）覆盖默认模型。
+    """
+    # 手动从 header 获取，避免 FastAPI Header 解析失败导致 422
+    # 模型列表本身是配置数据，不严格依赖 user_id
+    # 模型列表不依赖具体用户（配置数据），但仍尝试提取以满足可能的权限中间件
+    raw_user_id = request.headers.get("x-user-id") or request.headers.get("X-User-Id")
+    if raw_user_id:
+        try:
+            get_user_id_from_header(raw_user_id)  # 只做校验，不赋值
+        except Exception:
+            pass
+
+    def _list(category):
+        configs = UnifiedConfigRegistry.get_by_category(category)
+        return [
+            {
+                'task_id': c.id,
+                'key': c.key,
+                'name': c.name,
+                'computing_power': c.get_computing_power() if c.computing_power else 0,
+                'supported_durations': c.supported_durations or [],
+                'default_duration': c.default_duration,
+                'supported_ratios': c.supported_ratios or [],
+            }
+            for c in configs if c.enabled and not c.hidden
+        ]
+
+    return JSONResponse({
+        'success': True,
+        # 旧字段保留向前兼容（当前 storyboard 前端主要使用）
+        'image_models': _list(TaskCategory.TEXT_TO_IMAGE),
+        'video_models': _list(TaskCategory.IMAGE_TO_VIDEO),
+        'digital_human_models': _list(TaskCategory.DIGITAL_HUMAN),
+        # 新增分类字段（为未来 UI 动态文生/图生支持做准备，第一版前端暂不使用切换）
+        'text_to_image_models': _list(TaskCategory.TEXT_TO_IMAGE),
+        'image_edit_models': _list(TaskCategory.IMAGE_EDIT),
+        'text_to_video_models': _list(TaskCategory.TEXT_TO_VIDEO),
+        'image_to_video_models': _list(TaskCategory.IMAGE_TO_VIDEO),
+    })
+
+
+@router.get('/{storyboard_id:int}')
 @require_permission("storyboard:view")
 async def get_storyboard(
     request: Request,
@@ -607,6 +991,8 @@ async def get_storyboard(
 
     scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
     await _attach_dialogues(scenes)
+    _enrich_scene_location_props(scenes)
+
     return JSONResponse({
         'success': True,
         'storyboard': sb.to_dict(),
@@ -614,7 +1000,7 @@ async def get_storyboard(
     })
 
 
-@router.put('/{storyboard_id}')
+@router.put('/{storyboard_id:int}')
 @require_permission("storyboard:update")
 async def update_storyboard(
     request: Request,
@@ -634,7 +1020,7 @@ async def update_storyboard(
     return JSONResponse({'success': True, 'affected': affected})
 
 
-@router.post('/{storyboard_id}/generate-from-script')
+@router.post('/{storyboard_id:int}/generate-from-script')
 @require_permission("storyboard:update")
 async def generate_storyboard_from_script(
     request: Request,
@@ -732,6 +1118,7 @@ async def generate_storyboard_from_script(
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
     scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
     await _attach_dialogues(scenes)
+    _enrich_scene_location_props(scenes)
     if script_id != sb.script_id:
         await asyncio.to_thread(StoryboardModel.update, storyboard_id, script_id=script_id)
         sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
@@ -744,7 +1131,7 @@ async def generate_storyboard_from_script(
     })
 
 
-@router.delete('/{storyboard_id}')
+@router.delete('/{storyboard_id:int}')
 @require_permission("storyboard:delete")
 async def delete_storyboard(
     request: Request,
@@ -765,7 +1152,7 @@ async def delete_storyboard(
 
 # ==================== 分镜 CRUD ====================
 
-@router.post('/{storyboard_id}/scene')
+@router.post('/{storyboard_id:int}/scene')
 @require_permission("storyboard:update")
 async def add_scene(
     request: Request,
@@ -852,7 +1239,7 @@ async def delete_scene(
     return JSONResponse({'success': True, 'affected': affected})
 
 
-@router.put('/{storyboard_id}/scene/reorder')
+@router.put('/{storyboard_id:int}/scene/reorder')
 @require_permission("storyboard:update")
 async def reorder_scenes(
     request: Request,
@@ -943,6 +1330,7 @@ async def update_scene_prompt(
 async def generate_scene_image(
     request: Request,
     scene_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
     """
@@ -972,48 +1360,40 @@ async def generate_scene_image(
     if asset_type not in VALID_ASSET_TYPES:
         return JSONResponse(status_code=400, content={'error': 'asset_type 必须为 first_frame/last_frame/video'})
 
-    task_type = int(data.get('task_type') or TaskTypeId.GPT_IMAGE_2_EDIT)
-    prompt = data.get('prompt') or _compose_image_prompt(scene)
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
-    ratio = data.get('ratio') or (sb.workflow_ratio if sb else None)
-    image_size = data.get('image_size')
+    task_type = data.get('task_type')
+    if task_type:
+        try:
+            from api.script_writer import set_text_to_image_model_id
+            await asyncio.to_thread(
+                set_text_to_image_model_id,
+                str(user_id),
+                str(sb.world_id if sb else scene.storyboard_id),
+                int(task_type),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to sync storyboard image model preference: {e}")
 
-    # 算力预扣（失败 scheduler 会按 transaction_id 退还）
-    config = UnifiedConfigRegistry.get_by_id(task_type)
-    computing_power = config.get_computing_power() if config else 0
-    transaction_id = str(uuid.uuid4())
-    ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
-    if not ok:
-        return JSONResponse(status_code=400, content={'error': msg or '算力不足或扣费失败'})
+    try:
+        from services.storyboard_agent_cli_service import StoryboardAgentCliService, StoryboardCliError
 
-    # 创建 ai_tools + TasksModel（scheduler 的 generate_video 统一处理所有 ai_tools，含图片）
-    ai_tool_id = await asyncio.to_thread(
-        AIToolsModel.create,
-        prompt=prompt, user_id=user_id, type=task_type, ratio=ratio,
-        transaction_id=transaction_id, status=AI_TOOL_STATUS_PENDING, image_size=image_size,
-    )
-    await asyncio.to_thread(
-        TasksModel.create,
-        task_type=TASK_TYPE_GENERATE_VIDEO, task_id=ai_tool_id, status=TASK_STATUS_QUEUED,
-    )
+        result = await asyncio.to_thread(
+            StoryboardAgentCliService().generate_image,
+            scene_id,
+            user_id,
+            auth_token=_normalize_auth_token(auth_token),
+            mode=data.get('mode') or 'auto',
+            asset_type=asset_type,
+            prompt=data.get('prompt') or None,
+            source_image=data.get('source_image') or None,
+            ratio=data.get('ratio') or (sb.workflow_ratio if sb else None),
+            image_size=data.get('image_size') or None,
+            count=_safe_int(data.get('count'), 1) or 1,
+        )
+    except StoryboardCliError as exc:
+        return JSONResponse(status_code=400, content=exc.to_dict())
 
-    # 插入资产候选并设为当前选中
-    asset_id = await asyncio.to_thread(
-        StoryboardSceneAssetModel.create,
-        scene_id=scene_id, asset_type=asset_type, ai_tool_id=ai_tool_id,
-    )
-    await asyncio.to_thread(StoryboardSceneAssetModel.set_selected, scene_id, asset_type, asset_id)
-    await asyncio.to_thread(StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id)
-
-    return JSONResponse({
-        'success': True,
-        'ai_tool_id': ai_tool_id,
-        'asset_id': asset_id,
-        'asset_type': asset_type,
-        'computing_power': computing_power,
-        'status': 'submitted',
-    })
-
+    return JSONResponse(result)
 
 @router.post('/scene/{scene_id}/generate-video')
 @require_permission("storyboard:generate")
@@ -1203,16 +1583,298 @@ async def generate_dialogue_voiceover(
 async def scene_ai_chat(
     request: Request,
     scene_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """AI 对话改图（占位 — 后续接入 LLM SSE 流）"""
+    """AI 对话改图：启动 storyboard-image 智能体任务。"""
     user_id = get_user_id_from_header(user_id)
     scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
     if err:
         return err
 
-    # TODO: 接入 LLM 对话改图 SSE 流
-    return JSONResponse({'success': False, 'error': 'AI 对话功能尚未实现'})
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    message = str(data.get('message') or '').strip()
+    if not message:
+        return JSONResponse(status_code=400, content={'success': False, 'error': '消息不能为空'})
+    generation_target = str(data.get('generation_target') or 'image').strip().lower()
+    generation_target = 'video' if generation_target == 'video' else 'image'
+
+    model = str(data.get('model') or '').strip()
+    model_id = data.get('model_id')
+    if not model or model_id in (None, ''):
+        return JSONResponse(status_code=400, content={'success': False, 'error': '请先选择对话模型'})
+
+    try:
+        model_id = int(model_id)
+    except (TypeError, ValueError):
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'model_id 必须为数字'})
+
+    vendor_id = data.get('vendor_id') or 1
+    try:
+        vendor_id = int(vendor_id)
+    except (TypeError, ValueError):
+        vendor_id = 1
+    if vendor_id == 1:
+        try:
+            from model.vendor_model import VendorModelModel
+            resolved_vendor_id = await asyncio.to_thread(
+                VendorModelModel.get_vendor_id_by_model_id,
+                model_id,
+            )
+            if resolved_vendor_id:
+                vendor_id = int(resolved_vendor_id)
+        except Exception as e:
+            logger.warning(f"Failed to resolve vendor for storyboard agent model {model_id}: {e}")
+
+    sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
+    first_frame = await _asset_task_info(scene, 'first_frame')
+    first_frame_url = (first_frame or {}).get('result_url')
+
+    image_task_id = data.get('image_task_id')
+    if image_task_id:
+        try:
+            from api.script_writer import set_text_to_image_model_id
+            await asyncio.to_thread(
+                set_text_to_image_model_id,
+                str(user_id),
+                str(sb.world_id if sb else scene.storyboard_id),
+                int(image_task_id),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to sync storyboard image model preference: {e}")
+    video_task_id = data.get('video_task_id')
+    if video_task_id:
+        try:
+            from api.script_writer import set_image_to_video_model_id
+            await asyncio.to_thread(
+                set_image_to_video_model_id,
+                str(user_id),
+                str(sb.world_id if sb else scene.storyboard_id),
+                int(video_task_id),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to sync storyboard video model preference: {e}")
+
+    try:
+        from services.storyboard_agent_cli_service import StoryboardAgentCliService
+        scene_generation_context = await asyncio.to_thread(
+            StoryboardAgentCliService().scene_context,
+            scene_id,
+            user_id,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to build storyboard scene generation context: {e}")
+        scene_generation_context = {}
+
+    reference_images = scene_generation_context.get("reference_images") or ([first_frame_url] if first_frame_url else [])
+    reference_image_items = scene_generation_context.get("reference_image_items") or []
+    selected_first_frame = (
+        (scene_generation_context.get("selected_assets") or {}).get("first_frame") or {}
+    )
+    first_frame_url_for_prompt = selected_first_frame.get("result_url") or first_frame_url
+
+    agent_message = _build_storyboard_agent_message(
+        message,
+        scene,
+        sb,
+        first_frame_url=first_frame_url_for_prompt,
+        reference_images=reference_images,
+        reference_image_items=reference_image_items,
+        generation_target=generation_target,
+    )
+    conversation_history = await asyncio.to_thread(_list_storyboard_agent_messages, scene_id, True)
+    await asyncio.to_thread(
+        _record_storyboard_agent_message,
+        scene_id,
+        "user",
+        message,
+        None,
+        "text",
+        "both",
+        "storyboard_agent_user",
+    )
+    session_id = f"storyboard-{scene_id}-{uuid.uuid4()}"
+    token = _normalize_auth_token(auth_token)
+
+    from api.script_writer import task_manager
+    task_id = await asyncio.to_thread(
+        task_manager.create_task,
+        session_id=session_id,
+        user_message=agent_message,
+        user_id=str(user_id),
+        world_id=str(sb.world_id if sb else scene.storyboard_id),
+        auth_token=token,
+        vendor_id=vendor_id,
+        model_id=model_id,
+        image_urls=reference_images or None,
+        language=data.get('language') or 'zh-CN',
+    )
+    task = await asyncio.to_thread(task_manager.get_task, task_id)
+    if not task:
+        return JSONResponse(status_code=500, content={'success': False, 'error': '智能体任务创建失败'})
+
+    runner = StoryboardImageAgentRunner(
+        scene_id=scene_id,
+        scene_context=agent_message,
+        conversation_history=conversation_history,
+        generation_target=generation_target,
+    )
+    task_manager.start_task(task, runner, {
+        'user_id': str(user_id),
+        'world_id': str(sb.world_id if sb else scene.storyboard_id),
+        'session_id': session_id,
+    })
+
+    return JSONResponse({
+        'success': True,
+        'task_id': task_id,
+        'session_id': session_id,
+        'stream_url': f'/api/storyboard/agent-task/{task_id}/stream',
+    })
+
+
+@router.get('/scene/{scene_id}/ai-chat/history')
+@require_permission("storyboard:view")
+async def get_scene_ai_chat_history(
+    request: Request,
+    scene_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """Return persisted storyboard agent chat messages for the current scene."""
+    user_id = get_user_id_from_header(user_id)
+    _scene, err = await _ensure_scene_access(scene_id, user_id, Action.VIEW)
+    if err:
+        return err
+
+    messages = await asyncio.to_thread(_list_storyboard_agent_messages, scene_id, False)
+    return JSONResponse({'success': True, 'messages': messages})
+
+
+def _format_sse_event(data: dict, event_id: Optional[int] = None) -> str:
+    lines = []
+    if event_id is not None:
+        lines.append(f"id: {event_id}")
+    lines.append(f"data: {json.dumps(data, ensure_ascii=False)}")
+    return "\n".join(lines) + "\n\n"
+
+
+@router.get('/agent-task/{task_id}/stream')
+@require_permission("agent_task:stream")
+async def stream_storyboard_agent_task(request: Request, task_id: str):
+    """SSE stream for storyboard image agent task."""
+    from model.agent_task_messages import AgentTaskMessagesModel
+    from model.agent_tasks import AgentTasksModel
+
+    async def event_generator():
+        last_message_id = 0
+        try:
+            raw_last_id = request.headers.get("last-event-id") or request.query_params.get("last_id")
+            if raw_last_id:
+                last_message_id = int(raw_last_id)
+        except (TypeError, ValueError):
+            last_message_id = 0
+
+        yield _format_sse_event({'type': 'connected', 'task_id': task_id})
+
+        while True:
+            messages = []
+            try:
+                messages = await asyncio.to_thread(
+                    AgentTaskMessagesModel.get_messages_after,
+                    task_id,
+                    last_message_id,
+                    50,
+                )
+            except Exception as e:
+                logger.error(f"Failed to load storyboard agent messages: {e}")
+
+            for msg in messages:
+                item = msg.to_dict()
+                last_message_id = max(last_message_id, int(item.get('id') or 0))
+                yield _format_sse_event(item, event_id=item.get('id'))
+                if item.get('type') in ('done', 'error'):
+                    return
+
+            if not messages:
+                try:
+                    db_task = await asyncio.to_thread(AgentTasksModel.get_by_task_id, task_id)
+                    if db_task and db_task.status in ['completed', 'failed', 'cancelled']:
+                        yield _format_sse_event({'type': 'done', 'status': db_task.status})
+                        return
+                except Exception as e:
+                    logger.error(f"Failed to check storyboard agent task status: {e}")
+                await asyncio.sleep(0.3)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post('/scene/{scene_id}/bind-agent-image-task')
+@require_permission("storyboard:generate")
+async def bind_agent_image_task(
+    request: Request,
+    scene_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """Bind agent-submitted ai_tools project_ids to current storyboard scene assets."""
+    user_id = get_user_id_from_header(user_id)
+    scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
+    if err:
+        return err
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    project_ids = data.get('project_ids') or []
+    asset_type = data.get('asset_type') or 'first_frame'
+    if asset_type not in VALID_ASSET_TYPES:
+        return JSONResponse(status_code=400, content={'success': False, 'error': 'asset_type 必须为 first_frame/last_frame/video'})
+    if not isinstance(project_ids, list):
+        project_ids = [project_ids]
+
+    asset_ids = []
+    for project_id in project_ids:
+        try:
+            ai_tool_id = int(project_id)
+        except (TypeError, ValueError):
+            continue
+        asset_id = await asyncio.to_thread(
+            StoryboardSceneAssetModel.create,
+            scene_id=scene_id,
+            asset_type=asset_type,
+            ai_tool_id=ai_tool_id,
+        )
+        asset_ids.append(asset_id)
+
+    if not asset_ids:
+        return JSONResponse(status_code=400, content={'success': False, 'error': '未提供有效 project_ids'})
+
+    await asyncio.to_thread(
+        StoryboardSceneAssetModel.set_selected,
+        scene_id,
+        asset_type,
+        asset_ids[0],
+    )
+    await asyncio.to_thread(StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id)
+
+    return JSONResponse({
+        'success': True,
+        'asset_type': asset_type,
+        'asset_ids': asset_ids,
+        'selected_asset_id': asset_ids[0],
+    })
 
 
 @router.get('/scene/{scene_id}/task-status')
@@ -1264,41 +1926,6 @@ async def get_scene_task_status(
         'last_frame': last_frame,
         'video': video,
         'dialogues': voice_items,
-    })
-
-
-@router.get('/models')
-@require_permission("storyboard:view")
-async def get_storyboard_models(
-    request: Request,
-    user_id: Optional[int] = Header(None, alias="X-User-Id"),
-):
-    """
-    返回图片 / 图生视频 / 数字人模型列表，供前端模型选择。
-    生成接口接收 task_type（= 此处的 task_id）覆盖默认模型。
-    """
-    user_id = get_user_id_from_header(user_id)
-
-    def _list(category):
-        configs = UnifiedConfigRegistry.get_by_category(category)
-        return [
-            {
-                'task_id': c.id,
-                'key': c.key,
-                'name': c.name,
-                'computing_power': c.get_computing_power() if c.computing_power else 0,
-                'supported_durations': c.supported_durations or [],
-                'default_duration': c.default_duration,
-                'supported_ratios': c.supported_ratios or [],
-            }
-            for c in configs if c.enabled and not c.hidden
-        ]
-
-    return JSONResponse({
-        'success': True,
-        'image_models': _list(TaskCategory.TEXT_TO_IMAGE),
-        'video_models': _list(TaskCategory.IMAGE_TO_VIDEO),
-        'digital_human_models': _list(TaskCategory.DIGITAL_HUMAN),
     })
 
 
@@ -1457,6 +2084,7 @@ async def list_scene_assets(
     assets = await asyncio.to_thread(
         StoryboardSceneAssetModel.list_by_scene, scene_id, asset_type
     )
+    assets = await asyncio.to_thread(_enrich_scene_asset_result_urls, assets)
     return JSONResponse({
         'success': True,
         'selected': {
@@ -1533,7 +2161,7 @@ async def select_dialogue_audio(
 
 # ==================== 导出操作（占位） ====================
 
-@router.post('/{storyboard_id}/export-full-video')
+@router.post('/{storyboard_id:int}/export-full-video')
 @require_permission("storyboard:export")
 async def export_full_video(
     request: Request,
@@ -1552,7 +2180,7 @@ async def export_full_video(
     return JSONResponse({'success': False, 'error': '完整视频导出功能尚未实现'})
 
 
-@router.post('/{storyboard_id}/export-all-scenes')
+@router.post('/{storyboard_id:int}/export-all-scenes')
 @require_permission("storyboard:export")
 async def export_all_scenes(
     request: Request,

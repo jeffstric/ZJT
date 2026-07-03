@@ -2711,6 +2711,7 @@
             if (scriptId) params.set('script_id', scriptId);
             if (USER_ID) params.set('user_id', USER_ID);
             if (WORKFLOW_ID) params.set('workflow_id', WORKFLOW_ID);
+            // 注意：不再把 auth_token 放到 URL 中（避免敏感信息暴露），storyboard 会从 localStorage 读取（参考本文件实现）
             window.location.href = `/storyboard?${params.toString()}`;
         }
 
@@ -5991,6 +5992,7 @@
             if (scriptId) params.set('script_id', scriptId);
             if (USER_ID) params.set('user_id', USER_ID);
             if (WORKFLOW_ID) params.set('workflow_id', WORKFLOW_ID);
+            // 注意：不再把 auth_token 放到 URL 中（避免敏感信息暴露），storyboard 会从 localStorage 读取（参考本文件实现）
             window.location.href = `/storyboard?${params.toString()}`;
         }
 

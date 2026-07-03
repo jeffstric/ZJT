@@ -81,4 +81,8 @@ def test_storyboard_frontend_exposes_generate_from_script_flow():
     assert "maybePromptGenerateFromScript" in bootstrap_js
     assert "generateFromScript" in api_js
     assert "showGenerateFromScriptDialog" in render_js
+    assert 'data-config-select="scriptSplit"' in render_js
     assert "generate-from-script-confirm" in events_js
+    assert "resolveSelectedScriptSplitLlmModel" in events_js
+    assert "model_id: splitModel.model_id" in events_js
+    assert "vendor_id: splitModel.vendor_id" in events_js

@@ -13,6 +13,7 @@ from .storyboard_scene import (
 from .storyboard_dialogue import StoryboardDialogue, StoryboardDialogueModel
 from .storyboard_dialogue_audio import StoryboardDialogueAudio, StoryboardDialogueAudioModel
 from .storyboard_scene_asset import StoryboardSceneAsset, StoryboardSceneAssetModel
+from .world import WorldModel
 from config.constant import Edition
 from config.unified_config import SceneVideoType
 import logging
@@ -94,6 +95,18 @@ class StoryboardModel:
         config_json: Optional[Dict] = None,
         version: int = 1,
     ) -> int:
+        # 初始化画风和构图倾向：参考 video_workflow，从 world 继承（如果未提供）
+        if not style or not composition_preference:
+            try:
+                world = WorldModel.get_by_id(world_id)
+                if world:
+                    if not style and hasattr(world, 'visual_style'):
+                        style = world.visual_style
+                    if not composition_preference and hasattr(world, 'composition_preference'):
+                        composition_preference = world.composition_preference
+            except Exception:
+                pass
+
         sql = """
             INSERT INTO storyboard
             (version, world_id, user_id, episode_number, workflow_id, script_id, title,
@@ -299,6 +312,18 @@ class StoryboardModel:
                 'dialogues': [{'character_id': int|None, 'text': str, 'speed': float, 'volume': int}, ...]
             }
         """
+        # 初始化画风和构图倾向：如果未提供，从 world 继承（参考 video_workflow 逻辑）
+        if not style or not composition_preference:
+            try:
+                world = WorldModel.get_by_id(world_id)
+                if world:
+                    if not style and hasattr(world, 'visual_style'):
+                        style = world.visual_style
+                    if not composition_preference and hasattr(world, 'composition_preference'):
+                        composition_preference = world.composition_preference
+            except Exception:
+                pass
+
         config_str = json.dumps(config_json) if config_json else None
 
         insert_sb_sql = """

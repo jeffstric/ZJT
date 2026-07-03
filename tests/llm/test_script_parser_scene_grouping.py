@@ -101,3 +101,11 @@ def test_prompt_contains_non_conflicting_storyboard_design_rules():
     assert "动作-反应结构" in parser_source
     assert "短镜优先并入同一场景或同一幕内的相邻镜头" in parser_source
     assert "短镜必须跨场景" not in parser_source
+
+
+def test_prompt_requires_prop_marker_distinct_from_character_marker():
+    parser_source = SCRIPT_PARSER_PATH.read_text(encoding="utf-8")
+
+    assert "道具名称必须用〖〖道具名〗〗格式包裹" in parser_source
+    assert "角色名称必须用【【角色名】】格式包裹" in parser_source
+    assert "〖〖公文包〗〗【【德保罗】】" in parser_source
