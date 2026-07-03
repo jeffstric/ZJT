@@ -8,6 +8,7 @@ from config.config_util import get_config, get_dynamic_config_value
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
 from utils.runninghub_error import is_upstream_congested_error
+from .exceptions import ImageExpiredError
 
 
 class Ltx2RunninghubV1Driver(BaseVideoDriver):
@@ -194,7 +195,8 @@ class Ltx2RunninghubV1Driver(BaseVideoDriver):
                 image_path = result.url if result.url else result.key
                 self.logger.info(f"图片上传完成，使用 URL: {image_path}")
             else:
-                self.logger.warning(f"图片上传失败: {result.error}")
+                # 上传失败直接报错，不再静默用原始过期 URL 导致下游 401 假象
+                raise RuntimeError(f"图片上传到 RunningHub 失败: {result.error}")
 
         # Build node info list for LTX2.0 v2
         node_info_list = [
@@ -369,6 +371,16 @@ class Ltx2RunninghubV1Driver(BaseVideoDriver):
             return {
                 "success": True,
                 "project_id": task_id
+            }
+
+        except ImageExpiredError as e:
+            # 第三方图床签名过期，无法恢复：友好提示用户重新上传
+            self.logger.warning(f"输入图片已过期: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "USER",
+                "retry": False
             }
 
         except Exception as e:
