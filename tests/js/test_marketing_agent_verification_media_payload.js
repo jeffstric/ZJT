@@ -2,8 +2,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const html = fs.readFileSync(
-  path.join(__dirname, '../../web/marketing_agent.html'),
+const marketingAgentJs = fs.readFileSync(
+  path.join(__dirname, '../../web/js/marketing_agent.js'),
   'utf8'
 );
 const api = fs.readFileSync(
@@ -11,11 +11,11 @@ const api = fs.readFileSync(
   'utf8'
 );
 
-const functionStart = html.indexOf('async function submitVerificationAnswer');
+const functionStart = marketingAgentJs.indexOf('async function submitVerificationAnswer');
 assert.notEqual(functionStart, -1, 'submitVerificationAnswer should exist');
-const functionEnd = html.indexOf('// 新建对话', functionStart);
+const functionEnd = marketingAgentJs.indexOf('function newChat', functionStart);
 assert.notEqual(functionEnd, -1, 'submitVerificationAnswer block should be bounded');
-const block = html.slice(functionStart, functionEnd);
+const block = marketingAgentJs.slice(functionStart, functionEnd);
 
 [
   'image_urls',

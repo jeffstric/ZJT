@@ -511,7 +511,7 @@
             }
 
 
-            const selectedDuration = ref(5);
+            const selectedDuration = ref('auto');
             const videoImageMode = ref('first_last_frame'); // 'first_last_frame' | 'multi_reference'
 
             // 参考图状态（全能参考模式使用）
@@ -656,15 +656,39 @@
 
             // 当前视频时长选项（根据选中模型动态计算，videoModelConfigs 使用简短 key）
             const currentDurationOptions = Vue.computed(() => {
-                if (!isVideoMode.value || !selectedModelKey.value) return [3, 5, 8, 10, 15];
+                if (!isVideoMode.value || !selectedModelKey.value) return ['auto', 3, 5, 8, 10, 15];
                 const model = currentModels.value.find(m => m.key === selectedModelKey.value);
                 const shortKey = model ? model.value : '';
                 const config = shortKey ? videoModelConfigs.value[shortKey] : null;
                 if (config && config.durations && config.durations.length > 0) {
-                    return config.durations;
+                    return ['auto', ...config.durations];
                 }
-                return [3, 5, 8, 10, 15];
+                return ['auto', 3, 5, 8, 10, 15];
             });
+
+            function getCurrentVideoModelConfig() {
+                if (!selectedModelKey.value) return null;
+                const model = currentModels.value.find(m => m.key === selectedModelKey.value);
+                const shortKey = model ? model.value : '';
+                return shortKey ? videoModelConfigs.value[shortKey] : null;
+            }
+
+            function getMaxSupportedDuration(config) {
+                const durations = (config?.durations || []).filter(d => typeof d === 'number');
+                return durations.length > 0 ? Math.max(...durations) : 15;
+            }
+
+            function resolveSelectedDurationForSubmission() {
+                if (selectedDuration.value === 'auto') {
+                    return getMaxSupportedDuration(getCurrentVideoModelConfig());
+                }
+                return selectedDuration.value;
+            }
+
+            function formatDurationOption(duration) {
+                if (duration === 'auto') return window.t ? window.t('duration_auto') : 'Auto';
+                return window.t ? window.t('duration_seconds', { dur: duration }) : `${duration}s`;
+            }
 
             // 是否显示参考图上传（全能参考模式下）
             const showAddSubject = Vue.computed(() => {
@@ -731,7 +755,7 @@
                     }
 
                     return window.TaskConfig?.getComputingPower
-                        ? window.TaskConfig.getComputingPower(shortKey, selectedDuration.value, context)
+                        ? window.TaskConfig.getComputingPower(shortKey, resolveSelectedDurationForSubmission(), context)
                         : 0;
                 }
 
@@ -1032,6 +1056,31 @@
                 return mediaItems.value
                     .filter(m => m.serverUrl || m.previewUrl)
                     .map(m => ({ type: m.type, url: m.serverUrl || m.previewUrl, thumbnailUrl: m.thumbnailUrl }));
+            }
+
+            function collectAgentMediaPayload(currentMessageMedia = collectCurrentMessageMedia()) {
+                const imageUrls = [];
+                const thumbnailUrls = [];
+                const videoUrls = [];
+                const audioUrls = [];
+
+                currentMessageMedia.forEach(media => {
+                    if (media.type === 'image' && isHttpUrl(media.url) && !imageUrls.includes(media.url)) {
+                        imageUrls.push(media.url);
+                        thumbnailUrls.push(isHttpUrl(media.thumbnailUrl) ? media.thumbnailUrl : media.url);
+                    } else if (media.type === 'video' && isHttpUrl(media.url) && !videoUrls.includes(media.url)) {
+                        videoUrls.push(media.url);
+                    } else if (media.type === 'audio' && isHttpUrl(media.url) && !audioUrls.includes(media.url)) {
+                        audioUrls.push(media.url);
+                    }
+                });
+
+                return {
+                    image_urls: imageUrls,
+                    thumbnail_urls: thumbnailUrls,
+                    video_urls: videoUrls,
+                    audio_urls: audioUrls
+                };
             }
 
             function getMediaPreviewLabel(type, count) {
@@ -2377,7 +2426,7 @@
                     form.append('user_id', userId.value);
                     form.append('auth_token', authToken.value);
                     form.append('ratio', selectedRatio.value);
-                    form.append('duration_seconds', String(selectedDuration.value));
+                    form.append('duration_seconds', String(resolveSelectedDurationForSubmission()));
                     form.append('count', '1');
                     const videoResolution = ensureSelectedVideoResolution();
                     if (videoResolution) {
@@ -2610,6 +2659,36 @@
             }
 
             // 调用 API 发送消息
+            function buildAgentVideoPreferences(validImageUrls) {
+                const useImageToVideo = Array.isArray(validImageUrls) && validImageUrls.length > 0;
+                const category = validImageUrls.length > 0 ? 'image_to_video' : 'text_to_video';
+                const list = useImageToVideo ? allImageToVideoModels.value : allTextToVideoModels.value;
+                const savedModelName = localStorage.getItem(useImageToVideo ? 'marketing_selected_i2v_model' : 'marketing_selected_t2v_model');
+                const canUseModel = (model) => {
+                    if (!model || !model.key) return false;
+                    if (!window.TaskConfig?.getTaskIdByKey) return true;
+                    return !!window.TaskConfig.getTaskIdByKey(model.key, category);
+                };
+                const model = list.find(item => item.key === selectedVideoModelKey.value && canUseModel(item))
+                    || (savedModelName && list.find(item => item.name === savedModelName && canUseModel(item)))
+                    || list.find(canUseModel)
+                    || list[0];
+                const taskKey = model?.key || selectedVideoModelKey.value;
+                const taskId = window.TaskConfig?.getTaskIdByKey
+                    ? window.TaskConfig.getTaskIdByKey(taskKey, category)
+                    : undefined;
+                ensureSelectedVideoResolution();
+
+                return {
+                    ratio: selectedRatio.value,
+                    duration: selectedDuration.value,
+                    resolution: selectedVideoResolution.value || undefined,
+                    image_mode: videoImageMode.value,
+                    model_name: model?.name || selectedVideoModelName.value || savedModelName || undefined,
+                    task_id: taskId || undefined
+                };
+            }
+
             async function sendMessageToApi(text) {
                 isLoading.value = true;
                 const sessionId = currentSessionId.value;
@@ -2733,18 +2812,7 @@
                             vendor_id: selectedLLMModel.value ? (selectedLLMModel.value.vendor_id || 1) : 1,
                             language: localStorage.getItem('zjt_locale') || 'zh-CN',
                             image_preferences: imagePreferences,
-                            video_preferences: (isAgentMode && mediaType.value === 'video') ? {
-                                ratio: selectedRatio.value,
-                                duration: selectedDuration.value,
-                                resolution: ensureSelectedVideoResolution() || undefined,
-                                image_mode: videoImageMode.value,
-                                model_name: selectedVideoModelName.value || undefined,
-                                task_id: window.TaskConfig?.getTaskIdByKey
-                                    ? (window.TaskConfig.getTaskIdByKey(
-                                        selectedVideoModelKey.value,
-                                        hasUploadedImage.value ? 'image_to_video' : 'text_to_video'))
-                                    : undefined
-                            } : undefined
+                            video_preferences: isAgentMode ? buildAgentVideoPreferences(validImageUrls) : undefined
                         }),
                         signal: controller.signal
                     });
@@ -3155,10 +3223,14 @@
             // 提交验证回答
             async function submitVerificationAnswer(verificationId, userInput) {
                 try {
+                    const currentMessageMedia = selectedType.value === 'agent' ? collectCurrentMessageMedia() : [];
+                    const mediaPayload = collectAgentMediaPayload(currentMessageMedia);
+                    const userContent = buildUserMessageContent(userInput);
+
                     // 显示用户回答
                     messages.value.push({
                         role: 'user',
-                        content: userInput,
+                        content: userContent,
                         timestamp: new Date().toISOString()
                     });
 
@@ -3170,7 +3242,11 @@
                         },
                         body: JSON.stringify({
                             approved: true,
-                            user_input: userInput
+                            user_input: userInput,
+                            image_urls: mediaPayload.image_urls.length > 0 ? mediaPayload.image_urls : undefined,
+                            video_urls: mediaPayload.video_urls.length > 0 ? mediaPayload.video_urls : undefined,
+                            audio_urls: mediaPayload.audio_urls.length > 0 ? mediaPayload.audio_urls : undefined,
+                            thumbnail_urls: mediaPayload.thumbnail_urls.length > 0 ? mediaPayload.thumbnail_urls : undefined
                         })
                     });
 
@@ -3947,9 +4023,13 @@
                 // 通用参数：视频时长
                 const durationParam = getUrlParam('duration');
                 if (durationParam) {
-                    const dur = parseInt(durationParam);
-                    if (!isNaN(dur) && dur > 0) {
-                        selectedDuration.value = dur;
+                    if (durationParam === 'auto') {
+                        selectedDuration.value = 'auto';
+                    } else {
+                        const dur = parseInt(durationParam);
+                        if (!isNaN(dur) && dur > 0) {
+                            selectedDuration.value = dur;
+                        }
                     }
                 }
 
@@ -4360,7 +4440,7 @@
                     const shortKey = model ? model.value : '';
                     const config = shortKey ? videoModelConfigs.value[shortKey] : null;
                     if (config && config.durations && config.durations.length > 0) {
-                        if (!config.durations.includes(selectedDuration.value)) {
+                        if (selectedDuration.value !== 'auto' && !config.durations.includes(selectedDuration.value)) {
                             selectedDuration.value = config.default_duration || config.durations[0];
                         }
                     }
@@ -6063,7 +6143,7 @@
                 const shortKey = model ? model.value : '';
                 const config = shortKey ? videoModelConfigs.value[shortKey] : null;
                 if (config && config.durations && config.durations.length > 0) {
-                    if (!config.durations.includes(selectedDuration.value)) {
+                    if (selectedDuration.value !== 'auto' && !config.durations.includes(selectedDuration.value)) {
                         selectedDuration.value = config.default_duration || config.durations[0];
                     }
                 }
@@ -6231,6 +6311,7 @@
                 videoStatus,
                 videoResults,
                 selectedDuration,
+                formatDurationOption,
                 sendVideoRequest,
                 startVideoStatusCheck,
                 clearVideoStatusCheck,
