@@ -2840,6 +2840,9 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                     pass
             if v_model_display:
                 v_pref_parts.append(f"视频模型: {v_model_display}")
+            # 人脸处理开关（让智能体感知：仅当开启时才在视频克隆提示词追加「黑框还原真人人脸」）
+            if v_prefs.get('enable_face_mask'):
+                v_pref_parts.append("人脸处理: 已开启")
             if v_pref_parts:
                 user_message += f"\n\n[用户视频偏好] {', '.join(v_pref_parts)}"
 

@@ -54,6 +54,8 @@
             // 专用视频模型状态（独立于图片模型的 selectedModelKey）
             const selectedVideoModelKey = ref('');
             const selectedVideoModelName = ref('');
+            // 是否处理人脸（仅 seedance2.0 系列商业版生效，默认不勾选）
+            const processFace = ref(false);
             // 图生视频模型偏好（页面加载时预取，上传图片后使用）
             const savedImg2VidModelKey = ref('');
             const savedImg2VidModelName = ref('');
@@ -599,6 +601,16 @@
             const isVideoMode = Vue.computed(() => {
                 return selectedType.value === 'video' ||
                        (selectedType.value === 'agent' && mediaType.value === 'video');
+            });
+
+            // 当前所选视频模型是否走人脸遮盖预处理（seedance2.0 系列），用于显隐「是否处理人脸」
+            const currentVideoModelNeedsFaceMask = Vue.computed(() => {
+                if (!isVideoMode.value) return false;
+                const shortKey = selectedModelKey.value
+                    ? selectedModelKey.value.split('_image_to_video')[0].split('_text_to_video')[0]
+                    : '';
+                const config = shortKey ? videoModelConfigs.value[shortKey] : null;
+                return config?.needs_face_mask === true;
             });
 
             const selectedModel = Vue.computed({
@@ -2512,6 +2524,10 @@
                         }
                         form.append('task_id', taskId);
                         apiUrl = '/api/ai-app-run-image';
+                        // 是否处理人脸（仅 seedance2.0 商业版生效）
+                        if (processFace.value) {
+                            form.append('enable_face_mask', 'true');
+                        }
                     } else {
                         // 文生视频
                         const taskId = window.TaskConfig?.getTaskIdByKey
@@ -2685,7 +2701,9 @@
                     resolution: selectedVideoResolution.value || undefined,
                     image_mode: videoImageMode.value,
                     model_name: model?.name || selectedVideoModelName.value || savedModelName || undefined,
-                    task_id: taskId || undefined
+                    task_id: taskId || undefined,
+                    // 是否处理人脸（仅图生视频 + seedance2.0 商业版生效）
+                    enable_face_mask: useImageToVideo && processFace.value === true
                 };
             }
 
@@ -6313,6 +6331,9 @@
                 selectedDuration,
                 formatDurationOption,
                 sendVideoRequest,
+                processFace,
+                currentVideoModelNeedsFaceMask,
+                isEnterprise,
                 startVideoStatusCheck,
                 clearVideoStatusCheck,
                 videoImageMode,

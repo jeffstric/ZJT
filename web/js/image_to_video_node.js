@@ -31,6 +31,7 @@
           motionEnabled: opts?.data?.motionEnabled || false,
           motion: opts?.data?.motion || '',
           imageMode: opts?.data?.imageMode || 'first_last_frame',  // first_last_frame | multi_reference
+          processFace: opts?.data?.processFace ?? false,  // 是否处理人脸（仅 seedance2.0 商业版生效）
           startFile: null,
           endFile: null,
           startPreview: opts?.data?.startPreview || '',
@@ -151,6 +152,13 @@
               <div class="field field-collapsible video-resolution-field" style="display:none;">
                 <div class="label" data-i18n="video_resolution">${window.t ? window.t('video_resolution') : '分辨率'}</div>
                 <select class="video-resolution-select"></select>
+              </div>
+              <div class="field field-collapsible process-face-field" style="display:none;">
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; cursor: pointer;">
+                  <input type="checkbox" class="process-face-checkbox" style="cursor: pointer;" />
+                  <span data-i18n="process_face_label">${window.t ? window.t('process_face_label') : '是否处理人脸'}</span>
+                </label>
+                <div class="process-face-hint" style="margin-top: 4px; font-size: 11px; color: #d97706; display: none;" data-i18n="process_face_community_hint">${window.t ? window.t('process_face_community_hint') : '此功能为商业版功能，请联系购买商业版本后使用'}</div>
               </div>
               <div class="field field-collapsible">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -720,6 +728,7 @@
       if(window.TaskConfig) {
         window.TaskConfig.onLoaded(() => {
           updateRefImagesLabel();
+          updateProcessFaceVisibility();
         });
       }
       
@@ -947,6 +956,30 @@
         }
       }
       
+      // 初始化「是否处理人脸」字段可见性（仅 seedance2.0 系列显示；社区版置灰提示）
+      function updateProcessFaceVisibility() {
+        const faceField = el.querySelector('.process-face-field');
+        if(!faceField) return;
+        const videoModel = videoModelSelect.value || node.data.videoModel || '';
+        const hintEl = el.querySelector('.process-face-hint');
+        const checkboxEl = el.querySelector('.process-face-checkbox');
+        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          const modelConfig = window.TaskConfig.getModelConfigs()[videoModel];
+          const needsFaceMask = modelConfig && modelConfig.needs_face_mask === true;
+          faceField.style.display = needsFaceMask ? '' : 'none';
+          if(needsFaceMask) {
+            const isEnterprise = window.TaskConfig.isEnterprise();
+            if(checkboxEl) {
+              checkboxEl.checked = !!node.data.processFace;
+              checkboxEl.disabled = !isEnterprise;
+            }
+            if(hintEl) hintEl.style.display = isEnterprise ? 'none' : 'block';
+          }
+        } else {
+          faceField.style.display = 'none';
+        }
+      }
+
       videoModelSelect.value = node.data.videoModel;
       // 应用驱动状态禁用未配置的选项
       applyDriverStatusToSelect(videoModelSelect);
@@ -954,6 +987,7 @@
       updateDurationOptions(node.data.videoModel);
       updateRatioOptions(node.data.videoModel);
       updateResolutionOptions(node.data.videoModel);
+      updateProcessFaceVisibility();
       
       videoModelSelect.addEventListener('change', () => {
         node.data.videoModel = videoModelSelect.value;
@@ -963,6 +997,8 @@
         updateResolutionOptions(videoModelSelect.value);
         // 更新图片模式UI（如尾帧是否支持）
         updateImageModeUI();
+        // 更新「是否处理人脸」显隐
+        updateProcessFaceVisibility();
         // 更新算力显示
         updateComputingPowerDisplay();
       });
@@ -1050,6 +1086,15 @@
         resolutionSelect.addEventListener('change', () => {
           node.data.videoResolution = resolutionSelect.value;
           updateComputingPowerDisplay();
+        });
+      }
+
+      // 人脸处理复选框事件
+      const processFaceCheckbox = el.querySelector('.process-face-checkbox');
+      if(processFaceCheckbox) {
+        processFaceCheckbox.addEventListener('change', (e) => {
+          node.data.processFace = !!e.target.checked;
+          safeAutoSave();
         });
       }
 
@@ -1203,7 +1248,7 @@
           if(currentImageMode === 'text_to_video') {
             result = await generateVideoFromText(prompt, duration, desiredCount, ratio, videoModel, node.data.videoResolution);
           } else {
-            result = await generateVideoFromImage(imageUrls, prompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution);
+            result = await generateVideoFromImage(imageUrls, prompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution, node.data.processFace);
           }
           console.log('[DEBUG] API返回:', { projectIds: result.projectIds, count: result.projectIds?.length });
           
