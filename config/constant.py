@@ -25,6 +25,15 @@ from config.unified_config import (
 
 IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
 IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT = 120
+
+# ===== 图片 URL 过期保护（签名 URL 自动刷新/转存）=====
+# 探测只针对「非自有 CDN」的第三方 URL（自有 CDN 走重签名，不探测）。
+# 过期 URL 会立即返回 401（不等超时）；只有「不可达」(DNS/连接失败) 才卡满 connect。
+IMAGE_URL_PROBE_TOTAL_TIMEOUT = 3       # 第三方URL主动探测总超时(秒)，Range GET 1字节
+IMAGE_URL_PROBE_CONNECT_TIMEOUT = 2     # 探测连接超时(秒)：不可达URL在connect阶段快速失败
+IMAGE_URL_PROBE_CONCURRENCY = 5         # A类多图探测并发上限，避免串行累积卡住调度
+IMAGE_URL_REFRESH_SYNC_WRAPPER_TIMEOUT = 200  # 刷新(含探测/重签)同步包装超时
+
 SYNC_TASK_STALE_TIMEOUT_DEFAULT = None
 SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
     DriverImplementation.SEEDREAM5_VOLCENGINE_V1: 180,

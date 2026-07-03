@@ -17,8 +17,11 @@ from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import DriverImplementation
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.network_utils import is_local_file_path
-from utils.image_upload_utils import try_map_url_to_local_file, upload_local_images_to_cdn_sync
+from utils.image_upload_utils import try_map_url_to_local_file, upload_local_images_to_cdn_sync, ensure_fresh_image_url_sync
+from utils.media_mapping_util import extract_local_path_from_url
+from utils.project_path import get_project_root
 from utils.media_cache import get_cache_manager
+from .exceptions import ImageExpiredError
 
 
 class GptImageCommonV1Driver(BaseVideoDriver):
@@ -213,15 +216,21 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         if is_local_file_path(image_path):
             self.logger.info(f"检测到本地文件路径: {image_path}")
             return self._read_local_file_as_base64(image_path)
-        else:
-            # URL，尝试映射到本地文件
-            local_file = try_map_url_to_local_file(image_path, self._config)
-            if local_file:
-                self.logger.info(f"URL映射到本地文件: {image_path} -> {local_file}")
-                return self._read_local_file_as_base64(local_file)
-            else:
-                self.logger.info(f"通过HTTP下载图片: {image_path}")
-                return self._download_image_as_base64(image_path)
+        # URL：先刷新签名(自有CDN重签名/第三方探测)，再尝试本地映射，最后HTTP下载
+        fresh = ensure_fresh_image_url_sync(image_path, self._config)
+        local_file = try_map_url_to_local_file(fresh, self._config)
+        if not local_file:
+            # /upload/ 本地映射兜底（与域名无关）
+            local_rel = extract_local_path_from_url(fresh)
+            if local_rel:
+                candidate = os.path.join(get_project_root(), local_rel)
+                if os.path.exists(candidate):
+                    local_file = candidate
+        if local_file:
+            self.logger.info(f"URL映射到本地文件: {image_path} -> {local_file}")
+            return self._read_local_file_as_base64(local_file)
+        self.logger.info(f"通过HTTP下载图片: {fresh}")
+        return self._download_image_as_base64(fresh)
 
     def _prepare_image_file(self, image_path: str) -> tuple[bytes, str, str]:
         """
@@ -238,20 +247,28 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             actual_path = image_path
             self.logger.info(f"准备上传本地文件: {image_path}")
         else:
-            # URL，尝试映射到本地文件
-            local_file = try_map_url_to_local_file(image_path, self._config)
+            # URL：先刷新签名(自有CDN重签名/第三方探测)，再尝试本地映射
+            fresh = ensure_fresh_image_url_sync(image_path, self._config)
+            local_file = try_map_url_to_local_file(fresh, self._config)
+            if not local_file:
+                # /upload/ 本地映射兜底（与域名无关）
+                local_rel = extract_local_path_from_url(fresh)
+                if local_rel:
+                    candidate = os.path.join(get_project_root(), local_rel)
+                    if os.path.exists(candidate):
+                        local_file = candidate
             if local_file:
                 actual_path = local_file
                 self.logger.info(f"URL映射到本地文件: {image_path} -> {local_file}")
             else:
-                # 下载远程图片
-                self.logger.info(f"下载远程图片用于上传: {image_path}")
-                response = requests.get(image_path, timeout=30)
+                # 下载远程图片（用 fresh URL）
+                self.logger.info(f"下载远程图片用于上传: {fresh}")
+                response = requests.get(fresh, timeout=30)
                 response.raise_for_status()
 
                 # 从 URL 提取文件名
                 from urllib.parse import urlparse
-                parsed = urlparse(image_path)
+                parsed = urlparse(fresh)
                 filename = os.path.basename(parsed.path) or "image.png"
 
                 # 从 Content-Type 获取 MIME 类型
@@ -675,6 +692,16 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 "success": True,
                 "sync_mode": True,
                 "result_url": result_url
+            }
+
+        except ImageExpiredError as e:
+            # 第三方图床签名过期，无法恢复：友好提示用户重新上传
+            self.logger.warning(f"输入图片已过期: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "USER",
+                "retry": False
             }
 
         except Exception as e:

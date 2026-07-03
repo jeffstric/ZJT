@@ -10,6 +10,7 @@ from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
 from utils.image_upload_utils import resolve_url_to_local_file_sync
 from utils.runninghub_error import is_upstream_congested_error
+from .exceptions import ImageExpiredError
 
 
 class Ltx2Dot3RunninghubV1Driver(BaseVideoDriver):
@@ -202,7 +203,9 @@ class Ltx2Dot3RunninghubV1Driver(BaseVideoDriver):
                 image_path = result.url if result.url else result.key
                 self.logger.info(f"图片上传完成，使用 URL: {image_path}")
             else:
-                self.logger.warning(f"图片上传失败: {result.error}")
+                # 上传失败（图片URL不可用 / RunningHub异常）直接报错，
+                # 不再静默用原始过期 URL 导致下游 401 假象
+                raise RuntimeError(f"图片上传到 RunningHub 失败: {result.error}")
 
         # 计算帧数（8的倍数+1）
         duration = ai_tool.duration or 5
@@ -369,6 +372,16 @@ class Ltx2Dot3RunninghubV1Driver(BaseVideoDriver):
             return {
                 "success": True,
                 "project_id": task_id
+            }
+
+        except ImageExpiredError as e:
+            # 第三方图床签名过期，无法恢复：友好提示用户重新上传
+            self.logger.warning(f"输入图片已过期: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "USER",
+                "retry": False
             }
 
         except Exception as e:

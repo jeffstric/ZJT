@@ -65,6 +65,7 @@ class RunningHubFileStorage(BaseFileStorage):
         # 延迟导入避免循环依赖
         from utils.network_utils import is_local_file_path, is_local_or_private_url
         from utils.image_upload_utils import try_map_url_to_local_file
+        from utils.media_mapping_util import extract_local_path_from_url
         from utils.project_path import get_project_path
 
         if is_local_file_path(file_path_or_url):
@@ -87,11 +88,19 @@ class RunningHubFileStorage(BaseFileStorage):
             self._log("warning", f"[图片上传诊断] 本地文件路径不存在: {file_path_or_url}, project_path={project_path}")
             return None
 
-        # URL 类型（局域网或公网）- 先尝试映射到本地文件
+        # URL 类型（局域网或公网）- 先尝试映射到本地文件（域名匹配 server.host）
         local_path = try_map_url_to_local_file(file_path_or_url, self._config)
         if local_path and os.path.exists(local_path):
             self._log("info", f"URL映射到本地文件: {file_path_or_url} -> {local_path}")
             return local_path
+
+        # /upload/ 本地映射兜底（与域名无关，命中本服务文件直接读，绕过URL有效性）
+        local_rel = extract_local_path_from_url(file_path_or_url)
+        if local_rel:
+            candidate = get_project_path(local_rel)
+            if os.path.exists(candidate):
+                self._log("info", f"URL 通过 /upload/ 映射到本地文件: {file_path_or_url} -> {candidate}")
+                return candidate
 
         # 无法映射到本地文件，返回None，由调用方（异步上下文）负责下载
         if is_local_or_private_url(file_path_or_url):
@@ -223,11 +232,14 @@ class RunningHubFileStorage(BaseFileStorage):
         local_file = self._resolve_to_local_file(file_path)
 
         if local_file is None:
-            # 无法映射到本地文件，在异步上下文中下载
-            from utils.image_upload_utils import download_url_to_temp
-            self._log("info", f"下载文件到临时目录后上传到 RunningHub: {file_path}")
+            # 无法映射到本地文件：先确保 URL 新鲜（自有CDN重签名 / 第三方探测），
+            # 再下载。ImageExpiredError（第三方图床已过期）自然向上传播，
+            # 由驱动 submit_task 给出「请重新上传」的友好提示。
+            from utils.image_upload_utils import download_url_to_temp, ensure_fresh_image_url
+            fresh_url = await ensure_fresh_image_url(file_path, self._config, os.getcwd())
+            self._log("info", f"下载文件到临时目录后上传到 RunningHub: {fresh_url[:120]}")
             try:
-                local_file = await download_url_to_temp(file_path, os.getcwd())
+                local_file = await download_url_to_temp(fresh_url, os.getcwd())
             except Exception as e:
                 self._log("error", f"[图片上传诊断] 下载文件异常: {file_path}, error={type(e).__name__}: {e}")
                 return UploadResult(success=False, error=f"下载文件失败: {file_path}")
