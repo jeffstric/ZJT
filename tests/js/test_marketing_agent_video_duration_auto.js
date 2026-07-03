@@ -6,6 +6,10 @@ const html = fs.readFileSync(
   path.join(__dirname, '../../web/marketing_agent.html'),
   'utf8'
 );
+const marketingAgentJs = fs.readFileSync(
+  path.join(__dirname, '../../web/js/marketing_agent.js'),
+  'utf8'
+);
 const zh = fs.readFileSync(
   path.join(__dirname, '../../web/i18n/locales/zh-CN/marketing_agent.json'),
   'utf8'
@@ -16,33 +20,39 @@ const en = fs.readFileSync(
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /const selectedDuration = ref\('auto'\)/,
   'marketing agent should default video duration to auto'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /return \['auto', \.\.\.config\.durations\]/,
   'duration options should prepend auto before model-supported durations'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /function formatDurationOption\(duration\)/,
   'duration labels should format auto separately from seconds'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /function resolveSelectedDurationForSubmission\(\)/,
   'direct video submission should resolve auto to a concrete supported duration'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /form\.append\('duration_seconds', String\(resolveSelectedDurationForSubmission\(\)\)\)/,
   'direct video API calls should not submit the literal auto string as duration_seconds'
+);
+
+assert.match(
+  html,
+  /formatDurationOption\(selectedDuration\)/,
+  'marketing agent duration bar should render auto duration label'
 );
 
 assert.match(

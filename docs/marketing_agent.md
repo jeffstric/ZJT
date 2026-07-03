@@ -279,7 +279,7 @@ Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指�
 
 #### 视频时长
 
-通过 `TaskConfig` 的 `supported_durations` 动态获取，默认选项 `[3, 5, 8, 10, 15]`。
+通过 `TaskConfig` 的 `supported_durations` 动态获取，前端会在模型支持时长前追加 `auto`，默认选择 `auto`。直连视频提交时，`auto` 会解析为当前模型支持的最长时长；Agent 偏好中保留 `duration: "auto"`，表示不把创作意图锁死为固定秒数。
 
 #### 生成方式（videoImageMode）
 
