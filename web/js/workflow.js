@@ -374,6 +374,10 @@
           ratioSelect.value = node.data.ratio;
         }
       }
+
+      if(typeof node.updateResolutionOptions === 'function') {
+        node.updateResolutionOptions(node.data.videoModel);
+      }
     }
 
     // 配置加载完成后，刷新所有已存在图生视频节点的 model/duration/ratio select 选项
@@ -399,7 +403,14 @@
             if(computingPowerValue && computingPowerDetail){
               const videoModel = node.data.videoModel || 'sora2';
               const duration = node.data.videoDuration || 10;
-              const singlePower = calculateVideoGenerationPower(videoModel, duration);
+              const context = {};
+              if(node.data.videoMode) {
+                context.image_mode = node.data.videoMode;
+              }
+              if(node.data.videoResolution) {
+                context.resolution = node.data.videoResolution;
+              }
+              const singlePower = calculateVideoGenerationPower(videoModel, duration, context);
               const count = node.data.videoDrawCount || 1;
               const totalPower = singlePower * count;
               computingPowerValue.textContent = window.t ? window.t('shot_frame_computing_power_value', { power: totalPower }) : `${totalPower} 算力`;

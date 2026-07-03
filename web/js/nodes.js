@@ -3253,6 +3253,7 @@
             shotData: shotDataWithLocation,
             model: shotGroupNode.data.model,
             videoModel: shotGroupNode.data.videoModel,
+            videoResolution: shotGroupNode.data.videoResolution,
             checkCollision: false
           });
           createdNodeIds.push(shotFrameNodeId);
@@ -3789,6 +3790,9 @@
           form.append('count', count);
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', t2vTaskId);
+          if(typeof appendVideoResolutionToForm === 'function') {
+            appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
+          }
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run', { method: 'POST', body: form });
@@ -3807,6 +3811,9 @@
           form.append('count', count);
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', refTaskId);
+          if(typeof appendVideoResolutionToForm === 'function') {
+            appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
+          }
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
@@ -3824,6 +3831,9 @@
           form.append('count', count);
           form.append('ratio', state.ratio || '9:16');
           form.append('task_id', taskId9);
+          if(typeof appendVideoResolutionToForm === 'function') {
+            appendVideoResolutionToForm(form, videoModel || 'wan22', shotGroupNode.data.videoResolution);
+          }
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });

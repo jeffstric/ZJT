@@ -672,9 +672,10 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 
 ## 视频分辨率选择
 
-`web/marketing_agent.html` 在直接“视频生成”模式和 Agent 模式的视频设置区都会根据当前视频模型展示分辨率选项。
+`web/marketing_agent.html` 在直接“视频生成”模式和 Agent 模式的视频设置区都会根据当前视频模型展示分辨率选项；状态、默认值降级和提交逻辑位于 `web/js/marketing_agent.js`。
 
 - 选项来源优先使用 `TaskConfig.getVideoResolutionOptions(selectedModelKey)`，保证 `seedance_2_0_image_to_video`、`seedance_2_0_fast_image_to_video`、`seedance_2_0_mini_image_to_video` 等完整模型 key 能直接读取后端统一配置下发的 `supported_video_resolutions`。
 - 默认值优先使用 `TaskConfig.getDefaultVideoResolution(selectedModelKey)`，无默认值时回退到模型配置缓存里的 `default_video_resolution` 或第一项。
 - 普通“生成视频”底部比例设置面板在视频模式下显示视频分辨率按钮组；图片模式仍显示图片分辨率。提交视频任务时使用 `selectedVideoResolution` 作为 `resolution` 参数。
+- Agent 视频对话任务会把同一分辨率写入 `video_preferences.resolution`，后端视频工具据此透传到实际 `/api/ai-app-run` 或 `/api/ai-app-run-image` 请求。
 - Seedance 2.0 Fast / Mini 展示 `480P`、`720P`；Seedance 2.0 标准版展示 `480P`、`720P`、`1080P`、`4K`，具体支持范围以 `config/unified_config.py` 的实现方配置为准。

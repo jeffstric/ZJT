@@ -50,6 +50,7 @@
             const selectedImageModel = ref('');
             const selectedImageModelKey = ref('');
             const selectedResolution = ref('');
+            const selectedVideoResolution = ref('');
             // 专用视频模型状态（独立于图片模型的 selectedModelKey）
             const selectedVideoModelKey = ref('');
             const selectedVideoModelName = ref('');
@@ -586,6 +587,13 @@
 
             // 当前可选分辨率
             const currentResolutions = Vue.computed(() => availableResolutions.value);
+            const currentVideoResolutionOptions = Vue.computed(() => {
+                if (!isVideoMode.value || !window.TaskConfig || typeof window.TaskConfig.getVideoResolutionOptions !== 'function') {
+                    return [];
+                }
+                const modelValue = getCurrentVideoModelValue();
+                return modelValue ? window.TaskConfig.getVideoResolutionOptions(modelValue) : [];
+            });
 
             // 是否为视频模式
             const isVideoMode = Vue.computed(() => {
@@ -618,6 +626,33 @@
                     }
                 }
             });
+
+            function getCurrentVideoModelValue() {
+                const model = currentModels.value.find(m => m.key === selectedVideoModelKey.value || m.name === selectedVideoModelName.value);
+                return model?.value || selectedVideoModelKey.value || '';
+            }
+
+            function ensureSelectedVideoResolution() {
+                if (!window.TaskConfig || typeof window.TaskConfig.getVideoResolutionOptions !== 'function') {
+                    selectedVideoResolution.value = '';
+                    return '';
+                }
+                const modelValue = getCurrentVideoModelValue();
+                const options = modelValue ? window.TaskConfig.getVideoResolutionOptions(modelValue) : [];
+                if (!options.length) {
+                    selectedVideoResolution.value = '';
+                    return '';
+                }
+                const values = options.map(option => option.value);
+                if (!selectedVideoResolution.value || !values.includes(selectedVideoResolution.value)) {
+                    selectedVideoResolution.value = (
+                        typeof window.TaskConfig.getDefaultVideoResolution === 'function'
+                            ? window.TaskConfig.getDefaultVideoResolution(modelValue)
+                            : null
+                    ) || options[0].value;
+                }
+                return selectedVideoResolution.value;
+            }
 
             // 当前视频时长选项（根据选中模型动态计算，videoModelConfigs 使用简短 key）
             const currentDurationOptions = Vue.computed(() => {
@@ -689,6 +724,10 @@
                         }
                     } else {
                         context.image_mode = videoImageMode.value;
+                    }
+                    const videoResolution = ensureSelectedVideoResolution();
+                    if (videoResolution) {
+                        context.resolution = videoResolution;
                     }
 
                     return window.TaskConfig?.getComputingPower
@@ -2340,6 +2379,10 @@
                     form.append('ratio', selectedRatio.value);
                     form.append('duration_seconds', String(selectedDuration.value));
                     form.append('count', '1');
+                    const videoResolution = ensureSelectedVideoResolution();
+                    if (videoResolution) {
+                        form.append('resolution', videoResolution);
+                    }
 
                     let apiUrl = '';
 
@@ -2693,6 +2736,7 @@
                             video_preferences: (isAgentMode && mediaType.value === 'video') ? {
                                 ratio: selectedRatio.value,
                                 duration: selectedDuration.value,
+                                resolution: ensureSelectedVideoResolution() || undefined,
                                 image_mode: videoImageMode.value,
                                 model_name: selectedVideoModelName.value || undefined,
                                 task_id: window.TaskConfig?.getTaskIdByKey
@@ -4290,21 +4334,25 @@
                     selectedRatio.value = preferredDefaultRatio;
                 }
 
-                // 获取分辨率选项
-                const sizes = window.TaskConfig.getSizeOptions(modelKey);
-                const mappedSizes = sizes.map(s => {
-                    if (s === '1K') return '1K';
-                    if (s === '2K') return window.t('resolution_2k');
-                    if (s === '4K') return window.t('resolution_4k');
-                    return s;
-                });
-                // 在最前面添加 auto 选项
-                availableResolutions.value = ['auto', ...mappedSizes];
-                if (availableResolutions.value.length === 1) {
-                    availableResolutions.value = ['auto', '1K', window.t('resolution_2k')];
-                }
-                if (!availableResolutions.value.includes(selectedResolution.value)) {
-                    selectedResolution.value = 'auto';
+                if (isVideoMode.value) {
+                    ensureSelectedVideoResolution();
+                } else {
+                    // 获取图片分辨率选项
+                    const sizes = window.TaskConfig.getSizeOptions(modelKey);
+                    const mappedSizes = sizes.map(s => {
+                        if (s === '1K') return '1K';
+                        if (s === '2K') return window.t('resolution_2k');
+                        if (s === '4K') return window.t('resolution_4k');
+                        return s;
+                    });
+                    // 在最前面添加 auto 选项
+                    availableResolutions.value = ['auto', ...mappedSizes];
+                    if (availableResolutions.value.length === 1) {
+                        availableResolutions.value = ['auto', '1K', window.t('resolution_2k')];
+                    }
+                    if (!availableResolutions.value.includes(selectedResolution.value)) {
+                        selectedResolution.value = 'auto';
+                    }
                 }
 
                 // 视频模式下更新默认时长（videoModelConfigs 使用简短 key）
@@ -6019,6 +6067,7 @@
                         selectedDuration.value = config.default_duration || config.durations[0];
                     }
                 }
+                ensureSelectedVideoResolution();
                 // 如果不支持尾帧且当前有多张图片，只保留第一张
                 const supportsLastFrame = config?.supports_last_frame !== false;
                 if (!supportsLastFrame) {
@@ -6109,6 +6158,7 @@
                 selectRatio,
                 selectedModel,
                 selectedResolution,
+                selectedVideoResolution,
                 currentModels,
                 selectModel,
                 toggleDropdown,
@@ -6164,6 +6214,7 @@
                 availableResolutions,
                 currentRatios,
                 currentResolutions,
+                currentVideoResolutionOptions,
                 aspectRatioMap,
                 refreshModelSettings,
                 selectedModelKey,

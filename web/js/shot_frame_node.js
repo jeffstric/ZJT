@@ -96,6 +96,7 @@
           videoDrawCount: 1,
           videoDuration: 5,
           videoModel: inheritedVideoModel,
+          videoResolution: opts?.data?.videoResolution || opts?.videoResolution || '',
           videoMode: 'first_last_frame',  // 'first_last_frame' | 'multi_reference'
         }
       };
@@ -215,6 +216,10 @@
                 <div class="label" data-i18n="shot_group_video_model_label">${window.t ? window.t('shot_group_video_model_label') : '视频模型'}</div>
                 <select class="shot-frame-video-model"></select>
               </div>
+              <div class="field field-always-visible shot-frame-video-resolution-field" style="display:none;">
+                <div class="label" data-i18n="video_resolution">${window.t ? window.t('video_resolution') : '分辨率'}</div>
+                <select class="shot-frame-video-resolution-select video-resolution-select"></select>
+              </div>
               <div class="field field-always-visible">
                 <div class="label" data-i18n="shot_frame_video_duration_label">${window.t ? window.t('shot_frame_video_duration_label') : '视频时长'}</div>
                 <select class="shot-frame-video-duration">
@@ -289,6 +294,8 @@
       const firstFramePort = el.querySelector('.first-frame-port');
       const videoDurationEl = el.querySelector('.shot-frame-video-duration');
       const videoModelEl = el.querySelector('.shot-frame-video-model');
+      const resolutionField = el.querySelector('.shot-frame-video-resolution-field');
+      const resolutionSelect = el.querySelector('.shot-frame-video-resolution-select');
       const computingPowerValue = el.querySelector('.shot-frame-computing-power-value');
       const computingPowerDetail = el.querySelector('.shot-frame-computing-power-detail');
       const refSectionEl = el.querySelector('.shot-ref-section');
@@ -480,6 +487,7 @@
 
             // 重新填充视频模型列表
             populateVideoModelOptions();
+            updateResolutionOptions(node.data.videoModel);
             updateModeUI();
             // 触发算力重新计算（通过元素引用，因为函数定义在后面）
             if(el._updateVideoComputingPowerDisplay) {
@@ -492,6 +500,7 @@
         // 监听视频模型变化
         videoModelEl.addEventListener('change', () => {
           node.data.videoModel = videoModelEl.value;
+          updateResolutionOptions(videoModelEl.value);
           updateRefAudioVideoVisibility();
           safeAutoSave()
         });
@@ -1129,6 +1138,38 @@
         node.data.videoModel = 'wan22';
       }
       if(videoModelEl) videoModelEl.value = node.data.videoModel;
+
+      function updateResolutionOptions(videoModel) {
+        if(!resolutionField || !resolutionSelect) return;
+        const options = window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function'
+          ? TaskConfig.getVideoResolutionOptions(videoModel)
+          : [];
+
+        resolutionSelect.innerHTML = '';
+        if(!options.length) {
+          resolutionField.style.display = 'none';
+          node.data.videoResolution = '';
+          return;
+        }
+
+        resolutionField.style.display = '';
+        options.forEach(option => {
+          const optEl = document.createElement('option');
+          optEl.value = option.value;
+          optEl.textContent = option.label || option.value;
+          resolutionSelect.appendChild(optEl);
+        });
+
+        const validValues = options.map(option => option.value);
+        if(!node.data.videoResolution || !validValues.includes(node.data.videoResolution)) {
+          node.data.videoResolution = (
+            typeof TaskConfig.getDefaultVideoResolution === 'function'
+              ? TaskConfig.getDefaultVideoResolution(videoModel)
+              : null
+          ) || options[0].value;
+        }
+        resolutionSelect.value = node.data.videoResolution;
+      }
       
       // 根据模型更新时长选项（使用全局配置）
       function updateVideoDurationOptions(videoModel) {
@@ -1174,6 +1215,7 @@
       
       // 初始化时根据模型设置时长选项
       updateVideoDurationOptions(node.data.videoModel);
+      updateResolutionOptions(node.data.videoModel);
       
       // 设置视频时长选择器的初始值
       if(!node.data.videoDuration){
@@ -1191,8 +1233,16 @@
         const videoModel = node.data.videoModel || 'sora2';
         const duration = node.data.videoDuration || 10;
 
+        const context = {};
+        if(node.data.videoMode) {
+          context.image_mode = node.data.videoMode;
+        }
+        if(node.data.videoResolution) {
+          context.resolution = node.data.videoResolution;
+        }
+
         // 使用 TaskConfig API 动态获取算力（自动支持所有模型）
-        return TaskConfig.getComputingPower(videoModel, duration);
+        return TaskConfig.getComputingPower(videoModel, duration, context);
       }
 
       // 更新视频算力显示
@@ -1449,12 +1499,20 @@
         // 更新算力显示
         updateVideoComputingPowerDisplay();
       });
+
+      if(resolutionSelect) {
+        resolutionSelect.addEventListener('change', () => {
+          node.data.videoResolution = resolutionSelect.value;
+          updateVideoComputingPowerDisplay();
+        });
+      }
       
       // 视频模型选择
       videoModelEl.addEventListener('change', () => {
         node.data.videoModel = videoModelEl.value;
         // 模型改变时更新时长选项
         updateVideoDurationOptions(videoModelEl.value);
+        updateResolutionOptions(videoModelEl.value);
         // 更新算力显示
         updateVideoComputingPowerDisplay();
         // 更新按钮显示状态
@@ -1524,6 +1582,7 @@
       node.updatePreview = updatePreviewImage;
       node.updateModeUI = updateModeUI;
       node.populateVideoModelOptions = populateVideoModelOptions;
+      node.updateShotFrameResolutionOptions = updateResolutionOptions;
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();

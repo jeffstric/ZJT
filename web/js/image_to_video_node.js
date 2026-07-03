@@ -26,6 +26,7 @@
           duration: opts?.data?.duration || 5,
           ratio: opts?.data?.ratio || state.ratio || '16:9',
           videoModel: opts?.data?.videoModel || defaultVideoModel,
+          videoResolution: opts?.data?.videoResolution || opts?.videoResolution || '',
           drawCount: opts?.data?.drawCount || 1,
           motionEnabled: opts?.data?.motionEnabled || false,
           motion: opts?.data?.motion || '',
@@ -147,6 +148,10 @@
                 <div class="label" data-i18n="video_model_label">${window.t ? window.t('video_model_label') : '视频模型'}</div>
                 <select class="video-model-select"></select>
               </div>
+              <div class="field field-collapsible video-resolution-field" style="display:none;">
+                <div class="label" data-i18n="video_resolution">${window.t ? window.t('video_resolution') : '分辨率'}</div>
+                <select class="video-resolution-select"></select>
+              </div>
               <div class="field field-collapsible">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                   <div class="label" style="margin: 0;" data-i18n="prompt_label">${window.t ? window.t('prompt_label') : '提示词'}</div>
@@ -193,6 +198,8 @@
       const durationSelect = el.querySelector('.duration-select');
       const ratioSelect = el.querySelector('.ratio-select');
       const videoModelSelect = el.querySelector('.video-model-select');
+      const resolutionField = el.querySelector('.video-resolution-field');
+      const resolutionSelect = el.querySelector('.video-resolution-select');
       const genBtnMain = el.querySelector('.gen-btn-main');
       const genBtnCaret = el.querySelector('.gen-btn-caret');
       const genMenu = el.querySelector('.gen-menu');
@@ -304,6 +311,40 @@
       populateVideoModelOptions();
       
       // 定义首尾帧字段选择器
+      function updateResolutionOptions(videoModel) {
+        if(!resolutionField || !resolutionSelect) return;
+        const options = window.TaskConfig && typeof TaskConfig.getVideoResolutionOptions === 'function'
+          ? TaskConfig.getVideoResolutionOptions(videoModel)
+          : [];
+
+        resolutionSelect.innerHTML = '';
+        if(!options.length) {
+          resolutionField.style.display = 'none';
+          node.data.videoResolution = '';
+          return;
+        }
+
+        resolutionField.style.display = '';
+        options.forEach(option => {
+          const optEl = document.createElement('option');
+          optEl.value = option.value;
+          optEl.textContent = option.label || option.value;
+          resolutionSelect.appendChild(optEl);
+        });
+
+        const validValues = options.map(option => option.value);
+        if(!node.data.videoResolution || !validValues.includes(node.data.videoResolution)) {
+          node.data.videoResolution = (
+            typeof TaskConfig.getDefaultVideoResolution === 'function'
+              ? TaskConfig.getDefaultVideoResolution(videoModel)
+              : null
+          ) || options[0].value;
+        }
+        resolutionSelect.value = node.data.videoResolution;
+      }
+
+      updateResolutionOptions(node.data.videoModel);
+
       const firstLastFields = el.querySelectorAll('.video-frame-content');
 
       // 图片模式切换逻辑
@@ -489,6 +530,7 @@
         updateImageModeUI();
         // 重新填充视频模型选项（根据新的图片模式筛选）
         populateVideoModelOptions();
+        updateResolutionOptions(node.data.videoModel);
         // 更新时长和比例选项（新模型可能有不同的支持范围）
         updateDurationOptions(node.data.videoModel);
         updateRatioOptions(node.data.videoModel);
@@ -715,6 +757,9 @@
         } else {
           context['image_mode'] = imageMode;
         }
+        if(node.data.videoResolution) {
+          context.resolution = node.data.videoResolution;
+        }
 
         // 使用 TaskConfig API 动态获取算力，并传递context以应用修饰符
         return TaskConfig.getComputingPower(videoModel, duration, context);
@@ -740,6 +785,7 @@
       if(!el._updateComputingPowerDisplay) {
         el._updateComputingPowerDisplay = updateComputingPowerDisplay;
       }
+      node.updateResolutionOptions = updateResolutionOptions;
 
       // 首帧预览更新函数
       function updateStartFrameDisplay(){
@@ -907,12 +953,14 @@
       // 初始化时根据模型设置时长和比例选项
       updateDurationOptions(node.data.videoModel);
       updateRatioOptions(node.data.videoModel);
+      updateResolutionOptions(node.data.videoModel);
       
       videoModelSelect.addEventListener('change', () => {
         node.data.videoModel = videoModelSelect.value;
         // 模型改变时更新时长和比例选项
         updateDurationOptions(videoModelSelect.value);
         updateRatioOptions(videoModelSelect.value);
+        updateResolutionOptions(videoModelSelect.value);
         // 更新图片模式UI（如尾帧是否支持）
         updateImageModeUI();
         // 更新算力显示
@@ -997,6 +1045,13 @@
 
       updateMotionUI();
       */
+
+      if(resolutionSelect) {
+        resolutionSelect.addEventListener('change', () => {
+          node.data.videoResolution = resolutionSelect.value;
+          updateComputingPowerDisplay();
+        });
+      }
 
       function updateGenMeta(){
         { const _t = window.t ? window.t('draw_count_x', { count: node.data.drawCount }) : null; genCountLabel.textContent = (_t && _t !== 'draw_count_x') ? _t : `抽卡次数：X${node.data.drawCount}`; }
@@ -1146,9 +1201,9 @@
           // 调用生成API
           let result;
           if(currentImageMode === 'text_to_video') {
-            result = await generateVideoFromText(prompt, duration, desiredCount, ratio, videoModel);
+            result = await generateVideoFromText(prompt, duration, desiredCount, ratio, videoModel, node.data.videoResolution);
           } else {
-            result = await generateVideoFromImage(imageUrls, prompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences));
+            result = await generateVideoFromImage(imageUrls, prompt, duration, desiredCount, ratio, videoModel, currentImageMode, referenceImages, allAudioUrls.join(','), allVideoUrls.join(','), JSON.stringify(mediaReferences), node.data.videoResolution);
           }
           console.log('[DEBUG] API返回:', { projectIds: result.projectIds, count: result.projectIds?.length });
           
