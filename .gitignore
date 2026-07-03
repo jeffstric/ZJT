@@ -28,6 +28,9 @@ scripts/build_enterprise.py
 # Node modules
 node_modules/
 
+# 前端测试报告（CI artifacts）
+frontend-test-results.xml
+
 # Playwright
 .playwright-mcp/
 playwright-report/
@@ -37,6 +40,4 @@ console-errors.txt
 # E2E tests
 tests/e2e/
 playwright.config.js
-package.json
-package-lock.json
 

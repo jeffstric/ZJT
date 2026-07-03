@@ -29,6 +29,8 @@ class VendorModel:
         self.model_id = model_id
         self.created_at = created_at
         self.input_token_threshold = input_token_threshold
+        # ⚠️ 命名陷阱：数据库列名为 out_token_threshold，Python 属性名为 output_token_threshold
+        # SQL 中需使用 out_token_threshold，Python 中使用 output_token_threshold
         self.output_token_threshold = output_token_threshold
         self.cache_read_threshold = cache_read_threshold
         self.raw_token_threshold = raw_token_threshold

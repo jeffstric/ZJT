@@ -925,6 +925,10 @@ class WorldUpdateRequest(BaseModel):
 class VerificationSubmitRequest(BaseModel):
     approved: bool
     user_input: Optional[str] = None
+    image_urls: Optional[List[str]] = None
+    video_urls: Optional[List[str]] = None
+    audio_urls: Optional[List[str]] = None
+    thumbnail_urls: Optional[List[str]] = None
 
 class SessionHistoryUpdateRequest(BaseModel):
     messages: List[Dict[str, Any]]
@@ -2787,9 +2791,10 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             if pref_parts:
                 user_message += f"\n\n[用户图片偏好] {', '.join(pref_parts)}"
 
-        # 如果有视频偏好，保存到内存并追加到用户消息中
-        if task_request.video_preferences:
-            v_prefs = task_request.video_preferences
+        # 如果有视频偏好，保存到内存并追加到用户消息中；旧客户端未传时回退到历史偏好。
+        effective_video_preferences = task_request.video_preferences or get_video_preferences(user_id, world_id)
+        if effective_video_preferences:
+            v_prefs = dict(effective_video_preferences)
 
             # 如果前端传递了 task_id（视频模型选择），同步到模型偏好
             v_task_id = v_prefs.get('task_id')
@@ -2815,9 +2820,14 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             if v_prefs.get('ratio'):
                 v_pref_parts.append(f"视频比例: {v_prefs['ratio']}")
             if v_prefs.get('duration'):
-                v_pref_parts.append(f"视频时长: {v_prefs['duration']}秒")
+                if str(v_prefs.get('duration')).lower() == 'auto':
+                    v_pref_parts.append("视频时长: auto（模型自动/优先最长）")
+                else:
+                    v_pref_parts.append(f"视频时长: {v_prefs['duration']}秒")
             if v_prefs.get('image_mode'):
                 v_pref_parts.append(f"图片模式: {v_prefs['image_mode']}")
+            if v_prefs.get('resolution'):
+                v_pref_parts.append(f"视频分辨率: {v_prefs['resolution']}")
             # 添加视频模型名称（优先从前端传入，其次从 task_id 解析）
             v_model_display = v_prefs.get('model_name')
             if not v_model_display and v_task_id:
@@ -3080,7 +3090,11 @@ async def submit_verification(request: Request, verification_id: str, verify_req
 
         result = {
             "action": "confirm" if verify_request.approved else "cancel",
-            "user_input": verify_request.user_input
+            "user_input": verify_request.user_input,
+            "image_urls": verify_request.image_urls,
+            "video_urls": verify_request.video_urls,
+            "audio_urls": verify_request.audio_urls,
+            "thumbnail_urls": verify_request.thumbnail_urls,
         }
         success = task_manager.submit_verification(
             verification_id=verification_id,
@@ -3103,13 +3117,48 @@ async def submit_verification(request: Request, verification_id: str, verify_req
                     'status': db_verification.status if db_verification else 'not_found'
                 }, status_code=404)
 
+        # 将 verification 回答中的媒体合并到当前任务，确保等待中的 PM/专家能看到真实 URL
+        db_verification = task_manager.get_verification(verification_id)
+        if db_verification and (verify_request.image_urls or verify_request.video_urls or verify_request.audio_urls):
+            try:
+                from model.agent_tasks import AgentTasksModel
+                task_entity = await asyncio.to_thread(
+                    AgentTasksModel.get_by_task_id, db_verification.task_id
+                )
+                if task_entity:
+                    def _merge_urls(existing, incoming):
+                        merged = list(existing or [])
+                        for url in incoming or []:
+                            if isinstance(url, str) and url and url not in merged:
+                                merged.append(url)
+                        return merged or None
+
+                    merged_image_urls = _merge_urls(task_entity.image_urls, verify_request.image_urls)
+                    merged_video_urls = _merge_urls(task_entity.video_urls, verify_request.video_urls)
+                    merged_audio_urls = _merge_urls(task_entity.audio_urls, verify_request.audio_urls)
+                    await asyncio.to_thread(
+                        AgentTasksModel.update_media_urls,
+                        db_verification.task_id,
+                        merged_image_urls,
+                        merged_video_urls,
+                        merged_audio_urls,
+                    )
+                    task_manager.merge_task_media(
+                        db_verification.task_id,
+                        image_urls=verify_request.image_urls,
+                        video_urls=verify_request.video_urls,
+                        audio_urls=verify_request.audio_urls,
+                        thumbnail_urls=verify_request.thumbnail_urls,
+                    )
+            except Exception as e:
+                logger.error(f"Failed to merge verification media into task: {e}")
+
         # 将 verification_answer 写入 chat_messages
         if verify_request.user_input:
             try:
                 from script_writer_core.conversation_recorder import ConversationRecorder
                 recorder = ConversationRecorder()
                 # 从 verification 获取 session_id（通过 task_id 关联 agent_tasks 表）
-                db_verification = task_manager.get_verification(verification_id)
                 session_id_for_msg = None
                 if db_verification:
                     from model.agent_tasks import AgentTasksModel
@@ -3119,14 +3168,21 @@ async def submit_verification(request: Request, verification_id: str, verify_req
                     if task_entity:
                         session_id_for_msg = task_entity.session_id
                 if session_id_for_msg:
+                    persisted_verification_answer = build_agent_user_message_with_media(
+                        user_message=verify_request.user_input,
+                        image_urls=verify_request.image_urls,
+                        video_urls=verify_request.video_urls,
+                        audio_urls=verify_request.audio_urls,
+                        thumbnail_urls=verify_request.thumbnail_urls,
+                    )
                     await asyncio.to_thread(
                         recorder.append_message,
                         session_id=session_id_for_msg,
                         role="user",
-                        content={"text": verify_request.user_input},
+                        content={"text": persisted_verification_answer},
                         message_type="verification_answer",
                         verification_id=verification_id,
-                        idempotency_key=f"verification:{verification_id}:answer:{recorder._content_hash({'text': verify_request.user_input})}",
+                        idempotency_key=f"verification:{verification_id}:answer:{recorder._content_hash({'text': persisted_verification_answer})}",
                         visibility="both",
                         source="verification",
                         agent_scope="pm",

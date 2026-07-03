@@ -266,6 +266,12 @@ class VideoDriverFactory:
         """
         获取实现方名称和驱动参数（考虑用户偏好）
 
+        ⚠️ 三层回退策略：
+          1. 用户偏好（需同时通过 _is_driver_available 和 _is_impl_enabled 检查）
+          2. 按 sort_order 排序的第一个可用实现方
+          3. 配置文件中的默认实现方
+        注意：用户偏好不能绕过 admin 禁用（_is_impl_enabled 检查）
+
         Args:
             task_type: 任务类型
             user_id: 用户ID

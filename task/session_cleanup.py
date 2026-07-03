@@ -73,9 +73,11 @@ def _cleanup_orphan_marketing_images():
     """
     清理孤立的营销图片目录
 
+    ⚠️ 代码重复警告：此函数与 _cleanup_orphan_marketing_videos / _cleanup_orphan_marketing_audios
+    逻辑几乎完全相同，仅 base_dir 路径不同。维护时需同步修改三处。
+
     扫描 upload/marketing/pic/ 目录下的所有子目录（即 session_id 目录），
     如果对应的 session 在数据库中不存在，则删除该目录。
-    用于清理历史遗留的孤立数据。
     """
     app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     base_dir = os.path.join(app_dir, _MARKETING_PIC_RELATIVE_DIR)

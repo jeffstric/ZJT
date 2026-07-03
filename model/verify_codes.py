@@ -19,6 +19,8 @@ class VerifyCode:
         self.email = kwargs.get('email')
         self.identifier_type = kwargs.get('identifier_type', 'phone')
         self.code = kwargs.get('code')
+        # ⚠️ 命名不一致：数据库列名为 `type`，Python 属性名为 `code_type`
+        # 优先从 'type' 键读取（数据库查询结果），其次从 'code_type' 键读取（直接构造）
         self.code_type = kwargs.get('type') or kwargs.get('code_type', 'register')
         self.expire_time = kwargs.get('expire_time')
         self.used = kwargs.get('used', False)

@@ -172,14 +172,19 @@
       state.payBtn.textContent = '正在拉起支付...';
     }
 
+    function escapeHtml(value) {
+      if (value === null || value === undefined) return '';
+      return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
     function renderSummary() {
       const pkgName = decodeURIComponent(state.params.get('package_name') || '算力套餐');
       const price = Number(state.params.get('price') || 0).toFixed(2);
       const computing = state.params.get('computing_power') || '--';
       state.summary.innerHTML = `
-        <div><span class="label">套餐</span><span class="value">${pkgName}</span></div>
-        <div><span class="label">价格</span><span class="value">¥ ${price}</span></div>
-        <div><span class="label">算力</span><span class="value">${computing}</span></div>
+        <div><span class="label">套餐</span><span class="value">${escapeHtml(pkgName)}</span></div>
+        <div><span class="label">价格</span><span class="value">¥ ${escapeHtml(price)}</span></div>
+        <div><span class="label">算力</span><span class="value">${escapeHtml(computing)}</span></div>
       `;
     }
 
@@ -201,7 +206,18 @@
       const packageId = state.params.get('package_id');
       const userId = state.params.get('user_id');
       const authToken = decodeURIComponent(state.params.get('auth_token') || '');
-      state.redirectUrl = decodeURIComponent(state.params.get('redirect_url') || '') || window.location.origin;
+      // 验证 redirect_url 是否为同源地址，防止开放重定向
+      const rawRedirect = decodeURIComponent(state.params.get('redirect_url') || '');
+      if (rawRedirect) {
+        try {
+          const redirectOrigin = new URL(rawRedirect, window.location.origin).origin;
+          state.redirectUrl = redirectOrigin === window.location.origin ? rawRedirect : window.location.origin;
+        } catch (e) {
+          state.redirectUrl = window.location.origin;
+        }
+      } else {
+        state.redirectUrl = window.location.origin;
+      }
 
       if (!packageId || !userId || !authToken) {
         showError('参数缺失，请返回重新选择套餐');

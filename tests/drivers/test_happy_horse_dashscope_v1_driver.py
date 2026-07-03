@@ -222,6 +222,15 @@ class TestParseExtraParams(unittest.TestCase):
         self.assertEqual(result['resolution'], '720P')
         self.assertFalse(result['watermark'])
 
+    def test_video_resolution_preferred_over_legacy_resolution(self):
+        """优先使用 video_resolution，兼容旧 resolution 字段"""
+        ai_tool = _make_ai_tool(extra_config={
+            'resolution': '720P',
+            'video_resolution': '1080P',
+        })
+        result = self.driver._parse_extra_params(ai_tool)
+        self.assertEqual(result['resolution'], '1080P')
+
     def test_invalid_resolution_ignored(self):
         """无效的 resolution 值被忽略，使用默认值"""
         ai_tool = _make_ai_tool(extra_config={'resolution': '4K'})

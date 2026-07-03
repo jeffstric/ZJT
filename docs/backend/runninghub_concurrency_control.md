@@ -201,18 +201,48 @@ if is_runninghub and task.status == 0:
 
 ### 错误处理
 
-#### TASK_QUEUE_MAXED 错误
+#### 上游并发超限错误（api queue limit reached / TASK_QUEUE_MAXED）
 
-即使有槽位控制，RunningHub 服务端仍可能返回 `TASK_QUEUE_MAXED` 错误（例如服务端队列已满）。处理方式：
+**根因**：当多个系统共用同一个 RunningHub API Key 时，本地 `runninghub_slots` 槽位表只统计**本系统**占用的并发，无法感知其他系统在跑的任务，于是本地"还有空槽"、上游账号实际并发已满 → RunningHub 服务端返回 `api queue limit reached, please retry later` / `TASK_QUEUE_MAXED` 等错误。这类错误本质是**临时性拥堵**。
+
+即使有本地槽位控制，这类上游拥堵错误仍可能发生。处理方式：**识别为可重试错误，自动延迟重试，而非直接判失败、退算力**。
+
+##### 1. 错误识别（utils/runninghub_error.py）
+
+通过 RunningHub 响应的 `errorCode` 精确识别：当 `errorCode == '421'`（错误码常量见 `config/constant.py: RUNNINGHUB_QUEUE_LIMIT_ERROR_CODE`）时判定为上游拥堵。识别仅依据 `errorCode`，与 `errorMessage` 文本无关：
 
 ```python
-if error_msg == "TASK_QUEUE_MAXED":
-    logger.warning(f"RunningHub queue maxed for task {task_id}, will retry later")
-    # 延迟60秒后重试，不增加重试计数
-    next_trigger = datetime.now() + timedelta(seconds=60)
-    TasksModel.update_by_task_id(task_id, next_trigger=next_trigger)
-    return True  # 返回True避免增加重试计数
+from utils.runninghub_error import is_upstream_congested_error
+
+if error_code or error_message:
+    if is_upstream_congested_error(error_code):
+        # 命中 → 返回自动重试标记（不判失败）
+        return self._build_upstream_congested_result()
+        # => {"success": False, "retry": True, "retry_reason": "UPSTREAM_CONGESTED", ...}
 ```
+
+所有 RunningHub 视频驱动（ltx2.3 / ltx2 / wan22 / digital_human / digital_human_ltx2_3_voice / qwen_multi_angle）和异步驱动均接入该识别。
+
+##### 2. 视频任务（tasks 表）—— 不消耗重试次数的延迟重试
+
+`task/visual_task.py: _submit_new_task_with_driver` 检测到 `retry_reason=UPSTREAM_CONGESTED` 时：释放本地槽位 → 状态回 `QUEUED` → 设置 `next_trigger` 延迟 → 返回 True（外层 `process_task_with_retry` 因此**不增加 try_count**、不退算力、不切换实现方）。延迟到期后任务重新进入调度，重新获取槽位并提交，上游恢复即成功。靠 `_check_task_expiration`（`task_expire_days`）兜底防止无限重试。
+
+```python
+if result.get("retry") and result.get("retry_reason") == "UPSTREAM_CONGESTED" \
+        and ai_tool_type in RUNNINGHUB_TASK_TYPES:
+    RunningHubSlotsModel.release_slot(rh_task.id, source=RunningHubSlot.SOURCE_TASK)
+    delay = get_dynamic_config_value("runninghub", "upstream_congest_retry_delay",
+                                     default=RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT)
+    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_QUEUED,
+                                 next_trigger=datetime.now() + timedelta(seconds=delay))
+    return True  # 返回 True → 外层不增加 try_count
+```
+
+##### 3. 异步任务（async_tasks 表）—— 指数退避重试
+
+`task/async_drivers/base_async_driver.py` 检测到上游拥堵时：释放槽位 → `AsyncTasksModel.schedule_retry()` 安排重试（复用与本地槽位满相同的指数退避：30s→60s→120s→300s→300s，受 `max_retries` 限制），不标记 FAILED。
+
+**效果**：用户看到的不再是"生成失败"，而是任务自动排队重试，上游通常几十秒内恢复即可成功提交。
 
 ## API 说明
 
@@ -392,9 +422,10 @@ print(f"Cleaned {cleaned_count} stale slots")
    - 位置：`process_task_with_retry` 函数中的 `delay_seconds = 30`
    - 建议：根据任务处理速度调整，太短会频繁查询，太长会影响响应速度
 
-4. **TASK_QUEUE_MAXED 重试延迟**：默认60秒
-   - 位置：`_submit_new_task` 函数中的 `timedelta(seconds=60)`
-   - 建议：根据 RunningHub 服务端队列恢复速度调整
+4. **上游拥堵自动重试延迟**：默认30秒
+   - 动态配置项：`runninghub.upstream_congest_retry_delay`（秒，可热更新）
+   - 作用：检测到上游并发超限（api queue limit reached / TASK_QUEUE_MAXED 等）时，视频任务的延迟重试间隔；异步任务沿用既有指数退避（30s→60s→120s→300s→300s）
+   - 识别依据：RunningHub 响应 `errorCode == '421'`（常量 `config/constant.py: RUNNINGHUB_QUEUE_LIMIT_ERROR_CODE`），命中即触发自动重试而非直接判失败
 
 5. **调度间隔**：默认11秒
    - 位置：`task/scheduler.py` 中的 `IntervalTrigger(seconds=11)`

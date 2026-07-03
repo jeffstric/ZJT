@@ -5,5 +5,7 @@
 4. 涉及到video_workflow.html 工作流相关改动时，注意工作流有重新加载功能，新建的节点需要考虑重新加载后复原。
 5. 后端代码中所有的常量都位于 config/constant.py 和 config/unified_config.py 中，请你注意参考，必要时新增。
 6. 系统需要兼容windows\linux\macos 三种系统，注意路径以及字符集编码问题。
-7. 新建表或者修改表结构,请你同步更新下 alembic/versions, 新建迁移脚本，并更新对应model的表sql
+7. 新建表或者修改表结构,请你同步更新下 alembic/versions, 新建迁移脚本，并更新对应model目录下的具体模型文件末尾sql内容。
 8. 数据库表名类似 user_token, 常见字段 create_at, update_at
+9. 【超时红线·进程池/线程池】所有 `concurrent.futures.Future.result()` 调用必须显式指定 `timeout=` 参数，禁止无超时等待；任何 `ProcessPoolExecutor` / `ThreadPoolExecutor` 提交后必须在 future 层包超时保护（超时常量统一在 `config/constant.py` 维护）。违例由 CI `scripts/lint_blocking_calls.py` R4 拦截。
+10. 【超时红线·同步包装异步】用 `ThreadPoolExecutor.submit(asyncio.run, coro)` 跨事件循环包装时，**禁止用 `with ThreadPoolExecutor()` 上下文管理器**（with 退出会触发 `shutdown(wait=True)`，使 `.result(timeout=)` 假超时；调用线程仍卡死）。必须用模块级长寿 executor。`asyncio.wait_for(coro, timeout=)` 包装时，被包装 coroutine 必须用 `try/finally` 清理临时文件/资源。违例由 CI R6 拦截.

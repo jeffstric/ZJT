@@ -140,7 +140,7 @@ function generatePortsHtml(ports) {
   return ports.map(function(port) {
     var dir = port.direction;
     var extraClass = port.cssClass ? ' ' + port.cssClass : '';
-    var title = port.title || '';
+    var title = escapeHtml(port.title || '');
     var i18nAttr = port.titleI18nKey
       ? ' data-i18n="' + port.titleI18nKey + ':title"'
       : '';

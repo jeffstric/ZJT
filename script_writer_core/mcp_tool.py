@@ -40,13 +40,12 @@ def log_skill_interaction(message: str, data: Any = None):
     else:
         logger.info(message)
 
-# 全局技能加载器实例
+# ⚠️ 全局可变单例：延迟初始化，由 get_skill_loader() / get_file_manager() 按需创建
+# _get_text_to_image_model_id_func 和 _get_image_preferences_func 由 script_writer_api.py 启动时注入
+# 初始化顺序：script_writer_api.py → 注入函数引用 → mcp_tool 函数才能正常工作
 _skill_loader = None
-# 全局文件管理器实例
 _file_manager = None
-# 获取生图模型 task_id 的函数引用（由 script_writer_api.py 设置）
 _get_text_to_image_model_id_func = None
-# 获取用户图片偏好的函数引用（由 script_writer_api.py 设置）
 _get_image_preferences_func = None
 # 获取用户视频偏好的函数引用（由 script_writer_api.py 设置）
 _get_video_preferences_func = None
@@ -364,10 +363,14 @@ def get_file_manager() -> FileManager:
 def get_task_status(user_id: str, world_id: str, auth_token: str, item_type: int, item_name: str) -> Dict[str, Any]:
     """
     查询指定项目的任务状态
-    
+
     **重要限制**: 此函数仅支持单个图片生成任务（generate_text_to_image）的状态查询。
     不适用于多宫格图片生成任务（generate_4grid_character_images、generate_4grid_location_images、generate_4grid_prop_images）。
     请勿对多宫格生成任务调用此函数。
+
+    ⚠️ 与 check_image_status 的区别：
+      - get_task_status: 按 item_type + item_name 查询，适用于剧本创作场景（角色/场景/道具）
+      - check_image_status: 按 project_id 查询，适用于营销等通用生图场景
     
     Args:
         user_id: 用户ID（必填）
@@ -649,6 +652,7 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                 result_data = {'project_ids': [generate_mock_project_id()]}
                 logger.info(f"[MOCK] mcp_tool image_edit short-circuit pid={result_data['project_ids'][0]}")
             else:
+                # ⚠️ verify=False 禁用 SSL 证书验证，因为 ComfyUI 可能使用自签名证书
                 response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
                 response.raise_for_status()
                 result_data = response.json()
@@ -840,11 +844,13 @@ def validate_image_url(url: str, field_name: str = "reference_image") -> Dict[st
 
 
 def create_character_json(user_id: str, world_id: str, auth_token: str, name: str, age: str = None, identity: str = None,
-                         appearance: str = None, personality: str = None, behavior: str = None, 
-                         other_info: str = None, reference_image: str = None, 
+                         appearance: str = None, personality: str = None, behavior: str = None,
+                         other_info: str = None, reference_image: str = None,
                          _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的角色JSON文件 - MCP工具函数
+    ⚠️ _temp_filename 参数名以下划线开头，但它是公开参数（可由调用方传入）
+    命名约定：下划线前缀表示"内部使用"，但 MCP 工具函数的参数会暴露给 LLM，所以用下划线隐藏此参数
     
     Args:
         user_id: 用户ID（必填）
@@ -3331,7 +3337,9 @@ def list_script_jsons(user_id: str, world_id: str, auth_token: str) -> Dict[str,
 def skill(SkillName: str) -> Dict[str, Any]:
     """
     调用指定技能获取详细指导和提示词 - MCP工具函数
-    
+    ⚠️ 参数名 SkillName 使用大写开头，因为这是 MCP 工具函数，参数名会暴露给 LLM，大写更易读
+    ⚠️ 此函数签名与其他 mcp_tool 函数不同（无 user_id/world_id/auth_token），因为它不依赖用户上下文
+
     Args:
         SkillName: 技能名称
         

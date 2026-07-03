@@ -1,5 +1,11 @@
 """
 Implementation Power Config Model - 实现方算力配置（支持管理员热更新）
+
+⚠️ 与 implementation_power_config.py 的关系：
+  - 两个文件操作同一张表 implementation_power_config
+  - 本文件（implementation_power.py）：功能更完整，包含热更新、批量操作、驱动映射等高级功能
+  - implementation_power_config.py：基础 CRUD 操作，TABLE_NAME 常量定义
+  - 新功能建议优先在本文件中扩展
 """
 import logging
 from typing import Dict, Any, List, Optional, Union

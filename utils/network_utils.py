@@ -1,5 +1,11 @@
 """
 网络相关工具函数
+
+【函数族选择指南】
+  is_private_ip(host)         → 判断 host 是否为私有/回环 IP（127.x, 10.x, 192.168.x 等）
+  is_local_or_private_url(url)→ 判断 URL 是否指向本地或私有网络（解析 URL 后调用 is_private_ip）
+  is_local_file_path(path)    → 判断路径是否为本地文件路径（file:// 或绝对路径）
+  is_local_path(path)         → 判断路径是否为本地路径（file:// 或非 http/https 开头）
 """
 from urllib.parse import urlparse
 

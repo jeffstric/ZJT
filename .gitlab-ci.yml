@@ -12,6 +12,7 @@
 # =============================================================================
 
 stages:
+  - lint
   - test
 
 # 变量配置
@@ -33,6 +34,19 @@ variables:
   PYTHONUNBUFFERED: "1"
   PYTHONDONTWRITEBYTECODE: "1"
   PYTHONUTF8: "1"
+
+# =============================================================================
+# 阻塞调用 lint job
+# =============================================================================
+lint:blocking_calls:
+  stage: lint
+  # 走 daocloud 加速镜像，避免直连 registry-1.docker.io 网络超时（与 unit_tests job 保持一致）
+  image: m.daocloud.io/docker.io/library/python:3.10-slim
+  script:
+    - python scripts/lint_blocking_calls.py --allow-file scripts/lint_blocking_calls_allowlist.txt
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
 
 # =============================================================================
 # 单元测试 job
@@ -196,4 +210,45 @@ unit_tests:
   rules:
     - if: $CI_COMMIT_BRANCH
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# =============================================================================
+# 前端 JS 单元测试 job（Vitest）
+# =============================================================================
+frontend_tests:
+  stage: test
+
+  # 不依赖 DinD，直接在 node 镜像里跑，比后端 unit_tests 轻量很多
+  image: m.daocloud.io/docker.io/library/node:20-slim
+
+  # npm 缓存，加速后续构建
+  cache:
+    key:
+      files:
+        - package-lock.json
+      prefix: npm-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .npm/
+    policy: pull-push
+
+  before_script:
+    - npm config set cache .npm
+    - npm ci --no-audit --no-fund
+
+  script:
+    - npm run test:ci
+
+  artifacts:
+    when: always
+    paths:
+      - frontend-test-results.xml
+    reports:
+      junit: frontend-test-results.xml
+    expire_in: 7 days
+
+  tags:
+    - docker
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
 

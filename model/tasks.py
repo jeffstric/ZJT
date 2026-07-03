@@ -1,5 +1,11 @@
 """
-Tasks Model - Database operations for tasks table
+Tasks Model - ComfyUI 视频/图片生成任务调度队列
+
+⚠️ 与其他任务表的区别（易混淆，修改前请确认目标表）：
+  - tasks: 本表，ComfyUI 视频/图片生成轮询队列，task_id 为 int（指向 ai_tools.id）
+  - agent_tasks: Agent 对话任务（跨进程共享），task_id 为 UUID 字符串
+  - async_tasks: 外部服务异步任务（RunningHub 等），有 implementation 字段
+  - grid_image_tasks: 宫格生图专用轮询，有 CANCELLED/DOWNLOAD_FAILED 状态
 """
 from typing import List, Optional, Dict, Any
 from .database import execute_query, execute_update, execute_insert
@@ -13,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class Task:
-    """Task model class"""
+    """ComfyUI 任务调度队列记录（非通用任务模型）"""
     
     def __init__(self, **kwargs):
         self.id = kwargs.get('id')

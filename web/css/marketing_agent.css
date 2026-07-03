@@ -991,10 +991,6 @@ body {
   animation: spin 0.8s linear infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 /* ========== 错误提示 ========== */
 .error-toast {
   position: fixed;
@@ -1155,17 +1151,6 @@ body {
 /* 大面板弹窗 */
 .marketing-panel {
   animation: fadeInUp 0.15s ease;
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 /* 禁用按钮 tooltip */
@@ -1378,16 +1363,6 @@ body {
   height: 85vh;
 }
 
-@keyframes modalSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(-20px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
 
 .modal-header {
   display: flex;
@@ -1458,6 +1433,17 @@ body {
   background: var(--border-light);
 }
 
+.modal-action-btn.danger {
+  background: transparent;
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+.modal-action-btn.danger:hover {
+  background: #ef4444;
+  color: white;
+}
+
 /* 充值套餐项 */
 .package-item {
   padding: 16px;
@@ -1498,11 +1484,37 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
 .feedback-fab:hover {
   transform: scale(1.1);
   box-shadow: 0 6px 20px rgba(0, 168, 230, 0.45);
+}
+
+.feedback-fab-close {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: #ef4444;
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.4);
+  transition: all 0.2s ease;
+  z-index: 1;
+}
+
+.feedback-fab-close:hover {
+  transform: scale(1.15);
+  background: #dc2626;
 }
 
 /* ========== 联系我们弹窗内容 ========== */

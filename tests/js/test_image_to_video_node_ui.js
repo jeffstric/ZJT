@@ -2,14 +2,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const nodesJs = fs.readFileSync(path.join(__dirname, '../../web/js/nodes.js'), 'utf8');
+const imageToVideoNodeJs = fs.readFileSync(path.join(__dirname, '../../web/js/image_to_video_node.js'), 'utf8');
 const eventsJs = fs.readFileSync(path.join(__dirname, '../../web/js/events.js'), 'utf8');
 
-const imageToVideoStart = nodesJs.indexOf('function createImageToVideoNode(opts)');
+const imageToVideoStart = imageToVideoNodeJs.indexOf('function createImageToVideoNode(opts)');
 assert.notEqual(imageToVideoStart, -1, 'image_to_video node factory should exist');
-const imageToVideoHeaderEnd = nodesJs.indexOf('const headerEl = el.querySelector', imageToVideoStart);
+const imageToVideoHeaderEnd = imageToVideoNodeJs.indexOf('const headerEl = el.querySelector', imageToVideoStart);
 assert.notEqual(imageToVideoHeaderEnd, -1, 'image_to_video node DOM query block should exist');
-const imageToVideoMarkup = nodesJs.slice(imageToVideoStart, imageToVideoHeaderEnd);
+const imageToVideoMarkup = imageToVideoNodeJs.slice(imageToVideoStart, imageToVideoHeaderEnd);
 
 assert.match(
   imageToVideoMarkup,

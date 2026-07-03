@@ -1,3 +1,9 @@
+"""
+⚠️ 旧版通义千问客户端（遗留代码）：
+  - 本文件是早期独立实现，每次调用都创建新的 OpenAI 客户端，且使用静态配置（启动时读取）
+  - 新版推荐使用 aliyun_openai_client.py（AliyunOpenAIClient），支持动态刷新配置
+  - 本文件目前仍被部分旧代码引用，新功能请勿使用此文件
+"""
 from openai import OpenAI
 from config.config_util import get_config_value
 

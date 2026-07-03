@@ -373,21 +373,24 @@ class TestBuildCreateRequest(unittest.TestCase):
         image_node = next(n for n in node_list if n['fieldName'] == 'image')
         self.assertEqual(image_node['fieldValue'], 'storage_key_123')
 
-    def test_request_upload_failure_uses_original_path(self):
-        """上传失败时仍使用原始路径"""
+    def test_request_upload_failure_raises_error(self):
+        """上传失败时直接抛 RuntimeError，不再静默用原始过期 URL 导致下游 401 假象。
+
+        依据 docs/backend/image_url_expiry_refresh.md「RunningHub 静默降级 bug 修复」：
+        RunningHub upload_file 失败时若继续把原始（可能已过期的签名）URL 透传给下游，
+        会触发下游 401 假象，故改为分层失败——非图片过期的其他上传失败 raise
+        RuntimeError，交由 submit_task 归类为 SYSTEM 错误。
+        """
         tool = _make_ai_tool(extra_config='{"horizontal_angle": 0, "vertical_angle": 0, "zoom": 5.0}')
 
         upload_result = MagicMock()
         upload_result.success = False
         upload_result.error = 'Upload failed'
         self.driver._storage.upload_file = AsyncMock(return_value=upload_result)
-        self.driver._get_image_dimensions_from_url = MagicMock(return_value=None)
 
-        result = self._run_async(self.driver.build_create_request(tool))
-
-        node_list = result['json']['nodeInfoList']
-        image_node = next(n for n in node_list if n['fieldName'] == 'image')
-        self.assertEqual(image_node['fieldValue'], 'http://example.com/test.jpg')
+        with self.assertRaises(RuntimeError) as ctx:
+            self._run_async(self.driver.build_create_request(tool))
+        self.assertIn('图片上传到 RunningHub 失败', str(ctx.exception))
 
 
 class TestBuildCheckQuery(unittest.TestCase):

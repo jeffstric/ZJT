@@ -228,12 +228,11 @@ def _apply_mock_angle(task_key: str, comfyui_base_url: str):
 
 def process_location_multi_angle_task(task_key: str) -> Dict[str, Any]:
     """
-    处理单个场景多角度生图任务（非阻塞模式）
+    处理单个场景多角度生图任务（非阻塞状态机模式）
 
-    每次调用只处理一个角度：
-    1. 如果有正在等待的 ai_tool_task_id，检查是否完成
-    2. 如果完成，处理结果并提交下一个角度
-    3. 如果没有正在等待的任务，提交当前角度
+    ⚠️ 重要：此函数是"一次一个角度"的状态机。每次调度器调用只推进一个角度，
+    返回后等待下一次调用（每17秒）。如果 AI 任务还在生成中，返回 waiting=True，
+    调度器会在下一个周期再次调用。此设计避免长时间阻塞调度器线程。
 
     Args:
         task_key: 任务唯一键

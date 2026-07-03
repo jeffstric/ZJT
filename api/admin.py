@@ -15,6 +15,7 @@ from model.computing_power import ComputingPowerModel
 from model.computing_power_log import ComputingPowerLogModel
 from model.video_workflow import VideoWorkflowModel
 from model.ai_tools import AIToolsModel
+from model.ai_tools_log import AIToolsLogModel
 from model.implementation_attempts import ImplementationAttemptModel
 from config.unified_config import UnifiedConfigRegistry, IMPLEMENTATION_FROM_ID
 from model.system_config import SystemConfigModel
@@ -261,6 +262,56 @@ async def admin_model_analysis(
         raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD")
     except Exception as e:
         logger.error(f"Failed to get model analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ai-tools/timeline")
+async def admin_ai_tools_timeline(
+    ai_tool_id: Optional[int] = Query(None, description="ai_tools.id"),
+    project_id: Optional[str] = Query(None, description="上游任务ID（Duomi 等）"),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    管理员查看某任务的事件时间线（用于排查任务耗时/卡点/轮询节奏）
+    支持按 ai_tool_id 或 project_id 查询，不限用户。
+    """
+    await require_admin(auth_token)
+
+    if not ai_tool_id and not project_id:
+        raise HTTPException(status_code=400, detail="需要提供 ai_tool_id 或 project_id")
+
+    try:
+        if project_id:
+            logs = await asyncio.to_thread(AIToolsLogModel.list_by_project_id, project_id)
+        else:
+            logs = await asyncio.to_thread(AIToolsLogModel.list_by_ai_tool, ai_tool_id)
+
+        # 尽量补全 ai_tool_id / project_id 便于前端展示
+        resolved_ai_tool_id = ai_tool_id
+        resolved_project_id = project_id
+        record_status = None
+        if logs:
+            resolved_ai_tool_id = resolved_ai_tool_id or logs[0].ai_tool_id
+            resolved_project_id = resolved_project_id or logs[0].project_id
+        if resolved_ai_tool_id:
+            rec = AIToolsModel.get_by_id(resolved_ai_tool_id)
+            if rec:
+                record_status = rec.status
+                resolved_project_id = resolved_project_id or rec.project_id
+
+        return {
+            'success': True,
+            'data': {
+                'ai_tool_id': resolved_ai_tool_id,
+                'project_id': resolved_project_id,
+                'status': record_status,
+                'timeline': [log.to_dict() for log in logs]
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get ai_tools timeline: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -369,6 +369,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         self.add_to_history("assistant", history_entry)
 
         deferred_user_inputs = []
+        # ⚠️ deferred 机制：多模态图片和用户输入延迟到所有 tool_calls 执行完毕后才注入历史
+        # 这样可以确保 tool 消息的顺序正确（所有 tool 结果 → 多模态图片 → 用户输入）
         deferred_multimodal_content = []  # fetch_image_as_base64 成功时注入的多模态图片
 
         for tool_call in tool_calls:
@@ -706,7 +708,9 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         return False, ""
 
     def _request_graceful_shutdown(self, reason: str, state: LoopState) -> None:
-        """请求优雅收尾：向对话历史注入收尾指令，给 LLM 最后机会做总结"""
+        """请求优雅收尾：向对话历史注入收尾指令，给 LLM 最后机会做总结
+        ⚠️ 实现方式：注入一条伪造的 "user" 消息，LLM 会在下一轮回复中做总结
+        """
         if state.graceful_shutdown_requested:
             return
 

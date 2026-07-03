@@ -144,6 +144,9 @@ async function generateShotFrameVideo(nodeId, node){
     form.append('count', count);
     if(userId) form.append('user_id', userId);
     if(authToken) form.append('auth_token', authToken);
+    if(typeof appendVideoResolutionToForm === 'function') {
+      appendVideoResolutionToForm(form, videoModel, node.data.videoResolution);
+    }
 
     let res;
 

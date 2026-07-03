@@ -71,6 +71,18 @@
 
 Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可自主调用图片/视频生成工具。图片/视频模式为直接生成模式，前端直接调用生成 API 并轮询状态。
 
+#### Agent 视频意图路由（企业版）
+
+Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版加载后，`enterprise/sops/sop-video-generation.md` 和 `enterprise/skills/marketing-video/SKILL.md` 会覆盖开源目录中的同名占位 SOP/skill，并注册 `generate_text_to_video`、`image_to_video` 工具。社区版没有视频生成工具，开源目录中的 `sop-video-generation` 只负责提示用户视频生成功能为商业版专属。
+
+企业版 Agent 模式中的视频请求分为普通视频和营销视频：
+
+- **普通视频**：用户只描述主体、动作、场景或镜头，例如"生成一个视频，一个女孩在跳舞"、"赛博城市航拍镜头"。这类请求应直接进入视频生成流程，不应询问商品展示、广告宣传、品牌宣传等营销用途。
+- **营销视频**：用户明确提到商品、广告、品牌、带货、产品宣传、社交媒体投放、本地生活推广等商业目的。只有这类请求才需要补充商品、品牌、卖点、投放平台等营销信息；其中餐饮、酒旅、旅游、丽人、休闲娱乐、到店零售、生活服务等按本地生活规则处理，非本地生活则按普通营销视频处理。
+- **图生视频**：用户上传图片并要求图片动起来、生成动作或镜头运动时，保留真实图片上下文并进入视频生成流程，不得编造图片 URL。
+
+当用户的普通视频描述已经足够明确时，PM Agent 应直接调用视频专家提交生成任务；只有缺少主体、动作、场景或必要素材时，才使用 `ask_user` 补充关键生成信息。
+
 ### 会话管理
 
 #### 创建会话
@@ -141,6 +153,7 @@ Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可�
 2. 渲染为特殊消息气泡，包含预设选项按钮和"其他"自由输入按钮
 3. 用户选择后调用 `POST /api/verification/{verification_id}` 提交回答
 4. 验证期间（`pendingVerificationId` 不为 null）禁止正常发送消息
+5. 如果用户在等待 `ask_user` 回答期间上传了图片、视频或音频，`marketing_agent.html` 会等待上传完成，并在提交验证回答时携带 `image_urls`、`video_urls`、`audio_urls` 和 `thumbnail_urls`。后端会把这些媒体 URL 合并进当前 `agent_tasks`，并写入验证回答历史，确保 PM Agent 和后续专家能看到真实 `[图片N]（URL: ...）` 等标签，而不是只看到纯文本回答。
 
 切换会话或刷新页面后，前端会从 `chat_messages` 历史中查找最后一个未被 `verification_answer` 覆盖、且 `agent_verifications.status` 仍为 `pending` 的 `verification_request`，并恢复 `pendingVerificationId`。只有 `verificationId` 等于当前 `pendingVerificationId` 的问题卡片可点击，历史中的旧问题保持禁用，避免误把旧选项提交到当前等待项。主输入框在等待用户回答时仍可提交自定义答案，但不会发送新的普通对话消息。
 
@@ -266,7 +279,7 @@ Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指�
 
 #### 视频时长
 
-通过 `TaskConfig` 的 `supported_durations` 动态获取，默认选项 `[3, 5, 8, 10, 15]`。
+通过 `TaskConfig` 的 `supported_durations` 动态获取，前端会在模型支持时长前追加 `auto`，默认选择 `auto`。直连视频提交时，`auto` 会解析为当前模型支持的最长时长；Agent 偏好中保留 `duration: "auto"`，表示不把创作意图锁死为固定秒数。
 
 #### 生成方式（videoImageMode）
 
@@ -411,6 +424,10 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 ```
 
 Agent 模式下，`image_preferences.ratio`、`image_preferences.resolution` 会在创建任务时同步写入后端图片偏好，后续专家调用 `generate_text_to_image` / `edit_image` 工具时会由工具层强制应用当前偏好。`ratio: "auto"` 也会被保存，表示本次任务不强制覆盖专家或模型默认比例。图片编辑场景中，`image_preferences.resolution` 只代表输出结果的目标分辨率；专家不应因为输入原图分辨率低于该值而中断任务或要求用户重传高清原图。如果没有有效的 `image_preferences.resolution`，也没有历史/本轮文本分辨率要求，专家应直接使用当前模型支持的最低输出分辨率，不触发 `ask_user`。
+
+Agent 对话模式即使当前自定义面板停留在“图片”，前端也会随 `/api/session/{session_id}/task` 携带 `video_preferences`，让 PM Agent 能看到用户历史生视频模型、比例、时长和图片模式偏好。前端按本轮真实上传图片 URL 判断模型类别：有图片 URL 时使用图生视频历史模型（`marketing_selected_i2v_model`），没有图片 URL 时使用文生视频历史模型（`marketing_selected_t2v_model`）。后端在旧客户端未传 `video_preferences` 时，会从 `get_video_preferences(user_id, world_id)` 读取历史视频偏好并追加 `[用户视频偏好]`。
+
+视频时长选择支持 `auto`。在前端偏好和 Agent 上下文中，`auto` 表示不把创作意图锁死为 5 秒；直连视频接口和企业版 `video_tools` 在真正提交任务时会把 `auto` 解析为当前模型支持的最长时长，避免底层接口收到非数字时长。本地生活营销视频如果选择 3/5/8 秒，但内容包含门店/产品/卖点/口播/BGM/音效/店招等完整信息，PM Agent 应提醒用户改为 `auto` 或模型最长时长；只有用户明确坚持短时长时，才压缩为单一核心镜头。
 
 ### 媒体上传
 
@@ -585,6 +602,11 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - `call_agent.AgentName` 的工具枚举会按当前 PM 的 `allowed_expert_types` 动态过滤，`_handle_agent_call()` 也会做后端校验，避免营销模式误调用剧本专家或反向串线
 - 营销视频克隆必须走 `sop-video-clone` 并委托 `marketing-video`；数字人口播必须走 `sop-digital-human` 并委托 `digital-human-creator`，且数字人专家必须实际调用 `generate_digital_human` 并返回非空 `project_ids` 才算提交成功
 - 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast 和 Seedance2.0 Mini（seedance2.0-mini）；专家提示词必须通过 `video_urls` 传入参考视频，并在视频克隆提示词末尾保留"将人脸位置的黑色方框修改为真人人脸。"这句人脸修正指令
+- 本地生活营销视频（餐饮、酒旅、旅游、丽人、休闲娱乐、到店零售、生活服务等）仍走 `sop-video-generation` 并委托 `marketing-video`。此类视频推荐 10~15秒，且推荐使用 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini），因为该系列更适合完整短视频叙事，并能更好表达 BGM、TTS 口播和音效
+- Seedance2.0 系列是普通本地生活视频的推荐模型，不是全局硬限制。若用户当前选择其他视频模型，PM Agent 可以提醒效果差异，但不能拒绝、不得拒绝继续调用当前模型；只有视频克隆等明确限制场景才按硬限制处理
+- 本地生活视频提示词由 `enterprise/skills/marketing-video/SKILL.md` 组织为画面提示词、口播旁白、BGM 与音效提示、店招/品牌文字要求；涉及中文店名、中文口播和招牌文字时可使用中文结构化提示词，避免翻译破坏品牌信息
+- 本地生活视频的追问应优先收集店名、主推菜品、核心卖点和参考图片，而不是默认询问通用画风。餐饮、酒旅、旅游等场景默认真实实拍；只有用户明确要求卡通、插画、二次元等特殊表达时，才继续确认非真实风格。需要提供风格选项时，应使用 `真实探店感`、`暖色食欲感`、`高级精致感`、`烟火气市井感`、`清爽干净感` 等营销语义。
+- 图生视频必须以真实上传媒体为准。用户在 `ask_user` 中选择“有参考图片”只代表意图，不代表系统已经拿到图片；只有验证回答或任务上下文中存在真实 `[图片N]（URL: ...）` 标签，或 `image_urls` 非空时，才能按图生视频委托。若 `image_urls` 为 null/空，必须提醒用户上传图片或确认改用文生视频，不得把 `https://example.com/...` 这类占位 URL 当作参考图提交。工具层的 `enterprise/tools/video_tools.py::image_to_video` 会在提交 `/api/ai-app-run-image` 前对图片 URL 做轻量级真实性校验：先拒绝示例域名占位 URL，再用短超时 HEAD 探测图片是否可访问；HEAD 不支持时退化为 Range GET 获取 1 字节，探测失败则不提交任务。
 - 数字人口播缺少用户音频时，专家应调用通用 `generate_reference_audio` 生成参考音频；数字人专家不暴露角色耦合的 `generate_character_reference_audio`
 
 ### 用户偏好同步
@@ -641,3 +663,19 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 | `web/css/marketing_inspiration.css` | 样式 | 灵感页专用样式 |
 | `web/i18n/locales/{zh-CN,en}/marketing_inspiration.json` | 翻译 | 灵感页国际化文案 |
 | `web/index.html` | 页面 | 模式选择弹窗入口 |
+
+### 图床图片签名刷新
+
+当 `server.auto_upload_to_cdn=true` 且 `server.is_local=false` 时，营销智能体页不会把图床图片的过期签名 URL 直接写死给 `<img>` 使用。`marketing_agent.html` 中的 `proxyImageUrl()` 会将外部 HTTP/HTTPS 图片包装为 `/api/proxy-image?url=...`；后端 `proxy_image` 接口识别 CDN 域名后重新生成签名并 302 到新鲜 URL，非 CDN 外链则使用异步 `httpx.AsyncClient` 代理读取，避免在 Web 接口中阻塞事件循环。
+
+生成结果卡片、历史 Markdown 图片、以及历史中已保存的 `generated-image` HTML 都会在渲染时经过 `proxyImageUrl()`。这样旧会话重新打开、图床签名超时或点击放大时，图片仍会自动走代理刷新并显示。
+
+## 视频分辨率选择
+
+`web/marketing_agent.html` 在直接“视频生成”模式和 Agent 模式的视频设置区都会根据当前视频模型展示分辨率选项；状态、默认值降级和提交逻辑位于 `web/js/marketing_agent.js`。
+
+- 选项来源优先使用 `TaskConfig.getVideoResolutionOptions(selectedModelKey)`，保证 `seedance_2_0_image_to_video`、`seedance_2_0_fast_image_to_video`、`seedance_2_0_mini_image_to_video` 等完整模型 key 能直接读取后端统一配置下发的 `supported_video_resolutions`。
+- 默认值优先使用 `TaskConfig.getDefaultVideoResolution(selectedModelKey)`，无默认值时回退到模型配置缓存里的 `default_video_resolution` 或第一项。
+- 普通“生成视频”底部比例设置面板在视频模式下显示视频分辨率按钮组；图片模式仍显示图片分辨率。提交视频任务时使用 `selectedVideoResolution` 作为 `resolution` 参数。
+- Agent 视频对话任务会把同一分辨率写入 `video_preferences.resolution`，后端视频工具据此透传到实际 `/api/ai-app-run` 或 `/api/ai-app-run-image` 请求。
+- Seedance 2.0 Fast / Mini 展示 `480P`、`720P`；Seedance 2.0 标准版展示 `480P`、`720P`、`1080P`、`4K`，具体支持范围以 `config/unified_config.py` 的实现方配置为准。

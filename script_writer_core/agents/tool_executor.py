@@ -123,7 +123,9 @@ class ToolExecutor:
             return {"error": f"未知工具: {tool_name}"}
 
         try:
-            # MCP 工具现在需要 user_id, world_id, auth_token 作为前三个参数
+            # ⚠️ 双重注册维护：mcp_tool_names 列表必须与 tool_map 保持同步
+            # mcp_tool_names 中的工具会自动注入 user_id/world_id/auth_token 前三个参数
+            # 新增 MCP 工具时，必须同时更新 tool_map 和 mcp_tool_names 两处
             mcp_tool_names = [
                 "read_world", "update_world", "read_script_json", "list_script_jsons",
                 "read_character_json", "list_character_jsons", "read_location_json",

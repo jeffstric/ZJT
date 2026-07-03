@@ -5,23 +5,70 @@
 import aiohttp
 import os
 import asyncio
+import concurrent.futures
 import logging
+import time
 import uuid
 from typing import List, Optional, Dict, Any
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, parse_qs
 from pathlib import Path
 from datetime import datetime
 
-from config.constant import FilePathConstants
+from concurrent.futures import TimeoutError as FutureTimeoutError
+
+from config.constant import (
+    FilePathConstants,
+    IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT,
+    IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT,
+    IMAGE_URL_PROBE_TOTAL_TIMEOUT,
+    IMAGE_URL_PROBE_CONNECT_TIMEOUT,
+    IMAGE_URL_PROBE_CONCURRENCY,
+    IMAGE_URL_REFRESH_SYNC_WRAPPER_TIMEOUT,
+)
 from utils.network_utils import is_local_path, is_local_file_path
 from utils.file_storage import get_file_storage
 from utils.image_compressor import compress_image_to_limit, get_image_size_mb
 from utils.media_cache import get_temp_date_dir
+from utils.media_mapping_util import extract_local_path_from_url
 
 logger = logging.getLogger(__name__)
 
 # 项目根目录
 _PROJECT_ROOT = Path(__file__).parent.parent
+_SYNC_WRAPPER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4,
+    thread_name_prefix="image_upload_sync_wrapper",
+)
+
+# 外层 future.result 比内层 asyncio.wait_for 多留的余量（秒）。
+# 内层 wait_for 超时后仍需时间取消协程、让 asyncio.run 干净退出（关闭事件循环）；
+# 若内外用同一 timeout，线程调度抖动会使外层先抛 FutureTimeoutError，而内层 asyncio.run
+# 仍在跑、占用 worker，最坏耗尽 4 个 worker → 后续同步包装全部"排队→假超时"。
+# （符合 CLAUDE.md rule 10：模块级长寿 executor + 内层超时保护的精神）
+_SYNC_WRAPPER_OUTER_MARGIN_SECONDS = 5
+
+
+def _run_coro_sync(coro, timeout: float, timeout_result, operation: str):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            return asyncio.run(asyncio.wait_for(coro, timeout=timeout))
+        except asyncio.TimeoutError:
+            logger.error("%s超时: timeout=%ss", operation, timeout)
+            return timeout_result
+
+    future = _SYNC_WRAPPER_EXECUTOR.submit(
+        asyncio.run,
+        asyncio.wait_for(coro, timeout=timeout),
+    )
+    try:
+        # 外层比内层多留 _SYNC_WRAPPER_OUTER_MARGIN_SECONDS，确保内层 wait_for 超时后
+        # asyncio.run 能干净退出，不长期占用线程池 worker（避免 worker 耗尽→假超时连锁）
+        return future.result(timeout=timeout + _SYNC_WRAPPER_OUTER_MARGIN_SECONDS)
+    except (FutureTimeoutError, asyncio.TimeoutError):
+        logger.error("%s超时: timeout=%ss", operation, timeout)
+        return timeout_result
 
 
 def try_map_url_to_local_file(url: str, config: Dict[str, Any], project_root: str = None) -> Optional[str]:
@@ -90,8 +137,8 @@ async def download_url_to_temp(url: str, app_dir: str = None) -> Optional[str]:
     Returns:
         Optional[str]: 临时文件路径，失败返回None
     """
-    import aiohttp
-
+    temp_path = None
+    success = False
     try:
         # 获取图片临时目录（按年月日分组）
         if app_dir is None:
@@ -116,14 +163,197 @@ async def download_url_to_temp(url: str, app_dir: str = None) -> Optional[str]:
                     content = await response.read()
                     with open(temp_path, 'wb') as f:
                         f.write(content)
+                    success = True
                     return temp_path
                 else:
                     logger.error(f"下载图片失败，状态码: {response.status}")
-                    os.remove(temp_path)
                     return None
     except Exception as e:
         logger.error(f"下载图片异常: {str(e)}")
         return None
+    finally:
+        if not success and temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
+async def _probe_url_status(url: str) -> str:
+    """主动探测第三方 URL 当前可访问性（Range: bytes=0-0，仅取 1 字节）。
+
+    用于判断「非自有 CDN」的第三方签名 URL 是否已过期。过期 URL 会立即返回
+    401/403（不等超时）；只有「不可达」(DNS/连接失败) 才会卡满 connect 超时。
+
+    Returns:
+        'ok' (2xx，含 206) / 'auth_failed' (401,403=签名失效) /
+        'other' (404,5xx,网络错误等不确定情况)
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                headers={"Range": "bytes=0-0"},
+                timeout=aiohttp.ClientTimeout(
+                    total=IMAGE_URL_PROBE_TOTAL_TIMEOUT,
+                    connect=IMAGE_URL_PROBE_CONNECT_TIMEOUT,
+                ),
+                allow_redirects=True,
+            ) as resp:
+                if 200 <= resp.status < 300:
+                    return "ok"
+                if resp.status in (401, 403):
+                    return "auth_failed"
+                return "other"
+    except Exception:
+        return "other"
+
+
+async def ensure_fresh_image_url(
+    image_url: str,
+    config: Dict[str, Any],
+    project_root: str = None,
+) -> str:
+    """确保图片 URL 新鲜可访问，返回可直接交给下游/网络的 URL（始终返回 str）。
+
+    决策树：
+    1. 空 / 本地路径 → 原样返回（本地源的上传交由调用方处理）。
+    2. 自有 CDN URL（CDNUtil.is_cdn_url 命中）→ refresh_cdn_signed_url 重签名
+       （零成本，纯本地 HMAC；配置不全/异常时返回原 URL）。**自有图床从不抛异常**。
+    3. 第三方 URL → 主动探测：
+       - 'ok' (2xx) → 原样返回（此刻仍可用）；
+       - 'auth_failed' (401/403，已过期) → 抛 ImageExpiredError（第三方无法重签、
+         下载转存同样 401，无法救回，需提示用户重新上传）；
+       - 'other' (404/5xx/网络错误) → 降级原样返回（不阻断，交下游尝试）。
+    """
+    if not image_url or not isinstance(image_url, str):
+        return image_url
+    if not image_url.startswith(("http://", "https://")):
+        return image_url
+
+    from utils.cdn_util import CDNUtil
+
+    # (1) 自有 CDN：零成本重签名，不探测、不抛异常
+    if CDNUtil.is_cdn_url(image_url):
+        return CDNUtil.refresh_cdn_signed_url(image_url)
+
+    # (2) 第三方 URL：先检查 /upload/ 本地映射（本服务文件即使域名未在 CDN 配置中
+    #     也能通过本地副本恢复，避免误判过期抛异常）
+    if project_root:
+        local_rel = extract_local_path_from_url(image_url)
+        if local_rel:
+            candidate = os.path.join(project_root, local_rel)
+            if os.path.exists(candidate):
+                # 本地有副本：返回原 URL，由下载/透传链路用本地映射恢复
+                return image_url
+
+    # 主动探测是否过期
+    status = await _probe_url_status(image_url)
+    if status == "ok":
+        return image_url
+    if status == "auth_failed":
+        # 延迟导入避免循环依赖
+        from task.visual_drivers.exceptions import ImageExpiredError
+        raise ImageExpiredError(
+            f"输入图片已过期或不可访问，请重新上传: {image_url[:80]}"
+        )
+    # 'other'：不确定（404/5xx/网络波动），降级原样返回
+    return image_url
+
+
+def ensure_fresh_image_url_sync(
+    image_url: str,
+    config: Dict[str, Any],
+    project_root: str = None,
+) -> str:
+    """ensure_fresh_image_url 的同步包装（供同步上下文的驱动使用）。
+
+    超时时降级返回原 URL（不阻断主流程）；ImageExpiredError 等业务异常正常传播。
+    """
+    return _run_coro_sync(
+        ensure_fresh_image_url(image_url, config, project_root),
+        IMAGE_URL_REFRESH_SYNC_WRAPPER_TIMEOUT,
+        image_url,
+        "同步刷新图片URL",
+    )
+
+
+async def _upload_one_to_cdn(
+    source: str,
+    storage,
+    config: Dict[str, Any],
+    project_root: str,
+) -> str:
+    """把单个本地文件 / 局域网 URL 上传到 CDN，返回带签名的 CDN URL。
+
+    从原 upload_local_images_to_cdn 的本地分支抽取，供串行上传复用。
+    失败抛 RuntimeError（与原行为一致）。
+    """
+    temp_file = None
+    try:
+        if is_local_file_path(source):
+            # 本地文件路径 — 若原路径不存在，尝试拼接项目根目录
+            resolved_path = source
+            if not os.path.exists(resolved_path) and project_root:
+                candidate = os.path.join(project_root, source.lstrip('/').lstrip('\\'))
+                if os.path.exists(candidate):
+                    resolved_path = candidate
+            if not os.path.exists(resolved_path):
+                error_msg = f"本地图片文件不存在: {source}"
+                if resolved_path != source:
+                    error_msg += f" (尝试解析: {resolved_path})"
+                logger.error(error_msg)
+                raise RuntimeError(error_msg)
+            file_to_upload = resolved_path
+            filename = os.path.basename(resolved_path)
+        else:
+            # 局域网 URL：优先映射本地，否则 HTTP 下载
+            local_file = try_map_url_to_local_file(source, config, project_root)
+            if local_file:
+                file_to_upload = local_file
+                filename = os.path.basename(local_file)
+            else:
+                logger.info(f"检测到局域网URL，准备下载: {source}")
+                temp_file = await download_url_to_temp(source, project_root)
+                if not temp_file:
+                    error_msg = f"下载局域网图片失败: {source}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                file_to_upload = temp_file
+                parsed = urlparse(source)
+                filename = os.path.basename(unquote(parsed.path)) or "image.png"
+
+        key = storage.generate_key_with_datetime(filename)
+        logger.info(f"上传图片到图床: {file_to_upload} -> {key}")
+        try:
+            upload_result = await asyncio.wait_for(
+                storage.upload_file(key, file_to_upload),
+                timeout=IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT,
+            )
+        except asyncio.TimeoutError as exc:
+            error_msg = f"图片上传到CDN超时: {source}"
+            logger.error(error_msg)
+            raise RuntimeError(error_msg) from exc
+
+        if upload_result.success:
+            cdn_url = storage.get_download_url(upload_result.key)
+            logger.info(f"图片上传成功，CDN链接: {cdn_url}")
+            return cdn_url
+        error_msg = f"图片上传到CDN失败: {source}, 错误: {upload_result.error}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        error_msg = f"上传图片到CDN异常: {source}, 错误: {str(e)}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg) from e
+    finally:
+        if temp_file and os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except Exception:
+                pass
 
 
 async def upload_local_images_to_cdn(
@@ -132,109 +362,81 @@ async def upload_local_images_to_cdn(
     project_root: str = None
 ) -> List[str]:
     """
-    将本地图片上传到图床并返回CDN链接
+    将本地图片/局域网URL上传到图床，外网URL确保新鲜后透传，返回CDN链接列表。
+
+    - 外网 URL：经 ensure_fresh_image_url 刷新（自有 CDN 重签名 / 第三方探测），
+      多张并发(IMAGE_URL_PROBE_CONCURRENCY)避免串行累积卡住调度；自有 CDN 重签名
+      失败时尝试 /upload/ 本地映射兜底（命中本地副本则转入上传流程得到新鲜 URL），
+      避免透传过期 URL 给下游。
+    - 本地文件 / 局域网 URL：串行上传到图床（复用 _upload_one_to_cdn）。
+    - 结果按输入顺序一一对应（首帧/尾帧/参考图正确回填）。
 
     Args:
-        image_urls: 图片路径列表（可能是本地路径或URL）
+        image_urls: 图片路径列表（本地路径 / 局域网URL / 外网URL 混合）
         config: 配置字典，包含 file_storage 和 server 配置
         project_root: 项目根目录，用于URL到本地文件的映射
 
     Returns:
-        List[str]: 上传后的CDN链接列表
+        List[str]: 与输入顺序对应的CDN链接/刷新后URL列表（跳过空字符串项）
     """
     if not image_urls:
         return image_urls
 
-    # project_root 为空时，使用当前工作目录作为兜底
     if not project_root:
         project_root = os.getcwd()
 
-    result_urls = []
-    storage = get_file_storage(config)
+    # 按原索引记录结果，保证输出顺序与输入一一对应
+    results: List[Optional[str]] = [None] * len(image_urls)
+    # 待串行上传的本地源：(原索引, 源路径)
+    pending_local: List[tuple] = []
 
-    for image_path in image_urls:
-        image_path = image_path.strip()
-        if not image_path:
+    # 1. 分类：外网URL → 并发处理；本地/局域网源 → 待串行上传
+    sem = asyncio.Semaphore(IMAGE_URL_PROBE_CONCURRENCY)
+
+    async def _handle_remote(idx: int, url: str) -> None:
+        async with sem:
+            fresh = await ensure_fresh_image_url(url, config, project_root)
+            if fresh != url:
+                # 自有CDN重签名成功 → 用 fresh
+                results[idx] = fresh
+                return
+            # fresh == url：第三方探测 ok/other 原样，或自有CDN重签名失败降级。
+            # 尝试 /upload/ 本地映射兜底（自有图床文件本地有副本则转上传，避免用过期URL）
+            local_rel = extract_local_path_from_url(url)
+            if local_rel:
+                candidate = os.path.join(project_root, local_rel)
+                if os.path.exists(candidate):
+                    pending_local.append((idx, candidate))
+                    return
+            # 本地无副本：原样透传（下游尝试，或调用方报错）
+            results[idx] = url
+
+    remote_tasks = []
+    for idx, raw in enumerate(image_urls):
+        if not isinstance(raw, str):
+            raw = str(raw) if raw is not None else ""
+        url = raw.strip()
+        if not url:
             continue
+        if not is_local_path(url):
+            remote_tasks.append(_handle_remote(idx, url))
+        else:
+            pending_local.append((idx, url))
 
-        # 外网URL：直接透传
-        if not is_local_path(image_path):
-            result_urls.append(image_path)
-            continue
+    # 2. 并发处理外网URL（自有CDN重签名 / 第三方探测 / 本地映射兜底）
+    if remote_tasks:
+        await asyncio.gather(*remote_tasks)
 
-        temp_file = None
-        file_to_upload = None
+    # 3. 串行上传本地文件（含上一步转本地的兜底项）；复用单个 storage 实例
+    #    延迟初始化：全外网URL场景无需 file_storage 配置
+    storage = None
+    for idx, source in pending_local:
+        if storage is None:
+            storage = get_file_storage(config)
+        results[idx] = await _upload_one_to_cdn(source, storage, config, project_root)
 
-        try:
-            # 判断是本地文件还是局域网URL
-            if is_local_file_path(image_path):
-                # 本地文件路径 — 如果原始路径不存在，尝试拼接项目根目录
-                resolved_path = image_path
-                if not os.path.exists(resolved_path):
-                    if project_root:
-                        candidate = os.path.join(project_root, image_path.lstrip('/').lstrip('\\'))
-                        if os.path.exists(candidate):
-                            resolved_path = candidate
-                if not os.path.exists(resolved_path):
-                    error_msg = f"本地图片文件不存在: {image_path}"
-                    if resolved_path != image_path:
-                        error_msg += f" (尝试解析: {resolved_path})"
-                    logger.error(error_msg)
-                    raise RuntimeError(error_msg)
-                file_to_upload = resolved_path
-                filename = os.path.basename(resolved_path)
-            else:
-                # 局域网URL，优先尝试映射到本地文件（省下载），否则HTTP下载
-                local_file = try_map_url_to_local_file(image_path, config, project_root)
-                if local_file:
-                    # URL域名与server.host匹配，直接使用本地文件
-                    file_to_upload = local_file
-                    filename = os.path.basename(local_file)
-                else:
-                    # 无法映射，需要HTTP下载
-                    logger.info(f"检测到局域网URL，准备下载: {image_path}")
-                    temp_file = await download_url_to_temp(image_path, project_root)
-                    if not temp_file:
-                        error_msg = f"下载局域网图片失败: {image_path}"
-                        logger.error(error_msg)
-                        raise RuntimeError(error_msg)
-                    file_to_upload = temp_file
-                    # 从URL中提取文件名
-                    parsed = urlparse(image_path)
-                    filename = os.path.basename(unquote(parsed.path)) or "image.png"
-
-            # 生成带日期时间前缀的key
-            key = storage.generate_key_with_datetime(filename)
-
-            logger.info(f"上传图片到图床: {file_to_upload} -> {key}")
-
-            # 上传文件
-            upload_result = await storage.upload_file(key, file_to_upload)
-
-            if upload_result.success:
-                # 获取私有下载链接
-                cdn_url = storage.get_download_url(upload_result.key)
-                logger.info(f"图片上传成功，CDN链接: {cdn_url}")
-                result_urls.append(cdn_url)
-            else:
-                error_msg = f"图片上传到CDN失败: {image_path}, 错误: {upload_result.error}"
-                logger.error(error_msg)
-                raise RuntimeError(error_msg)
-        except RuntimeError:
-            raise
-        except Exception as e:
-            error_msg = f"上传图片到CDN异常: {image_path}, 错误: {str(e)}"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg) from e
-        finally:
-            # 清理临时文件
-            if temp_file and os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                except Exception:
-                    pass
-
-    return result_urls
+    # 4. 按原顺序输出（跳过空字符串项，与原行为一致）
+    return [r for r in results if r is not None]
 
 
 def upload_local_images_to_cdn_sync(
@@ -253,24 +455,12 @@ def upload_local_images_to_cdn_sync(
     Returns:
         List[str]: 上传后的CDN链接列表
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 如果事件循环已在运行，创建新任务
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    upload_local_images_to_cdn(image_urls, config, project_root)
-                )
-                return future.result()
-        else:
-            return loop.run_until_complete(
-                upload_local_images_to_cdn(image_urls, config, project_root)
-            )
-    except RuntimeError:
-        # 没有事件循环，创建新的
-        return asyncio.run(upload_local_images_to_cdn(image_urls, config, project_root))
+    return _run_coro_sync(
+        upload_local_images_to_cdn(image_urls, config, project_root),
+        IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT,
+        [],
+        "同步上传图片到图床",
+    )
 
 
 async def resolve_url_to_local_file(
@@ -313,14 +503,23 @@ async def resolve_url_to_local_file(
         logger.warning(f"本地文件不存在: {url}")
         return None
     
-    # 如果是 URL，尝试映射到本地文件
+    # 如果是 URL，尝试映射到本地文件（域名匹配 server.host）
     local_file = try_map_url_to_local_file(url, config, project_root)
     if local_file:
         return local_file
-    
-    # 无法映射，下载到临时目录
-    logger.info(f"下载 URL 到临时目录: {url}")
-    temp_file = await download_url_to_temp(url, project_root)
+
+    # /upload/ 本地映射兜底（与域名无关，命中本服务文件直接读，绕过URL有效性）
+    local_rel = extract_local_path_from_url(url)
+    if local_rel:
+        candidate = os.path.join(project_root, local_rel)
+        if os.path.exists(candidate):
+            logger.info(f"URL 通过 /upload/ 映射到本地文件: {url} -> {candidate}")
+            return candidate
+
+    # 确保URL新鲜（自有CDN重签名 / 第三方探测，过期抛 ImageExpiredError），再下载
+    fresh_url = await ensure_fresh_image_url(url, config, project_root)
+    logger.info(f"下载 URL 到临时目录: {fresh_url[:120]}")
+    temp_file = await download_url_to_temp(fresh_url, project_root)
     return temp_file
 
 
@@ -340,24 +539,12 @@ def resolve_url_to_local_file_sync(
     Returns:
         本地文件路径，失败返回 None
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 如果事件循环已在运行，创建新任务
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    resolve_url_to_local_file(url, config, project_root)
-                )
-                return future.result()
-        else:
-            return loop.run_until_complete(
-                resolve_url_to_local_file(url, config, project_root)
-            )
-    except RuntimeError:
-        # 没有事件循环，创建新的
-        return asyncio.run(resolve_url_to_local_file(url, config, project_root))
+    return _run_coro_sync(
+        resolve_url_to_local_file(url, config, project_root),
+        IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT,
+        None,
+        "同步解析URL到本地文件",
+    )
 
 
 async def compress_and_upload_image(
@@ -494,24 +681,12 @@ def compress_and_upload_image_sync(
     Returns:
         (success, new_url, error_message)
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 如果事件循环已在运行，创建新任务
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    compress_and_upload_image(image_url, config, max_size_mb, is_local, project_root)
-                )
-                return future.result()
-        else:
-            return loop.run_until_complete(
-                compress_and_upload_image(image_url, config, max_size_mb, is_local, project_root)
-            )
-    except RuntimeError:
-        # 没有事件循环，创建新的
-        return asyncio.run(compress_and_upload_image(image_url, config, max_size_mb, is_local, project_root))
+    return _run_coro_sync(
+        compress_and_upload_image(image_url, config, max_size_mb, is_local, project_root),
+        IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT,
+        (False, None, "timeout"),
+        "同步压缩并上传图片",
+    )
 
 
 def upload_media_to_cdn_sync(

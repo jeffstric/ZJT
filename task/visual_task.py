@@ -1,5 +1,28 @@
 """
 Video generation task processing
+
+⚠️ 核心模块 - 视频/图片生成任务的提交、状态检查、失败处理、重试调度全链路
+修改此文件前务必理解以下架构：
+
+【双状态系统】
+  AI_TOOL_STATUS_*  → ai_tools 表（任务主记录，含 project_id、result_url 等）
+  TASK_STATUS_*     → tasks 表（调度记录，含 try_count、next_trigger 等）
+  两套状态值必须保持一一对应同步更新，否则会导致调度器行为异常。
+  对应关系：PENDING↔QUEUED, PROCESSING↔PROCESSING, COMPLETED↔COMPLETED,
+            FAILED↔FAILED, SYNC_QUEUED↔SYNC_QUEUED,
+            WAITING_PARAM_PREPARE↔WAITING_PARAM_PREPARE,
+            WAITING_BEFORE_FINISH↔WAITING_BEFORE_FINISH
+
+【任务生命周期】
+  _submit_new_task() → 提交任务（6条退出路径，见函数内注释）
+  _check_task_status() → 轮询 PROCESSING 任务状态
+  _check_pipeline_stage() → 处理流水线阶段（PARAM_PREPARE / BEFORE_FINISH）
+  _handle_task_failure() → 统一失败入口（企业版重试 / 社区版直接失败 + 退费）
+  process_task_with_retry() → 调度器主循环（RunningHub 槽位控制 + 过期检查 + 卡死恢复）
+
+【企业版 vs 社区版】
+  _enterprise_failure_handler 由企业版模块注册，社区版为 None。
+  企业版失败时先尝试 before_finish 切换备用实现方，社区版直接失败+退费。
 """
 import logging
 import json
@@ -26,9 +49,11 @@ from config.constant import (
     TASK_STATUS_SYNC_QUEUED,
     TASK_STATUS_WAITING_PARAM_PREPARE,
     TASK_STATUS_WAITING_BEFORE_FINISH,
-    RUNNINGHUB_TASK_TYPES
+    RUNNINGHUB_TASK_TYPES,
+    RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage
+from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -111,11 +136,18 @@ def calculate_next_retry_delay(try_count):
 
 def _refund_computing_power(ai_tool, reason: str):
     """
-    退还算力（考虑修饰符）
+    退还算力 - 两层回退机制
+
+    ⚠️ 退费金额计算优先级：
+      1. get_computing_power_for_task() → 考虑实现方修饰符、分辨率等上下文（推荐）
+      2. TASK_COMPUTING_POWER[type] → 旧静态配置回退（不含修饰符，可能金额不准）
+
+    ⚠️ 此函数在异步上下文中被同步调用（_handle_task_failure 是同步函数），
+    内部的 make_perseids_request 是同步 HTTP 请求，会短暂阻塞事件循环。
 
     Args:
         ai_tool: AITool 对象
-        reason: 退还原因
+        reason: 退还原因（仅用于日志）
     """
     try:
         user_id = ai_tool.user_id
@@ -211,8 +243,14 @@ async def _submit_new_task(ai_tool):
     """
     使用驱动架构提交新任务 (status == AI_TOOL_STATUS_PENDING)
 
-    这是新的实现方法，使用统一的驱动架构替代原有的 if-elif 分支逻辑。
-    测试通过后将替换 _submit_new_task 方法。
+    ⚠️ 6条退出路径（修改时请逐一确认影响）：
+      1. Pipeline PARAM_PREPARE → WAITING_PARAM_PREPARE, return True
+      2. Sync mode → 提交到进程池, SYNC_QUEUED, return True
+      3. Mock 短路 → 直接 PROCESSING, return True
+      4. Driver 创建失败 → FAILED + 退费, return False
+      5. 同步 API 成功 → 直接 COMPLETED（含媒体下载缓存）, return True
+      6. 异步提交成功 → PROCESSING + project_id, return True
+      7. 提交失败 → _handle_task_failure（企业版重试 / 社区版失败+退费）
 
     Args:
         ai_tool: AITool 对象
@@ -225,7 +263,9 @@ async def _submit_new_task(ai_tool):
     from task.sync_task_executor import get_sync_task_executor
 
     ai_tool_type = ai_tool.type
-    # 需要重构该变量名为 ai_tools_id
+    # ⚠️ 命名陷阱：task_id 实际上是 ai_tools 表的 id，不是 tasks 表的 id
+    # tasks 表的 id 在 process_task_with_retry 中通过 task.id 获取
+    # 后续重构应改为 ai_tools_id 以避免混淆
     task_id = ai_tool.id
 
     if _is_test_mode_enabled():
@@ -261,6 +301,11 @@ async def _submit_new_task(ai_tool):
             if implementation_id > 0:
                 AIToolsModel.update(task_id, implementation=implementation_id)
                 logger.info(f"Recorded implementation {implementation_name} (id: {implementation_id}) for task {task_id}")
+                AIToolsLogModel.log(task_id, AIToolsLogEvent.IMPLEMENTATION_SELECTED,
+                                   user_id=ai_tool.user_id,
+                                   implementation=implementation_id,
+                                   message=f"选用实现方: {implementation_name}",
+                                   detail={'impl_name': implementation_name, 'impl_id': implementation_id})
 
                 # 仅在首次提交时记录实现方尝试（attempt_number=1）
                 # 重试由 ImplementationRetryPipelineDriver 记录（attempt_number>=2）
@@ -285,11 +330,17 @@ async def _submit_new_task(ai_tool):
             if impl_config and impl_config.sync_mode:
                 executor = get_sync_task_executor()
                 if executor.is_running():
-                    executor.submit(task_id, ai_tool_type)
-                    AIToolsModel.update(task_id, status=AI_TOOL_STATUS_SYNC_QUEUED)
-                    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
-                    logger.info(f"[SyncTask] Task {task_id} submitted to sync task executor (sync_mode implementation: {impl_config.name})")
-                    return True
+                    submitted = executor.submit(task_id, ai_tool_type, implementation_name)
+                    if submitted:
+                        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_SYNC_QUEUED)
+                        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
+                        logger.info(f"[SyncTask] Task {task_id} submitted to sync task executor (sync_mode implementation: {impl_config.name})")
+                        return True
+
+                    logger.error(
+                        f"[SyncTask] Submit failed for task {task_id} implementation={implementation_name}; outer retry will backoff"
+                    )
+                    return False
                 else:
                     logger.warning(f"[SyncTask] Sync task executor not running, falling back to normal processing")
 
@@ -349,11 +400,35 @@ async def _submit_new_task(ai_tool):
             error = result.get("error", "未知错误")
             error_type = result.get("error_type", "SYSTEM")
             error_detail = result.get("error_detail", "")
-            
+
             logger.error(f"Task {task_id} submission failed: {error}")
             if error_detail:
                 logger.error(f"Error detail: {error_detail}")
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.UPSTREAM_FAILED,
+                               user_id=ai_tool.user_id,
+                               message=f"提交失败: {error}",
+                               detail={'error': error, 'error_type': error_type,
+                                       'error_detail': error_detail})
             
+            # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
+            # 释放本地槽位、状态回 QUEUED、延迟重试，不消耗 try_count、不退算力、不切换实现方。
+            # 复用本地槽位满的延迟出队机制（list_by_type_and_status 带 next_trigger <= NOW 过滤）。
+            if result.get("retry") and result.get("retry_reason") == "UPSTREAM_CONGESTED" \
+                    and ai_tool_type in RUNNINGHUB_TASK_TYPES:
+                rh_task = TasksModel.get_by_task_id(task_id)
+                if rh_task:
+                    RunningHubSlotsModel.release_slot(rh_task.id, source=RunningHubSlot.SOURCE_TASK)
+                delay = get_dynamic_config_value(
+                    "runninghub", "upstream_congest_retry_delay",
+                    default=RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
+                )
+                next_trigger = datetime.now() + timedelta(seconds=delay)
+                TasksModel.update_by_task_id(
+                    task_id, status=TASK_STATUS_QUEUED, next_trigger=next_trigger
+                )
+                logger.info(f"Task {task_id} upstream congested, re-queued, will retry in {delay}s")
+                return True  # 返回 True → 外层 process_task_with_retry 不增加 try_count
+
             # 处理需要重试的情况（通常是网络异常）
             if result.get("retry"):
                 logger.warning(f"Task {task_id} will retry later due to network error")
@@ -393,11 +468,22 @@ async def _submit_new_task(ai_tool):
                     if ext in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
                         media_type = "image"
 
+                AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_STARTED,
+                                   user_id=ai_tool.user_id,
+                                   message="开始下载结果文件（同步任务）",
+                                   detail={'source_url': result_url, 'media_type': media_type})
+                download_start = datetime.now()
                 # 下载并缓存，如果失败则使用原URL
                 cached_url = await download_and_cache(result_url, task_id, media_type)
                 final_url = cached_url if cached_url else result_url
+                download_ms = int((datetime.now() - download_start).total_seconds() * 1000)
 
                 logger.info(f"Sync task media cached: {result_url} -> {final_url}")
+                AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_COMPLETED,
+                                   user_id=ai_tool.user_id,
+                                   message="下载/缓存完成（同步任务）",
+                                   duration_ms=download_ms,
+                                   detail={'source_url': result_url, 'final_url': final_url})
 
             AIToolsModel.update_with_cdn_sync(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
@@ -410,6 +496,10 @@ async def _submit_new_task(ai_tool):
                 logger.warning(f"Failed to mark attempt as success for sync task {task_id}: {e}")
 
             logger.info(f"Sync task {task_id} completed with result: {final_url}")
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.TASK_COMPLETED,
+                               user_id=ai_tool.user_id, status_to=AI_TOOL_STATUS_COMPLETED,
+                               message="任务完成（同步任务）",
+                               detail={'result_url': final_url})
             return True
 
         # 5. 异步模式，更新数据库
@@ -437,13 +527,22 @@ async def _submit_new_task(ai_tool):
                 logger.info(f"Updated RunningHub slot project_id for task {task_id}")
         
         logger.info(f"Task {task_id} submitted successfully with project_id: {project_id}")
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.SUBMITTED,
+                           user_id=ai_tool.user_id, project_id=project_id,
+                           status_to=AI_TOOL_STATUS_PROCESSING,
+                           implementation=ai_tool.implementation,
+                           message=f"已提交到上游，project_id={project_id}",
+                           detail={'project_id': project_id, 'driver': driver.driver_name})
         return True
-        
+
     except Exception as e:
         # 捕获所有未预期的异常
         logger.error(f"Unexpected exception in _submit_new_task_with_driver for task {task_id}: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.EXCEPTION,
+                           user_id=getattr(ai_tool, 'user_id', None),
+                           message=f"提交流程异常: {str(e)}")
         
         # 更新任务状态为失败
         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message="服务异常，请联系技术支持", completed_time=datetime.now())
@@ -458,13 +557,16 @@ async def _submit_new_task(ai_tool):
 async def _check_task_status(ai_tool):
     """
     使用驱动架构检查任务状态 (status == AI_TOOL_STATUS_PROCESSING)
-    
-    这是新的实现方法，使用统一的驱动架构替代原有的 if-elif 分支逻辑。
-    测试通过后将替换 _check_task_status 方法。
-    
+
+    ⚠️ 关键逻辑：
+      - 先检查是否在同步执行器中运行（跳过，避免干扰）
+      - 孤儿检测：PROCESSING + 无 project_id + 不在同步执行器 → 重置为 PENDING
+      - Mock 短路：直接返回成功
+      - 正常流程：调用驱动 check_status，根据结果更新状态
+
     Args:
         ai_tool: AITool 对象
-    
+
     Returns:
         bool: True 表示任务已完成（成功或失败），False 表示仍在处理中
     """
@@ -483,8 +585,10 @@ async def _check_task_status(ai_tool):
         return False
     
     if not project_id:
-        # 孤儿任务：status=PROCESSING 但 project_id=NULL，且不在同步执行器中
-        # 说明同步执行器子进程已完成但结果处理失败，需要重置为 PENDING 让调度器重新提交
+        # ⚠️ 孤儿任务恢复：PROCESSING + 无 project_id + 不在同步执行器
+        # 常见原因：同步执行器子进程崩溃/超时，结果未写回数据库
+        # 处理：重置为 PENDING/QUEUED，try_count 清零，让调度器重新提交
+        # 注意：不清零 try_count 可能导致快速触发 max_retry 失败
         logger.warning(f"AI tool {task_id} has no project_id while status=PROCESSING and not in sync executor, resetting to PENDING")
         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_PENDING)
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_QUEUED, try_count=0, next_trigger=datetime.now())
@@ -546,7 +650,17 @@ async def _check_task_status(ai_tool):
         
         # 2. 调用驱动检查状态
         result = driver.check_status(project_id)
-        
+
+        # 记录每次状态轮询（含 running），便于排查轮询静默/调度积压
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.STATUS_CHECK,
+                           user_id=ai_tool.user_id, project_id=project_id,
+                           implementation=ai_tool.implementation,
+                           message=f"状态轮询: {result.get('status')}",
+                           detail={'state': result.get('status'),
+                                   'progress': result.get('progress'),
+                                   'message': result.get('message'),
+                                   'error': result.get('error')})
+
         # 3. 处理状态检查结果
         status = result.get("status")
         
@@ -558,14 +672,24 @@ async def _check_task_status(ai_tool):
                 return _handle_task_failure(task_id, ai_tool_type, "任务成功但未返回结果URL", ai_tool.user_id, project_id=project_id)
             
             logger.info(f"Task {task_id} completed successfully, result_url: {result_url}")
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.UPSTREAM_SUCCEEDED,
+                               user_id=ai_tool.user_id, project_id=project_id,
+                               implementation=ai_tool.implementation,
+                               message="上游返回成功",
+                               detail={'result_url': result_url})
             return await _handle_task_success(project_id, task_id, result_url)
-            
+
         elif status == "FAILED":
             # 任务失败
             error = result.get("error", "任务失败")
             error_type = result.get("error_type", "SYSTEM")
-            
+
             logger.error(f"Task {task_id} failed: {error} (type: {error_type})")
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.UPSTREAM_FAILED,
+                               user_id=ai_tool.user_id, project_id=project_id,
+                               implementation=ai_tool.implementation,
+                               message=f"上游返回失败: {error}",
+                               detail={'error': error, 'error_type': error_type})
             return _handle_task_failure(task_id, ai_tool_type, error, ai_tool.user_id, project_id=project_id)
             
         elif status == "RUNNING":
@@ -584,7 +708,10 @@ async def _check_task_status(ai_tool):
         logger.error(f"Unexpected exception in _check_task_status_with_driver for task {task_id}: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
-        
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.EXCEPTION,
+                           user_id=getattr(ai_tool, 'user_id', None), project_id=project_id,
+                           message=f"状态检查异常: {str(e)}")
+
         # 不立即标记为失败，继续重试
         return False
 
@@ -593,8 +720,14 @@ def _check_pipeline_stage(ai_tool, stage):
     """
     检查流水线阶段状态，推进 ai_tool
 
-    在 ai_tool 处于 WAITING_PARAM_PREPARE 或 WAITING_BEFORE_FINISH 状态时调用。
-    检查该阶段所有步骤的状态，据此决定 ai_tool 的下一步状态。
+    ⚠️ 两个阶段行为不同（极易混淆，修改前务必理解）：
+      PARAM_PREPARE（预处理）:
+        - 任何步骤失败 → 整个任务 FAILED + 退费（不允许重试）
+        - 全部完成 → 应用结果，回到 PENDING 提交正式任务
+      BEFORE_FINISH（失败重试）:
+        - 步骤失败但仍有待处理步骤 → 继续等待（还有重试机会）
+        - 所有步骤失败/无剩余 → 最终 FAILED + 退费
+        - 全部完成 → implementation_retry_driver 已将 ai_tool 设回 PENDING
 
     Args:
         ai_tool: AITool 对象
@@ -706,14 +839,48 @@ async def _handle_task_success(project_id, task_id, media_url):
         # 下载并缓存，如果失败则使用原URL
         # mock 本地路径短路（download_and_cache 不识别 /upload/ 本地路径，见方案 §5.1 改动 C）
         is_local_path = media_url and media_url.startswith("/upload/")
+        download_ms = None
         if is_local_path:
             final_url = media_url
             logger.info(f"[MOCK] local path, skip download_and_cache: {media_url}")
         else:
-            cached_url = await download_and_cache(media_url, task_id, media_type)
-            final_url = cached_url if cached_url else media_url
-        
+            # 派发到下载队列，解耦主循环：置 DOWNLOADING + tasks 退出主队列 + 入队。
+            # M1：仅 DB 异常才 fallback 同步下载；正在处理/正常入队都直接 return True
+            # （终态 COMPLETED + mark attempt + TASK_COMPLETED 日志由 worker 完成）
+            from config.constant import AI_TOOL_STATUS_DOWNLOADING
+            from model.download_queue import DownloadQueueModel
+            AIToolsModel.update_by_project_id(project_id=project_id, status=AI_TOOL_STATUS_DOWNLOADING)
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
+            AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_STARTED,
+                               project_id=project_id,
+                               message="上游成功，已派发到下载队列",
+                               detail={'source_url': media_url, 'media_type': media_type})
+            try:
+                enqueue_result = DownloadQueueModel.enqueue(
+                    ai_tool_id=task_id,
+                    task_id=task_id,
+                    remote_url=media_url,
+                    media_type=media_type,
+                    project_id=project_id,
+                )
+                logger.info(f"Task {task_id} dispatched to download_queue (result={enqueue_result})，"
+                            f"ai_tools -> DOWNLOADING，主循环立即返回")
+                return True
+            except Exception as dispatch_err:
+                # DB 异常：fallback 同步下载，任务不丢（state 已是 DOWNLOADING，下方共用更新会改回 COMPLETED）
+                logger.warning(f"dispatch to download_queue failed for task {task_id}, "
+                               f"fallback to sync download: {dispatch_err}")
+                download_start = datetime.now()
+                cached_url = await download_and_cache(media_url, task_id, media_type)
+                final_url = cached_url if cached_url else media_url
+                download_ms = int((datetime.now() - download_start).total_seconds() * 1000)
+
         logger.info(f"Media cached: {media_url} -> {final_url}")
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_COMPLETED,
+                           project_id=project_id,
+                           message="下载/缓存完成",
+                           duration_ms=download_ms,
+                           detail={'source_url': media_url, 'final_url': final_url})
         
         AIToolsModel.update_by_project_id_with_cdn_sync(
             project_id=project_id,
@@ -731,6 +898,10 @@ async def _handle_task_success(project_id, task_id, media_url):
             logger.warning(f"Failed to mark attempt as success for task {task_id}: {e}")
 
         logger.info(f"Task {project_id} completed successfully")
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.TASK_COMPLETED,
+                           project_id=project_id, status_to=AI_TOOL_STATUS_COMPLETED,
+                           message="任务完成",
+                           detail={'result_url': final_url})
         return True
     except Exception as db_error:
         logger.error(f"Failed to update records for success task {project_id}: {db_error}")
@@ -743,10 +914,17 @@ async def _handle_task_success(project_id, task_id, media_url):
 
 def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None):
     """
-    Handle failed task - 统一失败处理入口
+    统一失败处理入口 - 所有任务失败最终汇聚于此
 
-    企业版：先尝试通过 before_finish 重试（切换备用实现方），无可用重试则直接失败
-    社区版：直接标记失败并退还算力
+    ⚠️ 处理流程（修改时必须保持此顺序）：
+      1. 企业版重试：_enterprise_failure_handler 尝试 before_finish 切换备用实现方
+         → 成功则进入 WAITING_BEFORE_FINISH，由 pipeline 驱动重试
+         → 失败/异常则继续走社区版流程
+      2. 社区版兜底：标记 FAILED + 退还算力 + 释放 RunningHub 槽位
+
+    ⚠️ 退费两层回退：
+      优先：get_computing_power_for_task()（考虑实现方修饰符、分辨率等上下文）
+      回退：TASK_COMPUTING_POWER[ai_tool_type]（旧静态配置，不含修饰符）
 
     Args:
         task_id: Task ID (ai_tools.id)
@@ -902,7 +1080,18 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
 
 
 async def process_generate_video(task):
-    """Process video generation task logic"""
+    """
+    单个视频/图片生成任务的状态分发入口
+
+    ⚠️ 状态分发表（此处是任务生命周期的核心路由）：
+      PENDING(0)              → _submit_new_task()    提交到驱动
+      PROCESSING(1)           → _check_task_status()  轮询外部API状态
+      WAITING_PARAM_PREPARE(3)→ _check_pipeline_stage(PARAM_PREPARE)  预处理流水线
+      WAITING_BEFORE_FINISH(5)→ _check_pipeline_stage(BEFORE_FINISH) 失败重试流水线
+      其他状态 → 警告日志（不应出现，说明状态机有bug）
+
+    注意：此函数由 process_task_with_retry 通过 asyncio.run() 调用
+    """
     try:
         logger.info(f"Processing video generation task: {task.task_id}")
         ai_tool = AIToolsModel.get_by_id(task.task_id)
@@ -974,12 +1163,30 @@ def _check_max_retry_exceeded(task):
 
 def process_task_with_retry(task_type, process_func):
     """
-    Generic task processing function with retry logic and RunningHub concurrency control
-    
+    调度器主循环 - 每次触发时处理指定类型的所有待处理任务
+
+    ⚠️ 处理顺序（每个 task 按此顺序检查）：
+      1. 过期检查 → FAILED + 释放槽位
+      2. 最大重试次数 → FAILED + 退费 + 释放槽位
+      3. RunningHub 槽位控制（QUEUED 任务需先获取槽位才能提交）
+      4. 状态分发：
+         - QUEUED(0) → _submit_new_task() 提交
+         - PROCESSING(1) → _check_task_status() 轮询状态
+         - WAITING_PARAM_PREPARE/WAITING_BEFORE_FINISH → _check_pipeline_stage()
+      5. 失败处理 → _handle_task_failure()
+
+    ⚠️ RunningHub 槽位机制：
+      QUEUED 状态的 RunningHub 任务必须先通过 try_acquire_slot 获取槽位
+      获取失败则跳过本次调度（延迟到下次重试），避免超发请求
+
+    ⚠️ 卡死恢复（函数末尾）：
+      检测 WAITING_BEFORE_FINISH 状态但 ai_tools 已 PENDING/FAILED 的任务
+      说明 pipeline 步骤完成但 tasks 表状态未同步，自动修复
+
     Args:
         task_type: Task type
         process_func: Specific task processing function
-    
+
     Returns:
         Tuple of (has_task, process_result)
     """
@@ -1002,6 +1209,7 @@ def process_task_with_retry(task_type, process_func):
         for task in tasks:
             try:
                 logger.info(f"Start processing task: task_id={task.task_id}, table_id={task.id}, status={task.status}, try_count={task.try_count}")
+                ai_tool = None  # 预初始化，保证下方 except 中可安全引用
                 
                 # 检查任务是否过期
                 if _check_task_expiration(task):
@@ -1119,6 +1327,10 @@ def process_task_with_retry(task_type, process_func):
                     
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as failed due to max retry exceeded")
+                    AIToolsLogModel.log(task.task_id, AIToolsLogEvent.MAX_RETRY_EXCEEDED,
+                                       user_id=ai_tool.user_id, project_id=ai_tool.project_id,
+                                       status_to=AI_TOOL_STATUS_FAILED,
+                                       message=f"超过最大重试次数({_get_max_retry_count()})，终态失败")
                     continue
                 
                 # 获取 AI 工具详情
@@ -1128,8 +1340,10 @@ def process_task_with_retry(task_type, process_func):
                     continue
                 
                 is_runninghub = ai_tool.type in RUNNINGHUB_TASK_TYPES
-                
-                # 如果是 RunningHub 任务且状态为0（未提交）
+
+                # ⚠️ RunningHub 槽位控制：QUEUED 状态必须先获取槽位
+                # 获取失败 → 延迟30秒后重试，不计入 try_count
+                # 非 RunningHub 任务（如火山引擎等同步/异步 API）不经过此逻辑
                 if is_runninghub and task.status == TASK_STATUS_QUEUED:
                     # 尝试获取槽位
                     slot_acquired = RunningHubSlotsModel.try_acquire_slot(
@@ -1147,13 +1361,26 @@ def process_task_with_retry(task_type, process_func):
                             next_trigger=next_trigger
                         )
                         logger.info(f"Task {task.task_id} delayed by {delay_seconds}s due to slot limit, next_trigger: {next_trigger}")
+                        AIToolsLogModel.log(task.task_id, AIToolsLogEvent.SLOT_DELAYED,
+                                           user_id=ai_tool.user_id, project_id=ai_tool.project_id,
+                                           message=f"槽位已满，延迟 {delay_seconds}s",
+                                           detail={'delay_seconds': delay_seconds})
                         delayed_count += 1
                         continue  # 跳过此任务，处理下一个
-                
-                # Update status to 1 (处理中) if it's 0 (队列中)
+
+                # ⚠️ 关键状态转换：QUEUED → PROCESSING
+                # 此处仅更新 tasks 表，ai_tools 表的状态由 _submit_new_task / _check_task_status 内部更新
+                # 两表状态必须同步，否则会导致调度器重复提交或遗漏任务
                 if task.status == TASK_STATUS_QUEUED:
                     TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_PROCESSING)
                     logger.info(f"Updated task {task.task_id} status to TASK_STATUS_PROCESSING (处理中)")
+                    AIToolsLogModel.log(task.task_id, AIToolsLogEvent.TASK_STARTED,
+                                       user_id=ai_tool.user_id, project_id=ai_tool.project_id,
+                                       implementation=ai_tool.implementation,
+                                       try_count=task.try_count,
+                                       status_to=AI_TOOL_STATUS_PROCESSING,
+                                       message="调度器接管，开始处理",
+                                       detail={'task_table_id': task.id, 'try_count': task.try_count})
                 
                 # Call the specific processing function
                 # 检查是否为协程函数
@@ -1182,16 +1409,45 @@ def process_task_with_retry(task_type, process_func):
                         next_trigger=next_trigger
                     )
                     logger.info(f"Task failed: {task.task_id}, retry count: {new_try_count}, next trigger: {next_trigger}")
-                    
+                    AIToolsLogModel.log(task.task_id, AIToolsLogEvent.RETRY_SCHEDULED,
+                                       user_id=ai_tool.user_id if ai_tool else None,
+                                       project_id=ai_tool.project_id if ai_tool else None,
+                                       try_count=new_try_count,
+                                       message=f"处理失败，安排重试（第 {new_try_count} 次）",
+                                       detail={'try_count': new_try_count,
+                                               'delay_seconds': delay_seconds,
+                                               'next_trigger': next_trigger.isoformat() if next_trigger else None})
+
             except Exception as e:
                 logger.error(f"Error processing task {task.task_id}: {str(e)}")
                 import traceback
                 logger.error(traceback.format_exc())
+                new_try_count = (task.try_count or 0) + 1
+                delay_seconds = calculate_next_retry_delay(new_try_count)
+                next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
+                TasksModel.update_by_task_id(
+                    task.task_id,
+                    try_count=new_try_count,
+                    next_trigger=next_trigger,
+                )
+                logger.info(
+                    f"Task exception backoff: {task.task_id}, retry count: {new_try_count}, next trigger: {next_trigger}"
+                )
+                AIToolsLogModel.log(task.task_id, AIToolsLogEvent.EXCEPTION,
+                                   user_id=ai_tool.user_id if ai_tool else None,
+                                   project_id=ai_tool.project_id if ai_tool else None,
+                                   try_count=new_try_count,
+                                   message=f"处理异常退避: {str(e)}",
+                                   detail={'try_count': new_try_count,
+                                           'delay_seconds': delay_seconds,
+                                           'next_trigger': next_trigger.isoformat() if next_trigger else None})
                 
         logger.info(f"Summary: processed={processed_count}, succeeded={success_count}, delayed={delayed_count}, expired={expired_count}")
 
-        # 恢复机制：检测卡死的 WAITING_BEFORE_FINISH 任务
-        # 当 pipeline 步骤已完成但 tasks.status 未同步更新时，自动修复
+        # ⚠️ 卡死恢复机制：修复 tasks 表与 ai_tools 表状态不同步的问题
+        # 场景：pipeline before_finish 步骤完成后，implementation_retry_driver 更新了 ai_tools.status
+        #       但 tasks.status 仍停留在 WAITING_BEFORE_FINISH(5)，导致任务永远不被调度
+        # 修复：检测到 ai_tools 已 PENDING 但 tasks 仍 WAITING → 同步 tasks 为 QUEUED
         try:
             stuck_tasks = TasksModel.list_by_type_and_status(
                 task_type, status_list=[TASK_STATUS_WAITING_BEFORE_FINISH]

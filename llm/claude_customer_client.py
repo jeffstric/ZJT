@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 class ClaudeCustomerClient(OpenAIBaseClient):
-    """Claude OpenAI 兼容格式 LLM 客户端"""
+    """Claude OpenAI 兼容格式 LLM 客户端
+    ⚠️ "Customer" 指使用第三方 API 代理（如 jiekou.ai），而非直连 Anthropic 官方 API
+    """
 
     # model 表友好名称 -> 实际 API endpoint model ID 映射
     _MODEL_NAME_MAP = {

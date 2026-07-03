@@ -2,20 +2,20 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const html = fs.readFileSync(
-  path.join(__dirname, '../../web/marketing_agent.html'),
+const marketingAgentJs = fs.readFileSync(
+  path.join(__dirname, '../../web/js/marketing_agent.js'),
   'utf8'
 );
 
-const videoBranchStarts = [...html.matchAll(/if \(file\.type\.startsWith\('video\/'\)\) \{/g)]
+const videoBranchStarts = [...marketingAgentJs.matchAll(/if \(file\.type\.startsWith\('video\/'\)\) \{/g)]
   .map(match => match.index);
 assert.notEqual(videoBranchStarts.length, 0, 'video upload branch should exist');
 
 videoBranchStarts.forEach((videoBranchStart, index) => {
-  const audioBranchStart = html.indexOf("if (file.type.startsWith('audio/')) {", videoBranchStart);
+  const audioBranchStart = marketingAgentJs.indexOf("if (file.type.startsWith('audio/')) {", videoBranchStart);
   assert.notEqual(audioBranchStart, -1, `audio upload branch should follow video branch ${index + 1}`);
 
-  const videoBranch = html.slice(videoBranchStart, audioBranchStart);
+  const videoBranch = marketingAgentJs.slice(videoBranchStart, audioBranchStart);
 
   assert.equal(
     videoBranch.includes('hasUploadedImage.value = true'),

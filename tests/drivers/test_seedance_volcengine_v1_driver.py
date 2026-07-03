@@ -739,6 +739,36 @@ class TestBuildCreateRequestPayload(unittest.TestCase):
         self.assertNotIn('ratio', result['json'])
         self.assertNotIn('duration', result['json'])
 
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_video_resolution_written_to_payload(self, mock_compress):
+        """video_resolution 应转换为火山 payload 的 resolution 参数"""
+        mock_compress.return_value = (True, 'https://cdn.example.com/first.jpg', None)
+        ai_tool = _make_ai_tool(
+            image_path='http://example.com/first.jpg',
+            extra_config={'image_mode': 'first_last_frame', 'video_resolution': '1080P'}
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        self.assertEqual(result['json']['resolution'], '1080p')
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_video_resolution_preferred_over_legacy_resolution(self, mock_compress):
+        """优先使用 video_resolution，同时兼容旧 resolution 字段"""
+        mock_compress.return_value = (True, 'https://cdn.example.com/first.jpg', None)
+        ai_tool = _make_ai_tool(
+            image_path='http://example.com/first.jpg',
+            extra_config={
+                'image_mode': 'first_last_frame',
+                'resolution': '480P',
+                'video_resolution': '4K',
+            }
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        self.assertEqual(result['json']['resolution'], '4k')
+
 
 class TestSubmitTaskTestMode(unittest.TestCase):
     """测试 submit_task 的测试模式"""
