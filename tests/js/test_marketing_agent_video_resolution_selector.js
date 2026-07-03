@@ -14,7 +14,7 @@ assert.ok(ratioPanelMatch, 'Marketing agent should render the non-Agent ratio/se
 
 assert.match(
   ratioPanelMatch[0],
-  /v-if="isVideoMode && currentVideoResolutionOptions\.length"/,
+  /v-else-if="currentVideoResolutionOptions\.length"/,
   'Direct video mode ratio/settings panel should show video resolution options when supported'
 );
 
@@ -25,9 +25,9 @@ assert.match(
 );
 
 assert.match(
-  html,
-  /getVideoResolutionOptions\(selectedModelKey\.value\)/,
-  'Marketing agent should resolve video resolutions from the selected full model key'
+  fs.readFileSync(path.join(__dirname, '../../web/js/marketing_agent.js'), 'utf8'),
+  /getVideoResolutionOptions\(modelValue\)/,
+  'Marketing agent should resolve video resolutions from the selected video model value'
 );
 
 console.log('marketing_agent video resolution selector tests passed');

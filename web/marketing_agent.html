@@ -386,7 +386,7 @@
                                         <div v-if="mediaType === 'video'" style="margin-bottom: 20px;">
                                             <span style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: block; margin-bottom: 12px;">{{ $t('video_duration') }}</span>
                                             <div style="display: flex; gap: 8px;">
-                                                <div v-for="dur in currentDurationOptions" :key="dur" @click.stop="selectedDuration = dur" style="flex: 1; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: selectedDuration === dur ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: selectedDuration === dur ? '#e6f7ff' : '#f5f5f5', color: selectedDuration === dur ? '#00a8e6' : '#1a1a1a' }">{{ $t('duration_seconds', { dur: dur }) }}</div>
+                                                <div v-for="dur in currentDurationOptions" :key="dur" @click.stop="selectedDuration = dur" style="flex: 1; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: selectedDuration === dur ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: selectedDuration === dur ? '#e6f7ff' : '#f5f5f5', color: selectedDuration === dur ? '#00a8e6' : '#1a1a1a' }">{{ formatDurationOption(dur) }}</div>
                                             </div>
                                         </div>
 
@@ -594,11 +594,11 @@
                                         <circle cx="12" cy="12" r="10"/>
                                         <path d="M12 6v6l4 2"/>
                                     </svg>
-                                    <span>{{ $t('duration_seconds', { dur: selectedDuration }) }}</span>
+                                    <span>{{ formatDurationOption(selectedDuration) }}</span>
                                 </button>
                                 <div v-if="showDurationPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); padding: 8px; min-width: 120px; z-index: 100;">
                                     <div v-for="dur in currentDurationOptions" :key="dur" @click.stop="selectedDuration = dur; showDurationPanel = false" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.2s;" :style="{ background: selectedDuration === dur ? '#e6f7ff' : 'transparent' }">
-                                        <span style="font-size: 13px; font-weight: 500; color: #1a1a1a;">{{ $t('duration_seconds', { dur: dur }) }}</span>
+                                        <span style="font-size: 13px; font-weight: 500; color: #1a1a1a;">{{ formatDurationOption(dur) }}</span>
                                         <span v-if="selectedDuration === dur" style="color: #00a8e6; font-weight: bold;">✓</span>
                                     </div>
                                 </div>

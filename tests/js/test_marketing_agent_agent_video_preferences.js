@@ -2,8 +2,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const html = fs.readFileSync(
-  path.join(__dirname, '../../web/marketing_agent.html'),
+const marketingAgentJs = fs.readFileSync(
+  path.join(__dirname, '../../web/js/marketing_agent.js'),
   'utf8'
 );
 const api = fs.readFileSync(
@@ -12,43 +12,43 @@ const api = fs.readFileSync(
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /function buildAgentVideoPreferences\(validImageUrls\)/,
   'Agent send should have a helper that builds video preferences independently of the visible media panel'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /video_preferences:\s*isAgentMode\s*\?\s*buildAgentVideoPreferences\(validImageUrls\)\s*:\s*undefined/,
   'Agent task payload should include video_preferences for all Agent messages, not only Agent video panel messages'
 );
 
 assert.doesNotMatch(
-  html,
+  marketingAgentJs,
   /video_preferences:\s*\(isAgentMode\s*&&\s*mediaType\.value\s*===\s*'video'\)/,
   'Agent video preferences must not be gated by mediaType === video'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /validImageUrls\.length\s*>\s*0\s*\?\s*'image_to_video'\s*:\s*'text_to_video'/,
   'Agent video preferences should choose image_to_video only when the current message has real image URLs'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /marketing_selected_i2v_model/,
   'Agent video preferences should be able to restore the saved image-to-video model'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /marketing_selected_t2v_model/,
   'Agent video preferences should be able to restore the saved text-to-video model'
 );
 
 assert.match(
-  html,
+  marketingAgentJs,
   /buildAgentVideoPreferences[\s\S]{0,2000}?resolution:\s*selectedVideoResolution\.value\s*\|\|\s*undefined/,
   'Agent video preferences should include resolution from selectedVideoResolution'
 );
