@@ -7,6 +7,7 @@
         videoModel: 'wan22',
         model: '9:16',
         videoResolution: '',
+        processFace: false,  // 是否处理人脸（仅 seedance2.0 商业版生效）
         durationSeconds: 5,
         count: 1,
         loading: false,
@@ -255,6 +256,15 @@
           return [];
         }
         return TaskConfig.getVideoResolutionOptions(this.videoModel);
+      },
+      // 当前所选模型是否走人脸遮盖预处理（seedance2.0 系列）
+      currentModelNeedsFaceMask() {
+        const config = this.modelConfigs && this.modelConfigs[this.videoModel];
+        return !!(config && config.needs_face_mask === true);
+      },
+      // 是否为商业版（社区版下「是否处理人脸」置灰提示）
+      isEnterprise() {
+        return !!(window.TaskConfig && window.TaskConfig.isEnterprise && window.TaskConfig.isEnterprise());
       },
       countOptions() {
         return [
@@ -864,6 +874,11 @@
           }
           form.append('task_id', taskId);
 
+          // 是否处理人脸（仅 seedance2.0 商业版生效）
+          if (this.processFace) {
+            form.append('enable_face_mask', 'true');
+          }
+
           // Add user_id from localStorage
           const userId = localStorage.getItem('user_id');
           if (userId) {
@@ -1287,6 +1302,16 @@
                 {{ opt.label || opt.value }}
               </option>
             </select>
+          </div>
+
+          <div class="field" v-if="currentModelNeedsFaceMask">
+            <label class="label" style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+              <input type="checkbox" v-model="processFace" :disabled="!isEnterprise" style="cursor: pointer; width: 14px; height: 14px;" />
+              <span>{{ $t('process_face_label') || '是否处理人脸' }}</span>
+            </label>
+            <div class="muted" v-if="!isEnterprise" style="margin-top: 4px; color: #d97706; font-size: 12px;">
+              {{ $t('process_face_community_hint') || '此功能为商业版功能，请联系购买商业版本后使用' }}
+            </div>
           </div>
 
           <div class="field" v-if="videoModel !== 'vidu'">

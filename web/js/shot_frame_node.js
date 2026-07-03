@@ -98,6 +98,7 @@
           videoModel: inheritedVideoModel,
           videoResolution: opts?.data?.videoResolution || opts?.videoResolution || '',
           videoMode: 'first_last_frame',  // 'first_last_frame' | 'multi_reference'
+          processFace: opts?.data?.processFace ?? false,  // 是否处理人脸（仅 seedance2.0 商业版生效）
         }
       };
       state.nodes.push(node);
@@ -236,6 +237,13 @@
                 <div class="label" data-i18n="shot_frame_reference_video_label">${window.t ? window.t('shot_frame_reference_video_label') : '参考视频（可选）'}</div>
                 <input type="file" class="shot-ref-video-input" accept="video/*" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;" />
                 <div class="shot-ref-video-name" style="margin-top: 4px; font-size: 11px; color: #666;"></div>
+              </div>
+              <div class="shot-process-face-field field field-always-visible" style="margin-top: 8px; display: none;">
+                <label class="shot-process-face-label" style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; cursor: pointer;">
+                  <input type="checkbox" class="shot-process-face-checkbox" style="cursor: pointer;" />
+                  <span data-i18n="process_face_label">${window.t ? window.t('process_face_label') : '是否处理人脸'}</span>
+                </label>
+                <div class="shot-process-face-hint" style="margin-top: 4px; font-size: 11px; color: #d97706; display: none;" data-i18n="process_face_community_hint">${window.t ? window.t('process_face_community_hint') : '此功能为商业版功能，请联系购买商业版本后使用'}</div>
               </div>
               <div class="field field-always-visible" style="margin-top: 12px;">
                 <div class="gen-container" style="width: 100%;">
@@ -464,10 +472,35 @@
         }
       }
 
+      // 初始化「是否处理人脸」字段可见性（仅 seedance2.0 系列显示；社区版置灰提示）
+      function updateProcessFaceVisibility() {
+        const faceField = el.querySelector('.shot-process-face-field');
+        if(!faceField) return;
+        const videoModel = videoModelEl ? videoModelEl.value : (node.data.videoModel || '');
+        const hintEl = el.querySelector('.shot-process-face-hint');
+        const checkboxEl = el.querySelector('.shot-process-face-checkbox');
+        if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          const modelConfig = window.TaskConfig.getModelConfigs()[videoModel];
+          const needsFaceMask = modelConfig && modelConfig.needs_face_mask === true;
+          faceField.style.display = needsFaceMask ? 'block' : 'none';
+          if(needsFaceMask) {
+            const isEnterprise = window.TaskConfig.isEnterprise();
+            if(checkboxEl) {
+              checkboxEl.checked = !!node.data.processFace;
+              checkboxEl.disabled = !isEnterprise;
+            }
+            if(hintEl) hintEl.style.display = isEnterprise ? 'none' : 'block';
+          }
+        } else {
+          faceField.style.display = 'none';
+        }
+      }
+
       if(videoModelEl) {
         // 初始填充
         populateVideoModelOptions();
         updateRefAudioVideoVisibility();
+        updateProcessFaceVisibility();
 
         // ============ 模式切换事件 ============
         const modeBtns = el.querySelectorAll('.video-mode-btn');
@@ -502,8 +535,18 @@
           node.data.videoModel = videoModelEl.value;
           updateResolutionOptions(videoModelEl.value);
           updateRefAudioVideoVisibility();
+          updateProcessFaceVisibility();
           safeAutoSave()
         });
+
+        // 人脸处理复选框事件
+        const processFaceCheckbox = el.querySelector('.shot-process-face-checkbox');
+        if(processFaceCheckbox) {
+          processFaceCheckbox.addEventListener('change', (e) => {
+            node.data.processFace = !!e.target.checked;
+            safeAutoSave();
+          });
+        }
 
         // 参考音频输入事件
         const refAudioInput = el.querySelector('.shot-ref-audio-input');

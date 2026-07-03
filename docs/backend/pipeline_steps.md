@@ -10,6 +10,12 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 > **适配模型清单（单一事实来源）**：param_prepare 人脸遮盖适用的 Seedance 模型统一维护在 `config/unified_config.py::SEEDANCE_FACE_MASK_DRIVER_KEYS`，`server.py` 闸门与 `PipelineDriverFactory` 均查询该集合，新增模型只需在此追加一项。
 
+> **用户开关与版本门（opt-in）**：人脸遮盖改为**用户显式勾选才生效（默认不勾选）**。`/api/ai-app-run-image` 新增表单参数 `enable_face_mask: bool = Form(False)`；`server.py` 的 `need_pipeline_steps` 闸门最终为 `is_seedance_face_mask AND enable_face_mask AND (NOT Edition.is_community()) AND runninghub_api_key AND has_any_param_prepare_input`。
+> - **未勾选 / 社区版**：闸门为假 → 走 `AIToolsModel.create`（普通生成，**不创建任何步骤**，避免卡在 `WAITING_PARAM_PREPARE`）。
+> - **勾选 + 商业版**：走 `AIToolsModel.create_with_pipeline_steps`（建 `face_mask` / `image_face_mask` 步骤）。
+> - 版本判断 `NOT Edition.is_community()` **必须**在闸门内，不能仅依赖 `create_with_pipeline_steps` 内部判断，否则社区版会把 ai_tool 以 `WAITING_PARAM_PREPARE` 落库却不建步骤，导致任务永久卡死。
+> - 前端通过 `/api/system/task-configs` 下发的每模型标志 `needs_face_mask`（= `key in SEEDANCE_FACE_MASK_DRIVER_KEYS`）显隐「是否处理人脸」选项；社区版下选项仍显示但置灰提示「商业版功能」。智能体（marketing-video）路径经 `video_preferences.enable_face_mask` 透传同一开关。
+
 ## 状态机
 
 ```
@@ -94,7 +100,7 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 用于 `param_prepare` 阶段，在 Seedance 2.0 等需要处理含人脸视频的场景中，先将视频中的人脸遮盖掉。
 
-**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + `pipeline.seedance_face_mask_enabled=true` + 有 video_path 输入
+**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 video_path 输入
 
 **遮盖语义**：单帧 ComfyUI 工作流 `人脸识别_单帧.json` 不再在检测前 resize，YOLOv8 的 `BBOX Detector (combined)` 直接在原图上生成整图尺寸的 bbox 矩形 mask，再通过 `8x8` 黑色图像按 mask 拉伸合成回原图。遮盖区域以检测框 `x1/y1/x2/y2` 为基础，并使用 `dilation=128` 增加安全边距，补偿 YOLO face bbox 在侧脸、头发遮挡、扇子遮挡、局部置信度偏高时只框住人脸核心区域的问题；它不是 SEGS 裁剪图或人脸轮廓分割区域，避免出现纯黑背景里残留脸部裁剪图的结果。
 
@@ -111,9 +117,9 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast / 2.0 Mini 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的图片做人脸矩形黑块遮盖。
 
-**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
+**触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
 
-**配置开关**：`pipeline.seedance_face_mask_enabled`，默认 `true`，是 Seedance 人脸遮盖前置处理的**总开关**，同时控制图片（`image_face_mask`）和视频（`face_mask`）两种遮盖步骤。关闭后图片和视频的遮盖步骤均不创建，任务走普通生成流程。
+**配置开关**：`pipeline.seedance_face_mask_enabled`，默认 `true`，是 Seedance 人脸遮盖前置处理的**总开关**（管理员级），同时控制图片（`image_face_mask`）和视频（`face_mask`）两种遮盖步骤。关闭后图片和视频的遮盖步骤均不创建，任务走普通生成流程。其上还有两层用户/版本级门：用户级 `enable_face_mask`（前端「是否处理人脸」勾选，默认不勾选，**opt-in**）与版本级 `NOT Edition.is_community()`（社区版禁止），三者同时满足才会创建步骤（见上文「用户开关与版本门」）。
 
 **RunningHub 工作流**：调用 RunningHub AI App `2067560129192620033`，将输入图片上传后映射到节点 `3` 的 `image` 字段。工作流返回遮盖后的 png 结果，系统会先下载到本地 `upload/cache`，避免直接依赖 RunningHub 24 小时临时 URL。
 

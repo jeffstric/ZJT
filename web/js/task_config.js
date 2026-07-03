@@ -350,6 +350,8 @@
         supports_last_frame: task.supports_last_frame !== false,  // 默认为 true
         // 是否支持参考音频和视频
         supports_ref_audio_video: task.supports_ref_audio_video === true,
+        // 是否走人脸遮盖预处理（seedance 2.0 系列），前端据此显隐「是否处理人脸」选项
+        needs_face_mask: task.needs_face_mask === true,
         // 多参考图模式最大图片数量
         max_multi_ref_images: task.max_multi_ref_images || 5,
         // 视频分辨率配置
@@ -515,6 +517,11 @@
     // RunningHub 配置状态
     isRunningHubConfigured() {
       return taskConfigCache?.runninghub_configured ?? false;
+    },
+
+    // 是否为商业版（用于「是否处理人脸」等商业功能的置灰提示）
+    isEnterprise() {
+      return taskConfigCache?.is_enterprise === true;
     },
 
     // 兼容旧格式

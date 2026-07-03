@@ -226,5 +226,7 @@
   "audio_exceeds_remaining_duration": "Audio duration {dur}s exceeds remaining {remaining}s",
   "video_tag": "[Video]",
   "audio_tag": "[Audio]",
-  "video_label": "[Video {num}]"
+  "video_label": "[Video {num}]",
+  "process_face_label": "Process face",
+  "process_face_community_hint": "This is a commercial-edition feature. Please contact us to upgrade."
 }

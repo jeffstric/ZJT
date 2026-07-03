@@ -704,6 +704,8 @@
   "video_prompt_dialogue": "对话：{value}",
   "video_prompt_audio_notes": "音频备注：{value}",
   "video_prompt_environment_sound": "环境音：{value}",
-  "video_prompt_background_music": "背景音乐：{value}"
+  "video_prompt_background_music": "背景音乐：{value}",
+  "process_face_label": "是否处理人脸",
+  "process_face_community_hint": "此功能为商业版功能，请联系购买商业版本后使用"
 }
 

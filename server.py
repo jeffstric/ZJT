@@ -1926,7 +1926,8 @@ async def ai_app_run_image(
     audio_urls: str = Form(None, description="Comma-separated reference audio URLs (alternative to uploading audio file)"),
     video_urls: str = Form(None, description="Comma-separated reference video URLs (alternative to uploading video file)"),
     media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution"),
-    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
+    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）"),
+    enable_face_mask: bool = Form(False, description="是否启用人脸遮盖预处理（仅 Seedance 2.0 系列商业版生效，默认关闭）")
 ):
     """
     Submit image to video task.
@@ -2162,12 +2163,15 @@ async def ai_app_run_image(
                         )
                         need_pipeline_steps = (
                             is_seedance_face_mask
+                            and enable_face_mask
+                            and not Edition.is_community()
                             and runninghub_api_key
                             and has_any_param_prepare_input
                         )
                         logger.info(
                             f"Pipeline steps condition check: image_to_video_type={image_to_video_type}, "
                             f"is_seedance_face_mask={is_seedance_face_mask}, "
+                            f"enable_face_mask={enable_face_mask}, is_community={Edition.is_community()}, "
                             f"has_api_key={bool(runninghub_api_key)}, has_video={bool(video_path)}, "
                             f"face_mask_enabled={bool(seedance_face_mask_enabled)}, "
                             f"has_image_input={has_image_input}, need_pipeline_steps={need_pipeline_steps}"

@@ -507,6 +507,10 @@ class UnifiedTaskConfig:
         # 添加参考音频和视频支持标记
         result['supports_ref_audio_video'] = self.supports_ref_audio_video
 
+        # 是否走人脸遮盖预处理（seedance 2.0 系列），前端据此显隐「是否处理人脸」选项
+        # 单一事实来源：模块级 SEEDANCE_FACE_MASK_DRIVER_KEYS
+        result['needs_face_mask'] = self.key in SEEDANCE_FACE_MASK_DRIVER_KEYS
+
         # 添加算力修饰符
         if self.power_modifiers:
             result['power_modifiers'] = [
@@ -825,11 +829,20 @@ class UnifiedConfigRegistry:
         except Exception:
             pass
 
+        # 是否为商业版（延迟导入以避免循环导入），前端据此对「是否处理人脸」等商业功能做置灰提示
+        is_enterprise = True
+        try:
+            from config.constant import Edition
+            is_enterprise = not Edition.is_community()
+        except Exception:
+            pass
+
         return {
             'tasks': tasks,
             'categories': categories,
             'providers': providers,
             'runninghub_configured': runninghub_configured,
+            'is_enterprise': is_enterprise,
         }
 
     @classmethod
