@@ -14,9 +14,31 @@ import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
 import { renderApp, renderPromptWithInlineRoles, getThumbnailUrl } from './render.js';
 import { pollSceneTaskStatus } from './polling.js';
+import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';
+
+let generateProgressTimer = null;
+let isTimelineHovered = false;
 
 function notify(message) {
     window.alert(message);
+}
+
+function handleAutoDialogueAudioPolling(response) {
+    const summary = response && response.audio_auto_generate;
+    if (!summary || !summary.enabled) return;
+    const sceneIds = new Set();
+    (summary.submitted || []).forEach(item => {
+        const sceneId = parseInt(item.scene_id, 10);
+        if (Number.isFinite(sceneId)) sceneIds.add(sceneId);
+    });
+    sceneIds.forEach(sceneId => {
+        pollSceneTaskStatus(sceneId);
+    });
+    const submitted = Number(summary.submitted_count || 0);
+    const skipped = Number(summary.skipped_count || 0);
+    if (submitted > 0 || skipped > 0) {
+        notify(`已提交 ${submitted} 条配音任务，${skipped} 条跳过`);
+    }
 }
 
 function rerender() {
@@ -282,6 +304,40 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'close-generate-progress') {
+        if (generateProgressTimer) {
+            clearInterval(generateProgressTimer);
+            generateProgressTimer = null;
+        }
+        state.showGenerateProgressDialog = false;
+        state.generateProgressError = '';
+        rerender();
+        return;
+    }
+
+    if (action === 'retry-generate-progress') {
+        if (generateProgressTimer) {
+            clearInterval(generateProgressTimer);
+            generateProgressTimer = null;
+        }
+        state.showGenerateProgressDialog = false;
+        state.generateProgressError = '';
+        state.showGenerateFromScriptDialog = true;
+        rerender();
+        return;
+    }
+
+    if (action === 'set-auto-image-sequence-mode') {
+        const mode = target.dataset.autoImageSequenceMode;
+        if (!['speed', 'balanced', 'quality'].includes(mode) || state.isGeneratingFromScript) return;
+        state.autoImageSequenceMode = mode;
+        rerender();
+        if (state.storyboardId) {
+            persistUiConfig().catch(() => {});
+        }
+        return;
+    }
+
     if (action === 'generate-from-script-confirm') {
         if (state.isGeneratingFromScript || !state.storyboardId) return;
         const splitModel = resolveSelectedScriptSplitLlmModel();
@@ -292,7 +348,49 @@ async function handleAction(action, target) {
         }
         state.isGeneratingFromScript = true;
         state.generateFromScriptError = '';
+        state.showGenerateFromScriptDialog = false;
+        state.showGenerateProgressDialog = true;
+        state.generateProgressError = '';
+        const progressSteps = [
+            { name: '构思场景背景', status: 'pending' },
+            { name: '设计画面构图', status: 'pending' },
+            { name: '选择适合景别', status: 'pending' },
+            { name: '调整色彩与灯光', status: 'pending' },
+            { name: '最终细节确认', status: 'pending' },
+        ];
+        state.generateProgressSteps = progressSteps;
+        state.generateProgressStepIndex = 0;
+        progressSteps[0].status = 'running';
         rerender();
+
+        const STEP_DELAY = 5000;
+        if (generateProgressTimer) {
+            clearInterval(generateProgressTimer);
+            generateProgressTimer = null;
+        }
+        const advanceStep = () => {
+            const idx = state.generateProgressStepIndex;
+            if (idx >= 0 && idx < progressSteps.length) {
+                progressSteps[idx].status = 'completed';
+            }
+            const nextIdx = idx + 1;
+            if (nextIdx < progressSteps.length - 1) {
+                progressSteps[nextIdx].status = 'running';
+                state.generateProgressStepIndex = nextIdx;
+                rerender();
+            } else if (nextIdx === progressSteps.length - 1) {
+                progressSteps[nextIdx].status = 'running';
+                state.generateProgressStepIndex = nextIdx;
+                rerender();
+                clearInterval(generateProgressTimer);
+                generateProgressTimer = null;
+            } else {
+                clearInterval(generateProgressTimer);
+                generateProgressTimer = null;
+            }
+        };
+        generateProgressTimer = setInterval(advanceStep, STEP_DELAY);
+
         try {
             const response = await api.generateFromScript(state.storyboardId, {
                 max_group_duration: 15,
@@ -301,12 +399,28 @@ async function handleAction(action, target) {
                 model_id: splitModel.model_id,
                 vendor_id: splitModel.vendor_id,
             });
-            loadStoryboardData(response);
-            state.showGenerateFromScriptDialog = false;
-            notify(`已生成 ${response.generated_count || state.scenes.length} 个分镜`);
+            clearInterval(generateProgressTimer);
+            generateProgressTimer = null;
+            progressSteps.forEach(s => s.status = 'completed');
+            state.generateProgressStepIndex = progressSteps.length;
+            rerender();
+            setTimeout(() => {
+                state.showGenerateProgressDialog = false;
+                loadStoryboardData(response);
+                handleAutoDialogueAudioPolling(response);
+                state.isGeneratingFromScript = false;
+                autoGenerateMissingFirstFrames();
+                notify(`已生成 ${response.generated_count || state.scenes.length} 个分镜`);
+                rerender();
+            }, 500);
         } catch (error) {
-            state.generateFromScriptError = error.message || '生成分镜失败';
-        } finally {
+            clearInterval(generateProgressTimer);
+            generateProgressTimer = null;
+            const idx = state.generateProgressStepIndex;
+            if (idx >= 0 && idx < progressSteps.length) {
+                progressSteps[idx].status = 'failed';
+            }
+            state.generateProgressError = error.message || '生成分镜失败';
             state.isGeneratingFromScript = false;
             rerender();
         }
@@ -579,6 +693,10 @@ async function handleAction(action, target) {
 }
 
 function handleRoute(route) {
+    if (route === 'storyboard-list') {
+        window.location.href = '/storyboard-list';
+        return;
+    }
     if (route === 'script') {
         window.location.href = buildQuery('/script-writer', {
             world_id: state.worldId,
@@ -665,14 +783,71 @@ export function bindEvents() {
         }
     });
 
+    document.addEventListener('mouseenter', (event) => {
+        if (event.target && typeof event.target.closest === 'function' && event.target.closest('.scene-timeline-list')) {
+            isTimelineHovered = true;
+        }
+    }, true);
+
+    document.addEventListener('mouseleave', (event) => {
+        if (!event.target || typeof event.target.closest !== 'function') return;
+        const list = event.target.closest('.scene-timeline-list');
+        if (list && !list.contains(event.relatedTarget)) {
+            isTimelineHovered = false;
+        }
+    }, true);
+
     document.addEventListener('keydown', (event) => {
         const target = event.target;
         if (target.id === 'chat-textarea' && event.key === 'Enter' && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
             event.preventDefault();
             const btn = document.querySelector('[data-action="send-ai"]');
             if (btn) btn.click();
+            return;
         }
+        if (!isTimelineHovered) return;
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+
+        const currentIndex = state.scenes.findIndex(s => s.id === state.currentSceneId);
+        if (currentIndex === -1) return;
+
+        let newIndex = currentIndex;
+        if (event.key === 'ArrowLeft' && currentIndex > 0) {
+            newIndex = currentIndex - 1;
+        } else if (event.key === 'ArrowRight' && currentIndex < state.scenes.length - 1) {
+            newIndex = currentIndex + 1;
+        }
+        if (newIndex === currentIndex) return;
+
+        event.preventDefault();
+        state.currentSceneId = state.scenes[newIndex].id;
+        state.currentTime = 0;
+        state.agentMessages = [];
+        rerender();
+
+        requestAnimationFrame(() => {
+            const activeThumb = document.querySelector('.scene-timeline-thumb.active');
+            if (!activeThumb) return;
+            const list = document.querySelector('.scene-timeline-list');
+            if (!list) return;
+            const thumbRect = activeThumb.getBoundingClientRect();
+            const listRect = list.getBoundingClientRect();
+            if (thumbRect.left < listRect.left + 8) {
+                list.scrollLeft -= (listRect.left + 8 - thumbRect.left);
+            } else if (thumbRect.right > listRect.right - 8) {
+                list.scrollLeft += (thumbRect.right - (listRect.right - 8));
+            }
+        });
     });
+
+    document.addEventListener('wheel', (event) => {
+        const timelineList = event.target.closest('.scene-timeline-list');
+        if (!timelineList) return;
+        if (Math.abs(event.deltaY) > 0 && timelineList.scrollWidth > timelineList.clientWidth) {
+            event.preventDefault();
+            timelineList.scrollLeft += event.deltaY;
+        }
+    }, { passive: false });
 
     document.addEventListener('change', async (event) => {
         const target = event.target;
@@ -752,10 +927,15 @@ export function bindEvents() {
     document.addEventListener('click', (event) => {
         const overlay = event.target.closest('.modal-overlay');
         if (overlay && event.target === overlay) {
+            if (generateProgressTimer) {
+                clearInterval(generateProgressTimer);
+                generateProgressTimer = null;
+            }
             state.showModelConfigModal = false;
             state.showExportDialog = false;
             state.showGlobalStyleDialog = false;
             state.showGenerateFromScriptDialog = false;
+            state.showGenerateProgressDialog = false;
             rerender();
             return;
         }

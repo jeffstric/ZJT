@@ -9,6 +9,15 @@ export function normalizePagedList(response) {
     const outer = response.data !== undefined ? response.data : response;
     if (Array.isArray(outer)) return outer;
     if (outer && Array.isArray(outer.data)) return outer.data;
+    const keys = ['items', 'list', 'records', 'characters', 'props', 'locations', 'data'];
+    for (const key of keys) {
+        if (outer && Array.isArray(outer[key])) return outer[key];
+    }
+    if (outer && outer.data && typeof outer.data === 'object') {
+        for (const key of keys) {
+            if (Array.isArray(outer.data[key])) return outer.data[key];
+        }
+    }
     return [];
 }
 
@@ -36,28 +45,51 @@ export function mapAssetAvatar(item) {
     if (!item) return '';
     if (item.reference_image) return item.reference_image;
     if (item.referenceImage) return item.referenceImage;
-    if (Array.isArray(item.reference_images) && item.reference_images.length > 0) {
-        const first = item.reference_images[0];
-        return typeof first === 'string' ? first : (first.url || first.file_url || first.image_url || '');
+    const referenceImages = parseReferenceImages(item.reference_images || item.referenceImages);
+    if (referenceImages.length > 0) {
+        const first = referenceImages.find(Boolean);
+        if (typeof first === 'string') return first;
+        if (first) {
+            return first.url || first.file_url || first.image_url || first.reference_image || first.path || '';
+        }
     }
     if (item.avatar) return item.avatar;
     if (item.image_url) return item.image_url;
     if (item.imageUrl) return item.imageUrl;
     if (item.cover_url) return item.cover_url;
     if (item.pic_url) return item.pic_url;
+    if (item.file_url) return item.file_url;
+    if (item.thumbnail_url) return item.thumbnail_url;
+    if (item.url) return item.url;
+    if (item.path) return item.path;
     return '';
 }
 
 export function assetFromApi(item) {
     const avatar = mapAssetAvatar(item);
+    const referenceImages = parseReferenceImages(item.reference_images || item.referenceImages);
     return {
         id: item.id,
         name: item.name || item.title || `#${item.id}`,
         avatar,
         reference_image: item.reference_image || item.referenceImage || avatar,
-        reference_images: item.reference_images || [],
+        reference_images: referenceImages,
         raw: item,
     };
+}
+
+function parseReferenceImages(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'string') return [];
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+        const parsed = JSON.parse(trimmed);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
 }
 
 export function dialogueFromApi(raw = {}) {

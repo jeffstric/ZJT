@@ -10,6 +10,7 @@ from .runninghub_slots import RunningHubSlotsModel, RunningHubSlot
 from .database import get_db_connection, execute_query, execute_update, execute_insert, transaction, execute_insert_in_transaction, execute_update_in_transaction
 from .users import UsersModel, User
 from .user_tokens import UserTokensModel, UserToken
+from .user_api_tokens import UserApiTokensModel, UserApiToken
 from .computing_power import ComputingPowerModel, ComputingPower
 from .computing_power_log import ComputingPowerLogModel, ComputingPowerLog
 from .verify_codes import VerifyCodesModel, VerifyCode
@@ -30,6 +31,7 @@ from .storyboard import StoryboardModel, Storyboard, StoryboardSceneModel, Story
 from .storyboard_dialogue import StoryboardDialogueModel, StoryboardDialogue
 from .storyboard_dialogue_audio import StoryboardDialogueAudioModel, StoryboardDialogueAudio
 from .storyboard_scene_asset import StoryboardSceneAssetModel, StoryboardSceneAsset
+from .storyboard_image_batch import StoryboardImageBatchJobModel, StoryboardImageBatchItemModel
 
 __all__ = [
     'AIToolsModel',
@@ -55,6 +57,8 @@ __all__ = [
     'User',
     'UserTokensModel',
     'UserToken',
+    'UserApiTokensModel',
+    'UserApiToken',
     'ComputingPowerModel',
     'ComputingPower',
     'ComputingPowerLogModel',
@@ -104,4 +108,6 @@ __all__ = [
     'StoryboardDialogueAudio',
     'StoryboardSceneAssetModel',
     'StoryboardSceneAsset',
+    'StoryboardImageBatchJobModel',
+    'StoryboardImageBatchItemModel',
 ]

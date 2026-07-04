@@ -287,6 +287,8 @@
 
             renderCarousel();
             initCarousel();
+            restoreInterventionLevel();
+            initCustomModelSelectMenus();
 
             // 设置发送按钮事件监听器
             const sendButton = document.getElementById('send-btn');
@@ -1153,7 +1155,8 @@
                         model_id: modelId,
                         vendor_id: vendorId ? parseInt(vendorId) : 1,
                         language: localStorage.getItem('zjt_locale') || 'zh-CN',
-                        ...getThinkingParams()
+                        ...getThinkingParams(),
+                        intervention_level: getInterventionLevel()
                     }),
                     signal: controller.signal
                 });
@@ -2182,6 +2185,117 @@
             display.style.color = '';
         }
 
+        let activeCustomModelSelect = null;
+        let customModelSelectListenersReady = false;
+
+        function closeCustomModelSelectMenu() {
+            if (!activeCustomModelSelect) return;
+            activeCustomModelSelect.menu.remove();
+            activeCustomModelSelect.wrapper.classList.remove('custom-select-open');
+            activeCustomModelSelect.wrapper.setAttribute('aria-expanded', 'false');
+            activeCustomModelSelect = null;
+        }
+
+        function appendCustomModelSelectOption(menu, selector, option, optionIndex) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'custom-model-select-option';
+            item.textContent = option.textContent || option.value;
+            item.title = option.textContent || option.value;
+            item.disabled = option.disabled;
+            if (option.selected) {
+                item.classList.add('selected');
+            }
+            item.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (option.disabled) return;
+                selector.selectedIndex = optionIndex;
+                closeCustomModelSelectMenu();
+                selector.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+            menu.appendChild(item);
+        }
+
+        function appendCustomModelSelectOptions(menu, selector, children) {
+            Array.from(children).forEach((child) => {
+                if (child.tagName === 'OPTGROUP') {
+                    const label = document.createElement('div');
+                    label.className = 'custom-model-select-group';
+                    label.textContent = child.label;
+                    menu.appendChild(label);
+                    appendCustomModelSelectOptions(menu, selector, child.children);
+                    return;
+                }
+                if (child.tagName !== 'OPTION') return;
+                const optionIndex = Array.prototype.indexOf.call(selector.options, child);
+                appendCustomModelSelectOption(menu, selector, child, optionIndex);
+            });
+        }
+
+        function openCustomModelSelectMenu(selector) {
+            const wrapper = selector.closest('.model-select-wrapper');
+            if (!wrapper) return;
+            if (activeCustomModelSelect && activeCustomModelSelect.selector === selector) {
+                closeCustomModelSelectMenu();
+                return;
+            }
+            closeCustomModelSelectMenu();
+
+            const rect = wrapper.getBoundingClientRect();
+            const menu = document.createElement('div');
+            menu.className = 'custom-model-select-menu';
+            menu.style.top = `${rect.bottom + 6}px`;
+            menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
+            menu.style.width = `${Math.max(rect.width, 180)}px`;
+            menu.style.maxHeight = `${Math.max(120, Math.min(320, window.innerHeight - rect.bottom - 18))}px`;
+            appendCustomModelSelectOptions(menu, selector, selector.children);
+            document.body.appendChild(menu);
+
+            wrapper.classList.add('custom-select-open');
+            wrapper.setAttribute('aria-expanded', 'true');
+            activeCustomModelSelect = { selector, wrapper, menu };
+        }
+
+        function initCustomModelSelectMenus() {
+            document.querySelectorAll('.model-select-wrapper .model-select').forEach((selector) => {
+                const wrapper = selector.closest('.model-select-wrapper');
+                const display = wrapper?.querySelector('.model-select-display');
+                if (!wrapper || !display || wrapper.dataset.customSelectReady === 'true') return;
+                wrapper.dataset.customSelectReady = 'true';
+                wrapper.tabIndex = 0;
+                wrapper.setAttribute('role', 'combobox');
+                wrapper.setAttribute('aria-haspopup', 'listbox');
+                wrapper.setAttribute('aria-expanded', 'false');
+                selector.tabIndex = -1;
+                selector.setAttribute('aria-hidden', 'true');
+
+                const openMenu = (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openCustomModelSelectMenu(selector);
+                };
+                display.addEventListener('click', openMenu);
+                wrapper.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        openMenu(event);
+                    } else if (event.key === 'Escape') {
+                        closeCustomModelSelectMenu();
+                    }
+                });
+            });
+
+            if (customModelSelectListenersReady) return;
+            customModelSelectListenersReady = true;
+            document.addEventListener('click', (event) => {
+                if (!activeCustomModelSelect) return;
+                if (activeCustomModelSelect.menu.contains(event.target) || activeCustomModelSelect.wrapper.contains(event.target)) return;
+                closeCustomModelSelectMenu();
+            });
+            window.addEventListener('resize', closeCustomModelSelectMenu);
+            window.addEventListener('scroll', closeCustomModelSelectMenu, true);
+        }
+
         function updateModelTooltip() {
             const selector = document.getElementById('model-selector');
             if (!selector) return;
@@ -2347,6 +2461,97 @@
                 enable_thinking: true,
                 thinking_effort: effortSelect ? effortSelect.value : 'medium'
             };
+        }
+
+        // ==================== AI 介入程度 ====================
+        const INTERVENTION_LEVEL_I18N_KEYS = {
+            balanced: 'intervention_balanced',
+            concise: 'intervention_concise',
+            detailed: 'intervention_detailed'
+        };
+
+        function onInterventionLevelChange() {
+            const selector = document.getElementById('intervention-level-selector');
+            if (!selector) return;
+            localStorage.setItem('lastInterventionLevel', selector.value);
+            updateInterventionLevelDisplay();
+        }
+
+        function updateInterventionLevelDisplay() {
+            const selector = document.getElementById('intervention-level-selector');
+            const display = document.getElementById('intervention-level-display');
+            if (!selector || !display) return;
+            const fallbackLabels = {
+                balanced: '标准',
+                concise: '简洁·少提问',
+                detailed: '精细·多确认'
+            };
+            const value = selector.value || 'balanced';
+            const translationKey = INTERVENTION_LEVEL_I18N_KEYS[value] || INTERVENTION_LEVEL_I18N_KEYS.balanced;
+            display.textContent = window.t ? window.t(translationKey) : (fallbackLabels[value] || fallbackLabels.balanced);
+        }
+
+        function restoreInterventionLevel() {
+            const saved = localStorage.getItem('lastInterventionLevel');
+            const selector = document.getElementById('intervention-level-selector');
+            if (!selector) return;
+            if (saved && ['balanced', 'concise', 'detailed'].includes(saved)) {
+                selector.value = saved;
+            } else {
+                selector.value = 'balanced';
+            }
+            updateInterventionLevelDisplay();
+        }
+
+        function getInterventionLevel() {
+            const selector = document.getElementById('intervention-level-selector');
+            return selector ? selector.value : 'balanced';
+        }
+
+        // ==================== 窄屏暂存区切换 ====================
+        function toggleFileSidebar() {
+            const sidebar = document.getElementById('file-sidebar');
+            const overlay = document.getElementById('file-sidebar-overlay');
+            if (!sidebar || !overlay) return;
+            const isOpen = sidebar.classList.contains('open');
+            if (isOpen) {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                document.body.style.overflow = '';
+            } else {
+                sidebar.classList.add('open');
+                overlay.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+
+        function openModelSettingsPanel() {
+            const card = document.getElementById('model-selector-card');
+            const overlay = document.getElementById('model-settings-overlay');
+            const button = document.querySelector('.model-settings-toggle-btn');
+            if (!card || !overlay) return;
+            card.classList.add('compact-open');
+            overlay.classList.add('active');
+            if (button) button.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeModelSettingsPanel() {
+            const card = document.getElementById('model-selector-card');
+            const overlay = document.getElementById('model-settings-overlay');
+            const button = document.querySelector('.model-settings-toggle-btn');
+            if (!card || !overlay) return;
+            card.classList.remove('compact-open');
+            overlay.classList.remove('active');
+            if (button) button.setAttribute('aria-expanded', 'false');
+        }
+
+        function toggleModelSettingsPanel() {
+            const card = document.getElementById('model-selector-card');
+            if (card && card.classList.contains('compact-open')) {
+                closeModelSettingsPanel();
+            } else {
+                openModelSettingsPanel();
+            }
         }
 
         function updateImageModelIcon() {
@@ -5709,6 +5914,7 @@
             
             // 按 Escape 键关闭弹窗
             if (e.key === 'Escape') {
+                closeCustomModelSelectMenu();
                 if (document.getElementById('new-world-modal').classList.contains('show')) {
                     closeNewWorldModal();
                 }
@@ -6213,6 +6419,19 @@
             }
         }
 
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const sidebar = document.getElementById('file-sidebar');
+                const overlay = document.getElementById('file-sidebar-overlay');
+                if (sidebar && sidebar.classList.contains('open')) {
+                    sidebar.classList.remove('open');
+                    overlay.classList.remove('active');
+                    document.body.style.overflow = '';
+                }
+                closeModelSettingsPanel();
+            }
+        });
+
         document.addEventListener('DOMContentLoaded', () => {
             const dropZone = document.getElementById('script-drop-zone');
             const fileInput = document.getElementById('import-script-file');
@@ -6303,6 +6522,7 @@
         // 监听语言变化事件，更新动态设置的文本值
         if (window.ZJTi18n) {
             window.ZJTi18n.on('locale-changed', () => {
+                updateInterventionLevelDisplay();
                 // 如果没有选择世界，更新占位符和状态文本
                 if (!window.WORLD_ID) {
                     const messageInput = document.getElementById('message-input');

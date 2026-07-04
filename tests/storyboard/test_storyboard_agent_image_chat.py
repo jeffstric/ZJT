@@ -87,6 +87,15 @@ def test_storyboard_agent_video_mode_reaches_backend_prompt():
     assert "image_to_video" in skill_content
 
 
+def test_storyboard_agent_prompt_includes_reference_legend_constraints():
+    api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
+
+    assert "build_reference_legend" in api_py
+    assert "【参考图说明】" in api_py
+    assert "edit_image.prompt" in api_py
+    assert "不要加入未出现在当前画面提示词或视频提示词中的角色/道具参考图" in api_py
+
+
 def test_storyboard_scene_asset_candidates_enrich_result_url_from_ai_tool(monkeypatch):
     from api import storyboard as storyboard_api
 

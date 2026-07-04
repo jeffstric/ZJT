@@ -19,6 +19,8 @@ from config.constant import (
     Edition, Action,
     TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO,
     TASK_STATUS_QUEUED, AI_TOOL_STATUS_PENDING, AI_AUDIO_STATUS_PENDING,
+    StoryboardAutoGenerateConstants,
+    StoryboardAudioGenerateConstants,
 )
 from config.unified_config import SceneVideoType, UnifiedConfigRegistry, TaskTypeId, TaskCategory
 from model.storyboard import (
@@ -33,11 +35,15 @@ from model.tasks import TasksModel
 from model.character import CharacterModel
 from model.world import WorldModel
 from model.script import ScriptModel
+from model.user_tokens import UserTokensModel
 from utils.resource_access import (
     get_user_id_from_header,
     ensure_resource_access,
     ensure_world_access,
 )
+from services.storyboard_agent_cli_service import StoryboardCliError
+from services.storyboard_agent_command_service import StoryboardAgentCommandService
+from services.storyboard_reference_prompt_service import build_reference_legend
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +60,47 @@ VALID_ASSET_TYPES = ('first_frame', 'last_frame', 'video')
 
 
 # ==================== Helpers ====================
+
+def _auth_header_token(token: Optional[str]) -> str:
+    token = (token or '').strip()
+    if token.lower().startswith('bearer '):
+        token = token[7:].strip()
+    return token
+
+
+async def _resolve_auth_user_id(auth_token: Optional[str]):
+    token = _auth_header_token(auth_token)
+    if not token:
+        return None, JSONResponse(
+            status_code=401,
+            content={'success': False, 'error_code': 'missing_auth_token', 'error': 'Authorization is required'},
+        )
+    user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, token)
+    if not user_id:
+        return None, JSONResponse(
+            status_code=401,
+            content={'success': False, 'error_code': 'invalid_auth_token', 'error': 'Authorization is invalid or expired'},
+        )
+    return int(user_id), None
+
+
+async def _read_json_object_body(request: Request):
+    raw_body = await request.body()
+    if not raw_body or not raw_body.strip():
+        return {}, None
+    try:
+        data = json.loads(raw_body)
+    except Exception:
+        return None, JSONResponse(
+            status_code=400,
+            content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body is invalid'},
+        )
+    if not isinstance(data, dict):
+        return None, JSONResponse(
+            status_code=400,
+            content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body must be an object'},
+        )
+    return data, None
 
 def resolve_storyboard_script_id(
     script_id: Optional[int],
@@ -346,6 +393,173 @@ async def _ensure_dialogue_access(dialogue_id: int, user_id: int, action: str):
     return dialogue, scene, None
 
 
+class StoryboardVoiceoverSubmissionError(ValueError):
+    """Expected voiceover submission validation error."""
+
+    def __init__(self, reason: str, message: str, status_code: int = 400):
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+        self.status_code = status_code
+
+
+def _voiceover_skip(dialogue_id: int, scene_id: Optional[int], reason: str, message: str) -> dict:
+    return {
+        'dialogue_id': dialogue_id,
+        'scene_id': scene_id,
+        'reason': reason,
+        'message': message,
+    }
+
+
+def submit_storyboard_dialogue_voiceover(
+    dialogue_id: int,
+    user_id: int,
+    config: Optional[dict] = None,
+    *,
+    strict: bool = True,
+) -> dict:
+    """Submit one storyboard dialogue voiceover task without waiting for TTS completion."""
+    config = config or {}
+    constants = StoryboardAudioGenerateConstants
+    dialogue = StoryboardDialogueModel.get_by_id(dialogue_id)
+    if not dialogue:
+        raise StoryboardVoiceoverSubmissionError(
+            constants.SKIP_REASON_SUBMIT_FAILED,
+            '对话不存在',
+            status_code=404,
+        )
+
+    scene_id = getattr(dialogue, 'scene_id', None)
+    text = str(config.get('text') or getattr(dialogue, 'text', '') or '').strip()
+    if not text:
+        message = '台词为空，无法生成配音'
+        if strict:
+            raise StoryboardVoiceoverSubmissionError(constants.SKIP_REASON_EMPTY_TEXT, message)
+        return {'success': False, 'skipped': True, **_voiceover_skip(dialogue_id, scene_id, constants.SKIP_REASON_EMPTY_TEXT, message)}
+
+    if config.get('skip_existing') and getattr(dialogue, 'selected_audio_id', None):
+        message = '对话已存在选中配音'
+        return {'success': False, 'skipped': True, **_voiceover_skip(dialogue_id, scene_id, constants.SKIP_REASON_ALREADY_HAS_SELECTED_AUDIO, message)}
+
+    ref_path = config.get('ref_path')
+    character_id = getattr(dialogue, 'character_id', None)
+    if not ref_path and character_id:
+        character = CharacterModel.get_by_id(character_id)
+        ref_path = getattr(character, 'default_voice', None) if character else None
+
+    if not ref_path:
+        reason = constants.SKIP_REASON_MISSING_REFERENCE_AUDIO
+        message = '角色缺少参考音频'
+        if not character_id:
+            reason = constants.SKIP_REASON_NARRATION_WITHOUT_VOICE
+            message = '旁白缺少默认音色'
+        if strict:
+            raise StoryboardVoiceoverSubmissionError(reason, message)
+        return {'success': False, 'skipped': True, **_voiceover_skip(dialogue_id, scene_id, reason, message)}
+
+    transaction_id = str(uuid.uuid4())
+    audio_id = AIAudioModel.create(
+        text=text,
+        user_id=user_id,
+        ref_path=ref_path,
+        transaction_id=transaction_id,
+        emo_control_method=config.get('emo_control_method'),
+        emo_weight=config.get('emo_weight'),
+        emo_vec=config.get('emo_vec'),
+        emo_text=config.get('emo_text'),
+        status=AI_AUDIO_STATUS_PENDING,
+    )
+    TasksModel.create(
+        task_type=TASK_TYPE_GENERATE_AUDIO,
+        task_id=audio_id,
+        status=TASK_STATUS_QUEUED,
+    )
+    dialogue_audio_id = StoryboardDialogueAudioModel.create(
+        dialogue_id=dialogue_id,
+        ai_audio_id=audio_id,
+    )
+    StoryboardDialogueAudioModel.set_selected(dialogue_id, dialogue_audio_id)
+
+    return {
+        'success': True,
+        'dialogue_id': dialogue_id,
+        'scene_id': scene_id,
+        'audio_id': audio_id,
+        'dialogue_audio_id': dialogue_audio_id,
+        'status': 'submitted',
+    }
+
+
+async def _auto_submit_storyboard_dialogue_voiceovers(scenes: list, user_id: int) -> dict:
+    """Queue dialogue voiceover tasks after script split without blocking for generation."""
+    constants = StoryboardAudioGenerateConstants
+    result = {
+        'enabled': bool(constants.ENABLE_AUTO_AFTER_SCRIPT_SPLIT),
+        'submitted_count': 0,
+        'skipped_count': 0,
+        'submitted': [],
+        'skipped': [],
+    }
+    if not result['enabled']:
+        return result
+
+    submitted_count = 0
+    for scene in scenes or []:
+        scene_id = scene.get('id') if isinstance(scene, dict) else None
+        for dialogue in (scene.get('dialogues') or []):
+            dialogue_id = dialogue.get('id')
+            if not dialogue_id:
+                continue
+            if submitted_count >= constants.MAX_AUTO_SUBMIT_PER_SPLIT:
+                result['skipped'].append(_voiceover_skip(
+                    int(dialogue_id),
+                    scene_id,
+                    constants.SKIP_REASON_LIMIT_REACHED,
+                    '达到自动提交数量上限',
+                ))
+                continue
+            try:
+                item = await asyncio.to_thread(
+                    submit_storyboard_dialogue_voiceover,
+                    int(dialogue_id),
+                    user_id,
+                    {'skip_existing': True},
+                    strict=False,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to auto-submit storyboard dialogue voiceover dialogue_id=%s: %s",
+                    dialogue_id,
+                    exc,
+                    exc_info=True,
+                )
+                item = {
+                    'success': False,
+                    'skipped': True,
+                    **_voiceover_skip(
+                        int(dialogue_id),
+                        scene_id,
+                        constants.SKIP_REASON_SUBMIT_FAILED,
+                        str(exc),
+                    ),
+                }
+            if item.get('success'):
+                result['submitted'].append(item)
+                submitted_count += 1
+            else:
+                result['skipped'].append({
+                    'dialogue_id': item.get('dialogue_id', dialogue_id),
+                    'scene_id': item.get('scene_id', scene_id),
+                    'reason': item.get('reason') or constants.SKIP_REASON_SUBMIT_FAILED,
+                    'message': item.get('message') or '',
+                })
+
+    result['submitted_count'] = len(result['submitted'])
+    result['skipped_count'] = len(result['skipped'])
+    return result
+
+
 async def _resolve_sort_value(get_by_id_fn, entity_id: Optional[int]) -> Optional[float]:
     """取某记录的 sort_order；entity_id 为 None 返回 None（表示边界）"""
     if entity_id is None:
@@ -586,9 +800,10 @@ def _build_storyboard_agent_message(
     first_frame_line = first_frame_url or "无"
     reference_images = reference_images or []
     reference_image_items = reference_image_items or []
+    reference_legend = build_reference_legend(reference_image_items)
     if reference_image_items:
         reference_lines = [
-            f"- 图{idx}：{item.get('label') or item.get('url')}，URL：{item.get('url')}"
+            f"- 图{idx}：{item.get('label') or (str(item.get('type') or '参考图') + ('：' + str(item.get('name')) if item.get('name') else '')) or item.get('url')}，URL：{item.get('url')}"
             for idx, item in enumerate(reference_image_items, start=1)
         ]
     else:
@@ -624,12 +839,15 @@ def _build_storyboard_agent_message(
 【参考图清单】
 {reference_block}
 
+【参考图说明】
+{reference_legend or '无'}
+
 【当前分镜 prompt_json】
 ```json
 {prompt_json}
 ```
 
-请严格围绕当前分镜创作，保留角色、场景、道具一致性，并结合全局画风、构图倾向和画幅比例。{tool_instruction} 提交成功后返回包含 project_ids 的工作总结。"""
+请严格围绕当前分镜创作，保留角色、场景、道具一致性，并结合全局画风、构图倾向和画幅比例。{tool_instruction} 如果调用 edit_image，edit_image.prompt 末尾必须原样追加【参考图说明】内容，例如“参考图说明：图1是角色：布冯。图2是场景：布冯的房间。”如果调用 image_to_video，也要在视频提示词末尾追加同样的参考图说明。不要加入未出现在当前画面提示词或视频提示词中的角色/道具参考图。提交成功后返回包含 project_ids 的工作总结。"""
 
 
 class StoryboardImageAgentRunner:
@@ -974,6 +1192,128 @@ async def get_storyboard_models(
     })
 
 
+@router.get('/agent/schema')
+async def get_storyboard_agent_schema(
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+):
+    user_id, err = await _resolve_auth_user_id(auth_token)
+    if err:
+        return err
+    result = await asyncio.to_thread(StoryboardAgentCommandService().schema)
+    result['user_id'] = user_id
+    return JSONResponse(result)
+
+@router.post('/agent/commands/{command}')
+async def execute_storyboard_agent_command(
+    request: Request,
+    command: str,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+):
+    user_id, err = await _resolve_auth_user_id(auth_token)
+    if err:
+        return err
+
+    data, body_err = await _read_json_object_body(request)
+    if body_err:
+        return body_err
+
+    params = dict(data)
+    params['user_id'] = user_id
+    params['auth_token'] = _auth_header_token(auth_token)
+
+    try:
+        result = await asyncio.to_thread(
+            StoryboardAgentCommandService().execute,
+            command,
+            params,
+        )
+    except StoryboardCliError as exc:
+        return JSONResponse(status_code=400, content=exc.to_dict())
+
+    return JSONResponse(result)
+
+
+@router.post('/{storyboard_id:int}/auto-generate-missing-images')
+async def auto_generate_missing_storyboard_images(
+    request: Request,
+    storyboard_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+):
+    user_id, err = await _resolve_auth_user_id(auth_token)
+    if err:
+        return err
+
+    data, body_err = await _read_json_object_body(request)
+    if body_err:
+        return body_err
+
+    params = dict(data)
+    params['storyboard_id'] = storyboard_id
+    params['user_id'] = user_id
+    params['auth_token'] = _auth_header_token(auth_token)
+
+    try:
+        result = await asyncio.to_thread(
+            StoryboardAgentCommandService().execute,
+            'auto-generate-missing-images',
+            params,
+        )
+    except StoryboardCliError as exc:
+        return JSONResponse(status_code=400, content=exc.to_dict())
+
+    return JSONResponse(result)
+
+
+@router.get('/{storyboard_id:int}/task-status')
+async def get_storyboard_task_status(
+    storyboard_id: int,
+    asset_type: Optional[str] = StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+):
+    user_id, err = await _resolve_auth_user_id(auth_token)
+    if err:
+        return err
+
+    try:
+        result = await asyncio.to_thread(
+            StoryboardAgentCommandService().execute,
+            'storyboard-task-status',
+            {
+                'storyboard_id': storyboard_id,
+                'user_id': user_id,
+                'asset_type': asset_type,
+            },
+        )
+    except StoryboardCliError as exc:
+        return JSONResponse(status_code=400, content=exc.to_dict())
+
+    return JSONResponse(result)
+
+
+@router.get('/image-batches/{batch_id:int}/status')
+async def get_storyboard_image_batch_status(
+    batch_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+):
+    user_id, err = await _resolve_auth_user_id(auth_token)
+    if err:
+        return err
+
+    try:
+        result = await asyncio.to_thread(
+            StoryboardAgentCommandService().execute,
+            'storyboard-image-batch-status',
+            {
+                'batch_id': batch_id,
+                'user_id': user_id,
+            },
+        )
+    except StoryboardCliError as exc:
+        return JSONResponse(status_code=400, content=exc.to_dict())
+
+    return JSONResponse(result)
+
+
 @router.get('/{storyboard_id:int}')
 @require_permission("storyboard:view")
 async def get_storyboard(
@@ -1119,6 +1459,7 @@ async def generate_storyboard_from_script(
     scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
     await _attach_dialogues(scenes)
     _enrich_scene_location_props(scenes)
+    audio_auto_generate = await _auto_submit_storyboard_dialogue_voiceovers(scenes, user_id)
     if script_id != sb.script_id:
         await asyncio.to_thread(StoryboardModel.update, storyboard_id, script_id=script_id)
         sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
@@ -1128,6 +1469,7 @@ async def generate_storyboard_from_script(
         'storyboard': sb.to_dict(),
         'scenes': scenes,
         'generated_count': generated_count,
+        'audio_auto_generate': audio_auto_generate,
     })
 
 
@@ -1538,7 +1880,22 @@ async def generate_dialogue_voiceover(
     except Exception:
         data = {}
 
-    text = data.get('text') or dialogue.text
+    try:
+        result = await asyncio.to_thread(
+            submit_storyboard_dialogue_voiceover,
+            dialogue_id,
+            user_id,
+            data,
+            strict=True,
+        )
+    except StoryboardVoiceoverSubmissionError as exc:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={'success': False, 'error': exc.message, 'reason': exc.reason},
+        )
+
+    return JSONResponse(result)
+
     if not text:
         return JSONResponse(status_code=400, content={'error': '台词为空，无法生成配音'})
 
@@ -1918,6 +2275,8 @@ async def get_scene_task_status(
                     if aa:
                         item['status'] = aa.status
                         item['error'] = aa.message
+                        if not item['audio_url'] and aa.result_url:
+                            item['audio_url'] = aa.result_url
         voice_items.append(item)
 
     return JSONResponse({

@@ -292,6 +292,32 @@ class StoryboardSceneModel:
         return new_id
 
 
+# ==================== CREATE_TABLE_SQL ====================
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `storyboard_scene` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `storyboard_id` INT UNSIGNED NOT NULL,
+    `sort_order` DOUBLE DEFAULT 0 COMMENT '排序序号（浮点二分，见文档 2.3.2）',
+    `title` VARCHAR(255) DEFAULT '',
+    `duration` INT DEFAULT 5,
+    `prompt_json` JSON DEFAULT NULL COMMENT '画面提示词: perspective/style/scene_desc/character_desc',
+    `video_prompt` TEXT DEFAULT NULL COMMENT '视频提示词（生视频/数字人动作描述）',
+    `video_type` VARCHAR(32) NOT NULL DEFAULT 'video' COMMENT '分镜类型 image/video/digital_human，见 SceneVideoType',
+    `video_config_json` JSON DEFAULT NULL COMMENT '视频生成参数偏好: 模型/分辨率/时长',
+    `selected_first_frame_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中首帧 asset id',
+    `selected_last_frame_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中尾帧 asset id',
+    `selected_video_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中视频 asset id',
+    `last_modified_user_id` INT UNSIGNED DEFAULT NULL COMMENT '最后修改人',
+    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_storyboard` (`storyboard_id`),
+    INDEX `idx_sort` (`storyboard_id`, `sort_order`),
+    INDEX `idx_video_type` (`video_type`),
+    INDEX `idx_selected_video` (`selected_video_id`),
+    FOREIGN KEY (`storyboard_id`) REFERENCES `storyboard`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='故事板分镜表';
+"""
+
 __all__ = [
     "StoryboardScene",
     "StoryboardSceneModel",

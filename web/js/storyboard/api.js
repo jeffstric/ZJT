@@ -113,11 +113,24 @@ export async function selectSceneAsset(sceneId, assetType, assetId) {
 export async function generateSceneImage(sceneId, config = {}) {
     return request(`/scene/${sceneId}/generate-image`, { method: 'POST', body: JSON.stringify(config) });
 }
+export async function autoGenerateMissingImages(storyboardId, config = {}) {
+    return request(`/${storyboardId}/auto-generate-missing-images`, {
+        method: 'POST',
+        body: JSON.stringify(config),
+    });
+}
 export async function generateSceneVideo(sceneId, config = {}) {
     return request(`/scene/${sceneId}/generate-video`, { method: 'POST', body: JSON.stringify(config) });
 }
 export async function getSceneTaskStatus(sceneId) {
     return request(`/scene/${sceneId}/task-status`);
+}
+export async function getStoryboardTaskStatus(storyboardId, assetType = 'first_frame') {
+    const qs = assetType ? `?asset_type=${encodeURIComponent(assetType)}` : '';
+    return request(`/${storyboardId}/task-status${qs}`);
+}
+export async function getStoryboardImageBatchStatus(batchId) {
+    return request(`/image-batches/${batchId}/status`);
 }
 
 export async function startSceneAgentChat(sceneId, data = {}) {
@@ -196,10 +209,10 @@ async function fetchPaged(path) {
 }
 
 export async function fetchCharacters(worldId) {
-    return fetchPaged(`/api/characters?world_id=${encodeURIComponent(worldId)}&page_size=100`);
+    return fetchPaged(`/api/characters?world_id=${encodeURIComponent(worldId)}&page_size=1000`);
 }
 export async function fetchLocations(worldId) {
-    return fetchPaged(`/api/locations?world_id=${encodeURIComponent(worldId)}&page_size=100`);
+    return fetchPaged(`/api/locations?world_id=${encodeURIComponent(worldId)}&page_size=1000`);
 }
 export async function fetchProps(worldId) {
     return fetchPaged(`/api/props?world_id=${encodeURIComponent(worldId)}&page_size=1000`);

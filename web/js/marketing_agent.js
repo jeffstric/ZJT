@@ -42,6 +42,7 @@
             const showSettingsPanel = ref(false);
             const showVideoModePanel = ref(false);
             const showDurationPanel = ref(false);
+            const showMobileToolbar = ref(false);
             const autoMode = ref(false);
             const showModelSelect = ref(false);
             const mediaType = ref('image');
@@ -1409,16 +1410,38 @@
             function showImageModal(src, aiToolId, suggestedTitle) {
                 const modal = document.getElementById('imgModal');
                 const img = document.getElementById('imgModalImg');
+                const video = document.getElementById('imgModalVideo');
                 if (modal && img) {
+                    if (video) { video.style.display = 'none'; video.pause(); }
+                    img.style.display = '';
                     img.src = src;
                     modal.style.display = 'flex';
-                    // 设置弹框图片信息
                     if (aiToolId) {
                         setModalImageInfo(aiToolId, suggestedTitle);
                     } else {
                         resetModalImageInfo();
                     }
                 }
+            }
+
+            function previewMedia(src, mediaType) {
+                const modal = document.getElementById('imgModal');
+                const img = document.getElementById('imgModalImg');
+                const video = document.getElementById('imgModalVideo');
+                if (!modal || !img || !video) return;
+                if (mediaType === 'video') {
+                    img.style.display = 'none';
+                    video.style.display = '';
+                    video.src = src;
+                    video.load();
+                } else {
+                    video.style.display = 'none';
+                    video.pause();
+                    img.style.display = '';
+                    img.src = src;
+                }
+                modal.style.display = 'flex';
+                resetModalImageInfo();
             }
 
             /**
@@ -6020,6 +6043,10 @@
                 showDurationPanel.value = false;
             }
 
+            function toggleMobileToolbar() {
+                showMobileToolbar.value = !showMobileToolbar.value;
+            }
+
             // 点击外部关闭下拉
             function onDocumentClick(e) {
                 showDropdown.value = false;
@@ -6219,6 +6246,7 @@
                 formatShortDate,
                 renderMarkdown,
                 showImageModal,
+                previewMedia,
                 autoResize,
                 handleSend,
                 sendContinue,
@@ -6253,6 +6281,8 @@
                 toggleModelPanel,
                 toggleRatioPanel,
                 toggleSettingsPanel,
+                showMobileToolbar,
+                toggleMobileToolbar,
                 showSettingsPanel,
                 showVideoModePanel,
                 showDurationPanel,

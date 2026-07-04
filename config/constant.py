@@ -92,6 +92,24 @@ def get_sync_task_stale_timeout(driver_name: str) -> Optional[int]:
 IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
+ASSET_LIST_MAX_PAGE_SIZE = 1000
+ASSET_LIST_DB_QUERY_TIMEOUT = 30
+
+
+class AgentAuthConstants:
+    """Agent/API token exchange constants."""
+    TOKEN_TYPE_AGENT = "agent"
+    TOKEN_TYPE_COMMERCIAL = "commercial"
+    TOKEN_TYPE_ZJT = "zjt"
+    TOKEN_TYPE_INTEGRATION = "integration"
+    SCOPE_AUTH_EXCHANGE = "auth:exchange"
+    SCOPE_STORYBOARD_READ = "storyboard:read"
+    SCOPE_STORYBOARD_GENERATE = "storyboard:generate"
+    DEFAULT_SESSION_EXPIRE_HOURS = 24
+    DEFAULT_AGENT_TOKEN_EXPIRE_DAYS = 30
+    STORYBOARD_AGENT_API_VERSION = "storyboard-agent-api/v1"
+    DEFAULT_DEVICE_UUID = "agent-api"
+    RAW_TOKEN_PREFIX = "zjt_agent_"
 
 
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
@@ -561,6 +579,59 @@ DOWNLOAD_MAX_TRY = 3                          # 单条下载最大尝试次数�
 DOWNLOAD_BACKOFF_SECONDS = (20, 60, 180)      # 重试指数退避（秒），按 try_count 取，越界取末值
 DOWNLOAD_WRITE_CHUNK_TIMEOUT = 30             # 单次写盘 chunk 的 wait_for 超时（秒）
 DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（模块级长寿 executor，禁止 with，CLAUDE.md 第10条）
+
+class StoryboardAutoGenerateConstants:
+    """Storyboard auto frame generation limits."""
+    DEFAULT_BATCH_LIMIT = 5
+    MAX_BATCH_LIMIT = 20
+    DEFAULT_ASSET_TYPE = "first_frame"
+    RUNNING_STATUSES = (AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING)
+    SEQUENCE_MODE_SPEED = "speed"
+    SEQUENCE_MODE_BALANCED = "balanced"
+    SEQUENCE_MODE_QUALITY = "quality"
+    DEFAULT_SEQUENCE_MODE = SEQUENCE_MODE_BALANCED
+    VALID_SEQUENCE_MODES = (
+        SEQUENCE_MODE_SPEED,
+        SEQUENCE_MODE_BALANCED,
+        SEQUENCE_MODE_QUALITY,
+    )
+    BATCH_JOB_STATUS_PENDING = 0
+    BATCH_JOB_STATUS_RUNNING = 1
+    BATCH_JOB_STATUS_COMPLETED = 2
+    BATCH_JOB_STATUS_FAILED = -1
+    BATCH_JOB_STATUS_PARTIAL = 3
+    BATCH_ITEM_STATUS_PENDING = 0
+    BATCH_ITEM_STATUS_RUNNING = 1
+    BATCH_ITEM_STATUS_COMPLETED = 2
+    BATCH_ITEM_STATUS_FAILED = -1
+    BATCH_ITEM_STATUS_SKIPPED = 3
+    BATCH_SCHEDULER_INTERVAL_SECONDS = 7
+    BATCH_SCHEDULER_JOB_LIMIT = 10
+
+
+class StoryboardAudioGenerateConstants:
+    """Storyboard dialogue audio generation limits and stable skip reasons."""
+    ENABLE_AUTO_AFTER_SCRIPT_SPLIT = True
+    MAX_AUTO_SUBMIT_PER_SPLIT = 100
+    SKIP_REASON_EMPTY_TEXT = "empty_text"
+    SKIP_REASON_MISSING_REFERENCE_AUDIO = "missing_reference_audio"
+    SKIP_REASON_ALREADY_HAS_SELECTED_AUDIO = "already_has_selected_audio"
+    SKIP_REASON_LIMIT_REACHED = "limit_reached"
+    SKIP_REASON_SUBMIT_FAILED = "submit_failed"
+    SKIP_REASON_NARRATION_WITHOUT_VOICE = "narration_without_voice"
+
+
+class StoryboardAgentReadConstants:
+    """Read-only discovery limits for storyboard agent commands."""
+    DEFAULT_PAGE_SIZE = 20
+    MAX_PAGE_SIZE = 200
+    DEFAULT_WORLD_CONTEXT_PAGE_SIZE = 100
+    STORY_OUTLINE_PREVIEW_CHARS = 50
+
+
+class StoryboardAgentCommandConstants:
+    """Storyboard agent command fallback values."""
+    DEFAULT_SCRIPT_SPLIT_MODEL = "gemini-3-flash-preview"
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED

@@ -40,6 +40,7 @@ def test_storyboard_related_tables_live_in_dedicated_modules():
     assert "class StoryboardDialogueModel:" in dialogue_py
     assert "class StoryboardDialogueAudio:" in audio_py
     assert "class StoryboardDialogueAudioModel:" in audio_py
+    assert "def update_audio_url_by_ai_audio_id" in audio_py
     assert "class StoryboardSceneAsset:" in asset_py
     assert "class StoryboardSceneAssetModel:" in asset_py
 

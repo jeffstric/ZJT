@@ -254,7 +254,12 @@
                 <span class="world-name-display" id="world-name-display" data-i18n="loading">加载中...</span>
             </div>
             <div class="header-right">
-                <div class="model-selector-card">
+                <button class="model-settings-toggle-btn" onclick="toggleModelSettingsPanel()" title="模型设置" data-i18n="model_settings:title" aria-label="模型设置" aria-expanded="false">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 3v18M5 7h14M7 12h10M9 17h6"/>
+                    </svg>
+                </button>
+                <div class="model-selector-card" id="model-selector-card">
                     <div class="model-selector-item">
                         <div class="model-icon text-model-icon" id="llm-model-icon" title="AI 模型" data-i18n="ai_model:title">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -280,6 +285,22 @@
                             <option value="medium" selected data-i18n="medium">中</option>
                             <option value="high" data-i18n="high">高</option>
                         </select>
+                    </div>
+                    <div class="intervention-level-wrapper" id="intervention-level-wrapper">
+                        <div class="model-icon intervention-icon" id="intervention-icon" title="AI 介入程度" data-i18n="intervention_level:title">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="3"/>
+                                <path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/>
+                            </svg>
+                        </div>
+                        <div class="model-select-wrapper">
+                            <select id="intervention-level-selector" class="model-select" onchange="onInterventionLevelChange()" title="选择 AI 介入程度" data-i18n="select_intervention_level:title">
+                                <option value="balanced" data-i18n="intervention_balanced">标准</option>
+                                <option value="concise" data-i18n="intervention_concise">简洁·少提问</option>
+                                <option value="detailed" data-i18n="intervention_detailed">精细·多确认</option>
+                            </select>
+                            <div class="model-select-display" id="intervention-level-display">标准</div>
+                        </div>
                     </div>
                     <div class="model-divider"></div>
                     <div class="model-selector-item">
@@ -421,7 +442,7 @@
             </div>
 
             <!-- 文件管理面板 -->
-            <aside class="file-sidebar">
+            <aside class="file-sidebar" id="file-sidebar">
                 <div class="sidebar-header">
                     <h3 class="sidebar-title" data-i18n="file_management">📁 暂存文件管理</h3>
                     <div class="sidebar-header-actions">
@@ -1435,6 +1456,19 @@
             </div>
         </div>
     </div>
+
+    <!-- 暂存区遮罩层（窄屏全屏模式用） -->
+    <div class="file-sidebar-overlay" id="file-sidebar-overlay" onclick="toggleFileSidebar()"></div>
+
+    <!-- 窄屏模型设置遮罩层 -->
+    <div class="model-settings-overlay" id="model-settings-overlay" onclick="closeModelSettingsPanel()"></div>
+
+    <!-- 窄屏暂存区浮动按钮 -->
+    <button class="file-sidebar-toggle-btn" id="file-sidebar-toggle-btn" onclick="toggleFileSidebar()" title="暂存文件" data-i18n="staging_files:title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+    </button>
 
 </body>
 </html>

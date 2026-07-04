@@ -68,7 +68,9 @@ from config.constant import (
     JIANYING_RATIO_RESOLUTION,
     JIANYING_DEFAULT_RATIO,
     IMAGE_MODE_EXTRA_CONFIG_KEY,
-    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY
+    VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+    ASSET_LIST_MAX_PAGE_SIZE,
+    ASSET_LIST_DB_QUERY_TIMEOUT,
 )
 from utils.wechat_pay_util import WechatPayUtil
 from utils.project_path import (
@@ -297,6 +299,9 @@ from api.storyboard import router as storyboard_router
 app.include_router(storyboard_router)
 
 # 导入并注册测试路由（临时测试，完成后移除）
+from api.agent_auth import router as agent_auth_router
+app.include_router(agent_auth_router)
+
 from api.test_ask_user import router as test_ask_user_router
 app.include_router(test_ask_user_router)
 
@@ -6476,7 +6481,7 @@ async def get_scripts(
 async def get_characters(
     world_id: int = Query(..., description="世界ID"),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(100, ge=1, le=ASSET_LIST_MAX_PAGE_SIZE, description="每页数量"),
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -6486,11 +6491,15 @@ async def get_characters(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        result = CharacterModel.list_by_world(
-            world_id=world_id,
-            page=page,
-            page_size=page_size,
-            keyword=keyword
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                CharacterModel.list_by_world,
+                world_id=world_id,
+                page=page,
+                page_size=page_size,
+                keyword=keyword
+            ),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT
         )
         return JSONResponse(
             status_code=200,
@@ -6965,7 +6974,7 @@ async def delete_character(
 async def get_locations(
     world_id: int = Query(..., description="世界ID"),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(100, ge=1, le=ASSET_LIST_MAX_PAGE_SIZE, description="每页数量"),
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -6975,11 +6984,15 @@ async def get_locations(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        result = LocationModel.list_by_world(
-            world_id=world_id,
-            page=page,
-            page_size=page_size,
-            keyword=keyword
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                LocationModel.list_by_world,
+                world_id=world_id,
+                page=page,
+                page_size=page_size,
+                keyword=keyword
+            ),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT
         )
         return JSONResponse(
             status_code=200,
@@ -7745,7 +7758,7 @@ async def delete_location_reference_image(
 async def get_props(
     world_id: int = Query(..., description="世界ID"),
     page: int = Query(1, ge=1, description="页码"),
-    page_size: int = Query(100, ge=1, le=100, description="每页数量"),
+    page_size: int = Query(100, ge=1, le=ASSET_LIST_MAX_PAGE_SIZE, description="每页数量"),
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -7757,11 +7770,15 @@ async def get_props(
         user_id = _get_user_id_from_header(user_id)
         logger.info(f"Getting props list - world_id: {world_id}, page: {page}, page_size: {page_size}, keyword: {keyword}")
         
-        result = PropsModel.list_by_world(
-            world_id=world_id,
-            page=page,
-            page_size=page_size,
-            keyword=keyword
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                PropsModel.list_by_world,
+                world_id=world_id,
+                page=page,
+                page_size=page_size,
+                keyword=keyword
+            ),
+            timeout=ASSET_LIST_DB_QUERY_TIMEOUT
         )
         
         logger.info(f"Props query result - total: {result.get('total', 0)}, data count: {len(result.get('data', []))}")

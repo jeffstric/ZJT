@@ -84,6 +84,10 @@
 3. 跳转 `/storyboard?world_id=...&episode_number=...&script_id=...`。
 4. 故事板页调用 `POST /api/storyboard/create` 幂等创建或打开。
 
+### 故事板编辑器
+
+`web/storyboard.html` 左上角 `.header-logo` 使用 `data-route="storyboard-list"` 接入现有路由事件代理，点击后跳转 `/storyboard-list`，返回故事板列表页。
+
 ### 空故事板生成分镜
 
 进入 `web/storyboard.html` 后，如果当前故事板没有任何 `storyboard_scene`，前端会显示确认弹框：

@@ -69,7 +69,7 @@ web/js/storyboard/
 
 - `create_storyboard` 不再访问不存在的 `World.style_reference_image` 字段，统一通过 `build_storyboard_defaults()` 安全继承。
 - `script_id` 缺失时通过 `resolve_storyboard_script_id()` 兜底查找当前集剧本。
-- 建表 SQL 保存在 `model/storyboard.py` 末尾的 `CREATE_TABLE_SQL`，正式建表由 Alembic 迁移脚本负责；不向 `model/sql/baseline.sql` 或 `model/sql/baseline_with_db.sql` 写入新表结构。
+- 建表 SQL 按模型拆分保存：`storyboard` 主表在 `model/storyboard.py` 末尾的 `CREATE_TABLE_SQL`；`storyboard_scene` / `storyboard_dialogue` / `storyboard_dialogue_audio` / `storyboard_scene_asset` 分别在对应 `model/storyboard_*.py` 文件末尾；正式建表由 Alembic 迁移脚本负责；不向 `model/sql/baseline.sql` 或 `model/sql/baseline_with_db.sql` 写入新表结构。
 
 > 基于 demo2 原型 + 项目实际架构修订，修正字段命名、接口地址、异步约束、幂等设计、任务状态模型等关键问题。
 

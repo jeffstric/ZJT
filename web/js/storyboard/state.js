@@ -43,6 +43,13 @@ const state = {
     showGenerateFromScriptDialog: false,
     isGeneratingFromScript: false,
     generateFromScriptError: '',
+    autoImageSequenceMode: 'balanced',
+
+    // 生成分镜进度弹框
+    showGenerateProgressDialog: false,
+    generateProgressSteps: [],
+    generateProgressStepIndex: -1,
+    generateProgressError: '',
 
     // 模型配置弹框
     showModelConfigModal: false,
@@ -323,6 +330,7 @@ export function serializeUiConfig() {
         selectedImageTaskId: state.selectedImageTaskId,
         selectedVideoTaskId: state.selectedVideoTaskId,
         selectedDigitalHumanTaskId: state.selectedDigitalHumanTaskId,
+        autoImageSequenceMode: state.autoImageSequenceMode,
         // 第一版准备：对话模型记忆（画风/构图由后端 storyboard 主表承载）
         selectedLlmModel: state.selectedLlmModel,
         selectedScriptSplitLlmModel: state.selectedScriptSplitLlmModel,
@@ -343,6 +351,9 @@ export function restoreUiConfig(config = {}) {
     }
     if (config.selectedDigitalHumanTaskId !== undefined && config.selectedDigitalHumanTaskId !== null) {
         state.selectedDigitalHumanTaskId = config.selectedDigitalHumanTaskId;
+    }
+    if (['speed', 'balanced', 'quality'].includes(config.autoImageSequenceMode)) {
+        state.autoImageSequenceMode = config.autoImageSequenceMode;
     }
 
     if (config.selectedLlmModel) {

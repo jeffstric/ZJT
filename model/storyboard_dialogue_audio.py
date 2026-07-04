@@ -89,6 +89,17 @@ class StoryboardDialogueAudioModel:
             raise
 
     @staticmethod
+    def update_audio_url_by_ai_audio_id(ai_audio_id: int, audio_url: str) -> int:
+        sql = "UPDATE storyboard_dialogue_audio SET audio_url = %s WHERE ai_audio_id = %s"
+        try:
+            affected = execute_update(sql, (audio_url, ai_audio_id))
+            logger.info(f"Updated storyboard dialogue audio URL for ai_audio {ai_audio_id}, affected rows: {affected}")
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to update storyboard dialogue audio URL for ai_audio {ai_audio_id}: {e}")
+            raise
+
+    @staticmethod
     def delete(record_id: int) -> int:
         sql = "DELETE FROM storyboard_dialogue_audio WHERE id = %s"
         try:
@@ -99,5 +110,19 @@ class StoryboardDialogueAudioModel:
             logger.error(f"Failed to delete storyboard_dialogue_audio {record_id}: {e}")
             raise
 
+
+# ==================== CREATE_TABLE_SQL ====================
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `storyboard_dialogue_audio` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `dialogue_id` INT UNSIGNED NOT NULL,
+    `ai_audio_id` INT DEFAULT NULL COMMENT '→ ai_audio.id（源表 int，不加外键）',
+    `audio_url` VARCHAR(512) DEFAULT NULL COMMENT '配音结果 URL（冗余）',
+    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_dialogue` (`dialogue_id`),
+    INDEX `idx_ai_audio` (`ai_audio_id`),
+    FOREIGN KEY (`dialogue_id`) REFERENCES `storyboard_dialogue`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分镜对话配音历史表';
+"""
 
 __all__ = ["StoryboardDialogueAudio", "StoryboardDialogueAudioModel"]

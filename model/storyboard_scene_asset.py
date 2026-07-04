@@ -143,4 +143,19 @@ class StoryboardSceneAssetModel:
             raise
 
 
+# ==================== CREATE_TABLE_SQL ====================
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `storyboard_scene_asset` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `scene_id` INT UNSIGNED NOT NULL,
+    `ai_tool_id` INT DEFAULT NULL COMMENT '→ ai_tools.id（源表 int，不加外键）',
+    `asset_type` VARCHAR(32) NOT NULL COMMENT 'first_frame / last_frame / video',
+    `result_url` VARCHAR(512) DEFAULT NULL COMMENT '结果 URL（图片或视频，冗余）',
+    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX `idx_scene` (`scene_id`, `asset_type`),
+    INDEX `idx_ai_tool` (`ai_tool_id`),
+    FOREIGN KEY (`scene_id`) REFERENCES `storyboard_scene`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分镜图片/视频资产表';
+"""
+
 __all__ = ["StoryboardSceneAsset", "StoryboardSceneAssetModel"]

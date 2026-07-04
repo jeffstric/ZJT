@@ -1,6 +1,5 @@
 """
-Storyboard Model - Database operations for storyboard / storyboard_scene /
-storyboard_dialogue / storyboard_dialogue_audio / storyboard_scene_asset tables
+Storyboard Model - database operations for storyboard table and aggregate helpers.
 """
 from typing import Optional, Dict, Any, List
 from .database import execute_query, execute_update, execute_insert, transaction, execute_insert_in_transaction
@@ -464,67 +463,4 @@ CREATE TABLE IF NOT EXISTS `storyboard` (
     INDEX `idx_world_user` (`world_id`, `user_id`),
     INDEX `idx_workflow` (`workflow_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='故事板主表';
-
-CREATE TABLE IF NOT EXISTS `storyboard_scene` (
-    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `storyboard_id` INT UNSIGNED NOT NULL,
-    `sort_order` DOUBLE DEFAULT 0 COMMENT '排序序号（浮点二分，见文档 2.3.2）',
-    `title` VARCHAR(255) DEFAULT '',
-    `duration` INT DEFAULT 5,
-    `prompt_json` JSON DEFAULT NULL COMMENT '画面提示词: perspective/style/scene_desc/character_desc',
-    `video_prompt` TEXT DEFAULT NULL COMMENT '视频提示词（生视频/数字人动作描述）',
-    `video_type` VARCHAR(32) NOT NULL DEFAULT 'video' COMMENT '分镜类型 image/video/digital_human，见 SceneVideoType',
-    `video_config_json` JSON DEFAULT NULL COMMENT '视频生成参数偏好: 模型/分辨率/时长',
-    `selected_first_frame_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中首帧 asset id',
-    `selected_last_frame_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中尾帧 asset id',
-    `selected_video_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中视频 asset id',
-    `last_modified_user_id` INT UNSIGNED DEFAULT NULL COMMENT '最后修改人',
-    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    `update_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX `idx_storyboard` (`storyboard_id`),
-    INDEX `idx_sort` (`storyboard_id`, `sort_order`),
-    INDEX `idx_video_type` (`video_type`),
-    INDEX `idx_selected_video` (`selected_video_id`),
-    FOREIGN KEY (`storyboard_id`) REFERENCES `storyboard`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='故事板分镜表';
-
-CREATE TABLE IF NOT EXISTS `storyboard_dialogue` (
-    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `scene_id` INT UNSIGNED NOT NULL,
-    `sort_order` DOUBLE DEFAULT 0 COMMENT '对话顺序（浮点二分，同 storyboard_scene）',
-    `character_id` INT UNSIGNED DEFAULT NULL COMMENT '说话角色; NULL=旁白',
-    `text` TEXT DEFAULT NULL COMMENT '台词',
-    `speed` DECIMAL(4,2) NOT NULL DEFAULT 1.00 COMMENT '语速',
-    `volume` INT NOT NULL DEFAULT 100 COMMENT '音量 0-100',
-    `selected_audio_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中配音 → storyboard_dialogue_audio.id',
-    `last_modified_user_id` INT UNSIGNED DEFAULT NULL COMMENT '最后修改人',
-    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    `update_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX `idx_scene` (`scene_id`, `sort_order`),
-    INDEX `idx_character` (`character_id`),
-    FOREIGN KEY (`scene_id`) REFERENCES `storyboard_scene`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分镜对话表';
-
-CREATE TABLE IF NOT EXISTS `storyboard_dialogue_audio` (
-    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `dialogue_id` INT UNSIGNED NOT NULL,
-    `ai_audio_id` INT DEFAULT NULL COMMENT '→ ai_audio.id（源表 int，不加外键）',
-    `audio_url` VARCHAR(512) DEFAULT NULL COMMENT '配音结果 URL（冗余）',
-    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX `idx_dialogue` (`dialogue_id`),
-    INDEX `idx_ai_audio` (`ai_audio_id`),
-    FOREIGN KEY (`dialogue_id`) REFERENCES `storyboard_dialogue`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分镜对话配音历史表';
-
-CREATE TABLE IF NOT EXISTS `storyboard_scene_asset` (
-    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    `scene_id` INT UNSIGNED NOT NULL,
-    `ai_tool_id` INT DEFAULT NULL COMMENT '→ ai_tools.id（源表 int，不加外键）',
-    `asset_type` VARCHAR(32) NOT NULL COMMENT 'first_frame / last_frame / video',
-    `result_url` VARCHAR(512) DEFAULT NULL COMMENT '结果 URL（图片或视频，冗余）',
-    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX `idx_scene` (`scene_id`, `asset_type`),
-    INDEX `idx_ai_tool` (`ai_tool_id`),
-    FOREIGN KEY (`scene_id`) REFERENCES `storyboard_scene`(`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分镜图片/视频资产表';
 """

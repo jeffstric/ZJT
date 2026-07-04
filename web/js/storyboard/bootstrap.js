@@ -12,6 +12,7 @@ import * as api from './api.js';
 import { bindEvents, loadSceneAgentMessages } from './events.js';
 import { renderApp } from './render.js';
 import { resumePollingTasks } from './polling.js';
+import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';
 
 async function loadStoryboard() {
     if (state.storyboardId) {
@@ -162,6 +163,7 @@ async function main() {
     renderApp();
     loadSceneAgentMessages(state.currentSceneId).catch(() => {});
     resumePollingTasks();
+    autoGenerateMissingFirstFrames();
 }
 
 main().catch((error) => {

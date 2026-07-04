@@ -7,6 +7,7 @@ import uuid
 import json
 from typing import Optional, Dict, Any
 from model import TasksModel, AIAudioModel
+from model.storyboard_dialogue_audio import StoryboardDialogueAudioModel
 from config.constant import (
     TASK_TYPE_GENERATE_AUDIO,
     AI_AUDIO_STATUS_PENDING,
@@ -63,6 +64,7 @@ async def _submit_new_task(ai_audio):
         if url:
             AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED,
                                 result_url=url, message="[MOCK] 音频生成成功")
+            StoryboardDialogueAudioModel.update_audio_url_by_ai_audio_id(task_id, url)
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
             logger.info(f"[MOCK] audio tts short-circuit task={task_id} url={url}")
             return True
@@ -151,6 +153,7 @@ async def _submit_new_task(ai_audio):
         result_url = f"{upload_url}{audio_filename}"
         # Update database with result
         AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED, result_url=result_url, message="音频生成成功")
+        StoryboardDialogueAudioModel.update_audio_url_by_ai_audio_id(task_id, result_url)
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
         
         logger.info(f"Task {task_id}: Audio generation completed successfully")

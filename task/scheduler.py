@@ -9,6 +9,7 @@ from task.audio_task import generate_audio_task
 from task.token_task import process_token_task
 from task.download_queue_task import process_download_queue
 from functools import partial
+from config.constant import StoryboardAutoGenerateConstants
 
 from config.constant import DOWNLOAD_POLL_INTERVAL
 
@@ -401,6 +402,20 @@ def init_scheduler(app):
 
     # 场景多角度生图任务处理
     logger.info('启用场景多角度生图任务处理')
+    logger.info('Enable storyboard image batch orchestration task')
+    from task.storyboard_image_batch_task import process_storyboard_image_batch_tasks
+    task_with_app_storyboard_image_batch = partial(process_storyboard_image_batch_tasks, app=app)
+
+    scheduler.add_job(
+        func=task_with_app_storyboard_image_batch,
+        trigger=IntervalTrigger(seconds=StoryboardAutoGenerateConstants.BATCH_SCHEDULER_INTERVAL_SECONDS),
+        id='process_storyboard_image_batch_tasks',
+        name='Process storyboard image batch tasks',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
     from task.location_multi_angle_task import process_pending_location_multi_angle_tasks
 
     scheduler.add_job(

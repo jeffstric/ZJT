@@ -10,6 +10,7 @@
 python -m scripts.storyboard_agent_cli create-storyboard-from-script --script-id 20 --user-id 1
 python -m scripts.storyboard_agent_cli scene-context --scene-id 123 --user-id 1
 python -m scripts.storyboard_agent_cli split-from-script --storyboard-id 10 --user-id 1
+python -m scripts.storyboard_agent_cli list-scenes --storyboard-id 10 --user-id 1
 python -m scripts.storyboard_agent_cli generate-image --scene-id 123 --user-id 1
 python -m scripts.storyboard_agent_cli generate-image --scene-id 123 --user-id 1 --mode text_to_image
 python -m scripts.storyboard_agent_cli generate-image --scene-id 123 --user-id 1 --mode image_edit --source-image selected_first_frame
@@ -24,7 +25,7 @@ python -m scripts.storyboard_agent_cli task-status --scene-id 123
 - `create-storyboard-from-script` 根据 `script_id` 创建或复用空 storyboard，返回 `storyboard_id`，
   供下一步 `split-from-script` 使用；重复调用同一 `user_id + world_id + episode_number` 会返回既有 storyboard。
 - `split-from-script` 复用 `api.storyboard.build_storyboard_scenes_from_parsed_script` 和
-  `StoryboardModel.create_scenes`，把已关联剧本拆分为分镜。`storyboard.html` 在空分镜弹框中提供“拆分剧本模型”选择，前端会把用户选择的 `model`、`model_id`、`vendor_id` 传给后端，避免落回默认 `gemini-3-flash-preview`。
+  `StoryboardModel.create_scenes`，把已关联剧本拆分为分镜。`storyboard.html` 在空分镜弹框中提供“拆分剧本模型”选择，前端会把用户选择的 `model`、`model_id`、`vendor_id` 传给后端，避免落回服务端默认模型。
 - `generate-image` 支持 `auto`、`text_to_image` 和 `image_edit`，默认 `auto`。`auto` 会先收集当前分镜涉及的画风、角色、场景、道具和已有分镜图参考；只要存在参考图，就把这些 URL 按顺序发送给 `edit_image`，并把“图 1 是角色/场景/道具”的说明追加到 prompt；没有参考图时才调用 `generate_text_to_image`。`upload/...` 和 `/upload/...` 会按 `server.host` 转为 HTTP/HTTPS URL 后再暴露给智能体和工具。提交成功后把返回的 `project_ids` 绑定为 `storyboard_scene_asset`，默认选中第一条素材。
 - `generate-video` 支持 `text_to_video` 和 `image_to_video`，图生视频默认使用当前首帧，也可用
   `first_last_with_ref` 或 `multi_reference` 汇入参考图。
@@ -49,4 +50,70 @@ python -m scripts.storyboard_agent_cli create-storyboard-from-script --script-id
 
 ```bash
 python -m scripts.storyboard_agent_cli split-from-script --storyboard-id <storyboard_id> --user-id 1
+python -m scripts.storyboard_agent_cli list-scenes --storyboard-id <storyboard_id> --user-id 1
 ```
+
+## Agent 默认配置
+
+- `split-from-script` 未显式传 `model` 时，后端优先读取 `storyboard.config_json.selectedScriptSplitLlmModel`，再回退到服务端默认模型。
+- `split-from-script` 返回 `scenes` 概要；也可以用 `list-scenes` 按 `storyboard_id` 查询场次 ID、标题、时长和素材概要。
+- `auto-generate-missing-images` 未显式传 `task_type` 时，后端优先读取 `storyboard.config_json.selectedImageTaskId`。只有需要覆盖当前分镜配置时才传 `task_type`。
+
+## Agent Token 与 HTTP 调用
+
+除本地 CLI 外，分镜自动化能力也提供 HTTP 调用入口，供网页端或其他智能体调用。HTTP 调用不直接使用长期 Agent Token 操作业务接口，而是先用 Agent Token 换取短期 `auth_token`，后续请求继续沿用现有 `Authorization: Bearer <auth_token>` 鉴权链路。
+
+Agent Token 存储在独立的 `user_api_tokens` 表，不复用 `users.api_token`，避免影响现有商业版权限判断。Token 记录包含 `token_type`、`scopes`、`enabled`、`expire_at`、`last_used_at` 等字段。分镜智能体 token 应使用 `token_type=agent`，并至少包含 `auth:exchange` scope；需要生成能力时再增加 `storyboard:generate`，只读场景使用 `storyboard:read`。
+
+换取短期登录态：
+
+```bash
+curl -X POST http://localhost:9003/api/agent-auth/exchange \
+  -H "Content-Type: application/json" \
+  -d '{"token":"zjt_agent_xxx","device_uuid":"storyboard-agent"}'
+```
+
+返回示例：
+
+```json
+{
+  "success": true,
+  "auth_token": "short-lived-auth-token",
+  "expires_at": "2026-07-03T20:00:00",
+  "user_id": 1,
+  "token_type": "agent",
+  "scopes": ["auth:exchange", "storyboard:generate"]
+}
+```
+
+获取可调用命令 schema：
+
+```bash
+curl http://localhost:9003/api/storyboard/agent/schema \
+  -H "Authorization: Bearer short-lived-auth-token"
+```
+
+调用分镜命令：
+
+```bash
+curl -X POST http://localhost:9003/api/storyboard/agent/commands/generate-image \
+  -H "Authorization: Bearer short-lived-auth-token" \
+  -H "Content-Type: application/json" \
+  -d '{"scene_id":123,"mode":"auto","asset_type":"first_frame"}'
+```
+
+HTTP 入口会从 `Authorization` 解析真实用户，并覆盖请求体中的 `user_id`。因此外部智能体不需要、也不能通过 body 冒充其他用户。后端路由内部调用同步 service 时统一使用 `asyncio.to_thread()`，不会阻塞 FastAPI 事件循环。
+
+## CLI 环境
+
+智能体连接包会返回 `environment` 字段，值来自后端 `comfyui_env`，未设置时为 `dev`。HTTP 调用不需要额外设置环境；只有改用本地 CLI fallback 时，才需要在运行 `python -m scripts.storyboard_agent_cli ...` 前设置：
+
+```powershell
+$env:comfyui_env="<environment>"
+```
+
+```bash
+export comfyui_env="<environment>"
+```
+
+CLI 和 HTTP command API 的 JSON 返回都会带 `environment`，方便智能体确认当前连接和本地命令使用的是同一套配置。

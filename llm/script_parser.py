@@ -68,7 +68,8 @@ SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和�
 13. 只输出纯JSON内容,不要添加```json```标记或任何解释性文字
 14. **【重要】在shot节点的所有文本字段中,只要涉及角色名称,必须用【【角色名】】格式包裹,便于后续匹配角色库。注意：只对角色名称使用【【】】包裹,场景名称、地点名称和道具名称不要使用【【】】包裹**
 15. **【重要】在shot节点的所有画面/视频提示文本字段中,只要涉及道具名称,道具名称必须用〖〖道具名〗〗格式包裹,便于后续匹配道具库；props_present字段仍使用道具ID。正确示例：〖〖公文包〗〗【【德保罗】】。**
-16. 每个shot必须有明确的narrative_purpose，说明这个镜头为什么存在，且必须具体到视听手段
+16. **【重要】严禁幻想道具**：所有带〖〖〗〗标记的道具必须来自数据库已有道具列表，或原始剧本文本中明确出现的新道具；不要因为画面需要自行添加数据库和剧本都没有的道具。
+17. 每个shot必须有明确的narrative_purpose，说明这个镜头为什么存在，且必须具体到视听手段
 
 ID格式规范：
 - shot_id: s001-s999（最多10位字符）
@@ -204,6 +205,141 @@ def _split_semantic_group_by_duration(
             total_parts,
         )
     return group_counter
+
+
+PROP_MARKER_RE = re.compile(r"〖〖([^〗]+)〗〗")
+PROMPT_PROP_TEXT_KEYS = {
+    "description",
+    "opening_frame_description",
+    "scene_detail",
+    "action",
+    "mood",
+    "environment_sound",
+    "background_music",
+    "audio_notes",
+    "narrative_purpose",
+}
+
+
+def _normalize_asset_name(value: Any) -> str:
+    text = str(value or "")
+    text = re.sub(r"【【([^】]+)】】", r"\1", text)
+    text = re.sub(r"〖〖([^〗]+)〗〗", r"\1", text)
+    return re.sub(r"[\s　_（）()【】〖〗《》<>，,。.:：;；、\-]+", "", text).lower()
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _find_unique_prop_by_name(name: Any, db_props: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    normalized = _normalize_asset_name(name)
+    if not normalized:
+        return None
+
+    for prop in db_props:
+        if _normalize_asset_name(prop.get("name")) == normalized:
+            return prop
+
+    fuzzy_matches = [
+        prop for prop in db_props
+        if _normalize_asset_name(prop.get("name")).endswith(normalized)
+        or normalized.endswith(_normalize_asset_name(prop.get("name")))
+    ]
+    return fuzzy_matches[0] if len(fuzzy_matches) == 1 else None
+
+
+def _prop_name_appears_in_script(name: Any, script_content: str) -> bool:
+    normalized_name = _normalize_asset_name(name)
+    if not normalized_name:
+        return False
+    return normalized_name in _normalize_asset_name(script_content)
+
+
+def _replace_prop_markers(text: str, valid_marker_props: List[Dict[str, Any]]) -> str:
+    def replace(match: re.Match) -> str:
+        raw_name = match.group(1).strip()
+        matched = _find_unique_prop_by_name(raw_name, valid_marker_props)
+        if matched:
+            return f"〖〖{matched.get('name', raw_name)}〗〗"
+        return raw_name
+
+    return PROP_MARKER_RE.sub(replace, text)
+
+
+def sanitize_parsed_prop_references(
+    parsed_data: Dict[str, Any],
+    db_props: Optional[List[Dict[str, Any]]] = None,
+    script_content: str = "",
+) -> Dict[str, Any]:
+    """
+    清理 LLM 幻觉出的道具引用。
+
+    LLM 可能在画面提示词里标记未提供、也未出现在原始剧本中的道具。
+    这里以数据库道具和原始剧本文本为准，避免无效道具进入 props、props_present
+    或后续参考图匹配。
+    """
+    db_props = db_props or []
+    db_props_by_id = {
+        _safe_int(prop.get("id")): prop
+        for prop in db_props
+        if _safe_int(prop.get("id")) is not None
+    }
+
+    valid_props: List[Dict[str, Any]] = []
+    valid_prop_ids = set()
+    for prop in parsed_data.get("props") or []:
+        if not isinstance(prop, dict):
+            continue
+
+        prop_name = prop.get("name")
+        db_match = db_props_by_id.get(_safe_int(prop.get("props_db_id")))
+        if not db_match:
+            db_match = _find_unique_prop_by_name(prop_name, db_props)
+
+        if db_match:
+            prop["props_db_id"] = db_match.get("id")
+            prop["name"] = db_match.get("name") or prop_name
+            valid_props.append(prop)
+            valid_prop_ids.add(str(prop.get("id")))
+            continue
+
+        if _prop_name_appears_in_script(prop_name, script_content):
+            prop["props_db_id"] = None
+            valid_props.append(prop)
+            valid_prop_ids.add(str(prop.get("id")))
+
+    parsed_data["props"] = valid_props
+
+    valid_marker_props = []
+    seen_marker_names = set()
+    for prop in [*valid_props, *db_props]:
+        normalized = _normalize_asset_name(prop.get("name") if isinstance(prop, dict) else "")
+        if normalized and normalized not in seen_marker_names:
+            seen_marker_names.add(normalized)
+            valid_marker_props.append(prop)
+
+    for group in parsed_data.get("shot_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for shot in group.get("shots") or []:
+            if not isinstance(shot, dict):
+                continue
+            if isinstance(shot.get("props_present"), list):
+                shot["props_present"] = [
+                    prop_id for prop_id in shot["props_present"]
+                    if str(prop_id) in valid_prop_ids
+                ]
+            for key in PROMPT_PROP_TEXT_KEYS:
+                if isinstance(shot.get(key), str):
+                    shot[key] = _replace_prop_markers(shot[key], valid_marker_props)
+
+    return parsed_data
 
 
 # JSON格式示例模板
@@ -524,6 +660,7 @@ async def parse_script_to_shots(
         
         # 获取数据库中的道具列表（如果提供了world_id）
         db_props_text = ""
+        db_props = []
         if world_id is not None:
             try:
                 from model.props import PropsModel
@@ -551,6 +688,7 @@ async def parse_script_to_shots(
 - 匹配时要考虑道具名称和描述的相似性，不需要完全一致
 - **严禁编造或随意填写不存在的props_db_id！如果不确定是否匹配，必须设置为null**
 - **只能使用上面列表中显示的ID，不能使用其他任何数字**
+- **严禁在画面描述中添加数据库列表和原始剧本文本都没有出现的道具；这类道具不能放入props数组、props_present，也不能用〖〖〗〗标记**
 """
                     logger.info(f"Generated db_props_text with {len(props_lines)} props entries")
                 else:
@@ -848,6 +986,7 @@ async def parse_script_to_shots(
    - 正确示例："【【服务员】】将一张〖〖百元大钞〗〗拍在桌上"、"〖〖公文包〗〗【【德保罗】】站在门口"
    - 错误示例："【【服务员】】将一张【【prop_002】】拍在桌上" ❌ 严禁这样做
    - 错误示例："【【服务员】】将一张【【百元大钞】】拍在桌上" ❌ 道具不能使用角色标记
+   - 错误示例：数据库和原始剧本都没有"扩音器"，却写"〖〖扩音器〗〗掉在地上" ❌ 严禁幻想道具
    - **【关键】角色名称必须用【【角色名】】格式包裹，道具名称必须用〖〖道具名〗〗格式包裹，不能混用**
 
 {special_requirements}9. **输出格式**：
@@ -983,6 +1122,9 @@ JSON格式示例：
         if missing_keys:
             raise Exception(f"返回的JSON缺少必需字段: {', '.join(missing_keys)}")
         
+        parsed_data = sanitize_parsed_prop_references(parsed_data, db_props, script_content)
+        _save_log_file(log_dir, f"script_parser_{timestamp}_06_prop_sanitized.json", parsed_data)
+
         # 重新组合分镜组，确保每组不超过max_group_duration秒
         parsed_data = reorganize_shot_groups(parsed_data, max_group_duration, log_dir, timestamp)
         

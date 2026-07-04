@@ -125,6 +125,177 @@ def test_generate_video_command_supports_image_to_video(monkeypatch, capsys):
     assert calls[0]["image_mode"] == "first_last_with_ref"
 
 
+def test_auto_generate_missing_images_command(monkeypatch, capsys):
+    from scripts import storyboard_agent_cli
+
+    calls = []
+
+    class FakeService:
+        def auto_generate_missing_images(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "storyboard_id": kwargs["storyboard_id"], "submitted_count": 2}
+
+    monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
+
+    code = storyboard_agent_cli.main(
+        [
+            "auto-generate-missing-images",
+            "--storyboard-id",
+            "44",
+            "--user-id",
+            "7",
+            "--auth-token",
+            "short",
+            "--limit",
+            "3",
+            "--image-size",
+            "1K",
+            "--sequence-mode",
+            "quality",
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert out["submitted_count"] == 2
+    assert calls[0]["storyboard_id"] == 44
+    assert calls[0]["user_id"] == 7
+    assert calls[0]["limit"] == 3
+    assert calls[0]["image_size"] == "1K"
+    assert calls[0]["sequence_mode"] == "quality"
+
+
+def test_storyboard_image_batch_status_command(monkeypatch, capsys):
+    from scripts import storyboard_agent_cli
+
+    calls = []
+
+    class FakeService:
+        def storyboard_image_batch_status(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "batch_id": kwargs["job_id"], "status": "running", "items": []}
+
+    monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
+
+    code = storyboard_agent_cli.main(
+        [
+            "storyboard-image-batch-status",
+            "--batch-id",
+            "88",
+            "--user-id",
+            "7",
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert out["batch_id"] == 88
+    assert calls[0]["job_id"] == 88
+    assert calls[0]["user_id"] == 7
+
+
+def test_storyboard_task_status_command(monkeypatch, capsys):
+    from scripts import storyboard_agent_cli
+
+    calls = []
+
+    class FakeService:
+        def storyboard_task_status(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "storyboard_id": kwargs["storyboard_id"], "scenes": []}
+
+    monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
+
+    code = storyboard_agent_cli.main(
+        [
+            "storyboard-task-status",
+            "--storyboard-id",
+            "44",
+            "--user-id",
+            "7",
+            "--asset-type",
+            "first_frame",
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert out["storyboard_id"] == 44
+    assert calls[0]["storyboard_id"] == 44
+    assert calls[0]["user_id"] == 7
+    assert calls[0]["asset_type"] == "first_frame"
+
+
+def test_list_scenes_command(monkeypatch, capsys):
+    from scripts import storyboard_agent_cli
+
+    calls = []
+
+    class FakeService:
+        def list_scenes(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "storyboard_id": kwargs["storyboard_id"], "scenes": []}
+
+    monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
+
+    code = storyboard_agent_cli.main(
+        [
+            "list-scenes",
+            "--storyboard-id",
+            "44",
+            "--user-id",
+            "7",
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert out["storyboard_id"] == 44
+    assert calls[0]["storyboard_id"] == 44
+    assert calls[0]["user_id"] == 7
+
+
+def test_insert_scene_command(monkeypatch, capsys):
+    from scripts import storyboard_agent_cli
+
+    calls = []
+
+    class FakeService:
+        def insert_scene(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "storyboard_id": kwargs["storyboard_id"], "scene_id": 99}
+
+    monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
+
+    code = storyboard_agent_cli.main(
+        [
+            "insert-scene",
+            "--storyboard-id",
+            "44",
+            "--user-id",
+            "7",
+            "--after-scene-id",
+            "31",
+            "--title",
+            "Inserted",
+            "--duration",
+            "4",
+            "--prompt-json",
+            '{"scene_desc":"Inserted beat"}',
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert out["scene_id"] == 99
+    assert calls[0]["storyboard_id"] == 44
+    assert calls[0]["user_id"] == 7
+    assert calls[0]["after_scene_id"] == 31
+    assert calls[0]["title"] == "Inserted"
+    assert calls[0]["duration"] == 4
+    assert calls[0]["prompt_json"] == '{"scene_desc":"Inserted beat"}'
+
+
 def test_cli_errors_are_json(monkeypatch, capsys):
     from scripts import storyboard_agent_cli
     from services.storyboard_agent_cli_service import StoryboardCliError

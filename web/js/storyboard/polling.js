@@ -6,6 +6,7 @@ import { renderApp } from './render.js';
 
 const POLL_INTERVAL = 4000;
 const pollTimers = {};
+const batchPollTimers = {};
 
 function upsertSceneCandidateFromTask(sceneId, assetType, taskInfo) {
     if (!taskInfo || !taskInfo.asset_id) return;
@@ -78,6 +79,28 @@ export function pollSceneTaskStatus(sceneId) {
             }
         } catch (e) {
             pollTimers[sceneId] = setTimeout(poll, POLL_INTERVAL * 2);
+        }
+    };
+    poll();
+}
+
+export function pollImageBatchStatus(batchId) {
+    if (!batchId || batchPollTimers[batchId]) return;
+    const poll = async () => {
+        try {
+            const data = await api.getStoryboardImageBatchStatus(batchId);
+            for (const item of data.items || []) {
+                if (item.scene_id && (item.status === 'running' || item.status === 'completed')) {
+                    pollSceneTaskStatus(item.scene_id);
+                }
+            }
+            if (data.status === 'pending' || data.status === 'running') {
+                batchPollTimers[batchId] = setTimeout(poll, POLL_INTERVAL);
+            } else {
+                delete batchPollTimers[batchId];
+            }
+        } catch (e) {
+            batchPollTimers[batchId] = setTimeout(poll, POLL_INTERVAL * 2);
         }
     };
     poll();

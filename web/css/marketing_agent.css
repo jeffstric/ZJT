@@ -430,6 +430,16 @@ body {
   color: var(--text-primary);
 }
 
+@media (max-width: 499px) {
+  .top-bar-date {
+    display: inline-block;
+    width: 1em;
+    overflow: hidden;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+}
+
 .top-bar-right {
   display: flex;
   align-items: center;
@@ -1517,6 +1527,12 @@ body {
   background: #dc2626;
 }
 
+@media (max-width: 1389px) {
+  .feedback-fab-container {
+    display: none;
+  }
+}
+
 /* ========== 联系我们弹窗内容 ========== */
 .feedback-body {
   display: flex;
@@ -1734,4 +1750,33 @@ body {
   padding: 20px 0 4px;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+@media (max-width: 499px) {
+  .mobile-foldable {
+    display: none !important;
+  }
+
+  .toolbar-expanded .mobile-foldable {
+    display: flex !important;
+  }
+
+  .marketing-panel {
+    position: fixed !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    width: 100% !important;
+    min-width: auto !important;
+    z-index: 1000 !important;
+    overflow-y: auto !important;
+    padding: 16px !important;
+    max-height: 100vh !important;
+  }
+}
+
+@media (min-width: 500px) {
+  .mobile-settings-toggle {
+    display: none !important;
+  }
 }

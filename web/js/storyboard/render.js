@@ -23,6 +23,64 @@ export function getThumbnailUrl(imageUrl, size) {
     return '/api/thumbnail?url=' + encodeURIComponent(imageUrl) + '&size=' + size;
 }
 
+function unwrapPromptAssetName(value) {
+    return String(value || '')
+        .replace(/【【([^】]+)】】/g, '$1')
+        .replace(/〖〖([^〗]+)〗〗/g, '$1')
+        .trim();
+}
+
+function removeNestedRoleNames(value) {
+    return String(value || '').replace(/【【[^】]+】】/g, '').trim();
+}
+
+function normalizeAssetName(value) {
+    return unwrapPromptAssetName(value).replace(/\s+/g, '');
+}
+
+function buildAssetNameCandidates(value) {
+    const raw = String(value || '').trim();
+    return [raw, unwrapPromptAssetName(raw), removeNestedRoleNames(raw)]
+        .map(item => item.trim())
+        .filter((item, index, list) => item && list.indexOf(item) === index);
+}
+
+function findPromptAsset(assetList, rawName, isProp) {
+    const candidates = buildAssetNameCandidates(rawName);
+    const normalizedCandidates = candidates.map(normalizeAssetName).filter(Boolean);
+    let asset = assetList.find(item => normalizedCandidates.includes(normalizeAssetName(item.name || '')));
+    if (!asset && isProp) {
+        asset = assetList.find(item => {
+            const assetName = normalizeAssetName(item.name || '');
+            return assetName && normalizedCandidates.some(candidate =>
+                candidate && (assetName.endsWith(candidate) || candidate.endsWith(assetName))
+            );
+        });
+    }
+    return asset || null;
+}
+
+function tagPlainRolesOutsideProps(text, names) {
+    if (!names.length) return text;
+    const namePattern = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+    const plainRe = new RegExp(`(?<!【【)(${namePattern})(?!】】)`, 'g');
+    const propPattern = /〖〖[^〗]+〗〗/g;
+    let result = '';
+    let lastIndex = 0;
+    let match;
+    while ((match = propPattern.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            result += text.substring(lastIndex, match.index).replace(plainRe, '【【$1】】');
+        }
+        result += match[0];
+        lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+        result += text.substring(lastIndex).replace(plainRe, '【【$1】】');
+    }
+    return result;
+}
+
 // 将提示词文本中的角色标记替换为 <img>角色名 格式
 // 参考 video_workflow.html 分镜节点的 renderPromptWithInlineChars
 export function renderPromptWithInlineRoles(text, usedChars, usedProps) {
@@ -46,9 +104,7 @@ export function renderPromptWithInlineRoles(text, usedChars, usedProps) {
     let processedText = text;
     const names = worldChars.map(c => c.name).filter(Boolean);
     if (names.length > 0) {
-        const namePattern = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-        const plainRe = new RegExp(`(?<!【【)(${namePattern})(?!】】)`, 'g');
-        processedText = processedText.replace(plainRe, '【【$1】】');
+        processedText = tagPlainRolesOutsideProps(processedText, names);
     }
 
     // Unified pattern: 角色【【】】 或 道具〖〖〗〗
@@ -59,9 +115,15 @@ export function renderPromptWithInlineRoles(text, usedChars, usedProps) {
             displayEl.appendChild(document.createTextNode(processedText.substring(lastIndex, match.index)));
         }
         const isProp = match[2] !== undefined;
-        const assetName = (match[1] || match[2]).trim();
+        const rawAssetName = (match[1] || match[2]).trim();
         const assetList = isProp ? worldProps : worldChars;
-        const asset = assetList.find(a => String(a.name || '').trim() === assetName);
+        const asset = findPromptAsset(assetList, rawAssetName, isProp);
+        const assetName = asset ? String(asset.name || rawAssetName).trim() : unwrapPromptAssetName(rawAssetName);
+        if (isProp && !asset) {
+            displayEl.appendChild(document.createTextNode(assetName));
+            lastIndex = match.index + match[0].length;
+            continue;
+        }
         const avatarUrl = asset && (asset.avatar || asset.reference_image || mapAssetAvatar(asset.raw || asset));
         const chip = document.createElement('span');
         chip.className = isProp ? 'prop-chip' : 'role-chip';
@@ -128,7 +190,7 @@ function renderHeader() {
     return `
         <header class="header">
             <div class="header-left">
-                <div class="header-logo">智</div>
+                <div class="header-logo" data-route="storyboard-list">智</div>
                 <div>
                     <h1 class="header-title">${escapeHtml(state.title)}</h1>
                     <div class="header-subtitle">
@@ -543,6 +605,11 @@ function renderGenerateFromScriptDialog() {
     if (!state.showGenerateFromScriptDialog) return '';
     const busy = state.isGeneratingFromScript;
     const splitModelConfig = renderScriptSplitModelConfig(busy);
+    const autoImageModeButtons = `
+        <button type="button" class="sequence-mode-button ${state.autoImageSequenceMode === 'balanced' ? 'active' : ''}" data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="balanced" ${busy ? 'disabled' : ''}>均衡</button>
+        <button type="button" class="sequence-mode-button ${state.autoImageSequenceMode === 'quality' ? 'active' : ''}" data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="quality" ${busy ? 'disabled' : ''}>效果</button>
+        <button type="button" class="sequence-mode-button ${state.autoImageSequenceMode === 'speed' ? 'active' : ''}" data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="speed" ${busy ? 'disabled' : ''}>速度</button>
+    `;
     return `
         <div class="modal-overlay">
             <div class="export-dialog generate-from-script-dialog">
@@ -556,6 +623,10 @@ function renderGenerateFromScriptDialog() {
                 </div>
                 <div class="generate-from-script-model">
                     ${splitModelConfig}
+                </div>
+                <div class="generate-from-script-model">
+                    <label class="config-label">分镜图生成模式</label>
+                    <div class="sequence-mode-control">${autoImageModeButtons}</div>
                 </div>
                 <footer class="dialog-footer">
                     <button class="btn-ghost" data-action="generate-from-script-cancel" ${busy ? 'disabled' : ''}>暂不生成</button>
@@ -739,6 +810,58 @@ function renderGlobalStyleDialog() {
         </div>`;
 }
 
+function renderGenerateProgressDialog() {
+    if (!state.showGenerateProgressDialog) return '';
+    const steps = state.generateProgressSteps || [];
+    const error = state.generateProgressError || '';
+    const stepHtml = steps.map((step) => {
+        const cls = step.status || 'pending';
+        let iconHtml;
+        let statusText;
+        if (cls === 'completed') {
+            iconHtml = icon('success', 16);
+            statusText = '执行完毕';
+        } else if (cls === 'running') {
+            iconHtml = `<span class="spinner">${icon('loading', 16)}</span>`;
+            statusText = '执行中';
+        } else if (cls === 'failed') {
+            iconHtml = icon('close', 16);
+            statusText = '失败';
+        } else {
+            iconHtml = icon('circle', 16);
+            statusText = '待开始执行';
+        }
+        return `
+            <div class="progress-step ${cls}">
+                <div class="progress-step-icon">${iconHtml}</div>
+                <div class="progress-step-name">${escapeHtml(step.name)}</div>
+                <div class="progress-step-status ${cls}">${statusText}</div>
+            </div>`;
+    }).join('');
+
+    const footer = error
+        ? `<div class="generate-progress-footer">
+            <button class="btn-ghost" data-action="close-generate-progress">关闭</button>
+            <button class="btn-primary" data-action="retry-generate-progress">重试</button>
+           </div>`
+        : '';
+
+    return `
+        <div class="modal-overlay">
+            <div class="export-dialog generate-progress-dialog">
+                <header>
+                    <h2>正在生成分镜...</h2>
+                    ${error ? `<button data-action="close-generate-progress">${icon('close', 18)}</button>` : ''}
+                </header>
+                <div class="progress-steps">
+                    ${stepHtml}
+                </div>
+                ${error ? `<div class="generate-progress-error">${escapeHtml(error)}</div>` : ''}
+                ${footer}
+            </div>
+        </div>`;
+}
+
 export function renderApp() {
     const app = document.getElementById('app');
     const scene = getCurrentScene();
@@ -747,6 +870,18 @@ export function renderApp() {
         app.innerHTML = `<div class="storyboard-error"><h1>故事板打开失败</h1><p>${escapeHtml(state.error)}</p><button class="btn-primary" data-route="script">返回剧本策划</button></div>`;
         return;
     }
+
+    const scrollSelectors = [
+        { selector: '.scene-timeline-list', prop: 'scrollLeft' },
+        { selector: '.storyboard-grid', prop: 'scrollTop' },
+        { selector: '.right-sidebar', prop: 'scrollTop' },
+        { selector: '.sidebar-content', prop: 'scrollTop' },
+    ];
+    const savedScrolls = [];
+    scrollSelectors.forEach(({ selector, prop }) => {
+        const el = document.querySelector(selector);
+        if (el) savedScrolls.push({ selector, prop, value: el[prop] });
+    });
 
     app.innerHTML = `
         <div class="app-shell">
@@ -759,7 +894,15 @@ export function renderApp() {
         </div>
         ${renderExportDialog()}
         ${renderGenerateFromScriptDialog()}
+        ${renderGenerateProgressDialog()}
         ${renderMentionPopup()}
         ${renderModelConfigModal()}
         ${renderGlobalStyleDialog()}`;
+
+    requestAnimationFrame(() => {
+        savedScrolls.forEach(({ selector, prop, value }) => {
+            const el = document.querySelector(selector);
+            if (el) el[prop] = value;
+        });
+    });
 }

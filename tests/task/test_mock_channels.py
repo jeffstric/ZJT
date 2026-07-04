@@ -114,8 +114,10 @@ class TestAudioSubmit:
     def test_short_circuit_writes_mock_result_url(self, mock_enabled, monkeypatch):
         monkeypatch.setattr(mi, "mock_audio", lambda subkey="tts": "/upload/mock/e2e_tts.mp3")
         ai_audio_model = MagicMock()
+        dialogue_audio_model = MagicMock()
         tasks = MagicMock()
         monkeypatch.setattr(at, "AIAudioModel", ai_audio_model)
+        monkeypatch.setattr(at, "StoryboardDialogueAudioModel", dialogue_audio_model)
         monkeypatch.setattr(at, "TasksModel", tasks)
 
         ai_audio = MagicMock()
@@ -128,6 +130,10 @@ class TestAudioSubmit:
         _, kwargs = ai_audio_model.update.call_args
         assert kwargs["result_url"] == "/upload/mock/e2e_tts.mp3"
         assert kwargs["status"] == at.AI_AUDIO_STATUS_COMPLETED
+        dialogue_audio_model.update_audio_url_by_ai_audio_id.assert_called_once_with(
+            2002,
+            "/upload/mock/e2e_tts.mp3",
+        )
 
 
 class TestE2EMockFixture:

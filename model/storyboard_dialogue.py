@@ -182,4 +182,24 @@ class StoryboardDialogueModel:
         return mid
 
 
+# ==================== CREATE_TABLE_SQL ====================
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS `storyboard_dialogue` (
+    `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    `scene_id` INT UNSIGNED NOT NULL,
+    `sort_order` DOUBLE DEFAULT 0 COMMENT '对话顺序（浮点二分，同 storyboard_scene）',
+    `character_id` INT UNSIGNED DEFAULT NULL COMMENT '说话角色; NULL=旁白',
+    `text` TEXT DEFAULT NULL COMMENT '台词',
+    `speed` DECIMAL(4,2) NOT NULL DEFAULT 1.00 COMMENT '语速',
+    `volume` INT NOT NULL DEFAULT 100 COMMENT '音量 0-100',
+    `selected_audio_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中配音 → storyboard_dialogue_audio.id',
+    `last_modified_user_id` INT UNSIGNED DEFAULT NULL COMMENT '最后修改人',
+    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `update_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_scene` (`scene_id`, `sort_order`),
+    INDEX `idx_character` (`character_id`),
+    FOREIGN KEY (`scene_id`) REFERENCES `storyboard_scene`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分镜对话表';
+"""
+
 __all__ = ["StoryboardDialogue", "StoryboardDialogueModel"]

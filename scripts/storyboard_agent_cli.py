@@ -12,6 +12,7 @@ from services.storyboard_agent_cli_service import (  # noqa: E402
     StoryboardAgentCliService,
     StoryboardCliError,
 )
+from services.storyboard_agent_command_service import StoryboardAgentCommandService  # noqa: E402
 
 
 def _print_json(payload: Dict[str, Any]) -> None:
@@ -31,9 +32,77 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    list_worlds = subparsers.add_parser("list-worlds", help="List worlds visible to a user.")
+    list_worlds.add_argument("--user-id", type=int, required=True)
+    list_worlds.add_argument("--page", type=int, default=1)
+    list_worlds.add_argument("--page-size", type=int, default=20)
+    list_worlds.add_argument("--keyword")
+    list_worlds.add_argument("--include-full-story-outline", action="store_true")
+
+    list_world_scripts = subparsers.add_parser("list-world-scripts", help="List scripts under a world.")
+    list_world_scripts.add_argument("--world-id", type=int, required=True)
+    list_world_scripts.add_argument("--user-id", type=int, required=True)
+    list_world_scripts.add_argument("--page", type=int, default=1)
+    list_world_scripts.add_argument("--page-size", type=int, default=20)
+    list_world_scripts.add_argument("--include-content", action="store_true")
+    list_world_scripts.add_argument("--include-full-story-outline", action="store_true")
+
+    get_script = subparsers.add_parser("get-script", help="Read one script with full content.")
+    get_script.add_argument("--script-id", type=int, required=True)
+    get_script.add_argument("--user-id", type=int, required=True)
+
+    list_world_characters = subparsers.add_parser("list-world-characters", help="List characters under a world.")
+    list_world_characters.add_argument("--world-id", type=int, required=True)
+    list_world_characters.add_argument("--user-id", type=int, required=True)
+    list_world_characters.add_argument("--page", type=int, default=1)
+    list_world_characters.add_argument("--page-size", type=int, default=20)
+    list_world_characters.add_argument("--keyword")
+    list_world_characters.add_argument("--include-full-story-outline", action="store_true")
+
+    list_world_locations = subparsers.add_parser("list-world-locations", help="List locations under a world.")
+    list_world_locations.add_argument("--world-id", type=int, required=True)
+    list_world_locations.add_argument("--user-id", type=int, required=True)
+    list_world_locations.add_argument("--page", type=int, default=1)
+    list_world_locations.add_argument("--page-size", type=int, default=20)
+    list_world_locations.add_argument("--keyword")
+    list_world_locations.add_argument("--include-full-story-outline", action="store_true")
+
+    list_world_props = subparsers.add_parser("list-world-props", help="List props under a world.")
+    list_world_props.add_argument("--world-id", type=int, required=True)
+    list_world_props.add_argument("--user-id", type=int, required=True)
+    list_world_props.add_argument("--page", type=int, default=1)
+    list_world_props.add_argument("--page-size", type=int, default=20)
+    list_world_props.add_argument("--keyword")
+    list_world_props.add_argument("--include-full-story-outline", action="store_true")
+
+    world_context = subparsers.add_parser("world-context", help="Read scripts, characters, locations, and props for a world.")
+    world_context.add_argument("--world-id", type=int, required=True)
+    world_context.add_argument("--user-id", type=int, required=True)
+    world_context.add_argument("--page-size", type=int, default=100)
+    world_context.add_argument("--include-script-content", action="store_true")
+    world_context.add_argument("--include-full-story-outline", action="store_true")
+
     scene_context = subparsers.add_parser("scene-context", help="Read scene prompts and references.")
     scene_context.add_argument("--scene-id", type=int, required=True)
     scene_context.add_argument("--user-id", type=int)
+
+    list_scenes = subparsers.add_parser("list-scenes", help="List storyboard scenes with asset summaries.")
+    list_scenes.add_argument("--storyboard-id", type=int, required=True)
+    list_scenes.add_argument("--user-id", type=int)
+
+    insert_scene = subparsers.add_parser("insert-scene", help="Insert a storyboard scene after or before another scene.")
+    insert_scene.add_argument("--storyboard-id", type=int, required=True)
+    insert_scene.add_argument("--user-id", type=int, required=True)
+    insert_scene.add_argument("--after-scene-id", type=int)
+    insert_scene.add_argument("--before-scene-id", type=int)
+    insert_scene.add_argument("--prev-id", type=int)
+    insert_scene.add_argument("--next-id", type=int)
+    insert_scene.add_argument("--title", default="")
+    insert_scene.add_argument("--duration", type=int, default=5)
+    insert_scene.add_argument("--prompt-json")
+    insert_scene.add_argument("--video-prompt")
+    insert_scene.add_argument("--video-type", default="video")
+    insert_scene.add_argument("--video-config-json")
 
     create_storyboard = subparsers.add_parser(
         "create-storyboard-from-script",
@@ -53,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     split_script.add_argument("--storyboard-id", type=int, required=True)
     split_script.add_argument("--user-id", type=int, required=True)
     split_script.add_argument("--auth-token", default="")
-    split_script.add_argument("--model", default="gemini-3-flash-preview")
+    split_script.add_argument("--model")
     split_script.add_argument("--model-id", type=int)
     split_script.add_argument("--vendor-id", type=int)
     split_script.add_argument("--max-group-duration", type=int, default=15)
@@ -75,6 +144,30 @@ def build_parser() -> argparse.ArgumentParser:
     generate_image.add_argument("--ratio")
     generate_image.add_argument("--image-size")
     generate_image.add_argument("--count", type=int, default=1)
+
+    auto_generate = subparsers.add_parser(
+        "auto-generate-missing-images",
+        help="Generate missing storyboard frame images in a bounded batch.",
+    )
+    auto_generate.add_argument("--storyboard-id", type=int, required=True)
+    auto_generate.add_argument("--user-id", type=int, required=True)
+    auto_generate.add_argument("--auth-token", default="")
+    auto_generate.add_argument("--asset-type", choices=["first_frame", "last_frame"], default="first_frame")
+    auto_generate.add_argument("--mode", choices=["auto", "text_to_image", "image_edit"], default="auto")
+    auto_generate.add_argument("--prompt")
+    auto_generate.add_argument("--source-image")
+    auto_generate.add_argument("--ratio")
+    auto_generate.add_argument("--image-size")
+    auto_generate.add_argument("--count", type=int, default=1)
+    auto_generate.add_argument("--limit", type=int)
+    auto_generate.add_argument("--task-type", type=int)
+    auto_generate.add_argument(
+        "--sequence-mode",
+        choices=["speed", "balanced", "quality"],
+        default="balanced",
+        help="speed=no references, balanced=parallel by group, quality=global serial references.",
+    )
+    auto_generate.add_argument("--continue-on-error", action="store_true")
 
     generate_video = subparsers.add_parser("generate-video", help="Generate storyboard video.")
     generate_video.add_argument("--scene-id", type=int, required=True)
@@ -98,6 +191,21 @@ def build_parser() -> argparse.ArgumentParser:
     task_status.add_argument("--scene-id", type=int, required=True)
     task_status.add_argument("--asset-type", choices=["first_frame", "last_frame", "video"])
 
+    storyboard_task_status = subparsers.add_parser(
+        "storyboard-task-status",
+        help="Read selected task status for all scenes in a storyboard.",
+    )
+    storyboard_task_status.add_argument("--storyboard-id", type=int, required=True)
+    storyboard_task_status.add_argument("--user-id", type=int)
+    storyboard_task_status.add_argument("--asset-type", choices=["first_frame", "last_frame", "video"], default="first_frame")
+
+    image_batch_status = subparsers.add_parser(
+        "storyboard-image-batch-status",
+        help="Read a storyboard image batch orchestration status.",
+    )
+    image_batch_status.add_argument("--batch-id", type=int, required=True)
+    image_batch_status.add_argument("--user-id", type=int)
+
     bind_projects = subparsers.add_parser("bind-projects", help="Bind existing ai_tools ids to scene assets.")
     bind_projects.add_argument("--scene-id", type=int, required=True)
     bind_projects.add_argument("--user-id", type=int)
@@ -108,85 +216,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_command(args: argparse.Namespace) -> Dict[str, Any]:
-    service = StoryboardAgentCliService()
-
-    if args.command == "scene-context":
-        return service.scene_context(scene_id=args.scene_id, user_id=args.user_id)
-
-    if args.command == "create-storyboard-from-script":
-        return service.create_storyboard_from_script(
-            script_id=args.script_id,
-            user_id=args.user_id,
-            title=args.title,
-            workflow_id=args.workflow_id,
-            style=args.style,
-            style_reference_image=args.style_reference_image,
-            workflow_ratio=args.workflow_ratio,
-            composition_preference=args.composition_preference,
-            version=args.version,
-        )
-
-    if args.command == "split-from-script":
-        return service.split_from_script(
-            storyboard_id=args.storyboard_id,
-            user_id=args.user_id,
-            auth_token=args.auth_token,
-            model=args.model,
-            model_id=args.model_id,
-            vendor_id=args.vendor_id,
-            max_group_duration=args.max_group_duration,
-            force_medium_shot=args.force_medium_shot,
-            no_bg_music=args.no_bg_music,
-            split_multi_dialogue=args.split_multi_dialogue,
-            language=args.language,
-            dialogue_language=args.dialogue_language,
-            prompt_language=args.prompt_language,
-        )
-
-    if args.command == "generate-image":
-        return service.generate_image(
-            scene_id=args.scene_id,
-            user_id=args.user_id,
-            auth_token=args.auth_token,
-            mode=args.mode,
-            asset_type=args.asset_type,
-            prompt=args.prompt,
-            source_image=args.source_image,
-            ratio=args.ratio,
-            image_size=args.image_size,
-            count=args.count,
-        )
-
-    if args.command == "generate-video":
-        return service.generate_video(
-            scene_id=args.scene_id,
-            user_id=args.user_id,
-            auth_token=args.auth_token,
-            mode=args.mode,
-            prompt=args.prompt,
-            ratio=args.ratio,
-            duration_seconds=args.duration_seconds,
-            count=args.count,
-            image_mode=args.image_mode,
-            image_urls=args.image_urls,
-            video_urls=args.video_urls,
-            audio_urls=args.audio_urls,
-        )
-
-    if args.command == "task-status":
-        return service.task_status(scene_id=args.scene_id, asset_type=args.asset_type)
-
-    if args.command == "bind-projects":
-        project_ids = [int(item.strip()) for item in args.project_ids.split(",") if item.strip()]
-        result = service.bind_projects(
-            scene_id=args.scene_id,
-            user_id=args.user_id,
-            asset_type=args.asset_type,
-            project_ids=project_ids,
-        )
-        return {"success": True, "scene_id": args.scene_id, **result}
-
-    raise StoryboardCliError("unknown_command", f"unknown command: {args.command}")
+    params = {key: value for key, value in vars(args).items() if key != "command"}
+    return StoryboardAgentCommandService(
+        service=StoryboardAgentCliService()
+    ).execute(args.command, params)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
