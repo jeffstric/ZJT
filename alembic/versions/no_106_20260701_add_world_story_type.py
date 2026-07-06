@@ -1,7 +1,7 @@
 """Add story_type to world
 
 Revision ID: 20260701_world_story_type
-Revises: 20260701_ai_tools_log
+Revises: 20260624_storyboard_v2
 Create Date: 2026-07-01
 """
 from typing import Sequence, Union
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 revision: str = '20260701_world_story_type'
-down_revision: Union[str, None] = '20260701_ai_tools_log'
+down_revision: Union[str, None] = '20260624_storyboard_v2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
