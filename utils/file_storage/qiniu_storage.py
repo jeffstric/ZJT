@@ -11,8 +11,21 @@ from typing import Optional, Union
 from concurrent.futures import ThreadPoolExecutor
 
 import qiniu
+import qiniu.config as _qiniu_config
+
+from config.constant import (
+    QINIU_HTTP_CONNECTION_TIMEOUT,
+    QINIU_UPLOAD_HARD_TIMEOUT,
+)
 
 from .base import BaseFileStorage, UploadResult
+
+# 显式设置 qiniu SDK 全局 HTTP 超时，避免依赖 SDK 内部默认值
+# SDK 内部所有 requests 调用会读取 config.get_default('connection_timeout')
+try:
+    _qiniu_config.set_default(connection_timeout=QINIU_HTTP_CONNECTION_TIMEOUT)
+except Exception:  # pragma: no cover - SDK 版本差异保护
+    pass
 
 
 def _setup_qiniu_logger() -> logging.Logger:
@@ -134,14 +147,22 @@ class QiniuFileStorage(BaseFileStorage):
         content_type: Optional[str] = None
     ) -> UploadResult:
         """同步上传文件"""
+        import time as _time
+        _t0 = _time.monotonic()
         try:
             logger.info(f"[七牛云] 开始上传文件, key={key}, file_path={file_path}")
             token = self._get_upload_token(key)
             logger.debug(f"[七牛云] 获取token成功, key={key}, file_path={file_path}, bucket={self.bucket_name}")
             ret, info = qiniu.put_file(token, key, file_path) #qiniu 来自于 pip install qiniu
 
+            _elapsed = _time.monotonic() - _t0
             logger.info(f"[七牛云] 上传响应: ret={ret}, status_code={info.status_code}, "
-                        f"req_id={info.req_id}, x_log={info.x_log}")
+                        f"req_id={info.req_id}, x_log={info.x_log}, elapsed={_elapsed:.2f}s")
+            if _elapsed >= QINIU_UPLOAD_HARD_TIMEOUT:
+                logger.warning(
+                    f"[七牛云] 上传耗时过长 {_elapsed:.2f}s >= {QINIU_UPLOAD_HARD_TIMEOUT}s, "
+                    f"key={key}（可能网络异常，需关注）"
+                )
             if hasattr(info, 'error') and info.error:
                 logger.error(f"[七牛云] 上传错误详情: error={info.error}, "
                             f"text_body={info.text_body}")
