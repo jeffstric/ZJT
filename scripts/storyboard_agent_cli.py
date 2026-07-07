@@ -103,6 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
     insert_scene.add_argument("--video-prompt")
     insert_scene.add_argument("--video-type", default="video")
     insert_scene.add_argument("--video-config-json")
+    insert_scene.add_argument("--difficulty", choices=["易", "中", "难"], default="中",
+                              help="分镜难易程度（易/中/难），默认 中")
+    insert_scene.add_argument("--act-name", help="所属幕/分镜组名称")
 
     create_storyboard = subparsers.add_parser(
         "create-storyboard-from-script",
@@ -211,6 +214,19 @@ def build_parser() -> argparse.ArgumentParser:
     bind_projects.add_argument("--user-id", type=int)
     bind_projects.add_argument("--asset-type", choices=["first_frame", "last_frame", "video"], required=True)
     bind_projects.add_argument("--project-ids", required=True, help="Comma separated ai_tools/project ids.")
+
+    update_scene = subparsers.add_parser("update-scene", help="Update editable fields of an existing storyboard scene.")
+    update_scene.add_argument("--scene-id", type=int, required=True)
+    update_scene.add_argument("--user-id", type=int)
+    update_scene.add_argument("--duration", type=int)
+    update_scene.add_argument("--title")
+    update_scene.add_argument("--prompt-json")
+    update_scene.add_argument("--video-prompt")
+    update_scene.add_argument("--video-type")
+    update_scene.add_argument("--video-config-json")
+    update_scene.add_argument("--difficulty", choices=["易", "中", "难"],
+                              help="分镜难易程度（易/中/难）")
+    update_scene.add_argument("--act-name", help="所属幕/分镜组名称")
 
     return parser
 

@@ -1,13 +1,16 @@
 """
 Audio generation task processing
 """
+import asyncio
 import logging
 from datetime import datetime, timedelta
 import uuid
 import json
 from typing import Optional, Dict, Any
 from model import TasksModel, AIAudioModel
+from model.storyboard import StoryboardModel, StoryboardSceneModel
 from model.storyboard_dialogue_audio import StoryboardDialogueAudioModel
+from model.storyboard_dialogue import StoryboardDialogueModel
 from config.constant import (
     TASK_TYPE_GENERATE_AUDIO,
     AI_AUDIO_STATUS_PENDING,
@@ -21,6 +24,7 @@ from config.constant import (
 )
 from task.async_drivers.runninghub_audio_driver import RunningHubAudioConfig
 from utils.index_tts_util import generate_audio, validate_emotion_vector
+from utils.audio_duration_util import probe_audio_duration
 import os
 from config.config_util import get_dynamic_config_value
 
@@ -41,6 +45,110 @@ def _is_expire_check_enabled():
 
 # Get upload directory path
 UPLOAD_DIR = "/home/appuser/comfyui_upload/tts/result_audio/"
+
+
+async def recalc_scene_duration_if_all_completed(scene_id: int) -> Optional[float]:
+    """
+    若该分镜下所有对话的"当前选中配音"均 COMPLETED 且 duration 齐全，则把
+    storyboard_scene.duration 同步为这些音频时长之和（毫秒级浮点，DECIMAL(10,3)），
+    并联动重算故事板总时长。
+
+    Returns:
+        Optional[float]: 全部完成时返回写入的新 duration；未全部完成或异常返回 None。
+        所有异常仅记日志，不向上抛出（best-effort 联动，不阻塞调用方）。
+    """
+    if not scene_id:
+        return None
+    try:
+        total = await asyncio.to_thread(
+            StoryboardDialogueAudioModel.sum_selected_durations_if_all_completed, scene_id
+        )
+    except Exception as e:
+        logger.warning(f"[scene-duration] scene={scene_id} 完成度查询失败: {e}")
+        return None
+    if total is None:
+        # 未全部完成（含空场景、有未生成/处理中/失败/时长缺失）
+        return None
+
+    # DECIMAL(10,3) 保留毫秒精度；下限 1.0s 避免全零时长导致 0 秒分镜
+    new_duration = max(1.0, round(float(total), 3))
+    try:
+        await asyncio.to_thread(StoryboardSceneModel.update, scene_id, duration=new_duration)
+    except Exception as e:
+        logger.warning(f"[scene-duration] scene={scene_id} 更新 duration={new_duration} 失败: {e}")
+        return None
+
+    # 联动重算故事板总时长
+    try:
+        scene = await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
+        storyboard_id = getattr(scene, 'storyboard_id', None) if scene else None
+        if storyboard_id:
+            await asyncio.to_thread(StoryboardModel.recalc_total_duration, storyboard_id)
+    except Exception as e:
+        logger.warning(f"[scene-duration] scene={scene_id} 联动重算故事板总时长失败: {e}")
+
+    logger.info(
+        f"[scene-duration] scene={scene_id} 所有配音完成, duration={new_duration}s (音频累计 {total:.3f}s)"
+    )
+    return new_duration
+
+
+async def _finalize_scene_duration_if_completed(ai_audio_id: int, audio_url: str) -> None:
+    """
+    配音生成成功后的分镜时长联动：
+    1. 用 ffprobe 探测本条音频时长，回写到 storyboard_dialogue_audio.duration。
+    2. 反查该音频所属 scene_id，调用 recalc_scene_duration_if_all_completed 重算分镜时长。
+
+    纯后端联动，任何步骤失败都只记日志，不影响音频本身的成功结果。
+    """
+    if not audio_url:
+        return
+
+    # Step 1: 探测时长并回写
+    try:
+        duration = await probe_audio_duration(audio_url)
+    except Exception as e:
+        logger.warning(f"[scene-duration] ai_audio={ai_audio_id} 探测时长异常: {e}")
+        return
+    if duration is None or duration <= 0:
+        logger.warning(f"[scene-duration] ai_audio={ai_audio_id} 未能获取有效时长, url={audio_url}")
+        return
+    try:
+        await asyncio.to_thread(
+            StoryboardDialogueAudioModel.update_duration_by_ai_audio_id, ai_audio_id, duration
+        )
+    except Exception as e:
+        logger.warning(f"[scene-duration] ai_audio={ai_audio_id} 回写 duration 失败: {e}")
+        return
+
+    # Step 2: 反查 scene_id
+    try:
+        dialogue_audio = await asyncio.to_thread(
+            StoryboardDialogueAudioModel.get_by_ai_audio_id, ai_audio_id
+        )
+    except Exception as e:
+        logger.warning(f"[scene-duration] ai_audio={ai_audio_id} 反查 dialogue_audio 失败: {e}")
+        return
+    if not dialogue_audio:
+        return
+    dialogue_id = getattr(dialogue_audio, 'dialogue_id', None)
+    if not dialogue_id:
+        return
+    try:
+        dialogue = await asyncio.to_thread(StoryboardDialogueModel.get_by_id, dialogue_id)
+    except Exception as e:
+        logger.warning(f"[scene-duration] dialogue={dialogue_id} 查询失败: {e}")
+        return
+    if not dialogue:
+        return
+    scene_id = getattr(dialogue, 'scene_id', None)
+    if not scene_id:
+        return
+
+    # Step 3: 判定是否全部完成，若是则重算分镜时长并联动故事板总时长
+    await recalc_scene_duration_if_all_completed(scene_id)
+
+
 
 
 async def _submit_new_task(ai_audio):
@@ -67,6 +175,11 @@ async def _submit_new_task(ai_audio):
             StoryboardDialogueAudioModel.update_audio_url_by_ai_audio_id(task_id, url)
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
             logger.info(f"[MOCK] audio tts short-circuit task={task_id} url={url}")
+            # Mock 场景同样联动分镜时长（保证 E2E 测试覆盖）
+            try:
+                await _finalize_scene_duration_if_completed(task_id, url)
+            except Exception as e:
+                logger.warning(f"[MOCK] task={task_id}: 分镜时长联动失败: {e}")
             return True
     # =====================================================================
 
@@ -147,7 +260,7 @@ async def _submit_new_task(ai_audio):
             return False
         
         audio_file_path = audio_path_or_error or result_path
-        
+
         logger.info(f"Task {task_id}: Audio saved to {audio_file_path}")
         upload_url = get_dynamic_config_value("tts", "upload_url")
         result_url = f"{upload_url}{audio_filename}"
@@ -155,7 +268,13 @@ async def _submit_new_task(ai_audio):
         AIAudioModel.update(task_id, status=AI_AUDIO_STATUS_COMPLETED, result_url=result_url, message="音频生成成功")
         StoryboardDialogueAudioModel.update_audio_url_by_ai_audio_id(task_id, result_url)
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
-        
+
+        # 联动分镜时长：探测本条音频时长，若该分镜所有配音已完成则重算分镜时长
+        try:
+            await _finalize_scene_duration_if_completed(task_id, result_url)
+        except Exception as e:
+            logger.warning(f"Task {task_id}: 分镜时长联动失败, 不影响音频结果: {e}")
+
         logger.info(f"Task {task_id}: Audio generation completed successfully")
         return True
         

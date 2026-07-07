@@ -2,6 +2,12 @@
 // 2026-06-24 重构：废弃 demo2 照搬的 thumbnail/previewImageUrl/sceneInfo/charDesc/voiceoverText，
 // 改为 videoType/videoPrompt/selectedFirstFrameId 等；配音拆为 dialogues。
 
+// 分镜难易程度规范化（与后端 SceneDifficulty.normalize 对齐：易/中/难，非法值回落"中"）
+export function normalizeDifficulty(value) {
+    const v = String(value ?? '').trim();
+    return v === '易' || v === '难' ? v : '中';
+}
+
 export function normalizePagedList(response) {
     // 资产接口统一为 {code, message, data:{total,page,page_size,data:[...]}}
     if (Array.isArray(response)) return response;
@@ -114,16 +120,29 @@ export function dialoguesFromApi(rawDialogues = []) {
 
 export function sceneFromApi(raw = {}) {
     const prompt = raw.prompt_json || {};
+    const source = prompt.source || {};
     return {
         id: raw.id,
         storyboardId: raw.storyboard_id,
         sortOrder: raw.sort_order || 0,
         title: raw.title || `分镜${raw.sort_order ?? ''}`,
-        duration: parseDurationSeconds(raw.duration || 5),
+        // 剧本解析时的分组信息（埋在 prompt_json.source 里），用于左侧栏显示"幕XX"
+        groupId: source.group_id || '',
+        groupName: source.group_name || '',
+        // duration 现为 DECIMAL(10,3) 浮点（音频求和同步后可达毫秒级精度）。
+        // 数字原样保留浮点；字符串/undefined 时降级走 parseDurationSeconds（兼容旧值与 MM:SS）。
+        duration: (typeof raw.duration === 'number' && Number.isFinite(raw.duration))
+            ? raw.duration
+            : parseDurationSeconds(raw.duration || 5),
+        // 显示始终 floor 为 MM:SS（与产品决策一致：时间线标签保持秒级显示）。
         durationLabel: formatDuration(raw.duration || 5),
         videoType: raw.video_type || 'video',
         videoPrompt: raw.video_prompt || '',
         videoConfigJson: raw.video_config_json || {},
+        // 分镜难易程度（易/中/难，后端 SceneDifficulty；非法值统一回落"中"）
+        difficulty: normalizeDifficulty(raw.difficulty),
+        // 所属幕/分镜组名称（后端独立列；旧数据为 null 时回落到 source.group_name）
+        actName: raw.act_name || source.group_name || '',
         selectedFirstFrameId: raw.selected_first_frame_id ?? null,
         selectedLastFrameId: raw.selected_last_frame_id ?? null,
         selectedVideoId: raw.selected_video_id ?? null,
@@ -185,10 +204,13 @@ export function sceneToPromptPayload(scene) {
 export function sceneToUpdatePayload(scene) {
     return {
         title: scene.title || '',
-        duration: parseDurationSeconds(scene.duration),
+        // duration 已为浮点，直接回传，不截断精度（后端 DECIMAL(10,3) 接收）。
+        duration: scene.duration,
         video_type: scene.videoType || 'video',
         video_prompt: scene.videoPrompt || '',
         video_config_json: scene.videoConfigJson || {},
+        difficulty: normalizeDifficulty(scene.difficulty),
+        act_name: scene.actName || '',
         prompt_json: sceneToPromptPayload(scene),
     };
 }

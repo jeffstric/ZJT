@@ -14,7 +14,7 @@ import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
 import { renderApp, renderPromptWithInlineRoles, getThumbnailUrl } from './render.js';
 import { pollSceneTaskStatus } from './polling.js';
-import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';
+import { autoGenerateMissingFirstFrames, resetAutoMissingImagesFlag } from './auto_missing_images.js';
 
 let generateProgressTimer = null;
 let isTimelineHovered = false;
@@ -148,7 +148,7 @@ function pushAgentMessage(role, content, meta = {}) {
     ];
 }
 
-export async function loadSceneAgentMessages(sceneId) {
+export async function loadSceneAgentMessages(sceneId, skipRerender = false) {
     if (!sceneId) {
         state.agentMessages = [];
         return;
@@ -165,7 +165,8 @@ export async function loadSceneAgentMessages(sceneId) {
             status: item.status || '',
             createdAt: item.timestamp || item.create_at || new Date().toISOString(),
         }));
-        rerender();
+        // 点击切换分镜时由调用方统一渲染一次，避免与候选加载竞态导致多次 rerender 闪烁
+        if (!skipRerender) rerender();
     } catch (error) {
         console.warn('Failed to load storyboard agent chat history', error);
     }
@@ -193,6 +194,38 @@ async function bindSubmittedAgentTasks(sceneId, projectIds, assetType = 'first_f
     pollSceneTaskStatus(sceneId);
 }
 
+async function handleReferenceFileChange(input) {
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+    for (const file of files) {
+        const tempId = `ref_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        state.referenceImages = [...(state.referenceImages || []), {
+            id: tempId, url: null, thumbnailUrl: null, name: file.name, uploading: true,
+        }];
+        rerender();
+        try {
+            const res = await api.uploadReferenceImage(file);
+            const item = (state.referenceImages || []).find(r => r.id === tempId);
+            if (res && res.success && res.url) {
+                if (item) {
+                    item.url = res.url;
+                    item.thumbnailUrl = res.thumbnail_url || res.url;
+                    item.uploading = false;
+                }
+            } else {
+                state.referenceImages = (state.referenceImages || []).filter(r => r.id !== tempId);
+                notify((res && res.error) || '参考图上传失败');
+            }
+        } catch (err) {
+            state.referenceImages = (state.referenceImages || []).filter(r => r.id !== tempId);
+            notify('参考图上传失败: ' + (err.message || err));
+        }
+        rerender();
+    }
+    // 重置以允许重复选择同一文件
+    input.value = '';
+}
+
 async function sendStoryboardAgentMessage(current) {
     const message = (state.inputMessage || '').trim();
     if (!message) {
@@ -217,6 +250,10 @@ async function sendStoryboardAgentMessage(current) {
     rerender();
 
     try {
+        // 视频生成模式下，附上用户上传的补充参考图 URL（首帧图由后端 scene_context 自动提供）
+        const referenceImageUrls = state.chatMode === 'video'
+            ? (state.referenceImages || []).filter(r => r.url && !r.uploading).map(r => r.url)
+            : [];
         const response = await api.startSceneAgentChat(current.id, {
             message,
             model,
@@ -226,6 +263,7 @@ async function sendStoryboardAgentMessage(current) {
             image_task_id: state.selectedImageTaskId,
             video_task_id: state.selectedVideoTaskId,
             language: localStorage.getItem('zjt_locale') || 'zh-CN',
+            ...(referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
         });
         state.activeAgentTaskId = response.task_id;
         pushAgentMessage('status', state.chatMode === 'video' ? '分镜视频智能体已开始处理' : '分镜图片智能体已开始处理');
@@ -393,8 +431,10 @@ async function handleAction(action, target) {
 
         try {
             const response = await api.generateFromScript(state.storyboardId, {
-                max_group_duration: 15,
-                split_multi_dialogue: false,
+                max_group_duration: state.maxGroupDuration || 15,
+                force_medium_shot: state.forceMediumShot !== false,
+                no_bg_music: state.noBgMusic !== false,
+                split_multi_dialogue: state.splitMultiDialogue === true,
                 model: splitModel.model,
                 model_id: splitModel.model_id,
                 vendor_id: splitModel.vendor_id,
@@ -409,6 +449,9 @@ async function handleAction(action, target) {
                 loadStoryboardData(response);
                 handleAutoDialogueAudioPolling(response);
                 state.isGeneratingFromScript = false;
+                // 拆分已重建分镜集合（含删除后重新拆分），清除旧的自动生成去重标志，
+                // 让本轮新生成的缺失首帧能够重新触发一次自动生成。
+                resetAutoMissingImagesFlag(state.storyboardId);
                 autoGenerateMissingFirstFrames();
                 notify(`已生成 ${response.generated_count || state.scenes.length} 个分镜`);
                 rerender();
@@ -485,6 +528,16 @@ async function handleAction(action, target) {
     if (action === 'toggle-subtitle') {
         state.subtitleEnabled = target.checked;
         await persistUiConfig();
+        return;
+    }
+
+    if (action === 'toggle-force-medium-shot' || action === 'toggle-no-bg-music' || action === 'toggle-split-multi-dialogue') {
+        if (state.isGeneratingFromScript) return;
+        if (action === 'toggle-force-medium-shot') state.forceMediumShot = target.checked;
+        else if (action === 'toggle-no-bg-music') state.noBgMusic = target.checked;
+        else state.splitMultiDialogue = target.checked;
+        await persistUiConfig();
+        rerender();
         return;
     }
 
@@ -603,6 +656,22 @@ async function handleAction(action, target) {
     if (action === 'mention') {
         state.showMentionPopup = !state.showMentionPopup;
         rerender();
+        return;
+    }
+
+    if (action === 'add-reference-image') {
+        if (state.chatMode !== 'video') return;
+        const fileInput = document.getElementById('reference-file-input');
+        if (fileInput) fileInput.click();
+        return;
+    }
+
+    if (action === 'remove-reference-image') {
+        const refId = target.getAttribute('data-reference-id');
+        if (refId) {
+            state.referenceImages = (state.referenceImages || []).filter(r => r.id !== refId);
+            rerender();
+        }
         return;
     }
 
@@ -743,11 +812,13 @@ export function bindEvents() {
             state.currentSceneId = sceneId;
             state.currentTime = 0;
             state.agentMessages = [];
+            state.referenceImages = [];
             rerender();
             // 异步加载该 scene 的候选资产
             (async () => {
                 try {
-                    const historyPromise = loadSceneAgentMessages(sceneId).catch(() => {});
+                    // skipRerender=true：由本 IIFE 末尾统一渲染，避免渲染竞态
+                    const historyPromise = loadSceneAgentMessages(sceneId, true).catch(() => {});
                     await loadSceneCandidates(sceneId);
                     await historyPromise;
                     rerender();
@@ -823,6 +894,7 @@ export function bindEvents() {
         state.currentSceneId = state.scenes[newIndex].id;
         state.currentTime = 0;
         state.agentMessages = [];
+        state.referenceImages = [];
         rerender();
 
         requestAnimationFrame(() => {
@@ -855,6 +927,11 @@ export function bindEvents() {
             state.chatMode = target.value;
             rerender();
             await persistUiConfig();
+            return;
+        }
+
+        if (target.id === 'reference-file-input') {
+            await handleReferenceFileChange(target);
             return;
         }
 
@@ -903,8 +980,19 @@ export function bindEvents() {
                 } catch {}
             } else if (type === 'image') {
                 state.selectedImageTaskId = parseInt(val, 10) || state.selectedImageTaskId;
+                // 跨故事板记忆兜底（与 LLM 模型写法一致），新故事板/首次进入弹框时回显
+                try {
+                    localStorage.setItem('storyboard_lastSelectedImageTaskId', String(state.selectedImageTaskId));
+                } catch {}
             } else if (type === 'video') {
                 state.selectedVideoTaskId = parseInt(val, 10) || state.selectedVideoTaskId;
+                // 跨故事板记忆兜底，新故事板/首次进入弹框时回显
+                try {
+                    localStorage.setItem('storyboard_lastSelectedVideoTaskId', String(state.selectedVideoTaskId));
+                } catch {}
+            } else if (type === 'maxGroupDuration') {
+                const d = parseInt(val, 10);
+                if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
             }
 
             // 如果当前助手模式匹配，也可视为立即生效

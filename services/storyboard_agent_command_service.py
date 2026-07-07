@@ -136,6 +136,8 @@ class StoryboardAgentCommandService:
                         "video_prompt",
                         "video_type",
                         "video_config_json",
+                        "difficulty",
+                        "act_name",
                     ],
                 },
                 {
@@ -182,6 +184,21 @@ class StoryboardAgentCommandService:
                     "name": "bind-projects",
                     "permission": "storyboard:update",
                     "params": ["scene_id", "asset_type", "project_ids"],
+                },
+                {
+                    "name": "update-scene",
+                    "permission": "storyboard:update",
+                    "params": [
+                        "scene_id",
+                        "duration",
+                        "title",
+                        "prompt_json",
+                        "video_prompt",
+                        "video_type",
+                        "video_config_json",
+                        "difficulty",
+                        "act_name",
+                    ],
                 },
             ],
         }
@@ -282,6 +299,8 @@ class StoryboardAgentCommandService:
                 video_prompt=data.get("video_prompt"),
                 video_type=data.get("video_type") or "video",
                 video_config_json=data.get("video_config_json"),
+                difficulty=data.get("difficulty"),
+                act_name=data.get("act_name"),
             )
 
         if command == "create-storyboard-from-script":
@@ -389,5 +408,19 @@ class StoryboardAgentCommandService:
                 project_ids=_project_ids(data.get("project_ids")),
             )
             return {"success": True, "scene_id": _to_required_int(data.get("scene_id"), "scene_id"), **result}
+
+        if command == "update-scene":
+            return self.service.update_scene(
+                scene_id=_to_required_int(data.get("scene_id"), "scene_id"),
+                user_id=_to_int(data.get("user_id"), "user_id"),
+                duration=_to_int(data.get("duration"), "duration"),
+                title=data.get("title"),
+                prompt_json=data.get("prompt_json"),
+                video_prompt=data.get("video_prompt"),
+                video_type=data.get("video_type"),
+                video_config_json=data.get("video_config_json"),
+                difficulty=data.get("difficulty"),
+                act_name=data.get("act_name"),
+            )
 
         raise StoryboardCliError("unknown_command", f"unknown command: {command}")

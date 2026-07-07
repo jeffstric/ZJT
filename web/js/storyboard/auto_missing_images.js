@@ -12,6 +12,19 @@ function scenesMissingFirstFrame() {
     return state.scenes.filter(scene => !scene.firstFrameUrl && !isFirstFrameRunning(scene));
 }
 
+/**
+ * 清除「自动生成缺失首帧」的一次性去重标志位。
+ *
+ * 场景：用户删除所有分镜后重新拆分，storyboardId 不变，但场景集合已重建，
+ * 应当允许新一轮自动生成重新触发一次。因此拆分成功后需主动调用本函数。
+ */
+export function resetAutoMissingImagesFlag(storyboardId = state.storyboardId) {
+    if (!storyboardId) return;
+    try {
+        sessionStorage.removeItem(`storyboard_auto_missing_images_${storyboardId}`);
+    } catch {}
+}
+
 export async function autoGenerateMissingFirstFrames() {
     if (!state.storyboardId || !state.authToken || !state.scenes.length) return;
     const missing = scenesMissingFirstFrame();

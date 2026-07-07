@@ -5537,23 +5537,16 @@ async def get_grid_split_image(
             splitter = ImageGridSplitter()
             
             try:
-                if grid_size == GRID_SIZE_2X2:
-                    output_paths = await asyncio.to_thread(
-                        splitter.split_2x2_grid,
-                        grid_image_path=grid_image_path,
-                        output_dir=output_dir,
-                        output_names=[str(i) for i in range(1, GRID_SIZE_2X2 + 1)],
-                        output_format="png"
-                    )
-                else:  # grid_size == GRID_SIZE_3X3
-                    output_paths = await asyncio.to_thread(
-                        splitter.split_3x3_grid,
-                        grid_image_path=grid_image_path,
-                        output_dir=output_dir,
-                        output_names=[str(i) for i in range(1, GRID_SIZE_3X3 + 1)],
-                        output_format="png"
-                    )
-                logger.info(f"Grid split completed: {len(output_paths)} images")
+                # 通用 N×N 切分（grid_size ∈ VALID_SIZES 已在前面校验）
+                output_paths = await asyncio.to_thread(
+                    splitter.split_grid,
+                    grid_image_path=grid_image_path,
+                    output_dir=output_dir,
+                    grid_size=grid_size,
+                    output_names=[str(i) for i in range(1, grid_size + 1)],
+                    output_format="png"
+                )
+                logger.info(f"Grid split completed: {len(output_paths)} images (grid_size={grid_size})")
             except Exception as e:
                 logger.error(f"Failed to split grid image: {str(e)}")
                 logger.error(traceback.format_exc())

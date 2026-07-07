@@ -1,4 +1,6 @@
 import json
+import logging
+import math
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -7,6 +9,7 @@ from config.constant import (
     StoryboardAgentCommandConstants,
     StoryboardAgentReadConstants,
     StoryboardAutoGenerateConstants,
+    SceneDifficulty,
 )
 from config.unified_config import SceneVideoType
 from model.ai_tools import AIToolsModel
@@ -31,6 +34,31 @@ VALID_IMAGE_MODES = {"auto", "text_to_image", "image_edit"}
 VALID_VIDEO_MODES = {"text_to_video", "image_to_video"}
 VALID_ASSET_TYPES = {"first_frame", "last_frame", "video"}
 IMAGE_ASSET_TYPES = {"first_frame", "last_frame"}
+
+logger = logging.getLogger(__name__)
+
+
+def _batch_status_name(code: Any) -> str:
+    """批量 item/job 状态码 → 可读名称，仅用于诊断日志。"""
+    mapping = {
+        0: "pending",
+        1: "running",
+        2: "completed",
+        -1: "failed",
+        3: "skipped",
+    }
+    try:
+        return mapping.get(int(code), str(code))
+    except (TypeError, ValueError):
+        return str(code)
+
+
+def _url_preview(url: Any) -> str:
+    """日志里的 URL 只保留是否非空 + 尾段，避免刷屏。"""
+    if not url:
+        return "None"
+    text = str(url)
+    return text if len(text) <= 48 else f"{text[:32]}...({len(text)}chars)"
 
 
 class StoryboardCliError(Exception):
@@ -153,7 +181,7 @@ def _reference_label(source_type: str, name: Optional[str]) -> str:
         "character": "角色",
         "location": "场景",
         "prop": "道具",
-        "asset": "已有分镜图",
+        "asset": "前一分镜",
     }
     prefix = label_map.get(source_type, "参考图")
     return f"{prefix}：{name}" if name else prefix
@@ -562,6 +590,11 @@ class StoryboardAgentCliService:
         reference_items = context.get("reference_image_items") or []
         reference_urls = [item["url"] for item in reference_items if item.get("url")]
 
+        # 外部 location grid readiness check（Phase 6）：
+        # 若当前 scene 引用的子场景 location.reference_image 缺失，且其九宫格任务仍在运行，
+        # 抛 waiting_location_grid_reference；批量调度器据此 continue 保持 PENDING（不改状态）。
+        self._check_location_grid_readiness(context)
+
         if mode == "auto":
             mode = "image_edit" if reference_urls else "text_to_image"
 
@@ -577,7 +610,10 @@ class StoryboardAgentCliService:
             )
         else:
             image_urls = self._resolve_image_edit_urls(context, source_image, reference_urls)
-            prompt_text = self._append_reference_prompt_suffix(prompt_text, reference_items)
+            prompt_text = self._append_reference_prompt_suffix(
+                prompt_text,
+                self._with_source_image_legend(reference_items, context, source_image),
+            )
             result = self.submitter.image_edit(
                 user_id=str(user_id),
                 world_id=world_id,
@@ -623,7 +659,9 @@ class StoryboardAgentCliService:
         world_id = str(storyboard.get("world_id") or "")
         prompt_text = prompt or context["video_prompt"] or context["image_prompt"]
         ratio_value = ratio or storyboard.get("workflow_ratio") or "16:9"
-        duration_value = int(duration_seconds or scene.get("duration") or 5)
+        # scene.duration 现为 DECIMAL(10,3) 浮点（音频求和同步）。视频后端要求整数秒，
+        # 用 ceil 向上取整，确保视频时长不短于音频（避免丢帧/音画不同步）；下限 1 秒。
+        duration_value = max(1, math.ceil(float(duration_seconds or scene.get("duration") or 5)))
 
         if mode == "text_to_video":
             result = self.submitter.text_to_video(
@@ -737,6 +775,8 @@ class StoryboardAgentCliService:
         video_prompt: Optional[str] = None,
         video_type: str = SceneVideoType.VIDEO,
         video_config_json: Optional[Any] = None,
+        difficulty: str = SceneDifficulty.MEDIUM,
+        act_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         user_id = self._require_user_id(user_id)
         self._ensure_storyboard_for_user(storyboard_id, user_id)
@@ -764,6 +804,8 @@ class StoryboardAgentCliService:
             video_prompt=video_prompt,
             video_type=video_type or SceneVideoType.VIDEO,
             video_config_json=video_config_payload,
+            difficulty=difficulty,
+            act_name=act_name,
             last_modified_user_id=int(user_id),
         )
         scene = StoryboardSceneModel.get_by_id(int(scene_id))
@@ -777,6 +819,73 @@ class StoryboardAgentCliService:
                 "sort_order": sort_order,
             },
             "scene": _to_dict(scene) if scene else {"id": int(scene_id)},
+        }
+
+    def update_scene(
+        self,
+        scene_id: int,
+        user_id: int,
+        *,
+        duration: Optional[int] = None,
+        title: Optional[str] = None,
+        prompt_json: Optional[Any] = None,
+        video_prompt: Optional[str] = None,
+        video_type: Optional[str] = None,
+        video_config_json: Optional[Any] = None,
+        difficulty: Optional[str] = None,
+        act_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Update editable fields of an existing scene.
+
+        All keyword args default to None and are skipped when None, so callers can
+        patch a single field (e.g. duration) without touching the others. Only
+        duration / title / prompt_json / video_prompt / video_type /
+        video_config_json / difficulty / act_name are mutable here; selected
+        asset pointers stay under bind-projects / asset select endpoints. When
+        duration changes, the storyboard's total_duration is recomputed to stay
+        consistent.
+        """
+        user_id = self._require_user_id(user_id)
+        scene, storyboard = self._load_scene_pair(scene_id)
+        storyboard_id = int(_get_field(storyboard, "id"))
+        self._ensure_storyboard_for_user(storyboard_id, user_id)
+
+        update_fields: Dict[str, Any] = {}
+        if duration is not None:
+            update_fields["duration"] = max(1, int(duration))
+        if title is not None:
+            update_fields["title"] = str(title or "")
+        if prompt_json is not None:
+            update_fields["prompt_json"] = self._json_dict_param(prompt_json, "prompt_json")
+        if video_prompt is not None:
+            update_fields["video_prompt"] = str(video_prompt or "")
+        if video_type is not None:
+            update_fields["video_type"] = video_type or SceneVideoType.VIDEO
+        if video_config_json is not None:
+            update_fields["video_config_json"] = self._json_dict_param(video_config_json, "video_config_json")
+        if difficulty is not None:
+            update_fields["difficulty"] = SceneDifficulty.normalize(difficulty)
+        if act_name is not None:
+            update_fields["act_name"] = str(act_name).strip() or None
+
+        if not update_fields:
+            raise StoryboardCliError("missing_parameter", "no updatable fields provided")
+
+        update_fields["last_modified_user_id"] = int(user_id)
+        affected = StoryboardSceneModel.update(int(scene_id), **update_fields)
+
+        total_duration = _get_field(storyboard, "total_duration")
+        if "duration" in update_fields:
+            total_duration = StoryboardModel.recalc_total_duration(storyboard_id)
+
+        updated_scene = StoryboardSceneModel.get_by_id(int(scene_id))
+        return {
+            "success": True,
+            "scene_id": int(scene_id),
+            "storyboard_id": storyboard_id,
+            "affected": affected,
+            "scene": _to_dict(updated_scene) if updated_scene else {"id": int(scene_id)},
+            "total_duration": total_duration,
         }
 
     def storyboard_task_status(
@@ -901,8 +1010,17 @@ class StoryboardAgentCliService:
             )
             scene_to_item_id[item["scene_id"]] = item_id
             created_items.append({**item, "id": item_id, "dependency_item_id": dependency_item_id})
+            logger.info(
+                "[batch-create] job=%s item=%s scene=%s status=%s dep_scene=%s dep_item=%s resolved=%s",
+                job_id, item_id, item["scene_id"], item.get("status"),
+                item.get("dependency_scene_id"), dependency_item_id,
+                bool(dependency_item_id) if item.get("dependency_scene_id") else "N/A",
+            )
 
-        process_result = self.process_image_batch_jobs(job_id=job_id, limit_jobs=1)
+        # 不在此处同步推进 batch：交由调度器 process_storyboard_image_batch_tasks
+        # 统一处理，避免「同步流 + 调度器流」并发重复提交同一 pending item
+        # （曾导致同一分镜生成两条提示词完全相同的 ai_tools 记录）。
+        # 前端通过 pollImageBatchStatus(batch_id) 持续轮询进度即可。
         status = self.storyboard_image_batch_status(job_id=job_id)
 
         return {
@@ -913,7 +1031,7 @@ class StoryboardAgentCliService:
             "sequence_mode": sequence_mode,
             "batch_id": job_id,
             "limit": batch_limit,
-            "submitted_count": process_result.get("submitted_count", 0),
+            "submitted_count": 0,
             "skipped_count": status.get("skipped_count", 0),
             "failed_count": status.get("failed_count", 0),
             "status": status.get("status"),
@@ -978,6 +1096,14 @@ class StoryboardAgentCliService:
         by_id = {int(item["id"]): item for item in items}
         submitted_count = 0
 
+        # 诊断日志：本轮各 item 状态快照
+        def _snapshot_part(it):
+            dep = it.get("dependency_item_id")
+            dep_str = f",dep=#{dep}" if dep else ""
+            return f"#{it['id']}(s{it['scene_id']},{_batch_status_name(it.get('status'))}{dep_str})"
+        snapshot = " ".join(_snapshot_part(it) for it in items)
+        logger.info("[batch-tick] job=%s round items: %s", job_id, snapshot or "(empty)")
+
         for item in items:
             if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING:
                 continue
@@ -1011,8 +1137,16 @@ class StoryboardAgentCliService:
                     StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
                     StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
                 ):
+                    logger.info(
+                        "[batch-dep] item=#%s scene=%s dep=#%s dep_status=%s → skip (等待依赖完成)",
+                        item["id"], item["scene_id"], dependency.get("id"), _batch_status_name(dep_status),
+                    )
                     continue
                 if dep_status == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED and int(job.get("stop_on_error") or 0):
+                    logger.info(
+                        "[batch-dep] item=#%s scene=%s dep=#%s dep_status=failed → mark dependency_failed",
+                        item["id"], item["scene_id"], dependency.get("id"),
+                    )
                     StoryboardImageBatchItemModel.update(
                         int(item["id"]),
                         status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
@@ -1023,6 +1157,23 @@ class StoryboardAgentCliService:
                     continue
                 reference_url = dependency.get("result_url")
                 reference_item_id = dependency.get("id") if reference_url else None
+                # 关键诊断：依赖已完成，但 result_url 是否真的有值
+                if reference_url:
+                    logger.info(
+                        "[batch-dep] item=#%s scene=%s dep=#%s dep_status=%s dep_result_url=%s → reference_url=%s (将作为前一分镜)",
+                        item["id"], item["scene_id"], dependency.get("id"), _batch_status_name(dep_status),
+                        _url_preview(dependency.get("result_url")), _url_preview(reference_url),
+                    )
+                else:
+                    logger.warning(
+                        "[batch-dep] item=#%s scene=%s dep=#%s dep_status=%s dep_result_url=None → reference_url=None (依赖完成但无结果URL！)",
+                        item["id"], item["scene_id"], dependency.get("id"), _batch_status_name(dep_status),
+                    )
+            elif item.get("dependency_item_id"):
+                logger.info(
+                    "[batch-dep] item=#%s scene=%s dependency_item_id=%s 未在 by_id 中找到 → reference_url=None",
+                    item["id"], item["scene_id"], item.get("dependency_item_id"),
+                )
 
             try:
                 submit_mode = "image_edit" if reference_url else (job.get("mode") or "auto")
@@ -1040,6 +1191,22 @@ class StoryboardAgentCliService:
                     count=int(job.get("count") or 1),
                 )
             except StoryboardCliError as exc:
+                # 外部 location grid readiness check：保持 PENDING，不改状态，仅写诊断 extra_json，
+                # 等待九宫格回写后下一 tick 自动重试。详见 _check_location_grid_readiness。
+                from config.constant import LocationReferenceStatus
+                if exc.error_code == LocationReferenceStatus.WAITING_GRID:
+                    StoryboardImageBatchItemModel.update(
+                        int(item["id"]),
+                        extra_json={
+                            "waiting": "location_grid_reference",
+                            "location_db_id": exc.payload.get("location_db_id"),
+                        },
+                    )
+                    logger.info(
+                        "[batch-loc] item=#%s scene=%s → 保持 PENDING (等待 location 九宫格完成)",
+                        item["id"], item["scene_id"],
+                    )
+                    continue
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
                     status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
@@ -1071,6 +1238,16 @@ class StoryboardAgentCliService:
             item["reference_item_id"] = reference_item_id
             item["reference_url"] = reference_url
             submitted_count += 1
+            if reference_url:
+                logger.info(
+                    "[batch-submit] item=#%s scene=%s mode=%s source_image=%s → asset=%s (已用前一分镜作参考)",
+                    item["id"], item["scene_id"], submit_mode, _url_preview(source_image), selected_asset_id,
+                )
+            else:
+                logger.warning(
+                    "[batch-submit] item=#%s scene=%s mode=%s source_image=None → asset=%s (⚠️未使用前一分镜)",
+                    item["id"], item["scene_id"], submit_mode, selected_asset_id,
+                )
 
         self._update_image_batch_job_counts(job_id)
         return {"submitted_count": submitted_count}
@@ -1167,6 +1344,19 @@ class StoryboardAgentCliService:
             if batch_status != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED:
                 previous_item = item
                 previous_by_group[group_key] = item
+
+        # 诊断日志：输出规划出的依赖图，确认同组串联链是否正确建立
+        plan_lines = []
+        for idx, it in enumerate(items, start=1):
+            plan_lines.append(
+                f"  item#{idx} scene={it['scene_id']} group={it.get('group_key')} "
+                f"status={it.get('status')} dep_scene={it.get('dependency_scene_id')} "
+                f"result_url={'yes' if it.get('result_url') else 'None'}"
+            )
+        logger.info(
+            "[batch-plan] storyboard=%s mode=%s items=%d:\n%s",
+            storyboard_id, sequence_mode, len(items), "\n".join(plan_lines) or "  (empty)",
+        )
         return items
 
     def _scene_group_key(self, scene: Any, previous_group_key: Optional[str], storyboard_id: int) -> str:
@@ -1284,6 +1474,16 @@ class StoryboardAgentCliService:
         if not parsed_data or not parsed_data.get("shot_groups"):
             raise StoryboardCliError("parse_empty", "script parser returned no shot groups")
 
+        # location 资产化：新场景 / 子场景落库并回填真实 DB id，
+        # 必须在 _build_storyboard_scenes_from_parsed_script 之前执行。
+        # CLI 路径整体已在 to_thread 中运行，此处直接同步调用。
+        from services.storyboard_location_bootstrap_service import StoryboardLocationBootstrapService
+        location_bootstrap = StoryboardLocationBootstrapService().bootstrap(
+            parsed_data,
+            _get_field(storyboard, "world_id"),
+            int(user_id),
+        )
+
         scenes_payload = self._build_storyboard_scenes_from_parsed_script(
             parsed_data,
             style=_get_field(storyboard, "style") or "",
@@ -1295,6 +1495,28 @@ class StoryboardAgentCliService:
         if script_id != _get_field(storyboard, "script_id"):
             StoryboardModel.update(int(storyboard_id), script_id=int(script_id))
 
+        # 子场景九宫格 i2i：按父场景分批提交（非阻塞，异常不影响主流程）
+        # 门禁：只要有 auth_token 就尝试（内部精确跳过已有图 / 运行中任务的子场景，支持补偿重跑）
+        subscene_grid = {"enabled": False, "submitted_batches": 0, "warnings": []}
+        if auth_token:
+            try:
+                subscene_grid_result = StoryboardLocationBootstrapService().submit_subscene_grids(
+                    parsed_data,
+                    location_bootstrap,
+                    _get_field(storyboard, "world_id"),
+                    int(user_id),
+                    auth_token,
+                )
+                subscene_grid = {
+                    "enabled": True,
+                    "submitted_batches": subscene_grid_result.get("submitted_batches", 0),
+                    "submitted_subscene_count": subscene_grid_result.get("submitted_subscene_count", 0),
+                    "skipped_no_parent_image": subscene_grid_result.get("skipped_no_parent_image", 0),
+                    "warnings": subscene_grid_result.get("warnings", []),
+                }
+            except Exception as exc:
+                subscene_grid = {"enabled": True, "submitted_batches": 0, "warnings": [str(exc)]}
+
         return {
             "success": True,
             "storyboard_id": int(storyboard_id),
@@ -1302,6 +1524,12 @@ class StoryboardAgentCliService:
             "generated_count": int(generated_count),
             "status": "generated",
             "scenes": self.list_scenes(int(storyboard_id), user_id=user_id).get("scenes", []),
+            "location_bootstrap": {
+                "created_location_count": location_bootstrap.get("created_location_count", 0),
+                "reused_location_count": location_bootstrap.get("reused_location_count", 0),
+                "warnings": location_bootstrap.get("warnings", []),
+            },
+            "subscene_grid": subscene_grid,
         }
 
     def _require_user_id(self, user_id: Any) -> int:
@@ -1706,6 +1934,48 @@ class StoryboardAgentCliService:
                 return _to_dict(location)
         return location_data if isinstance(location_data, dict) else None
 
+    def _check_location_grid_readiness(self, context: Dict[str, Any]) -> None:
+        """
+        外部 location grid readiness check（Phase 6）。
+
+        若当前 scene 引用的 location 缺少 reference_image，且其九宫格任务仍在运行，
+        抛 StoryboardCliError(code=LocationReferenceStatus.WAITING_GRID)。
+        批量调度器据此 continue 保持 PENDING（不改 status），等待 grid 完成回写后下一 tick 重试。
+
+        判定逻辑：
+          - location 有 reference_image → READY，直接返回。
+          - location 无 reference_image 且有运行中九宫格任务 → WAITING_GRID。
+          - location 无 reference_image 且无运行中任务 → MISSING/FALLBACK，
+            不抛错，交由后续 mode=auto 走 t2i 兜底或父图降级（保持原静默降级行为）。
+        """
+        from config.constant import LocationReferenceStatus
+        from model.grid_image_tasks import GridImageTasksModel
+
+        location = context.get("location")
+        if not isinstance(location, dict):
+            return
+        # 已有参考图，无需等待
+        if location.get("reference_image"):
+            return
+        # 解析 location DB id
+        loc_db_id = location.get("id") or location.get("db_id") or location.get("location_db_id")
+        try:
+            loc_db_id_int = int(loc_db_id) if loc_db_id else None
+        except (TypeError, ValueError):
+            loc_db_id_int = None
+        if not loc_db_id_int:
+            return  # 无 DB id，无法查 grid 任务，放行走兜底
+        if GridImageTasksModel.has_running_grid_for_entity(loc_db_id_int):
+            logger.info(
+                "[location-readiness] location db_id=%s reference_image 缺失，"
+                "九宫格任务运行中 → waiting_location_grid_reference", loc_db_id_int,
+            )
+            raise StoryboardCliError(
+                LocationReferenceStatus.WAITING_GRID,
+                f"location db_id={loc_db_id_int} 参考图生成中，等待九宫格完成",
+                payload={"location_db_id": loc_db_id_int},
+            )
+
     def _resolve_props(
         self,
         prompt_json: Dict[str, Any],
@@ -1821,6 +2091,15 @@ class StoryboardAgentCliService:
         location: Optional[Dict[str, Any]],
         props: Sequence[Dict[str, Any]],
     ) -> str:
+        # 提示词只保留「画面本身需要呈现」的文本信息：
+        #   画风(style) + 构图(composition_preference) + 画面描述(scene_desc)
+        #   + 镜头景别(perspective) + 光照(lighting)
+        # 不再拼接 location/character/prop 的名字与设定描述：
+        # 这些实体的视觉特征已通过「参考图 + 参考图说明（图N是角色/道具/场景：...）」
+        # 由生图模型识别。把设定档案（尤其道具的「规格/功能/背景/剧情作用/象征意义」、
+        # 场景的「类型/规模/剧情作用」、角色外貌）塞进文本会浪费 token 且干扰画面，
+        # 也与「角色外貌交给角色库/参考图」的解析规则保持一致。
+        del characters, location, props  # 保留签名以兼容调用方，仅不再用于拼接
         parts = [
             _get_field(storyboard, "style"),
             _get_field(storyboard, "composition_preference"),
@@ -1828,15 +2107,6 @@ class StoryboardAgentCliService:
             prompt_json.get("perspective"),
             prompt_json.get("lighting"),
         ]
-        if location:
-            parts.append(location.get("name"))
-            parts.append(location.get("description"))
-        for character in characters:
-            parts.append(character.get("name"))
-            parts.append(character.get("appearance"))
-        for prop in props:
-            parts.append(prop.get("name"))
-            parts.append(prop.get("content") or prop.get("description"))
         title = _get_field(scene, "title")
         if title:
             parts.insert(0, title)
@@ -1925,6 +2195,41 @@ class StoryboardAgentCliService:
             raise StoryboardCliError("source_image_missing", "image_edit requires at least one reference image")
         return [str(url) for url in resolved]
 
+    def _with_source_image_legend(
+        self,
+        reference_items: Sequence[Dict[str, Any]],
+        context: Dict[str, Any],
+        source_image: Optional[str],
+    ) -> List[Dict[str, Any]]:
+        """Append the previous-frame (source_image) as an asset legend item.
+
+        Keeps the reference legend aligned with the image-edit URL queue: when
+        the previous storyboard frame is appended after role/prop/location
+        references, the legend gets a matching "图N是前一分镜。" entry so the
+        image model knows what each URL represents.
+        """
+        if not source_image:
+            return list(reference_items)
+        try:
+            resolved_source = self._resolve_source_image(context, source_image)
+        except StoryboardCliError:
+            return list(reference_items)
+        public_source = _public_upload_url(resolved_source)
+        if not public_source:
+            return list(reference_items)
+        existing_urls = {item.get("url") for item in reference_items}
+        if public_source in existing_urls:
+            return list(reference_items)
+        legend_items = list(reference_items)
+        legend_items.append({
+            "type": "前一分镜",
+            "source_type": "asset",
+            "name": "",
+            "label": "前一分镜",
+            "url": public_source,
+        })
+        return legend_items
+
     def _append_reference_prompt_suffix(
         self,
         prompt: str,
@@ -1939,12 +2244,14 @@ class StoryboardAgentCliService:
             "prop": "道具",
             "location": "场景",
             "style": "全局画风参考图",
-            "asset": "已有分镜图",
+            "asset": "前一分镜",
         }
         for index, item in enumerate(reference_items, start=1):
             item_type = item.get("type") or source_type_map.get(item.get("source_type") or "")
             name = item.get("name") or ""
-            if item_type and name:
+            if item_type:
+                # item_type alone is enough (e.g. asset legend with empty name),
+                # which build_reference_legend renders as "图N是{type}。".
                 normalized.append({"type": item_type, "name": name, "url": item.get("url") or ""})
             else:
                 fallback_lines.append(f"图{index}是{item.get('label') or '参考图'}。")

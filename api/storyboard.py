@@ -7,6 +7,7 @@ Storyboard API - 故事板后端接口
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +22,7 @@ from config.constant import (
     TASK_STATUS_QUEUED, AI_TOOL_STATUS_PENDING, AI_AUDIO_STATUS_PENDING,
     StoryboardAutoGenerateConstants,
     StoryboardAudioGenerateConstants,
+    SceneDifficulty,
 )
 from config.unified_config import SceneVideoType, UnifiedConfigRegistry, TaskTypeId, TaskCategory
 from model.storyboard import (
@@ -44,6 +46,7 @@ from utils.resource_access import (
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
 from services.storyboard_reference_prompt_service import build_reference_legend
+from task.audio_task import recalc_scene_duration_if_all_completed
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,7 @@ router = APIRouter(prefix="/api/storyboard", tags=["storyboard"])
 # update_scene 允许前端直接修改的字段（选中指针由 asset/select 接口管理，不在此处）
 ALLOWED_SCENE_UPDATE_FIELDS = {
     'title', 'duration', 'prompt_json', 'video_prompt', 'video_type', 'video_config_json',
+    'difficulty', 'act_name',
 }
 ALLOWED_DIALOGUE_UPDATE_FIELDS = {
     'character_id', 'text', 'speed', 'volume',
@@ -182,6 +186,19 @@ def _dialogue_character_id(dialogue: dict, character_db_map: Dict[str, Optional[
     return _safe_int(db_character_id, None)
 
 
+# reorganize_shot_groups 按时长拆组时，会把 group_name 改成 "xxx - 片段N"。
+# 提取 act_name（幕名）时需剥掉这个后缀，避免 act_name 被污染。
+_ACT_NAME_FRAGMENT_SUFFIX_RE = re.compile(r"\s*-\s*片段\d+$")
+
+
+def _extract_act_name(raw_group_name: str) -> Optional[str]:
+    """从 group_name 提取幕名，去掉时长拆组产生的 ' - 片段N' 后缀。"""
+    if not raw_group_name:
+        return None
+    cleaned = _ACT_NAME_FRAGMENT_SUFFIX_RE.sub('', str(raw_group_name)).strip()
+    return cleaned or None
+
+
 def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '') -> List[dict]:
     """
     Convert llm.script_parser output into StoryboardModel.create_scenes payload.
@@ -198,6 +215,8 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
     for group in parsed_data.get('shot_groups') or []:
         group_name = group.get('group_name') or ''
         group_type = group.get('group_type') or ''
+        # 幕名：从 group_name 提取（去掉时长拆组产生的 ' - 片段N' 后缀）
+        act_name = _extract_act_name(group_name)
         for shot in group.get('shots') or []:
             scene_index = len(scenes) + 1
             location = location_map.get(str(shot.get('location_id'))) or {}
@@ -251,6 +270,8 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
             scenes.append({
                 'title': f"分镜{scene_index}",
                 'duration': max(1, _safe_int(shot.get('duration'), 5)),
+                'difficulty': SceneDifficulty.normalize(shot.get('difficulty')),
+                'act_name': act_name,
                 'prompt': {
                     'perspective': perspective,
                     'style': style or parsed_data.get('style') or '',
@@ -271,6 +292,7 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                         'location_name': location_name,
                         'location_db_id': location_db_id,
                         'narrative_purpose': shot.get('narrative_purpose'),
+                        'difficulty_reason': shot.get('difficulty_reason'),
                     },
                 },
                 'video_prompt': video_prompt,
@@ -1433,6 +1455,16 @@ async def generate_storyboard_from_script(
     if not parsed_data or not parsed_data.get('shot_groups'):
         return JSONResponse(status_code=500, content={'error': '剧本解析未返回可用分镜'})
 
+    # location 资产化：新场景 / 子场景落库并回填真实 DB id，
+    # 必须在 build_storyboard_scenes_from_parsed_script 之前执行。
+    from services.storyboard_location_bootstrap_service import StoryboardLocationBootstrapService
+    location_bootstrap = await asyncio.to_thread(
+        StoryboardLocationBootstrapService().bootstrap,
+        parsed_data,
+        sb.world_id,
+        user_id,
+    )
+
     scenes_payload = build_storyboard_scenes_from_parsed_script(
         parsed_data,
         style=sb.style or '',
@@ -1460,6 +1492,34 @@ async def generate_storyboard_from_script(
     await _attach_dialogues(scenes)
     _enrich_scene_location_props(scenes)
     audio_auto_generate = await _auto_submit_storyboard_dialogue_voiceovers(scenes, user_id)
+
+    # 子场景九宫格 i2i：按父场景分批提交，父场景图作为输入生成子场景参考图。
+    # 非阻塞：异常不影响分镜主流程，子场景首帧生图会等待/降级。
+    # 门禁：只要有 auth_token 就尝试（submit_subscene_grids 内部会精确跳过
+    # 已有图 / 有运行中任务的子场景，支持补偿重跑）。
+    subscene_grid = {'enabled': False, 'submitted_batches': 0, 'warnings': []}
+    if auth_token:
+        try:
+            from services.storyboard_location_bootstrap_service import StoryboardLocationBootstrapService
+            subscene_grid_result = await asyncio.to_thread(
+                StoryboardLocationBootstrapService().submit_subscene_grids,
+                parsed_data,
+                location_bootstrap,
+                sb.world_id,
+                user_id,
+                auth_token,
+            )
+            subscene_grid = {
+                'enabled': True,
+                'submitted_batches': subscene_grid_result.get('submitted_batches', 0),
+                'submitted_subscene_count': subscene_grid_result.get('submitted_subscene_count', 0),
+                'skipped_no_parent_image': subscene_grid_result.get('skipped_no_parent_image', 0),
+                'warnings': subscene_grid_result.get('warnings', []),
+            }
+        except Exception as e:
+            logger.warning(f"子场景九宫格提交失败(非阻塞): {e}", exc_info=True)
+            subscene_grid = {'enabled': True, 'submitted_batches': 0, 'warnings': [str(e)]}
+
     if script_id != sb.script_id:
         await asyncio.to_thread(StoryboardModel.update, storyboard_id, script_id=script_id)
         sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
@@ -1470,6 +1530,12 @@ async def generate_storyboard_from_script(
         'scenes': scenes,
         'generated_count': generated_count,
         'audio_auto_generate': audio_auto_generate,
+        'location_bootstrap': {
+            'created_location_count': location_bootstrap.get('created_location_count', 0),
+            'reused_location_count': location_bootstrap.get('reused_location_count', 0),
+            'warnings': location_bootstrap.get('warnings', []),
+        },
+        'subscene_grid': subscene_grid,
     })
 
 
@@ -1536,6 +1602,8 @@ async def add_scene(
         video_prompt=data.get('video_prompt'),
         video_type=data.get('video_type', SceneVideoType.VIDEO),
         video_config_json=data.get('video_config_json'),
+        difficulty=data.get('difficulty'),
+        act_name=data.get('act_name'),
         last_modified_user_id=user_id,
     )
     scene = await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
@@ -2029,6 +2097,28 @@ async def scene_ai_chat(
 
     reference_images = scene_generation_context.get("reference_images") or ([first_frame_url] if first_frame_url else [])
     reference_image_items = scene_generation_context.get("reference_image_items") or []
+
+    # 视频生成模式下，合并用户在前端上传的补充参考图。
+    # 首帧图始终由 scene_context 提供（该分镜选中的首帧），用户上传的图作为补充追加在末尾，整体去重。
+    raw_user_refs = data.get('reference_image_urls') or []
+    if isinstance(raw_user_refs, str):
+        raw_user_refs = [u.strip() for u in raw_user_refs.split(',') if u.strip()]
+    user_reference_urls = [
+        str(u) for u in raw_user_refs
+        if str(u).startswith(('http://', 'https://')) and str(u) not in reference_images
+    ]
+    if user_reference_urls:
+        reference_images = list(reference_images) + user_reference_urls
+        existing_item_urls = {it.get('url') for it in reference_image_items if isinstance(it, dict)}
+        for idx, url in enumerate(user_reference_urls, start=1):
+            if url not in existing_item_urls:
+                reference_image_items.append({
+                    'url': url,
+                    'label': f'用户上传参考图{idx}',
+                    'type': '参考图',
+                    'name': '',
+                })
+
     selected_first_frame = (
         (scene_generation_context.get("selected_assets") or {}).get("first_frame") or {}
     )
@@ -2285,6 +2375,9 @@ async def get_scene_task_status(
         'last_frame': last_frame,
         'video': video,
         'dialogues': voice_items,
+        # 分镜当前时长（音频全部完成时由后端自动同步为选中配音求和，浮点秒）。
+        # 前端轮询据此即时刷新时间线/MM:SS 标签与进度行总时长。
+        'scene_duration': float(scene.duration) if scene and scene.duration is not None else None,
     })
 
 
@@ -2515,6 +2608,14 @@ async def select_dialogue_audio(
     await asyncio.to_thread(
         StoryboardDialogueAudioModel.set_selected, dialogue_id, dialogue_audio_id
     )
+
+    # 切换选中配音后，联动重算分镜时长（覆盖"用户手动选另一条已完成配音"的场景）。
+    # best-effort，失败仅记日志，不阻塞选中操作本身。
+    try:
+        await recalc_scene_duration_if_all_completed(scene.id)
+    except Exception as e:
+        logger.warning(f"[select_dialogue_audio] scene={scene.id} 联动重算分镜时长失败: {e}")
+
     return JSONResponse({'success': True, 'selected_audio_id': dialogue_audio_id})
 
 

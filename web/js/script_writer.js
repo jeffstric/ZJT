@@ -2247,8 +2247,8 @@
             menu.className = 'custom-model-select-menu';
             menu.style.top = `${rect.bottom + 6}px`;
             menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
-            menu.style.width = `${Math.max(rect.width, 180)}px`;
-            menu.style.maxHeight = `${Math.max(120, Math.min(320, window.innerHeight - rect.bottom - 18))}px`;
+            menu.style.width = `${Math.max(rect.width, 240)}px`;
+            menu.style.maxHeight = `${Math.max(120, Math.min(400, window.innerHeight - rect.bottom - 18))}px`;
             appendCustomModelSelectOptions(menu, selector, selector.children);
             document.body.appendChild(menu);
 
@@ -2293,7 +2293,17 @@
                 closeCustomModelSelectMenu();
             });
             window.addEventListener('resize', closeCustomModelSelectMenu);
-            window.addEventListener('scroll', closeCustomModelSelectMenu, true);
+            window.addEventListener('scroll', (event) => {
+                if (!activeCustomModelSelect) return;
+                // 菜单自身（或其内部）滚动时不应关闭；仅当滚动发生在菜单/触发元素外部时才关闭
+                const target = event.target;
+                if (target instanceof Node) {
+                    if (activeCustomModelSelect.menu.contains(target) || activeCustomModelSelect.wrapper.contains(target)) {
+                        return;
+                    }
+                }
+                closeCustomModelSelectMenu();
+            }, true);
         }
 
         function updateModelTooltip() {

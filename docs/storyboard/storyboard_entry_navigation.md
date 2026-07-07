@@ -90,10 +90,23 @@
 
 ### 空故事板生成分镜
 
-进入 `web/storyboard.html` 后，如果当前故事板没有任何 `storyboard_scene`，前端会显示确认弹框：
+进入 `web/storyboard.html` 后，如果当前故事板没有任何 `storyboard_scene`，前端会显示确认弹框（`renderGenerateFromScriptDialog`）：
 
 - 取消：关闭弹框，保留空故事板，用户仍可手动添加分镜。
 - 确认：调用 `POST /api/storyboard/{storyboard_id}/generate-from-script`，由后端一次性完成剧本解析和数据落库。
+
+弹框中可配置以下剧本拆分参数（与视频工作流的剧本节点保持一致，选项会持久化到 UI 配置，刷新后保留）：
+
+| 参数 | 控件 | 默认值 | 说明 |
+|------|------|--------|------|
+| `max_group_duration` | 镜头组时长 select | 15 | 每个分镜组的最大总时长（可选 5/8/10/15 秒），超时会在同一场景内自动拆分 |
+| `force_medium_shot` | 对话禁止全景 开关 | 开 | 对话镜头强制使用近景/中景，避免全景对话效果不佳 |
+| `no_bg_music` | 不生成背景音乐 开关 | 开 | 所有分镜的 background_music 置空，方便后期调音 |
+| `split_multi_dialogue` | 拆分多人对话镜头 开关 | 关 | 多人对话镜头按对话顺序拆成多个单人镜头，遵守 180 度轴线原则 |
+
+> 这些参数在 `web/js/storyboard/state.js`（`maxGroupDuration`/`forceMediumShot`/`noBgMusic`/`splitMultiDialogue`）中维护，由 `events.js` 的 `generate-from-script-confirm` 读取后透传给后端。两套入口（视频工作流剧本节点 / 故事板详情页弹框）共用同一个 `parse_script_to_shots` 后端逻辑。
+
+前端 state（`state.js`）：`maxGroupDuration`/`forceMediumShot`/`noBgMusic`/`splitMultiDialogue`，通过 `serializeUiConfig`/`restoreUiConfig` 持久化（含取值合法性校验）。弹框渲染见 `render.js` 的 `renderScriptSplitOptions`，事件处理见 `events.js` 的 `generate-from-script-confirm` 与 `toggle-force-medium-shot` 等 action。
 
 接口行为：
 

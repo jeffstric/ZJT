@@ -4,6 +4,7 @@ Storyboard scene model - database operations for storyboard_scene table.
 from typing import Optional, Dict, Any, List, Union
 from .database import execute_query, execute_update, execute_insert
 from config.unified_config import SceneVideoType
+from config.constant import SceneDifficulty
 import logging
 import json
 
@@ -53,6 +54,8 @@ class StoryboardScene:
         self.video_prompt = kwargs.get('video_prompt')
         self.video_type = kwargs.get('video_type')
         self.video_config_json = kwargs.get('video_config_json')
+        self.difficulty = kwargs.get('difficulty') or SceneDifficulty.MEDIUM
+        self.act_name = kwargs.get('act_name')
         self.selected_first_frame_id = kwargs.get('selected_first_frame_id')
         self.selected_last_frame_id = kwargs.get('selected_last_frame_id')
         self.selected_video_id = kwargs.get('selected_video_id')
@@ -79,6 +82,8 @@ class StoryboardScene:
             'video_prompt': self.video_prompt,
             'video_type': self.video_type,
             'video_config_json': _parse_json(self.video_config_json),
+            'difficulty': self.difficulty,
+            'act_name': self.act_name,
             'selected_first_frame_id': self.selected_first_frame_id,
             'selected_last_frame_id': self.selected_last_frame_id,
             'selected_video_id': self.selected_video_id,
@@ -96,23 +101,26 @@ class StoryboardSceneModel:
         storyboard_id: int,
         sort_order: float = 0.0,
         title: str = '',
-        duration: int = 5,
+        duration: float = 5.0,
         prompt_json: Optional[Dict] = None,
         video_prompt: Optional[str] = None,
         video_type: str = SceneVideoType.VIDEO,
         video_config_json: Optional[Dict] = None,
+        difficulty: str = SceneDifficulty.MEDIUM,
+        act_name: Optional[str] = None,
         last_modified_user_id: Optional[int] = None,
     ) -> int:
         sql = """
             INSERT INTO storyboard_scene
             (storyboard_id, sort_order, title, duration, prompt_json, video_prompt,
-             video_type, video_config_json, last_modified_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             video_type, video_config_json, difficulty, act_name, last_modified_user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         prompt_str = json.dumps(prompt_json, ensure_ascii=False) if prompt_json else None
         video_config_str = json.dumps(video_config_json, ensure_ascii=False) if video_config_json else None
         params = (storyboard_id, float(sort_order), title, duration, prompt_str, video_prompt,
-                  video_type, video_config_str, last_modified_user_id)
+                  video_type, video_config_str, SceneDifficulty.normalize(difficulty),
+                  act_name or None, last_modified_user_id)
         try:
             record_id = execute_insert(sql, params)
             logger.info(f"Created storyboard_scene with ID: {record_id}")
@@ -165,7 +173,7 @@ class StoryboardSceneModel:
     def update(record_id: int, **kwargs) -> int:
         allowed_fields = [
             'sort_order', 'title', 'duration', 'prompt_json', 'video_prompt',
-            'video_type', 'video_config_json',
+            'video_type', 'video_config_json', 'difficulty', 'act_name',
             'selected_first_frame_id', 'selected_last_frame_id', 'selected_video_id',
             'last_modified_user_id',
         ]
@@ -178,6 +186,10 @@ class StoryboardSceneModel:
                     value = json.dumps(value, ensure_ascii=False)
                 if field == 'sort_order':
                     value = float(value)
+                if field == 'difficulty':
+                    value = SceneDifficulty.normalize(value)
+                if field == 'act_name' and value is not None:
+                    value = str(value).strip() or None
                 update_fields.append(f"{field} = %s")
                 params.append(value)
 
@@ -273,6 +285,8 @@ class StoryboardSceneModel:
             video_prompt=scene.video_prompt,
             video_type=scene.video_type or SceneVideoType.VIDEO,
             video_config_json=video_config if isinstance(video_config, dict) else None,
+            difficulty=scene.difficulty or SceneDifficulty.MEDIUM,
+            act_name=scene.act_name,
             last_modified_user_id=scene.last_modified_user_id,
         )
 
@@ -299,11 +313,13 @@ CREATE TABLE IF NOT EXISTS `storyboard_scene` (
     `storyboard_id` INT UNSIGNED NOT NULL,
     `sort_order` DOUBLE DEFAULT 0 COMMENT '排序序号（浮点二分，见文档 2.3.2）',
     `title` VARCHAR(255) DEFAULT '',
-    `duration` INT DEFAULT 5,
+    `duration` DECIMAL(10,3) DEFAULT 5.000 COMMENT '分镜时长（秒），音频全部完成时自动同步为选中配音求和（毫秒级精度）',
     `prompt_json` JSON DEFAULT NULL COMMENT '画面提示词: perspective/style/scene_desc/character_desc',
     `video_prompt` TEXT DEFAULT NULL COMMENT '视频提示词（生视频/数字人动作描述）',
     `video_type` VARCHAR(32) NOT NULL DEFAULT 'video' COMMENT '分镜类型 image/video/digital_human，见 SceneVideoType',
     `video_config_json` JSON DEFAULT NULL COMMENT '视频生成参数偏好: 模型/分辨率/时长',
+    `difficulty` VARCHAR(8) NOT NULL DEFAULT '中' COMMENT '分镜难易程度: 易/中/难，见 SceneDifficulty',
+    `act_name` VARCHAR(255) DEFAULT NULL COMMENT '所属幕/分镜组名称（源自 LLM shot_group.group_name）',
     `selected_first_frame_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中首帧 asset id',
     `selected_last_frame_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中尾帧 asset id',
     `selected_video_id` INT UNSIGNED DEFAULT NULL COMMENT '当前选中视频 asset id',

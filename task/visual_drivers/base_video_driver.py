@@ -211,6 +211,8 @@ class BaseVideoDriver(ABC):
         Raises:
             requests.RequestException: 请求失败时抛出
         """
+        request_context = kwargs.pop("request_context", None)
+
         # 记录请求日志
         request_time = datetime.now().isoformat()
         api_logger.info(f"========== API 请求开始 ==========")
@@ -220,6 +222,12 @@ class BaseVideoDriver(ABC):
         api_logger.info(f"URL: {url}")
         api_logger.info(f"Headers: {self._mask_sensitive_headers(headers)}")
         api_logger.info(f"Payload: {self._mask_sensitive_payload(json)}")
+        if request_context:
+            api_logger.info(f"Context: {self._mask_sensitive_payload(request_context)}")
+        if kwargs.get('data') is not None:
+            api_logger.info(f"Form Data: {self._mask_multipart_form_data(kwargs.get('data'))}")
+        if kwargs.get('files') is not None:
+            api_logger.info(f"Files: {self._summarize_multipart_files(kwargs.get('files'))}")
         if kwargs.get('params'):
             api_logger.info(f"Params: {kwargs['params']}")
 
@@ -304,6 +312,74 @@ class BaseVideoDriver(ABC):
             else:
                 masked[key] = self._mask_data_uri(value)
         return masked
+
+    def _mask_multipart_form_data(self, data: Any) -> Any:
+        """脱敏 multipart/form-data 的普通字段，避免日志只显示空 Payload。"""
+        if data is None:
+            return {}
+        if isinstance(data, dict):
+            return self._mask_sensitive_payload(data)
+        if isinstance(data, (list, tuple)):
+            masked_items = []
+            for item in data:
+                try:
+                    key, value = item
+                except (TypeError, ValueError):
+                    masked_items.append({"field": "unknown", "repr": str(type(item))})
+                    continue
+                masked_items.append((key, self._mask_data_uri(value)))
+            return masked_items
+        return self._mask_data_uri(data)
+
+    def _summarize_multipart_files(self, files: Any) -> Any:
+        """记录 multipart 文件摘要，禁止把文件二进制内容写入日志。"""
+        if not files:
+            return []
+
+        if isinstance(files, dict):
+            iterable = files.items()
+        else:
+            iterable = files
+
+        summary = []
+        for item in iterable:
+            try:
+                field, value = item
+            except (TypeError, ValueError):
+                summary.append({"field": "unknown", "repr": str(type(item))})
+                continue
+
+            filename = None
+            content_type = None
+            size_bytes = None
+            if isinstance(value, tuple):
+                if len(value) > 0:
+                    filename = value[0]
+                if len(value) > 1:
+                    content = value[1]
+                    if isinstance(content, (bytes, bytearray)):
+                        size_bytes = len(content)
+                    elif hasattr(content, "tell") and hasattr(content, "seek"):
+                        try:
+                            current = content.tell()
+                            content.seek(0, 2)
+                            size_bytes = content.tell()
+                            content.seek(current)
+                        except (OSError, ValueError):
+                            size_bytes = None
+                if len(value) > 2:
+                    content_type = value[2]
+            elif isinstance(value, (bytes, bytearray)):
+                size_bytes = len(value)
+
+            summary.append({
+                "field": field,
+                "filename": filename,
+                "content_type": content_type,
+                "size_bytes": size_bytes,
+            })
+
+        return summary
 
     def _mask_data_uri(self, value: Any, threshold: int = 200) -> Any:
         """

@@ -27,6 +27,9 @@ const state = {
     viewMode: 'timeline',
     chatMode: 'dialogue',
     inputMessage: '',
+    // 视频生成模式下用户上传的补充参考图：[{id, url, thumbnailUrl, name, uploading}]
+    // 首帧图始终由 scene_context 提供（该分镜选中首帧），此处仅存补充参考图；切换分镜时清空。
+    referenceImages: [],
     agentMessages: [],
     isAgentRunning: false,
     activeAgentTaskId: null,
@@ -44,6 +47,11 @@ const state = {
     isGeneratingFromScript: false,
     generateFromScriptError: '',
     autoImageSequenceMode: 'balanced',
+    // 剧本拆分参数（与 video_workflow 剧本节点保持一致：true/true/false/15）
+    maxGroupDuration: 15,
+    forceMediumShot: true,
+    noBgMusic: true,
+    splitMultiDialogue: false,
 
     // 生成分镜进度弹框
     showGenerateProgressDialog: false,
@@ -257,6 +265,23 @@ export function setAssets({ characters = [], locations = [], props = [] }) {
     state.props = props.map(assetFromApi);
 }
 
+// 跨故事板 task_id 记忆兜底：读取 localStorage 中上一次的选择，校验仍存在于当前可用模型列表后才采用；
+// 否则回退到列表第一个，并把回退值同步写回 localStorage 以固化默认。
+function pickRememberedTaskId(models, storageKey) {
+    const fallback = models[0].task_id;
+    let remembered = null;
+    try {
+        remembered = localStorage.getItem(storageKey);
+    } catch {}
+    if (remembered != null && models.some(m => String(m.task_id) === String(remembered))) {
+        return Number(remembered);
+    }
+    try {
+        localStorage.setItem(storageKey, String(fallback));
+    } catch {}
+    return fallback;
+}
+
 export function setModels({
     image_models,
     video_models,
@@ -287,11 +312,12 @@ export function setModels({
     }
 
     // 默认选中逻辑（仅在首次且提供了对应列表时设置）
+    // 优先级：config_json（已在 restoreUiConfig 恢复）> localStorage 跨故事板兜底 > 列表第一个
     if (state.selectedImageTaskId == null && image_models && image_models.length) {
-        state.selectedImageTaskId = image_models[0].task_id;
+        state.selectedImageTaskId = pickRememberedTaskId(image_models, 'storyboard_lastSelectedImageTaskId');
     }
     if (state.selectedVideoTaskId == null && video_models && video_models.length) {
-        state.selectedVideoTaskId = video_models[0].task_id;
+        state.selectedVideoTaskId = pickRememberedTaskId(video_models, 'storyboard_lastSelectedVideoTaskId');
     }
     if (state.selectedDigitalHumanTaskId == null && digital_human_models && digital_human_models.length) {
         state.selectedDigitalHumanTaskId = digital_human_models[0].task_id;
@@ -334,6 +360,11 @@ export function serializeUiConfig() {
         // 第一版准备：对话模型记忆（画风/构图由后端 storyboard 主表承载）
         selectedLlmModel: state.selectedLlmModel,
         selectedScriptSplitLlmModel: state.selectedScriptSplitLlmModel,
+        // 剧本拆分参数
+        maxGroupDuration: state.maxGroupDuration,
+        forceMediumShot: state.forceMediumShot,
+        noBgMusic: state.noBgMusic,
+        splitMultiDialogue: state.splitMultiDialogue,
     };
 }
 
@@ -354,6 +385,19 @@ export function restoreUiConfig(config = {}) {
     }
     if (['speed', 'balanced', 'quality'].includes(config.autoImageSequenceMode)) {
         state.autoImageSequenceMode = config.autoImageSequenceMode;
+    }
+    // 剧本拆分参数恢复（含取值合法性校验）
+    if ([5, 8, 10, 15].includes(Number(config.maxGroupDuration))) {
+        state.maxGroupDuration = Number(config.maxGroupDuration);
+    }
+    if (typeof config.forceMediumShot === 'boolean') {
+        state.forceMediumShot = config.forceMediumShot;
+    }
+    if (typeof config.noBgMusic === 'boolean') {
+        state.noBgMusic = config.noBgMusic;
+    }
+    if (typeof config.splitMultiDialogue === 'boolean') {
+        state.splitMultiDialogue = config.splitMultiDialogue;
     }
 
     if (config.selectedLlmModel) {

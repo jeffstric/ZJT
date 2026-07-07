@@ -95,6 +95,9 @@ LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
 ASSET_LIST_DB_QUERY_TIMEOUT = 30
 
+# 音频时长探测（ffprobe）单次执行超时（秒）。用于分镜配音完成后探测时长并回写。
+FFPROBE_AUDIO_DURATION_TIMEOUT = 30
+
 
 class AgentAuthConstants:
     """Agent/API token exchange constants."""
@@ -189,6 +192,28 @@ class StoryType:
             return cls.DIALOGUE
         normalized = str(value).strip()
         return normalized if normalized in cls.VALID_TYPES else cls.DIALOGUE
+
+
+class SceneDifficulty:
+    """分镜难易程度（由 LLM 根据人物数量、动作复杂度、时长、道具、镜头运动综合判定）。"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'EASY': '易',
+        'MEDIUM': '中',
+        'HARD': '难',
+    }
+    EASY = "易"
+    MEDIUM = "中"
+    HARD = "难"
+    VALID_VALUES = (EASY, MEDIUM, HARD)
+    DEFAULT = MEDIUM
+
+    @classmethod
+    def normalize(cls, value) -> str:
+        if value is None:
+            return cls.DEFAULT
+        normalized = str(value).strip()
+        return normalized if normalized in cls.VALID_VALUES else cls.DEFAULT
 
 
 class Edition:
@@ -657,6 +682,14 @@ class GridConfig:
     LOCK_TIMEOUT_SECONDS = 120            # 文件锁超时（秒）
     IMAGE_DOWNLOAD_TIMEOUT = 60.0         # 下载原图超时（秒）
 
+    # 占位符名称：不足 grid_size 个时补位用，切图回写时跳过（不创建/不回写 location）
+    PLACEHOLDER_NAMES = frozenset({'placeholder', 'pure black background'})
+
+    @classmethod
+    def is_placeholder(cls, name: str) -> bool:
+        """判断名称是否为宫格占位符（大小写不敏感）。"""
+        return bool(name) and str(name).strip().lower() in cls.PLACEHOLDER_NAMES
+
 
 # 向后兼容别名 - 宫格拆分
 GRID_SIZE_2X2 = GridConfig.SIZE_2X2
@@ -665,6 +698,19 @@ GRID_VALID_SIZES = GridConfig.VALID_SIZES
 GRID_DEFAULT_SIZE_BY_TYPE = GridConfig.DEFAULT_SIZE_BY_TYPE
 GRID_LOCK_TIMEOUT_SECONDS = GridConfig.LOCK_TIMEOUT_SECONDS
 GRID_IMAGE_DOWNLOAD_TIMEOUT = GridConfig.IMAGE_DOWNLOAD_TIMEOUT
+
+
+class LocationReferenceStatus:
+    """
+    分镜首帧生图对 location 参考图的依赖状态。
+
+    用于 Phase 6「外部 location grid readiness check」：当子场景 location.reference_image
+    尚未就绪时，决定首帧生图是等待、降级还是兜底。
+    """
+    READY = 'ready'                              # 子场景 reference_image 已就绪，正常生图
+    WAITING_GRID = 'waiting_location_grid_reference'   # 九宫格任务仍在 QUEUED/PROCESSING，本 tick 等待
+    FALLBACK_PARENT = 'fallback_parent_location_reference'  # 九宫格失败，降级用父场景图
+    MISSING = 'missing_location_reference'       # 父子场景均无图，走纯文生图兜底
 
 class FilePathConstants:
     """文件路径相关常量 - 兼容Windows的跨平台路径配置"""

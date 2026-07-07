@@ -9,7 +9,12 @@ Grid Image Tasks Model - Database operations for grid_image_tasks table
   - grid_image_tasks: 本表，宫格生图专用轮询，有 CANCELLED/DOWNLOAD_FAILED 状态
 
 注意：GridImageTaskStatus 比 AsyncTaskStatus 多了 CANCELLED(-3) 和 DOWNLOAD_FAILED(-4) 两个状态
+
+宫格规格支持（grid_size 列）：
+  - 4  = 2x2 四宫格（grid_layout='2x2'，向后兼容默认值）
+  - 9  = 3x3 九宫格（grid_layout='3x3'，子场景参考图）
 """
+import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from .database import execute_query, execute_update, execute_insert
@@ -38,6 +43,9 @@ class GridImageTask:
         self.project_id = kwargs.get('project_id')
         self.item_type = kwargs.get('item_type')
         self.item_name = kwargs.get('item_name')
+        self.item_names_json = kwargs.get('item_names_json')
+        self.target_entity_ids_json = kwargs.get('target_entity_ids_json')
+        self.parent_reference_image = kwargs.get('parent_reference_image')
         self.user_id = kwargs.get('user_id')
         self.world_id = kwargs.get('world_id')
         self.comfyui_base_url = kwargs.get('comfyui_base_url')
@@ -53,6 +61,8 @@ class GridImageTask:
         self.task_config_id = kwargs.get('task_config_id')
         self.aspect_ratio = kwargs.get('aspect_ratio')
         self.image_size = kwargs.get('image_size')
+        self.grid_size = kwargs.get('grid_size', 4)
+        self.grid_layout = kwargs.get('grid_layout', '2x2')
         self.is_grid = kwargs.get('is_grid', 0)
         self.retry_count = kwargs.get('retry_count', 0)
         self.max_retries = kwargs.get('max_retries', 0)
@@ -69,6 +79,9 @@ class GridImageTask:
             'project_id': self.project_id,
             'item_type': self.item_type,
             'item_name': self.item_name,
+            'item_names_json': self.item_names_json,
+            'target_entity_ids_json': self.target_entity_ids_json,
+            'parent_reference_image': self.parent_reference_image,
             'user_id': self.user_id,
             'world_id': self.world_id,
             'status': self.status,
@@ -82,6 +95,8 @@ class GridImageTask:
             'task_config_id': self.task_config_id,
             'aspect_ratio': self.aspect_ratio,
             'image_size': self.image_size,
+            'grid_size': self.grid_size,
+            'grid_layout': self.grid_layout,
             'is_grid': self.is_grid,
             'retry_count': self.retry_count,
             'max_retries': self.max_retries,
@@ -90,6 +105,35 @@ class GridImageTask:
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'failed_at': self.failed_at.isoformat() if self.failed_at else None
         }
+
+    # ---- 便捷解析方法（JSON 列 → Python 对象）----
+
+    def get_item_names_list(self) -> List[str]:
+        """优先从 item_names_json 解析名称列表；为空时 fallback 到 item_name 逗号 split。"""
+        if self.item_names_json:
+            try:
+                parsed = self.item_names_json if isinstance(self.item_names_json, list) \
+                    else json.loads(self.item_names_json)
+                if isinstance(parsed, list):
+                    return [str(n).strip() for n in parsed if str(n).strip()]
+            except (ValueError, TypeError):
+                pass
+        if self.item_name:
+            return [n.strip() for n in self.item_name.split(',') if n.strip()]
+        return []
+
+    def get_target_entity_ids_list(self) -> List[int]:
+        """从 target_entity_ids_json 解析切图回写目标 DB id 列表。"""
+        if not self.target_entity_ids_json:
+            return []
+        try:
+            parsed = self.target_entity_ids_json if isinstance(self.target_entity_ids_json, list) \
+                else json.loads(self.target_entity_ids_json)
+            if isinstance(parsed, list):
+                return [int(v) for v in parsed if v is not None]
+        except (ValueError, TypeError):
+            pass
+        return []
 
 
 class GridImageTasksModel:
@@ -111,16 +155,21 @@ class GridImageTasksModel:
         aspect_ratio: str = None,
         image_size: str = None,
         is_grid: bool = False,
-        max_retries: int = 0
+        max_retries: int = 0,
+        grid_size: int = 4,
+        grid_layout: str = '2x2',
+        item_names: Optional[List[str]] = None,
+        target_entity_ids: Optional[List[int]] = None,
+        parent_reference_image: Optional[str] = None,
     ) -> int:
         """
         创建新的宫格生图任务
-        
+
         Args:
             task_key: 任务唯一键
             project_id: ComfyUI project_id
             item_type: 项目类型
-            item_name: 项目名称
+            item_name: 项目名称（逗号分隔，兼容旧逻辑；优先用 item_names）
             user_id: 用户ID
             world_id: 世界观ID
             comfyui_base_url: ComfyUI服务地址
@@ -132,26 +181,37 @@ class GridImageTasksModel:
             image_size: 图片尺寸（用于自动重试）
             is_grid: 是否为宫格生成
             max_retries: 最大重试次数
-        
+            grid_size: 宫格总数（4=2x2, 9=3x3）
+            grid_layout: 宫格布局描述（'2x2'/'3x3'）
+            item_names: 结构化名称列表（写入 item_names_json，避免逗号拼接歧义）
+            target_entity_ids: 切图回写目标 DB id 列表（写入 target_entity_ids_json，
+                              使回写按 id 而非按名）
+            parent_reference_image: i2i 父场景参考图 URL
+
         Returns:
             插入的记录ID
-        
+
         Raises:
             Exception: 如果任务已存在（UNIQUE KEY冲突）
         """
+        item_names_json = json.dumps(item_names, ensure_ascii=False) if item_names else None
+        target_entity_ids_json = json.dumps(target_entity_ids) if target_entity_ids else None
+
         sql = """
-            INSERT INTO grid_image_tasks 
-            (task_key, project_id, item_type, item_name, user_id, world_id, 
+            INSERT INTO grid_image_tasks
+            (task_key, project_id, item_type, item_name, user_id, world_id,
              comfyui_base_url, auth_token, status, max_attempts,
-             prompt, task_config_id, aspect_ratio, image_size, is_grid, max_retries)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             prompt, task_config_id, aspect_ratio, image_size, is_grid, max_retries,
+             grid_size, grid_layout, item_names_json, target_entity_ids_json, parent_reference_image)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             task_key, project_id, item_type, item_name, user_id, world_id,
             comfyui_base_url, auth_token, GridImageTaskStatus.QUEUED, max_attempts,
-            prompt, task_config_id, aspect_ratio, image_size, 1 if is_grid else 0, max_retries
+            prompt, task_config_id, aspect_ratio, image_size, 1 if is_grid else 0, max_retries,
+            grid_size, grid_layout, item_names_json, target_entity_ids_json, parent_reference_image,
         )
-        
+
         try:
             record_id = execute_insert(sql, params)
             logger.info(f"Created grid image task: {task_key}, record_id: {record_id}")
@@ -172,16 +232,54 @@ class GridImageTasksModel:
             True 如果存在活跃的 grid_image_task
         """
         sql = "SELECT COUNT(*) as cnt FROM grid_image_tasks WHERE project_id = %s AND status IN (%s, %s)"
-        
+
         try:
             result = execute_query(
-                sql, 
-                (str(project_id), GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING), 
+                sql,
+                (str(project_id), GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING),
                 fetch_one=True
             )
             return result and result.get('cnt', 0) > 0
         except Exception as e:
             logger.error(f"Failed to check grid image task by project_id {project_id}: {e}")
+            return False
+
+    @staticmethod
+    def has_running_grid_for_entity(entity_id: int, item_type: int = 5) -> bool:
+        """
+        检查指定 entity_id 是否存在运行中（QUEUED/PROCESSING）的宫格任务。
+
+        用于 Phase 6「外部 location grid readiness check」：分镜首帧生图前判断
+        子场景 location 的九宫格参考图是否仍在生成。
+
+        Args:
+            entity_id: 切图回写目标 DB id（location.id）。匹配 target_entity_ids_json 数组。
+            item_type: 宫格类型，默认 5（location_grid）。
+
+        Returns:
+            True 如果存在运行中的宫格任务且 target_entity_ids_json 包含该 entity_id。
+        """
+        if not entity_id:
+            return False
+        # JSON_CONTAINS 匹配 target_entity_ids_json 数组中是否含 entity_id。
+        # 仅查 location_grid(item_type=5) 的活跃任务。
+        sql = (
+            "SELECT COUNT(*) as cnt FROM grid_image_tasks "
+            "WHERE item_type = %s AND status IN (%s, %s) "
+            "AND JSON_CONTAINS(target_entity_ids_json, %s, '$')"
+        )
+        # JSON_CONTAINS 的目标值需是合法 JSON 标量
+        json_val = json.dumps(int(entity_id))
+        try:
+            result = execute_query(
+                sql,
+                (item_type, GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING, json_val),
+                fetch_one=True,
+            )
+            return bool(result and result.get('cnt', 0) > 0)
+        except Exception as e:
+            # target_entity_ids_json 为 NULL 的旧记录不会命中 JSON_CONTAINS，属预期行为
+            logger.error(f"Failed to check running grid for entity {entity_id}: {e}")
             return False
 
     @staticmethod
@@ -472,10 +570,13 @@ class GridImageTasksModel:
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `grid_image_tasks` (
   `id` int NOT NULL AUTO_INCREMENT COMMENT '主键ID',
-  `task_key` varchar(255) NOT NULL COMMENT '任务唯一键 (格式: item_type_item_name)',
+  `task_key` varchar(255) NOT NULL COMMENT '任务唯一键 (格式: item_type_item_name，九宫格用 grid:uid:wid:project_id 短键)',
   `project_id` varchar(100) NOT NULL COMMENT 'ComfyUI project_id',
   `item_type` tinyint NOT NULL COMMENT '项目类型 (0=general, 1=character, 2=location, 3=props, 4=character_grid, 5=location_grid, 6=prop_grid)',
-  `item_name` varchar(255) NOT NULL COMMENT '项目名称（宫格任务为逗号分隔的多个名称）',
+  `item_name` varchar(255) NOT NULL COMMENT '项目名称（宫格任务为逗号分隔的多个名称，九宫格建议配合 item_names_json 使用）',
+  `item_names_json` json DEFAULT NULL COMMENT '结构化名称列表（避免逗号拼接歧义 / 名称超长）',
+  `target_entity_ids_json` json DEFAULT NULL COMMENT '切图回写目标 DB id 列表（回写按 id 而非按名）',
+  `parent_reference_image` varchar(1000) DEFAULT NULL COMMENT 'i2i 父场景参考图 URL（用于宫格图生图与重试复原）',
   `user_id` varchar(50) NOT NULL COMMENT '用户ID',
   `world_id` varchar(50) NOT NULL COMMENT '世界观ID',
   `comfyui_base_url` varchar(500) NOT NULL COMMENT 'ComfyUI服务地址',
@@ -491,6 +592,8 @@ CREATE TABLE IF NOT EXISTS `grid_image_tasks` (
   `task_config_id` varchar(100) DEFAULT NULL COMMENT '生图模型配置ID（用于自动重试）',
   `aspect_ratio` varchar(20) DEFAULT NULL COMMENT '图片宽高比（用于自动重试）',
   `image_size` varchar(20) DEFAULT NULL COMMENT '图片尺寸（用于自动重试）',
+  `grid_size` tinyint NOT NULL DEFAULT '4' COMMENT '宫格总数 (4=2x2, 9=3x3)',
+  `grid_layout` varchar(8) NOT NULL DEFAULT '2x2' COMMENT '宫格布局 (2x2/3x3)',
   `is_grid` tinyint DEFAULT '0' COMMENT '是否为宫格生成 (0-否, 1-是)',
   `retry_count` int DEFAULT '0' COMMENT '已重试次数',
   `max_retries` int DEFAULT '0' COMMENT '最大重试次数（0=不重试）',

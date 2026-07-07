@@ -216,19 +216,32 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
             local_image_url = file_url
             local_file_path = None
         
-        # 检查是否为4宫格类型，需要进行图片拆分
+        # 检查是否为宫格类型，需要进行图片拆分
         split_image_urls = []
-        
+        # 宫格规格：优先用 task.grid_size（新列），旧记录/MagicMock 默认 4
+        from config.constant import GridConfig
+        try:
+            _raw_grid_size = task.grid_size
+            grid_size = int(_raw_grid_size) if isinstance(_raw_grid_size, int) else GridConfig.SIZE_2X2
+        except (AttributeError, TypeError, ValueError):
+            grid_size = GridConfig.SIZE_2X2
+
         if is_grid_type and local_file_path:
-            # 4宫格图片需要拆分
+            # 宫格图片需要拆分
             try:
-                # 解析item_name（格式："name1,name2,name3,name4"）
-                item_names = [name.strip() for name in task.item_name.split(',')]
-                
-                if len(item_names) == 4:
+                # 解析名称：优先用结构化 item_names_json，fallback 到 item_name 逗号 split
+                try:
+                    item_names = task.get_item_names_list()
+                except Exception:
+                    item_names = [name.strip() for name in (task.item_name or '').split(',')]
+                # 健壮性：item_names 为空或数量不在 VALID_SIZES 时，仍用 grid_size 兜底
+                if not item_names:
+                    item_names = [name.strip() for name in (task.item_name or '').split(',')]
+
+                if len(item_names) == grid_size:
                     # 创建拆分器
                     splitter = ImageGridSplitter()
-                    
+
                     # 根据item_type确定输出目录（存储到pic目录，而不是temp目录）
                     if task.item_type == 4:  # character_grid
                         output_dir = 'upload/character/pic'
@@ -238,35 +251,36 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
                         output_dir = 'upload/props/pic'
                     else:
                         output_dir = os.path.dirname(local_file_path)
-                    
+
                     # 确保输出目录存在
                     os.makedirs(output_dir, exist_ok=True)
-                    
+
                     # 生成唯一的文件名（使用UUID避免重复）
-                    unique_names = [str(uuid.uuid4()) for _ in range(4)]
-                    
-                    # 拆分图片
-                    split_paths = splitter.split_2x2_grid(
+                    unique_names = [str(uuid.uuid4()) for _ in range(grid_size)]
+
+                    # 拆分图片（通用 N×N 切分）
+                    split_paths = splitter.split_grid(
                         grid_image_path=local_file_path,
                         output_dir=output_dir,
+                        grid_size=grid_size,
                         output_names=unique_names,
                         output_format="png"
                     )
-                    
+
                     # 构建拆分后图片的URL
                     config_comfyui_base_url = get_config()["server"]["host"]
-                    
+
                     for split_path in split_paths:
                         # 获取文件名，使用预定义的 output_dir 构建 URL
                         filename = os.path.basename(split_path)
                         split_url = f"{config_comfyui_base_url.rstrip('/')}/{output_dir}/{filename}"
                         split_image_urls.append(split_url)
-                    
-                    logger.info(f"4宫格图片拆分成功: {len(split_paths)} 张图片")
+
+                    logger.info(f"宫格(grid_size={grid_size})图片拆分成功: {len(split_paths)} 张图片")
                 else:
-                    logger.warning(f"4宫格item_name格式不正确，期望4个名称，实际: {len(item_names)}")
+                    logger.warning(f"宫格 item_name 数量({len(item_names)})与 grid_size({grid_size})不符，跳过拆分")
             except Exception as e:
-                logger.error(f"4宫格图片拆分失败: {str(e)}")
+                logger.error(f"宫格图片拆分失败: {str(e)}")
         
         # 更新对应的item
         update_success = False
@@ -291,28 +305,55 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
                     result = mcp_tool.update_prop_json(task.user_id, task.world_id, task.auth_token,
                                                        task.item_name, reference_image=local_image_url)
                     update_success = result.get('success', False)
-                elif task.item_type == 4:  # character_grid (4宫格角色)
-                    item_names = [name.strip() for name in task.item_name.split(',')]
-                    if len(item_names) == 4 and len(split_image_urls) == 4:
+                elif task.item_type == 4:  # character_grid (宫格角色)
+                    item_names = task.get_item_names_list()
+                    if len(item_names) == grid_size and len(split_image_urls) == grid_size:
                         for idx, (name, img_url) in enumerate(zip(item_names, split_image_urls)):
+                            if GridConfig.is_placeholder(name):
+                                logger.info(f"跳过占位符格子 #{idx + 1}")
+                                continue
                             result = mcp_tool.update_character_json(task.user_id, task.world_id, task.auth_token,
                                                                    name, reference_image=img_url)
                             if result.get('success', False):
                                 logger.info(f"已更新角色 {name} 的参考图")
                         update_success = True
-                elif task.item_type == 5:  # location_grid (4宫格场景)
-                    item_names = [name.strip() for name in task.item_name.split(',')]
-                    if len(item_names) == 4 and len(split_image_urls) == 4:
+                elif task.item_type == 5:  # location_grid (宫格场景)
+                    # 名称统一从 item_names_json 读取（item_name 列已改为展示短 key）
+                    item_names = task.get_item_names_list()
+                    # target_entity_ids_json 在 create 时已过滤 placeholder 的 None，是纯 id 列表
+                    try:
+                        target_db_ids = task.get_target_entity_ids_list()
+                    except Exception:
+                        target_db_ids = []
+                    if len(item_names) == grid_size and len(split_image_urls) == grid_size:
+                        from model.location import LocationModel
+                        # 按"非 placeholder 名称"与"有效 target id"顺序对齐回写
+                        valid_id_iter = iter(target_db_ids)
                         for idx, (name, img_url) in enumerate(zip(item_names, split_image_urls)):
+                            if GridConfig.is_placeholder(name):
+                                logger.info(f"跳过占位符格子 #{idx + 1}")
+                                continue
+                            # 取下一个有效 DB id（与当前非 placeholder 名称对齐）
+                            loc_db_id = next(valid_id_iter, None)
+                            if loc_db_id:
+                                try:
+                                    LocationModel.update(int(loc_db_id), reference_image=img_url)
+                                    logger.info(f"已按 DB id={loc_db_id} 更新场景 reference_image")
+                                except Exception as loc_err:
+                                    logger.warning(f"按 DB id 更新场景失败(非阻塞，回退按名): {loc_err}")
+                            # 同时按名更新 JSON 文件，保持与角色/道具一致的资产管线
                             result = mcp_tool.update_location_json(task.user_id, task.world_id, task.auth_token,
                                                                   name, reference_image=img_url)
                             if result.get('success', False):
                                 logger.info(f"已更新场景 {name} 的参考图")
                         update_success = True
-                elif task.item_type == 6:  # prop_grid (4宫格道具)
-                    item_names = [name.strip() for name in task.item_name.split(',')]
-                    if len(item_names) == 4 and len(split_image_urls) == 4:
+                elif task.item_type == 6:  # prop_grid (宫格道具)
+                    item_names = task.get_item_names_list()
+                    if len(item_names) == grid_size and len(split_image_urls) == grid_size:
                         for idx, (name, img_url) in enumerate(zip(item_names, split_image_urls)):
+                            if GridConfig.is_placeholder(name):
+                                logger.info(f"跳过占位符格子 #{idx + 1}")
+                                continue
                             result = mcp_tool.update_prop_json(task.user_id, task.world_id, task.auth_token,
                                                               name, reference_image=img_url)
                             if result.get('success', False):

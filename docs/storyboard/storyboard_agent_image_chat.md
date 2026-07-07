@@ -14,8 +14,18 @@
 8. 如果当前分镜还没有首帧，智能体图片任务绑定后会立即成为当前选中首帧；任务完成轮询到 `result_url` 后，前端会自动回填主预览图和右侧候选图 URL。
 9. 右侧「分镜图候选」一行只显示一个候选图。用户点击候选图时，前端调用 `POST /api/storyboard/scene/{scene_id}/asset/select` 把该候选设置为当前首帧，并同步更新主预览和候选选中态。
 
-## 对话模型选择
+## 视频生成的补充参考图
 
+「视频生成」模式下，分镜助手输入框下方会显示补充参考图预览条，用户可上传额外参考图辅助生成：
+
+- 参考图通过 `POST /api/upload-agent-image` 上传（复用 marketing_agent 的端点），返回 `{ success, url, thumbnail_url }`；上传后立即在预览条显示缩略图，支持多选和逐个删除。
+- **首帧图始终由该分镜选中的首帧自动提供**（来自 `scene_context.selected_assets.first_frame`），用户上传的图作为补充参考追加在首帧之后，不会替代首帧。
+- 发送消息时，前端把已上传的 URL 列表作为 `reference_image_urls` 随 `POST /api/storyboard/scene/{scene_id}/ai-chat` 请求体发送。
+- 后端 `scene_ai_chat` 把 `reference_image_urls` 合并进 `reference_images` 和 `reference_image_items`（仅保留 http/https URL，去重，补充 label 为「用户上传参考图N」），随后注入智能体提示词的【参考图清单】和 `task.image_urls`。
+- 智能体会把首帧和用户上传图一起用英文逗号拼接为 `image_to_video` 的 `image_urls`。
+- 用户上传的参考图保存在前端 `state.referenceImages`，**切换分镜时清空**（发送后保留，便于对同一分镜连续多轮调整）；不纳入 UI 配置持久化，刷新页面即清空。
+
+## 对话模型选择
 分镜助手的对话模型来自 `/api/models`，前端会把选中的模型标准化为 `{ model, model_id, vendor_id }`。这一步兼容旧配置中只保存模型字符串的情况，也兼容模型列表使用 `model_id` 而不是 `id` 作为主键的返回格式，避免用户已在齿轮弹框中选中模型后，发送时仍被误判为未选择对话模型。
 
 同名模型可能同时出现在多个供应商下，例如 `deepseek-v4-flash` 同时属于 `zjt_api` 和 `deepseek`。前端渲染选中态时必须优先匹配 `model_id + vendor_id`，不能只按模型名判断，否则弹框会出现多个 `selected`，真实发送的供应商也可能和用户看到的不一致。

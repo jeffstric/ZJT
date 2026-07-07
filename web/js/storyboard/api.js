@@ -258,3 +258,19 @@ export async function fetchVendors() {
         return { success: false, vendors: [] };
     }
 }
+
+/**
+ * 上传视频生成的补充参考图。复用 marketing_agent 的上传端点，
+ * 返回 { success, url, thumbnail_url }。FormData 不可设 Content-Type，由浏览器自动填充 boundary。
+ */
+export async function uploadReferenceImage(file) {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('session_id', 'storyboard');
+    const resp = await fetch('/api/upload-agent-image', {
+        method: 'POST',
+        headers: authHeaders(false),
+        body: form,
+    });
+    return resp.json().catch(() => ({ success: false, error: '上传响应解析失败' }));
+}

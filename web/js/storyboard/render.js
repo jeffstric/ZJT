@@ -172,7 +172,23 @@ function assetBadge(scene, kind, label) {
         : `<span class="status idle">${label}待生成</span>`;
 }
 
-function mediaFrame(scene) {
+// 分镜难度 badge：易=绿 / 中=橙 / 难=红（与 .status.ready/running/failed 同色系）
+function difficultyBadge(scene) {
+    const d = scene.difficulty;
+    let cls = 'diff-medium';
+    if (d === '易') cls = 'diff-easy';
+    else if (d === '难') cls = 'diff-hard';
+    return `<span class="difficulty-badge ${cls}">${escapeHtml(d || '中')}</span>`;
+}
+
+// 所属幕/分镜组名称（仅在存在时显示，避免空标签）
+function actNameTag(scene) {
+    return scene.actName
+        ? `<span class="act-name-tag" title="${escapeHtml(scene.actName)}">${escapeHtml(scene.actName)}</span>`
+        : '';
+}
+
+export function mediaFrame(scene) {
     if (!scene) {
         return '<div class="preview-empty">选择一个分镜开始编辑</div>';
     }
@@ -185,12 +201,48 @@ function mediaFrame(scene) {
     return '<div class="preview-empty">当前分镜还没有画面</div>';
 }
 
+// 预览媒体（img/video）的稳定 key，用于判断新旧是否同一资源
+export function previewMediaKey(el) {
+    if (!el) return '';
+    return `${el.tagName}|${el.getAttribute('src') || ''}`;
+}
+
+// 给新插入的 .preview-media 元素附加过渡：与 oldKey 相同则立即显示（避免重建闪烁），不同则等加载后淡入。
+// 供 renderApp 全量重建与 polling 局部更新复用。
+export function attachPreviewMediaTransition(newPreview, oldKey) {
+    if (!newPreview) return;
+    if (newPreview.classList.contains('preview-media')) {
+        const newKey = previewMediaKey(newPreview);
+        if (newKey === oldKey) {
+            newPreview.classList.add('loaded');
+            return;
+        }
+        if (newPreview.tagName === 'IMG') {
+            if (newPreview.complete && newPreview.naturalWidth > 0) {
+                newPreview.classList.add('loaded');
+            } else {
+                newPreview.addEventListener('load', () => newPreview.classList.add('loaded'), { once: true });
+                newPreview.addEventListener('error', () => newPreview.classList.add('loaded'), { once: true });
+            }
+        } else if (newPreview.tagName === 'VIDEO') {
+            if (newPreview.readyState >= 2) {
+                newPreview.classList.add('loaded');
+            } else {
+                newPreview.addEventListener('loadeddata', () => newPreview.classList.add('loaded'), { once: true });
+                newPreview.addEventListener('error', () => newPreview.classList.add('loaded'), { once: true });
+            }
+        } else {
+            newPreview.classList.add('loaded');
+        }
+    }
+}
+
 function renderHeader() {
     const power = state.computingPower == null ? '--' : state.computingPower;
     return `
         <header class="header">
             <div class="header-left">
-                <div class="header-logo" data-route="storyboard-list">智</div>
+                <img src="/files/logo.svg" alt="Logo" class="header-logo-img" data-route="storyboard-list">
                 <div>
                     <h1 class="header-title">${escapeHtml(state.title)}</h1>
                     <div class="header-subtitle">
@@ -326,11 +378,21 @@ function renderLeftSidebar(scene) {
             ${icon(iconName, 16)} ${label}
         </button>`).join('');
 
+    // 幕号：来自剧本解析的 group_id（如 grp_001 → 幕01）；手动新增的分镜无 group_id 时不显示
+    const actTag = (() => {
+        if (!scene || !scene.groupId) return '';
+        const numStr = String(scene.groupId).replace(/^grp_?0*/i, '');
+        const num = parseInt(numStr, 10);
+        if (!Number.isFinite(num) || num <= 0) return '';
+        return `<span class="act-tag">幕${String(num).padStart(2, '0')}</span>`;
+    })();
+
     return `
         <aside class="left-sidebar">
             <div class="sidebar-content">
                 <div class="project-info">
                     <div class="project-brand">
+                        ${actTag}
                         <div class="brand-icon">${scene ? escapeHtml(scene.title) : '分镜'}</div>
                         <span>分镜工作台</span>
                     </div>
@@ -346,9 +408,9 @@ function renderLeftSidebar(scene) {
 function renderAiPanel() {
     const scene = getCurrentScene();
     const modes = [
-        ['dialogue', '对话改图'],
-        ['video', '视频生成'],
-    ].map(([key, label]) => `<option value="${key}" ${state.chatMode === key ? 'selected' : ''}>${label}</option>`).join('');
+        ['dialogue', '对话改图', '选择对话模型后，可让智能体基于当前画面提示词生成或调整首帧'],
+        ['video', '视频生成', '选择对话模型和视频模型后，可让智能体基于当前分镜生成视频'],
+    ].map(([key, label, title]) => `<option value="${key}" ${state.chatMode === key ? 'selected' : ''} title="${title}">${label}</option>`).join('');
 
     const agentMessages = renderAgentMessages();
     const disabled = state.isAgentRunning ? 'disabled' : '';
@@ -356,11 +418,23 @@ function renderAiPanel() {
         ? '和智能体描述要如何调整当前分镜画面'
         : '和智能体描述要如何生成当前分镜视频';
 
+    // 视频生成模式下渲染补充参考图预览条（首帧图由该分镜选中首帧自动提供，此处仅展示用户上传的补充图）
+    const referenceBar = state.chatMode === 'video' ? renderReferenceBar(disabled) : '';
+
     return `
         <section class="ai-chat-section">
             <div class="ai-chat-header">${icon('send', 16)} 分镜助手</div>
             ${agentMessages}
-            <textarea id="chat-textarea" class="chat-textarea" placeholder="${placeholder}" ${disabled}>${escapeHtml(state.inputMessage)}</textarea>
+            <div class="chat-textarea-row">
+                <button class="reference-add-btn" data-action="add-reference-image" ${disabled} title="上传参考图">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                </button>
+                <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple hidden>
+                <textarea id="chat-textarea" class="chat-textarea" placeholder="${placeholder}" ${disabled}>${escapeHtml(state.inputMessage)}</textarea>
+            </div>
+            ${referenceBar}
             <div class="chat-toolbar">
                 <button class="tool-button" data-action="open-model-config" title="模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）">${icon('settings', 14)}</button>
                 <select id="chat-mode-select" class="chat-mode-select">${modes}</select>
@@ -370,11 +444,32 @@ function renderAiPanel() {
         </section>`;
 }
 
+function renderReferenceBar(disabled) {
+    const thumbs = (state.referenceImages || []).map(img => {
+        const src = img.uploading
+            ? ''
+            : escapeHtml(getThumbnailUrl(img.thumbnailUrl || img.url || '', 32));
+        const name = escapeHtml(img.name || '');
+        return `
+            <div class="reference-thumb ${img.uploading ? 'uploading' : ''}" data-reference-id="${escapeHtml(img.id)}" title="${name}">
+                <div class="reference-thumb-inner">
+                    ${src ? `<img src="${src}" alt="${name}">` : '<div class="reference-placeholder"></div>'}
+                    ${img.uploading ? `<div class="reference-spinner">${icon('loading', 14)}</div>` : ''}
+                </div>
+                <span class="reference-name">${name}</span>
+                <button class="reference-remove" data-action="remove-reference-image" data-reference-id="${escapeHtml(img.id)}" title="移除">×</button>
+            </div>`;
+    }).join('');
+    return `
+        <div class="reference-bar">
+            <div class="reference-thumbs">${thumbs}</div>
+            <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple hidden>
+        </div>`;
+}
+
 function renderAgentMessages() {
     if (!state.agentMessages.length) {
-        return state.chatMode === 'video'
-            ? '<div class="agent-chat-empty">选择对话模型和视频模型后，可让智能体基于当前分镜生成视频。</div>'
-            : '<div class="agent-chat-empty">选择对话模型后，可让智能体基于当前画面提示词生成或调整首帧。</div>';
+        return '';
     }
     const rows = state.agentMessages.slice(-8).map(message => {
         const role = message.role || 'assistant';
@@ -421,7 +516,7 @@ function renderInsertSceneSlot(prevScene, nextScene, mode) {
         >${icon('add', 16)}</button>`;
 }
 
-function renderStoryboardGrid() {
+export function renderStoryboardGrid() {
     const cards = state.scenes.map((scene, index) => {
         const nextScene = state.scenes[index + 1];
         return `
@@ -431,7 +526,8 @@ function renderStoryboardGrid() {
                     <div class="storyboard-card-body">
                         <h3>${escapeHtml(scene.title)}</h3>
                         <p>${escapeHtml(scene.durationLabel)}</p>
-                        <div class="card-status">${assetBadge(scene, 'first_frame', '图')} ${assetBadge(scene, 'video', '视频')}</div>
+                        <div class="card-status">${assetBadge(scene, 'first_frame', '图')} ${assetBadge(scene, 'video', '视频')} ${difficultyBadge(scene)}</div>
+                        ${actNameTag(scene) ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
                         <div class="storyboard-card-actions">
                             <button data-action="duplicate-scene" data-id="${scene.id}">${icon('copy', 14)} 复制</button>
                             <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
@@ -452,7 +548,7 @@ function renderStoryboardGrid() {
         </main>`;
 }
 
-function renderTimeline() {
+export function renderTimeline() {
     const scenes = state.scenes.map((scene, index) => {
         const nextScene = state.scenes[index + 1];
         return `
@@ -479,12 +575,12 @@ function renderTimeline() {
             </div>
             <div class="scene-timeline">
                 <div class="scene-timeline-header"><span>分镜序列</span></div>
-                <div class="scene-timeline-list">${scenes}<button class="add-scene-btn" data-action="add-scene">${icon('add', 22)}</button></div>
+                <div class="scene-timeline-list" data-ratio="${escapeHtml(state.workflowRatio || '16:9')}">${scenes}<button class="add-scene-btn" data-action="add-scene">${icon('add', 22)}</button></div>
             </div>
         </section>`;
 }
 
-function renderRightSidebar(scene) {
+export function renderRightSidebar(scene) {
     const candidates = state.sceneCandidates?.[scene?.id] || {};
     const imageCandidates = candidates.images || [];
     const videoCandidates = candidates.videos || [];
@@ -601,10 +697,37 @@ function renderScriptSplitModelConfig(disabled = false) {
     return html;
 }
 
+// 渲染剧本拆分的高级选项：镜头组时长 + 3 个开关（与 video_workflow 剧本节点保持一致）
+function renderScriptSplitOptions(disabled = false) {
+    const durations = [5, 8, 10, 15];
+    const curDuration = durations.includes(Number(state.maxGroupDuration)) ? Number(state.maxGroupDuration) : 15;
+    const durationOptions = durations.map(d =>
+        `<option value="${d}" ${d === curDuration ? 'selected' : ''}>${d}秒</option>`
+    ).join('');
+    const toggleItem = (action, label, checked) => `
+        <label><input type="checkbox" data-action="${action}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span>${escapeHtml(label)}</span></label>`;
+    return `
+        <div class="generate-from-script-model">
+            <label class="config-label">镜头组时长</label>
+            <div class="config-hint">每个分镜组的最大总时长，超时会在同一场景内自动拆分</div>
+            <div class="config-select-wrapper">
+                <select class="chat-mode-select" data-config-select="maxGroupDuration" ${disabled ? 'disabled' : ''}>${durationOptions}</select>
+            </div>
+            <div class="config-label" style="margin-top:12px;">拆分选项</div>
+            <div class="script-split-toggles">
+                ${toggleItem('toggle-force-medium-shot', '对话禁止全景（使用近景/中景）', state.forceMediumShot !== false)}
+                ${toggleItem('toggle-no-bg-music', '不生成背景音乐', state.noBgMusic !== false)}
+                ${toggleItem('toggle-split-multi-dialogue', '拆分多人对话镜头（每人尽量一个镜头）', state.splitMultiDialogue === true)}
+            </div>
+        </div>`;
+}
+
 function renderGenerateFromScriptDialog() {
     if (!state.showGenerateFromScriptDialog) return '';
     const busy = state.isGeneratingFromScript;
     const splitModelConfig = renderScriptSplitModelConfig(busy);
+    const imageModelConfig = renderImageModelConfig(busy);
+    const splitOptionsConfig = renderScriptSplitOptions(busy);
     const autoImageModeButtons = `
         <button type="button" class="sequence-mode-button ${state.autoImageSequenceMode === 'balanced' ? 'active' : ''}" data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="balanced" ${busy ? 'disabled' : ''}>均衡</button>
         <button type="button" class="sequence-mode-button ${state.autoImageSequenceMode === 'quality' ? 'active' : ''}" data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="quality" ${busy ? 'disabled' : ''}>效果</button>
@@ -624,6 +747,10 @@ function renderGenerateFromScriptDialog() {
                 <div class="generate-from-script-model">
                     ${splitModelConfig}
                 </div>
+                <div class="generate-from-script-model">
+                    ${imageModelConfig}
+                </div>
+                ${splitOptionsConfig}
                 <div class="generate-from-script-model">
                     <label class="config-label">分镜图生成模式</label>
                     <div class="sequence-mode-control">${autoImageModeButtons}</div>
@@ -756,9 +883,11 @@ function renderDialogueModelConfig() {
     return html;
 }
 
-function renderImageModelConfig() {
+function renderImageModelConfig(disabled = false) {
     const models = state.textToImageModels.length ? state.textToImageModels : state.imageModels;
-    let html = '<label class="config-label">生图模型</label><div class="config-hint">用于对话改图与图片生成</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="image">';
+    let html = '<label class="config-label">生图模型</label><div class="config-hint">用于对话改图与图片生成</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="image"';
+    if (disabled) html += ' disabled';
+    html += '>';
     models.forEach(m => {
         const val = m.task_id;
         const sel = String(state.selectedImageTaskId) === String(val) ? 'selected' : '';
@@ -883,6 +1012,9 @@ export function renderApp() {
         if (el) savedScrolls.push({ selector, prop, value: el[prop] });
     });
 
+    // 记录旧的主预览媒体（img/video），用于重建后避免相同图片再次解码/绘制导致闪烁
+    const oldPreviewKey = previewMediaKey(document.querySelector('.preview-media'));
+
     app.innerHTML = `
         <div class="app-shell">
             ${renderHeader()}
@@ -899,10 +1031,151 @@ export function renderApp() {
         ${renderModelConfigModal()}
         ${renderGlobalStyleDialog()}`;
 
+    // 主图双缓冲：src 未变则立即显示（避免重建空白），src 变化则等加载后淡入
+    attachPreviewMediaTransition(app.querySelector('.preview-media'), oldPreviewKey);
+
     requestAnimationFrame(() => {
         savedScrolls.forEach(({ selector, prop, value }) => {
             const el = document.querySelector(selector);
             if (el) el[prop] = value;
         });
     });
+}
+
+// ==================== 局部更新 API（供 polling 局部刷新，避免全量重建抢焦点/抖动）====================
+// 设计原则：只更新由 applyTaskStatus 真正改动的区域；保留用户正在交互的控件（输入框焦点、滚动位置）。
+
+// 生成单个分镜的时间线缩略图按钮 innerHTML（不含外层 button，仅 img/span + 时长）。
+function renderTimelineThumbInner(scene) {
+    return `${scene.firstFrameUrl ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">` : '<span>无画面</span>'}
+                    <b>${escapeHtml(scene.durationLabel)}</b>`;
+}
+
+// 生成单个分镜的 grid 卡片 outerHTML（article 整张卡）。
+function renderStoryboardCardOuter(scene) {
+    const nextScene = state.scenes[state.scenes.indexOf(scene) + 1];
+    return `
+            <div class="storyboard-grid-cell">
+                <article class="storyboard-card ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
+                    <div class="storyboard-thumb">${mediaFrame(scene)}</div>
+                    <div class="storyboard-card-body">
+                        <h3>${escapeHtml(scene.title)}</h3>
+                        <p>${escapeHtml(scene.durationLabel)}</p>
+                        <div class="card-status">${assetBadge(scene, 'first_frame', '图')} ${assetBadge(scene, 'video', '视频')} ${difficultyBadge(scene)}</div>
+                        ${actNameTag(scene) ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
+                        <div class="storyboard-card-actions">
+                            <button data-action="duplicate-scene" data-id="${scene.id}">${icon('copy', 14)} 复制</button>
+                            <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
+                        </div>
+                    </div>
+                </article>
+                ${nextScene ? renderInsertSceneSlot(scene, nextScene, 'grid') : ''}
+            </div>`;
+}
+
+// 生成单个 dialogue 行 outerHTML（供局部更新单条对话的 audio 控件，避免触碰其他正在编辑的行）。
+// 需与 renderDialoguePanel 内的行模板保持一致。
+function renderDialogueRowOuter(d) {
+    const characterOptions = '<option value="">旁白</option>' + state.characters.map(c =>
+        `<option value="${c.id}" ${d.characterId === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`
+    ).join('');
+    return `
+            <div class="dialogue-row" data-dialogue-row data-dialogue-id="${d.id}">
+                <select class="dialogue-character" data-dialogue-field="characterId">${characterOptions}</select>
+                <textarea class="dialogue-text" data-dialogue-field="text" placeholder="台词">${escapeHtml(d.text)}</textarea>
+                <div class="dialogue-meta">
+                    <label class="meta-field">语速<input type="number" step="0.1" data-dialogue-field="speed" value="${d.speed ?? 1.0}"></label>
+                    <label class="meta-field">音量<input type="number" step="0.1" data-dialogue-field="volume" value="${d.volume ?? 100}"></label>
+                </div>
+                ${d.audioUrl ? `<audio src="${escapeHtml(d.audioUrl)}" controls class="dialogue-audio"></audio>` : ''}
+                <div class="dialogue-actions">
+                    <button class="tool-button" data-action="generate-voiceover" data-dialogue-id="${d.id}">${icon('mic', 14)} 生成配音</button>
+                    <button class="tool-button" data-action="save-dialogue" data-dialogue-id="${d.id}">${icon('success', 14)} 保存</button>
+                    <button class="tool-button" data-action="delete-dialogue" data-dialogue-id="${d.id}">${icon('delete', 14)}</button>
+                </div>
+            </div>`;
+}
+
+// ==================== 对外局部更新函数（polling 调用）====================
+
+// 更新时间线/grid 中某分镜的缩略图。仅当该分镜在当前视图中存在时才更新。
+// 返回 true 表示执行了更新。
+export function updateSceneThumb(scene) {
+    if (!scene) return false;
+    let updated = false;
+
+    // timeline 模式：替换 thumb 按钮内部内容（保留按钮本身，不破坏 active 态与滚动）
+    const thumbBtn = document.querySelector(`.scene-timeline-thumb[data-scene="${scene.id}"]`);
+    if (thumbBtn) {
+        thumbBtn.innerHTML = renderTimelineThumbInner(scene);
+        updated = true;
+    }
+
+    // grid 模式：替换整张卡片（含缩略图/角标）
+    const card = document.querySelector(`.storyboard-card[data-scene="${scene.id}"]`);
+    if (card) {
+        const cell = card.closest('.storyboard-grid-cell');
+        if (cell) {
+            cell.outerHTML = renderStoryboardCardOuter(scene);
+            updated = true;
+        }
+    }
+    return updated;
+}
+
+// 更新中央主预览 + 右侧候选网格。仅当 scene 为当前选中分镜时才更新。
+// 返回 true 表示执行了更新。timeline 与 grid 两种模式都处理主预览（grid 模式主预览不存在则跳过）。
+export function updateCurrentSceneDetail(scene) {
+    if (!scene || scene.id !== state.currentSceneId) return false;
+    let updated = false;
+
+    // 中央主预览（仅 timeline 模式存在 .preview-wrapper）
+    const previewWrapper = document.querySelector('.preview-wrapper');
+    if (previewWrapper) {
+        const oldKey = previewMediaKey(previewWrapper.querySelector('.preview-media'));
+        // 重建 .preview-wrapper 内容（含 mediaFrame + caption），与 renderCenter 保持一致
+        previewWrapper.innerHTML = `
+                ${mediaFrame(scene)}
+                <div class="preview-caption">
+                    <strong>${escapeHtml(scene.title)}</strong>
+                    <span>${escapeHtml(scene.durationLabel)}</span>
+                </div>`;
+        attachPreviewMediaTransition(previewWrapper.querySelector('.preview-media'), oldKey);
+        updated = true;
+    }
+
+    // 右侧候选网格（无输入控件，整块替换安全）
+    const rightSidebar = document.querySelector('.right-sidebar');
+    if (rightSidebar) {
+        // renderRightSidebar 返回 <aside>...</aside>，解析出其 innerHTML 写入现有容器，保留元素本身
+        const tmp = document.createElement('div');
+        tmp.innerHTML = renderRightSidebar(scene);
+        const newAside = tmp.querySelector('.right-sidebar');
+        if (newAside) rightSidebar.innerHTML = newAside.innerHTML;
+        updated = true;
+    }
+    return updated;
+}
+
+// 更新某条 dialogue 行的 audio 控件（仅在当前选中分镜 + 对话 Tab 时）。
+// 按 dialogue 行粒度替换，避免触碰用户正在编辑的其他行。返回 true 表示更新了。
+export function updateDialogueRow(scene, dialogueId) {
+    if (!scene || scene.id !== state.currentSceneId || state.activeTab !== 'dialogue') return false;
+    const dialogue = (scene.dialogues || []).find(d => d.id === dialogueId);
+    if (!dialogue) return false;
+    const row = document.querySelector(`.dialogue-row[data-dialogue-id="${dialogueId}"]`);
+    if (!row) return false;
+    row.outerHTML = renderDialogueRowOuter(dialogue);
+    return true;
+}
+
+// 刷新时间线进度行的总时长文本。
+// getTotalDuration() 由各 scene.duration 求和得出，某分镜 duration 因音频完成同步而变化后，
+// 进度行 span 不会随 updateSceneThumb/updateCurrentSceneDetail 自动重渲（仅全量 renderApp 才刷新），
+// 因此需在轮询局部更新里显式调用本函数。返回 true 表示更新了。
+export function updateTimelineProgress() {
+    const span = document.querySelector('.timeline-progress-row span');
+    if (!span) return false;
+    span.textContent = `${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}`;
+    return true;
 }

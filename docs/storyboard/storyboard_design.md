@@ -50,6 +50,8 @@ web/js/storyboard/
 | `video_prompt` | `scene.videoPrompt` | 视频提示词（生视频/数字人动作描述） |
 | `video_type` | `scene.videoType` | 分镜类型 image/video/digital_human |
 | `video_config_json` | `scene.videoConfigJson` | 视频生成参数偏好 |
+| `difficulty` | `scene.difficulty` | 分镜难易程度 易/中/难（见 2.3.1.1），卡片 badge 展示 |
+| `act_name` | `scene.actName` | 所属幕/分镜组名称（见 2.3.1.2），卡片标签展示 |
 | `selected_first_frame_id` | `scene.selectedFirstFrameId` | 当前选中首帧 asset 指针 |
 | `selected_last_frame_id` | `scene.selectedLastFrameId` | 当前选中尾帧 asset 指针 |
 | `selected_video_id` | `scene.selectedVideoId` | 当前选中视频 asset 指针 |
@@ -181,7 +183,7 @@ World (世界)
 | workflow_id | INT UNSIGNED | 关联工作流 ID（可选，用于一键转视频） |
 | script_id | INT UNSIGNED | 关联剧本 ID |
 | title | VARCHAR(255) | 故事板标题（如 "第1集：虚实之间"） |
-| total_duration | INT | 总时长（秒） |
+| total_duration | DECIMAL(10,3) | 总时长（秒，毫秒级精度，由各分镜 duration 求和） |
 | status | TINYINT | 状态：1=编辑中, 2=已完成 |
 | **style** | **VARCHAR(255)** | **画风名称（参考 video_workflow.style）** |
 | **style_reference_image** | **VARCHAR(500)** | **画风参考图 URL（参考 video_workflow.style_reference_image）** |
@@ -200,7 +202,7 @@ CREATE TABLE storyboard (
     workflow_id INT UNSIGNED DEFAULT NULL COMMENT '关联工作流ID（可选，一键转视频用）',
     script_id INT UNSIGNED DEFAULT NULL COMMENT '关联剧本ID',
     title VARCHAR(255) DEFAULT '' COMMENT '故事板标题',
-    total_duration INT DEFAULT 0 COMMENT '总时长（秒）',
+    total_duration DECIMAL(10,3) DEFAULT 0.000 COMMENT '总时长（秒），由各分镜 duration 求和（毫秒级精度）',
     status TINYINT DEFAULT 1 COMMENT '1=编辑中 2=已完成',
     style VARCHAR(255) DEFAULT NULL COMMENT '画风名称（同 video_workflow.style）',
     style_reference_image VARCHAR(500) DEFAULT NULL COMMENT '画风参考图URL',
@@ -277,6 +279,8 @@ World 对象通过 world_id 查询
 | **video_prompt** | **TEXT** | **视频提示词（生视频/数字人的动作描述）** |
 | **video_type** | **VARCHAR(32)** | **分镜类型，取 `SceneVideoType`：image / video / digital_human（见 2.3.1）** |
 | video_config_json | JSON | 视频生成参数偏好（模型 / 分辨率 / 时长） |
+| **difficulty** | **VARCHAR(8)** | **分镜难易程度：易/中/难，见 `SceneDifficulty`（config/constant.py），由 LLM 综合人物数量/动作/时长/道具/镜头运动判定，默认"中"** |
+| **act_name** | **VARCHAR(255)** | **所属幕/分镜组名称，源自 LLM `shot_group.group_name`（提升为独立列；`prompt_json.source.group_name` 仍保留作溯源）** |
 | **selected_first_frame_id** | **INT UNSIGNED** | **当前选中首帧 → storyboard_scene_asset.id** |
 | **selected_last_frame_id** | **INT UNSIGNED** | **当前选中尾帧 → storyboard_scene_asset.id** |
 | **selected_video_id** | **INT UNSIGNED** | **当前选中视频 → storyboard_scene_asset.id** |
@@ -292,11 +296,13 @@ CREATE TABLE storyboard_scene (
     storyboard_id INT UNSIGNED NOT NULL,
     sort_order DOUBLE DEFAULT 0 COMMENT '排序序号（浮点二分，见 2.3.2）',
     title VARCHAR(255) DEFAULT '',
-    duration INT DEFAULT 5,
+    duration DECIMAL(10,3) DEFAULT 5.000 COMMENT '分镜时长（秒），音频全部完成时自动同步为选中配音求和（毫秒级精度）',
     prompt_json JSON DEFAULT NULL COMMENT '画面提示词: perspective/style/scene_desc/character_desc',
     video_prompt TEXT DEFAULT NULL COMMENT '视频提示词（生视频/数字人动作描述）',
     video_type VARCHAR(32) NOT NULL DEFAULT 'video' COMMENT '分镜类型 image/video/digital_human，见 SceneVideoType',
     video_config_json JSON DEFAULT NULL COMMENT '视频生成参数偏好: 模型/分辨率/时长',
+    difficulty VARCHAR(8) NOT NULL DEFAULT '中' COMMENT '分镜难易程度: 易/中/难，见 SceneDifficulty',
+    act_name VARCHAR(255) DEFAULT NULL COMMENT '所属幕/分镜组名称（源自 LLM shot_group.group_name）',
     selected_first_frame_id INT UNSIGNED DEFAULT NULL COMMENT '当前选中首帧 asset id',
     selected_last_frame_id INT UNSIGNED DEFAULT NULL COMMENT '当前选中尾帧 asset id',
     selected_video_id INT UNSIGNED DEFAULT NULL COMMENT '当前选中视频 asset id',
@@ -341,6 +347,47 @@ class SceneVideoType:
 | `digital_human` | 数字人（13/32） | 视频（数字人），输入=人物形象图 + 当前对话配音 |
 
 > 数字人形式下，`selected_video_id` 指向的 asset 其 `ai_tool` 为数字人任务；人物形象图可复用 `selected_first_frame_id` 指向的 asset。
+
+### 2.3.1.1 分镜难易程度枚举 `SceneDifficulty`（config/constant.py）
+
+分镜的难易程度用独立枚举类维护，由 LLM 在剧本解析时根据**人物数量、动作复杂度、时长、道具、镜头运动**综合判定。写法参照 `StoryType`（`config/constant.py`）的 `_CONSTANT_GROUP` + `_LABELS` + `normalize()` 范式：
+
+```python
+class SceneDifficulty:
+    """分镜难易程度"""
+    _CONSTANT_GROUP = True
+    _LABELS = {'EASY': '易', 'MEDIUM': '中', 'HARD': '难'}
+    EASY = "易"
+    MEDIUM = "中"
+    HARD = "难"
+    VALID_VALUES = (EASY, MEDIUM, HARD)
+    DEFAULT = MEDIUM
+
+    @classmethod
+    def normalize(cls, value) -> str:
+        ...
+```
+
+判定标准（写入 `llm/script_parser.py` 的 system prompt，作为 LLM 输出 `difficulty` 字段的依据）：
+
+| 难度 | 判定条件（综合权衡，取整体倾向） |
+|------|------|
+| 易 | 单人或无角色、静态/轻微动作、短镜头（≤5秒）、无关键道具或仅普通道具、固定镜头/简单构图 |
+| 中 | 2-3 人有互动、有连续但常规的动作、中等时长（6-10秒）、1-2 个关键道具、简单镜头运动（推进/跟随） |
+| 难 | 4 人以上群体调度、打斗/追逐/复杂连续动作、长镜头（>10秒）且动作密集、多个关键道具且强交互、复杂镜头运动/强透视/多层景深 |
+
+数据流：
+- LLM 在每个 shot 输出 `difficulty`（易/中/难）+ `difficulty_reason`（一句话依据）。
+- `api/storyboard.py::build_storyboard_scenes_from_parsed_script` 用 `SceneDifficulty.normalize()` 规范化后写入 scene payload 的 `difficulty` 顶层键；`difficulty_reason` 进 `prompt_json.source` 供溯源。
+- 前端 `adapters.js::sceneFromApi` 映射为 `scene.difficulty`，卡片渲染 `difficultyBadge`（易=绿/中=橙/难=红）。
+
+### 2.3.1.2 幕字段 `act_name`
+
+"幕"（act）在重构前并未真正持久化——`shot_group` 只有 `group_name`（如"开场镜头"/"第一幕：迷雾森林"）和 `group_type`，`prompt_json.source` 存的就是这两个。本次将 **`group_name` 提升为独立的 DB 列 `act_name`**，便于后续按幕筛选/排序/统计/批量生图策略。
+
+- **数据流**：`build_storyboard_scenes_from_parsed_script` 从 `group.group_name` 提取 `act_name`，并用正则 `r"\s*-\s*片段\d+$"` 剥掉 `reorganize_shot_groups` 时长拆组产生的" - 片段N"后缀，避免污染。
+- **兼容**：`prompt_json.source.group_name` 仍保留（下游 `_enrich_scene_location_props` 依赖 source 结构）；前端 `sceneFromApi` 在 `act_name` 为空时回落到 `source.group_name`。
+- **旧数据**：不回填，`act_name` 保持 NULL（迁移 no_113 仅加列）。
 
 ### 2.3.2 排序策略：浮点二分（sort_order）
 
@@ -726,7 +773,7 @@ async def create_storyboard(request: Request):
 | POST | `/api/storyboard/scene/{scene_id}/generate-video` | `storyboard:generate` | 生成视频/数字人（按 `video_type`）：需已选中首帧；数字人需 `audio_path`。Body: `task_type/prompt/duration/audio_path` |
 | POST | `/api/storyboard/scene/{scene_id}/ai-chat` | `storyboard:generate` | AI 对话改图（SSE 流，占位） |
 | PUT | `/api/storyboard/scene/{scene_id}/prompt` | `storyboard:update` | 更新画面提示词 `prompt_json` |
-| GET | `/api/storyboard/scene/{scene_id}/task-status` | `storyboard:view` | 轮询任务状态：返回选中 asset 的 `first_frame/last_frame/video`（来自 `ai_tools.status/result_url`）+ `dialogues`（来自 `ai_audio.status`） |
+| GET | `/api/storyboard/scene/{scene_id}/task-status` | `storyboard:view` | 轮询任务状态：返回选中 asset 的 `first_frame/last_frame/video`（来自 `ai_tools.status/result_url`）+ `dialogues`（来自 `ai_audio.status`）+ `scene_duration`（当前分镜时长浮点秒；分镜下所有配音完成后由后端自动同步为音频求和） |
 
 > 生成任务由后台 scheduler 异步处理（图片/视频/数字人走 `TASK_TYPE_GENERATE_VIDEO`，配音走 `TASK_TYPE_GENERATE_AUDIO`），完成后回填 `ai_tools.result_url`/`ai_audio.result_url`；前端轮询 `task-status` 取结果并刷新画面。算力在接口预扣（`async_make_perseids_request` deduct），任务失败由 scheduler 按 `transaction_id` 退还。
 
@@ -923,6 +970,8 @@ await ZJTi18n.init(['common', 'storyboard']);
 - **算力显示**：⚡ 余额（复用现有 `/api/computing-power` 接口）
 
 #### 4.5.2 Left Sidebar（左侧编辑面板）
+
+**顶部品牌区**：显示当前分镜的幕号与分镜编号。幕号标签（如「幕01」）来自剧本解析时的 `group_id`（`grp_001` → 幕01，提取数字部分并补零），存放在 `prompt_json.source.group_id`，由 `adapters.js` 的 `sceneFromApi` 提取为 `scene.groupId` 顶层字段；手动新增的分镜无 `group_id`，不显示幕号。
 
 **Tab 切换（音乐 Tab 已移除——音乐属时间轴功能，本期后置）：**
 

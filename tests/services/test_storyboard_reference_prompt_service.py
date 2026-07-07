@@ -1,5 +1,6 @@
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
+    build_reference_legend,
     build_storyboard_reference_items,
 )
 
@@ -70,6 +71,20 @@ def test_reference_items_include_prompt_matched_props_and_append_legend():
         ("场景", "布冯的房间"),
     ]
     assert "参考图说明：图1是角色：德保罗。图2是道具：公文包。图3是场景：布冯的房间。" in prompt
+
+
+def test_build_reference_legend_renders_empty_name_without_colon():
+    # asset items (e.g. previous storyboard frame) carry an empty name and must
+    # render as "图N是前一分镜。" without a trailing "：".
+    items = [
+        {"type": "角色", "name": "奶酪", "url": "https://cdn.test/cheese.png"},
+        {"type": "角色", "name": "奶昔", "url": "https://cdn.test/milkshake.png"},
+        {"type": "前一分镜", "name": "", "url": "https://cdn.test/prev.png"},
+    ]
+    legend = build_reference_legend(items)
+    assert legend == (
+        "参考图说明：图1是角色：奶酪。图2是角色：奶昔。图3是前一分镜。"
+    )
 
 
 def test_storyboard_image_skill_requires_reference_legend_and_prompt_matched_assets():

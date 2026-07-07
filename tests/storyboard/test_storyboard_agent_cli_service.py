@@ -136,6 +136,7 @@ def patched_storyboard_cli(monkeypatch):
     created_assets = []
     selected_assets = []
     scene_updates = []
+    recalc_calls = []
 
     class FakeSceneModel:
         @staticmethod
@@ -183,6 +184,11 @@ def patched_storyboard_cli(monkeypatch):
         @staticmethod
         def create_scenes(storyboard_id, user_id, scenes):
             return len(scenes)
+
+        @staticmethod
+        def recalc_total_duration(storyboard_id):
+            recalc_calls.append(int(storyboard_id))
+            return 9
 
     class FakeScriptModel:
         @staticmethod
@@ -327,6 +333,7 @@ def patched_storyboard_cli(monkeypatch):
         created_assets=created_assets,
         selected_assets=selected_assets,
         scene_updates=scene_updates,
+        recalc_calls=recalc_calls,
         batch_jobs=batch_jobs,
         batch_items=batch_items,
     )
@@ -464,6 +471,44 @@ def test_generate_image_appends_source_image_after_described_references(patched_
     assert image_urls[-1] == "https://cdn.test/previous-frame.png"
     assert "https://cdn.test/umbrella.png" in image_urls[:-1]
     assert "https://cdn.test/alley.png" in image_urls[:-1]
+
+    # The previous-frame image must also be described in the reference legend so
+    # that the image model knows what each URL represents (图号与 URL 一一对应).
+    prompt = kwargs["prompt"]
+    assert "参考图说明" in prompt
+    assert "图3是前一分镜。" in prompt
+    # legend 图号数量必须与 image_url 队列长度一致
+    legend_part = prompt[prompt.index("参考图说明"):]
+    assert legend_part.count("图") >= len(image_urls)
+
+
+def test_generate_image_skips_duplicate_source_image_in_legend(patched_storyboard_cli):
+    """When source_image URL coincides with an existing reference URL, the legend
+    must not add a duplicate entry (图号仍与去重后的 URL 队列一一对应)."""
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+
+    # alley.png is the scene reference for scene 11; reusing it as source_image
+    # should be de-duplicated rather than described twice.
+    service.generate_image(
+        scene_id=11,
+        user_id=7,
+        auth_token="token",
+        mode="image_edit",
+        prompt="Keep visual continuity.",
+        source_image="https://cdn.test/alley.png",
+    )
+
+    method, kwargs = patched_storyboard_cli.submitter.calls[0]
+    image_urls = kwargs["image_url"].split(",")
+
+    assert method == "image_edit"
+    # URL queue has no duplicate
+    assert image_urls.count("https://cdn.test/alley.png") == 1
+    prompt = kwargs["prompt"]
+    # legend must not contain a "前一分镜" entry for the duplicated URL
+    assert "前一分镜" not in prompt
 
 
 def test_generate_image_auto_falls_back_to_text_without_references(patched_storyboard_cli, monkeypatch):
@@ -812,9 +857,13 @@ def test_auto_generate_missing_images_defaults_task_type_from_storyboard_config(
 
     result = service.auto_generate_missing_images(storyboard_id=22, user_id=7, auth_token="token")
 
-    assert result["submitted_count"] == 1
+    # 修复后不再同步推进 batch（避免与调度器并发重复提交），交由调度器统一处理。
+    # 因此 submitted_count=0、generate_image 未被同步调用，但 job 已创建（status=pending）。
+    assert result["submitted_count"] == 0
+    assert result["batch_id"]
+    assert result["status"] == "pending"
     assert captured_task_types == [1]
-    assert generated[0]["scene_id"] == 11
+    assert generated == []
 
 
 def test_plan_image_batch_dependencies_by_sequence_mode(patched_storyboard_cli, monkeypatch):
@@ -1073,3 +1122,169 @@ def test_insert_scene_after_existing_scene_creates_between_neighbors(patched_sto
     assert created[0]["title"] == "Inserted"
     assert created[0]["prompt_json"] == {"scene_desc": "Inserted beat"}
     assert created[0]["last_modified_user_id"] == 7
+
+
+def _patch_update_scene_models(monkeypatch, module, fixture, *, scene_duration=6,
+                                scene_title="Opening", storyboard_total=11,
+                                storyboard_user_id=7):
+    """Wire isolated fakes for update_scene tests and expose captured calls.
+
+    Reuses the fixture's recalc_calls list (reset per test) so the global
+    FakeStoryboardModel.recalc_total_duration records into a clean buffer.
+    """
+    scene = SimpleNamespace(
+        id=11,
+        storyboard_id=22,
+        title=scene_title,
+        duration=scene_duration,
+        prompt_json={"scene_desc": "A detective enters a rainy alley."},
+        video_prompt="Slow dolly in.",
+        video_type="video",
+        video_config_json=None,
+        selected_first_frame_id=101,
+        selected_last_frame_id=None,
+        selected_video_id=None,
+        last_modified_user_id=1,
+    )
+    storyboard = SimpleNamespace(
+        id=22,
+        world_id=99,
+        user_id=storyboard_user_id,
+        title="Case",
+        total_duration=storyboard_total,
+    )
+    scene_updates = []
+    recalc_calls = fixture.recalc_calls
+    recalc_calls.clear()
+
+    def fake_scene_get(record_id):
+        return scene if int(record_id) == 11 else None
+
+    def fake_scene_update(record_id, **kwargs):
+        scene_updates.append((record_id, kwargs))
+        # Reflect changes onto the in-memory scene so get_by_id returns updated state.
+        for key, value in kwargs.items():
+            setattr(scene, key, value)
+        return 1
+
+    def fake_storyboard_get(record_id):
+        return storyboard if int(record_id) == 22 else None
+
+    def fake_recalc(storyboard_id):
+        recalc_calls.append(int(storyboard_id))
+        return 9
+
+    monkeypatch.setattr(module.StoryboardSceneModel, "get_by_id", fake_scene_get)
+    monkeypatch.setattr(module.StoryboardSceneModel, "update", fake_scene_update)
+    monkeypatch.setattr(module.StoryboardModel, "get_by_id", fake_storyboard_get)
+    monkeypatch.setattr(module.StoryboardModel, "recalc_total_duration", fake_recalc)
+
+    return SimpleNamespace(
+        scene=scene,
+        storyboard=storyboard,
+        scene_updates=scene_updates,
+        recalc_calls=recalc_calls,
+    )
+
+
+def test_update_scene_duration_recomputes_total_duration(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    fakes = _patch_update_scene_models(monkeypatch, module, patched_storyboard_cli)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service.update_scene(scene_id=11, user_id=7, duration=8)
+
+    assert result["success"] is True
+    assert result["scene_id"] == 11
+    assert result["storyboard_id"] == 22
+    record_id, fields = fakes.scene_updates[0]
+    assert record_id == 11
+    assert fields["duration"] == 8
+    assert fields["last_modified_user_id"] == 7
+    # duration changed -> total_duration must be recomputed
+    assert fakes.recalc_calls == [22]
+    assert result["total_duration"] == 9
+
+
+def test_update_scene_non_duration_fields_skip_total_recalc(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    fakes = _patch_update_scene_models(monkeypatch, module, patched_storyboard_cli, storyboard_total=11)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service.update_scene(
+        scene_id=11,
+        user_id=7,
+        title="New title",
+        prompt_json={"scene_desc": "Updated description."},
+        video_prompt="Updated video prompt.",
+    )
+
+    fields = fakes.scene_updates[0][1]
+    assert fields["title"] == "New title"
+    assert fields["prompt_json"] == {"scene_desc": "Updated description."}
+    assert fields["video_prompt"] == "Updated video prompt."
+    assert "duration" not in fields
+    # Non-duration patch must not trigger recalc; total_duration echoes the storyboard value.
+    assert fakes.recalc_calls == []
+    assert result["total_duration"] == 11
+
+
+def test_update_scene_without_any_field_raises(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    _patch_update_scene_models(monkeypatch, module, patched_storyboard_cli)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    with pytest.raises(module.StoryboardCliError) as exc:
+        service.update_scene(scene_id=11, user_id=7)
+
+    assert exc.value.error_code == "missing_parameter"
+
+
+def test_update_scene_missing_scene_raises_not_found(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    _patch_update_scene_models(monkeypatch, module, patched_storyboard_cli)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    with pytest.raises(module.StoryboardCliError) as exc:
+        service.update_scene(scene_id=999, user_id=7, duration=8)
+
+    assert exc.value.error_code == "not_found"
+
+
+def test_update_scene_forbidden_for_other_user(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    _patch_update_scene_models(monkeypatch, module, patched_storyboard_cli, storyboard_user_id=7)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    with pytest.raises(module.StoryboardCliError) as exc:
+        service.update_scene(scene_id=11, user_id=999, duration=8)
+
+    assert exc.value.error_code == "forbidden"
+
+
+def test_update_scene_clamps_duration_to_minimum_one(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    fakes = _patch_update_scene_models(monkeypatch, module, patched_storyboard_cli)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    service.update_scene(scene_id=11, user_id=7, duration=0)
+
+    assert fakes.scene_updates[0][1]["duration"] == 1
+
+    service.update_scene(scene_id=11, user_id=7, duration=-3)
+    assert fakes.scene_updates[1][1]["duration"] == 1
+
+
+def test_update_scene_via_command_service_route(patched_storyboard_cli, monkeypatch):
+    """The command dispatcher must route update-scene and coerce duration via _to_int."""
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+    module = patched_storyboard_cli.module
+    fakes = _patch_update_scene_models(monkeypatch, module, patched_storyboard_cli)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    command_service = StoryboardAgentCommandService(service=service)
+
+    result = command_service.execute("update-scene", {"scene_id": 11, "user_id": 7, "duration": "10"})
+
+    assert result["success"] is True
+    assert fakes.scene_updates[0][1]["duration"] == 10
+    assert result["environment"]  # _with_environment adds it

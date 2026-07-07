@@ -15,7 +15,7 @@ from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
 from config.config_util import get_config
-from config.constant import FilePathConstants, StoryType
+from config.constant import FilePathConstants, StoryType, GridConfig
 
 # 模块级日志
 logger = logging.getLogger(__name__)
@@ -4316,6 +4316,328 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
             'success': False,
             'error': f'4宫格图像生成过程中发生错误: {str(e)}'
         }
+
+
+def _resolve_image_edit_task_id(user_id: str, world_id: str) -> Optional[int]:
+    """
+    解析图片编辑所需的 task_id（模型配置 id）。
+
+    复用 edit_image() 的模型选择逻辑：若用户当前选中的模型不支持 IMAGE_EDIT，
+    则 fallback 到默认 IMAGE_EDIT 模型（id=DEFAULT_TEXT_TO_IMAGE_TASK_ID）。
+    返回 None 表示无可用 IMAGE_EDIT 模型。
+    """
+    from config.unified_config import UnifiedConfigRegistry, TaskCategory
+    task_id = _get_text_to_image_task_id(user_id, world_id)
+    config = UnifiedConfigRegistry.get_by_id(task_id)
+    if config and (
+        config.category == TaskCategory.IMAGE_EDIT
+        or TaskCategory.IMAGE_EDIT in getattr(config, 'categories', [])
+    ):
+        return task_id
+    image_edit_models = UnifiedConfigRegistry.get_by_category(TaskCategory.IMAGE_EDIT)
+    if not image_edit_models:
+        return None
+    fallback = next(
+        (m for m in image_edit_models if m.id == DEFAULT_TEXT_TO_IMAGE_TASK_ID),
+        image_edit_models[0],
+    )
+    logger.warning(
+        f"宫格 i2i：当前模型不支持图片编辑，自动切换到 {fallback.name} (id={fallback.id})"
+    )
+    return fallback.id
+
+
+def _to_public_http_url(url: str, comfyui_base_url: str) -> Optional[str]:
+    """
+    将本地 /upload/... 路径转为可被 /api/image-edit 接受的公开 http(s) URL。
+
+    edit_image() 仅接受 http/https 协议（防 SSRF），本地相对路径必须先转换。
+    已是 http/https 的原样返回；无法识别的返回 None。
+    """
+    if not url or not isinstance(url, str):
+        return None
+    url = url.strip()
+    if url.lower().startswith(('http://', 'https://')):
+        return url
+    # 本地相对路径：以 / 开头则拼到 host 根，否则补 /
+    if url.startswith('/'):
+        return f"{comfyui_base_url.rstrip('/')}{url}"
+    return f"{comfyui_base_url.rstrip('/')}/{url}"
+
+
+def submit_grid_image_task(
+    user_id: str,
+    world_id: str,
+    auth_token: str,
+    item_names: List[str],
+    prompts: List[str],
+    item_type: int,
+    grid_size: int,
+    mode: str = "text_to_image",
+    parent_reference_image: Optional[str] = None,
+    target_entity_ids: Optional[List[Optional[int]]] = None,
+) -> Dict[str, Any]:
+    """
+    通用宫格图像提交入口（支持 2x2 四宫格 / 3x3 九宫格，支持 t2i / i2i 两种模式）。
+
+    两个干净分支，互不污染：
+      - mode="text_to_image"：复用 generate_text_to_image（/api/text-to-image，
+        aspect_ratio，is_grid=True 强制最大分辨率），内部自动创建 grid_image_tasks。
+      - mode="image_edit"：以父场景图为输入走图生图（/api/image-edit，ref_image_urls，
+        ratio，IMAGE_EDIT 模型），显式创建带 grid_type 的 grid_image_tasks 记录，
+        使后台轮询器能按 item_type 触发宫格切图。
+
+    Args:
+        user_id / world_id / auth_token: 用户/世界/认证。
+        item_names: 各格子名称（placeholder 占位项会被切图时跳过）。
+        prompts: 各格子提示词。
+        item_type: ItemType 宫格类型（4=角色四宫格, 5=场景四宫格, 6=道具四宫格）。
+        grid_size: GridConfig.SIZE_2X2(4) 或 GridConfig.SIZE_3X3(9)。
+        mode: "text_to_image" 或 "image_edit"。
+        parent_reference_image: i2i 模式下的父场景参考图（本地路径或 http URL）。
+        target_entity_ids: 各格子对应的切图回写目标 DB id（与 item_names 等长，按索引对齐；
+            placeholder 格子传 None）。仅 item_type=5(location_grid) 时用于按 id 回写
+            location.reference_image；为 None 时回退按 item_name 回写。
+
+    Returns:
+        dict: 与 generate_4grid_images 结构一致的结果。
+    """
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
+
+    if grid_size not in GridConfig.VALID_SIZES:
+        return {'success': False, 'error': f'不支持的 grid_size={grid_size}，允许: {GridConfig.VALID_SIZES}'}
+    if item_type not in ItemType.GRID_MAP:
+        return {'success': False, 'error': f'无效的 item_type={item_type}，必须为宫格类型(4/5/6)'}
+    if mode not in ("text_to_image", "image_edit"):
+        return {'success': False, 'error': f'无效的 mode={mode}，必须为 text_to_image 或 image_edit'}
+
+    item_info = ItemType.GRID_MAP[item_type]
+
+    # 数量校验：placeholder 不计入有效项，但总长度需等于 grid_size
+    if len(item_names) != grid_size:
+        return {'success': False, 'error': f'item_names 必须包含 {grid_size} 个名称（含 placeholder），当前 {len(item_names)}'}
+    if len(prompts) != grid_size:
+        return {'success': False, 'error': f'prompts 必须包含 {grid_size} 个提示词，当前 {len(prompts)}'}
+    # target_entity_ids 长度校验（提供时必须与 item_names 对齐）
+    if target_entity_ids is not None and len(target_entity_ids) != grid_size:
+        return {'success': False, 'error': f'target_entity_ids 长度({len(target_entity_ids)})必须等于 grid_size({grid_size})'}
+
+    grid_layout = "2x2" if grid_size == GridConfig.SIZE_2X2 else "3x3"
+
+    # i2i 模式必须有父图
+    if mode == "image_edit" and not parent_reference_image:
+        return {'success': False, 'error': 'image_edit 模式必须提供 parent_reference_image'}
+
+    _logger.info(
+        "[GRID] submit_grid_image_task mode=%s layout=%s type=%s names=%s target_ids=%s",
+        mode, grid_layout, item_info['name_cn'], item_names, target_entity_ids,
+    )
+
+    # 构造宫格 prompt JSON（shots 列表天然支持任意长度）
+    grid_prompt = {
+        "grid_layout": grid_layout,
+        "grid_aspect_ratio": "16:9",
+        "global_watermark": "",
+        "shots": [
+            {"shot_number": f"Shot {i + 1}", "prompt_text": p}
+            for i, p in enumerate(prompts)
+        ],
+    }
+    prompt_json_str = json.dumps(grid_prompt, ensure_ascii=False)
+
+    # item_name 列只存「展示短 key」（避免 9 个中文名逗号拼接超 varchar(255)）。
+    # 真实名称与回写目标 id 分别落 item_names_json / target_entity_ids_json，
+    # 切图与回写统一通过 GridImageTask.get_item_names_list() / get_target_entity_ids_list() 读取。
+    if target_entity_ids is not None:
+        # 用真实 id 列表生成稳定短 key（如 "loc#100,101,#"），placeholder 位用 # 占位
+        display_key = "loc#" + ",".join(
+            (str(tid) if tid is not None else "#") for tid in target_entity_ids
+        )
+    else:
+        # 无 target_entity_ids（如四宫格 t2i）：退化为名称首字符拼接，保持兼容
+        display_key = ",".join(n[:8] for n in item_names)
+    combined_item_name = display_key
+
+    # ---------- 分支 A：纯文生图 ----------
+    if mode == "text_to_image":
+        result = generate_text_to_image(
+            user_id=user_id,
+            world_id=world_id,
+            auth_token=auth_token,
+            prompt=prompt_json_str,
+            aspect_ratio="16:9",
+            count=1,
+            item_type=item_type,
+            item_name=combined_item_name,
+            force_update_exist_image=False,
+            is_grid=True,
+        )
+        if result.get('success'):
+            result['item_type_name'] = item_info['name_cn']
+            result['base_item_type'] = item_info['base_type']
+            result['item_names'] = item_names
+        return result
+
+    # ---------- 分支 B：图生图（父场景图作为输入）----------
+    # 复用 edit_image() 的模型选择 + URL 校验 + 请求构造，但显式创建带 grid_type 的 task。
+    server_config = get_config().get("server", {})
+    comfyui_base_url = server_config.get("comfyui_base_url_inner") or server_config.get("host", "")
+    if not comfyui_base_url:
+        return {'success': False, 'error': '配置文件中未找到 comfyui_base_url_inner 或 host 配置'}
+
+    # 父图转公开 http URL
+    parent_url = _to_public_http_url(parent_reference_image, comfyui_base_url)
+    if not parent_url:
+        return {'success': False, 'error': f'parent_reference_image 无法转为有效 http URL: {parent_reference_image}'}
+
+    # 解析模型 task_id（IMAGE_EDIT 类别，含 fallback）
+    edit_task_id = _resolve_image_edit_task_id(user_id, world_id)
+    if edit_task_id is None:
+        return {'success': False, 'error': '无可用图片编辑模型，无法执行宫格 i2i'}
+    model_name = _get_model_name_by_task_id(edit_task_id)
+
+    if not auth_token:
+        return {'success': False, 'error': '认证令牌不能为空'}
+
+    # 发起图生图请求（参照 edit_image L632-658）
+    api_url = f"{comfyui_base_url.rstrip('/')}/api/image-edit"
+    request_data = {
+        'prompt': prompt_json_str,
+        'task_id': edit_task_id,
+        'ratio': "16:9",  # i2i 端点字段名是 ratio，不是 aspect_ratio
+        'count': 1,
+        'user_id': user_id,
+        'auth_token': auth_token,
+        'ref_image_urls': parent_url,  # 逗号分隔的父图 URL
+    }
+    try:
+        from task.mock_interceptor import is_mock_enabled, generate_mock_project_id
+        if is_mock_enabled():
+            result_data = {'project_ids': [generate_mock_project_id()]}
+            _logger.info(f"[MOCK] submit_grid_image_task i2i short-circuit pid={result_data['project_ids'][0]}")
+        else:
+            response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+            response.raise_for_status()
+            result_data = response.json()
+    except httpx.HTTPStatusError as e:
+        error_detail = f'宫格图生图请求失败: {str(e)}'
+        try:
+            detail = e.response.json().get('detail', '')
+            if detail:
+                error_detail = detail
+        except Exception:
+            pass
+        return {'success': False, 'error': error_detail, 'model_used': model_name}
+    except Exception as e:
+        return {'success': False, 'error': f'宫格图生图请求异常: {str(e)}'}
+
+    project_ids = result_data.get('project_ids', [])
+    if not project_ids:
+        return {'success': False, 'error': '宫格图生图请求成功但未返回 project_ids'}
+
+    # 显式创建带 grid_type 的 grid_image_tasks 记录（绕过 create_image_task 的长名 task_key）
+    # 用 project_id 短键，避免 9 名拼接超长/撞键
+    task_key = f"grid:{user_id}:{world_id}:{project_ids[0]}"
+    # target_entity_ids 中的 None（placeholder 位）过滤为纯 id 列表写入 JSON，
+    # 使 JSON_CONTAINS 查询与回写对齐语义清晰。
+    target_ids_for_db = [tid for tid in (target_entity_ids or []) if tid is not None]
+    try:
+        from model import GridImageTasksModel, GridImageTaskStatus
+        existing = GridImageTasksModel.get_by_task_key(task_key)
+        if existing and existing.status not in [GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING]:
+            GridImageTasksModel.delete_by_task_key(task_key)
+        GridImageTasksModel.create(
+            task_key=task_key,
+            project_id=project_ids[0],
+            item_type=item_type,
+            item_name=combined_item_name,
+            user_id=user_id,
+            world_id=world_id,
+            comfyui_base_url=comfyui_base_url,
+            auth_token=auth_token,
+            max_attempts=60,
+            prompt=prompt_json_str,
+            task_config_id=str(edit_task_id),
+            aspect_ratio="16:9",
+            is_grid=True,
+            grid_size=grid_size,
+            grid_layout=grid_layout,
+            item_names=item_names,
+            target_entity_ids=target_ids_for_db,
+            parent_reference_image=parent_reference_image,
+        )
+        _logger.info(f"[GRID] 宫格 i2i 任务已创建: {task_key}, project_id={project_ids[0]}, target_ids={target_ids_for_db}")
+    except Exception as e:
+        # 入库失败必须返回失败：否则上层误认为已提交，但后台无任务可轮询/切图/回写。
+        # ComfyUI 侧的图生图请求虽已提交，但没有任务记录就无法走切图回写，等于无效提交。
+        _logger.error(f"[GRID] 宫格 i2i 后台任务记录创建失败（请求已提交但无任务记录）: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': f'宫格 i2i 请求已提交但后台任务记录创建失败: {e}',
+            'project_ids': project_ids,
+            'task_key': task_key,
+            'model_used': model_name,
+        }
+
+    return {
+        'success': True,
+        'project_ids': project_ids,
+        'status': 'submitted',
+        'mode': 'image_edit',
+        'grid_layout': grid_layout,
+        'item_type_name': item_info['name_cn'],
+        'base_item_type': item_info['base_type'],
+        'item_names': item_names,
+        'target_entity_ids': target_ids_for_db,
+        'model_used': model_name,
+        'task_key': task_key,
+        'message': f'宫格 i2i 请求已提交（父图作为输入），project_ids={project_ids}',
+    }
+
+
+def generate_9grid_location_images(
+    user_id: str,
+    world_id: str,
+    auth_token: str,
+    sub_location_names: List[str],
+    prompts: List[str],
+    parent_reference_image: Optional[str] = None,
+    target_entity_ids: Optional[List[Optional[int]]] = None,
+) -> Dict[str, Any]:
+    """
+    生成 3x3 九宫格子场景参考图（以父场景图为输入，走图生图）。
+
+    用于分镜首帧生成前，先用父场景图作为 i2i 输入，一次合成 9 个子场景参考图，
+    切图后按子场景 location.id 回写 reference_image。
+
+    不足 9 个子场景时，调用方应补 placeholder 占位（不回写、不建 location）。
+    超过 9 个时，调用方应拆成多个 3x3 批次分别调用。
+
+    Args:
+        user_id / world_id / auth_token: 用户/世界/认证。
+        sub_location_names: 9 个子场景名称（含 placeholder 占位）。
+        prompts: 9 个子场景提示词。
+        parent_reference_image: 父场景参考图（本地路径或 http URL）。
+        target_entity_ids: 9 个子场景对应的 location DB id（与 sub_location_names 对齐；
+            placeholder 位传 None）。切图后按此 id 回写 location.reference_image，
+            并使 has_running_grid_for_entity 能查到运行中任务。
+
+    Returns:
+        dict: submit_grid_image_task 的结果。
+    """
+    return submit_grid_image_task(
+        user_id=user_id,
+        world_id=world_id,
+        auth_token=auth_token,
+        item_names=sub_location_names,
+        prompts=prompts,
+        item_type=ItemType.LOCATION_GRID,
+        grid_size=GridConfig.SIZE_3X3,
+        mode="image_edit",
+        parent_reference_image=parent_reference_image,
+        target_entity_ids=target_entity_ids,
+    )
 
 
 def generate_4grid_character_images(user_id: str, world_id: str, auth_token: str,

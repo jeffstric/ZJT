@@ -288,7 +288,7 @@ class TestGridPoll:
         monkeypatch.setattr(git, "_download_and_store_image",
                             lambda url, item_type, base: ("http://h/upload/character/temp/grid.png", "grid.png"))
         splitter = MagicMock()
-        splitter.split_2x2_grid.return_value = ["a.png", "b.png", "c.png", "d.png"]
+        splitter.split_grid.return_value = ["a.png", "b.png", "c.png", "d.png"]
         monkeypatch.setattr(git, "ImageGridSplitter", MagicMock(return_value=splitter))
         grid_model = MagicMock()
         monkeypatch.setattr(git, "GridImageTasksModel", grid_model)
@@ -298,10 +298,15 @@ class TestGridPoll:
         task.task_key = "grid"
         task.item_type = 4
         task.item_name = "a,b,c,d"
+        task.grid_size = 4  # 九宫格支持后，grid_size 由 task 携带
         task.comfyui_base_url = "http://h"
         task.user_id = "u"
         task.world_id = "w"
         task.auth_token = "t"
+        # get_item_names_list / get_target_entity_ids_list 在 MagicMock 上返回 MagicMock，
+        # 覆盖为真实列表，使切图与回写逻辑按预期工作
+        task.get_item_names_list = lambda: ["a", "b", "c", "d"]
+        task.get_target_entity_ids_list = lambda: []
 
         git._handle_task_success(task, mi.comfyui_status_success("/upload/mock/e2e_grid_2x2.png"))
 

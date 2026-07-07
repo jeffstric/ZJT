@@ -13,7 +13,7 @@ from .storyboard_dialogue import StoryboardDialogue, StoryboardDialogueModel
 from .storyboard_dialogue_audio import StoryboardDialogueAudio, StoryboardDialogueAudioModel
 from .storyboard_scene_asset import StoryboardSceneAsset, StoryboardSceneAssetModel
 from .world import WorldModel
-from config.constant import Edition
+from config.constant import Edition, SceneDifficulty
 from config.unified_config import SceneVideoType
 import logging
 import json
@@ -305,7 +305,7 @@ class StoryboardModel:
 
         scenes 元素结构：
             {
-                'title': str, 'duration': int,
+                'title': str, 'duration': float,
                 'prompt': {perspective, style, scene_desc, character_desc},
                 'video_prompt': str, 'video_type': str, 'video_config': dict,
                 'dialogues': [{'character_id': int|None, 'text': str, 'speed': float, 'volume': int}, ...]
@@ -334,8 +334,8 @@ class StoryboardModel:
         insert_scene_sql = """
             INSERT INTO storyboard_scene
             (storyboard_id, sort_order, title, duration, prompt_json, video_prompt,
-             video_type, video_config_json, last_modified_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             video_type, video_config_json, difficulty, act_name, last_modified_user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         insert_dialogue_sql = """
             INSERT INTO storyboard_dialogue
@@ -361,6 +361,8 @@ class StoryboardModel:
                     scene_data.get('video_prompt'),
                     scene_data.get('video_type', SceneVideoType.VIDEO),
                     video_config_str,
+                    SceneDifficulty.normalize(scene_data.get('difficulty')),
+                    scene_data.get('act_name'),
                     user_id,
                 )
                 scene_id = execute_insert_in_transaction(conn, insert_scene_sql, scene_params)
@@ -387,8 +389,8 @@ class StoryboardModel:
         insert_scene_sql = """
             INSERT INTO storyboard_scene
             (storyboard_id, sort_order, title, duration, prompt_json, video_prompt,
-             video_type, video_config_json, last_modified_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             video_type, video_config_json, difficulty, act_name, last_modified_user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         insert_dialogue_sql = """
             INSERT INTO storyboard_dialogue
@@ -401,7 +403,7 @@ class StoryboardModel:
             WHERE id = %s
         """
 
-        total_duration = sum(int(scene.get('duration') or 0) for scene in scenes)
+        total_duration = sum(float(scene.get('duration') or 0) for scene in scenes)
 
         with transaction() as conn:
             for i, scene_data in enumerate(scenes):
@@ -418,6 +420,8 @@ class StoryboardModel:
                     scene_data.get('video_prompt'),
                     scene_data.get('video_type', SceneVideoType.VIDEO),
                     video_config_str,
+                    SceneDifficulty.normalize(scene_data.get('difficulty')),
+                    scene_data.get('act_name'),
                     user_id,
                 )
                 scene_id = execute_insert_in_transaction(conn, insert_scene_sql, scene_params)
@@ -437,6 +441,29 @@ class StoryboardModel:
             logger.info(f"Created {len(scenes)} scenes for storyboard {storyboard_id}")
             return len(scenes)
 
+    @staticmethod
+    def recalc_total_duration(storyboard_id: int) -> float:
+        """Recompute and persist storyboard.total_duration from current scenes.
+
+        Use after a single scene's duration changes (create/update/delete) so the
+        aggregate stays consistent. Returns the new total_duration in seconds (float,
+        millisecond precision per DECIMAL(10,3)).
+        """
+        select_sql = "SELECT duration FROM storyboard_scene WHERE storyboard_id = %s"
+        update_sql = (
+            "UPDATE storyboard SET total_duration = %s, update_at = CURRENT_TIMESTAMP "
+            "WHERE id = %s"
+        )
+        try:
+            rows = execute_query(select_sql, (storyboard_id,), fetch_all=True) or []
+            total_duration = sum(float(row.get('duration') or 0) for row in rows)
+            execute_update(update_sql, (total_duration, storyboard_id))
+            logger.info(f"Recalculated total_duration={total_duration} for storyboard {storyboard_id}")
+            return total_duration
+        except Exception as e:
+            logger.error(f"Failed to recalc total_duration for storyboard {storyboard_id}: {e}")
+            raise
+
 
 # ==================== CREATE_TABLE_SQL ====================
 
@@ -450,7 +477,7 @@ CREATE TABLE IF NOT EXISTS `storyboard` (
     `workflow_id` INT UNSIGNED DEFAULT NULL COMMENT '关联工作流ID（可选，一键转视频用）',
     `script_id` INT UNSIGNED DEFAULT NULL COMMENT '关联剧本ID',
     `title` VARCHAR(255) DEFAULT '' COMMENT '故事板标题',
-    `total_duration` INT DEFAULT 0 COMMENT '总时长（秒）',
+    `total_duration` DECIMAL(10,3) DEFAULT 0.000 COMMENT '总时长（秒），由各分镜 duration 求和（毫秒级精度）',
     `status` TINYINT DEFAULT 1 COMMENT '1=编辑中 2=已完成',
     `style` VARCHAR(255) DEFAULT NULL COMMENT '画风名称（同 video_workflow.style）',
     `style_reference_image` VARCHAR(500) DEFAULT NULL COMMENT '画风参考图URL',

@@ -187,10 +187,11 @@ def build_storyboard_reference_items(
 def build_reference_legend(items: List[Dict[str, str]], start_index: int = 1) -> str:
     if not items:
         return ""
-    parts = [
-        f"图{index}是{item['type']}：{item['name']}"
-        for index, item in enumerate(items, start=start_index)
-    ]
+    parts = []
+    for index, item in enumerate(items, start=start_index):
+        item_type = item.get("type") or "参考图"
+        name = _clean_name(item.get("name"))
+        parts.append(f"图{index}是{item_type}：{name}" if name else f"图{index}是{item_type}")
     return "参考图说明：" + "。".join(parts) + "。"
 
 

@@ -153,6 +153,16 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/insert-scene" \
 
 Use `after_scene_id` for "insert after this scene". `before_scene_id`, `prev_id`, and `next_id` are also accepted for precise placement. If no placement is provided, the scene is appended to the storyboard.
 
+Update editable fields of an existing scene (only provided fields are written; omitted fields are left untouched). When `duration` changes, the storyboard's `total_duration` is recomputed:
+
+```bash
+curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/update-scene" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"scene_id":123,"duration":8,"title":"Reaction shot"}'
+```
+
+Updatable fields: `duration` (seconds, clamped to a minimum of 1), `title`, `prompt_json` (JSON object), `video_prompt`, `video_type`, `video_config_json` (JSON object), `difficulty` (易/中/难, normalized via `SceneDifficulty`), `act_name` (act/shot-group name). Selected asset pointers (`selected_first_frame_id`, etc.) are not patched here — use `bind-projects` or the asset select endpoints instead.
+
 Batch-generate missing first-frame images:
 
 ```bash
@@ -246,6 +256,7 @@ python -m scripts.storyboard_agent_cli world-context --world-id 1 --user-id 1 --
 python -m scripts.storyboard_agent_cli get-script --script-id 20 --user-id 1
 python -m scripts.storyboard_agent_cli list-scenes --storyboard-id 10 --user-id 1
 python -m scripts.storyboard_agent_cli insert-scene --storyboard-id 10 --user-id 1 --after-scene-id 123 --title "Reaction shot" --duration 4 --prompt-json '{"scene_desc":"A quiet reaction shot."}'
+python -m scripts.storyboard_agent_cli update-scene --scene-id 123 --user-id 1 --duration 8 --title "Reaction shot"
 python -m scripts.storyboard_agent_cli scene-context --scene-id 123 --user-id 1
 python -m scripts.storyboard_agent_cli generate-image --scene-id 123 --user-id 1 --auth-token "<auth_token>"
 python -m scripts.storyboard_agent_cli storyboard-image-batch-status --batch-id 88 --user-id 1

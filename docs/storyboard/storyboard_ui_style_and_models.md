@@ -96,6 +96,38 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 
 所有新增 UI 状态（当前选中模型、LLM 模型、画风编辑临时态）通过 serializeUiConfig 纳入 `config_json`，同时 localStorage 作为 fallback。启动时优先 config_json，其次 localStorage。
 
+### 5.1 生图/视频模型的跨故事板记忆
+
+`selectedImageTaskId` / `selectedVideoTaskId` 除写入当前故事板 `config_json` 外，另新增 localStorage 跨故事板兜底键：
+
+| 字段 | localStorage 键 | 写入点 | 读取/兜底点 |
+|------|----------------|--------|-------------|
+| 生图模型 | `storyboard_lastSelectedImageTaskId` | `events.js` 的 `data-config-select="image"` change 处理 | `state.js` `setModels` → `pickRememberedTaskId` |
+| 视频模型 | `storyboard_lastSelectedVideoTaskId` | `events.js` 的 `data-config-select="video"` change 处理 | `state.js` `setModels` → `pickRememberedTaskId` |
+
+**优先级链路**：`config_json`（当前故事板，主记忆）> `localStorage`（跨故事板兜底）> 模型列表第一个。
+
+`pickRememberedTaskId(models, storageKey)` 在读取 localStorage 后会**校验该 task_id 仍存在于当前可用模型列表**，避免读到已下线模型的 task_id 造成空选中；若不存在则回退到列表第一个并同步回写 localStorage 以固化默认。该兜底对齐已有 LLM 模型的 `storyboard_lastSelectedLlmModel` / `storyboard_lastScriptSplitLlmModel` 设计。
+
+### 5.2 预览区与分镜序列缩略图的比例适配
+
+竖屏（9:16）故事板下，预览区与底部分镜序列缩略图原先会出现显示异常或严重裁切。修复后两者均按故事板 `workflowRatio` 自适应：
+
+**主预览区（`.preview-wrapper` / `.preview-media`）** —— 纯 CSS 修复（`storyboard.css`）：
+
+- `.preview-wrapper`：移除 `display:grid; place-items:center`，背景改为纯黑 `#000` 作为信箱留白。
+- `.preview-media`：新增 `position:absolute; inset:0` 强制铺满容器，规避 grid item 对带固有宽高比的 `<img>`/`<video>` 解析不稳定的怪异行为；保留 `object-fit:contain`，竖屏图高度 100%、左右留纯黑黑边。
+- `.preview-empty`：补 `position:absolute; inset:0; display:grid; place-items:center` 维持空状态居中。
+- `.storyboard-thumb .preview-media`：补 `position:static` 让网格卡缩略图回归普通流（防回归）。
+
+**分镜序列缩略图（`.scene-timeline-list` / `.scene-timeline-thumb`）** —— JS + CSS 配合：
+
+- `render.js` 在 `.scene-timeline-list` 上输出 `data-ratio="${state.workflowRatio}"`。
+- `storyboard.css` 把缩略图框从固定 `112×72` 改为 `height:72px; aspect-ratio:<ratio>`，并按 `[data-ratio="9:16"]` 等属性选择器覆盖比例；`.add-scene-btn` 同步跟随，保证加号按钮与缩略图等比例对齐。
+- `object-fit:cover` 保留（缩略图框已是正确比例，cover 不会裁掉重要内容，保持小图视觉饱满）。
+
+效果：竖屏项目下缩略图框自动变成约 41×72 的窄高竖屏小框，完整展示分镜图；横屏项目维持原 128×72 宽扁框；切换 `workflowRatio` 时无需刷新即生效（rerender 重写 `data-ratio`）。
+
 ## 6. 风险与缓解（已纳入设计）
 
 | 风险 | 缓解措施 |
@@ -122,6 +154,9 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 - [x] AI 助手模式下拉区分对话改图/图片生成/视频生成，gear 打开对应配置；魔法棒（AI 优化）按钮仅图片/视频模式出现，对话改图不显示。
 - [x] LLM 默认逻辑代码存在（优先 deepseek-v4-flash）；实际选中受 config_json 影响（合理）
 - [x] 切换/刷新状态通过 config_json + local 恢复
+- [x] 生图/视频模型在新建故事板的拆分剧本弹框中，能记住并回显上一次的选择（localStorage 跨故事板兜底，键 `storyboard_lastSelectedImageTaskId` / `storyboard_lastSelectedVideoTaskId`）
+- [x] 主预览区竖屏图高度 100%、左右纯黑黑边；横屏/方图行为无回归；网格卡缩略图未受影响（`position:static` 防回归）
+- [x] 分镜序列缩略图随 `workflowRatio` 自适应（竖屏变窄高框、横屏维持宽扁框），`data-ratio` 切换比例后立即生效
 - [x] 文档已更新
 - [ ] 后续：当对话改图真正后端支持后，完善提示与实际调用
 

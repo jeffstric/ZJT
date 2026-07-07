@@ -36,7 +36,10 @@ SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和�
 1. 必须严格按照指定的JSON格式输出
 2. 分镜组默认每个15秒,可根据剧情需要调整
 3. 人物信息要完整,包括角色定位和描述
-4. **【重要警告】在分镜描述中严禁描写人物外貌特征**：系统的角色库中已有完整的外貌信息，在所有分镜相关字段（opening_frame_description、scene_detail、description、action等）中，只需要提及角色名称（用【【角色名】】格式），不要描述角色的外貌、服装、发型、身材等任何外观特征，否则可能与角色库的外貌信息冲突
+4. **【重要警告】在分镜描述中必须区分角色的“固有档案”与“当前镜头动态”**：系统的角色库中已有完整的外貌档案，在所有分镜相关字段（opening_frame_description、scene_detail、description、action等）中：
+   - **【严禁】描写角色的“固有档案”**：不要描述发型、肤色、体型、固定的标志性服装/饰品等，这些由角色库统一提供，重复描写会与之冲突
+   - **【必须】描写角色的“当前镜头动态”**：必须写明角色在画面中的**位置、姿态、动作、表情、与其他角色/镜头的空间关系**，并提及角色名称（用【【角色名】】格式）
+   - 简言之：固有外观交给角色库，当前画面动态必须由你来写——否则画面将丢失角色
 5. 场景信息要详细,包括时间、天气、氛围、环境音、背景音乐等
 5. **场景支持嵌套层级**：通过parent_id和level字段表示场景的层级关系
    - parent_id为null表示顶层场景（如"神明竞技场"）
@@ -63,13 +66,24 @@ SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和�
    - 如果镜头中没有道具出现，设置为空数组[]
    - 只包含在该镜头画面中实际出现或被使用的道具
 10. 分镜要包含镜头类型、运动方式、对话、动作等详细信息
-11. opening_frame_description是最关键字段,用于AI生成首帧图像,必须非常详细描述镜头起始画面（包括人物位置、姿态、表情、场景布局、光线效果、构图信息等）
+11. opening_frame_description是最关键字段,用于AI生成首帧图像,必须非常详细描述镜头起始画面（包括人物位置、姿态、表情、场景布局、光线效果、构图信息等）。**【重要】必须列出该镜头 characters_present 中的每一个角色（用【【角色名】】格式包裹），并分别写出其位置、姿态、表情或动作；不要只写其中一两个角色，每个在场角色都不可遗漏**
 12. 确保所有ID引用关系正确（如shot中的location_id、character_id、props_present要对应）
 13. 只输出纯JSON内容,不要添加```json```标记或任何解释性文字
 14. **【重要】在shot节点的所有文本字段中,只要涉及角色名称,必须用【【角色名】】格式包裹,便于后续匹配角色库。注意：只对角色名称使用【【】】包裹,场景名称、地点名称和道具名称不要使用【【】】包裹**
 15. **【重要】在shot节点的所有画面/视频提示文本字段中,只要涉及道具名称,道具名称必须用〖〖道具名〗〗格式包裹,便于后续匹配道具库；props_present字段仍使用道具ID。正确示例：〖〖公文包〗〗【【德保罗】】。**
 16. **【重要】严禁幻想道具**：所有带〖〖〗〗标记的道具必须来自数据库已有道具列表，或原始剧本文本中明确出现的新道具；不要因为画面需要自行添加数据库和剧本都没有的道具。
 17. 每个shot必须有明确的narrative_purpose，说明这个镜头为什么存在，且必须具体到视听手段
+18. **【角色完整出场·硬性规则】每个shot的 characters_present 列出的角色，必须在该镜头的文本中全部出场，不可遗漏任何一个**：
+    - **画面提示词侧**：characters_present 中的**每一个角色**都必须在 opening_frame_description 中点名（用【【角色名】】格式），并写出其位置、姿态、表情或动作
+    - **视频提示词侧**：characters_present 中的**每一个角色**都至少在 description 或 action 中有可见动作或位置交代
+    - 即使某角色在该镜头没有台词或处于静态（如操控载具、观察、等待），也必须写出其位置与姿态，不能因为"不显眼"就漏写
+    - **【模式无关】本条以 characters_present 为准**：列出几个角色就写全几个。若启用了“多人对话拆分”规则，拆分后每个单人镜头的 characters_present 只剩 1 个角色，此时只需把这 1 个角色写充分即可；**严禁为了让多角色同框而拒绝拆分对话镜头**
+    - 错误示例：characters_present 含某角色，但 opening_frame_description/description/action 中完全没有提到该角色 ✗
+19. **【分镜难易程度 difficulty】** 每个 shot 必须输出 difficulty 字段（取值仅限"易"/"中"/"难"三个汉字之一），并附 difficulty_reason 简述依据。综合权衡以下维度，取整体倾向：
+    - **易**：单人或无角色、静态/轻微动作、短镜头（≤5秒）、无关键道具或仅普通道具、固定镜头/简单构图。例：一个角色静坐望向窗外的特写。
+    - **中**：2-3 人有互动、有连续但常规的动作、中等时长（6-10秒）、1-2 个关键道具、简单镜头运动（推进/跟随）。例：两人对话递接一份文件的中景。
+    - **难**：4 人以上群体调度、打斗/追逐/复杂连续动作、长镜头（>10秒）且动作密集、多个关键道具且强交互、复杂镜头运动（升降/摇移组合）/强透视/多层景深。例：多人混战追逐穿越复杂场景的长镜头。
+    - difficulty_reason 控制在一句话内，简述判定依据（如"4人群战+长镜头+多个道具交互"）。
 
 ID格式规范：
 - shot_id: s001-s999（最多10位字符）
@@ -270,6 +284,113 @@ def _replace_prop_markers(text: str, valid_marker_props: List[Dict[str, Any]]) -
         return raw_name
 
     return PROP_MARKER_RE.sub(replace, text)
+
+
+def _flatten_db_locations(db_locations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """递归展平 get_tree_by_world 返回的树形场景列表为扁平的 [{id, name}, ...]。"""
+    flat: List[Dict[str, Any]] = []
+    for loc in db_locations or []:
+        if not isinstance(loc, dict):
+            continue
+        flat.append({"id": loc.get("id"), "name": loc.get("name")})
+        if loc.get("children"):
+            flat.extend(_flatten_db_locations(loc.get("children") or []))
+    return flat
+
+
+def _find_unique_location_by_name(name: Any, db_locations_flat: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """按名称在数据库场景中精确匹配 → 唯一后缀模糊匹配（参照 _find_unique_prop_by_name）。"""
+    normalized = _normalize_asset_name(name)
+    if not normalized:
+        return None
+    for loc in db_locations_flat:
+        if _normalize_asset_name(loc.get("name")) == normalized:
+            return loc
+    fuzzy_matches = [
+        loc for loc in db_locations_flat
+        if _normalize_asset_name(loc.get("name")).endswith(normalized)
+        or normalized.endswith(_normalize_asset_name(loc.get("name")))
+    ]
+    return fuzzy_matches[0] if len(fuzzy_matches) == 1 else None
+
+
+def sanitize_parsed_location_references(
+    parsed_data: Dict[str, Any],
+    db_locations: Optional[List[Dict[str, Any]]] = None,
+    script_content: str = "",
+) -> Dict[str, Any]:
+    """
+    清理 LLM 幻觉出的场景引用。
+
+    LLM 可能在 locations 里声明数据库根本不存在的 location_db_id（编造的假 ID），
+    或把 location_db_id 留空当作"新场景"。这里以数据库已有场景为准：
+      1. 用 location_db_id 对照数据库主键核实；不在则按名称兜底匹配；
+         匹配上 → 复用 DB id（只认数据库场景）。
+      2. 仍未匹配、且 location_db_id 为 null 的新场景 / 子场景 → 保留，
+         由后续 storyboard_location_bootstrap_service 负责入库与 id 回填。
+         parent_id（内部 loc_xxx）、level、description、atmosphere、
+         environment_sound、background_music 等字段完整携带，供九宫格 prompt 使用。
+      3. 编造了假 location_db_id（非 null 但 DB 不存在）→ 丢弃，避免假场景穿透。
+      4. shot.location_id 指向被丢弃 / 悬空的 location 时置为 null，
+         避免假场景穿透到下游 storyboard_scene.prompt.location。
+    """
+    db_flat = _flatten_db_locations(db_locations or [])
+    db_locations_by_id = {
+        _safe_int(loc.get("id")): loc
+        for loc in db_flat
+        if _safe_int(loc.get("id")) is not None
+    }
+
+    valid_locations: List[Dict[str, Any]] = []
+    valid_location_ids = set()  # 合法 location 的内部 loc_xxx
+    unpersisted_count = 0
+    for location in parsed_data.get("locations") or []:
+        if not isinstance(location, dict):
+            continue
+
+        db_match = db_locations_by_id.get(_safe_int(location.get("location_db_id")))
+        if not db_match:
+            db_match = _find_unique_location_by_name(location.get("name"), db_flat)
+
+        if db_match:
+            # 已匹配 DB 场景：写回真实 DB id 与名称
+            location["location_db_id"] = db_match.get("id")
+            location["name"] = db_match.get("name") or location.get("name")
+            valid_locations.append(location)
+            valid_location_ids.add(str(location.get("id")))
+            continue
+
+        # 未匹配 DB：区分"新场景（location_db_id 为 null）"与"编造假 id"
+        if _safe_int(location.get("location_db_id")) is None:
+            # 新场景 / 子场景：保留，等待 bootstrap 入库与 id 回填
+            location["location_db_id"] = None
+            valid_locations.append(location)
+            valid_location_ids.add(str(location.get("id")))
+            unpersisted_count += 1
+        # 否则：编造的非 null 假 id → 丢弃
+
+    parsed_data["locations"] = valid_locations
+
+    # 调试 / 日志辅助字段，不影响旧结构
+    metadata = parsed_data.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        parsed_data["metadata"] = metadata
+    metadata["has_unpersisted_locations"] = unpersisted_count > 0
+    metadata["unpersisted_location_count"] = unpersisted_count
+
+    # shot.location_id 悬空或指向被丢弃的 location → 置 null
+    for group in parsed_data.get("shot_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for shot in group.get("shots") or []:
+            if not isinstance(shot, dict):
+                continue
+            loc_id = str(shot.get("location_id") or "")
+            if not loc_id or loc_id not in valid_location_ids:
+                shot["location_id"] = None
+
+    return parsed_data
 
 
 def sanitize_parsed_prop_references(
@@ -505,7 +626,7 @@ JSON_FORMAT_EXAMPLE = """{
           "shot_type": "远景/中景/近景/特写",
           "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
           "description": "镜头简要描述（涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式）",
-          "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：人物位置、姿态、表情、服装；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式）",
+          "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：画面中所有在场角色（用【【角色名】】格式）的位置、姿态、表情或动作（固有外貌如发型/体型/标志服装不要写，交给角色库）；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及道具时用〖〖道具名〗〗格式）",
           "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式）",
           "characters_present": ["char_001"],
           "props_present": ["prop_001"],
@@ -521,6 +642,8 @@ JSON_FORMAT_EXAMPLE = """{
           "environment_sound": "环境音（场景中的自然声音，如脚步声、车辆声等）",
           "background_music": "背景音乐（配乐，如钢琴曲、爵士乐等）",
           "narrative_purpose": "建立/推进/揭示/强调/过渡/情绪/反射：具体说明该镜头通过什么可见动作、构图、声音或转场完成叙事功能",
+          "difficulty": "易/中/难",
+          "difficulty_reason": "难度判定依据（一句话，综合人物数量/动作/时长/道具/镜头运动）",
           "audio_notes": "音频备注"
         },
         {
@@ -543,6 +666,8 @@ JSON_FORMAT_EXAMPLE = """{
           "environment_sound": "环境音",
           "background_music": "背景音乐",
           "narrative_purpose": "推进：通过角色递出关键道具的可见动作，让观众获得下一步信息",
+          "difficulty": "中",
+          "difficulty_reason": "两人互动递接关键道具，含简单镜头运动",
           "audio_notes": "音频备注"
         }
       ]
@@ -619,6 +744,7 @@ async def parse_script_to_shots(
 
         # 获取数据库中的场景列表（如果提供了world_id）
         db_locations_text = ""
+        db_locations = []
         if world_id is not None:
             try:
                 from model.location import LocationModel
@@ -710,7 +836,14 @@ async def parse_script_to_shots(
                     # 将角色列表格式化为文本
                     char_lines = []
                     for char in db_characters:
-                        char_desc = char.get('identity', '') or char.get('appearance', '') or char.get('personality', '无')
+                        # 拼接角色的多个维度信息（身份/外貌/性格），让 LLM 对每个角色有更全面的认识，
+                        # 减少因信息片面而漏写次要角色的情况
+                        _parts = []
+                        for _key, _label in (('identity', '身份'), ('appearance', '外貌'), ('personality', '性格')):
+                            _val = char.get(_key)
+                            if _val:
+                                _parts.append(f"{_label}: {_val}")
+                        char_desc = "；".join(_parts) if _parts else "无"
                         char_lines.append(f"- ID: {char['id']}, 名称: {char['name']}, 描述: {char_desc}")
 
                     db_characters_text = f"""
@@ -826,6 +959,12 @@ async def parse_script_to_shots(
   * 保持场景的连续性，location_id、time_of_day、weather等保持一致
   * 通过"看向镜头外"、"看向右侧/左侧"等描述暗示对话对象的存在，但不要直接描述对方
   * 确保拆分后的镜头在视觉上能够自然衔接（通过轴线原则）
+
+- **【防漏拆·极其重要】原镜头里有几个角色在对话，就必须拆出几个对应的单人镜头，严禁只拆出部分角色**：
+  * 例如原镜头 dialogue 依次为 A、B、C 三人发言，必须拆出 3 个镜头，分别聚焦 A、B、C，不能只拆出 A、B 而漏掉 C
+  * 即使某角色台词很短或只有一句反应（如"嗯"、"好的"），也必须为其单独拆出一个镜头，让该角色有自己的画面出场
+  * 拆分完成后请自检：原镜头 characters_present 中的每个角色，是否都成为了至少一个拆分镜头的唯一在场角色；若有角色从未单独出场，必须补齐
+  * 这与"角色完整出场"规则一致：拆分模式下"全员出场"= 每个对话角色都有属于自己的镜头
 
 """
         
@@ -962,10 +1101,11 @@ async def parse_script_to_shots(
 6. **opening_frame_description要求（最关键）**：
    - 这是用于AI生成首帧图像的最关键字段
    - 必须详细描述镜头开始时的静态画面
-   - 必须包含：人物位置、姿态、表情、服装
+   - 必须包含：该镜头 characters_present 中**所有在场角色**（用【【角色名】】格式包裹），并**分别**写出每个人物的位置、姿态、表情、当前动作（固有外貌如发型/体型/标志服装不要写，交给角色库）
    - 必须包含：场景布局、物品摆放、光线方向和强度
    - 必须包含：构图信息（如三分法、景深、视角等）
    - 描述要具体到能让AI准确还原画面
+   - **【重要】不得遗漏任何在场角色，即便某角色只是静态出现也必须点名并写出位置/姿态**
    - **涉及角色名称时必须用【【角色名】】格式包裹（注意：只对角色名称使用，场景名称不要使用）**
 
 7. **角色名称格式要求（非常重要）**：
@@ -977,6 +1117,14 @@ async def parse_script_to_shots(
    - **【极其重要】当角色与数据库匹配时（character_db_id不为null），【【角色名】】必须使用数据库中的角色名称**
    - 例如：如果数据库中角色名称是"阿方索戴维斯_AlphonsoDavies"，则使用"【【阿方索戴维斯_AlphonsoDavies】】"，而不是"【【布冯】】"
    - 这样便于后续系统匹配角色库
+
+7.1 **【角色出场完整性·硬性要求】每个shot的 characters_present 中列出的角色，必须在分镜文本中全部出场，严禁遗漏**：
+   - **画面提示词（opening_frame_description、scene_detail）**：characters_present 中的**每一个角色**都必须点名（用【【角色名】】格式），并写出其位置、姿态、表情或当前动作
+   - **视频提示词（description、action）**：characters_present 中的**每一个角色**都至少在其中一处有可见动作或位置交代
+   - 即使某角色没有台词或处于静态（如操控载具、观察、等待），也必须写出其位置与姿态，不能因为"不显眼"而漏写
+   - **【与多人对话拆分的关系】**：若下方“多人对话拆分要求”生效，则多人对话镜头会被拆成多个单人镜头，拆分后每个镜头的 characters_present 只剩 1 个角色，此时本条只要求把这 1 个角色写充分即可；不要为了满足"多角色同框"而拒绝拆分。拆分时必须保证原镜头中**每一个有对话的角色都被拆出对应镜头**，不能只拆部分角色（详见拆分要求中的防漏拆说明）
+   - 错误示例：characters_present 含某角色，但画面/动作描写中完全没有提到该角色 ✗
+   - 错误示例（只点名无动态）：只写"【【A】】和【【B】】在场"，没有各自的位置/姿态/动作 ✗
 
 8. **道具名称格式要求（极其重要 - 严禁违反）**：
    - **严禁在 opening_frame_description、scene_detail、description、action 等所有画面描述文本字段中使用 prop_001、prop_002 等道具ID来替代道具的实际名称**
@@ -1124,6 +1272,11 @@ JSON格式示例：
         
         parsed_data = sanitize_parsed_prop_references(parsed_data, db_props, script_content)
         _save_log_file(log_dir, f"script_parser_{timestamp}_06_prop_sanitized.json", parsed_data)
+
+        # 清理 LLM 幻觉出的场景引用：核实 location_db_id 对照数据库主键 + 名称兜底，
+        # 失效 location 被丢弃，shot.location_id 悬空则置 null
+        parsed_data = sanitize_parsed_location_references(parsed_data, db_locations, script_content)
+        _save_log_file(log_dir, f"script_parser_{timestamp}_07_location_sanitized.json", parsed_data)
 
         # 重新组合分镜组，确保每组不超过max_group_duration秒
         parsed_data = reorganize_shot_groups(parsed_data, max_group_duration, log_dir, timestamp)
