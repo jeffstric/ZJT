@@ -196,7 +196,10 @@ class StoryboardGridSplitPipelineDriver(BasePipelineDriver):
                 logger.warning("Failed to load storyboard batch item %s: %s", batch_item_id, exc)
             return {"id": batch_item_id, "extra_json": cell.get("extra_json") or {}}
         if grid_task_id:
-            return StoryboardImageBatchItemModel.find_running_by_grid_task(grid_task_id, scene_id)
+            item = StoryboardImageBatchItemModel.find_running_by_grid_task(grid_task_id, scene_id)
+            if item:
+                return item
+            return StoryboardImageBatchItemModel.find_by_grid_task(grid_task_id, scene_id)
         return None
 
     @staticmethod

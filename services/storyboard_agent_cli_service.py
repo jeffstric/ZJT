@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from config.config_util import get_config, get_current_env
 from config.constant import (
+    Edition,
     StoryboardAgentCommandConstants,
     StoryboardAgentReadConstants,
     StoryboardAutoGenerateConstants,
@@ -958,6 +959,14 @@ class StoryboardAgentCliService:
         if asset_type not in IMAGE_ASSET_TYPES:
             raise StoryboardCliError("invalid_asset_type", "image asset_type must be first_frame or last_frame")
         sequence_mode = self._normalize_sequence_mode(sequence_mode)
+        if (
+            sequence_mode == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY
+            and Edition.is_community()
+        ):
+            raise StoryboardCliError(
+                "enterprise_only",
+                "效果模式仅商业版支持，请购买商业版后使用",
+            )
 
         storyboard = StoryboardModel.get_by_id(int(storyboard_id))
         if not storyboard:
@@ -2473,6 +2482,7 @@ class StoryboardAgentCliService:
         character_name_map = self._build_character_name_map(parsed_data)
         location_map = self._build_location_map(parsed_data)
         prop_map = self._build_prop_map(parsed_data)
+        spatial_world = parsed_data.get("spatial_world") if isinstance(parsed_data.get("spatial_world"), dict) else None
         scenes: List[dict] = []
 
         for group in parsed_data.get("shot_groups") or []:
@@ -2548,6 +2558,8 @@ class StoryboardAgentCliService:
                         "difficulty_reason": shot.get("difficulty_reason"),
                     },
                 }
+                if spatial_world:
+                    prompt_payload["spatial_world"] = spatial_world
                 if isinstance(shot.get("spatial_layout"), dict):
                     prompt_payload["spatial_layout"] = shot.get("spatial_layout")
 

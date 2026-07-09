@@ -66,6 +66,7 @@ async function main() {
     }
 
     await initI18n();
+    state.editionInfo = await api.getEditionInfo().catch(() => ({ mode: 'community', mode_label: '社区版' }));
 
     const data = await loadStoryboard();
     loadStoryboardData(data);

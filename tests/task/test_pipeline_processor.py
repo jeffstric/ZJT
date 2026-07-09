@@ -110,6 +110,32 @@ class TestPipelineProcessorWaitingSteps(unittest.TestCase):
         mock_dispatch.assert_not_called()
         MockStepModel.update_status.assert_not_called()
 
+    @patch('task.pipeline_processor.PipelineProcessor.dispatch_step')
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_stage_completion_does_not_dispatch_storyboard_grid_split_step(self, MockStepModel, mock_dispatch):
+        """implementation_retry 完成后，阶段推进也不能提前派发分镜宫格拆图。"""
+        from model import PipelineStage, PipelineStepStatus, PipelineStepType
+
+        retry_step = MagicMock()
+        retry_step.id = 119
+        retry_step.ai_tool_id = 1120
+        retry_step.stage = PipelineStage.BEFORE_FINISH
+        retry_step.step_type = PipelineStepType.IMPLEMENTATION_RETRY
+        retry_step.status = PipelineStepStatus.COMPLETED
+
+        split_step = MagicMock()
+        split_step.id = 118
+        split_step.ai_tool_id = 1120
+        split_step.stage = PipelineStage.BEFORE_FINISH
+        split_step.step_type = PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+        split_step.status = PipelineStepStatus.PENDING
+
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [retry_step, split_step]
+
+        asyncio.run(PipelineProcessor._check_ai_tool_stage_completion(1120, PipelineStage.BEFORE_FINISH))
+
+        mock_dispatch.assert_not_called()
+
 
 class TestPipelineProcessorHasSteps(unittest.TestCase):
     """测试 PipelineProcessor.has_steps() 委托调用"""

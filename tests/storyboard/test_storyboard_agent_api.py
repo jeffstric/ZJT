@@ -112,6 +112,32 @@ def test_storyboard_auto_generate_missing_images_uses_authenticated_user(monkeyp
     assert calls[0][1]["auth_token"] == "short-lived-token"
 
 
+def test_storyboard_auto_generate_missing_images_returns_403_for_enterprise_only(monkeypatch):
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    client = _client()
+
+    monkeypatch.setattr("api.storyboard.UserTokensModel.get_user_id_by_token", lambda token: 7)
+
+    def fake_execute(self, command, params):
+        raise StoryboardCliError("enterprise_only", "效果模式仅商业版支持，请购买商业版后使用")
+
+    monkeypatch.setattr(
+        "api.storyboard.StoryboardAgentCommandService.execute",
+        fake_execute,
+        raising=False,
+    )
+
+    response = client.post(
+        "/api/storyboard/44/auto-generate-missing-images",
+        headers={"Authorization": "Bearer short-lived-token"},
+        json={"sequence_mode": "quality"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["error_code"] == "enterprise_only"
+
+
 def test_storyboard_batch_task_status_uses_authenticated_user(monkeypatch):
     client = _client()
     calls = []

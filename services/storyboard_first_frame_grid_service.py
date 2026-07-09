@@ -20,6 +20,7 @@ from model.storyboard_image_batch import StoryboardImageBatchItemModel
 from model.storyboard_scene import StoryboardSceneModel
 from script_writer_core.constant import ItemType
 from script_writer_core.mcp_tool import submit_grid_image_task
+from services.storyboard_spatial import build_spatial_prompt_context
 
 logger = logging.getLogger(__name__)
 _LLM_REFINE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="first-frame-grid-llm")
@@ -528,44 +529,13 @@ class StoryboardFirstFrameGridService:
             if position.get("occupant_type") == "character" and _is_visible_spatial_item(position):
                 yield position.get("character_db_id") or position.get("db_id"), str(position.get("name") or "")
 
-    def _spatial_entities(self, spatial_layout: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        visible: List[Dict[str, Any]] = []
-        hidden: List[Dict[str, Any]] = []
-
-        def append_entity(raw: Dict[str, Any], *, container_name: str = "") -> None:
-            if not isinstance(raw, dict):
-                return
-            name = _first_non_empty(raw.get("name"), raw.get("prop_name"))
-            if not name:
-                return
-            entity = {
-                "name": name,
-                "slot": _first_non_empty(raw.get("slot"), raw.get("screen_position"), raw.get("position")),
-                "screen_position": _first_non_empty(raw.get("screen_position"), raw.get("position")),
-                "pose": _first_non_empty(raw.get("pose")),
-                "visibility": _slot_visibility(raw),
-                "framing_role": _first_non_empty(raw.get("framing_role")),
-                "container": container_name,
-                "occupant_type": _first_non_empty(raw.get("occupant_type"), "character"),
-                "character_id": raw.get("character_id"),
-                "db_id": raw.get("character_db_id") or raw.get("db_id"),
-            }
-            if _is_visible_spatial_item(raw):
-                visible.append(entity)
-            else:
-                hidden.append(entity)
-
-        for container in spatial_layout.get("containers") or []:
-            if not isinstance(container, dict):
-                continue
-            container_name = _first_non_empty(container.get("name"), container.get("area"))
-            for slot in container.get("slots") or []:
-                append_entity(slot, container_name=container_name)
-
-        for position in spatial_layout.get("loose_positions") or []:
-            append_entity(position)
-
-        return visible, hidden
+    def _spatial_entities(
+        self,
+        spatial_layout: Dict[str, Any],
+        spatial_world: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        context = build_spatial_prompt_context(spatial_layout, spatial_world)
+        return context["visible_entities"], context["hidden_entities"]
 
     def _build_cell_prompt(
         self,
@@ -575,11 +545,13 @@ class StoryboardFirstFrameGridService:
     ) -> str:
         prompt = _as_prompt_json(scene.get("prompt_json"))
         spatial = prompt.get("spatial_layout") if isinstance(prompt.get("spatial_layout"), dict) else {}
-        visible_entities, hidden_entities = self._spatial_entities(spatial)
+        spatial_world = prompt.get("spatial_world") if isinstance(prompt.get("spatial_world"), dict) else None
+        visible_entities, hidden_entities = self._spatial_entities(spatial, spatial_world)
         base_text = self._clean_hidden_entities_from_prompt(
             str(prompt.get("scene_desc") or scene.get("title") or "").strip(),
             hidden_entities,
         )
+        camera_anchor_text = self._camera_anchor_prompt(spatial)
         visible_text = self._visible_spatial_prompt(visible_entities, hidden_entities)
         reference_text = "、".join(
             f"图{idx}" for idx in reference_indices
@@ -591,11 +563,38 @@ class StoryboardFirstFrameGridService:
         )
         parts = [
             base_text,
+            camera_anchor_text,
             visible_text,
             f"本格只使用这些参考图编号：{reference_text}。" if reference_text else "",
             reference_details,
         ]
         return "\n".join(part for part in parts if part)
+
+    def _camera_anchor_prompt(self, spatial_layout: Dict[str, Any]) -> str:
+        anchor = spatial_layout.get("camera_anchor") if isinstance(spatial_layout.get("camera_anchor"), dict) else {}
+        if not anchor:
+            return ""
+
+        parts = []
+        for key in ("description", "camera_position", "shooting_direction", "screen_composition"):
+            value = str(anchor.get(key) or "").strip()
+            if value and value not in parts:
+                parts.append(value)
+
+        relative = anchor.get("relative_to_character")
+        if isinstance(relative, dict):
+            rel_parts = [
+                str(relative.get("name") or "").strip(),
+                str(relative.get("position") or "").strip(),
+                str(relative.get("distance") or "").strip(),
+            ]
+            rel_text = "，".join(part for part in rel_parts if part)
+            if rel_text:
+                parts.append(f"相机相对角色位置：{rel_text}")
+
+        if not parts:
+            return ""
+        return "机位必须保持与分镜一致：" + "；".join(parts) + "。"
 
     def _visible_spatial_prompt(
         self,
@@ -647,7 +646,8 @@ class StoryboardFirstFrameGridService:
     ) -> Dict[str, Any]:
         prompt = _as_prompt_json(scene.get("prompt_json"))
         spatial = prompt.get("spatial_layout") if isinstance(prompt.get("spatial_layout"), dict) else {}
-        visible_entities, hidden_entities = self._spatial_entities(spatial)
+        spatial_world = prompt.get("spatial_world") if isinstance(prompt.get("spatial_world"), dict) else None
+        visible_entities, hidden_entities = self._spatial_entities(spatial, spatial_world)
         return {
             "scene_id": int(scene.get("id") or 0),
             "grid_index": int(grid_index),
@@ -751,12 +751,14 @@ class StoryboardFirstFrameGridService:
             scene_id = int(scene["id"])
             prompt = _as_prompt_json(scene.get("prompt_json"))
             spatial_layout = prompt.get("spatial_layout") if isinstance(prompt.get("spatial_layout"), dict) else {}
-            visible_entities, hidden_entities = self._spatial_entities(spatial_layout)
+            spatial_world = prompt.get("spatial_world") if isinstance(prompt.get("spatial_world"), dict) else None
+            visible_entities, hidden_entities = self._spatial_entities(spatial_layout, spatial_world)
             cells.append({
                 "scene_id": scene_id,
                 "grid_index": index,
                 "prompt_text": prompts[index],
                 "reference_indices": per_scene_indices.get(scene_id, []),
+                "spatial_world": spatial_world or {},
                 "spatial_layout": spatial_layout,
                 "visible_entities": visible_entities,
                 "hidden_continuity_entities": hidden_entities,
@@ -767,6 +769,8 @@ class StoryboardFirstFrameGridService:
             "spatial_layout、visible_entities、hidden_continuity_entities 只用于理解空间连续性；"
             "最终 prompt_text 只描述画面中应当可见的内容，不能输出 visibility、framing_role、spatial_layout、容器/区域、空间布局硬约束等字段化文本；"
             "hidden_continuity_entities 代表仍在空间里但本格不可见或被遮挡的对象，不要把它们写成可见主体；必要时只用自然语言写构图不入画。"
+            "slot_integrity_rule: preserve every physical seat/slot from spatial_layout exactly. Do not change front passenger/side-by-side/front-row seats into rear seats. Rear-seat wording is allowed only if spatial_layout already says rear seat or changed_positions declares a real seat move."
+            "camera_anchor_integrity_rule: preserve camera_anchor camera_position, shooting_direction, and screen_composition; do not invent a different viewpoint while refining prompt_text."
             "previous_grid_prompt_context 仅作前一幕风格、环境、角色状态参考；当前 spatial_layout 始终优先，不要照抄上一幕 prompt。"
         )
         user_payload = {
@@ -826,7 +830,8 @@ class StoryboardFirstFrameGridService:
         for idx, scene in enumerate(scenes):
             prompt = _as_prompt_json(scene.get("prompt_json"))
             spatial = prompt.get("spatial_layout") if isinstance(prompt.get("spatial_layout"), dict) else {}
-            _, hidden_entities = self._spatial_entities(spatial)
+            spatial_world = prompt.get("spatial_world") if isinstance(prompt.get("spatial_world"), dict) else None
+            _, hidden_entities = self._spatial_entities(spatial, spatial_world)
             cleaned_prompts.append(
                 self._clean_hidden_entities_from_prompt(
                     prompt_by_key[(int(scene["id"]), idx)],

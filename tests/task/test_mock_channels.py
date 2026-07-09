@@ -206,7 +206,7 @@ class TestGridResubmit:
         monkeypatch.setattr(mcp, "_to_public_http_url", lambda raw_url, base_url: f"http://public/{raw_url.rsplit('/', 1)[-1]}")
         captured = {}
 
-        def fake_post(url, data, timeout, verify):
+        def fake_post(url, data, timeout, verify, **kwargs):
             captured["url"] = url
             captured["data"] = data
             response = MagicMock()
@@ -434,6 +434,36 @@ class TestGridPoll:
         assert dispatch_calls == [(77, "http://h/upload/storyboard/temp/grid.png", "grid.png", 4)]
         splitter.split_grid.assert_not_called()
         grid_model.update_status.assert_called_once()
+
+    def test_late_completed_first_frame_grid_recovers_timeout_task(self, monkeypatch):
+        import task.grid_image_task as git
+        from script_writer_core.constant import ItemType
+
+        grid_model = MagicMock()
+        monkeypatch.setattr(git, "GridImageTasksModel", grid_model)
+        grid_model.get_pending_tasks.return_value = []
+
+        task = MagicMock()
+        task.task_key = "grid:1:2:1122"
+        task.project_id = "1123"
+        task.item_type = ItemType.STORYBOARD_FIRST_FRAME_GRID
+        task.ai_tool_result_url = "/upload/cache/2026-07-10/1123.png"
+        grid_model.get_late_completed_terminal_tasks.return_value = [task]
+
+        handled = []
+        monkeypatch.setattr(git, "_handle_task_success", lambda recovered_task, data: handled.append((recovered_task, data)))
+        monkeypatch.setattr(git, "_update_task_status_file", MagicMock())
+        monkeypatch.setattr(grid_model, "cleanup_old_tasks", MagicMock())
+
+        git.process_grid_image_tasks()
+
+        grid_model.get_late_completed_terminal_tasks.assert_called_once()
+        assert handled == [
+            (
+                task,
+                {"status": "SUCCESS", "results": [{"file_url": "/upload/cache/2026-07-10/1123.png"}]},
+            )
+        ]
 
     def test_first_frame_grid_validation_failure_resubmits_before_writeback(self, monkeypatch):
         import task.grid_image_task as git

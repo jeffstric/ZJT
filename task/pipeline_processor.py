@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 class PipelineProcessor:
     """Pipeline 编排器"""
 
+    @staticmethod
+    def _is_grid_task_owned_step(step: PipelineStep) -> bool:
+        """Steps dispatched by their owning task scheduler, not by the global pipeline flow."""
+        return step.step_type == PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+
     # ==================== 步骤创建（委托给 PipelineDriverFactory） ====================
 
     @staticmethod
@@ -314,7 +319,7 @@ class PipelineProcessor:
             dispatched_before_finish = set()  # (ai_tool_id, stage) 去重
             for step in waiting_steps:
                 try:
-                    if step.step_type == PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT:
+                    if PipelineProcessor._is_grid_task_owned_step(step):
                         logger.info(
                             "Skip storyboard grid split step %s in global pipeline scheduler; "
                             "grid_image_task dispatches it after grid image is ready",
@@ -370,7 +375,7 @@ class PipelineProcessor:
             logger.info(f"Processing {len(retry_steps)} retry pipeline steps")
             for step in retry_steps:
                 try:
-                    if step.step_type == PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT:
+                    if PipelineProcessor._is_grid_task_owned_step(step):
                         logger.info(
                             "Skip retrying storyboard grid split step %s in global pipeline scheduler; "
                             "grid_image_task owns this step",
@@ -453,12 +458,21 @@ class PipelineProcessor:
         steps = PipelineStepModel.get_by_ai_tool_and_stage(ai_tool_id, stage)
         if not steps:
             return
+        managed_steps = [
+            step for step in steps
+            if not (
+                stage == PipelineStage.BEFORE_FINISH
+                and PipelineProcessor._is_grid_task_owned_step(step)
+            )
+        ]
+        if not managed_steps:
+            return
 
-        pending = [s for s in steps if s.status in (PipelineStepStatus.PENDING, PipelineStepStatus.PROCESSING)]
-        failed = [s for s in steps if s.status in (PipelineStepStatus.FAILED, PipelineStepStatus.TIMEOUT)]
-        completed = [s for s in steps if s.status == PipelineStepStatus.COMPLETED]
+        pending = [s for s in managed_steps if s.status in (PipelineStepStatus.PENDING, PipelineStepStatus.PROCESSING)]
+        failed = [s for s in managed_steps if s.status in (PipelineStepStatus.FAILED, PipelineStepStatus.TIMEOUT)]
+        completed = [s for s in managed_steps if s.status == PipelineStepStatus.COMPLETED]
 
-        total = len(steps)
+        total = len(managed_steps)
         logger.info(
             f"Pipeline stage {stage} for ai_tool {ai_tool_id}: "
             f"total={total}, completed={len(completed)}, pending={len(pending)}, failed={len(failed)}"
@@ -467,10 +481,7 @@ class PipelineProcessor:
         # 如果还有 PENDING/PROCESSING 步骤，分发下一个
         if pending:
             if not any(s.status == PipelineStepStatus.PROCESSING for s in pending):
-                next_pending = next(
-                    (s for s in steps if s.status == PipelineStepStatus.PENDING),
-                    None
-                )
+                next_pending = next((s for s in managed_steps if s.status == PipelineStepStatus.PENDING), None)
                 if next_pending:
                     logger.info(f"Dispatching next pending step {next_pending.id} for ai_tool {ai_tool_id}")
                     await PipelineProcessor.dispatch_step(next_pending)

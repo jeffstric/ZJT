@@ -6,6 +6,8 @@
 - 2026年6月9日：修复角色名称不一致问题（LLM名称 vs 数据库名称）
 - 2026年6月9日：优化分镜节点角色显示，将标签改为提示词区域的图片形式
 - 2026年6月9日：新增在线缩略图服务，优化角色头像加载性能
+- 2026年7月10日：强化分镜空间布局的物理座位连续性，避免机位变化导致驾驶座/副驾驶座等槽位左右混淆
+- 2026年7月10日：将空间投影/坐标连续性核心实现迁移到 `enterprise.services.storyboard_spatial`，社区版保留旧格式兼容读取
 
 ## 问题背景
 
@@ -123,6 +125,19 @@ for group in shot_groups:
             })
         shot['db_character_info'] = db_character_info
 ```
+
+## 空间布局连续性补充
+
+分镜解析会输出顶层 `spatial_world` 和每个 shot 的 `spatial_layout`，用于后续首帧宫格生成和角色位置连续性判断。`spatial_world` 是整集级空间注册表，不是单一大坐标系；一集里可以包含多个 `space_units`，例如载具驾驶室、森林道路、糖浆陷阱区域、城堡大厅等。每个分镜通过 `spatial_layout.space_unit_refs` 引用当前相关的空间单元。
+
+对于载具、房间、桌面等有固定槽位的容器，空间布局需要同时记录两类位置：
+
+- 稳定物理槽位：`space_unit_id`、`anchor_id`、`position_3d`、`slot_id`、`slot`、`physical_position`、`position_basis`，表示角色真实坐在哪个座位或位于哪个容器槽位。
+- 当前画面投影：`screen_position`，只表示当前机位下角色落在画面的左/右/中/画外等位置；当存在 `camera_pose` 和 `position_3d` 时，宫格首帧生成优先使用后端派生的 `derived_screen_position`。
+
+当镜头从车内后排切到车外正面、侧面或透过挡风玻璃观察时，`screen_position` 可以变化，但 `space_unit_id`、`anchor_id`、`position_3d`、`slot_id` 和 `physical_position` 不应变化。只有 `spatial_layout.continuity.changed_positions[]` 明确声明角色换座、离开容器或进入新区域时，才允许改变稳定物理槽位。
+
+企业版后处理 `repair_spatial_layout_continuity()` 会在相邻分镜的同一容器内，为未声明真实移动的同一角色补齐或纠正上一镜头的稳定槽位字段，但不会复制上一镜头的 `screen_position`，避免把旧机位的画面左右硬套到新机位。该核心实现位于 `enterprise.services.storyboard_spatial`，社区版的 `services.storyboard_spatial` 只是兼容门面：它可以读取旧版 `spatial_layout` 并给普通流程使用，但不会启用整集级空间注册表、三维投影或效果模式首帧宫格能力。
 
 ## 数据流
 

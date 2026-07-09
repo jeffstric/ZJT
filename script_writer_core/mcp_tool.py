@@ -690,7 +690,7 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                 logger.info(f"[MOCK] mcp_tool image_edit short-circuit pid={result_data['project_ids'][0]}")
             else:
                 # ⚠️ verify=False 禁用 SSL 证书验证，因为 ComfyUI 可能使用自签名证书
-                response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+                response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
                 response.raise_for_status()
                 result_data = response.json()
             # ==============================================================================
@@ -3842,7 +3842,7 @@ def generate_digital_human(
         api_url = f"{base_url.rstrip('/')}/api/digital-human"
 
         try:
-            response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+            response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
             response.raise_for_status()
 
             result_data = response.json()
@@ -4080,7 +4080,7 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                 result_data = {'project_ids': [generate_mock_project_id()]}
                 logger.info(f"[MOCK] mcp_tool text_to_image short-circuit pid={result_data['project_ids'][0]}")
             else:
-                response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+                response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
                 response.raise_for_status()
                 result_data = response.json()
             # ==============================================================================
@@ -4599,7 +4599,7 @@ def submit_grid_image_task(
             result_data = {'project_ids': [generate_mock_project_id()]}
             _logger.info(f"[MOCK] submit_grid_image_task i2i short-circuit pid={result_data['project_ids'][0]}")
         else:
-            response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+            response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
             response.raise_for_status()
             result_data = response.json()
     except httpx.HTTPStatusError as e:

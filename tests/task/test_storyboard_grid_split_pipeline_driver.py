@@ -117,3 +117,69 @@ def test_storyboard_grid_split_driver_writes_only_real_cells(monkeypatch, tmp_pa
     assert [item_id for item_id, _ in updated_items] == [201, 202, 203]
     assert result["result_data"]["skipped_cells"] == [3]
     assert len(result["result_data"]["created_assets"]) == 3
+
+
+def test_storyboard_grid_split_driver_updates_failed_batch_item_on_late_recovery(monkeypatch, tmp_path):
+    grid_path = tmp_path / "grid.png"
+    output_dir = tmp_path / "out"
+    _make_grid(grid_path)
+
+    updated_items = []
+
+    monkeypatch.setattr(
+        "task.pipeline_drivers.storyboard_grid_split_driver.resolve_upload_url_to_local_path",
+        lambda value: str(grid_path),
+    )
+    monkeypatch.setattr(
+        "task.pipeline_drivers.storyboard_grid_split_driver.get_config",
+        lambda: {"server": {"host": "http://server.test"}},
+    )
+    monkeypatch.setattr(
+        "task.pipeline_drivers.storyboard_grid_split_driver.StoryboardSceneAssetModel.create",
+        lambda scene_id, asset_type, ai_tool_id=None, result_url=None: 9000 + int(scene_id),
+    )
+    monkeypatch.setattr(
+        "task.pipeline_drivers.storyboard_grid_split_driver.StoryboardSceneAssetModel.set_selected",
+        lambda scene_id, asset_type, asset_id: 1,
+    )
+    monkeypatch.setattr(
+        "task.pipeline_drivers.storyboard_grid_split_driver.StoryboardImageBatchItemModel.find_running_by_grid_task",
+        lambda grid_task_id, scene_id: None,
+    )
+    monkeypatch.setattr(
+        "task.pipeline_drivers.storyboard_grid_split_driver.StoryboardImageBatchItemModel.find_by_grid_task",
+        lambda grid_task_id, scene_id: {"id": 354, "extra_json": {"grid_task_id": grid_task_id}},
+    )
+    monkeypatch.setattr(
+        "task.pipeline_drivers.storyboard_grid_split_driver.StoryboardImageBatchItemModel.update",
+        lambda item_id, **kwargs: updated_items.append((item_id, kwargs)) or 1,
+    )
+
+    step = PipelineStep(
+        id=129,
+        ai_tool_id=1123,
+        step_type=PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT,
+        params={
+            "grid_task_id": 492,
+            "grid_size": 4,
+            "output_dir": str(output_dir),
+            "output_url_path": "upload/storyboard/first_frame",
+            "cells": [
+                {"grid_index": 0, "scene_id": 522},
+                {"grid_index": 1, "placeholder": True},
+                {"grid_index": 2, "placeholder": True},
+                {"grid_index": 3, "placeholder": True},
+            ],
+        },
+    )
+    ai_tool = SimpleNamespace(id=1123, result_url="/upload/storyboard/temp/grid.png")
+
+    result = asyncio.run(StoryboardGridSplitPipelineDriver().execute(step, ai_tool))
+
+    assert result["success"] is True
+    assert updated_items
+    item_id, kwargs = updated_items[0]
+    assert item_id == 354
+    assert kwargs["status"] == 2
+    assert kwargs["ai_tool_id"] == 1123
+    assert kwargs["asset_id"] == 9522

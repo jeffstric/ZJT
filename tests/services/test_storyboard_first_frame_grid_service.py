@@ -710,6 +710,9 @@ def test_llm_refiner_receives_hidden_continuity_but_returns_clean_prompt(monkeyp
     assert "hidden_continuity_entities" in payload
     assert "奶酪_Cheese" in payload
     assert "offscreen_continuity" in payload
+    system_prompt = calls[0]["messages"][0]["content"]
+    assert "slot_integrity_rule" in system_prompt
+    assert "camera_anchor_integrity_rule" in system_prompt
 
 
 def test_clean_cell_prompt_excludes_offscreen_character_and_reference_index():
@@ -768,6 +771,111 @@ def test_clean_cell_prompt_excludes_offscreen_character_and_reference_index():
     assert "容器/区域" not in prompt
     assert "图1" in prompt
     assert "图2" not in prompt
+
+
+def test_cell_prompt_includes_camera_anchor_for_slot_consistency():
+    service = StoryboardFirstFrameGridService(enable_llm_refine=False)
+    scene = {
+        "id": 110,
+        "title": "vehicle interior",
+        "prompt_json": {
+            "scene_desc": "front-row side-by-side vehicle shot",
+            "spatial_layout": {
+                "camera_anchor": {
+                    "description": "outside left window looking into the cabin",
+                    "camera_position": "outside left window",
+                    "shooting_direction": "through the left window toward the dashboard",
+                    "relative_to_character": {
+                        "name": "Cheese",
+                        "position": "left front 30 degrees",
+                        "distance": "medium shot distance",
+                    },
+                    "screen_composition": "Cheese stays in the front passenger seat, Milkshake stays in the driver seat",
+                },
+                "containers": [
+                    {
+                        "name": "bubble steam car",
+                        "area": "front cabin",
+                        "slots": [
+                            {
+                                "slot": "front passenger seat",
+                                "screen_position": "left side of frame",
+                                "occupant_type": "character",
+                                "name": "Cheese",
+                                "visibility": "visible",
+                                "framing_role": "primary_subject",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    }
+
+    prompt = service._build_cell_prompt(scene, reference_indices=[], manifest=[])
+
+    assert "outside left window looking into the cabin" in prompt
+    assert "through the left window toward the dashboard" in prompt
+    assert "front passenger seat" in prompt
+    assert "driver seat" in prompt
+
+
+def test_cell_prompt_prefers_derived_projection_over_raw_screen_position(monkeypatch):
+    monkeypatch.setattr("config.constant.Edition.is_enterprise", lambda: True)
+    service = StoryboardFirstFrameGridService(enable_llm_refine=False)
+    scene = {
+        "id": 111,
+        "title": "vehicle interior",
+        "prompt_json": {
+            "scene_desc": "驾驶室镜头",
+            "spatial_world": {
+                "space_units": [
+                    {
+                        "space_unit_id": "space_prop_001_cabin",
+                        "anchors": [
+                            {
+                                "anchor_id": "front_driver_seat",
+                                "label": "驾驶座",
+                                "position_3d": {"x": 0.55, "y": 0.45, "z": 0.25},
+                            }
+                        ],
+                    }
+                ]
+            },
+            "spatial_layout": {
+                "space_unit_refs": ["space_prop_001_cabin"],
+                "camera_pose": {
+                    "space_unit_id": "space_prop_001_cabin",
+                    "eye": {"x": 0.0, "y": -0.8, "z": 0.6},
+                    "target": {"x": 0.0, "y": 0.45, "z": 0.25},
+                    "up": {"x": 0, "y": 0, "z": 1},
+                },
+                "containers": [
+                    {
+                        "name": "泡泡蒸汽车",
+                        "area": "驾驶室",
+                        "slots": [
+                            {
+                                "slot": "驾驶座",
+                                "space_unit_id": "space_prop_001_cabin",
+                                "anchor_id": "front_driver_seat",
+                                "screen_position": "画面左侧（错误）",
+                                "occupant_type": "character",
+                                "name": "奶昔_Milkshake",
+                                "visibility": "visible",
+                                "framing_role": "primary_subject",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    }
+
+    prompt = service._build_cell_prompt(scene, reference_indices=[], manifest=[])
+
+    assert "画面右侧" in prompt
+    assert "画面左侧（错误）" not in prompt
 
 
 def test_character_references_from_spatial_skip_offscreen_characters():

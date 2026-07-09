@@ -87,6 +87,15 @@ def test_build_scenes_from_parsed_script_creates_scene_and_dialogue_payloads():
         "locations": [
             {"id": "loc_001", "name": "客厅", "location_db_id": 23},
         ],
+        "spatial_world": {
+            "space_units": [
+                {
+                    "space_unit_id": "space_loc_living_room",
+                    "name": "客厅空间",
+                    "anchors": [{"anchor_id": "table_left", "position_3d": {"x": -0.4, "y": 0.2, "z": 0}}],
+                }
+            ]
+        },
         "shot_groups": [
             {
                 "group_id": "grp_001",
@@ -148,6 +157,7 @@ def test_build_scenes_from_parsed_script_creates_scene_and_dialogue_payloads():
     assert scene["prompt"]["style"] == "写实电影"
     assert scene["prompt"]["perspective"] == "平视 / 中景"
     assert scene["prompt"]["scene_desc"] == "【【小林】】站在客厅桌边，钥匙在桌面中央。\n镜头推进到桌面钥匙。"
+    assert scene["prompt"]["spatial_world"]["space_units"][0]["space_unit_id"] == "space_loc_living_room"
     assert scene["prompt"]["spatial_layout"]["location_path"][0]["name"] == "客厅"
     assert scene["prompt"]["spatial_layout"]["loose_positions"][0]["screen_position"] == "画面左侧"
     assert scene["prompt"]["source"]["group_name"] == "场景编号：A1 客厅 夜晚"

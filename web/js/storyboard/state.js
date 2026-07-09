@@ -14,6 +14,7 @@ const state = {
     workflowId: null,
     userId: null,
     authToken: null,
+    editionInfo: { mode: 'community', mode_label: '社区版' },
 
     title: '故事板',
     style: '',
@@ -384,7 +385,13 @@ export function restoreUiConfig(config = {}) {
         state.selectedDigitalHumanTaskId = config.selectedDigitalHumanTaskId;
     }
     if (['speed', 'balanced', 'quality'].includes(config.autoImageSequenceMode)) {
-        state.autoImageSequenceMode = config.autoImageSequenceMode;
+        if (config.autoImageSequenceMode === 'quality' && state.editionInfo?.mode === 'enterprise') {
+            state.autoImageSequenceMode = 'quality';
+        } else if (config.autoImageSequenceMode !== 'quality') {
+            state.autoImageSequenceMode = config.autoImageSequenceMode;
+        } else {
+            state.autoImageSequenceMode = 'balanced';
+        }
     }
     // 剧本拆分参数恢复（含取值合法性校验）
     if ([5, 8, 10, 15].includes(Number(config.maxGroupDuration))) {

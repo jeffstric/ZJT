@@ -52,7 +52,7 @@ from config.constant import (
     RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
 )
-from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage
+from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 
 logging.basicConfig(level=logging.INFO)
@@ -739,6 +739,11 @@ def _check_pipeline_stage(ai_tool, stage):
     from task.pipeline_processor import PipelineProcessor
 
     all_steps = PipelineProcessor.get_all_steps(ai_tool.id, stage)
+    if stage == PipelineStage.BEFORE_FINISH:
+        all_steps = [
+            step for step in all_steps
+            if step.step_type != PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+        ]
     if not all_steps:
         # 无步骤，直接回到主流程
         if stage == PipelineStage.PARAM_PREPARE:
@@ -769,7 +774,10 @@ def _check_pipeline_stage(ai_tool, stage):
             logger.info(f"Task {ai_tool.id} failed: param_prepare step failed")
         elif stage == PipelineStage.BEFORE_FINISH:
             # 检查是否还有待处理的重试步骤
-            remaining = PipelineProcessor.get_pending_steps(ai_tool.id, stage)
+            remaining = [
+                step for step in PipelineProcessor.get_pending_steps(ai_tool.id, stage)
+                if step.step_type != PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+            ]
             if remaining:
                 # 还有重试机会，继续等待
                 return False

@@ -267,8 +267,18 @@ header {
   padding: 4px 8px;
 }
 
-.modal-close:hover { 
-  color: var(--text); 
+.modal-close:hover {
+  color: var(--text);
+}
+
+/* 可滚动弹窗（.modal 设 overflow-y:auto）内的粘性头部：
+   把关闭按钮（position:absolute）的包裹层从 relative 改为 sticky，
+   使头部连同 × 始终吸附在滚动容器顶部，避免滚动时关闭按钮被带出可视区。 */
+.modal-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--panel);
 }
 
 .modal-tabs {

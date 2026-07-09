@@ -8,6 +8,7 @@ import json
 import re
 from typing import Dict, Any, Optional, List, Tuple
 from llm.llm_client_factory import get_llm_client
+from services.storyboard_spatial import repair_spatial_layout_continuity as _repair_spatial_layout_continuity_core
 
 # ============================================================
 # 日志开关配置
@@ -85,17 +86,31 @@ SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和�
     - **难**：4 人以上群体调度、打斗/追逐/复杂连续动作、长镜头（>10秒）且动作密集、多个关键道具且强交互、复杂镜头运动（升降/摇移组合）/强透视/多层景深。例：多人混战追逐穿越复杂场景的长镜头。
     - difficulty_reason 控制在一句话内，简述判定依据（如"4人群战+长镜头+多个道具交互"）。
 20. **【镜头空间布局 spatial_layout】每个 shot 必须输出 spatial_layout 对象**，用于后续首帧宫格生成保持同一幕内的位置连续性：
+    - **整集级空间注册表 `spatial_world`**：全局不是一个坐标系，而是整集级空间注册表。必须在顶层输出 `spatial_world.space_units[]`，每个 `space_unit` 表示一个稳定局部空间（如载具驾驶室、糖浆陷阱区域、城堡大厅、桌面机关区），包含 `space_unit_id`、`owner_type`、`owner_id`、`location_ids`、`coordinate_frame` 和 `anchors`。一集可以有多个完全不同的 `space_units`，不能用单一大坐标系覆盖所有场景。
+    - 每个 `space_unit.coordinate_frame` 必须写清 `frame_id`、`origin`、`axes.x_positive/y_positive/z_positive`、`scale`、`locked=true`。同一个 `space_unit_id` 的坐标轴一旦建立，后续分镜只能引用，不允许重写含义。
+    - 每个稳定位置必须作为 `anchors[]` 登记，包含 `anchor_id`、`label`、`position_3d`。例如驾驶座、副驾驶座、车门、车窗、糖浆池中心、道路前方等。坐标使用 -1 到 1 的归一化语义坐标，不要求真实米制精度。
+    - 每个 shot 的 `spatial_layout.space_unit_refs` 必须引用顶层 `spatial_world.space_units` 中真实存在的 `space_unit_id`。不能在 shot 内临时创造坐标系；如果剧情出现新空间，必须先加入顶层 `spatial_world.space_units`，再在 shot 中引用。
+    - 每个 slot/loose_position 优先引用 `space_unit_id + anchor_id`，并可携带 `position_3d` 作兜底；没有 `changed_positions` 明确声明真实移动时，不得改变同一角色绑定的 `space_unit_id/anchor_id/position_3d`。
+    - 每个 shot 必须输出 `camera_pose`（或 `camera_anchor.camera_pose`）：包含 `space_unit_id`、`eye`、`target`、`up`、`fov`。相机变化只改变 `camera_pose`，不能改变角色所在 anchor。
     - `location_path` 必须引用顶层 `locations` 中真实存在的场景，表达父场景到当前场景的路径；如果剧本出现新场景，必须先在顶层 `locations` 创建，再在这里引用，不能凭空写名称。
     - `containers` 表达角色或小道具位于某个真实道具、载具、房间区域、桌面等容器内；如果容器是道具，`prop_id` 必须引用顶层 `props` 中真实存在的道具。若剧本需要新道具，必须先在顶层 `props` 创建。
     - `loose_positions` 表达不属于某个容器的角色/道具位置，例如"角色站在桥头左侧"。
     - `slots[].character_id` 必须引用顶层 `characters`。`visibility=visible/partial` 的角色必须进入 `characters_present`；`visibility=offscreen/occluded` 的角色可以不进入 `characters_present`，但必须保留在 `spatial_layout` 中用于空间连续性。
     - 每个 shot 必须输出 `focus_character_ids` 数组，表示当前镜头的视觉焦点/说话主体；近景或特写可以只聚焦一个角色，但不代表其他角色从空间中消失。
+    - 每个 shot 的 `spatial_layout` 必须输出 `camera_anchor` 对象，用结构化方式描述机位锚定：`camera_position` 表示相机所在的真实空间点，`shooting_direction` 表示拍摄方向，`relative_to_character` 表示相机相对主要焦点角色的位置和角度，`view_direction` 表示从容器/场景坐标看相机朝向（如 `rear_to_front`、`front_to_rear`、`left_to_right`、`right_to_left`、`unknown`），`screen_axis_mapping` 表示容器自身坐标如何投影到画面左右/上下，`screen_composition` 表示主要角色在画面中的左右/前后/边界关系。
+    - **机位锚定必须精确到角色相对位置**：不要只写"从车内拍摄"、"室内镜头"这类容器级描述；必须写清楚"从车内中央扶手区向左侧拍摄，机位位于奶酪_Cheese的右前方45度"这类相机相对角色的方位、角度和画面落点。
+    - `opening_frame_description` 必须与 `spatial_layout.camera_anchor` 一致，并在画面描述中体现同一机位锚定；例如说明"奶酪_Cheese位于画面左侧，其身体左侧紧邻左侧车门与车窗，右侧为车内中央区域与驾驶座方向"。
+    - **先判定观察点，再写 camera_anchor**：如果 `opening_frame_description` 写了"透过车窗可见"、"隔着玻璃看到车内"、"从窗外看向车内"，则相机必须锚定在车外/窗外对应位置，`camera_position` 不能写成车内后排、车内中央扶手区等车内机位。反过来，如果 `camera_anchor.camera_position` 是车内，`opening_frame_description` 也必须明确是车内视角。
+    - **一致性自检**：`camera_anchor.description` 必须能作为 `opening_frame_description` 的第一句视角说明直接拼进去而不矛盾。禁止出现 opening_frame_description 是车外透过车窗观察、但 camera_anchor 写车内向前排拍摄的冲突。
+    - **seat_source_constraint / 载具座位来源约束**：载具内的 `slots[].slot` 必须来自原始剧本文字、上一镜头已建立的 `spatial_layout`、或角色动作明确暗示的位置。禁止为了取景方便凭空新增"后排左侧座位/后排右侧座位/后座"；只有原文明确出现"后排/后座/后排座位"或 `changed_positions[]` 写明真实换座时，才允许使用后排座位。
+    - 如果原文或上一镜头建立的是左右并排、驾驶座+副驾驶座、驾驶室左侧/右侧、两人同坐前排，则拆分对话镜头后也必须保持同一排左右关系；可通过镜头裁切让非焦点角色 `offscreen`，但不能把副驾驶/并排角色改写成后排角色。
+    - **物理坐标与画面投影必须分开**：`slots[].slot_id` 是同一容器内稳定槽位 ID（如 `front_driver_seat`、`front_passenger_seat`），`slots[].slot` 是人类可读槽位名，`slots[].physical_position` 用容器自身坐标描述真实位置（如 `{ "row": "front", "side": "vehicle_left/vehicle_right/center", "basis": "container_forward_direction" }`），`slots[].position_basis` 固定写 `physical_slot`。`screen_position 只是当前镜头投影`，可以因机位变成画面左/右/外；但 `slot_id`、`slot`、`physical_position` 不能因为构图变化而改变。不要把画面左/右反推成换座，也不要因为从车前看、从车后看、透过挡风玻璃看而交换驾驶座和副驾驶座的 occupant。
     - `slots[]` 和 `loose_positions[]` 中的角色/道具必须输出 `visibility`（取值：`visible`、`partial`、`offscreen`、`occluded`）和 `framing_role`（取值：`primary_subject`、`secondary_continuity`、`background`、`offscreen_continuity`）。同一载具/房间中上一镜头已经存在但本镜头不是焦点的角色，必须保留为 `secondary_continuity` 或 `offscreen_continuity`，不要直接删除。
     - **逐项核对上一镜头槽位**：输出当前 shot 前，必须把上一 shot 的 `spatial_layout.containers[].slots[]` 和 `loose_positions[]` 当作检查表逐项核对。除非剧本明确发生真实空间变化，否则上一镜头中同一容器/同一空间里的每个角色槽位都必须在当前 shot 继续出现；不是焦点时改为 `secondary_continuity` 或 `offscreen_continuity`。
     - **真实空间变化必须结构化输出**：如果角色离开原容器/原场景、换座、进入其他区域、从车内到车外、从画内移动到另一空间，必须在 `spatial_layout.continuity.changed_positions[]` 输出对象，不能只写在 description/action 中。对象字段包括：`character_id`、`from_container_id`、`from_slot`、`to_container_id`、`to_slot`、`change_type`、`reason`；`change_type` 取值为 `moved_slot`、`entered_container`、`left_container`、`exited_scene`、`entered_scene`。近景/特写造成的画面裁切不是空间变化，不写入 changed_positions，只保留原 slot 并标记 `visibility=offscreen`。
     - 特写/近景规则：如果 camera_angle、容器、座位/空间关系没有明确变化，上一镜头的非焦点角色必须继续保留在 `spatial_layout` 中；若画面能看到则 `visibility=partial` 或 `visible`，若因裁切看不到则 `visibility=offscreen`，并在 `continuity.notes` 说明其仍在原位置。
     - `characters_present` 表示当前首帧应该可见或局部可见的角色；`focus_character_ids` 表示镜头重点。不要为了表达"单人近景/特写"而把仍在画面边缘、背景或局部可见的角色从 `characters_present` 删除。
-    - `continuity` 必须说明与前一分镜相比哪些位置保持不变、哪些发生变化；没有明确移动时，应保持上一分镜的逻辑位置，例如上一镜头奶酪在画面左侧，下一镜头未移动则仍在左侧。
+    - `continuity` 必须说明与前一分镜相比哪些位置保持不变、哪些发生变化；没有明确移动时，应保持上一分镜的物理槽位和角色占用关系，例如上一镜头奶酪在副驾驶座、奶昔在驾驶座，下一镜头即使机位变为面对驾驶室，也仍然是奶酪在副驾驶座、奶昔在驾驶座；画面左右如不确定，可以写更中性的 `screen_position`，但不能交换物理槽位。
     - 结构字段使用 id 和 name，不使用【【】】或〖〖〗〗标记；描述性文本字段仍按上述标记规则输出。
 
 ID格式规范：
@@ -444,6 +459,30 @@ def _changed_positions_include_character(spatial: Dict[str, Any], character_id: 
     )
 
 
+_STABLE_SPATIAL_SLOT_FIELDS = (
+    "slot_id",
+    "slot",
+    "physical_position",
+    "position_basis",
+)
+
+
+def _slot_stable_label(slot: Dict[str, Any]) -> str:
+    return str(slot.get("slot_id") or slot.get("slot") or slot.get("screen_position") or "").strip()
+
+
+def _inherit_stable_slot_identity(
+    current_slot: Dict[str, Any],
+    previous_slot: Dict[str, Any],
+) -> bool:
+    inherited = False
+    for field in _STABLE_SPATIAL_SLOT_FIELDS:
+        if field in previous_slot and current_slot.get(field) != previous_slot[field]:
+            current_slot[field] = previous_slot[field]
+            inherited = True
+    return inherited
+
+
 def repair_spatial_layout_continuity(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     修复 LLM 在近景/特写中漏掉的空间连续性角色。
@@ -452,35 +491,7 @@ def repair_spatial_layout_continuity(parsed_data: Dict[str, Any]) -> Dict[str, A
     这里按相邻分镜兜底：同一容器里的上一镜头角色若没有在当前镜头出现，就以
     offscreen_continuity 方式补回原 slot；不强行加入 characters_present。
     """
-    valid_character_ids = {
-        str(character.get("id"))
-        for character in parsed_data.get("characters") or []
-        if isinstance(character, dict) and character.get("id")
-    }
-
-    previous_spatial: Optional[Dict[str, Any]] = None
-    for group in parsed_data.get("shot_groups") or []:
-        if not isinstance(group, dict):
-            continue
-        for shot in group.get("shots") or []:
-            if not isinstance(shot, dict):
-                continue
-
-            spatial = shot.get("spatial_layout")
-            if not isinstance(spatial, dict):
-                previous_spatial = None
-                continue
-
-            if previous_spatial:
-                _repair_shot_spatial_layout_from_previous(
-                    spatial=spatial,
-                    previous_spatial=previous_spatial,
-                    valid_character_ids=valid_character_ids,
-                )
-
-            previous_spatial = spatial
-
-    return parsed_data
+    return _repair_spatial_layout_continuity_core(parsed_data)
 
 
 def _repair_shot_spatial_layout_from_previous(
@@ -530,6 +541,23 @@ def _repair_shot_spatial_layout_from_previous(
             current_slots = []
             current_container["slots"] = current_slots
 
+        previous_slots_by_character = {
+            str(slot.get("character_id")): slot
+            for slot in previous_container.get("slots") or []
+            if _is_character_slot(slot)
+        }
+        for current_slot in current_slots:
+            if not _is_character_slot(current_slot):
+                continue
+            character_id = str(current_slot.get("character_id"))
+            previous_slot = previous_slots_by_character.get(character_id)
+            if not previous_slot:
+                continue
+            if _changed_positions_include_character(spatial, character_id):
+                continue
+            if _inherit_stable_slot_identity(current_slot, previous_slot):
+                _append_unique_text(unchanged_slots, _slot_stable_label(current_slot))
+
         for previous_slot in previous_container.get("slots") or []:
             if not _is_character_slot(previous_slot):
                 continue
@@ -548,7 +576,7 @@ def _repair_shot_spatial_layout_from_previous(
             current_slots.append(carried_slot)
             current_character_ids.add(character_id)
 
-            slot_name = carried_slot.get("slot") or carried_slot.get("screen_position")
+            slot_name = _slot_stable_label(carried_slot)
             _append_unique_text(unchanged_slots, slot_name)
             name = carried_slot.get("name") or character_id
             if slot_name:
@@ -778,6 +806,65 @@ JSON_FORMAT_EXAMPLE = """{
       "category": "道具类别"
     }
   ],
+  "spatial_world": {
+    "space_units": [
+      {
+        "space_unit_id": "space_prop_001_cabin",
+        "name": "泡泡蒸汽车驾驶室",
+        "owner_type": "prop",
+        "owner_id": "prop_001",
+        "location_ids": ["loc_001", "loc_002"],
+        "coordinate_frame": {
+          "frame_id": "frame_prop_001_cabin",
+          "origin": "驾驶室中心",
+          "axes": {
+            "x_positive": "车辆自身右侧",
+            "y_positive": "车辆自身前方",
+            "z_positive": "上方"
+          },
+          "scale": "normalized_unit_box",
+          "locked": true
+        },
+        "anchors": [
+          {
+            "anchor_id": "front_driver_seat",
+            "label": "驾驶座",
+            "position_3d": {"x": 0.55, "y": 0.45, "z": 0.25}
+          },
+          {
+            "anchor_id": "front_passenger_seat",
+            "label": "副驾驶座",
+            "position_3d": {"x": -0.55, "y": 0.45, "z": 0.25}
+          }
+        ]
+      },
+      {
+        "space_unit_id": "space_loc_002_syrup_trap",
+        "name": "糖浆陷阱区域",
+        "owner_type": "location",
+        "owner_id": "loc_002",
+        "location_ids": ["loc_002"],
+        "coordinate_frame": {
+          "frame_id": "frame_loc_002_syrup_trap",
+          "origin": "糖浆陷阱区域中心",
+          "axes": {
+            "x_positive": "道路右侧",
+            "y_positive": "道路前方",
+            "z_positive": "上方"
+          },
+          "scale": "normalized_scene_box",
+          "locked": true
+        },
+        "anchors": [
+          {
+            "anchor_id": "syrup_pool_center",
+            "label": "糖浆池中心",
+            "position_3d": {"x": 0, "y": 0, "z": 0}
+          }
+        ]
+      }
+    ]
+  },
   "shot_groups": [
     {
       "group_id": "grp_001",
@@ -815,7 +902,34 @@ JSON_FORMAT_EXAMPLE = """{
           "difficulty": "易/中/难",
           "difficulty_reason": "难度判定依据（一句话，综合人物数量/动作/时长/道具/镜头运动）",
           "spatial_layout": {
-            "schema_version": 1,
+            "schema_version": 2,
+            "space_unit_refs": ["space_prop_001_cabin"],
+            "camera_pose": {
+              "space_unit_id": "space_prop_001_cabin",
+              "eye": {"x": 0.0, "y": -0.8, "z": 0.6},
+              "target": {"x": 0.3, "y": 0.45, "z": 0.35},
+              "up": {"x": 0, "y": 0, "z": 1},
+              "fov": "medium"
+            },
+            "camera_anchor": {
+              "description": "从车外左侧车窗外向车内拍摄，机位位于【【奶酪_Cheese】】的左前方约30度，隔着车窗玻璃观察车内",
+              "camera_position": "车外左侧车窗外",
+              "shooting_direction": "穿过左侧车窗向车内驾驶台方向拍摄",
+              "relative_to_character": {
+                "character_id": "char_001",
+                "name": "奶酪_Cheese",
+                "position": "左前方30度",
+                "distance": "隔着车窗的中景距离"
+              },
+              "view_direction": "left_to_right",
+              "screen_axis_mapping": {
+                "container_left": "screen_left",
+                "container_right": "screen_right",
+                "container_front": "screen_depth_front",
+                "container_rear": "screen_depth_back"
+              },
+              "screen_composition": "【【奶酪_Cheese】】位于画面左侧并贴近左侧车窗玻璃，【【奶昔_Milkshake】】位于画面右侧驾驶座，二者之间可见驾驶台和拉杆"
+            },
             "location_path": [
               {
                 "location_id": "loc_001",
@@ -834,7 +948,17 @@ JSON_FORMAT_EXAMPLE = """{
                 "position_in_location": "该容器在当前场景中的位置",
                 "slots": [
                   {
+                    "space_unit_id": "space_prop_001_cabin",
+                    "anchor_id": "front_passenger_seat",
+                    "slot_id": "front_left_seat",
                     "slot": "驾驶室左侧座位",
+                    "position_3d": {"x": -0.55, "y": 0.45, "z": 0.25},
+                    "physical_position": {
+                      "row": "front",
+                      "side": "vehicle_left",
+                      "basis": "container_forward_direction"
+                    },
+                    "position_basis": "physical_slot",
                     "screen_position": "画面左侧",
                     "occupant_type": "character",
                     "character_id": "char_001",
@@ -1337,6 +1461,9 @@ async def parse_script_to_shots(
    - **【近景/特写连续性】近景、特写只改变构图焦点，不自动改变角色是否在场。如果上一镜头中另一个角色仍在同一车舱/房间/座位，且本镜头没有在 `spatial_layout.continuity.changed_positions` 声明真实空间变化，必须说明他在本镜头中是边缘可见、背景模糊、局部可见，还是因裁切处于镜头外；禁止让角色凭空消失。**
    - **【真实空间变化】角色离开原容器/原场景、换座、进入其他区域等语义必须由你在同一次 JSON 输出的 `spatial_layout.continuity.changed_positions[]` 中结构化表达；后处理只读取这个结构化字段，不会从自然语言描述里猜测。**
    - 必须与 `focus_character_ids`、`spatial_layout.slots[].visibility`、`spatial_layout.slots[].framing_role` 保持一致：主角写充分，secondary_continuity 角色弱化但保留空间关系。
+   - 必须与 `spatial_layout.camera_anchor` 保持一致：首帧描述要写清相机在真实空间中的位置、拍摄方向、相对主要角色的方位角度，以及主要角色在画面左右/前后/边界上的落点。禁止只写"从车内拍摄"、"室内视角"这类无法复原机位的笼统描述。
+   - 如果首帧描述使用"透过车窗可见"、"隔着玻璃看到车内"、"窗外看向车内"等外部观察措辞，`spatial_layout.camera_anchor.camera_position` 必须写成车外/窗外位置；禁止同时输出车内后排、车内中央扶手区等内部机位。
+   - 遵守 `seat_source_constraint`：载具内角色座位必须继承原文或上一镜头已建立的物理座位。若角色原本是左右并排/副驾驶位/驾驶室左侧或右侧，不能因为近景、单人焦点或机位变化而改成后排座位；后排座位只有原文明确写出或 `changed_positions[]` 声明真实换座时才可出现。
    - **涉及角色名称时必须用【【角色名】】格式包裹（注意：只对角色名称使用，场景名称不要使用）**
 
 7. **角色名称格式要求（非常重要）**：

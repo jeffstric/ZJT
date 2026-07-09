@@ -15,6 +15,7 @@ import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
 import { renderApp, renderPromptWithInlineRoles, getThumbnailUrl } from './render.js';
 import { pollSceneTaskStatus } from './polling.js';
 import { autoGenerateMissingFirstFrames, resetAutoMissingImagesFlag } from './auto_missing_images.js';
+import { showToast } from './utils.js';
 
 let generateProgressTimer = null;
 let isTimelineHovered = false;
@@ -369,6 +370,10 @@ async function handleAction(action, target) {
     if (action === 'set-auto-image-sequence-mode') {
         const mode = target.dataset.autoImageSequenceMode;
         if (!['speed', 'balanced', 'quality'].includes(mode) || state.isGeneratingFromScript) return;
+        if (mode === 'quality' && state.editionInfo?.mode !== 'enterprise') {
+            showToast('效果模式仅商业版支持，请购买商业版后使用', 'warning');
+            return;
+        }
         state.autoImageSequenceMode = mode;
         rerender();
         if (state.storyboardId) {

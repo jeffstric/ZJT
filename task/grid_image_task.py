@@ -366,7 +366,7 @@ def _resubmit_image_request(task) -> str:
             if task.image_size:
                 request_data['image_size'] = task.image_size
         
-        response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+        response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
         response.raise_for_status()
         
         result_data = response.json()
@@ -648,6 +648,35 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
         _update_task_status_file(task.item_type, task.item_name, 'failed', task.user_id, task.world_id)
 
 
+def _recover_late_completed_terminal_tasks(limit: int = 20) -> int:
+    """Recover grid tasks that timed out before the bound ai_tools result arrived."""
+    try:
+        late_tasks = GridImageTasksModel.get_late_completed_terminal_tasks(limit=limit)
+    except AttributeError:
+        return 0
+    if not late_tasks:
+        return 0
+
+    recovered_count = 0
+    logger.info("发现 %s 个宫格晚到成功任务，准备恢复拆分/回写", len(late_tasks))
+    for task in late_tasks:
+        file_url = getattr(task, "ai_tool_result_url", None)
+        if not file_url:
+            continue
+        try:
+            _handle_task_success(task, {"status": "SUCCESS", "results": [{"file_url": file_url}]})
+            recovered_count += 1
+        except Exception as exc:
+            logger.error(
+                "恢复宫格晚到成功任务失败: task_key=%s project_id=%s err=%s",
+                getattr(task, "task_key", None),
+                getattr(task, "project_id", None),
+                exc,
+                exc_info=True,
+            )
+    return recovered_count
+
+
 def process_grid_image_tasks(app=None):
     """
     处理宫格生图任务（在scheduler进程中定时执行）
@@ -656,6 +685,8 @@ def process_grid_image_tasks(app=None):
         app: FastAPI应用实例（保持与其他任务处理函数签名一致）
     """
     try:
+        _recover_late_completed_terminal_tasks()
+
         # 获取待处理的任务
         pending_tasks = GridImageTasksModel.get_pending_tasks(limit=50)
         

@@ -72,6 +72,7 @@ class GridImageTask:
         self.is_grid = kwargs.get('is_grid', 0)
         self.retry_count = kwargs.get('retry_count', 0)
         self.max_retries = kwargs.get('max_retries', 0)
+        self.ai_tool_result_url = kwargs.get('ai_tool_result_url')
         self.created_at = kwargs.get('created_at')
         self.updated_at = kwargs.get('updated_at')
         self.completed_at = kwargs.get('completed_at')
@@ -106,6 +107,7 @@ class GridImageTask:
             'is_grid': self.is_grid,
             'retry_count': self.retry_count,
             'max_retries': self.max_retries,
+            'ai_tool_result_url': self.ai_tool_result_url,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
@@ -362,6 +364,44 @@ class GridImageTasksModel:
             return tasks
         except Exception as e:
             logger.error(f"Failed to get pending grid image tasks: {e}")
+            raise
+
+    @staticmethod
+    def get_late_completed_terminal_tasks(limit: int = 20) -> List[GridImageTask]:
+        """
+        获取已经被 grid 轮询标为终态，但绑定 ai_tools 后来成功的任务。
+
+        典型场景：同步图片实现方耗时超过 grid_image_tasks.max_attempts，grid 任务先
+        TIMEOUT 并停止轮询；几分钟后 ai_tools 成功写入 result_url。这里把这些
+        "晚到成功"捞回同一套下载/校验/拆图回写流程。
+        """
+        sql = """
+            SELECT g.*, a.result_url AS ai_tool_result_url
+            FROM grid_image_tasks g
+            JOIN ai_tools a ON a.id = CAST(g.project_id AS UNSIGNED)
+            WHERE g.status IN (%s, %s)
+              AND (g.result_url IS NULL OR g.result_url = '')
+              AND a.status = %s
+              AND a.result_url IS NOT NULL
+              AND a.result_url <> ''
+              AND g.item_type IN (4, 5, 6, 8)
+            ORDER BY g.updated_at ASC
+            LIMIT %s
+        """
+        try:
+            results = execute_query(
+                sql,
+                (
+                    GridImageTaskStatus.FAILED,
+                    GridImageTaskStatus.TIMEOUT,
+                    2,
+                    limit,
+                ),
+                fetch_all=True,
+            )
+            return [GridImageTask(**row) for row in results] if results else []
+        except Exception as e:
+            logger.error(f"Failed to get late completed terminal grid image tasks: {e}")
             raise
     
     @staticmethod

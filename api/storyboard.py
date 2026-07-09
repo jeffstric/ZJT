@@ -235,6 +235,7 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
     character_name_map = _build_character_name_map(parsed_data)
     location_map = _build_location_map(parsed_data)
     prop_map = _build_prop_map(parsed_data)
+    spatial_world = parsed_data.get('spatial_world') if isinstance(parsed_data.get('spatial_world'), dict) else None
     scenes: List[dict] = []
 
     for group in parsed_data.get('shot_groups') or []:
@@ -316,6 +317,8 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                     'difficulty_reason': shot.get('difficulty_reason'),
                 },
             }
+            if spatial_world:
+                prompt_payload['spatial_world'] = spatial_world
             if isinstance(shot.get('spatial_layout'), dict):
                 prompt_payload['spatial_layout'] = shot.get('spatial_layout')
 
@@ -1316,7 +1319,8 @@ async def auto_generate_missing_storyboard_images(
             params,
         )
     except StoryboardCliError as exc:
-        return JSONResponse(status_code=400, content=exc.to_dict())
+        status_code = 403 if exc.error_code == "enterprise_only" else 400
+        return JSONResponse(status_code=status_code, content=exc.to_dict())
 
     return JSONResponse(result)
 

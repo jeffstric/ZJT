@@ -37,6 +37,17 @@ async function request(path, options = {}) {
     return readJson(resp);
 }
 
+export async function getEditionInfo() {
+    try {
+        const resp = await fetch('/api/edition', { headers: authHeaders(false) });
+        if (!resp.ok) return { mode: 'community', mode_label: '社区版' };
+        const data = await resp.json().catch(() => ({}));
+        return data.data || data || { mode: 'community', mode_label: '社区版' };
+    } catch {
+        return { mode: 'community', mode_label: '社区版' };
+    }
+}
+
 // ==================== 故事板 ====================
 export async function createStoryboard(data) {
     return request('/create', { method: 'POST', body: JSON.stringify(data) });

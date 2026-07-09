@@ -1478,6 +1478,15 @@ def test_cli_parsed_scene_payload_preserves_decimal_duration(patched_storyboard_
         "characters": [],
         "locations": [],
         "props": [],
+        "spatial_world": {
+            "space_units": [
+                {
+                    "space_unit_id": "space_loc_rain_alley",
+                    "name": "雨夜街口空间",
+                    "anchors": [{"anchor_id": "street_left", "position_3d": {"x": -0.5, "y": 0, "z": 0}}],
+                }
+            ]
+        },
         "shot_groups": [
             {
                 "group_name": "第一幕 - 片段1",
@@ -1505,5 +1514,24 @@ def test_cli_parsed_scene_payload_preserves_decimal_duration(patched_storyboard_
     assert scenes[0]["duration"] == 4.75
     assert scenes[0]["difficulty"] == "难"
     assert scenes[0]["act_name"] == "第一幕"
+    assert scenes[0]["prompt"]["spatial_world"]["space_units"][0]["space_unit_id"] == "space_loc_rain_alley"
     assert scenes[0]["prompt"]["spatial_layout"]["location_path"][0]["name"] == "雨夜街口"
     assert scenes[0]["prompt"]["source"]["difficulty_reason"] == "长动作"
+
+
+def test_auto_generate_missing_images_rejects_quality_mode_in_community(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr("config.constant.Edition.is_community", lambda: True)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    with pytest.raises(module.StoryboardCliError) as exc:
+        service.auto_generate_missing_images(
+            storyboard_id=1,
+            user_id=7,
+            auth_token="token",
+            asset_type="first_frame",
+            sequence_mode="quality",
+        )
+
+    assert exc.value.error_code == "enterprise_only"
+    assert "效果模式仅商业版支持" in exc.value.message

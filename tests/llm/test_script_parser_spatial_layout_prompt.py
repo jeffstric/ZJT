@@ -14,7 +14,16 @@ def test_script_parser_prompt_requires_spatial_layout_schema():
     assert "containers" in prompt
     assert "loose_positions" in prompt
     assert "continuity" in prompt
+    assert "camera_anchor" in prompt
+    assert "camera_position" in prompt
+    assert "shooting_direction" in prompt
+    assert "relative_to_character" in prompt
+    assert "screen_composition" in prompt
+    assert "seat_source_constraint" in prompt
     assert "真实" in prompt and "场景" in prompt and "道具" in prompt
+    assert "透过车窗" in prompt
+    assert "车外" in prompt
+    assert "一致性自检" in prompt
 
 
 def test_script_parser_prompt_preserves_secondary_characters_in_closeups():
@@ -31,6 +40,33 @@ def test_script_parser_prompt_preserves_secondary_characters_in_closeups():
     assert "changed_positions" in prompt
     assert "change_type" in prompt
     assert "exited_scene" in prompt
+    assert "45" in prompt
+    assert "slots[].slot" in prompt
+
+
+def test_script_parser_prompt_requires_stable_physical_slot_coordinates():
+    prompt = SCRIPT_PARSER_SYSTEM_PROMPT
+
+    assert "slot_id" in prompt
+    assert "physical_position" in prompt
+    assert "position_basis" in prompt
+    assert "screen_axis_mapping" in prompt
+    assert "容器自身坐标" in prompt
+    assert "screen_position 只是当前镜头投影" in prompt
+    assert "不要把画面左/右反推成换座" in prompt
+
+
+def test_script_parser_prompt_requires_episode_level_multi_space_registry():
+    prompt = SCRIPT_PARSER_SYSTEM_PROMPT
+
+    assert "spatial_world" in prompt
+    assert "space_units" in prompt
+    assert "space_unit_refs" in prompt
+    assert "camera_pose" in prompt
+    assert "anchor_id" in prompt
+    assert "整集级空间注册表" in prompt
+    assert "全局不是一个坐标系" in prompt
+    assert "不能在 shot 内临时创造坐标系" in prompt
 
 
 def test_split_multi_dialogue_prompt_allows_spatial_continuity_characters():
@@ -48,7 +84,8 @@ def test_split_multi_dialogue_prompt_allows_spatial_continuity_characters():
     assert "_shot_text_mentions_character_exit" not in source
 
 
-def test_repair_spatial_layout_carries_missing_previous_character_slot_as_offscreen():
+def test_repair_spatial_layout_carries_missing_previous_character_slot_as_offscreen(monkeypatch):
+    monkeypatch.setattr("config.constant.Edition.is_enterprise", lambda: True)
     parsed = {
         "characters": [
             {"id": "char_001", "name": "奶昔_Milkshake", "character_db_id": 4},
@@ -134,7 +171,8 @@ def test_repair_spatial_layout_carries_missing_previous_character_slot_as_offscr
     assert "副驾驶座" in shot["spatial_layout"]["continuity"]["unchanged_slots"]
 
 
-def test_repair_spatial_layout_uses_llm_structured_changed_positions_instead_of_text_keywords():
+def test_repair_spatial_layout_uses_llm_structured_changed_positions_instead_of_text_keywords(monkeypatch):
+    monkeypatch.setattr("config.constant.Edition.is_enterprise", lambda: True)
     parsed = {
         "characters": [
             {"id": "char_001", "name": "奶昔_Milkshake"},
@@ -205,3 +243,91 @@ def test_repair_spatial_layout_uses_llm_structured_changed_positions_instead_of_
     slots = result["shot_groups"][0]["shots"][1]["spatial_layout"]["containers"][0]["slots"]
 
     assert slots == []
+
+
+def test_repair_spatial_layout_preserves_physical_slot_identity_without_copying_screen_position(monkeypatch):
+    monkeypatch.setattr("config.constant.Edition.is_enterprise", lambda: True)
+    parsed = {
+        "characters": [
+            {"id": "char_001", "name": "奶昔_Milkshake"},
+            {"id": "char_002", "name": "奶酪_Cheese"},
+        ],
+        "shot_groups": [
+            {
+                "group_id": "grp_001",
+                "shots": [
+                    {
+                        "shot_id": "s001",
+                        "spatial_layout": {
+                            "containers": [
+                                {
+                                    "container_type": "prop",
+                                    "prop_id": "prop_001",
+                                    "name": "泡泡蒸汽车",
+                                    "area": "驾驶室",
+                                    "slots": [
+                                        {
+                                            "slot_id": "front_driver_seat",
+                                            "slot": "驾驶座",
+                                            "physical_position": {
+                                                "row": "front",
+                                                "side": "vehicle_right",
+                                                "basis": "container_forward_direction",
+                                            },
+                                            "position_basis": "physical_slot",
+                                            "screen_position": "画面右侧",
+                                            "occupant_type": "character",
+                                            "character_id": "char_001",
+                                            "name": "奶昔_Milkshake",
+                                            "visibility": "visible",
+                                            "framing_role": "primary_subject",
+                                        }
+                                    ],
+                                }
+                            ],
+                            "continuity": {"unchanged_slots": []},
+                        },
+                    },
+                    {
+                        "shot_id": "s002",
+                        "spatial_layout": {
+                            "containers": [
+                                {
+                                    "container_type": "prop",
+                                    "prop_id": "prop_001",
+                                    "name": "泡泡蒸汽车",
+                                    "area": "驾驶室",
+                                    "slots": [
+                                        {
+                                            "slot": "副驾驶座",
+                                            "screen_position": "画面中央偏左（透过挡风玻璃）",
+                                            "occupant_type": "character",
+                                            "character_id": "char_001",
+                                            "name": "奶昔_Milkshake",
+                                            "visibility": "visible",
+                                            "framing_role": "primary_subject",
+                                        }
+                                    ],
+                                }
+                            ],
+                            "continuity": {"unchanged_slots": []},
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+
+    result = repair_spatial_layout_continuity(parsed)
+    slot = result["shot_groups"][0]["shots"][1]["spatial_layout"]["containers"][0]["slots"][0]
+
+    assert slot["slot_id"] == "front_driver_seat"
+    assert slot["slot"] == "驾驶座"
+    assert slot["physical_position"] == {
+        "row": "front",
+        "side": "vehicle_right",
+        "basis": "container_forward_direction",
+    }
+    assert slot["position_basis"] == "physical_slot"
+    assert slot["screen_position"] == "画面中央偏左（透过挡风玻璃）"
+    assert "front_driver_seat" in result["shot_groups"][0]["shots"][1]["spatial_layout"]["continuity"]["unchanged_slots"]
