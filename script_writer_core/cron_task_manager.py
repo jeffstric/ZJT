@@ -16,7 +16,7 @@ from typing import Dict, Any, List
 from apscheduler.schedulers.background import BackgroundScheduler
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from config.config_util import get_config
-from config.constant import FilePathConstants
+from config.constant import FilePathConstants, MediaConstants
 from utils.network_utils import is_local_file_path
 from model import GridImageTasksModel, GridImageTaskStatus
 
@@ -446,7 +446,7 @@ class TaskManager:
         # 生成文件名
         parsed_url = urllib.parse.urlparse(file_url)
         filename = os.path.basename(parsed_url.path)
-        if not filename or not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        if not filename or not filename.lower().endswith(MediaConstants.ALLOWED_IMAGE_EXTENSIONS):
             filename = f"generated_{uuid.uuid4().hex[:8]}.png"
         
         local_file_path = os.path.join(upload_dir, filename)

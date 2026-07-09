@@ -661,6 +661,8 @@ class UploadPathConstants:
 class MediaConstants:
     """媒体处理相关常量"""
     ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.avi', '.mkv'}
+    # 图片后缀白名单（tuple，适配 str.endswith）；含 webp/gif/bmp，避免下载图片时被兜底改名导致扩展名与内容错配
+    ALLOWED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
     VIDEO_COMPRESS_TARGET_HEIGHT = 480  # 前端压缩目标分辨率（480p）
     VIDEO_COMPRESS_THRESHOLD_MB = 10    # 超过此大小的视频触发前端压缩
 

@@ -13,7 +13,7 @@ from typing import Dict, Any, List
 from model import LocationMultiAngleTasksModel, LocationMultiAngleTask, LocationMultiAngleTaskStatus
 from model.ai_tools import AIToolsModel
 from config.config_util import get_config
-from config.constant import AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
+from config.constant import AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED, MediaConstants
 from utils.network_utils import is_local_file_path
 from utils.project_path import get_project_root
 
@@ -41,7 +41,7 @@ def _download_and_store_image(file_url: str, comfyui_base_url: str) -> tuple:
     # 生成文件名
     parsed_url = urllib.parse.urlparse(file_url)
     filename = os.path.basename(parsed_url.path)
-    if not filename or not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+    if not filename or not filename.lower().endswith(MediaConstants.ALLOWED_IMAGE_EXTENSIONS):
         filename = f"multi_angle_{uuid.uuid4().hex[:8]}.png"
 
     local_file_path = f"{upload_dir}/{filename}"
