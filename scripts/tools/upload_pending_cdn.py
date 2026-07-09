@@ -29,7 +29,7 @@
     # 通过环境变量 comfyui_env 指定环境（决定加载哪个 config_{env}.yml）
     comfyui_env=prod python scripts/tools/upload_pending_cdn.py
 
-    # 真正执行上传
+    # 真正执行上传（默认不限条数，一次补传全部）
     comfyui_env=prod python scripts/tools/upload_pending_cdn.py --force
 
     # 限制每个批次最多处理 50 条
@@ -64,8 +64,9 @@ def _parse_args():
     parser.add_argument(
         "--limit",
         type=int,
-        default=100,
-        help="每个批次最多处理的记录条数，默认 100。",
+        default=0,
+        help="每个批次最多处理的记录条数，默认 0 表示不限（处理全部待补传记录）。"
+             "如需限量可传如 --limit 100。",
     )
     parser.add_argument(
         "--force",
@@ -144,12 +145,14 @@ def _local_file_exists(relative_path):
 def _fetch_batch_a(limit):
     """
     批次 A：ai_tools 表中处理完成、result_url 指向本地 /upload/、尚未创建 mapping 的记录。
+    limit <= 0 表示不限条数（处理全部）。
     返回 [(id, result_url, user_id), ...]
     """
     from model.database import execute_query
     from config.constant import AI_TOOL_STATUS_COMPLETED
 
-    sql = """
+    # 注意：MySQL 中 LIMIT 0 表示返回 0 行，因此 limit<=0 时必须去掉 LIMIT 子句
+    base_sql = """
         SELECT id, result_url, user_id
         FROM ai_tools
         WHERE media_mapping_id IS NULL
@@ -157,29 +160,40 @@ def _fetch_batch_a(limit):
           AND result_url IS NOT NULL
           AND result_url LIKE '/upload/%%'
         ORDER BY id
-        LIMIT %s
     """
-    rows = execute_query(sql, (AI_TOOL_STATUS_COMPLETED, limit), fetch_all=True)
+    if limit and limit > 0:
+        sql = base_sql + " LIMIT %s"
+        params = (AI_TOOL_STATUS_COMPLETED, limit)
+    else:
+        sql = base_sql
+        params = (AI_TOOL_STATUS_COMPLETED,)
+    rows = execute_query(sql, params, fetch_all=True)
     return [(r["id"], r["result_url"], r["user_id"]) for r in (rows or [])]
 
 
 def _fetch_batch_b(limit):
     """
     批次 B：media_file_mapping 表中曾创建映射但上传失败（cloud_path 为空）的历史记录。
+    limit <= 0 表示不限条数（处理全部）。
     返回 [(id, local_path), ...]
     """
     from model.database import execute_query
 
-    sql = """
+    base_sql = """
         SELECT id, local_path
         FROM media_file_mapping
         WHERE cloud_path IS NULL
           AND status <> 'deleted'
           AND local_path LIKE 'upload/%%'
         ORDER BY id
-        LIMIT %s
     """
-    rows = execute_query(sql, (limit,), fetch_all=True)
+    if limit and limit > 0:
+        sql = base_sql + " LIMIT %s"
+        params = (limit,)
+    else:
+        sql = base_sql
+        params = ()
+    rows = execute_query(sql, params, fetch_all=True)
     return [(r["id"], r["local_path"]) for r in (rows or [])]
 
 
@@ -345,9 +359,10 @@ def main():
         sys.exit(0)
 
     # 2. 查询两批数据
-    print("\n[查询] 批次 A（ai_tools 未创建 mapping），limit=%d ..." % args.limit)
+    limit_desc = "%d" % args.limit if (args.limit and args.limit > 0) else "不限"
+    print("\n[查询] 批次 A（ai_tools 未创建 mapping），limit=%s ..." % limit_desc)
     batch_a = _fetch_batch_a(args.limit)
-    print("[查询] 批次 B（media_file_mapping cloud_path 为空），limit=%d ..." % args.limit)
+    print("[查询] 批次 B（media_file_mapping cloud_path 为空），limit=%s ..." % limit_desc)
     batch_b = _fetch_batch_b(args.limit)
 
     if not batch_a and not batch_b:
