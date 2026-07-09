@@ -298,6 +298,14 @@ def _get_wechat_pay_util():
 # 兼容旧代码，初始化时创建一个实例
 wechat_pay_util = _get_wechat_pay_util()
 
+# 注册 MIME 类型：部分系统/容器的 Python mimetypes 数据库不认识 .webp 等现代格式，
+# 导致 StaticFiles 提供静态文件时 Content-Type 回退为 text/plain，
+# 进而被图生视频等场景的图片资源校验（要求 Content-Type: image/*）误判为非图片。
+# 必须在 StaticFiles 挂载前注册（下方 app.mount("/upload", ...) 依赖此处的类型映射）。
+import mimetypes
+mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("image/avif", ".avif")
+
 app = FastAPI(title="ZJT Server")
 
 @app.on_event("startup")
