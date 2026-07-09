@@ -133,7 +133,7 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/split-from-script" \
   -d '{"storyboard_id":10,"max_group_duration":15}'
 ```
 
-When `model` is omitted, the server uses `storyboard.config_json.selectedScriptSplitLlmModel`, then falls back to the server default.
+When `model` is omitted, the server uses `storyboard.config_json.selectedScriptSplitLlmModel`, then falls back to the server default. The legacy `force_overwrite_subscene_grids` field is accepted for compatibility but no longer takes effect; subscene 9-grid i2i only fills subscenes without a reference image, and existing subscene reference images are never overwritten.
 
 List scenes after splitting:
 
@@ -148,7 +148,7 @@ Insert a new scene after an existing scene:
 ```bash
 curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/insert-scene" \
   -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"storyboard_id":10,"after_scene_id":123,"title":"Reaction shot","duration":4,"prompt_json":{"scene_desc":"A quiet reaction shot."},"video_prompt":"Hold on the character reaction."}'
+  -d '{"storyboard_id":10,"after_scene_id":123,"title":"Reaction shot","duration":4.5,"prompt_json":{"scene_desc":"A quiet reaction shot."},"video_prompt":"Hold on the character reaction."}'
 ```
 
 Use `after_scene_id` for "insert after this scene". `before_scene_id`, `prev_id`, and `next_id` are also accepted for precise placement. If no placement is provided, the scene is appended to the storyboard.
@@ -161,7 +161,7 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/update-scene" \
   -d '{"scene_id":123,"duration":8,"title":"Reaction shot"}'
 ```
 
-Updatable fields: `duration` (seconds, clamped to a minimum of 1), `title`, `prompt_json` (JSON object), `video_prompt`, `video_type`, `video_config_json` (JSON object), `difficulty` (易/中/难, normalized via `SceneDifficulty`), `act_name` (act/shot-group name). Selected asset pointers (`selected_first_frame_id`, etc.) are not patched here — use `bind-projects` or the asset select endpoints instead.
+Updatable fields: `duration` (decimal seconds, clamped to a minimum of 1), `title`, `prompt_json` (JSON object), `video_prompt`, `video_type`, `video_config_json` (JSON object), `difficulty` (易/中/难, normalized via `SceneDifficulty`), `act_name` (act/shot-group name). Selected asset pointers (`selected_first_frame_id`, etc.) are not patched here — use `bind-projects` or the asset select endpoints instead.
 
 Batch-generate missing first-frame images:
 

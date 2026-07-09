@@ -5,19 +5,190 @@ Grid Image Task Processing
 import os
 import uuid
 import logging
+import asyncio
+import json
 import requests
 import urllib.parse
 import httpx
 from datetime import datetime
 from typing import Dict, Any
 from model import GridImageTasksModel, GridImageTaskStatus, AIToolsModel
-from config.constant import AI_TOOL_STATUS_WAITING_BEFORE_FINISH, MediaConstants
+from config.constant import AI_TOOL_STATUS_WAITING_BEFORE_FINISH, MediaConstants, GridConfig, StoryboardAutoGenerateConstants
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from config.config_util import get_config
 from utils.network_utils import is_local_file_path
 from utils.project_path import get_project_root
+from utils.image_grid_validator import validate_grid_image
+from script_writer_core.constant import ItemType
 
 logger = logging.getLogger(__name__)
+
+
+def _build_storyboard_grid_cells(task: Any, grid_size: int) -> list:
+    """Build cell bindings for legacy first-frame grid tasks without pipeline params."""
+    try:
+        item_names = task.get_item_names_list()
+    except Exception:
+        item_names = [name.strip() for name in (task.item_name or '').split(',')]
+    try:
+        scene_ids = task.get_target_entity_ids_list()
+    except Exception:
+        scene_ids = []
+
+    scene_id_iter = iter(scene_ids)
+    cells = []
+    for index in range(grid_size):
+        name = item_names[index] if index < len(item_names) else "placeholder"
+        is_placeholder = GridConfig.is_placeholder(name)
+        scene_id = None if is_placeholder else next(scene_id_iter, None)
+        cells.append(
+            {
+                "grid_index": index,
+                "scene_id": scene_id,
+                "batch_item_id": None,
+                "placeholder": is_placeholder or scene_id is None,
+            }
+        )
+    return cells
+
+
+def _dispatch_storyboard_first_frame_grid_split(
+    task: Any,
+    local_image_url: str,
+    local_file_path: str,
+    grid_size: int,
+) -> bool:
+    """Dispatch the storyboard first-frame grid split pipeline step."""
+    try:
+        ai_tool_id = int(task.project_id)
+    except (TypeError, ValueError):
+        logger.error("分镜首帧宫格缺少可用 ai_tool_id: task_key=%s project_id=%s", task.task_key, task.project_id)
+        return False
+
+    try:
+        from model.ai_tool_pipeline_steps import PipelineStage, PipelineStepModel, PipelineStepType
+        from task.pipeline_processor import PipelineProcessor
+
+        AIToolsModel.update(ai_tool_id, result_url=local_image_url)
+        pending_steps = PipelineStepModel.get_pending_steps(ai_tool_id, PipelineStage.BEFORE_FINISH)
+        step = next(
+            (
+                item for item in pending_steps
+                if item.step_type == PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+            ),
+            None,
+        )
+        if not step:
+            step_id = PipelineStepModel.create(
+                ai_tool_id=ai_tool_id,
+                stage=PipelineStage.BEFORE_FINISH,
+                step_type=PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT,
+                step_order=0,
+                params={
+                    "grid_task_id": int(task.id),
+                    "grid_size": grid_size,
+                    "grid_layout": getattr(task, "grid_layout", None) or ("2x2" if grid_size == GridConfig.SIZE_2X2 else "3x3"),
+                    "asset_type": "first_frame",
+                    "output_dir": "upload/storyboard/first_frame",
+                    "output_url_path": "upload/storyboard/first_frame",
+                    "grid_image_path": local_file_path,
+                    "grid_result_url": local_image_url,
+                    "cells": _build_storyboard_grid_cells(task, grid_size),
+                },
+                target=task.task_key,
+            )
+            step = PipelineStepModel.get_by_id(step_id)
+        if not step:
+            logger.error("分镜首帧宫格 pipeline step 创建后仍无法读取: task_key=%s", task.task_key)
+            return False
+        return bool(asyncio.run(PipelineProcessor.dispatch_step(step)))
+    except Exception as exc:
+        logger.error("分镜首帧宫格 pipeline 分发失败: task_key=%s err=%s", task.task_key, exc, exc_info=True)
+        return False
+
+
+def _grid_validation_max_retries(task: Any) -> int:
+    max_retries = _safe_int(getattr(task, "max_retries", 0), default=0)
+    if task.item_type == ItemType.STORYBOARD_FIRST_FRAME_GRID:
+        return GridConfig.STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES
+    return max_retries
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _mark_storyboard_grid_batch_items_failed(task: Any, error_message: str) -> None:
+    if task.item_type != ItemType.STORYBOARD_FIRST_FRAME_GRID:
+        return
+    try:
+        from model.storyboard_image_batch import StoryboardImageBatchItemModel
+
+        for scene_id in task.get_target_entity_ids_list():
+            try:
+                batch_item = StoryboardImageBatchItemModel.find_running_by_grid_task(
+                    int(task.id),
+                    int(scene_id),
+                )
+                if not batch_item:
+                    continue
+                extra = batch_item.get("extra_json") if isinstance(batch_item.get("extra_json"), dict) else {}
+                StoryboardImageBatchItemModel.update(
+                    int(batch_item["id"]),
+                    status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
+                    error_code=StoryboardAutoGenerateConstants.ERROR_GRID_FIRST_FRAME_FAILED,
+                    error_message=error_message[:512],
+                    extra_json={
+                        **extra,
+                        "grid_validation_failed": True,
+                        "grid_validation_error": error_message[:512],
+                    },
+                )
+            except Exception as item_err:
+                logger.error(
+                    "标记分镜首帧宫格 batch item 失败时出错: grid_task_id=%s scene_id=%s err=%s",
+                    getattr(task, "id", None),
+                    scene_id,
+                    item_err,
+                    exc_info=True,
+                )
+    except Exception as exc:
+        logger.error("分镜首帧宫格 batch item 失败回写整体异常: %s", exc, exc_info=True)
+
+
+def _handle_grid_validation_failure(task: Any, validation: Any) -> bool:
+    reason = getattr(validation, "reason", "invalid grid image")
+    confidence = getattr(validation, "confidence", 0.0)
+    error_message = f"宫格图片几何校验失败: {reason}; confidence={confidence:.2f}"
+    retry_count = getattr(task, "retry_count", 0) or 0
+    max_retries = _grid_validation_max_retries(task)
+
+    if retry_count < max_retries and getattr(task, "prompt", None) and getattr(task, "task_config_id", None):
+        logger.info(
+            "宫格校验失败，准备重试: task_key=%s retry=%s/%s reason=%s",
+            task.task_key,
+            retry_count + 1,
+            max_retries,
+            reason,
+        )
+        new_project_id = _resubmit_image_request(task)
+        if new_project_id:
+            GridImageTasksModel.reset_for_retry(task.task_key, new_project_id)
+            _update_task_status_file(task.item_type, task.item_name, "retrying", task.user_id, task.world_id)
+            return True
+        error_message = f"{error_message}; 重试提交失败"
+
+    GridImageTasksModel.update_status(
+        task_key=task.task_key,
+        status=GridImageTaskStatus.FAILED,
+        error_message=error_message,
+    )
+    _mark_storyboard_grid_batch_items_failed(task, error_message)
+    _update_task_status_file(task.item_type, task.item_name, "failed", task.user_id, task.world_id)
+    return True
 
 
 def _download_and_store_image(file_url: str, item_type: int, comfyui_base_url: str) -> tuple:
@@ -34,7 +205,8 @@ def _download_and_store_image(file_url: str, item_type: int, comfyui_base_url: s
     """
     # 确定存储目录
     # ⚠️ item_type 魔数映射（与 script_writer_core/constant.py ItemType 对应）：
-    #   0=营销通用, 1=角色, 2=场景, 3=道具, 4=角色四宫格, 5=场景四宫格, 6=道具四宫格, 7=角色变体图
+    #   0=营销通用, 1=角色, 2=场景, 3=道具, 4=角色四宫格, 5=场景四宫格, 6=道具四宫格,
+    #   7=角色变体图, 8=分镜首帧宫格
     #   四宫格类型(4/5/6)存入 temp 目录（后续会被拆分），单图类型存入 pic 目录
     if item_type == 0:  # 通用生图（营销等场景）
         upload_dir = 'upload/marketing/pic'
@@ -60,6 +232,9 @@ def _download_and_store_image(file_url: str, item_type: int, comfyui_base_url: s
     elif item_type == 7:  # character_variant (角色变体图)
         upload_dir = 'upload/character/pic'
         local_url_path = 'upload/character/pic'
+    elif item_type == ItemType.STORYBOARD_FIRST_FRAME_GRID:
+        upload_dir = 'upload/storyboard/temp'
+        local_url_path = 'upload/storyboard/temp'
     else:
         raise Exception(f'无效的item_type: {item_type}')
     
@@ -152,18 +327,44 @@ def _resubmit_image_request(task) -> str:
         return None
     
     try:
-        api_url = f"{task.comfyui_base_url.rstrip('/')}/api/text-to-image"
-        request_data = {
-            'prompt': task.prompt,
-            'task_id': task.task_config_id,
-            'user_id': task.user_id,
-            'auth_token': task.auth_token,
-            'count': 1
-        }
-        if task.aspect_ratio:
-            request_data['aspect_ratio'] = task.aspect_ratio
-        if task.image_size:
-            request_data['image_size'] = task.image_size
+        reference_images = _parse_reference_images(getattr(task, "reference_images", None))
+        if reference_images:
+            from script_writer_core.mcp_tool import _to_public_http_url
+
+            public_ref_urls = []
+            for ref in reference_images:
+                raw_url = ref.get("url") if isinstance(ref, dict) else ref
+                public_url = _to_public_http_url(raw_url, task.comfyui_base_url) if raw_url else None
+                if public_url:
+                    public_ref_urls.append(public_url)
+            if not public_ref_urls:
+                logger.warning("任务 %s 缺少可用 reference_images，无法按 image-edit 重试", task.task_key)
+                return None
+            api_url = f"{task.comfyui_base_url.rstrip('/')}/api/image-edit"
+            request_data = {
+                'prompt': task.prompt,
+                'task_id': task.task_config_id,
+                'ratio': task.aspect_ratio or "16:9",
+                'count': 1,
+                'user_id': task.user_id,
+                'auth_token': task.auth_token,
+                'ref_image_urls': ','.join(public_ref_urls),
+            }
+            if task.image_size:
+                request_data['image_size'] = task.image_size
+        else:
+            api_url = f"{task.comfyui_base_url.rstrip('/')}/api/text-to-image"
+            request_data = {
+                'prompt': task.prompt,
+                'task_id': task.task_config_id,
+                'user_id': task.user_id,
+                'auth_token': task.auth_token,
+                'count': 1
+            }
+            if task.aspect_ratio:
+                request_data['aspect_ratio'] = task.aspect_ratio
+            if task.image_size:
+                request_data['image_size'] = task.image_size
         
         response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
         response.raise_for_status()
@@ -183,6 +384,20 @@ def _resubmit_image_request(task) -> str:
         return None
 
 
+def _parse_reference_images(value: Any) -> list:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError):
+            return []
+    return []
+
+
 def _handle_task_success(task: Any, comfyui_task_data: Dict):
     """
     处理任务成功的情况
@@ -200,13 +415,12 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
         if not file_url:
             raise Exception('图片生成完成但未返回文件URL')
         
-        is_grid_type = task.item_type in [4, 5, 6]  # 4=character_grid, 5=location_grid, 6=prop_grid
+        is_grid_type = ItemType.is_grid(task.item_type)
 
-        # 默认关闭图片下载功能；E2E mock 四宫格必须落盘拆图，否则四个 item 不会获得参考图
+        # grid 类型必须落盘后拆图；非 grid 仍受 image.enable_download 控制。
         enable_image_download = get_config().get("image", {}).get("enable_download", False)
-        force_mock_grid_download = is_grid_type and isinstance(file_url, str) and file_url.startswith("/upload/mock/")
 
-        if enable_image_download or force_mock_grid_download:
+        if enable_image_download or is_grid_type:
             # 启用图片下载和本地存储
             local_image_url, local_file_path = _download_and_store_image(
                 file_url, task.item_type, task.comfyui_base_url
@@ -227,6 +441,12 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
             grid_size = GridConfig.SIZE_2X2
 
         if is_grid_type and local_file_path:
+            validation = validate_grid_image(local_file_path, grid_size)
+            if not validation.is_valid:
+                _handle_grid_validation_failure(task, validation)
+                return
+
+        if is_grid_type and local_file_path and task.item_type != ItemType.STORYBOARD_FIRST_FRAME_GRID:
             # 宫格图片需要拆分
             try:
                 # 解析名称：优先用结构化 item_names_json，fallback 到 item_name 逗号 split
@@ -359,6 +579,13 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
                             if result.get('success', False):
                                 logger.info(f"已更新道具 {name} 的参考图")
                         update_success = True
+                elif task.item_type == ItemType.STORYBOARD_FIRST_FRAME_GRID:
+                    update_success = _dispatch_storyboard_first_frame_grid_split(
+                        task,
+                        local_image_url,
+                        local_file_path,
+                        grid_size,
+                    )
                 elif task.item_type == 7:  # character_variant (角色变体图)
                     # item_name 格式为 "角色名|变体标签"
                     parts = task.item_name.split('|', 1)
@@ -445,14 +672,16 @@ def process_grid_image_tasks(app=None):
                 
                 # 检查是否超过最大尝试次数
                 if task.try_count > task.max_attempts:
+                    timeout_msg = f"超过最大尝试次数 {task.max_attempts}"
                     logger.error(f"任务超时: {task.task_key}, 尝试次数: {task.try_count}/{task.max_attempts}")
                     GridImageTasksModel.update_status(
                         task_key=task.task_key,
                         status=GridImageTaskStatus.TIMEOUT,
-                        error_message=f"超过最大尝试次数 {task.max_attempts}"
+                        error_message=timeout_msg
                     )
-                    _update_task_status_file(task.item_type, task.item_name, 'timeout', 
+                    _update_task_status_file(task.item_type, task.item_name, 'timeout',
                                            task.user_id, task.world_id)
+                    _mark_storyboard_grid_batch_items_failed(task, f"宫格生图超时: {timeout_msg}")
                     continue
                 
                 # 更新为处理中状态（仅在第一次尝试时）
@@ -467,7 +696,7 @@ def process_grid_image_tasks(app=None):
                 # ===== E2E Mock 短路 =====
                 from task.mock_interceptor import is_mock_enabled, is_mock_id, comfyui_status_success, _img
                 if is_mock_enabled() and is_mock_id(task.project_id):
-                    file_url = (_img("grid_image") if task.item_type in (4, 5, 6)
+                    file_url = (_img("grid_image") if ItemType.is_grid(task.item_type)
                                 else _img("comfyui_text_to_image")) or "/upload/mock/e2e_grid_2x2.png"
                     _handle_task_success(task, comfyui_status_success(file_url))
                     continue
@@ -529,8 +758,9 @@ def process_grid_image_tasks(app=None):
                         status=GridImageTaskStatus.FAILED,
                         error_message=failure_reason
                     )
-                    _update_task_status_file(task.item_type, task.item_name, 'failed', 
+                    _update_task_status_file(task.item_type, task.item_name, 'failed',
                                            task.user_id, task.world_id)
+                    _mark_storyboard_grid_batch_items_failed(task, f"宫格生图失败: {failure_reason}")
                 
             except requests.RequestException as e:
                 # 网络请求异常，记录但不更新状态（继续重试）
@@ -543,8 +773,9 @@ def process_grid_image_tasks(app=None):
                     status=GridImageTaskStatus.FAILED,
                     error_message=str(e)
                 )
-                _update_task_status_file(task.item_type, task.item_name, 'failed', 
+                _update_task_status_file(task.item_type, task.item_name, 'failed',
                                        task.user_id, task.world_id)
+                _mark_storyboard_grid_batch_items_failed(task, f"宫格生图异常: {e}")
         
         # 清理旧任务（7天前的已完成/失败任务）
         try:

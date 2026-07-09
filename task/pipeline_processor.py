@@ -16,7 +16,7 @@ import pymysql
 
 from model import (
     PipelineStepModel, PipelineStep, PipelineStepStatus, PipelineStage,
-    AIToolsModel, AITool, AsyncTasksModel, AsyncTaskStatus
+    PipelineStepType, AIToolsModel, AITool, AsyncTasksModel, AsyncTaskStatus
 )
 from task.pipeline_drivers import PipelineDriverFactory
 
@@ -147,7 +147,7 @@ class PipelineProcessor:
                     PipelineStepModel.update_async_task_id(step.id, async_task_id)
                     logger.info(f"Step {step.id} dispatched, async_task_id={async_task_id}")
                 else:
-                    # 步骤直接完成（如 implementation_retry）
+                    # 步骤直接完成（如 implementation_retry / storyboard_grid_split）
                     result_data = result.get('result_data')
                     PipelineStepModel.update_status_with_retry(
                         step.id,
@@ -155,6 +155,12 @@ class PipelineProcessor:
                         result_data=result_data
                     )
                     logger.info(f"Step {step.id} completed directly")
+                    # 同步完成的步骤（如 storyboard_first_frame_grid_split）从不经过
+                    # PROCESSING 轮询分支，必须在此显式检查阶段完成，否则 before_finish
+                    # 阶段完成判定无法触发，父 ai_tool/tasks 状态将永久停滞。
+                    await PipelineProcessor._check_ai_tool_stage_completion(
+                        step.ai_tool_id, step.stage
+                    )
                 return True
             else:
                 # 处理失败
@@ -308,6 +314,13 @@ class PipelineProcessor:
             dispatched_before_finish = set()  # (ai_tool_id, stage) 去重
             for step in waiting_steps:
                 try:
+                    if step.step_type == PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT:
+                        logger.info(
+                            "Skip storyboard grid split step %s in global pipeline scheduler; "
+                            "grid_image_task dispatches it after grid image is ready",
+                            step.id,
+                        )
+                        continue
                     key = (step.ai_tool_id, step.stage)
                     if step.stage == PipelineStage.BEFORE_FINISH:
                         if key in dispatched_before_finish:
@@ -357,6 +370,13 @@ class PipelineProcessor:
             logger.info(f"Processing {len(retry_steps)} retry pipeline steps")
             for step in retry_steps:
                 try:
+                    if step.step_type == PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT:
+                        logger.info(
+                            "Skip retrying storyboard grid split step %s in global pipeline scheduler; "
+                            "grid_image_task owns this step",
+                            step.id,
+                        )
+                        continue
                     await PipelineProcessor.dispatch_step(step)
                 except Exception as e:
                     logger.error(f"Error retrying step {step.id}: {e}", exc_info=True)

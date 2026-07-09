@@ -328,17 +328,73 @@ class TestSubsceneGridFixes:
             user_id='u', world_id='w', auth_token='t',
             sub_location_names=['子1', '子2', 'placeholder'] + ['placeholder'] * 6,
             prompts=['p'] * 9,
-            parent_reference_image='http://h/p.png',
+            reference_images=[{"url": 'http://h/p.png', "role_description": "父场景图"}],
             target_entity_ids=[100, 101, None] + [None] * 6,
         )
 
         assert result.get('success') is True, result
         # create 收到过滤 None 后的纯 id 列表
         assert captured['target_entity_ids'] == [100, 101]
+        # create 收到参考图列表（含 role_description）
+        assert captured['reference_images'] == [{"url": 'http://h/p.png', "role_description": "父场景图"}]
         # item_name 是短 key（含 loc#，不含全名）
         assert 'loc#' in captured['item_name'] and '#' in captured['item_name']
         # item_names_json 含完整名
         assert captured['item_names'] == ['子1', '子2', 'placeholder'] + ['placeholder'] * 6
+
+    def test_submit_first_frame_grid_accepts_item_type_8_and_uses_storyboard_ratio(self, monkeypatch):
+        """分镜首帧宫格使用 item_type=8，且真实画幅要贯穿 prompt/request/任务记录。"""
+        import script_writer_core.mcp_tool as mcp
+        from script_writer_core.constant import ItemType
+
+        captured = {}
+
+        def fake_create(**kwargs):
+            captured["create"] = kwargs
+            return 1
+
+        def fake_post(url, data, timeout, verify):
+            captured["request"] = data
+            response = MagicMock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {"project_ids": ["pid_first_frame_grid"]}
+            return response
+
+        monkeypatch.setattr(mcp, "httpx", MagicMock())
+        monkeypatch.setattr(mcp.httpx, "post", fake_post)
+        monkeypatch.setattr(mcp, "_resolve_image_edit_task_id", lambda *a: 7)
+        monkeypatch.setattr(mcp, "_get_model_name_by_task_id", lambda *a: "edit")
+        monkeypatch.setattr(mcp, "_to_public_http_url", lambda *a: "http://h/ref.png")
+        monkeypatch.setattr(mcp, "get_config", lambda: {"server": {"comfyui_base_url_inner": "http://h"}})
+
+        from model.grid_image_tasks import GridImageTasksModel
+        monkeypatch.setattr(GridImageTasksModel, "get_by_task_key", lambda *a: None)
+        monkeypatch.setattr(GridImageTasksModel, "delete_by_task_key", lambda *a: None)
+        monkeypatch.setattr(GridImageTasksModel, "create", fake_create)
+
+        result = mcp.submit_grid_image_task(
+            user_id="u",
+            world_id="w",
+            auth_token="t",
+            item_names=["s1", "s2", "placeholder", "placeholder"],
+            prompts=["p1", "p2", "", ""],
+            item_type=ItemType.STORYBOARD_FIRST_FRAME_GRID,
+            grid_size=4,
+            mode="image_edit",
+            reference_images=[{"url": "http://h/ref.png", "role_description": "场景参考图"}],
+            target_entity_ids=[11, 12, None, None],
+            aspect_ratio="9:16",
+        )
+
+        assert result["success"] is True, result
+        assert result["grid_task_id"] == 1
+        assert result["base_item_type"] is None
+        assert captured["request"]["ratio"] == "9:16"
+        assert captured["create"]["aspect_ratio"] == "9:16"
+        assert captured["create"]["item_type"] == ItemType.STORYBOARD_FIRST_FRAME_GRID
+        assert captured["create"]["target_entity_ids"] == [11, 12]
+        prompt_json = captured["create"]["prompt"]
+        assert '"grid_aspect_ratio": "9:16"' in prompt_json
 
     def test_i2i_create_failure_returns_failure(self, monkeypatch):
         """i2i 入库失败必须返回 success=False（否则上层误认为已提交）。"""
@@ -359,7 +415,7 @@ class TestSubsceneGridFixes:
         result = mcp.generate_9grid_location_images(
             user_id='u', world_id='w', auth_token='t',
             sub_location_names=['s'] * 9, prompts=['p'] * 9,
-            parent_reference_image='http://h/p.png',
+            reference_images=[{"url": 'http://h/p.png', "role_description": "父场景图"}],
             target_entity_ids=list(range(100, 109)),
         )
         assert result.get('success') is False
@@ -400,6 +456,40 @@ class TestSubsceneGridFixes:
         assert captured_target_ids[0] == [203] + [None] * 8
         assert result['submitted_subscene_count'] == 1
 
+    def test_submit_subscene_grids_force_overwrite_still_skips_reference_images(self, monkeypatch):
+        """兼容旧参数但不允许覆盖已有图；运行中的九宫格任务也继续跳过。"""
+        svc = StoryboardLocationBootstrapService()
+
+        parsed = {
+            'locations': [
+                {'id': 'loc_p', 'name': '主厅', 'location_db_id': 100, 'reference_image': 'http://h/p.png'},
+                {'id': 'c1', 'name': '角落1', 'parent_id': 'loc_p', 'location_db_id': 201},  # 已有图，force 也跳过
+                {'id': 'c2', 'name': '角落2', 'parent_id': 'loc_p', 'location_db_id': 202},  # 运行中，force 仍跳过
+                {'id': 'c3', 'name': '角落3', 'parent_id': 'loc_p', 'location_db_id': 203},  # 需生成
+            ],
+        }
+        br = {'id_map': {'loc_p': 100, 'c1': 201, 'c2': 202, 'c3': 203}, 'warnings': [], 'created_location_count': 0}
+
+        monkeypatch.setattr(svc, '_subscene_has_reference_image', lambda db_id, loc: db_id == 201)
+        monkeypatch.setattr(svc, '_subscene_has_running_grid', lambda db_id: db_id == 202)
+
+        captured_target_ids = []
+
+        def fake_gen(**kw):
+            captured_target_ids.append(kw.get('target_entity_ids'))
+            return {'success': True, 'project_ids': ['pid']}
+
+        monkeypatch.setattr(
+            'script_writer_core.mcp_tool.generate_9grid_location_images', MagicMock(side_effect=fake_gen)
+        )
+
+        result = svc.submit_subscene_grids(
+            parsed, br, world_id=1, user_id=1, auth_token='t', force_overwrite=True
+        )
+
+        assert captured_target_ids == [[203] + [None] * 8]
+        assert result['submitted_subscene_count'] == 1
+
     def test_location_grid_writeback_aligns_by_id(self, monkeypatch):
         """item_type=5 回写：target_entity_ids 过滤 None 后，与非 placeholder 名称按序对齐回写。"""
         import task.grid_image_task as git
@@ -434,6 +524,7 @@ class TestSubsceneGridFixes:
         monkeypatch.setattr(git, '_download_and_store_image',
                             lambda *a: ('http://h/upload/mock/grid.png', 'grid.png'))
         monkeypatch.setattr(git, 'ImageGridSplitter', MagicMock(return_value=splitter))
+        monkeypatch.setattr(git, 'validate_grid_image', lambda path, grid_size: MagicMock(is_valid=True, reason='ok', confidence=1.0))
         monkeypatch.setattr(git, 'GridImageTasksModel', MagicMock())
         monkeypatch.setattr('model.location.LocationModel.update', fake_loc_update)
         monkeypatch.setattr('importlib.import_module', lambda name: fake_mcp)

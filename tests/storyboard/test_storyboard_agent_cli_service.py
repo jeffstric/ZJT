@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -997,10 +998,173 @@ def test_process_image_batch_submits_dependent_with_previous_frame_reference(pat
     assert items[2]["status"] == 1
 
 
+def test_process_image_batch_fails_running_item_when_grid_task_failed(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    jobs = {
+        88: {
+            "id": 88,
+            "storyboard_id": 22,
+            "user_id": 7,
+            "auth_token": "token",
+            "asset_type": "first_frame",
+            "sequence_mode": "balanced",
+            "mode": "auto",
+            "count": 1,
+            "stop_on_error": 1,
+            "status": 1,
+        }
+    }
+    items = {
+        180: {
+            "id": 180,
+            "job_id": 88,
+            "scene_id": 360,
+            "status": 1,
+            "order_index": 1,
+            "extra_json": {"grid_task_id": 454},
+        },
+        181: {
+            "id": 181,
+            "job_id": 88,
+            "scene_id": 361,
+            "status": 0,
+            "dependency_item_id": 180,
+            "order_index": 2,
+            "extra_json": {},
+        },
+    }
+    updates = []
+
+    class FakeJobModel:
+        @staticmethod
+        def update(job_id, **kwargs):
+            jobs[job_id].update(kwargs)
+            return 1
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return [items[180], items[181]]
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            updates.append((record_id, kwargs))
+            items[record_id].update(kwargs)
+            return 1
+
+    class FakeGridModel:
+        @staticmethod
+        def get_by_id(record_id):
+            assert record_id == 454
+            return SimpleNamespace(status=-1, error_message="grid validation failed")
+
+    monkeypatch.setattr(module, "StoryboardImageBatchJobModel", FakeJobModel)
+    monkeypatch.setattr(module, "StoryboardImageBatchItemModel", FakeItemModel)
+    monkeypatch.setattr(module, "GridImageTasksModel", FakeGridModel)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service._process_one_image_batch_job(jobs[88])
+
+    assert result["submitted_count"] == 0
+    assert items[180]["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    assert items[180]["error_code"] == module.StoryboardAutoGenerateConstants.ERROR_GRID_FIRST_FRAME_FAILED
+    assert items[181]["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    assert any(call[0] == 180 for call in updates)
+
+
+def test_process_image_batch_fails_stale_running_item(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    old_update_at = datetime.now() - timedelta(seconds=module.StoryboardAutoGenerateConstants.BATCH_RUNNING_ITEM_TIMEOUT_SECONDS + 5)
+    jobs = {
+        88: {
+            "id": 88,
+            "storyboard_id": 22,
+            "user_id": 7,
+            "auth_token": "token",
+            "asset_type": "first_frame",
+            "sequence_mode": "balanced",
+            "mode": "auto",
+            "count": 1,
+            "stop_on_error": 0,
+            "status": 1,
+        }
+    }
+    items = {
+        180: {
+            "id": 180,
+            "job_id": 88,
+            "scene_id": 360,
+            "status": 1,
+            "order_index": 1,
+            "update_at": old_update_at.isoformat(),
+            "extra_json": {},
+        }
+    }
+
+    class FakeJobModel:
+        @staticmethod
+        def update(job_id, **kwargs):
+            jobs[job_id].update(kwargs)
+            return 1
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return [items[180]]
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            items[record_id].update(kwargs)
+            return 1
+
+    monkeypatch.setattr(module, "StoryboardImageBatchJobModel", FakeJobModel)
+    monkeypatch.setattr(module, "StoryboardImageBatchItemModel", FakeItemModel)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service._process_one_image_batch_job(jobs[88])
+
+    assert result["submitted_count"] == 0
+    assert items[180]["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    assert items[180]["error_code"] == module.StoryboardAutoGenerateConstants.ERROR_BATCH_ITEM_RUNNING_TIMEOUT
+    assert jobs[88]["status"] == module.StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_FAILED
+
+
+def test_quality_first_frame_batch_uses_grid_service(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    calls = []
+
+    class FakeGridService:
+        def __init__(self, counts_updater=None):
+            self.counts_updater = counts_updater
+
+        def process_job(self, job):
+            calls.append(job)
+            self.counts_updater(int(job["id"]))
+            return {"submitted_count": 2, "updated_counts": True}
+
+    monkeypatch.setattr(module, "StoryboardFirstFrameGridService", FakeGridService)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    job = {
+        "id": 88,
+        "storyboard_id": 22,
+        "user_id": 7,
+        "auth_token": "t",
+        "asset_type": "first_frame",
+        "sequence_mode": "quality",
+    }
+    patched_storyboard_cli.batch_jobs[88] = dict(job)
+
+    result = service._process_one_image_batch_job(job)
+
+    assert result["submitted_count"] == 2
+    assert calls == [job]
+
+
 def test_split_from_script_defaults_model_from_storyboard_config_and_returns_scenes(patched_storyboard_cli, monkeypatch):
     module = patched_storyboard_cli.module
     captured_parse_kwargs = []
     created_payloads = []
+    captured_grid_kwargs = []
     returned_scenes = [
         {"scene_id": 31, "title": "Scene A", "duration": 5, "sort_order": 0, "selected_first_frame_id": None},
         {"scene_id": 32, "title": "Scene B", "duration": 6, "sort_order": 1, "selected_first_frame_id": None},
@@ -1028,9 +1192,26 @@ def test_split_from_script_defaults_model_from_storyboard_config_and_returns_sce
     )
     monkeypatch.setattr(service, "list_scenes", lambda storyboard_id, user_id=None: {"success": True, "scenes": returned_scenes})
 
-    result = service.split_from_script(storyboard_id=22, user_id=7, auth_token="token")
+    class FakeLocationBootstrapService:
+        def bootstrap(self, parsed_data, world_id, user_id):
+            return {"id_map": {}, "warnings": [], "created_location_count": 0, "reused_location_count": 0}
+
+        def submit_subscene_grids(self, *args, **kwargs):
+            captured_grid_kwargs.append(kwargs)
+            return {"submitted_batches": 0, "submitted_subscene_count": 0, "skipped_no_parent_image": 0, "warnings": []}
+
+    import services.storyboard_location_bootstrap_service as location_bootstrap_module
+    monkeypatch.setattr(location_bootstrap_module, "StoryboardLocationBootstrapService", FakeLocationBootstrapService)
+
+    result = service.split_from_script(
+        storyboard_id=22,
+        user_id=7,
+        auth_token="token",
+        force_overwrite_subscene_grids=True,
+    )
 
     assert captured_parse_kwargs[0]["model"] == "deepseek-v4-flash"
+    assert captured_grid_kwargs[0]["force_overwrite"] is False
     assert len(created_payloads[0]) == 2
     assert result["generated_count"] == 2
     assert [scene["scene_id"] for scene in result["scenes"]] == [31, 32]
@@ -1276,15 +1457,53 @@ def test_update_scene_clamps_duration_to_minimum_one(patched_storyboard_cli, mon
 
 
 def test_update_scene_via_command_service_route(patched_storyboard_cli, monkeypatch):
-    """The command dispatcher must route update-scene and coerce duration via _to_int."""
+    """The command dispatcher must route update-scene and preserve decimal duration."""
     from services.storyboard_agent_command_service import StoryboardAgentCommandService
     module = patched_storyboard_cli.module
     fakes = _patch_update_scene_models(monkeypatch, module, patched_storyboard_cli)
     service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
     command_service = StoryboardAgentCommandService(service=service)
 
-    result = command_service.execute("update-scene", {"scene_id": 11, "user_id": 7, "duration": "10"})
+    result = command_service.execute("update-scene", {"scene_id": 11, "user_id": 7, "duration": "10.75"})
 
     assert result["success"] is True
-    assert fakes.scene_updates[0][1]["duration"] == 10
+    assert fakes.scene_updates[0][1]["duration"] == 10.75
     assert result["environment"]  # _with_environment adds it
+
+
+def test_cli_parsed_scene_payload_preserves_decimal_duration(patched_storyboard_cli):
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    parsed_data = {
+        "characters": [],
+        "locations": [],
+        "props": [],
+        "shot_groups": [
+            {
+                "group_name": "第一幕 - 片段1",
+                "act_title": "第一幕",
+                "shots": [
+                    {
+                        "shot_id": "s001",
+                        "duration": 4.75,
+                        "difficulty": "难",
+                        "difficulty_reason": "长动作",
+                        "opening_frame_description": "雨夜街口",
+                        "spatial_layout": {
+                            "schema_version": 1,
+                            "location_path": [{"name": "雨夜街口", "role": "current_scene"}],
+                            "containers": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    scenes = service._build_storyboard_scenes_from_parsed_script(parsed_data, style="noir")
+
+    assert scenes[0]["duration"] == 4.75
+    assert scenes[0]["difficulty"] == "难"
+    assert scenes[0]["act_name"] == "第一幕"
+    assert scenes[0]["prompt"]["spatial_layout"]["location_path"][0]["name"] == "雨夜街口"
+    assert scenes[0]["prompt"]["source"]["difficulty_reason"] == "长动作"

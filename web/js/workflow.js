@@ -2243,6 +2243,9 @@
         if(nodeData.data.splitModelId) node.data.splitModelId = nodeData.data.splitModelId;
         if(nodeData.data.splitModelVendorId) node.data.splitModelVendorId = nodeData.data.splitModelVendorId;
         if(nodeData.data.splitModelVendorName) node.data.splitModelVendorName = nodeData.data.splitModelVendorName;
+        node.data.enableThinking = nodeData.data.enableThinking !== undefined ? nodeData.data.enableThinking : false;
+        node.data.thinkingEffort = nodeData.data.thinkingEffort || 'medium';
+        node.data.thinkingExplicitlyDisabled = nodeData.data.thinkingExplicitlyDisabled !== undefined ? nodeData.data.thinkingExplicitlyDisabled : false;
 
         const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
         if(el){
@@ -2283,6 +2286,11 @@
             ensureSelectHasSavedOption(splitModelEl, node.data.splitModel);
             splitModelEl.value = node.data.splitModel;
           }
+          const enableThinkingEl = el.querySelector('.script-enable-thinking');
+          const thinkingEffortEl = el.querySelector('.script-thinking-effort');
+          if(enableThinkingEl) enableThinkingEl.checked = node.data.enableThinking === true;
+          if(thinkingEffortEl) thinkingEffortEl.value = node.data.thinkingEffort || 'medium';
+          if(splitModelEl) splitModelEl.dispatchEvent(new Event('change', { bubbles: true }));
 
           // 恢复语言选择器的UI显示
           const presetLanguageValues = ['', 'English', 'Deutsch', 'Français', 'Русский'];

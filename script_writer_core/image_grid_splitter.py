@@ -17,6 +17,7 @@ from typing import List, Optional
 from pathlib import Path
 
 from config.constant import GridConfig
+from utils.image_grid_validator import validate_grid_image
 
 # 位置标签（行优先）：用于日志输出，超出范围时回退为 "区域N"
 _POSITION_LABELS_2X2 = ["左上", "右上", "左下", "右下"]
@@ -35,7 +36,8 @@ class ImageGridSplitter:
         output_dir: str,
         grid_size: int = GridConfig.SIZE_2X2,
         output_names: Optional[List[str]] = None,
-        output_format: str = "png"
+        output_format: str = "png",
+        validate: bool = True,
     ) -> List[str]:
         """
         将 N×N 宫格图像切分成独立图像。
@@ -73,6 +75,14 @@ class ImageGridSplitter:
         # 检查输入文件是否存在
         if not os.path.exists(grid_image_path):
             raise FileNotFoundError(f"图像文件不存在: {grid_image_path}")
+
+        if validate:
+            validation = validate_grid_image(grid_image_path, grid_size)
+            if not validation.is_valid:
+                raise ValueError(
+                    f"Invalid grid image: {validation.reason}; "
+                    f"confidence={validation.confidence:.2f}"
+                )
 
         # 创建输出目录
         os.makedirs(output_dir, exist_ok=True)

@@ -429,8 +429,10 @@ char_desc = "；".join(_parts) if _parts else "无"
 
 "角色完整出场"规则与"多人对话拆分"规则本身逻辑自洽，但需注意措辞衔接，避免互相诱导：
 
-- **逻辑自洽**：`split_multi_dialogue=True` 会把多人对话镜头拆成多个单人镜头，拆分后每个镜头 `characters_present` 只剩 1 个角色，此时"全员出场"=那 1 个角色出场即可。
-- **措辞陷阱（已修正）**：早期版本的"角色完整出场"正例使用了"双角色同框"描述（如"奶酪+奶昔同框"），而拆分规则要求"严禁同时出现两个或多个角色"。两者并存时 LLM 可能为了凑同框而拒绝拆分，或只拆出部分角色。现已把"角色完整出场"正例改为**以 `characters_present` 为锚、模式无关**的抽象描述。
+- **逻辑自洽**：`split_multi_dialogue=True` 会把多人对话镜头拆成多个单人焦点镜头。拆分后每个镜头的 `focus_character_ids` 只包含当前说话角色；`characters_present` 仍表示首帧中可见或局部可见的角色。如果非说话角色仍在同一车舱/房间/座位并且没有离开，近景或特写不能让其凭空消失。
+- **空间连续性角色**：非说话角色可作为 `secondary_continuity`、`background` 或 `offscreen_continuity` 保留在 `spatial_layout`。若首帧边缘/背景/局部可见，则也保留在 `characters_present`；若完全被近景裁切到画面外，则不放入 `characters_present`，但必须在原 slot 中标记 `visibility=offscreen`、`framing_role=offscreen_continuity`。
+- **确定性兜底**：`llm.script_parser.repair_spatial_layout_continuity()` 会在解析 JSON 后按相邻分镜修复空间布局。如果上一分镜同一容器（如同一辆车的驾驶室）里存在某个角色，而下一分镜漏掉该角色，且 LLM 没有在 `spatial_layout.continuity.changed_positions[]` 为该角色声明真实空间变化，系统会把该角色补回原 slot，并标记为 `visibility=offscreen`、`framing_role=offscreen_continuity`；这个角色不会被强行加入 `characters_present`，避免把镜头外角色当成可见角色。后处理不解析自然语言离开/下车等词语，中文、英文或其他语言的离开语义都必须由同一次 LLM 输出写成结构化 `changed_positions`。
+- **措辞陷阱（已修正）**：早期版本的"角色完整出场"正例使用了"双角色同框"描述（如"奶酪+奶昔同框"），而拆分规则又要求"严禁同时出现两个或多个角色"。两者并存时 LLM 可能为了凑同框而拒绝拆分，或为了单人近景把同一空间里的角色删除。现已改成"单人焦点 + 空间连续性角色"：严禁把非说话角色写成发言主体，但允许以弱化方式保留其空间位置。
 - **防漏拆要求**：在拆分规则末尾新增"防漏拆"约束——原镜头里有几个角色对话，就必须拆出几个对应的单人镜头；即使某角色台词很短（如"嗯""好的"），也要为其单独拆镜头，保证每个对话角色都有自己的画面出场。
 
 ### 范围说明

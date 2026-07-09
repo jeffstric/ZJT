@@ -25,7 +25,7 @@ function notify(message) {
 
 function handleAutoDialogueAudioPolling(response) {
     const summary = response && response.audio_auto_generate;
-    if (!summary || !summary.enabled) return;
+    if (!summary || !summary.enabled) return null;
     const sceneIds = new Set();
     (summary.submitted || []).forEach(item => {
         const sceneId = parseInt(item.scene_id, 10);
@@ -37,8 +37,9 @@ function handleAutoDialogueAudioPolling(response) {
     const submitted = Number(summary.submitted_count || 0);
     const skipped = Number(summary.skipped_count || 0);
     if (submitted > 0 || skipped > 0) {
-        notify(`已提交 ${submitted} 条配音任务，${skipped} 条跳过`);
+        return `已提交 ${submitted} 条配音任务，${skipped} 条跳过`;
     }
+    return null;
 }
 
 function rerender() {
@@ -447,13 +448,14 @@ async function handleAction(action, target) {
             setTimeout(() => {
                 state.showGenerateProgressDialog = false;
                 loadStoryboardData(response);
-                handleAutoDialogueAudioPolling(response);
+                const audioMessage = handleAutoDialogueAudioPolling(response);
                 state.isGeneratingFromScript = false;
                 // 拆分已重建分镜集合（含删除后重新拆分），清除旧的自动生成去重标志，
                 // 让本轮新生成的缺失首帧能够重新触发一次自动生成。
                 resetAutoMissingImagesFlag(state.storyboardId);
                 autoGenerateMissingFirstFrames();
-                notify(`已生成 ${response.generated_count || state.scenes.length} 个分镜`);
+                const generatedMessage = `已生成 ${response.generated_count || state.scenes.length} 个分镜`;
+                notify([generatedMessage, audioMessage].filter(Boolean).join('\n'));
                 rerender();
             }, 500);
         } catch (error) {
@@ -508,6 +510,10 @@ async function handleAction(action, target) {
         if (!window.confirm('确定删除这个分镜吗？')) return;
         await api.deleteScene(sceneId);
         removeSceneFromState(sceneId);
+        if (state.scenes.length === 0) {
+            state.showGenerateFromScriptDialog = true;
+            state.generateFromScriptError = '';
+        }
         rerender();
         return;
     }

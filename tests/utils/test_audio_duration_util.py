@@ -35,6 +35,13 @@ sys.modules['utils.project_path'] = _proj
 
 from utils.audio_duration_util import get_audio_duration_seconds, probe_audio_duration
 
+# 立即恢复被 mock 的全局模块，避免 pytest 收集其它测试文件时导入到瘦身版 config.constant。
+for _key, _saved in _saved_modules.items():
+    if _saved is not None:
+        sys.modules[_key] = _saved
+    else:
+        sys.modules.pop(_key, None)
+
 
 class TestGetAudioDurationSeconds(unittest.TestCase):
     """测试 get_audio_duration_seconds()"""

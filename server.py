@@ -78,7 +78,7 @@ from utils.project_path import (
     generate_upload_filename, build_upload_url, resolve_upload_url_to_local_path,
 )
 from config.constant import Edition, Action, StoryType
-from utils.image_grid_splitter import ImageGridSplitter
+from script_writer_core.image_grid_splitter import ImageGridSplitter
 from utils.image_grid_merger import ImageGridMerger
 from utils.sentry_util import SentryUtil
 from utils import file_lock
@@ -128,6 +128,22 @@ def _sync_write_file(file_path: str, content: bytes):
     """同步写入文件（需在线程池中调用）"""
     with open(file_path, 'wb') as f:
         f.write(content)
+
+
+def _json_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return default
 
 
 async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> tuple[bool, str]:
@@ -5738,6 +5754,8 @@ async def parse_script(
         model = body.get('model', 'gemini-3-flash-preview')
         model_id = body.get('model_id', '')
         vendor_id = body.get('vendor_id', None)
+        enable_thinking = _json_bool(body.get('enable_thinking'), False)
+        thinking_effort = body.get('thinking_effort', 'medium')
 
         if not script_content:
             return JSONResponse(
@@ -5809,7 +5827,9 @@ async def parse_script(
             prompt_language=prompt_language,
             auth_token=auth_token,
             vendor_id=real_vendor_id,
-            model_id=int(model_id) if model_id else 1
+            model_id=int(model_id) if model_id else 1,
+            enable_thinking=enable_thinking,
+            thinking_effort=thinking_effort,
         )
         
         if not parsed_data:

@@ -604,7 +604,7 @@
                             warningMsg += window.t ? window.t('alert_file_diff_local_only', { files: localOnlyList }) : `📁 本地独有文件（数据库中不存在）：\n  • ${localOnlyList}\n\n`;
                         }
 
-                        warningMsg += window.t ? window.t('alert_file_diff_hint') : '💡 提示：这些文件的本地内容已保留，不会被数据库覆盖。如需同步，请使用"提交数据"按钮。';
+                        warningMsg += window.t ? window.t('alert_file_diff_hint') : '💡 提示：这些文件的本地内容已保留，不会被数据库覆盖。如需同步，请使用"提交"按钮。';
 
                         alert(warningMsg);
                         updateStatus(window.t ? window.t('status_orchestrator_ready_local') : '剧本编排系统已就绪（检测到未提交的本地修改）');
@@ -2577,6 +2577,20 @@
 
             const modelName = selectedOption.textContent;
             icon.title = `生图模型: ${modelName}`;
+            // 同步自定义下拉框的显示文本（与 LLM 模型的 updateModelSelectorDisplay 保持一致）
+            updateImageModelDisplay();
+        }
+
+        function updateImageModelDisplay() {
+            const selector = document.getElementById('text-to-image-model-selector');
+            const display = document.getElementById('image-model-selector-display');
+            if (!selector || !display) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) return;
+
+            display.textContent = selectedOption.dataset.conciseName || selectedOption.textContent || selectedOption.value;
+            display.style.color = '';
         }
 
 
@@ -2758,6 +2772,8 @@
 
                 // 显示选择器
                 selector.style.display = '';
+                // 包装在 .model-select-wrapper 后，同步自定义显示层的文本
+                updateImageModelDisplay();
                 // 注意：自动设置模型逻辑已移至 createSession() 成功后执行
             } catch (error) {
                 console.error('加载生图模型列表失败:', error);
@@ -6097,7 +6113,7 @@
                         }
                         message += '\n';
                     });
-                    message += window.t ? window.t('asset_confirm_hint') : '\n💡 提示：请点击「提交数据」按钮生成资产图片后再进入制作工坊\n';
+                    message += window.t ? window.t('asset_confirm_hint') : '\n💡 提示：请点击「提交」按钮生成资产图片后再进入制作工坊\n';
                 }
 
                 message += window.t ? window.t('asset_confirm_enter_workflow') : '\n是否仍要进入制作工坊？';

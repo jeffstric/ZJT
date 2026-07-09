@@ -65,7 +65,27 @@ i2i 分支 `GridImageTasksModel.create` 失败时**返回 `success=False`**（�
 
 ### i2i 关键点
 - 模型选择：`_resolve_image_edit_task_id()` 复用 `edit_image` 逻辑，用户当前模型不支持 IMAGE_EDIT 时 fallback 到默认 IMAGE_EDIT 模型（id=7）。
-- 父图 URL：`_to_public_http_url()` 把本地 `/upload/...` 路径转为公开 http URL（`edit_image` 仅接受 http/https，防 SSRF）。
+- 参考图 URL：`_to_public_http_url()` 把本地 `/upload/...` 路径转为公开 http URL（`edit_image` 仅接受 http/https，防 SSRF）。对参考图列表逐项转换。
+- 分辨率（分镜首帧宫格专用）：按 `grid_size` 选择目标分辨率，4宫格→2K、9宫格→4K（映射常量 `GridConfig.GRID_SIZE_IMAGE_SIZE_MAP`）。`_submit_chunk` 按 grid_size 取映射值传入 `submit_grid_image_task(image_size=...)`，i2i 分支用 `_pick_grid_image_size` 按所选 IMAGE_EDIT 模型的 `supported_sizes` 降级到最接近且不超过目标的档位（如模型只支持 2K/3K、目标 4K → 选 3K），再把 `image_size` 透传到 `/api/image-edit` 请求。该值同时写入 `grid_image_tasks.image_size`，i2i 重试分支（`_resubmit_image_request`）复原时一并带上。角色/场景/道具宫格（t2i）不受此映射影响，仍走 `generate_text_to_image` 的强制最大分辨率逻辑。
+
+### reference_images 泛化设计
+i2i 输入从"单一父场景图"泛化为**带角色说明的参考图列表** `reference_images: List[Dict]`，每项 `{"url": str, "role_description": str}`：
+- `url`：参考图地址（本地路径或 http URL）
+- `role_description`：这张图的角色说明（如"父场景的完整俯瞰图，展示整体空间结构"、"分镜首帧，展示角色站位与镜头构图"）
+
+role_description 被拼进 grid_prompt JSON 的全局说明区（`reference_images_legend` 字段），对所有格子生效：
+```json
+{
+  "grid_layout": "3x3",
+  "reference_images_legend": "参考图说明：图1是父场景'主厅'的完整场景图...；各格内容需与参考图保持视觉连续性。",
+  "shots": [...]
+}
+```
+
+这个设计适配多种宫格生图场景：
+- **当前**：父场景图 → 子场景九宫格（1 张参考图）
+- **当前**：分镜首帧宫格（item_type=8）→ 同一幕下缺失首帧的分镜按 2x2/3x3 批量生成，参考图列表可包含角色、道具、场景，各格 prompt 写明本格使用的图号和空间位置
+- **其他**：任意"参考图列表 + 宫格生图"场景
 
 ## Phase 4：grid_image_tasks 表扩展
 
@@ -76,9 +96,9 @@ i2i 分支 `GridImageTasksModel.create` 失败时**返回 `success=False`**（�
 | `grid_layout` | VARCHAR(8) DEFAULT '2x2' | 布局描述 |
 | `item_names_json` | JSON NULL | 结构化名称列表（真实名称，回写时读取） |
 | `target_entity_ids_json` | JSON NULL | 切图回写目标 DB id 列表（过滤 None 后的纯 id，**强制按 id 回写**） |
-| `parent_reference_image` | VARCHAR(1000) | i2i 父场景参考图 URL（重试复原） |
+| `reference_images` | TEXT NULL | i2i 参考图列表 JSON `[{url, role_description}, ...]`（重试复原） |
 
-旧记录 `grid_size` 默认 4，`grid_layout` 默认 '2x2'，向后兼容。
+旧记录 `grid_size` 默认 4，`grid_layout` 默认 '2x2'，向后兼容。若旧迁移已建 `parent_reference_image`(varchar)，本迁移用 `CHANGE COLUMN` 重命名为 `reference_images`(text)。
 
 ### task_key 重做
 原 `generate_task_key(item_type, item_name)` 把全部名称拼进唯一键，9 名会超长/撞键。九宫格 i2i 用 `grid:{user_id}:{world_id}:{project_id}` 短键（project_id 天然唯一）。四宫格路径保留原 task_key。
@@ -94,21 +114,74 @@ magic `4` 全部替换。placeholder 格子（`GridConfig.is_placeholder`）跳�
 ### item_type=5 回写按 id 对齐
 回写阶段统一通过 `task.get_item_names_list()`（优先 `item_names_json`）读取真实名称，**不再** `task.item_name.split(',')`（item_name 已是短 key）。`target_entity_ids_json` 在 create 时已过滤 placeholder 的 None，回写时用「有效 id 列表」与「非 placeholder 名称」按序 zip 对齐，逐个调 `LocationModel.update(id, reference_image=url)`。
 
+### item_type=8 分镜首帧宫格回写
+
+`storyboard_first_frame_grid` 使用 `item_type=8`，没有对应的单图 base type。提交时：
+
+- `item_names` 长度必须等于 `grid_size`，placeholder 位写占位名称。
+- `target_entity_ids` 也必须等于 `grid_size`，真实格写 `storyboard_scene.id`，placeholder 位写 `None`。
+- `submit_grid_image_task()` 会把 `None` 过滤后写入 `target_entity_ids_json`，同时为 item_type=8 创建 `ai_tool_pipeline_steps.step_type=storyboard_first_frame_grid_split`。step params 保存 `grid_task_id`、`grid_size`、`grid_layout`，以及每个格子的 `grid_index/scene_id/batch_item_id/placeholder`。
+- 宫格 `ai_tools` 成功后，`task/grid_image_task.py` 只负责下载整张宫格图、写入 `ai_tools.result_url`，然后分发 pipeline step。`StoryboardGridSplitPipelineDriver` 切图后跳过 placeholder，每个真实格创建 `storyboard_scene_asset(asset_type="first_frame")`，调用 `set_selected(scene_id, "first_frame", asset_id)`，并优先按 `batch_item_id` 回写 batch item；老记录缺少 `batch_item_id` 时回退到 `grid_task_id + scene_id`。
+- 下载后的整张宫格会先通过 `validate_grid_image(local_file_path, grid_size)` 做几何校验。校验失败时不切图、不写回分镜，而是重新提交同一个宫格任务；`item_type=8` 默认最多重试 2 次，仍失败后才把 grid task 和相关 batch item 标记失败。
+
+### item_type=8 asset 与 ai_tool 的 result_url 优先级（防宫格图回显）
+
+宫格拆分场景下，多个 `storyboard_scene_asset`（单格图）共享同一个 `ai_tool`（宫格生图任务）。两张图的 URL 含义不同：
+
+| 字段 | 内容 | 示例 |
+|---|---|---|
+| `storyboard_scene_asset.result_url` | **拆分后的单格图**（权威值，driver 切图后写入） | `upload/storyboard/first_frame/xxx.png` |
+| `ai_tools.result_url` | **整张宫格图**（dispatch 前写入，供 driver 读取） | `upload/storyboard/temp/1084_xxx.png` |
+
+`api/storyboard.py` 的 `_asset_task_info`（task-status 轮询接口）和 `_enrich_scene_asset_result_urls`（候选资产列表接口）返回首帧 URL 时，**必须以 `asset.result_url` 为准**，仅在 asset 缺失 result_url 时才用 `ai_tool.result_url` 兜底。若无条件用 `ai_tool.result_url` 覆盖，前端轮询 task-status 时会把单格图回退成整张宫格图。
+
+前端 `getSceneAssetCandidateUrl`（`web/js/storyboard/events.js`）的优先级与此一致：`asset.result_url` → `ai_tool.result_url`。
+
+### item_type=8 终态失败回写与 step 调度防护
+
+宫格拆分 step（`storyboard_first_frame_grid_split`）的生命周期有两个易卡死的环节，需特别防护：
+
+**1. 预建 step 不被全局 pipeline 调度器过早 dispatch**
+
+`submit_grid_image_task` 在提交宫格任务时就预建了 `before_finish` 阶段的 split step（status=PENDING），但此时宫格图尚未生成、step params 里没有 `grid_image_path`。全局 pipeline 调度器（`PipelineProcessor.process_all_pending_steps`）每 13 秒扫描一次 PENDING 步骤，若不显式跳过，会在宫格图就绪前 dispatch 该 step，导致 driver 因"缺少宫格图片地址"立即失败。
+
+防护：`process_all_pending_steps` 的 PENDING 分发循环和重试循环都**显式跳过** `PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT` 类型的步骤——该步骤的唯一分发者是 `task/grid_image_task.py` 的 `_dispatch_storyboard_first_frame_grid_split`（在宫格图下载成功后调用）。
+
+**2. grid task 终态失败时回写 batch item**
+
+grid task 进入终态失败有三条路径，每条都必须调用 `_mark_storyboard_grid_batch_items_failed` 把关联的 `storyboard_image_batch_item`（status=RUNNING）回写为 FAILED，否则 batch item 永久卡在 RUNNING、batch job 永远不结束：
+
+| 路径 | 触发条件 | grid task 终态 |
+|---|---|---|
+| 超时 | `try_count > max_attempts`（轮询次数耗尽） | TIMEOUT(-2) |
+| 生成失败 | ComfyUI 返回 FAILED 且重试耗尽/重试提交失败 | FAILED(-1) |
+| 异常 | 轮询/处理过程抛未预期异常 | FAILED(-1) |
+
+`_mark_storyboard_grid_batch_items_failed` 只处理 `item_type=STORYBOARD_FIRST_FRAME_GRID`（不误伤角色/场景/道具宫格），按 `task.get_target_entity_ids_list()` 遍历每个 scene，通过 `find_running_by_grid_task(grid_task_id, scene_id)` 定位 RUNNING 的 batch item 并回写 FAILED。单个 scene 回写异常不影响其余 scene。
+
+**3. dispatch_step 同步完成补阶段完成检查**
+
+`storyboard_first_frame_grid_split` 步骤从 PENDING→PROCESSING→COMPLETED 全程同步发生在一次 `dispatch_step` 调用里，瞬间结束，从不经过全局调度器的 PROCESSING 轮询分支。因此 `dispatch_step` 的"步骤直接完成"分支在标记 COMPLETED 后，需显式调用 `_check_ai_tool_stage_completion(ai_tool_id, stage)`，否则 `before_finish` 阶段完成判定无法触发。
+
+
+所有 grid 类型（4/5/6/8）在 `task/grid_image_task.py` 中都强制下载原图到本地再切图，不依赖 `image.enable_download`。E2E/mock 路径使用 `ItemType.is_grid()` 判断是否返回 grid mock 图片，避免新增 grid type 拿到单图 mock。
+
 ## Phase 5：按父场景分批提交
 
 `StoryboardLocationBootstrapService.submit_subscene_grids(parsed_data, bootstrap_result, world_id, user_id, auth_token)`：
 
 1. 按父场景分组子场景。
-2. **补偿重跑友好（门禁）**：跳过「已有参考图」或「有运行中九宫格任务」的子场景，只提交「缺图且无运行中任务」的。避免重复提交 / 覆盖已生成结果。判定：
+2. **补偿重跑友好（门禁）**：始终跳过「已有参考图」或「有运行中九宫格任务」的子场景，只提交「缺图且无运行中任务」的。`force_overwrite_subscene_grids` / `force_overwrite=True` 为兼容旧调用保留，但不再生效；已有子场景参考图一律不会被重新提交或覆盖。判定：
    - `_subscene_has_reference_image(db_id, loc)`：查 DB 行 `reference_image`，fallback parsed dict。
    - `_subscene_has_running_grid(db_id)`：`GridImageTasksModel.has_running_grid_for_entity`。
 3. 取父 `reference_image` / `reference_images[0].url`；**父无图 → 该批不提交**（标 `missing_parent_reference_image`），子场景后续走 t2i 降级。
 4. 不足 9 补 placeholder（不建 location、不回写）；超 9 拆多个 3x3 批。
 5. 每子场景 prompt 必含：父场景名/描述/参考图说明 + 子场景名/描述/氛围 + "保持父场景空间结构、色彩、材质、光照连续"。
-6. 调 `generate_9grid_location_images(parent_reference_image=<父公开URL>, target_entity_ids=<DB id 列表>)`。
+6. 调 `generate_9grid_location_images(reference_images=[{url, role_description}], target_entity_ids=<DB id 列表>)`。bootstrap 构造的 reference_images 含父场景图，role_description 为"父场景'{name}'的完整场景图，展示整体空间结构、色彩、材质、光照，各子场景需保持与其连续性"。
 
 ### split 端点门禁
 Web（`api/storyboard.py`）与 CLI（`cli_service.py`）入口只需「有 auth_token」即尝试提交（内部精确跳过无需处理的子场景）。**不再用 `created_location_count > 0`** 作为门禁——那样会让「子场景已落库但缺图」的重跑无法补提交。
+Web split 入口会先将 `Authorization: Bearer <token>` 规范化为裸 token，再传给剧本解析与九宫格 i2i；否则内部 `/api/image-edit` 再拼接 `Bearer` 时会变成 `Bearer Bearer <token>`，导致鉴权失败且不会创建 `grid_image_tasks`。
 
 非阻塞接入 split 端点（`_auto_submit_storyboard_dialogue_voiceovers` 之后），异常不影响主流程。
 

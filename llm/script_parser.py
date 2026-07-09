@@ -77,13 +77,26 @@ SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和�
     - **画面提示词侧**：characters_present 中的**每一个角色**都必须在 opening_frame_description 中点名（用【【角色名】】格式），并写出其位置、姿态、表情或动作
     - **视频提示词侧**：characters_present 中的**每一个角色**都至少在 description 或 action 中有可见动作或位置交代
     - 即使某角色在该镜头没有台词或处于静态（如操控载具、观察、等待），也必须写出其位置与姿态，不能因为"不显眼"就漏写
-    - **【模式无关】本条以 characters_present 为准**：列出几个角色就写全几个。若启用了“多人对话拆分”规则，拆分后每个单人镜头的 characters_present 只剩 1 个角色，此时只需把这 1 个角色写充分即可；**严禁为了让多角色同框而拒绝拆分对话镜头**
+    - **【模式无关】本条以 characters_present 为准**：列出几个角色就写全几个。若启用了“多人对话拆分”规则，拆分后每个镜头只有一个 `focus_character_ids` 说话主体；但同一空间中仍可见或局部可见的非说话角色必须继续留在 characters_present，并在 spatial_layout 中标为 `secondary_continuity`。完全被裁切到画面外的非说话角色不放入 characters_present，但必须在 spatial_layout 中以 `offscreen_continuity` 保留位置。**严禁为了让多角色同框而拒绝拆分对话镜头，也严禁为了单人近景让角色凭空消失**
     - 错误示例：characters_present 含某角色，但 opening_frame_description/description/action 中完全没有提到该角色 ✗
 19. **【分镜难易程度 difficulty】** 每个 shot 必须输出 difficulty 字段（取值仅限"易"/"中"/"难"三个汉字之一），并附 difficulty_reason 简述依据。综合权衡以下维度，取整体倾向：
     - **易**：单人或无角色、静态/轻微动作、短镜头（≤5秒）、无关键道具或仅普通道具、固定镜头/简单构图。例：一个角色静坐望向窗外的特写。
     - **中**：2-3 人有互动、有连续但常规的动作、中等时长（6-10秒）、1-2 个关键道具、简单镜头运动（推进/跟随）。例：两人对话递接一份文件的中景。
     - **难**：4 人以上群体调度、打斗/追逐/复杂连续动作、长镜头（>10秒）且动作密集、多个关键道具且强交互、复杂镜头运动（升降/摇移组合）/强透视/多层景深。例：多人混战追逐穿越复杂场景的长镜头。
     - difficulty_reason 控制在一句话内，简述判定依据（如"4人群战+长镜头+多个道具交互"）。
+20. **【镜头空间布局 spatial_layout】每个 shot 必须输出 spatial_layout 对象**，用于后续首帧宫格生成保持同一幕内的位置连续性：
+    - `location_path` 必须引用顶层 `locations` 中真实存在的场景，表达父场景到当前场景的路径；如果剧本出现新场景，必须先在顶层 `locations` 创建，再在这里引用，不能凭空写名称。
+    - `containers` 表达角色或小道具位于某个真实道具、载具、房间区域、桌面等容器内；如果容器是道具，`prop_id` 必须引用顶层 `props` 中真实存在的道具。若剧本需要新道具，必须先在顶层 `props` 创建。
+    - `loose_positions` 表达不属于某个容器的角色/道具位置，例如"角色站在桥头左侧"。
+    - `slots[].character_id` 必须引用顶层 `characters`。`visibility=visible/partial` 的角色必须进入 `characters_present`；`visibility=offscreen/occluded` 的角色可以不进入 `characters_present`，但必须保留在 `spatial_layout` 中用于空间连续性。
+    - 每个 shot 必须输出 `focus_character_ids` 数组，表示当前镜头的视觉焦点/说话主体；近景或特写可以只聚焦一个角色，但不代表其他角色从空间中消失。
+    - `slots[]` 和 `loose_positions[]` 中的角色/道具必须输出 `visibility`（取值：`visible`、`partial`、`offscreen`、`occluded`）和 `framing_role`（取值：`primary_subject`、`secondary_continuity`、`background`、`offscreen_continuity`）。同一载具/房间中上一镜头已经存在但本镜头不是焦点的角色，必须保留为 `secondary_continuity` 或 `offscreen_continuity`，不要直接删除。
+    - **逐项核对上一镜头槽位**：输出当前 shot 前，必须把上一 shot 的 `spatial_layout.containers[].slots[]` 和 `loose_positions[]` 当作检查表逐项核对。除非剧本明确发生真实空间变化，否则上一镜头中同一容器/同一空间里的每个角色槽位都必须在当前 shot 继续出现；不是焦点时改为 `secondary_continuity` 或 `offscreen_continuity`。
+    - **真实空间变化必须结构化输出**：如果角色离开原容器/原场景、换座、进入其他区域、从车内到车外、从画内移动到另一空间，必须在 `spatial_layout.continuity.changed_positions[]` 输出对象，不能只写在 description/action 中。对象字段包括：`character_id`、`from_container_id`、`from_slot`、`to_container_id`、`to_slot`、`change_type`、`reason`；`change_type` 取值为 `moved_slot`、`entered_container`、`left_container`、`exited_scene`、`entered_scene`。近景/特写造成的画面裁切不是空间变化，不写入 changed_positions，只保留原 slot 并标记 `visibility=offscreen`。
+    - 特写/近景规则：如果 camera_angle、容器、座位/空间关系没有明确变化，上一镜头的非焦点角色必须继续保留在 `spatial_layout` 中；若画面能看到则 `visibility=partial` 或 `visible`，若因裁切看不到则 `visibility=offscreen`，并在 `continuity.notes` 说明其仍在原位置。
+    - `characters_present` 表示当前首帧应该可见或局部可见的角色；`focus_character_ids` 表示镜头重点。不要为了表达"单人近景/特写"而把仍在画面边缘、背景或局部可见的角色从 `characters_present` 删除。
+    - `continuity` 必须说明与前一分镜相比哪些位置保持不变、哪些发生变化；没有明确移动时，应保持上一分镜的逻辑位置，例如上一镜头奶酪在画面左侧，下一镜头未移动则仍在左侧。
+    - 结构字段使用 id 和 name，不使用【【】】或〖〖〗〗标记；描述性文本字段仍按上述标记规则输出。
 
 ID格式规范：
 - shot_id: s001-s999（最多10位字符）
@@ -393,6 +406,162 @@ def sanitize_parsed_location_references(
     return parsed_data
 
 
+def _spatial_container_key(container: Dict[str, Any]) -> Tuple[str, str, str, str]:
+    return (
+        str(container.get("container_type") or ""),
+        str(container.get("prop_id") or ""),
+        _normalize_asset_name(container.get("name")),
+        _normalize_asset_name(container.get("area")),
+    )
+
+
+def _is_character_slot(slot: Dict[str, Any]) -> bool:
+    return (
+        isinstance(slot, dict)
+        and str(slot.get("occupant_type") or "").lower() == "character"
+        and bool(slot.get("character_id"))
+    )
+
+
+def _append_unique_text(values: List[Any], value: Any) -> None:
+    text = str(value or "").strip()
+    if text and text not in [str(item) for item in values]:
+        values.append(text)
+
+
+def _changed_positions_include_character(spatial: Dict[str, Any], character_id: str) -> bool:
+    continuity = spatial.get("continuity")
+    if not isinstance(continuity, dict):
+        return False
+
+    changed_positions = continuity.get("changed_positions")
+    if not isinstance(changed_positions, list):
+        return False
+
+    return any(
+        isinstance(change, dict) and str(change.get("character_id") or "") == character_id
+        for change in changed_positions
+    )
+
+
+def repair_spatial_layout_continuity(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    修复 LLM 在近景/特写中漏掉的空间连续性角色。
+
+    解析提示词要求非焦点角色保留在 spatial_layout，但模型仍可能只输出当前焦点。
+    这里按相邻分镜兜底：同一容器里的上一镜头角色若没有在当前镜头出现，就以
+    offscreen_continuity 方式补回原 slot；不强行加入 characters_present。
+    """
+    valid_character_ids = {
+        str(character.get("id"))
+        for character in parsed_data.get("characters") or []
+        if isinstance(character, dict) and character.get("id")
+    }
+
+    previous_spatial: Optional[Dict[str, Any]] = None
+    for group in parsed_data.get("shot_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for shot in group.get("shots") or []:
+            if not isinstance(shot, dict):
+                continue
+
+            spatial = shot.get("spatial_layout")
+            if not isinstance(spatial, dict):
+                previous_spatial = None
+                continue
+
+            if previous_spatial:
+                _repair_shot_spatial_layout_from_previous(
+                    spatial=spatial,
+                    previous_spatial=previous_spatial,
+                    valid_character_ids=valid_character_ids,
+                )
+
+            previous_spatial = spatial
+
+    return parsed_data
+
+
+def _repair_shot_spatial_layout_from_previous(
+    spatial: Dict[str, Any],
+    previous_spatial: Dict[str, Any],
+    valid_character_ids: set,
+) -> None:
+    current_containers = [
+        container for container in spatial.get("containers") or []
+        if isinstance(container, dict)
+    ]
+    previous_containers = [
+        container for container in previous_spatial.get("containers") or []
+        if isinstance(container, dict)
+    ]
+    if not current_containers or not previous_containers:
+        return
+
+    current_by_key = {
+        _spatial_container_key(container): container
+        for container in current_containers
+    }
+    current_character_ids = {
+        str(slot.get("character_id"))
+        for container in current_containers
+        for slot in container.get("slots") or []
+        if _is_character_slot(slot)
+    }
+
+    continuity = spatial.get("continuity")
+    if not isinstance(continuity, dict):
+        continuity = {}
+        spatial["continuity"] = continuity
+    unchanged_slots = continuity.get("unchanged_slots")
+    if not isinstance(unchanged_slots, list):
+        unchanged_slots = []
+        continuity["unchanged_slots"] = unchanged_slots
+
+    carried_notes: List[str] = []
+    for previous_container in previous_containers:
+        current_container = current_by_key.get(_spatial_container_key(previous_container))
+        if not current_container:
+            continue
+
+        current_slots = current_container.get("slots")
+        if not isinstance(current_slots, list):
+            current_slots = []
+            current_container["slots"] = current_slots
+
+        for previous_slot in previous_container.get("slots") or []:
+            if not _is_character_slot(previous_slot):
+                continue
+
+            character_id = str(previous_slot.get("character_id"))
+            if valid_character_ids and character_id not in valid_character_ids:
+                continue
+            if character_id in current_character_ids:
+                continue
+            if _changed_positions_include_character(spatial, character_id):
+                continue
+
+            carried_slot = dict(previous_slot)
+            carried_slot["visibility"] = "offscreen"
+            carried_slot["framing_role"] = "offscreen_continuity"
+            current_slots.append(carried_slot)
+            current_character_ids.add(character_id)
+
+            slot_name = carried_slot.get("slot") or carried_slot.get("screen_position")
+            _append_unique_text(unchanged_slots, slot_name)
+            name = carried_slot.get("name") or character_id
+            if slot_name:
+                carried_notes.append(f"{name}仍在{slot_name}，本镜头因构图裁切处于镜头外")
+            else:
+                carried_notes.append(f"{name}仍在上一镜头空间位置，本镜头因构图裁切处于镜头外")
+
+    if carried_notes:
+        old_notes = str(continuity.get("notes") or "").strip()
+        addendum = "；".join(carried_notes)
+        continuity["notes"] = f"{old_notes}；{addendum}" if old_notes else addendum
+
+
 def sanitize_parsed_prop_references(
     parsed_data: Dict[str, Any],
     db_props: Optional[List[Dict[str, Any]]] = None,
@@ -629,6 +798,7 @@ JSON_FORMAT_EXAMPLE = """{
           "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：画面中所有在场角色（用【【角色名】】格式）的位置、姿态、表情或动作（固有外貌如发型/体型/标志服装不要写，交给角色库）；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及道具时用〖〖道具名〗〗格式）",
           "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式）",
           "characters_present": ["char_001"],
+          "focus_character_ids": ["char_001"],
           "props_present": ["prop_001"],
           "dialogue": [
             {
@@ -644,6 +814,56 @@ JSON_FORMAT_EXAMPLE = """{
           "narrative_purpose": "建立/推进/揭示/强调/过渡/情绪/反射：具体说明该镜头通过什么可见动作、构图、声音或转场完成叙事功能",
           "difficulty": "易/中/难",
           "difficulty_reason": "难度判定依据（一句话，综合人物数量/动作/时长/道具/镜头运动）",
+          "spatial_layout": {
+            "schema_version": 1,
+            "location_path": [
+              {
+                "location_id": "loc_001",
+                "location_db_id": 123,
+                "name": "真实场景名称",
+                "role": "current_scene"
+              }
+            ],
+            "containers": [
+              {
+                "container_type": "prop",
+                "prop_id": "prop_001",
+                "props_db_id": 456,
+                "name": "真实道具名称",
+                "area": "容器内区域，如驾驶室",
+                "position_in_location": "该容器在当前场景中的位置",
+                "slots": [
+                  {
+                    "slot": "驾驶室左侧座位",
+                    "screen_position": "画面左侧",
+                    "occupant_type": "character",
+                    "character_id": "char_001",
+                    "character_db_id": 789,
+                    "name": "角色名",
+                    "pose": "当前镜头姿态或动作",
+                    "visibility": "visible/partial/offscreen/occluded",
+                    "framing_role": "primary_subject/secondary_continuity/background/offscreen_continuity"
+                  }
+                ]
+              }
+            ],
+            "loose_positions": [],
+            "continuity": {
+              "unchanged_slots": [],
+              "changed_positions": [
+                {
+                  "character_id": "char_002",
+                  "from_container_id": "prop_001",
+                  "from_slot": "副驾驶座",
+                  "to_container_id": null,
+                  "to_slot": null,
+                  "change_type": "moved_slot/entered_container/left_container/exited_scene/entered_scene",
+                  "reason": "真实空间变化原因；如果只是近景裁切导致看不见，不要写 changed_positions"
+                }
+              ],
+              "notes": "说明与前一分镜的位置延续或变化"
+            }
+          },
           "audio_notes": "音频备注"
         },
         {
@@ -699,7 +919,9 @@ async def parse_script_to_shots(
     prompt_language: Optional[str] = None,
     auth_token: Optional[str] = None,
     vendor_id: Optional[int] = None,
-    model_id: Optional[int] = None
+    model_id: Optional[int] = None,
+    enable_thinking: bool = False,
+    thinking_effort: str = "medium",
 ) -> Dict[str, Any]:
     """
     将剧本内容解析为结构化的人物、场景和分镜数据
@@ -898,19 +1120,21 @@ async def parse_script_to_shots(
 
 - **【核心规则 - 必须严格遵守】：**
   * **每个拆分后的镜头只能包含一个角色的对话**
-  * **【禁止行为】在拆分后的单人镜头中，opening_frame_description、scene_detail、description、action等所有画面描述字段中，严禁同时出现两个或多个角色**
-  * **【正确做法】每个镜头的画面描述只能聚焦于一个说话的角色，只描述这一个角色的动作、表情、位置**
+  * **【焦点规则】每个镜头只能聚焦一个说话角色：`focus_character_ids` 只放该说话角色，`framing_role=primary_subject` 只给该角色**
+  * **【空间连续性例外】非说话角色如果上一镜头已经在同一载具、房间、座位或空间关系中，且本镜头没有在 `spatial_layout.continuity.changed_positions` 声明真实空间变化，不能从 `spatial_layout` 中删除；应以 `secondary_continuity`、`background` 或 `offscreen_continuity` 保留**
+  * **【正确做法】画面描述聚焦说话角色，但允许用弱化方式交代非说话角色：例如“画面边缘/背景中/模糊轮廓/肩部局部/镜头外仍在副驾驶位”。严禁把非说话角色写成发言主体或抢占画面主体**
+  * **【禁止行为】严禁把非说话角色写成发言主体、动作主体或第二主角；但不要为了单人近景而让仍在场的角色凭空消失**
   * 按照对话顺序依次拆分，保持对话的连贯性
   * 每个拆分镜头的shot_type应该使用"近景"或"中景"，展现说话角色的面部表情
   * 每个拆分镜头的duration根据该角色台词长度合理分配（通常3-6秒）
-  * characters_present数组也只能包含一个角色ID（说话的角色）
+  * characters_present数组默认包含说话角色；如果非说话角色在首帧中仍然可见或局部可见（visibility 为 visible/partial），也必须保留在 characters_present。若非说话角色完全因裁切到镜头外，则不放入 characters_present，但必须在 spatial_layout 中保留其 slot，并标记 visibility=offscreen、framing_role=offscreen_continuity。
   
 - **【关键】遵守180度轴线原则，避免画面越轴：**
   * 假设两个角色A和B对话，建立一条虚拟的轴线连接两人
   * 摄像机必须始终保持在轴线的同一侧拍摄
   * 正确示例：角色A在画面左侧面向右，角色B在画面右侧面向左（正反打）
   * 错误示例：角色A和B都面向同一方向，或者位置关系突然颠倒
-  * 在opening_frame_description中明确描述角色在画面中的位置和朝向（但只描述一个角色）
+  * 在opening_frame_description中明确描述说话角色在画面中的位置和朝向；如非说话角色可见，只能作为空间连续性背景/边缘/局部信息简短描述
   
 - **【拆分示例 - 正确做法】：**
   * 原镜头：中景，A和B在咖啡厅对话
@@ -920,29 +1144,33 @@ async def parse_script_to_shots(
   * 拆分后（正确）：
     - 镜头1：中景，A说话
       - dialogue: [{"character_id": "A", "text": "你好吗？"}]
-      - characters_present: ["char_001"]  // 只有A
-      - description: "【【A】】说话"  // 只提A
-      - opening_frame_description: "中景：【【A】】坐在咖啡厅的座位上，身体微微前倾，双手放在桌上，面带微笑，眼神看向画面右侧（镜头外），嘴唇微动正在说话"  ✓ 正确！只描述A
-      - scene_detail: "【【A】】在咖啡厅中说话，表情友好"  ✓ 正确！只描述A
-      - action: "【【A】】微笑着询问对方"  ✓ 正确！只描述A
+      - focus_character_ids: ["char_001"]  // 只有A是说话焦点
+      - characters_present: ["char_001"]  // 如果B被构图裁切到镜头外，则只放可见的A
+      - description: "【【A】】说话，视线看向镜头外的对座"  // 聚焦A，但保留对座空间关系
+      - opening_frame_description: "中景：【【A】】坐在咖啡厅的座位上，身体微微前倾，双手放在桌上，面带微笑，眼神看向画面右侧（镜头外），嘴唇微动正在说话；对座的B仍在原座位但被当前构图裁切到镜头外"  ✓ 正确！A是焦点，B以镜头外空间连续性保留
+      - spatial_layout: A的slot标记primary_subject；B的原slot继续保留，visibility=offscreen，framing_role=offscreen_continuity
+      - scene_detail: "【【A】】在咖啡厅中说话，表情友好，仍朝向对座回应"  ✓ 正确！只让A成为动作主体
+      - action: "【【A】】微笑着询问镜头外的对方"  ✓ 正确！只让A成为动作主体
       
     - 镜头2：中景，B回应
       - dialogue: [{"character_id": "B", "text": "我很好，谢谢"}]
-      - characters_present: ["char_002"]  // 只有B
-      - description: "【【B】】回应"  // 只提B
-      - opening_frame_description: "中景：【【B】】坐在咖啡厅的另一侧座位，身体放松靠在椅背上，双手交叉放在胸前，面带笑容，眼神看向画面左侧（镜头外），点头回应"  ✓ 正确！只描述B
-      - scene_detail: "【【B】】在咖啡厅中回应，表情轻松愉快"  ✓ 正确！只描述B
-      - action: "【【B】】点头微笑着回答"  ✓ 正确！只描述B
+      - focus_character_ids: ["char_002"]  // 只有B是说话焦点
+      - characters_present: ["char_002"]
+      - description: "【【B】】回应，视线看向镜头外的对座"
+      - opening_frame_description: "中景：【【B】】坐在咖啡厅的另一侧座位，身体放松靠在椅背上，双手交叉放在胸前，面带笑容，眼神看向画面左侧（镜头外），点头回应；对座的A仍在原座位但被当前构图裁切到镜头外"  ✓ 正确！B是焦点，A以镜头外空间连续性保留
+      - spatial_layout: B的slot标记primary_subject；A的原slot继续保留，visibility=offscreen，framing_role=offscreen_continuity
+      - scene_detail: "【【B】】在咖啡厅中回应，表情轻松愉快"
+      - action: "【【B】】点头微笑着回答"
 
 - **【错误示例 - 严禁这样做】：**
   * ❌ 错误1：opening_frame_description: "中景：【【A】】和【【B】】坐在咖啡厅，【【A】】正在说话..."
-    - 问题：同时出现了A和B两个角色
+    - 问题：把A和B都写成同等画面主体，削弱了单人焦点
   * ❌ 错误2：scene_detail: "【【A】】对【【B】】说话，【【B】】在认真倾听"
-    - 问题：同时描述了A和B的动作
+    - 问题：把非说话角色B写成动作主体；应改为“A看向镜头外的对座说话”，B只在 spatial_layout 中保留空间位置
   * ❌ 错误3：description: "【【A】】和【【B】】在对话"
-    - 问题：同时提到了两个角色
-  * ❌ 错误4：characters_present: ["char_001", "char_002"]
-    - 问题：包含了两个角色ID
+    - 问题：没有明确当前说话焦点
+  * ❌ 错误4：focus_character_ids: ["char_001", "char_002"]
+    - 问题：单人对话镜头包含了两个焦点/说话主体
   
 - **【正确示例 - 应该这样做】：**
   * ✓ 正确1：opening_frame_description: "中景：【【A】】坐在咖啡厅，身体前倾，面带微笑看向镜头外右侧，正在说话"
@@ -951,8 +1179,8 @@ async def parse_script_to_shots(
     - 只描述B的状态
   * ✓ 正确3：description: "【【A】】说话"
     - 只提一个角色
-  * ✓ 正确4：characters_present: ["char_001"]
-    - 只包含一个角色ID
+  * ✓ 正确4：focus_character_ids: ["char_001"]；characters_present 可包含首帧中可见/局部可见的空间连续性角色
+    - 只有一个说话焦点；非说话角色如仍在画面边缘或背景中，可作为 secondary_continuity 保留
 
 - **注意事项：**
   * 拆分后的镜头仍然属于同一个shot_group（如果总时长不超限）
@@ -963,8 +1191,8 @@ async def parse_script_to_shots(
 - **【防漏拆·极其重要】原镜头里有几个角色在对话，就必须拆出几个对应的单人镜头，严禁只拆出部分角色**：
   * 例如原镜头 dialogue 依次为 A、B、C 三人发言，必须拆出 3 个镜头，分别聚焦 A、B、C，不能只拆出 A、B 而漏掉 C
   * 即使某角色台词很短或只有一句反应（如"嗯"、"好的"），也必须为其单独拆出一个镜头，让该角色有自己的画面出场
-  * 拆分完成后请自检：原镜头 characters_present 中的每个角色，是否都成为了至少一个拆分镜头的唯一在场角色；若有角色从未单独出场，必须补齐
-  * 这与"角色完整出场"规则一致：拆分模式下"全员出场"= 每个对话角色都有属于自己的镜头
+  * 拆分完成后请自检：原镜头 characters_present 中的每个说话角色，是否都成为了至少一个拆分镜头的唯一 focus_character；若有说话角色从未单独成为焦点，必须补齐
+  * 这与"角色完整出场"规则一致：拆分模式下"全员出场"= 每个对话角色都有属于自己的焦点镜头；同一空间里的非说话角色仍可作为空间连续性角色保留
 
 """
         
@@ -1106,6 +1334,9 @@ async def parse_script_to_shots(
    - 必须包含：构图信息（如三分法、景深、视角等）
    - 描述要具体到能让AI准确还原画面
    - **【重要】不得遗漏任何在场角色，即便某角色只是静态出现也必须点名并写出位置/姿态**
+   - **【近景/特写连续性】近景、特写只改变构图焦点，不自动改变角色是否在场。如果上一镜头中另一个角色仍在同一车舱/房间/座位，且本镜头没有在 `spatial_layout.continuity.changed_positions` 声明真实空间变化，必须说明他在本镜头中是边缘可见、背景模糊、局部可见，还是因裁切处于镜头外；禁止让角色凭空消失。**
+   - **【真实空间变化】角色离开原容器/原场景、换座、进入其他区域等语义必须由你在同一次 JSON 输出的 `spatial_layout.continuity.changed_positions[]` 中结构化表达；后处理只读取这个结构化字段，不会从自然语言描述里猜测。**
+   - 必须与 `focus_character_ids`、`spatial_layout.slots[].visibility`、`spatial_layout.slots[].framing_role` 保持一致：主角写充分，secondary_continuity 角色弱化但保留空间关系。
    - **涉及角色名称时必须用【【角色名】】格式包裹（注意：只对角色名称使用，场景名称不要使用）**
 
 7. **角色名称格式要求（非常重要）**：
@@ -1122,7 +1353,7 @@ async def parse_script_to_shots(
    - **画面提示词（opening_frame_description、scene_detail）**：characters_present 中的**每一个角色**都必须点名（用【【角色名】】格式），并写出其位置、姿态、表情或当前动作
    - **视频提示词（description、action）**：characters_present 中的**每一个角色**都至少在其中一处有可见动作或位置交代
    - 即使某角色没有台词或处于静态（如操控载具、观察、等待），也必须写出其位置与姿态，不能因为"不显眼"而漏写
-   - **【与多人对话拆分的关系】**：若下方“多人对话拆分要求”生效，则多人对话镜头会被拆成多个单人镜头，拆分后每个镜头的 characters_present 只剩 1 个角色，此时本条只要求把这 1 个角色写充分即可；不要为了满足"多角色同框"而拒绝拆分。拆分时必须保证原镜头中**每一个有对话的角色都被拆出对应镜头**，不能只拆部分角色（详见拆分要求中的防漏拆说明）
+   - **【与多人对话拆分的关系】**：若下方“多人对话拆分要求”生效，则多人对话镜头会被拆成多个单人焦点镜头；`focus_character_ids` 只包含当前说话角色，但 `characters_present` 仍应包含首帧中可见或局部可见的空间连续性角色。非说话角色如果完全被近景/特写裁切到画面外，则可不放入 `characters_present`，但必须在 `spatial_layout` 保留原 slot，并标记 `visibility=offscreen`、`framing_role=offscreen_continuity`。拆分时必须保证原镜头中**每一个有对话的角色都被拆出对应镜头**，不能只拆部分角色（详见拆分要求中的防漏拆说明）
    - 错误示例：characters_present 含某角色，但画面/动作描写中完全没有提到该角色 ✗
    - 错误示例（只点名无动态）：只写"【【A】】和【【B】】在场"，没有各自的位置/姿态/动作 ✗
 
@@ -1183,7 +1414,9 @@ JSON格式示例：
             max_tokens=65536,
             auth_token=auth_token,
             vendor_id=vendor_id,
-            model_id=model_id
+            model_id=model_id,
+            enable_thinking=enable_thinking,
+            thinking_effort=thinking_effort,
         )
         
         # 提取响应内容
@@ -1277,6 +1510,9 @@ JSON格式示例：
         # 失效 location 被丢弃，shot.location_id 悬空则置 null
         parsed_data = sanitize_parsed_location_references(parsed_data, db_locations, script_content)
         _save_log_file(log_dir, f"script_parser_{timestamp}_07_location_sanitized.json", parsed_data)
+
+        parsed_data = repair_spatial_layout_continuity(parsed_data)
+        _save_log_file(log_dir, f"script_parser_{timestamp}_08_spatial_continuity_repaired.json", parsed_data)
 
         # 重新组合分镜组，确保每组不超过max_group_duration秒
         parsed_data = reorganize_shot_groups(parsed_data, max_group_duration, log_dir, timestamp)

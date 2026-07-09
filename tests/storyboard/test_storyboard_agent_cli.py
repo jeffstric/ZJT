@@ -296,6 +296,36 @@ def test_insert_scene_command(monkeypatch, capsys):
     assert calls[0]["prompt_json"] == '{"scene_desc":"Inserted beat"}'
 
 
+def test_insert_scene_command_accepts_decimal_duration(monkeypatch, capsys):
+    from scripts import storyboard_agent_cli
+
+    calls = []
+
+    class FakeService:
+        def insert_scene(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "storyboard_id": kwargs["storyboard_id"], "scene_id": 99}
+
+    monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
+
+    code = storyboard_agent_cli.main(
+        [
+            "insert-scene",
+            "--storyboard-id",
+            "44",
+            "--user-id",
+            "7",
+            "--duration",
+            "4.75",
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert out["scene_id"] == 99
+    assert calls[0]["duration"] == 4.75
+
+
 def test_cli_errors_are_json(monkeypatch, capsys):
     from scripts import storyboard_agent_cli
     from services.storyboard_agent_cli_service import StoryboardCliError

@@ -54,9 +54,12 @@ python -m scripts.storyboard_agent_cli split-from-script --storyboard-id <storyb
 python -m scripts.storyboard_agent_cli list-scenes --storyboard-id <storyboard_id> --user-id 1
 ```
 
+`insert-scene` / `update-scene` 的 `--duration` 支持小数秒，会按 `DECIMAL(10,3)` 写入分镜；视频生成时再统一向上取整提交给视频模型。
+
 ## Agent 默认配置
 
 - `split-from-script` 未显式传 `model` 时，后端优先读取 `storyboard.config_json.selectedScriptSplitLlmModel`，再回退到服务端默认模型。
+- `split-from-script --force-overwrite-subscene-grids` 会让已有参考图的子场景重新提交九宫格 i2i；仍有运行中九宫格任务的子场景会继续跳过，避免并发回写竞态。
 - `split-from-script` 返回 `scenes` 概要；也可以用 `list-scenes` 按 `storyboard_id` 查询场次 ID、标题、时长和素材概要。
 - `auto-generate-missing-images` 未显式传 `task_type` 时，后端优先读取 `storyboard.config_json.selectedImageTaskId`。只有需要覆盖当前分镜配置时才传 `task_type`。
 

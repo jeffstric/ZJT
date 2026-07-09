@@ -247,7 +247,7 @@
                     <img src="/files/logo.svg" alt="Logo" class="app-logo">
                 </a>
                 <nav class="breadcrumb-nav">
-                    <a href="/video-workflow-list" class="breadcrumb-link" data-i18n="workflow_list">工作流列表</a>
+                    <a href="/video-workflow-list" class="breadcrumb-link" data-i18n="workflow_list">工作流</a>
                     <span class="breadcrumb-separator">/</span>
                     <span class="breadcrumb-current" data-i18n="script_writer_title">剧本智能创作系统</span>
                 </nav>
@@ -314,18 +314,21 @@
                                 <path d="M9 12c0 1.5 1 3 3 3s3-1.5 3-3"/>
                             </svg>
                         </div>
-                        <select id="text-to-image-model-selector" class="model-select" onchange="changeTextToImageModel()" title="选择生图模型" style="display: none;" data-i18n="select_image_model:title">
-                            <option value="" data-i18n="loading">加载中...</option>
-                        </select>
+                        <div class="model-select-wrapper">
+                            <select id="text-to-image-model-selector" class="model-select" onchange="changeTextToImageModel()" title="选择生图模型" style="display: none;" data-i18n="select_image_model:title">
+                                <option value="" data-i18n="loading">加载中...</option>
+                            </select>
+                            <div class="model-select-display" id="image-model-selector-display">加载中...</div>
+                        </div>
                     </div>
                 </div>
                 <div class="computing-power-display" id="computing-power-display" title="当前算力余额（点击查看日志）" onclick="openComputingPowerLogsModal()" style="cursor: pointer;" data-i18n="current_power_balance:title">
                     <span class="power-icon">⚡</span>
                     <span class="power-value" id="power-value">--</span>
                 </div>
-                <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交数据" data-i18n="submit_data:title">
+                <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交" data-i18n="submit_data:title">
                     <span class="btn-icon">💾</span>
-                    <span class="btn-text" data-i18n="submit_data">提交数据</span>
+                    <span class="btn-text" data-i18n="submit_data">提交</span>
                 </button>
                 <div class="auto-submit-container">
                     <label class="auto-submit-toggle" title="开启后每分钟自动提交" data-i18n="auto_submit_tip:title">

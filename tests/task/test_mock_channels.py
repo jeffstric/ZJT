@@ -105,7 +105,7 @@ class TestVisualAsyncSubmit:
         result = asyncio.run(vt._submit_new_task(ai_tool))
 
         assert result is True
-        executor.submit.assert_called_once_with(1003, 5)
+        executor.submit.assert_called_once_with(1003, 5, "sync_impl")
         aitools.update.assert_any_call(1003, status=vt.AI_TOOL_STATUS_SYNC_QUEUED)
 
 
@@ -198,6 +198,43 @@ class TestGridResubmit:
         assert isinstance(pid, str)
         assert pid.startswith(mi.MOCK_PROJECT_PREFIX)
 
+    def test_reference_image_grid_resubmits_with_image_edit(self, monkeypatch):
+        import task.mock_interceptor as mock_interceptor
+        import script_writer_core.mcp_tool as mcp
+
+        monkeypatch.setattr(mock_interceptor, "is_mock_enabled", lambda: False)
+        monkeypatch.setattr(mcp, "_to_public_http_url", lambda raw_url, base_url: f"http://public/{raw_url.rsplit('/', 1)[-1]}")
+        captured = {}
+
+        def fake_post(url, data, timeout, verify):
+            captured["url"] = url
+            captured["data"] = data
+            response = MagicMock()
+            response.raise_for_status.return_value = None
+            response.json.return_value = {"project_ids": ["new_i2i_project"]}
+            return response
+
+        monkeypatch.setattr(git.httpx, "post", fake_post)
+
+        task = MagicMock()
+        task.task_key = "grid"
+        task.prompt = "{}"
+        task.task_config_id = "7"
+        task.comfyui_base_url = "http://inner"
+        task.user_id = "u"
+        task.auth_token = "t"
+        task.aspect_ratio = "9:16"
+        task.image_size = None
+        task.reference_images = '[{"url": "/upload/ref/a.png", "role_description": "ref"}]'
+
+        pid = git._resubmit_image_request(task)
+
+        assert pid == "new_i2i_project"
+        assert captured["url"] == "http://inner/api/image-edit"
+        assert captured["data"]["ratio"] == "9:16"
+        assert captured["data"]["ref_image_urls"] == "http://public/a.png"
+        assert "aspect_ratio" not in captured["data"]
+
 
 # ──────────────── §5.4 RunningHub 异步 submit（BaseAsyncDriver）────────────────
 class _TestAsyncDriver(bad.BaseAsyncDriver):
@@ -276,6 +313,238 @@ class TestGridPoll:
         assert comfyui_data["status"] == "SUCCESS"
         assert comfyui_data["results"][0]["file_url"].startswith("/upload/mock/")
 
+    def test_first_frame_grid_mock_uses_grid_image_fixture(self, mock_enabled, monkeypatch):
+        import task.grid_image_task as git
+        from script_writer_core.constant import ItemType
+
+        monkeypatch.setattr(mi, "_img", lambda k: f"/upload/mock/{k}.png")
+
+        task = MagicMock()
+        task.task_key = "first-frame-grid"
+        task.project_id = "mock_task_grid_ff"
+        task.item_type = ItemType.STORYBOARD_FIRST_FRAME_GRID
+        task.try_count = 0
+        task.max_attempts = 60
+        task.auth_token = "t"
+        task.comfyui_base_url = "http://h"
+
+        grid_model = MagicMock()
+        grid_model.get_pending_tasks.return_value = [task]
+        monkeypatch.setattr(git, "GridImageTasksModel", grid_model)
+
+        handler = MagicMock()
+        monkeypatch.setattr(git, "_handle_task_success", handler)
+
+        git.process_grid_image_tasks()
+
+        handler.assert_called_once()
+        _, comfyui_data = handler.call_args.args
+        assert comfyui_data["results"][0]["file_url"] == "/upload/mock/grid_image.png"
+
+    def test_grid_success_forces_download_even_for_non_mock_url(self, monkeypatch):
+        import importlib
+        import task.grid_image_task as git
+
+        fake_mcp = MagicMock()
+        fake_mcp.update_character_json.return_value = {"success": True}
+        monkeypatch.setattr(importlib, "import_module", lambda name: fake_mcp)
+        monkeypatch.setattr(git, "get_config", lambda: {
+            "image": {"enable_download": False},
+            "server": {"host": "http://h"},
+        })
+        downloader = MagicMock(return_value=("http://h/upload/character/temp/grid.png", "grid.png"))
+        monkeypatch.setattr(git, "_download_and_store_image", downloader)
+        splitter = MagicMock()
+        splitter.split_grid.return_value = ["a.png", "b.png", "c.png", "d.png"]
+        monkeypatch.setattr(git, "ImageGridSplitter", MagicMock(return_value=splitter))
+        monkeypatch.setattr(git, "validate_grid_image", lambda path, grid_size: MagicMock(is_valid=True, reason="ok", confidence=1.0))
+        grid_model = MagicMock()
+        monkeypatch.setattr(git, "GridImageTasksModel", grid_model)
+        monkeypatch.setattr(git, "_update_task_status_file", MagicMock())
+
+        task = MagicMock()
+        task.task_key = "grid"
+        task.item_type = 4
+        task.item_name = "a,b,c,d"
+        task.grid_size = 4
+        task.comfyui_base_url = "http://h"
+        task.user_id = "u"
+        task.world_id = "w"
+        task.auth_token = "t"
+        task.get_item_names_list = lambda: ["a", "b", "c", "d"]
+        task.get_target_entity_ids_list = lambda: []
+
+        git._handle_task_success(task, mi.comfyui_status_success("http://remote.test/grid.png"))
+
+        downloader.assert_called_once_with("http://remote.test/grid.png", 4, "http://h")
+        assert fake_mcp.update_character_json.call_count == 4
+        grid_model.update_status.assert_called_once()
+
+    def test_first_frame_grid_writeback_creates_assets_and_updates_batch_items(self, monkeypatch):
+        import task.grid_image_task as git
+        from script_writer_core.constant import ItemType
+
+        monkeypatch.setattr(git, "get_config", lambda: {
+            "image": {"enable_download": False},
+            "server": {"host": "http://h"},
+        })
+        monkeypatch.setattr(
+            git,
+            "_download_and_store_image",
+            lambda url, item_type, base: ("http://h/upload/storyboard/temp/grid.png", "grid.png"),
+        )
+        splitter = MagicMock()
+        splitter.split_grid.return_value = [
+            "upload/storyboard/first_frame/a.png",
+            "upload/storyboard/first_frame/b.png",
+            "upload/storyboard/first_frame/c.png",
+            "upload/storyboard/first_frame/d.png",
+        ]
+        monkeypatch.setattr(git, "ImageGridSplitter", MagicMock(return_value=splitter))
+        monkeypatch.setattr(git, "validate_grid_image", lambda path, grid_size: MagicMock(is_valid=True, reason="ok", confidence=1.0))
+        grid_model = MagicMock()
+        monkeypatch.setattr(git, "GridImageTasksModel", grid_model)
+        monkeypatch.setattr(git, "_update_task_status_file", MagicMock())
+
+        dispatch_calls = []
+        monkeypatch.setattr(
+            git,
+            "_dispatch_storyboard_first_frame_grid_split",
+            lambda task, local_image_url, local_file_path, grid_size: dispatch_calls.append(
+                (task.id, local_image_url, local_file_path, grid_size)
+            ) or True,
+        )
+
+        task = MagicMock()
+        task.id = 77
+        task.task_key = "first-frame-grid"
+        task.item_type = ItemType.STORYBOARD_FIRST_FRAME_GRID
+        task.item_name = "scene#101,102,#,#"
+        task.grid_size = 4
+        task.comfyui_base_url = "http://h"
+        task.user_id = "u"
+        task.world_id = "w"
+        task.auth_token = "t"
+        task.project_id = "501"
+        task.get_item_names_list = lambda: ["分镜1", "分镜2", "placeholder", "placeholder"]
+        task.get_target_entity_ids_list = lambda: [101, 102]
+
+        git._handle_task_success(task, mi.comfyui_status_success("/upload/mock/grid_image.png"))
+
+        assert dispatch_calls == [(77, "http://h/upload/storyboard/temp/grid.png", "grid.png", 4)]
+        splitter.split_grid.assert_not_called()
+        grid_model.update_status.assert_called_once()
+
+    def test_first_frame_grid_validation_failure_resubmits_before_writeback(self, monkeypatch):
+        import task.grid_image_task as git
+        from script_writer_core.constant import ItemType
+
+        monkeypatch.setattr(git, "get_config", lambda: {
+            "image": {"enable_download": False},
+            "server": {"host": "http://h"},
+        })
+        monkeypatch.setattr(
+            git,
+            "_download_and_store_image",
+            lambda url, item_type, base: ("http://h/upload/storyboard/temp/bad.png", "bad.png"),
+        )
+        monkeypatch.setattr(
+            git,
+            "validate_grid_image",
+            lambda path, grid_size: MagicMock(is_valid=False, reason="not a uniform grid", confidence=0.1),
+        )
+        monkeypatch.setattr(git, "_resubmit_image_request", lambda task: "new_project")
+        grid_model = MagicMock()
+        monkeypatch.setattr(git, "GridImageTasksModel", grid_model)
+        monkeypatch.setattr(git, "_update_task_status_file", MagicMock())
+        dispatcher = MagicMock()
+        monkeypatch.setattr(git, "_dispatch_storyboard_first_frame_grid_split", dispatcher)
+        monkeypatch.setattr(git, "ImageGridSplitter", MagicMock())
+
+        task = MagicMock()
+        task.id = 77
+        task.task_key = "first-frame-grid"
+        task.item_type = ItemType.STORYBOARD_FIRST_FRAME_GRID
+        task.item_name = "scene#101,102,#,#"
+        task.grid_size = 4
+        task.max_retries = 2
+        task.retry_count = 0
+        task.prompt = "{}"
+        task.task_config_id = "7"
+        task.comfyui_base_url = "http://h"
+        task.user_id = "u"
+        task.world_id = "w"
+        task.auth_token = "t"
+        task.project_id = "501"
+        task.get_target_entity_ids_list = lambda: [101, 102]
+
+        git._handle_task_success(task, mi.comfyui_status_success("/upload/mock/bad_grid.png"))
+
+        grid_model.reset_for_retry.assert_called_once_with("first-frame-grid", "new_project")
+        grid_model.update_status.assert_not_called()
+        dispatcher.assert_not_called()
+
+    def test_first_frame_grid_validation_failure_fails_batch_after_two_retries(self, monkeypatch):
+        import task.grid_image_task as git
+        from script_writer_core.constant import ItemType
+
+        monkeypatch.setattr(git, "get_config", lambda: {
+            "image": {"enable_download": False},
+            "server": {"host": "http://h"},
+        })
+        monkeypatch.setattr(
+            git,
+            "_download_and_store_image",
+            lambda url, item_type, base: ("http://h/upload/storyboard/temp/bad.png", "bad.png"),
+        )
+        monkeypatch.setattr(
+            git,
+            "validate_grid_image",
+            lambda path, grid_size: MagicMock(is_valid=False, reason="not a uniform grid", confidence=0.1),
+        )
+        grid_model = MagicMock()
+        monkeypatch.setattr(git, "GridImageTasksModel", grid_model)
+        monkeypatch.setattr(git, "_update_task_status_file", MagicMock())
+
+        found_items = {
+            101: {"id": 1001, "extra_json": {"grid_task_id": 77}},
+            102: {"id": 1002, "extra_json": {"grid_task_id": 77}},
+        }
+        updated_items = []
+        monkeypatch.setattr(
+            "model.storyboard_image_batch.StoryboardImageBatchItemModel.find_running_by_grid_task",
+            lambda grid_task_id, scene_id: found_items.get(scene_id),
+        )
+        monkeypatch.setattr(
+            "model.storyboard_image_batch.StoryboardImageBatchItemModel.update",
+            lambda item_id, **kwargs: updated_items.append((item_id, kwargs)) or 1,
+        )
+
+        task = MagicMock()
+        task.id = 77
+        task.task_key = "first-frame-grid"
+        task.item_type = ItemType.STORYBOARD_FIRST_FRAME_GRID
+        task.item_name = "scene#101,102,#,#"
+        task.grid_size = 4
+        task.max_retries = 2
+        task.retry_count = 2
+        task.prompt = "{}"
+        task.task_config_id = "7"
+        task.comfyui_base_url = "http://h"
+        task.user_id = "u"
+        task.world_id = "w"
+        task.auth_token = "t"
+        task.project_id = "501"
+        task.get_target_entity_ids_list = lambda: [101, 102]
+
+        git._handle_task_success(task, mi.comfyui_status_success("/upload/mock/bad_grid.png"))
+
+        grid_model.reset_for_retry.assert_not_called()
+        grid_model.update_status.assert_called_once()
+        assert grid_model.update_status.call_args.kwargs["status"] == git.GridImageTaskStatus.FAILED
+        assert [item_id for item_id, _ in updated_items] == [1001, 1002]
+        assert all(kwargs["status"] == git.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED for _, kwargs in updated_items)
+
     def test_grid_mock_splits_even_when_image_download_disabled(self, monkeypatch):
         import importlib
         fake_mcp = MagicMock()
@@ -290,6 +559,7 @@ class TestGridPoll:
         splitter = MagicMock()
         splitter.split_grid.return_value = ["a.png", "b.png", "c.png", "d.png"]
         monkeypatch.setattr(git, "ImageGridSplitter", MagicMock(return_value=splitter))
+        monkeypatch.setattr(git, "validate_grid_image", lambda path, grid_size: MagicMock(is_valid=True, reason="ok", confidence=1.0))
         grid_model = MagicMock()
         monkeypatch.setattr(git, "GridImageTasksModel", grid_model)
         monkeypatch.setattr(git, "_update_task_status_file", MagicMock())

@@ -45,3 +45,10 @@
 - 支持增量同步，修改剧本后可重新解析
 
 详见 [剧本自动提交功能](../script/auto_submit_feature.md)
+
+## 拆分模型思考模式
+
+- 剧本节点的“拆分模型”下拉框会读取模型配置中的 `supports_thinking` 能力；支持思考模式的模型会显示“思考模式”开关。
+- DeepSeek 系列模型默认开启思考模式；如果用户手动关闭，节点会保存 `thinkingExplicitlyDisabled`，工作流重新加载后继续保持关闭。
+- 普通拆分和“拆分并生成宫格”两条 `/api/parse-script` 调用都会提交 `enable_thinking` 与 `thinking_effort`，后端再透传给 `llm.script_parser.parse_script_to_shots()`。
+- 工作流保存/重载会恢复 `enableThinking`、`thinkingEffort` 和 `thinkingExplicitlyDisabled`，避免重新加载后丢失模型思考设置。

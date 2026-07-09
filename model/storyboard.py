@@ -62,7 +62,7 @@ class Storyboard:
             'workflow_id': self.workflow_id,
             'script_id': self.script_id,
             'title': self.title,
-            'total_duration': self.total_duration,
+            'total_duration': float(self.total_duration) if self.total_duration is not None else None,
             'status': self.status,
             'style': self.style,
             'style_reference_image': self.style_reference_image,

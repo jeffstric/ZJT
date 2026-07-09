@@ -17,6 +17,16 @@ def _to_int(value: Any, name: str, default: Optional[int] = None) -> Optional[in
         raise StoryboardCliError("invalid_parameter", f"{name} must be an integer")
 
 
+def _to_float(value: Any, name: str, default: Optional[float] = None) -> Optional[float]:
+    """将参数转为 float，用于 duration 等 DECIMAL 字段（不再截断小数）。"""
+    if value in (None, ""):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise StoryboardCliError("invalid_parameter", f"{name} must be a number")
+
+
 def _to_required_int(value: Any, name: str) -> int:
     if value in (None, ""):
         raise StoryboardCliError("missing_parameter", f"{name} is required")
@@ -111,7 +121,15 @@ class StoryboardAgentCommandService:
                 {
                     "name": "split-from-script",
                     "permission": "storyboard:update",
-                    "params": ["storyboard_id", "model", "model_id", "vendor_id", "max_group_duration", "language"],
+                    "params": [
+                        "storyboard_id",
+                        "model",
+                        "model_id",
+                        "vendor_id",
+                        "max_group_duration",
+                        "language",
+                        "force_overwrite_subscene_grids",
+                    ],
                 },
                 {
                     "name": "scene-context",
@@ -294,7 +312,7 @@ class StoryboardAgentCommandService:
                 prev_id=_to_int(data.get("prev_id"), "prev_id"),
                 next_id=_to_int(data.get("next_id"), "next_id"),
                 title=data.get("title") or "",
-                duration=_to_int(data.get("duration"), "duration", 5) or 5,
+                duration=_to_float(data.get("duration"), "duration", 5.0) or 5.0,
                 prompt_json=data.get("prompt_json"),
                 video_prompt=data.get("video_prompt"),
                 video_type=data.get("video_type") or "video",
@@ -317,6 +335,8 @@ class StoryboardAgentCommandService:
             )
 
         if command == "split-from-script":
+            _legacy_force_overwrite_subscene_grids = _to_bool(data.get("force_overwrite_subscene_grids"))
+            del _legacy_force_overwrite_subscene_grids
             return self.service.split_from_script(
                 storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
                 user_id=_to_required_int(data.get("user_id"), "user_id"),
@@ -331,6 +351,8 @@ class StoryboardAgentCommandService:
                 language=data.get("language") or "",
                 dialogue_language=data.get("dialogue_language") or "",
                 prompt_language=data.get("prompt_language") or "",
+                # 旧字段继续接受，但已废弃：split 内部永远不会覆盖已有子场景参考图。
+                force_overwrite_subscene_grids=False,
             )
 
         if command == "generate-image":
@@ -413,7 +435,7 @@ class StoryboardAgentCommandService:
             return self.service.update_scene(
                 scene_id=_to_required_int(data.get("scene_id"), "scene_id"),
                 user_id=_to_int(data.get("user_id"), "user_id"),
-                duration=_to_int(data.get("duration"), "duration"),
+                duration=_to_float(data.get("duration"), "duration"),
                 title=data.get("title"),
                 prompt_json=data.get("prompt_json"),
                 video_prompt=data.get("video_prompt"),

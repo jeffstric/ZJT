@@ -77,7 +77,7 @@ class StoryboardScene:
             'storyboard_id': self.storyboard_id,
             'sort_order': float(self.sort_order) if self.sort_order is not None else 0.0,
             'title': self.title,
-            'duration': self.duration,
+            'duration': float(self.duration) if self.duration is not None else None,
             'prompt_json': _parse_json(self.prompt_json),
             'video_prompt': self.video_prompt,
             'video_type': self.video_type,

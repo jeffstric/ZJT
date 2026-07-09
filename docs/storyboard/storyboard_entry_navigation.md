@@ -91,6 +91,7 @@
 ### 空故事板生成分镜
 
 进入 `web/storyboard.html` 后，如果当前故事板没有任何 `storyboard_scene`，前端会显示确认弹框（`renderGenerateFromScriptDialog`）：
+如果用户在编辑器中删除了最后一个分镜，前端也会重新进入同一个拆分分镜弹框，方便直接从剧本重新生成分镜。
 
 - 取消：关闭弹框，保留空故事板，用户仍可手动添加分镜。
 - 确认：调用 `POST /api/storyboard/{storyboard_id}/generate-from-script`，由后端一次性完成剧本解析和数据落库。

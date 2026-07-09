@@ -58,11 +58,11 @@ curl http://localhost:9003/api/storyboard/10/task-status?asset_type=first_frame 
 
 ## Billing Boundary
 
-`auto-generate-missing-images` does not create a separate image-generation path. It selects scenes that need an image and then calls the existing `StoryboardAgentCliService.generate_image()` method for each submitted scene.
+`auto-generate-missing-images` creates one orchestration job. In `speed` and `balanced` it selects scenes that need an image and calls the existing `StoryboardAgentCliService.generate_image()` method for each submitted scene. In `quality + first_frame` it submits same-act storyboard first-frame grids through `StoryboardFirstFrameGridService`, then `task/grid_image_task.py` cuts the grid and writes each cell back as `storyboard_scene_asset(first_frame)`.
 
 That means billing and permission behavior remain on the existing image-generation chain:
 
-1. `generate_image()` calls `generate_text_to_image` or `edit_image`.
+1. `generate_image()` calls `generate_text_to_image` or `edit_image`; quality first-frame grid calls `submit_grid_image_task(item_type=8, mode="image_edit")`.
 2. Those tools call the existing image endpoints with `auth_token`.
 3. The image endpoints perform the current auth and computing-power deduction.
 
@@ -74,7 +74,19 @@ The batch command requires a non-empty `auth_token`. It skips scenes that alread
 
 - `speed`: submit all missing images up to `limit` without referencing neighboring frames.
 - `balanced` (default): scenes in different parsed groups can submit concurrently. Within the same group, each missing scene waits for the previous scene result and then submits as `image_edit` with the previous result URL as `source_image`.
-- `quality`: submit as a single global chain. Each scene waits for the previous scene across group boundaries, so B1 can reference A3.
+- `quality + first_frame`: same-act / same parsed group pending scenes are submitted as 2x2 or 3x3 storyboard first-frame grids. Scenes whose location reference image is missing remain pending with `waiting=location_grid_reference`; ready scenes in the same act can still proceed. The old global previous-frame chain is used only when `StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED` is disabled.
+
+Quality grid details:
+
+- 1-4 ready scenes use a 2x2 grid; 5-9 use a 3x3 grid; a single ready scene still uses 2x2 with placeholders to keep the quality-mode grid path uniform.
+- `limit` keeps its planning meaning: maximum real scenes planned for the batch. Per scheduler tick throughput is controlled separately by `StoryboardAutoGenerateConstants.QUALITY_GRID_BATCHES_PER_TICK`.
+- The grid uses the storyboard/job ratio (`job.ratio` or `storyboard.workflow_ratio`), not a hard-coded `16:9`.
+- Each real cell prompt is built with a two-layer prompt flow. `storyboard_scene.prompt_json.spatial_layout` is passed to the optional LLM prompt rewriter together with `visible_entities` and `hidden_continuity_entities`, so the rewriter can reason about continuity. The final image-generation prompt stays clean: it describes only visible/partial entities in natural image language; `offscreen`/`occluded` continuity entities are not written as visible subjects, their names are removed from the final prompt if the source text leaks them, and they do not enter that cell's reference indices. The service stores each submitted cell's final prompt and spatial summary in `storyboard_image_batch_item.extra_json.grid_prompt_cell_context`; the group-level summary is stored in `grid_prompt_group_context` and is passed to the next act/group as `previous_grid_prompt_context` for continuity reference.
+- `submit_grid_image_task(item_type=8)` creates an `ai_tool_pipeline_steps` record with `step_type=storyboard_first_frame_grid_split`. The step params store `grid_task_id`, grid layout, and per-cell bindings (`grid_index`, `scene_id`, `batch_item_id`, `placeholder`).
+- At an act/group boundary, quality first-frame grids wait for the previous group’s last storyboard frame before submitting the next group. The reference is the split first-frame asset/result URL for that previous storyboard scene, not the full grid image. If that previous frame is still pending/running, the next group remains pending with `waiting=previous_group_first_frame`; once ready, the previous frame is added to the next grid’s `reference_images` and every real cell prompt mentions it as the previous storyboard frame for continuity.
+- After the grid `ai_tools` task succeeds, `task/grid_image_task.py` records the downloaded grid image on `ai_tools.result_url` and dispatches the pipeline step. The global pipeline scheduler intentionally skips `storyboard_first_frame_grid_split`; otherwise the step can run before the grid image exists. The pipeline driver splits the grid, skips placeholder cells, creates `storyboard_scene_asset(asset_type="first_frame")`, sets it selected, and updates the owning `storyboard_image_batch_item`. It uses `batch_item_id` first and falls back to `grid_task_id + scene_id` for older records.
+- Before dispatching the split step, the downloaded grid is checked by `utils.image_grid_validator.validate_grid_image()`. If the geometry is not a valid 2x2/3x3 grid, the grid generation is retried up to 2 times. Only after those retries fail are the related batch items marked failed, allowing the whole storyboard image batch job to finish instead of binding bad cell crops.
+- At the start of every scheduler tick, `StoryboardAgentCliService._process_one_image_batch_job()` reconciles running batch items before checking dependencies. It completes items whose bound `storyboard_scene_asset` now has a result URL, fails items whose bound asset failed, and for quality first-frame grids checks `extra_json.grid_task_id`: terminal grid failures (`FAILED`, `TIMEOUT`, `CANCELLED`, `DOWNLOAD_FAILED`) or completed grids without successful split/writeback mark the owning batch item failed with `grid_first_frame_failed`. As a last-resort stale guard, any item that remains `running` for more than `StoryboardAutoGenerateConstants.BATCH_RUNNING_ITEM_TIMEOUT_SECONDS` is marked failed with `batch_item_running_timeout`, so dependent items cannot wait forever.
 
 Inserted scenes that have no parsed group metadata inherit the previous scene's group. If the first scene has no group metadata, it uses a temporary manual group.
 

@@ -13,6 +13,12 @@ Grid Image Tasks Model - Database operations for grid_image_tasks table
 宫格规格支持（grid_size 列）：
   - 4  = 2x2 四宫格（grid_layout='2x2'，向后兼容默认值）
   - 9  = 3x3 九宫格（grid_layout='3x3'，子场景参考图）
+
+宫格 item_type：
+  - 4 = character_grid
+  - 5 = location_grid
+  - 6 = prop_grid
+  - 8 = storyboard_first_frame_grid
 """
 import json
 from typing import List, Optional, Dict, Any
@@ -45,7 +51,7 @@ class GridImageTask:
         self.item_name = kwargs.get('item_name')
         self.item_names_json = kwargs.get('item_names_json')
         self.target_entity_ids_json = kwargs.get('target_entity_ids_json')
-        self.parent_reference_image = kwargs.get('parent_reference_image')
+        self.reference_images = kwargs.get('reference_images')
         self.user_id = kwargs.get('user_id')
         self.world_id = kwargs.get('world_id')
         self.comfyui_base_url = kwargs.get('comfyui_base_url')
@@ -81,7 +87,7 @@ class GridImageTask:
             'item_name': self.item_name,
             'item_names_json': self.item_names_json,
             'target_entity_ids_json': self.target_entity_ids_json,
-            'parent_reference_image': self.parent_reference_image,
+            'reference_images': self.reference_images,
             'user_id': self.user_id,
             'world_id': self.world_id,
             'status': self.status,
@@ -160,7 +166,7 @@ class GridImageTasksModel:
         grid_layout: str = '2x2',
         item_names: Optional[List[str]] = None,
         target_entity_ids: Optional[List[int]] = None,
-        parent_reference_image: Optional[str] = None,
+        reference_images: Optional[List[Dict]] = None,
     ) -> int:
         """
         创建新的宫格生图任务
@@ -186,7 +192,8 @@ class GridImageTasksModel:
             item_names: 结构化名称列表（写入 item_names_json，避免逗号拼接歧义）
             target_entity_ids: 切图回写目标 DB id 列表（写入 target_entity_ids_json，
                               使回写按 id 而非按名）
-            parent_reference_image: i2i 父场景参考图 URL
+            reference_images: i2i 参考图列表 [{url, role_description}, ...]，
+                              序列化为 JSON 存 TEXT 列，用于宫格图生图与重试复原。
 
         Returns:
             插入的记录ID
@@ -196,20 +203,21 @@ class GridImageTasksModel:
         """
         item_names_json = json.dumps(item_names, ensure_ascii=False) if item_names else None
         target_entity_ids_json = json.dumps(target_entity_ids) if target_entity_ids else None
+        reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
 
         sql = """
             INSERT INTO grid_image_tasks
             (task_key, project_id, item_type, item_name, user_id, world_id,
              comfyui_base_url, auth_token, status, max_attempts,
              prompt, task_config_id, aspect_ratio, image_size, is_grid, max_retries,
-             grid_size, grid_layout, item_names_json, target_entity_ids_json, parent_reference_image)
+             grid_size, grid_layout, item_names_json, target_entity_ids_json, reference_images)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (
             task_key, project_id, item_type, item_name, user_id, world_id,
             comfyui_base_url, auth_token, GridImageTaskStatus.QUEUED, max_attempts,
             prompt, task_config_id, aspect_ratio, image_size, 1 if is_grid else 0, max_retries,
-            grid_size, grid_layout, item_names_json, target_entity_ids_json, parent_reference_image,
+            grid_size, grid_layout, item_names_json, target_entity_ids_json, reference_images_str,
         )
 
         try:
@@ -572,11 +580,11 @@ CREATE TABLE IF NOT EXISTS `grid_image_tasks` (
   `id` int NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `task_key` varchar(255) NOT NULL COMMENT '任务唯一键 (格式: item_type_item_name，九宫格用 grid:uid:wid:project_id 短键)',
   `project_id` varchar(100) NOT NULL COMMENT 'ComfyUI project_id',
-  `item_type` tinyint NOT NULL COMMENT '项目类型 (0=general, 1=character, 2=location, 3=props, 4=character_grid, 5=location_grid, 6=prop_grid)',
+  `item_type` tinyint NOT NULL COMMENT '项目类型 (0=general, 1=character, 2=location, 3=props, 4=character_grid, 5=location_grid, 6=prop_grid, 8=storyboard_first_frame_grid)',
   `item_name` varchar(255) NOT NULL COMMENT '项目名称（宫格任务为逗号分隔的多个名称，九宫格建议配合 item_names_json 使用）',
   `item_names_json` json DEFAULT NULL COMMENT '结构化名称列表（避免逗号拼接歧义 / 名称超长）',
   `target_entity_ids_json` json DEFAULT NULL COMMENT '切图回写目标 DB id 列表（回写按 id 而非按名）',
-  `parent_reference_image` varchar(1000) DEFAULT NULL COMMENT 'i2i 父场景参考图 URL（用于宫格图生图与重试复原）',
+  `reference_images` text COMMENT 'i2i 参考图列表 JSON [{url, role_description}, ...]（用于宫格图生图与重试复原）',
   `user_id` varchar(50) NOT NULL COMMENT '用户ID',
   `world_id` varchar(50) NOT NULL COMMENT '世界观ID',
   `comfyui_base_url` varchar(500) NOT NULL COMMENT 'ComfyUI服务地址',

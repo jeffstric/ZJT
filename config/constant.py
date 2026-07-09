@@ -605,6 +605,23 @@ DOWNLOAD_BACKOFF_SECONDS = (20, 60, 180)      # 重试指数退避（秒），�
 DOWNLOAD_WRITE_CHUNK_TIMEOUT = 30             # 单次写盘 chunk 的 wait_for 超时（秒）
 DOWNLOAD_IO_POOL_MAX_WORKERS = 8              # 下载写盘线程池大小（模块级长寿 executor，禁止 with，CLAUDE.md 第10条）
 
+STORYBOARD_FIRST_FRAME_GRID_ITEM_TYPE = 8
+
+
+class StoryboardFeatureFlags:
+    """Storyboard feature flags."""
+    _CONSTANT_GROUP = True
+
+    QUALITY_GRID_FIRST_FRAME_ENABLED = True
+
+
+class StoryboardTimeouts:
+    """Storyboard timeout constants in seconds."""
+    _CONSTANT_GROUP = True
+
+    FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS = 60
+
+
 class StoryboardAutoGenerateConstants:
     """Storyboard auto frame generation limits."""
     DEFAULT_BATCH_LIMIT = 5
@@ -620,6 +637,14 @@ class StoryboardAutoGenerateConstants:
         SEQUENCE_MODE_BALANCED,
         SEQUENCE_MODE_QUALITY,
     )
+    # quality 模式下，子场景缺图时阻止首帧生图的重试上限（tick 次数）。
+    # 超过后降级放行（走 t2i），避免九宫格彻底失败时无限等待。
+    # 调度器默认 10s/tick，30 次 ≈ 5 分钟。
+    QUALITY_WAIT_MAX_TICKS = 30
+    QUALITY_GRID_BATCHES_PER_TICK = 2
+    ERROR_GRID_FIRST_FRAME_FAILED = "grid_first_frame_failed"
+    ERROR_BATCH_ITEM_RUNNING_TIMEOUT = "batch_item_running_timeout"
+    BATCH_RUNNING_ITEM_TIMEOUT_SECONDS = 2 * 60 * 60
     BATCH_JOB_STATUS_PENDING = 0
     BATCH_JOB_STATUS_RUNNING = 1
     BATCH_JOB_STATUS_COMPLETED = 2
@@ -681,6 +706,20 @@ class GridConfig:
     DEFAULT_SIZE_BY_TYPE = {1: 4, 7: 9}   # AI工具类型 → 默认宫格大小
     LOCK_TIMEOUT_SECONDS = 120            # 文件锁超时（秒）
     IMAGE_DOWNLOAD_TIMEOUT = 60.0         # 下载原图超时（秒）
+    VALIDATION_MAX_SCAN_SIZE = 1024       # 宫格几何校验时的最长边缩放上限
+    VALIDATION_POSITION_TOLERANCE_RATIO = 0.05  # 分割线允许偏离理论位置的比例
+    VALIDATION_SEPARATOR_HALF_WIDTH = 1    # 搜索分割线时取中心线两侧像素宽度
+    VALIDATION_SEPARATOR_SIDE_WIDTH = 5    # 计算分割线两侧对比时的采样宽度
+    VALIDATION_MIN_LINE_COVERAGE = 0.82    # 分割线贯穿比例阈值
+    VALIDATION_MIN_CELL_UNIFORMITY = 0.90  # 同方向 cell 尺寸最小/最大比例阈值
+    STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES = 2  # 分镜首帧宫格几何校验失败后的重试次数
+
+    # 分镜首帧宫格（i2i）目标分辨率映射：4宫格→2K，9宫格→4K。
+    # 模型不支持目标值时，由 _pick_grid_image_size 自动降级到不超过目标的最大支持档位。
+    GRID_SIZE_IMAGE_SIZE_MAP = {
+        SIZE_2X2: "2K",
+        SIZE_3X3: "4K",
+    }
 
     # 占位符名称：不足 grid_size 个时补位用，切图回写时跳过（不创建/不回写 location）
     PLACEHOLDER_NAMES = frozenset({'placeholder', 'pure black background'})
@@ -689,6 +728,14 @@ class GridConfig:
     def is_placeholder(cls, name: str) -> bool:
         """判断名称是否为宫格占位符（大小写不敏感）。"""
         return bool(name) and str(name).strip().lower() in cls.PLACEHOLDER_NAMES
+
+    # 宫格生图全局防文字指令：附加在 grid_prompt JSON 中，抑制生图模型在格子内/格子间输出文字、字幕、镜头编号
+    STYLE_GUIDANCE_NO_TEXT = (
+        "High-quality image grid. Strictly NO TEXT, NO CAPTIONS, NO SUBTITLES, "
+        "NO SCRIPT NARRATION, NO NUMBERS, NO SHOT LABELS anywhere in the image "
+        "(including below/under each cell). Clean visual composition only, pure "
+        "grid of images with no text areas or blank caption bars."
+    )
 
 
 # 向后兼容别名 - 宫格拆分
@@ -711,6 +758,7 @@ class LocationReferenceStatus:
     WAITING_GRID = 'waiting_location_grid_reference'   # 九宫格任务仍在 QUEUED/PROCESSING，本 tick 等待
     FALLBACK_PARENT = 'fallback_parent_location_reference'  # 九宫格失败，降级用父场景图
     MISSING = 'missing_location_reference'       # 父子场景均无图，走纯文生图兜底
+
 
 class FilePathConstants:
     """文件路径相关常量 - 兼容Windows的跨平台路径配置"""

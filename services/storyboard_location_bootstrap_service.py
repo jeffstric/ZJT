@@ -39,6 +39,8 @@ class StoryboardLocationBootstrapService:
         parsed_data: Dict[str, Any],
         world_id: int,
         user_id: int,
+        *,
+        update_existing_description: bool = True,
     ) -> Dict[str, Any]:
         """
         将 parsed_data.locations 落库并回填真实 DB id。
@@ -106,11 +108,17 @@ class StoryboardLocationBootstrapService:
             if existing is not None:
                 existing_parent = self._safe_int(getattr(existing, 'parent_id', None))
                 if existing_parent == parent_db_id:
-                    # 同名同父：直接复用，不动任何字段（保护已有参考图）
+                    # 同名同父：复用既有行，但可选更新 description（重跑剧本时场景描述可能变化）
                     db_id = self._safe_int(getattr(existing, 'id', None))
                     if db_id:
                         id_map[loc_key] = db_id
                         location["location_db_id"] = db_id
+                        # 如果解析产生了新的 description，更新它（不动 reference_image，保护已有参考图）
+                        new_desc = location.get("description")
+                        if update_existing_description and new_desc:
+                            old_desc = getattr(existing, 'description', None) or ''
+                            if str(new_desc).strip() != str(old_desc).strip():
+                                LocationModel.update(db_id, description=new_desc)
                         reused_count += 1
                         continue
                 # 同名异父：改名后走新建分支
@@ -269,6 +277,8 @@ class StoryboardLocationBootstrapService:
         world_id: int,
         user_id: int,
         auth_token: str = "",
+        *,
+        force_overwrite: bool = False,
     ) -> Dict[str, Any]:
         """
         按父场景分组子场景，提交 3x3 九宫格 i2i 任务（父场景图作为输入）。
@@ -279,6 +289,10 @@ class StoryboardLocationBootstrapService:
             子场景后续首帧生图走 t2i 降级。
           - 不足 9 个补 placeholder 占位（不回写、不建 location）；超过 9 个拆多个 3x3 批次。
           - 每个子场景 prompt 必含父场景上下文 + 连续性约束。
+
+        Args:
+            force_overwrite: 兼容旧调用参数，已废弃且不再生效；已有参考图的子场景
+                             始终会被跳过，避免覆盖用户资产。
 
         非阻塞：每个批次独立提交，单个失败不影响其他批次。
 
@@ -306,8 +320,10 @@ class StoryboardLocationBootstrapService:
         }
 
         # 按父场景分组子场景（只处理 parent_id 指向 loc_xxx 且自身已入库的子场景）
-        # 补偿重跑友好：跳过「已有参考图」或「已有运行中九宫格任务」的子场景，
+        # 补偿重跑友好：始终跳过「已有参考图」或「已有运行中九宫格任务」的子场景，
         # 只提交「缺图且无运行中任务」的，避免重复提交 / 覆盖已生成结果。
+        # force_overwrite 为兼容旧 API 保留，但不再允许覆盖已有参考图。
+        del force_overwrite
         children_by_parent: Dict[str, List[Dict[str, Any]]] = {}
         skipped_already_has_image = 0
         skipped_running_grid = 0
@@ -320,11 +336,11 @@ class StoryboardLocationBootstrapService:
             sub_db_id = self._safe_int(loc.get("location_db_id"))
             if sub_db_id is None:
                 continue  # 入库失败的子场景，跳过
-            # 跳过已有参考图的子场景（重跑时不重复生成）
+            # 跳过已有参考图的子场景（重跑时不重复生成，也不允许旧 overwrite 参数覆盖）
             if self._subscene_has_reference_image(sub_db_id, loc):
                 skipped_already_has_image += 1
                 continue
-            # 跳过有运行中九宫格任务的子场景（避免重复提交）
+            # 跳过有运行中九宫格任务的子场景，避免同一子场景并发回写互相覆盖。
             if self._subscene_has_running_grid(sub_db_id):
                 skipped_running_grid += 1
                 continue
@@ -362,6 +378,15 @@ class StoryboardLocationBootstrapService:
                 continue
 
             # 拆成多个 3x3 批次
+            # 构造参考图列表：父场景图 + 角色说明（拼进 prompt 全局说明区）
+            parent_name = self._clean_name(parent_loc.get("name")) if isinstance(parent_loc, dict) else ""
+            ref_images_for_grid = [{
+                "url": parent_image,
+                "role_description": (
+                    f"父场景'{parent_name}'的完整场景图，展示整体空间结构、色彩、材质、光照，"
+                    f"各子场景需保持与其连续性"
+                ),
+            }]
             for batch_idx, batch in enumerate(self._chunk_into_grid_batches(children, GridConfig.SIZE_3X3)):
                 item_names, target_ids, prompts = self._build_batch_grid_io(
                     batch, parent_loc, GridConfig.SIZE_3X3, id_map
@@ -373,7 +398,7 @@ class StoryboardLocationBootstrapService:
                         auth_token=auth_token,
                         sub_location_names=item_names,
                         prompts=prompts,
-                        parent_reference_image=parent_image,
+                        reference_images=ref_images_for_grid,
                         target_entity_ids=target_ids,
                     )
                     ok = bool(result.get("success"))
@@ -390,13 +415,13 @@ class StoryboardLocationBootstrapService:
                         "result": result,
                     })
                     if not ok:
-                        warnings.append(
-                            f"父场景 {parent_key} 批次 {batch_idx} 提交失败: {result.get('error')}"
-                        )
+                        msg = f"父场景 {parent_key} 批次 {batch_idx} 提交失败: {result.get('error')}"
+                        warnings.append(msg)
+                        logger.error("[subscene-grids] %s", msg)
                 except Exception as exc:
-                    warnings.append(
-                        f"父场景 {parent_key} 批次 {batch_idx} 提交异常: {exc}"
-                    )
+                    msg = f"父场景 {parent_key} 批次 {batch_idx} 提交异常: {exc}"
+                    warnings.append(msg)
+                    logger.error("[subscene-grids] %s", msg, exc_info=True)
                     batch_details.append({
                         "parent_key": parent_key,
                         "parent_db_id": parent_db_id,

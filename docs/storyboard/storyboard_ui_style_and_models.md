@@ -123,10 +123,10 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 **分镜序列缩略图（`.scene-timeline-list` / `.scene-timeline-thumb`）** —— JS + CSS 配合：
 
 - `render.js` 在 `.scene-timeline-list` 上输出 `data-ratio="${state.workflowRatio}"`。
-- `storyboard.css` 把缩略图框从固定 `112×72` 改为 `height:72px; aspect-ratio:<ratio>`，并按 `[data-ratio="9:16"]` 等属性选择器覆盖比例；`.add-scene-btn` 同步跟随，保证加号按钮与缩略图等比例对齐。
-- `object-fit:cover` 保留（缩略图框已是正确比例，cover 不会裁掉重要内容，保持小图视觉饱满）。
+- `storyboard.css` 将缩略图框调整为更小的固定横向黑底胶片框（`180×101.25`），不再随 `[data-ratio]` 变成窄竖框；`.add-scene-btn` 与插入槽同步使用同一高度，保证队列布局稳定。
+- 缩略图图片统一包在 `.scene-timeline-media-frame` 中，frame 负责黑底与完整展示；内部 `<img>` 显式 `width:100%; height:100%; object-fit:contain !important; background:#000`，竖屏图按高度 100% 显示并左右留黑边，和上方 preview 一致；横屏图也不裁切。`storyboard.html` 对 `storyboard.css` 使用 `?v=__VERSION__`，避免浏览器继续使用旧 CSS。
 
-效果：竖屏项目下缩略图框自动变成约 41×72 的窄高竖屏小框，完整展示分镜图；横屏项目维持原 128×72 宽扁框；切换 `workflowRatio` 时无需刷新即生效（rerender 重写 `data-ratio`）。
+效果：底部分镜序列统一为较小的横向黑底胶片框（`180x101.25`），竖屏图高度 100% 显示并左右自然留黑边，和上方 preview 的显示方式一致；横屏图也不裁切。切换 `workflowRatio` 时无需刷新即生效（rerender 重写 `data-ratio`）。
 
 ## 6. 风险与缓解（已纳入设计）
 

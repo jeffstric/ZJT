@@ -191,6 +191,26 @@ class StoryboardImageBatchItemModel:
         return [StoryboardImageBatchItemModel._normalize(row) for row in rows]
 
     @staticmethod
+    def find_running_by_grid_task(grid_task_id: int, scene_id: int) -> Optional[Dict[str, Any]]:
+        sql = """
+            SELECT * FROM storyboard_image_batch_item
+            WHERE scene_id = %s
+              AND status = %s
+              AND JSON_EXTRACT(extra_json, '$.grid_task_id') = %s
+            LIMIT 1
+        """
+        row = execute_query(
+            sql,
+            (
+                int(scene_id),
+                StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
+                int(grid_task_id),
+            ),
+            fetch_one=True,
+        )
+        return StoryboardImageBatchItemModel._normalize(row)
+
+    @staticmethod
     def update(record_id: int, **kwargs: Any) -> int:
         allowed = {
             "status",

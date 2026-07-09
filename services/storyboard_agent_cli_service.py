@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from config.config_util import get_config, get_current_env
@@ -9,6 +10,7 @@ from config.constant import (
     StoryboardAgentCommandConstants,
     StoryboardAgentReadConstants,
     StoryboardAutoGenerateConstants,
+    StoryboardFeatureFlags,
     SceneDifficulty,
 )
 from config.unified_config import SceneVideoType
@@ -23,11 +25,13 @@ from model.storyboard_image_batch import StoryboardImageBatchItemModel, Storyboa
 from model.storyboard_scene import StoryboardSceneModel, compute_sort_between, is_precision_exhausted
 from model.storyboard_scene_asset import StoryboardSceneAssetModel
 from model.world import WorldModel
+from model.grid_image_tasks import GridImageTasksModel, GridImageTaskStatus
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     build_storyboard_reference_items,
     reference_urls,
 )
+from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
 
 
 VALID_IMAGE_MODES = {"auto", "text_to_image", "image_edit"}
@@ -576,6 +580,7 @@ class StoryboardAgentCliService:
         ratio: Optional[str] = None,
         image_size: Optional[str] = None,
         count: int = 1,
+        sequence_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         if mode not in VALID_IMAGE_MODES:
             raise StoryboardCliError("invalid_mode", f"invalid image mode: {mode}")
@@ -591,9 +596,10 @@ class StoryboardAgentCliService:
         reference_urls = [item["url"] for item in reference_items if item.get("url")]
 
         # 外部 location grid readiness check（Phase 6）：
-        # 若当前 scene 引用的子场景 location.reference_image 缺失，且其九宫格任务仍在运行，
-        # 抛 waiting_location_grid_reference；批量调度器据此 continue 保持 PENDING（不改状态）。
-        self._check_location_grid_readiness(context)
+        # 若当前 scene 引用的子场景 location.reference_image 缺失，按 sequence_mode 决定是否阻止：
+        #   - quality（效果模式）：严格阻止，等待九宫格完成（缺图+无运行中任务也阻止，强制保证质量）
+        #   - balanced/speed（均衡/速度模式）：仅在九宫格任务运行中时等待；缺图+无任务则放行走 t2i 兜底
+        self._check_location_grid_readiness(context, sequence_mode=sequence_mode)
 
         if mode == "auto":
             mode = "image_edit" if reference_urls else "text_to_image"
@@ -770,7 +776,7 @@ class StoryboardAgentCliService:
         prev_id: Optional[int] = None,
         next_id: Optional[int] = None,
         title: str = "",
-        duration: int = 5,
+        duration: float = 5,
         prompt_json: Optional[Any] = None,
         video_prompt: Optional[str] = None,
         video_type: str = SceneVideoType.VIDEO,
@@ -799,7 +805,7 @@ class StoryboardAgentCliService:
             storyboard_id=int(storyboard_id),
             sort_order=sort_order,
             title=title or "",
-            duration=int(duration or 5),
+            duration=float(duration or 5),
             prompt_json=prompt_payload,
             video_prompt=video_prompt,
             video_type=video_type or SceneVideoType.VIDEO,
@@ -826,7 +832,7 @@ class StoryboardAgentCliService:
         scene_id: int,
         user_id: int,
         *,
-        duration: Optional[int] = None,
+        duration: Optional[float] = None,
         title: Optional[str] = None,
         prompt_json: Optional[Any] = None,
         video_prompt: Optional[str] = None,
@@ -852,7 +858,7 @@ class StoryboardAgentCliService:
 
         update_fields: Dict[str, Any] = {}
         if duration is not None:
-            update_fields["duration"] = max(1, int(duration))
+            update_fields["duration"] = max(1.0, float(duration))
         if title is not None:
             update_fields["title"] = str(title or "")
         if prompt_json is not None:
@@ -1089,10 +1095,136 @@ class StoryboardAgentCliService:
             "submitted_count": submitted_count,
         }
 
+    def _parse_batch_item_time(self, value: Any) -> Optional[datetime]:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None) if value.tzinfo else value
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo:
+            return parsed.astimezone().replace(tzinfo=None)
+        return parsed
+
+    def _fail_image_batch_item(
+        self,
+        item: Dict[str, Any],
+        *,
+        error_code: str,
+        error_message: str,
+        extra_json: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        update_kwargs: Dict[str, Any] = {
+            "status": StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
+            "error_code": error_code,
+            "error_message": str(error_message or "generation failed")[:512],
+        }
+        if extra_json is not None:
+            current_extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+            update_kwargs["extra_json"] = {**current_extra, **extra_json}
+        StoryboardImageBatchItemModel.update(int(item["id"]), **update_kwargs)
+        item.update(update_kwargs)
+
+    def _complete_image_batch_item(self, item: Dict[str, Any], *, result_url: str) -> None:
+        StoryboardImageBatchItemModel.update(
+            int(item["id"]),
+            status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED,
+            result_url=result_url,
+        )
+        item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED
+        item["result_url"] = result_url
+
+    def _reconcile_running_image_batch_items(self, job_id: int, items: List[Dict[str, Any]]) -> None:
+        timeout_seconds = int(StoryboardAutoGenerateConstants.BATCH_RUNNING_ITEM_TIMEOUT_SECONDS)
+        now = datetime.now()
+        grid_failed_statuses = {
+            GridImageTaskStatus.FAILED,
+            GridImageTaskStatus.TIMEOUT,
+            GridImageTaskStatus.CANCELLED,
+            GridImageTaskStatus.DOWNLOAD_FAILED,
+        }
+        for item in items:
+            if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING:
+                continue
+
+            asset = self._asset_info(item.get("asset_id")) if item.get("asset_id") else None
+            if asset and asset.get("result_url"):
+                self._complete_image_batch_item(item, result_url=asset.get("result_url"))
+                continue
+            if asset and int(asset.get("status") or 0) == -1:
+                self._fail_image_batch_item(
+                    item,
+                    error_code="generation_failed",
+                    error_message=asset.get("message") or "generation failed",
+                )
+                continue
+
+            extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+            grid_task_id = extra.get("grid_task_id")
+            if grid_task_id:
+                try:
+                    grid_task = GridImageTasksModel.get_by_id(int(grid_task_id))
+                except Exception as exc:
+                    logger.warning(
+                        "[batch-reconcile] job=%s item=#%s scene=%s grid_task_id=%s query failed: %s",
+                        job_id, item.get("id"), item.get("scene_id"), grid_task_id, exc,
+                    )
+                    grid_task = None
+                if grid_task:
+                    grid_status = int(_get_field(grid_task, "status", 0) or 0)
+                    if grid_status in grid_failed_statuses:
+                        self._fail_image_batch_item(
+                            item,
+                            error_code=StoryboardAutoGenerateConstants.ERROR_GRID_FIRST_FRAME_FAILED,
+                            error_message=_get_field(grid_task, "error_message", None) or "grid image task failed",
+                            extra_json={
+                                "grid_task_status": grid_status,
+                                "failure_source": "grid_task",
+                            },
+                        )
+                        continue
+                    if grid_status == GridImageTaskStatus.COMPLETED and int(_get_field(grid_task, "update_success", 0) or 0) != 1:
+                        self._fail_image_batch_item(
+                            item,
+                            error_code=StoryboardAutoGenerateConstants.ERROR_GRID_FIRST_FRAME_FAILED,
+                            error_message=_get_field(grid_task, "error_message", None) or "grid split/writeback failed",
+                            extra_json={
+                                "grid_task_status": grid_status,
+                                "failure_source": "grid_task_writeback",
+                            },
+                        )
+                        continue
+
+            last_update = self._parse_batch_item_time(item.get("update_at") or item.get("updated_at") or item.get("create_at"))
+            if last_update and (now - last_update).total_seconds() > timeout_seconds:
+                self._fail_image_batch_item(
+                    item,
+                    error_code=StoryboardAutoGenerateConstants.ERROR_BATCH_ITEM_RUNNING_TIMEOUT,
+                    error_message=f"batch item stayed running for more than {timeout_seconds} seconds",
+                    extra_json={"failure_source": "batch_running_timeout"},
+                )
+
     def _process_one_image_batch_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
         job_id = int(job["id"])
         StoryboardImageBatchJobModel.update(job_id, status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING)
         items = StoryboardImageBatchItemModel.list_by_job(job_id)
+        self._reconcile_running_image_batch_items(job_id, items)
+        if (
+            StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED
+            and (job.get("asset_type") or StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE) == "first_frame"
+            and self._normalize_sequence_mode(job.get("sequence_mode")) == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY
+        ):
+            return StoryboardFirstFrameGridService(
+                counts_updater=self._update_image_batch_job_counts
+            ).process_job(job)
+
         by_id = {int(item["id"]): item for item in items}
         submitted_count = 0
 
@@ -1189,24 +1321,55 @@ class StoryboardAgentCliService:
                     ratio=job.get("ratio"),
                     image_size=job.get("image_size"),
                     count=int(job.get("count") or 1),
+                    sequence_mode=job.get("sequence_mode"),
                 )
             except StoryboardCliError as exc:
                 # 外部 location grid readiness check：保持 PENDING，不改状态，仅写诊断 extra_json，
                 # 等待九宫格回写后下一 tick 自动重试。详见 _check_location_grid_readiness。
                 from config.constant import LocationReferenceStatus
                 if exc.error_code == LocationReferenceStatus.WAITING_GRID:
-                    StoryboardImageBatchItemModel.update(
-                        int(item["id"]),
-                        extra_json={
-                            "waiting": "location_grid_reference",
-                            "location_db_id": exc.payload.get("location_db_id"),
-                        },
-                    )
-                    logger.info(
-                        "[batch-loc] item=#%s scene=%s → 保持 PENDING (等待 location 九宫格完成)",
-                        item["id"], item["scene_id"],
-                    )
-                    continue
+                    is_quality_wait = bool(exc.payload.get("quality_mode"))
+                    # quality 模式下"缺图+无任务"的重试上限保护：累计超过上限则降级放行（走 t2i），
+                    # 避免九宫格彻底失败时无限等待。balanced/speed 模式的等待（有运行中任务）不计次。
+                    if is_quality_wait:
+                        prev_extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+                        wait_count = int(prev_extra.get("quality_wait_count") or 0) + 1
+                        if wait_count > StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS:
+                            logger.warning(
+                                "[batch-loc] item=#%s scene=%s quality 等待达上限(%s>%s) → 降级放行(t2i)",
+                                item["id"], item["scene_id"], wait_count,
+                                StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS,
+                            )
+                            # 不 continue，落入下方正常生图流程（mode 已是 auto，会走 t2i）
+                        else:
+                            StoryboardImageBatchItemModel.update(
+                                int(item["id"]),
+                                extra_json={
+                                    **prev_extra,
+                                    "waiting": "location_grid_reference",
+                                    "location_db_id": exc.payload.get("location_db_id"),
+                                    "quality_wait_count": wait_count,
+                                },
+                            )
+                            logger.info(
+                                "[batch-loc] item=#%s scene=%s → 保持 PENDING (quality 等待九宫格 %s/%s)",
+                                item["id"], item["scene_id"], wait_count,
+                                StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS,
+                            )
+                            continue
+                    else:
+                        StoryboardImageBatchItemModel.update(
+                            int(item["id"]),
+                            extra_json={
+                                "waiting": "location_grid_reference",
+                                "location_db_id": exc.payload.get("location_db_id"),
+                            },
+                        )
+                        logger.info(
+                            "[batch-loc] item=#%s scene=%s → 保持 PENDING (等待 location 九宫格完成)",
+                            item["id"], item["scene_id"],
+                        )
+                        continue
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
                     status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
@@ -1434,7 +1597,10 @@ class StoryboardAgentCliService:
         language: str = "",
         dialogue_language: str = "",
         prompt_language: str = "",
+        force_overwrite_subscene_grids: bool = False,
     ) -> Dict[str, Any]:
+        # 兼容旧 CLI/API 参数名，但不再允许覆盖已有子场景参考图。
+        del force_overwrite_subscene_grids
         storyboard = StoryboardModel.get_by_id(int(storyboard_id))
         if not storyboard:
             raise StoryboardCliError("not_found", f"storyboard not found: {storyboard_id}")
@@ -1506,6 +1672,7 @@ class StoryboardAgentCliService:
                     _get_field(storyboard, "world_id"),
                     int(user_id),
                     auth_token,
+                    force_overwrite=False,
                 )
                 subscene_grid = {
                     "enabled": True,
@@ -1934,21 +2101,27 @@ class StoryboardAgentCliService:
                 return _to_dict(location)
         return location_data if isinstance(location_data, dict) else None
 
-    def _check_location_grid_readiness(self, context: Dict[str, Any]) -> None:
+    def _check_location_grid_readiness(self, context: Dict[str, Any], *, sequence_mode: Optional[str] = None) -> None:
         """
         外部 location grid readiness check（Phase 6）。
 
-        若当前 scene 引用的 location 缺少 reference_image，且其九宫格任务仍在运行，
-        抛 StoryboardCliError(code=LocationReferenceStatus.WAITING_GRID)。
-        批量调度器据此 continue 保持 PENDING（不改 status），等待 grid 完成回写后下一 tick 重试。
+        若当前 scene 引用的 location 缺少 reference_image，按 sequence_mode 决定是否阻止生图：
+          - quality（效果模式，严格）：缺图就阻止（无论是否有运行中九宫格任务），强制等待九宫格完成。
+            保证首帧质量，不降级走 t2i。批量调度器对 quality 阻止有重试上限保护（QUALITY_WAIT_MAX_TICKS）。
+          - balanced/speed（均衡/速度模式，宽松）：仅在九宫格任务运行中时阻止等待；
+            缺图+无运行中任务则放行，走 t2i 兜底（保证生图不卡住）。
 
-        判定逻辑：
-          - location 有 reference_image → READY，直接返回。
-          - location 无 reference_image 且有运行中九宫格任务 → WAITING_GRID。
-          - location 无 reference_image 且无运行中任务 → MISSING/FALLBACK，
-            不抛错，交由后续 mode=auto 走 t2i 兜底或父图降级（保持原静默降级行为）。
+        判定矩阵：
+          | reference_image | 运行中任务 | quality 模式     | balanced/speed 模式 |
+          |-----------------|------------|------------------|---------------------|
+          | 有              | (任意)     | READY 放行       | READY 放行          |
+          | 缺              | 有         | WAITING_GRID 阻止| WAITING_GRID 阻止   |
+          | 缺              | 无         | WAITING_GRID 阻止| 放行(t2i 兜底)      |
+
+        quality 模式下"缺图+无任务"抛 WAITING_GRID 时 payload 带 quality_mode=True，
+        供调度器做重试上限降级（避免九宫格彻底失败时死锁）。
         """
-        from config.constant import LocationReferenceStatus
+        from config.constant import LocationReferenceStatus, StoryboardAutoGenerateConstants
         from model.grid_image_tasks import GridImageTasksModel
 
         location = context.get("location")
@@ -1963,9 +2136,12 @@ class StoryboardAgentCliService:
             loc_db_id_int = int(loc_db_id) if loc_db_id else None
         except (TypeError, ValueError):
             loc_db_id_int = None
-        if not loc_db_id_int:
-            return  # 无 DB id，无法查 grid 任务，放行走兜底
-        if GridImageTasksModel.has_running_grid_for_entity(loc_db_id_int):
+
+        is_quality_mode = (sequence_mode or "").strip().lower() == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY
+        has_running = bool(loc_db_id_int) and GridImageTasksModel.has_running_grid_for_entity(loc_db_id_int)
+
+        if has_running:
+            # 缺图 + 有运行中任务 → 所有模式都阻止等待
             logger.info(
                 "[location-readiness] location db_id=%s reference_image 缺失，"
                 "九宫格任务运行中 → waiting_location_grid_reference", loc_db_id_int,
@@ -1975,6 +2151,21 @@ class StoryboardAgentCliService:
                 f"location db_id={loc_db_id_int} 参考图生成中，等待九宫格完成",
                 payload={"location_db_id": loc_db_id_int},
             )
+
+        # 缺图 + 无运行中任务
+        if is_quality_mode:
+            # 效果模式：严格阻止，强制等待九宫格提交/完成（避免 t2i 降级导致质量下降）
+            # payload 带 quality_mode=True，调度器据此做重试上限降级
+            logger.info(
+                "[location-readiness] location db_id=%s reference_image 缺失且无运行中任务，"
+                "quality 模式 → 严格阻止生图（等待九宫格提交）", loc_db_id_int,
+            )
+            raise StoryboardCliError(
+                LocationReferenceStatus.WAITING_GRID,
+                f"location db_id={loc_db_id_int} 缺少参考图，效果模式要求等待九宫格生成",
+                payload={"location_db_id": loc_db_id_int, "quality_mode": True},
+            )
+        # 均衡/速度模式：放行，走 t2i 兜底（保证生图不卡住），保持原静默降级行为
 
     def _resolve_props(
         self,
@@ -2287,6 +2478,15 @@ class StoryboardAgentCliService:
         for group in parsed_data.get("shot_groups") or []:
             group_name = group.get("group_name") or ""
             group_type = group.get("group_type") or ""
+            # act_name：优先用 group.act_title（LLM 显式输出的幕名），其次从 group_name 剥掉 " - 片段N" 后缀
+            raw_act = group.get("act_title") or group.get("act")
+            if raw_act:
+                act_name = str(raw_act).strip() or None
+            elif group_name:
+                _cleaned = re.sub(r"\s*-\s*片段\d+$", "", str(group_name)).strip()
+                act_name = _cleaned or None
+            else:
+                act_name = None
             for shot in group.get("shots") or []:
                 scene_index = len(scenes) + 1
                 location = location_map.get(str(shot.get("location_id"))) or {}
@@ -2322,34 +2522,41 @@ class StoryboardAgentCliService:
                         "volume": 100,
                     })
 
+                prompt_payload = {
+                    "perspective": self._compact_join([camera_angle, shot_type], " / "),
+                    "style": style or parsed_data.get("style") or "",
+                    "scene_desc": self._compact_join([
+                        shot.get("opening_frame_description"),
+                        shot.get("scene_detail"),
+                    ]),
+                    "character_desc": "、".join(dict.fromkeys(character_names)),
+                    "location": {
+                        "id": location_db_id,
+                        "name": location_name,
+                    },
+                    "props": shot_props,
+                    "source": {
+                        "group_id": group.get("group_id"),
+                        "group_name": group_name,
+                        "group_type": group_type,
+                        "shot_id": shot.get("shot_id"),
+                        "shot_number": shot.get("shot_number"),
+                        "location_id": shot.get("location_id"),
+                        "location_name": location_name,
+                        "location_db_id": location_db_id,
+                        "narrative_purpose": shot.get("narrative_purpose"),
+                        "difficulty_reason": shot.get("difficulty_reason"),
+                    },
+                }
+                if isinstance(shot.get("spatial_layout"), dict):
+                    prompt_payload["spatial_layout"] = shot.get("spatial_layout")
+
                 scenes.append({
                     "title": f"分镜{scene_index}",
-                    "duration": max(1, self._safe_int(shot.get("duration"), 5)),
-                    "prompt": {
-                        "perspective": self._compact_join([camera_angle, shot_type], " / "),
-                        "style": style or parsed_data.get("style") or "",
-                        "scene_desc": self._compact_join([
-                            shot.get("opening_frame_description"),
-                            shot.get("scene_detail"),
-                        ]),
-                        "character_desc": "、".join(dict.fromkeys(character_names)),
-                        "location": {
-                            "id": location_db_id,
-                            "name": location_name,
-                        },
-                        "props": shot_props,
-                        "source": {
-                            "group_id": group.get("group_id"),
-                            "group_name": group_name,
-                            "group_type": group_type,
-                            "shot_id": shot.get("shot_id"),
-                            "shot_number": shot.get("shot_number"),
-                            "location_id": shot.get("location_id"),
-                            "location_name": location_name,
-                            "location_db_id": location_db_id,
-                            "narrative_purpose": shot.get("narrative_purpose"),
-                        },
-                    },
+                    "duration": max(1.0, self._safe_float(shot.get("duration"), 5.0)),
+                    "difficulty": SceneDifficulty.normalize(shot.get("difficulty")),
+                    "act_name": act_name,
+                    "prompt": prompt_payload,
                     "video_prompt": self._compact_join([
                         shot.get("description"),
                         shot.get("scene_detail"),
@@ -2374,6 +2581,12 @@ class StoryboardAgentCliService:
     def _safe_int(self, value: Any, default: int = 0) -> int:
         try:
             return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        try:
+            return float(value)
         except (TypeError, ValueError):
             return default
 

@@ -1246,6 +1246,18 @@
                 return isVideoResultUrl(asset?.result_url || asset?.video_path || '');
             }
 
+            // 返回竖屏视频应使用的 aspect-ratio CSS 值（如 '9:16'）；非竖屏返回空串，沿用默认正方形容器
+            function verticalVideoAspectRatio(ratio) {
+                if (!ratio || typeof ratio !== 'string') return '';
+                const parts = ratio.split(':');
+                if (parts.length !== 2) return '';
+                const w = parseFloat(parts[0]);
+                const h = parseFloat(parts[1]);
+                if (!w || !h) return '';
+                // 竖屏：高 > 宽，用原始比例让卡片自适应高度，视频完整无裁切
+                return h > w ? ratio : '';
+            }
+
             function formatAssetType(asset) {
                 if (isAssetVideo(asset)) return window.t('video');
                 return window.t('image');
@@ -6226,6 +6238,7 @@
                 assetsTotalPages,
                 loadAssets,
                 isAssetVideo,
+                verticalVideoAspectRatio,
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,

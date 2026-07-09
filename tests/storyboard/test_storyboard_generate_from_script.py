@@ -107,6 +107,21 @@ def test_build_scenes_from_parsed_script_creates_scene_and_dialogue_payloads():
                         "scene_detail": "镜头推进到桌面钥匙。",
                         "action": "【【小林】】松开手。",
                         "narrative_purpose": "揭示：通过钥匙特写说明角色已回家",
+                        "spatial_layout": {
+                            "schema_version": 1,
+                            "location_path": [
+                                {"location_id": "loc_001", "name": "客厅", "role": "current_scene"}
+                            ],
+                            "containers": [],
+                            "loose_positions": [
+                                {
+                                    "occupant_type": "character",
+                                    "character_id": "char_001",
+                                    "screen_position": "画面左侧",
+                                    "name": "小林",
+                                }
+                            ],
+                        },
                         "dialogue": [
                             {
                                 "character_id": "char_001",
@@ -133,6 +148,8 @@ def test_build_scenes_from_parsed_script_creates_scene_and_dialogue_payloads():
     assert scene["prompt"]["style"] == "写实电影"
     assert scene["prompt"]["perspective"] == "平视 / 中景"
     assert scene["prompt"]["scene_desc"] == "【【小林】】站在客厅桌边，钥匙在桌面中央。\n镜头推进到桌面钥匙。"
+    assert scene["prompt"]["spatial_layout"]["location_path"][0]["name"] == "客厅"
+    assert scene["prompt"]["spatial_layout"]["loose_positions"][0]["screen_position"] == "画面左侧"
     assert scene["prompt"]["source"]["group_name"] == "场景编号：A1 客厅 夜晚"
     assert scene["prompt"]["source"]["location_db_id"] == 23
     assert "揭示：通过钥匙特写说明角色已回家" in scene["video_prompt"]
@@ -140,6 +157,79 @@ def test_build_scenes_from_parsed_script_creates_scene_and_dialogue_payloads():
         {"character_id": 17, "text": "我回来了。", "speed": 1.0, "volume": 100},
         {"character_id": None, "text": "夜色压低了房间里的声音。", "speed": 1.0, "volume": 100},
     ]
+
+
+def test_generate_from_script_strips_bearer_token_for_parser_and_subscene_grid(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services import storyboard_location_bootstrap_service as location_bootstrap_module
+    import llm.script_parser as script_parser_module
+
+    app = FastAPI()
+    app.include_router(storyboard_api.router)
+    client = TestClient(app)
+
+    storyboard = SimpleNamespace(
+        id=44,
+        user_id=7,
+        world_id=2,
+        episode_number=1,
+        script_id=55,
+        style="pixar",
+        to_dict=lambda: {"id": 44, "world_id": 2},
+    )
+    script = SimpleNamespace(id=55, content="故事正文")
+    scenes_after_create = [{"id": 101, "storyboard_id": 44, "dialogues": []}]
+    list_calls = {"count": 0}
+    captured = {"parse_auth_token": None, "grid_auth_token": None}
+
+    async def fake_parse_script_to_shots(**kwargs):
+        captured["parse_auth_token"] = kwargs.get("auth_token")
+        return {
+            "locations": [{"id": "loc_001", "name": "主场景", "location_db_id": 1}],
+            "shot_groups": [{"group_id": "grp_001", "shots": [{"shot_id": "s001", "duration": 1}]}],
+        }
+
+    class FakeLocationBootstrapService:
+        def bootstrap(self, parsed_data, world_id, user_id):
+            return {"id_map": {"loc_001": 1}, "warnings": [], "created_location_count": 0, "reused_location_count": 1}
+
+        def submit_subscene_grids(self, parsed_data, bootstrap_result, world_id, user_id, auth_token, **kwargs):
+            captured["grid_auth_token"] = auth_token
+            return {"submitted_batches": 0, "submitted_subscene_count": 0, "skipped_no_parent_image": 0, "warnings": []}
+
+    def fake_list_by_storyboard(storyboard_id):
+        list_calls["count"] += 1
+        return [] if list_calls["count"] <= 2 else scenes_after_create
+
+    monkeypatch.setattr(storyboard_api, "ensure_resource_access", lambda *args, **kwargs: None)
+    monkeypatch.setattr(storyboard_api.StoryboardModel, "get_by_id", lambda storyboard_id: storyboard)
+    monkeypatch.setattr(storyboard_api.StoryboardModel, "create_scenes", lambda *args, **kwargs: 1)
+    monkeypatch.setattr(storyboard_api.StoryboardSceneModel, "list_by_storyboard", fake_list_by_storyboard)
+    monkeypatch.setattr(storyboard_api.ScriptModel, "get_by_id", lambda script_id: script)
+    monkeypatch.setattr(storyboard_api, "build_storyboard_scenes_from_parsed_script", lambda *args, **kwargs: [{"title": "分镜1"}])
+    async def fake_attach_dialogues(scenes):
+        return None
+
+    monkeypatch.setattr(storyboard_api, "_attach_dialogues", fake_attach_dialogues)
+    monkeypatch.setattr(storyboard_api, "_enrich_scene_location_props", lambda scenes: None)
+
+    async def fake_auto_voiceovers(scenes, user_id):
+        return {"enabled": False, "submitted_count": 0, "skipped_count": 0}
+
+    monkeypatch.setattr(storyboard_api, "_auto_submit_storyboard_dialogue_voiceovers", fake_auto_voiceovers)
+    monkeypatch.setattr(script_parser_module, "parse_script_to_shots", fake_parse_script_to_shots)
+    monkeypatch.setattr(location_bootstrap_module, "StoryboardLocationBootstrapService", FakeLocationBootstrapService)
+
+    response = client.post(
+        "/api/storyboard/44/generate-from-script",
+        headers={"Authorization": "Bearer short-lived-token", "X-User-Id": "7"},
+        json={"max_group_duration": 15},
+    )
+
+    assert response.status_code == 200
+    assert captured["parse_auth_token"] == "short-lived-token"
+    assert captured["grid_auth_token"] == "short-lived-token"
 
 
 def test_storyboard_frontend_exposes_generate_from_script_flow():
@@ -169,7 +259,9 @@ def test_storyboard_frontend_exposes_generate_from_script_flow():
     assert "resolveSelectedScriptSplitLlmModel" in events_js
     assert "model_id: splitModel.model_id" in events_js
     assert "vendor_id: splitModel.vendor_id" in events_js
-    assert "import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';" in events_js
+    assert "from './auto_missing_images.js';" in events_js
+    assert "autoGenerateMissingFirstFrames" in events_js
+    assert "resetAutoMissingImagesFlag" in events_js
     assert "autoGenerateMissingFirstFrames();" in events_js
     assert events_js.index("loadStoryboardData(response);") < events_js.index("autoGenerateMissingFirstFrames();")
 

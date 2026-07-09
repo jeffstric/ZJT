@@ -146,7 +146,7 @@
     </div>
 
     <!-- 智能体连接信息弹窗 -->
-    <div class="modal-overlay" v-if="showAgentConnectionModal" @click.self="closeAgentConnectionModal">
+    <div class="modal-overlay" v-if="showAgentConnectionModal">
       <div class="modal agent-connection-modal" style="position: relative;">
         <button class="modal-close" @click="closeAgentConnectionModal">×</button>
         <div class="modal-title">智能体连接信息</div>
@@ -188,7 +188,7 @@
     </div>
 
     <!-- 意见反馈弹窗 -->
-    <div class="modal-overlay" v-if="showFeedbackModal" @click.self="showFeedbackModal = false">
+    <div class="modal-overlay" v-if="showFeedbackModal">
       <div class="modal" style="position: relative; max-width: 400px;">
         <button class="modal-close" @click="showFeedbackModal = false">×</button>
         <div class="modal-title">意见反馈</div>
@@ -201,7 +201,7 @@
     </div>
 
     <!-- 视频号二维码弹窗 -->
-    <div class="modal-overlay" v-if="showWechatChannelsModal" @click.self="showWechatChannelsModal = false">
+    <div class="modal-overlay" v-if="showWechatChannelsModal">
       <div class="modal" style="position: relative; max-width: 400px;">
         <button class="modal-close" @click="showWechatChannelsModal = false">×</button>
         <div class="modal-title">视频号</div>
@@ -214,7 +214,7 @@
     </div>
 
     <!-- User Settings Modal -->
-    <div class="modal-overlay" v-if="showUserSettingsModalFlag" @click.self="closeUserSettingsModal">
+    <div class="modal-overlay" v-if="showUserSettingsModalFlag">
       <div class="modal" style="position: relative; max-width: 600px; max-height: 80vh; overflow-y: auto;">
         <button class="modal-close" @click="closeUserSettingsModal">×</button>
         <div class="modal-title">用户设置</div>
@@ -388,7 +388,7 @@
     </div>
 
     <!-- Login/Register Modal -->
-    <div class="modal-overlay" v-if="showLoginModal" @click.self="closeModal">
+    <div class="modal-overlay" v-if="showLoginModal">
       <div class="modal" style="position: relative;">
         <button class="modal-close" @click="closeModal">×</button>
         <div class="modal-title">{{ authMode === 'login' ? $t('user_login') : (authMode === 'register' ? $t('user_register') : $t('reset_password')) }}</div>
@@ -562,7 +562,7 @@
     <div v-if="captchaEnabled && captchaPrefix" id="captcha-verify-btn" style="position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden;"></div>
 
     <!-- Terms of Service Modal -->
-    <div class="modal-overlay" v-if="showTermsModal" @click.self="showTermsModal = false">
+    <div class="modal-overlay" v-if="showTermsModal">
       <div class="modal terms-modal" style="position: relative;">
         <button class="modal-close" @click="showTermsModal = false">×</button>
         <div class="modal-title">{{ $t('ai_service_terms') }}</div>
@@ -574,7 +574,7 @@
     </div>
     
     <!-- Invite Code Modal -->
-    <div class="modal-overlay" v-if="showInviteModal" @click.self="showInviteModal = false">
+    <div class="modal-overlay" v-if="showInviteModal">
       <div class="modal invite-modal">
         <button class="modal-close" @click="showInviteModal = false">×</button>
         <div class="invite-modal-header">
@@ -750,7 +750,7 @@
     </div>
     
     <!-- Computing Power Logs Modal -->
-    <div class="modal-overlay" v-if="showComputingPowerLogsModal" @click.self="showComputingPowerLogsModal = false">
+    <div class="modal-overlay" v-if="showComputingPowerLogsModal">
       <div class="modal" style="position: relative; max-width: 700px; height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
         <button class="modal-close" @click="showComputingPowerLogsModal = false">×</button>
         <div class="modal-title">算力日志</div>
@@ -764,7 +764,7 @@
     </div>
     
     <!-- Recharge Computing Power Modal -->
-    <div class="modal-overlay" v-if="showRechargePowerModal" @click.self="closeRechargeModal">
+    <div class="modal-overlay" v-if="showRechargePowerModal">
       <div class="modal" style="position: relative; max-width: 600px;">
         <button class="modal-close" @click="closeRechargeModal">×</button>
         <div class="modal-title">算力充值</div>
@@ -851,7 +851,7 @@
     </div>
     
     <!-- WeChat Mini-Program Guide Modal -->
-    <div class="modal-overlay" v-if="showWechatGuideModal" @click.self="showWechatGuideModal = false">
+    <div class="modal-overlay" v-if="showWechatGuideModal">
       <div class="modal" style="position: relative; max-width: 500px;">
         <button class="modal-close" @click="showWechatGuideModal = false">×</button>
         <div class="modal-title">微信浏览器下载提示</div>
@@ -869,7 +869,7 @@
     </div>
     
     <!-- Admin Switch User Modal -->
-    <div class="modal-overlay" v-if="showAdminSwitchModal" @click.self="closeAdminSwitchModal">
+    <div class="modal-overlay" v-if="showAdminSwitchModal">
       <div class="modal" style="position: relative; max-width: 500px;">
         <button class="modal-close" @click="closeAdminSwitchModal">×</button>
         <div class="modal-title">管理员 - 切换用户身份</div>
@@ -926,7 +926,7 @@
     </div>
     
     <!-- Mode Selection Modal -->
-    <div class="modal-overlay" v-if="showModeSelectModal" @click.self="creationMode ? showModeSelectModal = false : null">
+    <div class="modal-overlay" v-if="showModeSelectModal">
       <div class="modal" style="position: relative; max-width: 500px;">
         <button class="modal-close" v-if="creationMode" @click="showModeSelectModal = false">×</button>
         <div class="modal-title" style="text-align: center;">{{ $t('select_creation_mode') }}</div>
@@ -1035,7 +1035,7 @@
         }
       },
       template: `
-        <div class="modal-overlay" @click.self="close" style="z-index: 10001;">
+        <div class="modal-overlay" style="z-index: 10001;">
           <div class="modal" style="max-width: 720px; max-height: 82vh; overflow-y: auto;">
             <button class="modal-close" @click="close">×</button>
             <div class="modal-title">{{ $t('task_timeline') }} <span style="font-weight: 400; color: var(--muted); font-size: 14px;">ID: {{ aiToolId }}</span></div>

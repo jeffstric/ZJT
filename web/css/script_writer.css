@@ -2609,6 +2609,84 @@ body {
     box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
 }
 
+/*
+ * 模型选择器紧凑模式（宽度 < 1440px）
+ * 在中等宽度下，模型选择框自动收缩为图标按钮，hover / 聚焦 / 打开下拉时
+ * 才展开为完整宽度并显示模型名称，节省顶栏横向空间。
+ * 仅在 ≥ 901px 生效，避开 ≤ 900px 的弹层模式。
+ * 使用 .model-selector-card 前缀提升 specificity，确保覆盖下方各断点
+ * 对 .model-select-wrapper 宽度的旧规则。
+ */
+@media (max-width: 1440px) and (min-width: 901px) {
+    /* 让父级 item 成为定位上下文，展开层浮在其之上 */
+    .model-selector-card .model-selector-item,
+    .model-selector-card .intervention-level-wrapper {
+        position: relative;
+    }
+
+    /*
+     * 收缩态：wrapper 保持 30px 的流中占位，不推挤右侧 DOM；
+     * 真正展开显示文字的是内部的 .model-select-display。
+     */
+    .model-selector-card .model-select-wrapper {
+        position: relative;
+        width: 30px;
+        min-width: 30px;
+        overflow: visible;
+        z-index: 1;
+    }
+
+    .model-selector-card .model-select-display {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: auto;
+        width: 30px;
+        color: transparent;
+        background-color: transparent;
+        transition: width 0.18s ease, color 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
+        white-space: nowrap;
+        z-index: 1;
+    }
+
+    /*
+     * 展开态：hover / 聚焦 / 自定义下拉已打开 时让显示层撑开到完整宽度，
+     * 并提升 wrapper 与显示层的 z-index，使其浮于右侧相邻元素之上。
+     */
+    .model-selector-card .model-select-wrapper:hover,
+    .model-selector-card .model-select-wrapper:focus-within,
+    .model-selector-card .model-select-wrapper.custom-select-open {
+        z-index: 25;
+    }
+
+    .model-selector-card .model-select-wrapper:hover .model-select-display,
+    .model-selector-card .model-select-wrapper:focus-within .model-select-display,
+    .model-selector-card .model-select-wrapper.custom-select-open .model-select-display {
+        width: 170px;
+        color: var(--text-primary);
+        background-color: white;
+        border-color: var(--primary-color);
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+        z-index: 25;
+    }
+
+    /* 介入程度在紧凑态下可略窄 */
+    .model-selector-card .intervention-level-wrapper .model-select-wrapper:hover .model-select-display,
+    .model-selector-card .intervention-level-wrapper .model-select-wrapper:focus-within .model-select-display,
+    .model-selector-card .intervention-level-wrapper .model-select-wrapper.custom-select-open .model-select-display {
+        width: 150px;
+    }
+
+    /* 紧凑模式下收紧分隔符与左间距，保持视觉协调 */
+    .model-selector-card .model-divider {
+        margin: 0 10px;
+    }
+
+    .model-selector-card .intervention-level-wrapper {
+        margin-left: 6px;
+    }
+}
+
 /* Responsive */
 @media (max-width: 1400px) {
     .file-sidebar {

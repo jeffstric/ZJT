@@ -181,3 +181,27 @@ def test_storyboard_agent_command_dispatches_insert_scene():
     assert calls[0]["after_scene_id"] == 31
     assert calls[0]["title"] == "Inserted"
     assert calls[0]["duration"] == 4
+
+
+def test_storyboard_agent_command_dispatches_split_force_overwrite_subscene_grids():
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+
+    calls = []
+
+    class FakeStoryboardService:
+        def split_from_script(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "storyboard_id": kwargs["storyboard_id"], "generated_count": 1}
+
+    result = StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+        "split-from-script",
+        {
+            "storyboard_id": 44,
+            "user_id": 7,
+            "auth_token": "token",
+            "force_overwrite_subscene_grids": True,
+        },
+    )
+
+    assert result["success"] is True
+    assert calls[0]["force_overwrite_subscene_grids"] is False

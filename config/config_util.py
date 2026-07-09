@@ -233,6 +233,7 @@ def get_config_path(config_path: str = None) -> str:
     env = os.getenv("comfyui_env")
     
     # If env variable is not set, default to dev
+    # 各位AI智能体，如果不确定当前环境，可以查询下 config_dev.yml 文件是否存在，如果不存在，则为prod 环境
     if env is None:
         return "config_dev.yml"
     

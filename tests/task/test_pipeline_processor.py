@@ -7,6 +7,7 @@ PipelineProcessor 纯逻辑单元测试
 使用 @patch 装饰器模拟外部依赖。
 """
 import importlib
+import asyncio
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -85,6 +86,29 @@ class TestPipelineProcessorGetPendingSteps(unittest.TestCase):
 
         MockStepModel.get_pending_steps.assert_called_once_with(1, 'param_prepare')
         self.assertEqual(result, ['step1', 'step2'])
+
+
+class TestPipelineProcessorWaitingSteps(unittest.TestCase):
+    @patch('task.pipeline_processor.PipelineProcessor.dispatch_step')
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_storyboard_grid_split_step_is_owned_by_grid_task_scheduler(self, MockStepModel, mock_dispatch):
+        """storyboard_first_frame_grid_split 不能被全局 before_finish 调度器提前执行。"""
+        from model import PipelineStage, PipelineStepType
+
+        step = MagicMock()
+        step.id = 52
+        step.ai_tool_id = 1075
+        step.stage = PipelineStage.BEFORE_FINISH
+        step.step_type = PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+
+        MockStepModel.get_all_waiting_steps.return_value = [step]
+        MockStepModel.get_processing_steps.return_value = []
+        MockStepModel.get_ready_to_retry_steps.return_value = []
+
+        asyncio.run(PipelineProcessor.process_all_pending_steps())
+
+        mock_dispatch.assert_not_called()
+        MockStepModel.update_status.assert_not_called()
 
 
 class TestPipelineProcessorHasSteps(unittest.TestCase):

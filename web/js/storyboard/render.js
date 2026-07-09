@@ -554,8 +554,10 @@ export function renderTimeline() {
         return `
             <div class="scene-timeline-item">
                 <button class="scene-timeline-thumb ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
-                    ${scene.firstFrameUrl ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">` : '<span>无画面</span>'}
-                    <b>${escapeHtml(scene.durationLabel)}</b>
+                    <span class="scene-timeline-media-frame">
+                        ${scene.firstFrameUrl ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">` : '<span>无画面</span>'}
+                    </span>
+                    <div class="scene-timeline-meta">${icon('play', 14)} <b>${escapeHtml(scene.durationLabel)}</b></div>
                 </button>
                 <div class="scene-timeline-actions">
                     <button data-action="duplicate-scene" data-id="${scene.id}" title="复制">${icon('copy', 14)}</button>
@@ -1047,8 +1049,10 @@ export function renderApp() {
 
 // 生成单个分镜的时间线缩略图按钮 innerHTML（不含外层 button，仅 img/span + 时长）。
 function renderTimelineThumbInner(scene) {
-    return `${scene.firstFrameUrl ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">` : '<span>无画面</span>'}
-                    <b>${escapeHtml(scene.durationLabel)}</b>`;
+    return `<span class="scene-timeline-media-frame">
+                        ${scene.firstFrameUrl ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">` : '<span>无画面</span>'}
+                    </span>
+                    <div class="scene-timeline-meta">${icon('play', 14)} <b>${escapeHtml(scene.durationLabel)}</b></div>`;
 }
 
 // 生成单个分镜的 grid 卡片 outerHTML（article 整张卡）。

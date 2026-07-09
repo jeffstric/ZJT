@@ -1647,12 +1647,18 @@ body {
 .asset-preview video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
   display: block;
 }
 
 .asset-preview img {
+  object-fit: cover;
   cursor: zoom-in;
+}
+
+.asset-preview video {
+  /* 视频用 contain 完整显示：竖屏视频容器已按比例自适应高度，contain 与 cover 效果一致；
+     横屏视频在默认 1:1 容器内会上下留白但画面完整，避免裁切 */
+  object-fit: contain;
 }
 
 .asset-card-body {

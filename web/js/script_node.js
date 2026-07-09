@@ -99,6 +99,20 @@
                 <option value="" data-i18n="script_loading">${window.t ? window.t('script_loading') : '加载中...'}</option>
               </select>
             </div>
+            <div class="field field-always-visible script-thinking-mode-field" style="display: none;">
+              <div class="label" data-i18n="script_thinking_mode_label">${window.t ? window.t('script_thinking_mode_label') : '思考模式'}</div>
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px;">
+                  <input type="checkbox" class="script-enable-thinking" style="cursor: pointer;" />
+                  <span data-i18n="script_enable_thinking">${window.t ? window.t('script_enable_thinking') : '启用模型深度思考'}</span>
+                </label>
+                <select class="script-thinking-effort" style="display: none; padding: 4px 6px; border: 1px solid #ddd; border-radius: 4px; background: white; font-size: 12px;">
+                  <option value="low" data-i18n="thinking_effort_low">${window.t ? window.t('thinking_effort_low') : '低'}</option>
+                  <option value="medium" selected data-i18n="thinking_effort_medium">${window.t ? window.t('thinking_effort_medium') : '中'}</option>
+                  <option value="high" data-i18n="thinking_effort_high">${window.t ? window.t('thinking_effort_high') : '高'}</option>
+                </select>
+              </div>
+            </div>
             <div class="field field-always-visible">
               <div class="label" data-i18n="script_video_model_label">${window.t ? window.t('script_video_model_label') : '视频生成模型'}</div>
               <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
@@ -202,6 +216,9 @@
       const batchStatusEl = el.querySelector('.script-batch-status');
       const uploadBtn = el.querySelector('.script-upload-btn');
       const splitModelSelect = el.querySelector('.script-split-model');
+      const enableThinkingEl = el.querySelector('.script-enable-thinking');
+      const thinkingEffortEl = el.querySelector('.script-thinking-effort');
+      const thinkingModeFieldEl = el.querySelector('.script-thinking-mode-field');
 
       // 上传按钮点击时触发隐藏的文件输入框
       if(uploadBtn && fileEl) {
@@ -512,7 +529,78 @@
       }
 
       // 初始化拆分模型
+      if(node.data.enableThinking === undefined) node.data.enableThinking = false;
+      if(!node.data.thinkingEffort) node.data.thinkingEffort = 'medium';
+      if(node.data.thinkingExplicitlyDisabled === undefined) node.data.thinkingExplicitlyDisabled = false;
+
+      function isThinkingModelOption(option) {
+        if(!option) return false;
+        const vendorName = (option.dataset.vendorName || '').toLowerCase();
+        const modelValue = (option.value || '').toLowerCase();
+        const textValue = (option.textContent || '').toLowerCase();
+        return option.dataset.supportsThinking === 'true'
+          || vendorName === 'deepseek'
+          || modelValue.includes('deepseek')
+          || textValue.includes('deepseek');
+      }
+
+      function isDeepSeekModelOption(option) {
+        if(!option) return false;
+        const vendorName = (option.dataset.vendorName || '').toLowerCase();
+        const modelValue = (option.value || '').toLowerCase();
+        const textValue = (option.textContent || '').toLowerCase();
+        return vendorName === 'deepseek'
+          || modelValue.includes('deepseek')
+          || textValue.includes('deepseek');
+      }
+
+      function updateThinkingModeVisibility() {
+        if(!splitModelSelect || !thinkingModeFieldEl) return;
+        const selected = splitModelSelect.options[splitModelSelect.selectedIndex];
+        const supportsThinking = isThinkingModelOption(selected);
+        thinkingModeFieldEl.style.display = supportsThinking ? 'block' : 'none';
+        if(thinkingEffortEl) {
+          thinkingEffortEl.style.display = (supportsThinking && enableThinkingEl && enableThinkingEl.checked) ? 'inline-block' : 'none';
+        }
+      }
+
+      function syncThinkingModeFromSelectedModel() {
+        if(!splitModelSelect) return;
+        const selected = splitModelSelect.options[splitModelSelect.selectedIndex];
+        const supportsThinking = isThinkingModelOption(selected);
+        const shouldDefaultEnable = supportsThinking
+          && isDeepSeekModelOption(selected)
+          && !node.data.thinkingExplicitlyDisabled;
+
+        if(!supportsThinking) {
+          node.data.enableThinking = false;
+        } else if(shouldDefaultEnable) {
+          node.data.enableThinking = true;
+        }
+
+        if(enableThinkingEl) enableThinkingEl.checked = node.data.enableThinking === true;
+        if(thinkingEffortEl) thinkingEffortEl.value = node.data.thinkingEffort || 'medium';
+        updateThinkingModeVisibility();
+      }
+
+      if(enableThinkingEl) {
+        enableThinkingEl.checked = node.data.enableThinking === true;
+        enableThinkingEl.addEventListener('change', () => {
+          node.data.enableThinking = enableThinkingEl.checked;
+          node.data.thinkingExplicitlyDisabled = !enableThinkingEl.checked;
+          updateThinkingModeVisibility();
+        });
+      }
+
+      if(thinkingEffortEl) {
+        thinkingEffortEl.value = node.data.thinkingEffort || 'medium';
+        thinkingEffortEl.addEventListener('change', () => {
+          node.data.thinkingEffort = thinkingEffortEl.value;
+        });
+      }
+
       populateScriptSplitModelOptions();
+      syncThinkingModeFromSelectedModel();
 
       // 拆分模型切换事件
       if(splitModelSelect) {
@@ -522,6 +610,7 @@
           node.data.splitModelId = selected.dataset.modelId || '';
           node.data.splitModelVendorId = selected.dataset.vendorId || '';
           node.data.splitModelVendorName = selected.dataset.vendorName || '';
+          syncThinkingModeFromSelectedModel();
           console.log(`[剧本节点] 拆分模型切换为: ${splitModelSelect.value}, modelId: ${node.data.splitModelId}, vendor: ${node.data.splitModelVendorName}`);
         });
       }
@@ -832,7 +921,9 @@
               prompt_language: node.data.promptLanguage || '',
               model: node.data.splitModel || 'gemini-3-flash-preview',
               model_id: node.data.splitModelId || '',
-              vendor_id: node.data.splitModelVendorId || ''
+              vendor_id: node.data.splitModelVendorId || '',
+              enable_thinking: node.data.enableThinking === true,
+              thinking_effort: node.data.thinkingEffort || 'medium'
             })
           });
 
@@ -1311,7 +1402,9 @@
               prompt_language: node.data.promptLanguage || '',
               model: node.data.splitModel || 'gemini-3-flash-preview',
               model_id: node.data.splitModelId || '',
-              vendor_id: node.data.splitModelVendorId || ''
+              vendor_id: node.data.splitModelVendorId || '',
+              enable_thinking: node.data.enableThinking === true,
+              thinking_effort: node.data.thinkingEffort || 'medium'
             })
           });
 

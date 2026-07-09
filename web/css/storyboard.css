@@ -11,6 +11,9 @@
     --warning: #d97706;
     --success: #16a34a;
     --shadow: 0 8px 24px rgba(24, 38, 62, 0.08);
+    --timeline-thumb-width: 180px;
+    --timeline-thumb-height: 101.25px;
+    --timeline-card-bg: #000;
 }
 
 * { box-sizing: border-box; }
@@ -753,6 +756,195 @@ button {
 .grid-insert-slot:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
+}
+
+/* Storyboard timeline filmstrip cards.  The frame is always landscape; media uses contain
+   so portrait frames keep their full height instead of being cropped. */
+.scene-timeline-list {
+    gap: 10px;
+    padding: 2px 4px 8px;
+}
+.scene-timeline-item {
+    position: relative;
+    width: var(--timeline-thumb-width);
+    height: var(--timeline-thumb-height);
+}
+.scene-timeline-thumb {
+    width: var(--timeline-thumb-width);
+    height: var(--timeline-thumb-height);
+    aspect-ratio: auto;
+    display: grid;
+    place-items: center;
+    position: relative;
+    overflow: hidden;
+    padding: 0;
+    border: 2px solid rgba(255, 255, 255, 0.14);
+    background: var(--timeline-card-bg);
+    isolation: isolate;
+}
+.scene-timeline-list[data-ratio="4:3"] .scene-timeline-thumb,
+.scene-timeline-list[data-ratio="1:1"] .scene-timeline-thumb,
+.scene-timeline-list[data-ratio="3:4"] .scene-timeline-thumb,
+.scene-timeline-list[data-ratio="9:16"] .scene-timeline-thumb {
+    aspect-ratio: auto;
+}
+.scene-timeline-thumb::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 48%;
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(24, 25, 29, 0), rgba(24, 25, 29, 0.82));
+}
+.scene-timeline-thumb.active {
+    border: 2px solid #f8fafc;
+    box-shadow: 0 0 0 1px rgba(17, 24, 39, 0.9), 0 12px 28px rgba(15, 23, 42, 0.22);
+    transform: none;
+}
+.scene-timeline-media-frame {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    overflow: hidden;
+}
+.scene-timeline-media-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain !important;
+    display: block;
+    background: #000;
+}
+.scene-timeline-thumb > img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain !important;
+    display: block;
+    background: #000;
+}
+.scene-timeline-media-frame > span {
+    color: #9ca3af;
+    font-size: 15px;
+    font-weight: 700;
+}
+.scene-timeline-thumb > span:not(.scene-timeline-media-frame) {
+    position: relative;
+    z-index: 2;
+    color: #9ca3af;
+    font-size: 15px;
+    font-weight: 700;
+}
+.scene-timeline-meta {
+    position: absolute;
+    left: 10px;
+    bottom: 10px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+}
+.scene-timeline-meta b {
+    position: static;
+    right: auto;
+    bottom: auto;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    font: inherit;
+}
+.scene-timeline-actions {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    z-index: 3;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 0;
+    opacity: 1;
+}
+.scene-timeline-actions button {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    background: rgba(24, 25, 29, 0.2);
+    color: #fff;
+    transition: background 0.16s ease, transform 0.16s ease;
+}
+.scene-timeline-actions button:hover,
+.scene-timeline-actions button:focus-visible {
+    background: rgba(255, 255, 255, 0.18);
+    transform: translateY(-1px);
+}
+.add-scene-btn {
+    width: var(--timeline-thumb-width);
+    height: var(--timeline-thumb-height);
+    aspect-ratio: auto;
+    border: 1px dashed rgba(47, 109, 246, 0.45);
+    background: rgba(47, 109, 246, 0.06);
+}
+.scene-timeline-list[data-ratio="4:3"] .add-scene-btn,
+.scene-timeline-list[data-ratio="1:1"] .add-scene-btn,
+.scene-timeline-list[data-ratio="3:4"] .add-scene-btn,
+.scene-timeline-list[data-ratio="9:16"] .add-scene-btn {
+    aspect-ratio: auto;
+}
+.scene-timeline-insert-slot {
+    width: 24px;
+    min-width: 24px;
+    height: var(--timeline-thumb-height);
+    border-radius: 999px;
+    position: relative;
+    color: var(--primary);
+    opacity: 0.72;
+}
+.scene-timeline-insert-slot::before {
+    content: "";
+    position: absolute;
+    top: 14px;
+    bottom: 14px;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    border-radius: 999px;
+    background: rgba(47, 109, 246, 0.28);
+}
+.scene-timeline-insert-slot::after {
+    content: "";
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid rgba(47, 109, 246, 0.34);
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18);
+}
+.scene-timeline-insert-slot .sb-icon {
+    position: relative;
+    z-index: 1;
+}
+.scene-timeline-insert-slot:hover,
+.scene-timeline-insert-slot:focus-visible {
+    border-color: transparent;
+    background: transparent;
+    opacity: 1;
 }
 
 .right-sidebar {

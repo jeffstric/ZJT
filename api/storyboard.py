@@ -7,6 +7,7 @@ Storyboard API - 故事板后端接口
 import asyncio
 import json
 import logging
+import math
 import re
 import uuid
 from typing import Any, Dict, List, Optional
@@ -106,6 +107,22 @@ async def _read_json_object_body(request: Request):
         )
     return data, None
 
+
+def _json_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+    return default
+
 def resolve_storyboard_script_id(
     script_id: Optional[int],
     world_id: int,
@@ -139,6 +156,14 @@ def _compact_join(parts: List[Optional[str]], sep: str = "\n") -> str:
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """将 LLM / 前端传来的值安全转为 float（保留小数，配合 DECIMAL(10,3)）。"""
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return default
 
@@ -215,8 +240,9 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
     for group in parsed_data.get('shot_groups') or []:
         group_name = group.get('group_name') or ''
         group_type = group.get('group_type') or ''
-        # 幕名：从 group_name 提取（去掉时长拆组产生的 ' - 片段N' 后缀）
-        act_name = _extract_act_name(group_name)
+        # 幕名：优先用 group.act_title（LLM 显式输出的幕名），其次从 group_name 剥掉 " - 片段N" 后缀
+        raw_act = group.get('act_title') or group.get('act')
+        act_name = (str(raw_act).strip() or None) if raw_act else _extract_act_name(group_name)
         for shot in group.get('shots') or []:
             scene_index = len(scenes) + 1
             location = location_map.get(str(shot.get('location_id'))) or {}
@@ -267,34 +293,38 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                     'volume': 100,
                 })
 
+            prompt_payload = {
+                'perspective': perspective,
+                'style': style or parsed_data.get('style') or '',
+                'scene_desc': scene_desc,
+                'character_desc': character_desc,
+                'location': {
+                    'id': location_db_id,
+                    'name': location_name,
+                },
+                'props': shot_props,
+                'source': {
+                    'group_id': group.get('group_id'),
+                    'group_name': group_name,
+                    'group_type': group_type,
+                    'shot_id': shot.get('shot_id'),
+                    'shot_number': shot.get('shot_number'),
+                    'location_id': shot.get('location_id'),
+                    'location_name': location_name,
+                    'location_db_id': location_db_id,
+                    'narrative_purpose': shot.get('narrative_purpose'),
+                    'difficulty_reason': shot.get('difficulty_reason'),
+                },
+            }
+            if isinstance(shot.get('spatial_layout'), dict):
+                prompt_payload['spatial_layout'] = shot.get('spatial_layout')
+
             scenes.append({
                 'title': f"分镜{scene_index}",
-                'duration': max(1, _safe_int(shot.get('duration'), 5)),
+                'duration': max(1, _safe_float(shot.get('duration'), 5.0)),
                 'difficulty': SceneDifficulty.normalize(shot.get('difficulty')),
                 'act_name': act_name,
-                'prompt': {
-                    'perspective': perspective,
-                    'style': style or parsed_data.get('style') or '',
-                    'scene_desc': scene_desc,
-                    'character_desc': character_desc,
-                    'location': {
-                        'id': location_db_id,
-                        'name': location_name,
-                    },
-                    'props': shot_props,
-                    'source': {
-                        'group_id': group.get('group_id'),
-                        'group_name': group_name,
-                        'group_type': group_type,
-                        'shot_id': shot.get('shot_id'),
-                        'shot_number': shot.get('shot_number'),
-                        'location_id': shot.get('location_id'),
-                        'location_name': location_name,
-                        'location_db_id': location_db_id,
-                        'narrative_purpose': shot.get('narrative_purpose'),
-                        'difficulty_reason': shot.get('difficulty_reason'),
-                    },
-                },
+                'prompt': prompt_payload,
                 'video_prompt': video_prompt,
                 'video_type': SceneVideoType.VIDEO,
                 'video_config': {
@@ -637,7 +667,12 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
         if tool:
             info['status'] = tool.status
             info['error'] = tool.message
-            if tool.result_url:
+            # 仅在 asset 自身没有 result_url 时，才用 ai_tool.result_url 兜底。
+            # 宫格拆分场景下，多个 asset 共享同一个 ai_tool，而 ai_tool.result_url
+            # 存的是整张宫格图（如 upload/storyboard/temp/xxx.png），asset.result_url
+            # 才是拆分后的单格图（upload/storyboard/first_frame/xxx.png）。
+            # 无条件覆盖会导致前端轮询时把单格图回退成宫格图。
+            if tool.result_url and not info.get('result_url'):
                 info['result_url'] = tool.result_url
     return info
 
@@ -1416,6 +1451,7 @@ async def generate_storyboard_from_script(
         return JSONResponse(status_code=400, content={'error': '剧本内容为空，无法生成分镜'})
 
     data = await request.json()
+    normalized_auth_token = _auth_header_token(auth_token)
 
     real_vendor_id = data.get('vendor_id')
     model_id = data.get('model_id')
@@ -1444,9 +1480,11 @@ async def generate_storyboard_from_script(
             language=data.get('language') or '',
             dialogue_language=data.get('dialogue_language') or data.get('language') or '',
             prompt_language=data.get('prompt_language') or data.get('language') or '',
-            auth_token=auth_token,
+            auth_token=normalized_auth_token,
             vendor_id=int(real_vendor_id) if real_vendor_id else None,
             model_id=int(model_id) if model_id else None,
+            enable_thinking=_json_bool(data.get('enable_thinking'), False),
+            thinking_effort=data.get('thinking_effort', 'medium'),
         )
     except Exception as e:
         logger.error(f"Failed to parse script for storyboard {storyboard_id}: {e}", exc_info=True)
@@ -1497,8 +1535,11 @@ async def generate_storyboard_from_script(
     # 非阻塞：异常不影响分镜主流程，子场景首帧生图会等待/降级。
     # 门禁：只要有 auth_token 就尝试（submit_subscene_grids 内部会精确跳过
     # 已有图 / 有运行中任务的子场景，支持补偿重跑）。
+    # 兼容旧请求读取 force_overwrite_subscene_grids，但该字段已废弃，不再覆盖已有参考图。
+    _legacy_force_overwrite_subscene_grids = bool(data.get('force_overwrite_subscene_grids', False))
+    del _legacy_force_overwrite_subscene_grids
     subscene_grid = {'enabled': False, 'submitted_batches': 0, 'warnings': []}
-    if auth_token:
+    if normalized_auth_token:
         try:
             from services.storyboard_location_bootstrap_service import StoryboardLocationBootstrapService
             subscene_grid_result = await asyncio.to_thread(
@@ -1507,7 +1548,8 @@ async def generate_storyboard_from_script(
                 location_bootstrap,
                 sb.world_id,
                 user_id,
-                auth_token,
+                normalized_auth_token,
+                force_overwrite=False,
             )
             subscene_grid = {
                 'enabled': True,
@@ -1877,12 +1919,15 @@ async def generate_scene_video(
         image_path = ff.result_url
 
     prompt = data.get('prompt') or scene.video_prompt or ''
-    duration = data.get('duration') or scene.duration
+    # scene.duration 现为 DECIMAL(10,3)（可能为 Decimal / float），视频生成 API 只接受整数秒。
+    # 统一向上取整，确保视频不短于音频/分镜时长。
+    raw_duration = data.get('duration') or scene.duration
+    video_duration = math.ceil(float(raw_duration)) if raw_duration else 5
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     ratio = data.get('ratio') or (sb.workflow_ratio if sb else None)
 
     config = UnifiedConfigRegistry.get_by_id(task_type)
-    computing_power = config.get_computing_power(duration=duration) if config else 0
+    computing_power = config.get_computing_power(duration=video_duration) if config else 0
     transaction_id = str(uuid.uuid4())
     ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
     if not ok:
@@ -1893,7 +1938,7 @@ async def generate_scene_video(
         AIToolsModel.create,
         prompt=prompt, user_id=user_id, type=task_type,
         image_path=image_path, audio_path=audio_path,
-        duration=duration, ratio=ratio,
+        duration=video_duration, ratio=ratio,
         transaction_id=transaction_id, status=AI_TOOL_STATUS_PENDING,
         extra_config=extra_config,
     )
