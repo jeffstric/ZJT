@@ -571,6 +571,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     behavior=char.get('behavior'),
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
+                    default_voice=char.get('default_voice'),
                     _temp_filename=temp_filename
                 )
                 
@@ -594,7 +595,8 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         personality=char.get('personality'),
                                         behavior=char.get('behavior'),
                                         other_info=sync_other_info,
-                                        reference_image=char.get('reference_image')
+                                        reference_image=char.get('reference_image'),
+                                        default_voice=char.get('default_voice')
                                     )
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
@@ -616,7 +618,8 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     personality=char.get('personality'),
                     behavior=char.get('behavior'),
                     other_info=sync_other_info,
-                    reference_image=char.get('reference_image')
+                    reference_image=char.get('reference_image'),
+                    default_voice=char.get('default_voice')
                 )
         
         # 2. 同步剧本
