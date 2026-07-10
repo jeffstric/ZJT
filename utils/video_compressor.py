@@ -10,6 +10,7 @@ import logging
 import os
 from typing import Optional, Tuple
 
+from config.constant import MediaConstants
 from config.config_util import get_config_value, resolve_bin_path
 from utils.project_path import get_project_root
 
@@ -91,6 +92,20 @@ def needs_compression(info: dict, max_shortest_edge: int = 480) -> bool:
         return True
     shortest = min(info.get("width", 0), info.get("height", 0))
     return shortest > max_shortest_edge
+
+
+def is_reference_video_pixel_count_valid(
+    info: dict,
+    min_pixel_count: int = MediaConstants.VIDEO_REFERENCE_MIN_PIXEL_COUNT,
+) -> bool:
+    """判断参考视频是否满足下游模型的最低总像素数要求。"""
+    if not info:
+        return False
+    width = int(info.get("width", 0) or 0)
+    height = int(info.get("height", 0) or 0)
+    if width <= 0 or height <= 0:
+        return False
+    return width * height >= min_pixel_count
 
 
 async def compress_video(

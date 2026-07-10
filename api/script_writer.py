@@ -56,7 +56,8 @@ from script_writer_core.skill_loader import SkillLoader
 from utils.file_storage import get_file_storage
 from utils.conversation_history import append_message_if_not_duplicate
 from utils.sse import format_sse_event, parse_last_event_id
-from utils.video_compressor import get_video_info, needs_compression
+from config.constant import MediaConstants
+from utils.video_compressor import get_video_info, is_reference_video_pixel_count_valid
 logger = logging.getLogger(__name__)
 
 # 创建路由器
@@ -4213,13 +4214,17 @@ async def upload_agent_video(
                     'error': f'视频时长 {video_info["duration"]:.1f}s 超过限制 {max_duration}s'
                 }, status_code=400)
 
-            if needs_compression(video_info, max_shortest_edge=480):
+            if not is_reference_video_pixel_count_valid(video_info):
                 os.remove(file_path)
-                shortest = min(video_info.get('width', 0), video_info.get('height', 0))
-                longest = max(video_info.get('width', 0), video_info.get('height', 0))
+                width = video_info.get('width', 0)
+                height = video_info.get('height', 0)
+                pixel_count = width * height
                 return JSONResponse({
                     'success': False,
-                    'error': f'视频分辨率 {longest}x{shortest} 最短边 {shortest}px 超过 480p 限制'
+                    'error': (
+                        f'视频分辨率 {width}x{height} 总像素 {pixel_count} '
+                        f'低于最低要求 {MediaConstants.VIDEO_REFERENCE_MIN_PIXEL_COUNT}'
+                    )
                 }, status_code=400)
 
         # 根据 is_local 配置决定返回本地 URL 还是 CDN URL

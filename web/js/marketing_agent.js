@@ -5029,7 +5029,7 @@
                     if (typeof VIDEO_COMPRESSOR !== 'undefined') {
                         vidItem.compressing = true;
                         const effectiveMaxDuration = maxDurationForThis || maxVideoDurationSeconds.value;
-                        const result = await VIDEO_COMPRESSOR.compressVideoTo480p(file, (p) => {
+                        const result = await VIDEO_COMPRESSOR.compressVideoForReference(file, (p) => {
                             vidItem.compressProgress = p;
                         }, effectiveMaxDuration);
                         vidItem.compressing = false;
