@@ -8,10 +8,22 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+import tempfile
+import uuid
 from typing import Optional, Tuple
+from urllib.parse import urlparse, unquote
 
-from config.constant import MediaConstants
+import requests
+
+from config.constant import (
+    MediaConstants,
+    SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT,
+    SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT,
+    SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT,
+)
 from config.config_util import get_config_value, resolve_bin_path
+from utils.media_mapping_util import extract_local_path_from_url
 from utils.project_path import get_project_root
 
 logger = logging.getLogger(__name__)
@@ -106,6 +118,152 @@ def is_reference_video_pixel_count_valid(
     if width <= 0 or height <= 0:
         return False
     return width * height >= min_pixel_count
+
+
+def _get_url_or_path_extension(value: str) -> str:
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    path = unquote(parsed.path if parsed.scheme else value)
+    return os.path.splitext(path)[1].lower()
+
+
+def _resolve_local_video_path(video_url: str, project_root: str) -> tuple[Optional[str], list[str], Optional[str]]:
+    cleanup_paths: list[str] = []
+    if video_url.startswith(("http://", "https://")):
+        local_rel = extract_local_path_from_url(video_url)
+        if local_rel:
+            candidate = os.path.join(project_root, local_rel)
+            if os.path.exists(candidate):
+                return candidate, cleanup_paths, None
+
+        suffix = _get_url_or_path_extension(video_url) or ".video"
+        temp_path = os.path.join(
+            tempfile.gettempdir(),
+            f"seedance_reference_source_{uuid.uuid4().hex[:8]}{suffix}",
+        )
+        try:
+            with requests.get(
+                video_url,
+                stream=True,
+                timeout=(
+                    SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT,
+                    SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT,
+                ),
+            ) as response:
+                response.raise_for_status()
+                with open(temp_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+            cleanup_paths.append(temp_path)
+            return temp_path, cleanup_paths, None
+        except Exception as e:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            return None, cleanup_paths, f"下载参考视频失败: {e}"
+
+    candidates = []
+    if os.path.isabs(video_url):
+        candidates.append(video_url)
+    else:
+        candidates.append(os.path.join(project_root, video_url))
+    if video_url.startswith("/"):
+        candidates.append(os.path.join(project_root, video_url.lstrip("/\\")))
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate, cleanup_paths, None
+    return None, cleanup_paths, f"参考视频文件不存在: {video_url}"
+
+
+def transcode_reference_video_to_seedance_mp4(
+    input_path: str,
+    output_path: str,
+    timeout: int = SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT,
+) -> tuple[bool, Optional[str]]:
+    """将参考视频转成 Seedance 可稳定解析 duration 的 MP4。"""
+    if not os.path.exists(input_path):
+        return False, f"输入参考视频不存在: {input_path}"
+
+    ffmpeg_path = _get_ffmpeg_path()
+    cmd = [
+        ffmpeg_path,
+        "-y",
+        "-i", input_path,
+        "-map", "0:v:0",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "fast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        "-shortest",
+        output_path,
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"ffmpeg 转码超时（{timeout}秒）"
+    except FileNotFoundError:
+        return False, f"找不到 ffmpeg: {ffmpeg_path}"
+    except Exception as e:
+        return False, str(e)
+
+    if proc.returncode != 0:
+        return False, f"ffmpeg 转码失败: {proc.stderr[-500:]}"
+    if not os.path.exists(output_path):
+        return False, "ffmpeg 转码未生成输出文件"
+    return True, None
+
+
+def prepare_seedance_reference_video_sync(
+    video_url: str,
+    config: Optional[dict] = None,
+    project_root: Optional[str] = None,
+) -> tuple[bool, Optional[str], Optional[str], list[str]]:
+    """
+    准备 Seedance 参考视频。
+
+    浏览器 MediaRecorder 产出的 WebM 可能没有容器 duration 元数据，火山 Seedance
+    输入适配器会解析失败。因此 WebM/MKV 先转为 H.264/AAC MP4，其余格式原样返回。
+    """
+    if not video_url:
+        return False, None, "参考视频为空", []
+
+    source_ext = _get_url_or_path_extension(video_url)
+    if source_ext not in {".webm", ".mkv"}:
+        return True, video_url, None, []
+
+    root = project_root or get_project_root()
+    local_path, cleanup_paths, error = _resolve_local_video_path(video_url, root)
+    if not local_path:
+        return False, None, error, cleanup_paths
+
+    output_path = os.path.join(
+        tempfile.gettempdir(),
+        f"seedance_reference_{uuid.uuid4().hex[:8]}.mp4",
+    )
+    cleanup_paths.append(output_path)
+    success, transcode_error = transcode_reference_video_to_seedance_mp4(local_path, output_path)
+    if not success:
+        return False, None, transcode_error, cleanup_paths
+    return True, output_path, None, cleanup_paths
 
 
 async def compress_video(

@@ -27,4 +27,11 @@ describe('VIDEO_COMPRESSOR reference video dimensions', () => {
     expect(dims).toEqual({ width: 854, height: 480 });
     expect(dims.width * dims.height).toBeGreaterThanOrEqual(409600);
   });
+
+  test('keeps the old compression method name as a compatibility alias', () => {
+    const compressor = loadCompressor();
+
+    expect(typeof compressor.compressVideoForReference).toBe('function');
+    expect(typeof compressor.compressVideoTo480p).toBe('function');
+  });
 });
