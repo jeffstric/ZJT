@@ -18,6 +18,7 @@ from config.constant import LEGACY_RESOLUTION_EXTRA_CONFIG_KEY, VIDEO_RESOLUTION
 from config.unified_config import DriverImplementation, VideoResolution
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.image_upload_utils import compress_and_upload_image_sync, upload_media_to_cdn_sync
+from utils.video_compressor import prepare_seedance_reference_video_sync
 from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStepType, PipelineStage
 
 
@@ -25,6 +26,15 @@ from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, 
 
 # 各分辨率标准值 → 火山 API 下发值（统一由 VideoResolution 维护）
 SEEDANCE_RESOLUTION_DRIVER_VALUES = VideoResolution.SEEDANCE_DRIVER_VALUES
+
+
+def _cleanup_seedance_reference_video_temps(paths):
+    for path in paths or []:
+        try:
+            if path and os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
 
 
 class SeedanceVolcengineV1Driver(BaseVideoDriver):
@@ -351,15 +361,25 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
                 for video_path in video_paths:
                     # 查找 face_mask 遮盖结果，如有则使用遮盖后的视频
                     actual_path = self._resolve_video_path_with_face_mask(ai_tool, video_path)
-                    success, cdn_url, error = upload_media_to_cdn_sync(actual_path, self._config)
-                    if success and cdn_url:
-                        content.append({
-                            "type": "video_url",
-                            "video_url": {"url": cdn_url},
-                            "role": "reference_video"
-                        })
-                    else:
-                        self.logger.warning(f"参考视频上传 CDN 失败，跳过: {error}")
+                    prep_success, prepared_path, prep_error, cleanup_paths = prepare_seedance_reference_video_sync(
+                        actual_path, self._config
+                    )
+                    try:
+                        if not prep_success or not prepared_path:
+                            self.logger.warning(f"参考视频规范化失败，跳过: {prep_error}")
+                            continue
+
+                        success, cdn_url, error = upload_media_to_cdn_sync(prepared_path, self._config)
+                        if success and cdn_url:
+                            content.append({
+                                "type": "video_url",
+                                "video_url": {"url": cdn_url},
+                                "role": "reference_video"
+                            })
+                        else:
+                            self.logger.warning(f"参考视频上传 CDN 失败，跳过: {error}")
+                    finally:
+                        _cleanup_seedance_reference_video_temps(cleanup_paths)
 
             # 参考音频（仅多参考图模式下添加，需上传到 CDN）
             reference_audio_raw = self.get_audio_path(ai_tool) or extra_config.get('reference_audio')

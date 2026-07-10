@@ -42,6 +42,7 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 - **参考视频**：支持传入参考视频（role: reference_video）
 - **参考音频**：支持传入参考音频（role: reference_audio）
 - **图片压缩上传**：本地图片自动压缩后上传至 CDN
+- **参考视频规范化**：提交前会将 WebM/MKV 参考视频转为 H.264/AAC MP4，避免浏览器 `MediaRecorder` 产物缺少 duration 元数据导致火山输入适配器失败
 
 ## Content 数组格式
 
@@ -100,6 +101,16 @@ Seedance API 使用 content 数组传递输入：
 
 1. **参考视频**：优先读取 `ai_tool.video_path`，备选 `extra_config.reference_video`
 2. **参考音频**：优先读取 `ai_tool.audio_path`，备选 `extra_config.reference_audio`
+
+### 参考视频规范化
+
+多参考模式下，驱动会先调用 `prepare_seedance_reference_video_sync()` 处理参考视频：
+
+- `.webm` / `.mkv`：下载或映射到本地后，用 ffmpeg 转为 `.mp4`（H.264 + AAC，`+faststart`），再上传 CDN。
+- `.mp4` / `.mov` 等其他格式：保持原逻辑，直接上传或透传。
+- 转码产生的临时文件会在 CDN 上传后清理。
+
+这个步骤用于规避 Chrome `MediaRecorder` 生成的 WebM 常见问题：文件可播放，但容器 `format.duration` 和 `stream.duration` 为空，Seedance v2 输入适配器会报 `parse media duration: strconv.ParseFloat: parsing "": invalid syntax`。
 
 ## 配置
 
