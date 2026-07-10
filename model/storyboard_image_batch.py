@@ -102,6 +102,35 @@ class StoryboardImageBatchJobModel:
         return [StoryboardImageBatchJobModel._normalize(row) for row in rows]
 
     @staticmethod
+    def list_active_by_storyboard(
+        storyboard_id: int,
+        *,
+        asset_type: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        filters = [
+            "storyboard_id = %s",
+            "status IN (%s, %s)",
+        ]
+        params: List[Any] = [
+            int(storyboard_id),
+            StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
+            StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING,
+        ]
+        if asset_type:
+            filters.append("asset_type = %s")
+            params.append(asset_type)
+        params.append(int(limit))
+        sql = f"""
+            SELECT * FROM storyboard_image_batch_job
+            WHERE {' AND '.join(filters)}
+            ORDER BY id ASC
+            LIMIT %s
+        """
+        rows = execute_query(sql, tuple(params), fetch_all=True) or []
+        return [StoryboardImageBatchJobModel._normalize(row) for row in rows]
+
+    @staticmethod
     def update(record_id: int, **kwargs: Any) -> int:
         allowed = {
             "status",

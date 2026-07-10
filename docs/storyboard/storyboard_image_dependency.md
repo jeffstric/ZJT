@@ -100,3 +100,12 @@ mode 决策前已注入 `_check_location_grid_readiness`。单张入口不传 se
 - batch 调度器持续 tick，waiting item 在 grid 完成后自动解除。
 
 **前端无需改动**——现有 per-scene 轮询天然支持。
+
+## Quality Previous Group Reference Timeout
+
+Effect/quality grid generation also waits across parsed groups: the first grid in a new group uses the previous group's last split first-frame as `previous_group_first_frame`. If that previous frame never becomes available, the waiting item now increments `extra_json.previous_group_reference_wait_count` on each scheduler tick.
+
+- The cap is `StoryboardAutoGenerateConstants.QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS`, default 30 ticks.
+- Before the cap, the item remains `PENDING` with `extra_json.waiting=previous_group_first_frame`.
+- After the cap, waiting items fail with `error_code=previous_group_reference_timeout` and `failure_source=previous_group_reference_timeout`.
+- The batch count updater then settles the job as `failed` or `partial`, so it no longer occupies the active batch queue indefinitely.

@@ -138,6 +138,37 @@ def test_storyboard_auto_generate_missing_images_returns_403_for_enterprise_only
     assert response.json()["error_code"] == "enterprise_only"
 
 
+def test_storyboard_auto_generate_missing_images_returns_409_for_active_batch(monkeypatch):
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    client = _client()
+
+    monkeypatch.setattr("api.storyboard.UserTokensModel.get_user_id_by_token", lambda token: 7)
+
+    def fake_execute(self, command, params):
+        raise StoryboardCliError(
+            "active_batch_exists",
+            "当前故事板已有自动生成任务正在进行，请等待完成后再发起新的生成。",
+            payload={"active_batch_id": 88},
+        )
+
+    monkeypatch.setattr(
+        "api.storyboard.StoryboardAgentCommandService.execute",
+        fake_execute,
+        raising=False,
+    )
+
+    response = client.post(
+        "/api/storyboard/44/auto-generate-missing-images",
+        headers={"Authorization": "Bearer short-lived-token"},
+        json={"sequence_mode": "speed"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "active_batch_exists"
+    assert response.json()["active_batch_id"] == 88
+
+
 def test_storyboard_batch_task_status_uses_authenticated_user(monkeypatch):
     client = _client()
     calls = []

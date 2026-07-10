@@ -286,6 +286,22 @@ def patched_storyboard_cli(monkeypatch):
             return list(batch_jobs.values())[:limit]
 
         @staticmethod
+        def list_active_by_storyboard(storyboard_id, asset_type=None, limit=20):
+            rows = []
+            for job in batch_jobs.values():
+                if int(job.get("storyboard_id") or 0) != int(storyboard_id):
+                    continue
+                if asset_type and job.get("asset_type") != asset_type:
+                    continue
+                if int(job.get("status") or 0) not in (
+                    svc.StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
+                    svc.StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING,
+                ):
+                    continue
+                rows.append(job)
+            return rows[:limit]
+
+        @staticmethod
         def update(record_id, **kwargs):
             batch_jobs[int(record_id)].update(kwargs)
             return 1
@@ -865,6 +881,79 @@ def test_auto_generate_missing_images_defaults_task_type_from_storyboard_config(
     assert result["status"] == "pending"
     assert captured_task_types == [1]
     assert generated == []
+
+
+def test_auto_generate_missing_images_reuses_active_identical_batch(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(
+        module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda storyboard_id: [
+            {
+                "id": 11,
+                "storyboard_id": storyboard_id,
+                "title": "Opening",
+                "sort_order": 1,
+                "selected_first_frame_id": None,
+            }
+        ],
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    first = service.auto_generate_missing_images(
+        storyboard_id=22,
+        user_id=7,
+        auth_token="token",
+        sequence_mode="balanced",
+    )
+    second = service.auto_generate_missing_images(
+        storyboard_id=22,
+        user_id=7,
+        auth_token="token",
+        sequence_mode="balanced",
+    )
+
+    assert second["batch_id"] == first["batch_id"]
+    assert second["idempotent_reuse"] is True
+    assert len(patched_storyboard_cli.batch_jobs) == 1
+    assert len(patched_storyboard_cli.batch_items) == 1
+
+
+def test_auto_generate_missing_images_rejects_conflicting_active_batch(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(
+        module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda storyboard_id: [
+            {
+                "id": 11,
+                "storyboard_id": storyboard_id,
+                "title": "Opening",
+                "sort_order": 1,
+                "selected_first_frame_id": None,
+            }
+        ],
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    service.auto_generate_missing_images(
+        storyboard_id=22,
+        user_id=7,
+        auth_token="token",
+        sequence_mode="balanced",
+    )
+
+    with pytest.raises(module.StoryboardCliError) as exc:
+        service.auto_generate_missing_images(
+            storyboard_id=22,
+            user_id=7,
+            auth_token="token",
+            sequence_mode="speed",
+        )
+
+    assert exc.value.error_code == "active_batch_exists"
+    assert exc.value.payload["active_batch_id"] == 800
+    assert len(patched_storyboard_cli.batch_jobs) == 1
 
 
 def test_plan_image_batch_dependencies_by_sequence_mode(patched_storyboard_cli, monkeypatch):

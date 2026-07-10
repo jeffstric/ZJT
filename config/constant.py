@@ -641,8 +641,13 @@ class StoryboardAutoGenerateConstants:
     # 超过后降级放行（走 t2i），避免九宫格彻底失败时无限等待。
     # 调度器默认 10s/tick，30 次 ≈ 5 分钟。
     QUALITY_WAIT_MAX_TICKS = 30
+    # quality mode waits for the previous group's last first-frame before submitting
+    # the next group grid. Cap that wait too, otherwise one missing previous frame
+    # can keep the whole batch active forever.
+    QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS = 30
     QUALITY_GRID_BATCHES_PER_TICK = 2
     ERROR_GRID_FIRST_FRAME_FAILED = "grid_first_frame_failed"
+    ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT = "previous_group_reference_timeout"
     ERROR_BATCH_ITEM_RUNNING_TIMEOUT = "batch_item_running_timeout"
     BATCH_RUNNING_ITEM_TIMEOUT_SECONDS = 2 * 60 * 60
     BATCH_JOB_STATUS_PENDING = 0

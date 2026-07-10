@@ -1,7 +1,41 @@
 import json
 
 from config.constant import StoryboardAutoGenerateConstants
-from model.storyboard_image_batch import StoryboardImageBatchItemModel
+from model.storyboard_image_batch import StoryboardImageBatchItemModel, StoryboardImageBatchJobModel
+
+
+def test_list_active_by_storyboard_filters_storyboard_and_asset(monkeypatch):
+    captured = {}
+
+    def fake_execute_query(sql, params, fetch_one=False, fetch_all=False):
+        captured["sql"] = sql
+        captured["params"] = params
+        captured["fetch_all"] = fetch_all
+        return [
+            {
+                "id": 10,
+                "storyboard_id": 5,
+                "asset_type": "first_frame",
+                "status": StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
+                "extra_json": json.dumps({"idempotency_key": "key"}),
+            }
+        ]
+
+    monkeypatch.setattr("model.storyboard_image_batch.execute_query", fake_execute_query)
+
+    rows = StoryboardImageBatchJobModel.list_active_by_storyboard(5, asset_type="first_frame", limit=3)
+
+    assert rows[0]["extra_json"]["idempotency_key"] == "key"
+    assert "storyboard_id = %s" in captured["sql"]
+    assert "asset_type = %s" in captured["sql"]
+    assert captured["params"] == (
+        5,
+        StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
+        StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING,
+        "first_frame",
+        3,
+    )
+    assert captured["fetch_all"] is True
 
 
 def test_find_running_by_grid_task_queries_extra_json(monkeypatch):

@@ -1,7 +1,9 @@
 import json
+import hashlib
 import logging
 import math
 import re
+import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -41,6 +43,7 @@ VALID_ASSET_TYPES = {"first_frame", "last_frame", "video"}
 IMAGE_ASSET_TYPES = {"first_frame", "last_frame"}
 
 logger = logging.getLogger(__name__)
+_IMAGE_BATCH_CREATE_LOCK = threading.Lock()
 
 
 def _batch_status_name(code: Any) -> str:
@@ -976,29 +979,59 @@ class StoryboardAgentCliService:
         self._sync_image_model_preference(user_id, storyboard, task_type)
 
         batch_limit = self._normalize_batch_limit(limit)
-        planned_items = self._plan_image_batch_items(
-            storyboard_id=int(storyboard_id),
-            asset_type=asset_type,
-            sequence_mode=sequence_mode,
-            limit=batch_limit,
-        )
-        job_id = StoryboardImageBatchJobModel.create(
+        effective_ratio = ratio or _get_field(storyboard, "workflow_ratio")
+        idempotency_payload = self._image_batch_idempotency_payload(
             storyboard_id=int(storyboard_id),
             user_id=int(user_id),
-            auth_token=auth_token,
             asset_type=asset_type,
             sequence_mode=sequence_mode,
             mode=mode,
-            prompt=prompt,
-            source_image=source_image,
-            ratio=ratio or _get_field(storyboard, "workflow_ratio"),
+            task_type=task_type,
+            ratio=effective_ratio,
             image_size=image_size,
             count=int(count or 1),
-            limit_count=batch_limit,
-            stop_on_error=1 if stop_on_error else 0,
-            status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
-            extra_json={"task_type": task_type},
+            limit=batch_limit,
+            prompt=prompt,
+            source_image=source_image,
+            stop_on_error=bool(stop_on_error),
         )
+        idempotency_key = self._image_batch_idempotency_key(idempotency_payload)
+        with _IMAGE_BATCH_CREATE_LOCK:
+            existing_status = self._active_image_batch_status_for_request(
+                storyboard_id=int(storyboard_id),
+                asset_type=asset_type,
+                idempotency_key=idempotency_key,
+            )
+            if existing_status:
+                return existing_status
+
+            planned_items = self._plan_image_batch_items(
+                storyboard_id=int(storyboard_id),
+                asset_type=asset_type,
+                sequence_mode=sequence_mode,
+                limit=batch_limit,
+            )
+            job_id = StoryboardImageBatchJobModel.create(
+                storyboard_id=int(storyboard_id),
+                user_id=int(user_id),
+                auth_token=auth_token,
+                asset_type=asset_type,
+                sequence_mode=sequence_mode,
+                mode=mode,
+                prompt=prompt,
+                source_image=source_image,
+                ratio=effective_ratio,
+                image_size=image_size,
+                count=int(count or 1),
+                limit_count=batch_limit,
+                stop_on_error=1 if stop_on_error else 0,
+                status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
+                extra_json={
+                    "task_type": task_type,
+                    "idempotency_key": idempotency_key,
+                    "idempotency_payload": idempotency_payload,
+                },
+            )
         scene_to_item_id: Dict[int, int] = {}
         created_items: List[Dict[str, Any]] = []
         for item in planned_items:
@@ -1052,6 +1085,79 @@ class StoryboardAgentCliService:
             "status": status.get("status"),
             "items": status.get("items", created_items),
         }
+
+    def _image_batch_idempotency_payload(
+        self,
+        *,
+        storyboard_id: int,
+        user_id: int,
+        asset_type: str,
+        sequence_mode: str,
+        mode: str,
+        task_type: Optional[int],
+        ratio: Optional[str],
+        image_size: Optional[str],
+        count: int,
+        limit: int,
+        prompt: Optional[str],
+        source_image: Optional[str],
+        stop_on_error: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "storyboard_id": int(storyboard_id),
+            "user_id": int(user_id),
+            "asset_type": asset_type,
+            "sequence_mode": sequence_mode,
+            "mode": mode,
+            "task_type": int(task_type) if task_type is not None else None,
+            "ratio": str(ratio or ""),
+            "image_size": str(image_size or ""),
+            "count": int(count or 1),
+            "limit": int(limit),
+            "prompt": str(prompt or ""),
+            "source_image": str(source_image or ""),
+            "stop_on_error": bool(stop_on_error),
+        }
+
+    def _image_batch_idempotency_key(self, payload: Dict[str, Any]) -> str:
+        serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        return f"storyboard:auto-image:{digest}"
+
+    def _active_image_batch_status_for_request(
+        self,
+        *,
+        storyboard_id: int,
+        asset_type: str,
+        idempotency_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        active_jobs = StoryboardImageBatchJobModel.list_active_by_storyboard(
+            int(storyboard_id),
+            asset_type=asset_type,
+            limit=20,
+        )
+        if not active_jobs:
+            return None
+
+        for job in active_jobs:
+            extra = job.get("extra_json") if isinstance(job.get("extra_json"), dict) else {}
+            if extra.get("idempotency_key") == idempotency_key:
+                status = self.storyboard_image_batch_status(job_id=int(job.get("id")))
+                status["idempotent_reuse"] = True
+                return status
+
+        active = active_jobs[0]
+        raise StoryboardCliError(
+            "active_batch_exists",
+            "当前故事板已有自动生成任务正在进行，请等待完成后再发起新的生成。",
+            payload={
+                "active_batch_id": active.get("id"),
+                "active_storyboard_id": active.get("storyboard_id"),
+                "active_asset_type": active.get("asset_type"),
+                "active_sequence_mode": active.get("sequence_mode"),
+                "active_status": self._batch_job_status_name(active.get("status")),
+            },
+        )
 
     def storyboard_image_batch_status(self, job_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
         job = StoryboardImageBatchJobModel.get_by_id(int(job_id))

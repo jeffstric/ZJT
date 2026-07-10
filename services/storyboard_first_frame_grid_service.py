@@ -126,6 +126,7 @@ class StoryboardFirstFrameGridService:
             for item in items
             if item.get("scene_id") is not None
         }
+        self._fail_orphan_pending_items(job_id, items, scenes_by_id)
         previous_references = self._build_previous_group_references(scenes, items_by_scene_id)
 
         pending_items = [
@@ -162,6 +163,39 @@ class StoryboardFirstFrameGridService:
         else:
             updated_counts = False
         return {"submitted_count": submitted_count, "updated_counts": updated_counts}
+
+    def _fail_orphan_pending_items(
+        self,
+        job_id: int,
+        items: Sequence[Dict[str, Any]],
+        scenes_by_id: Dict[int, Dict[str, Any]],
+    ) -> None:
+        """Settle pending items whose scenes were removed by a later script split."""
+        for item in items:
+            if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING:
+                continue
+            scene_id = int(item.get("scene_id") or 0)
+            if scene_id in scenes_by_id:
+                continue
+            extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+            StoryboardImageBatchItemModel.update(
+                int(item["id"]),
+                status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
+                error_code="scene_deleted",
+                error_message="scene was removed before the storyboard first-frame grid could run",
+                extra_json={
+                    **extra,
+                    "failure_source": "scene_deleted",
+                    "deleted_scene_id": scene_id,
+                },
+            )
+            item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+            logger.warning(
+                "[quality-grid] job=%s item=%s scene=%s no longer exists; mark failed",
+                job_id,
+                item.get("id"),
+                scene_id,
+            )
 
     def _grid_group_key(self, scene: Dict[str, Any], item: Dict[str, Any]) -> str:
         prompt = _as_prompt_json(scene.get("prompt_json"))
@@ -229,30 +263,43 @@ class StoryboardFirstFrameGridService:
             int(job.get("stop_on_error") or 0)
             and previous_status == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
         )
+        max_wait_ticks = int(StoryboardAutoGenerateConstants.QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS)
         for item in group_items:
             extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+            wait_count = int(extra.get("previous_group_reference_wait_count") or 0) + 1
+            wait_extra = {
+                **extra,
+                "waiting": "previous_group_first_frame",
+                "previous_scene_id": previous_reference.get("scene_id"),
+                "previous_item_id": previous_reference.get("item_id"),
+                "previous_group_reference_wait_count": wait_count,
+                "previous_group_reference_wait_max_ticks": max_wait_ticks,
+            }
             if should_fail:
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
                     status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
                     error_code="dependency_failed",
                     error_message="previous group last frame generation failed",
-                    extra_json={
-                        **extra,
-                        "previous_scene_id": previous_reference.get("scene_id"),
-                        "previous_item_id": previous_reference.get("item_id"),
-                    },
+                    extra_json={**wait_extra, "failure_source": "previous_group_failed"},
+                )
+                item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+            elif wait_count > max_wait_ticks:
+                StoryboardImageBatchItemModel.update(
+                    int(item["id"]),
+                    status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
+                    error_code=StoryboardAutoGenerateConstants.ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT,
+                    error_message=(
+                        "previous group last frame was not ready after "
+                        f"{max_wait_ticks} scheduler ticks"
+                    ),
+                    extra_json={**wait_extra, "failure_source": "previous_group_reference_timeout"},
                 )
                 item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
             else:
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
-                    extra_json={
-                        **extra,
-                        "waiting": "previous_group_first_frame",
-                        "previous_scene_id": previous_reference.get("scene_id"),
-                        "previous_item_id": previous_reference.get("item_id"),
-                    },
+                    extra_json=wait_extra,
                 )
         return True
 
@@ -384,7 +431,13 @@ class StoryboardFirstFrameGridService:
             next_extra = {
                 key: value
                 for key, value in extra.items()
-                if key not in {"waiting", "previous_scene_id", "previous_item_id"}
+                if key not in {
+                    "waiting",
+                    "previous_scene_id",
+                    "previous_item_id",
+                    "previous_group_reference_wait_count",
+                    "previous_group_reference_wait_max_ticks",
+                }
             }
             StoryboardImageBatchItemModel.update(
                 int(item["id"]),

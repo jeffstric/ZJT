@@ -1252,6 +1252,51 @@ button {
     cursor: not-allowed;
     opacity: 0.6;
 }
+.sequence-mode-intro {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+}
+.sequence-mode-intro-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #f8fafc;
+    padding: 10px 12px;
+}
+.sequence-mode-intro-card.active {
+    border-color: rgba(37, 99, 235, 0.45);
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(14, 165, 233, 0.08));
+}
+.sequence-mode-intro-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.sequence-mode-intro-head strong {
+    color: var(--foreground);
+    font-size: 13px;
+}
+.sequence-mode-intro-head span {
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1;
+    padding: 5px 7px;
+}
+.sequence-mode-intro-card.active .sequence-mode-intro-head span {
+    border-color: rgba(37, 99, 235, 0.22);
+    color: var(--primary);
+}
+.sequence-mode-intro-card p {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+}
 .dialog-error {
     margin: 10px 0 0;
     color: #dc2626;

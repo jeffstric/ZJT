@@ -1319,7 +1319,10 @@ async def auto_generate_missing_storyboard_images(
             params,
         )
     except StoryboardCliError as exc:
-        status_code = 403 if exc.error_code == "enterprise_only" else 400
+        status_code = {
+            "enterprise_only": 403,
+            "active_batch_exists": 409,
+        }.get(exc.error_code, 400)
         return JSONResponse(status_code=status_code, content=exc.to_dict())
 
     return JSONResponse(result)

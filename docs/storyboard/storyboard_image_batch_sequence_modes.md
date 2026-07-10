@@ -6,7 +6,17 @@
 
 - `speed`: submit all missing images up to `limit` without previous-frame references.
 - `balanced`: default. Submit the first ready scene in each parsed group concurrently. Later scenes in the same group wait for the previous scene result and submit through `image_edit` with that result as `source_image`.
-- `quality`: submit one global chain. Every scene waits for the previous scene, even across group boundaries.
+- `quality`: enterprise-only for first-frame generation. When `StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED` is enabled, ready scenes in the same parsed group are submitted as 2x2 or 3x3 storyboard first-frame grids and then split back to each scene. The old global previous-frame chain is only the fallback path when this feature flag is disabled.
+
+## Frontend Dialog Copy
+
+When `storyboard.html` opens a storyboard without any scenes, the "generate from script" dialog shows three user-facing modes:
+
+- 速度模式 (`speed`): 快速拆分剧本，适合草稿预览和方案试跑；核心是先出结果。
+- 均衡模式 (`balanced`): 兼顾生成速度与分镜质量，适合大多数创作场景；核心是质量和效率折中。
+- 效果模式 (`quality`): 先建立剧本级空间关系，再规划镜头拆分，提升场景连续性、角色站位一致性和镜头调度表现；核心是先搭空间，再做分镜。
+
+The frontend keeps the mode buttons compact and places these descriptions below them as explanation cards. The currently selected mode is visually highlighted. `quality` remains enterprise-only in the existing click handling.
 
 Inserted scenes without parsed group metadata inherit the previous scene's group. If the first scene has no group metadata, it uses a temporary manual group.
 

@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from config.constant import StoryboardAutoGenerateConstants
 from script_writer_core.constant import ItemType
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
@@ -276,7 +278,71 @@ def test_process_job_treats_location_reference_images_as_ready(monkeypatch):
 
     assert result["submitted_count"] == 1
     assert submissions[0]["reference_images"][0]["url"] == "https://cdn.test/location-ref.png"
-    assert item["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+
+
+def test_process_job_fails_pending_items_when_scene_was_deleted(monkeypatch):
+    from services import storyboard_first_frame_grid_service as grid_service_module
+
+    items = [
+        {
+            "id": 31,
+            "job_id": 90,
+            "scene_id": 301,
+            "status": StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
+            "order_index": 1,
+            "extra_json": {"title": "deleted scene"},
+        },
+    ]
+    updates = {}
+    count_updates = []
+
+    class FakeStoryboardModel:
+        @staticmethod
+        def get_by_id(record_id):
+            return SimpleNamespace(id=24, world_id=99, workflow_ratio="16:9")
+
+    class FakeSceneModel:
+        @staticmethod
+        def list_by_storyboard(storyboard_id):
+            return []
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return items
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            updates[int(record_id)] = kwargs
+            for item in items:
+                if int(item["id"]) == int(record_id):
+                    item.update(kwargs)
+            return 1
+
+    monkeypatch.setattr(grid_service_module, "StoryboardModel", FakeStoryboardModel)
+    monkeypatch.setattr(grid_service_module, "StoryboardSceneModel", FakeSceneModel)
+    monkeypatch.setattr(grid_service_module, "StoryboardImageBatchItemModel", FakeItemModel)
+
+    service = StoryboardFirstFrameGridService(
+        counts_updater=lambda job_id: count_updates.append(job_id),
+        enable_llm_refine=False,
+    )
+    result = service.process_job(
+        {
+            "id": 90,
+            "storyboard_id": 24,
+            "user_id": 7,
+            "auth_token": "token",
+            "ratio": None,
+        }
+    )
+
+    assert result == {"submitted_count": 0, "updated_counts": True}
+    assert count_updates == [90]
+    assert updates[31]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    assert updates[31]["error_code"] == "scene_deleted"
+    assert updates[31]["extra_json"]["failure_source"] == "scene_deleted"
+    assert updates[31]["extra_json"]["deleted_scene_id"] == 301
 
 
 def test_process_job_uses_prompt_prop_when_prop_id_is_logical(monkeypatch):
@@ -590,6 +656,93 @@ def test_process_job_waits_for_previous_group_last_scene_frame(monkeypatch):
     assert items[1]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
     assert items[1]["extra_json"]["waiting"] == "previous_group_first_frame"
     assert items[1]["extra_json"]["previous_scene_id"] == 401
+
+
+def test_process_job_fails_previous_group_wait_after_max_ticks(monkeypatch):
+    from services import storyboard_first_frame_grid_service as grid_service_module
+
+    scenes = [
+        {
+            "id": 401,
+            "storyboard_id": 32,
+            "sort_order": 1,
+            "title": "A last",
+            "act_name": "Act A",
+            "prompt_json": {"location": {"id": 61}, "source": {"group_id": "grp_a"}},
+        },
+        {
+            "id": 402,
+            "storyboard_id": 32,
+            "sort_order": 2,
+            "title": "B first",
+            "act_name": "Act B",
+            "prompt_json": {"location": {"id": 62}, "source": {"group_id": "grp_b"}},
+        },
+    ]
+    max_ticks = StoryboardAutoGenerateConstants.QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS
+    items = [
+        {
+            "id": 41,
+            "job_id": 92,
+            "scene_id": 401,
+            "status": StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
+            "order_index": 1,
+            "extra_json": {},
+        },
+        {
+            "id": 42,
+            "job_id": 92,
+            "scene_id": 402,
+            "status": StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
+            "order_index": 2,
+            "extra_json": {"previous_group_reference_wait_count": max_ticks},
+        },
+    ]
+    count_updates = []
+
+    class FakeStoryboardModel:
+        @staticmethod
+        def get_by_id(record_id):
+            return SimpleNamespace(id=32, world_id=99, workflow_ratio="16:9")
+
+    class FakeSceneModel:
+        @staticmethod
+        def list_by_storyboard(storyboard_id):
+            return scenes
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return items
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            for item in items:
+                if int(item["id"]) == int(record_id):
+                    item.update(kwargs)
+            return 1
+
+    monkeypatch.setattr(grid_service_module, "StoryboardModel", FakeStoryboardModel)
+    monkeypatch.setattr(grid_service_module, "StoryboardSceneModel", FakeSceneModel)
+    monkeypatch.setattr(grid_service_module, "StoryboardImageBatchItemModel", FakeItemModel)
+    monkeypatch.setattr(
+        grid_service_module,
+        "submit_grid_image_task",
+        lambda **kwargs: pytest.fail("timeout should fail before grid submission"),
+    )
+
+    result = StoryboardFirstFrameGridService(
+        counts_updater=lambda job_id: count_updates.append(job_id),
+        enable_llm_refine=False,
+    ).process_job({"id": 92, "storyboard_id": 32, "user_id": 7, "auth_token": "token"})
+
+    assert result["submitted_count"] == 0
+    assert result["updated_counts"] is True
+    assert count_updates == [92]
+    assert items[1]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    assert items[1]["error_code"] == StoryboardAutoGenerateConstants.ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT
+    assert items[1]["extra_json"]["previous_group_reference_wait_count"] == max_ticks + 1
+    assert items[1]["extra_json"]["failure_source"] == "previous_group_reference_timeout"
 
 
 def test_llm_refiner_replaces_prompts_by_scene_id_and_grid_index(monkeypatch):

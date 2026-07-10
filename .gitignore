@@ -23,6 +23,8 @@ dist/*
 *.spec
 enterprise/
 .claude/settings.local.json
+.claude/skills/lark*
+.agents/skills/lark*
 *.spec
 scripts/build_enterprise.py
 
