@@ -87,6 +87,10 @@ class TestMediaConstants(unittest.TestCase):
         """视频压缩阈值应为 10 MB"""
         self.assertEqual(MediaConstants.VIDEO_COMPRESS_THRESHOLD_MB, 10)
 
+    def test_reference_video_min_pixel_count(self):
+        """参考视频最低总像素数应匹配 Seedance r2v 要求"""
+        self.assertEqual(MediaConstants.VIDEO_REFERENCE_MIN_PIXEL_COUNT, 409600)
+
 
 if __name__ == '__main__':
     unittest.main()

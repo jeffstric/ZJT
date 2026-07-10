@@ -13,6 +13,7 @@ _saved_project_path = sys.modules.get('utils.project_path')
 sys.modules['config.config_util'] = MagicMock()
 sys.modules['utils.project_path'] = MagicMock()
 
+import utils.video_compressor as video_compressor
 from utils.video_compressor import needs_compression
 
 # 恢复 config.config_util 和 utils.project_path，防止污染后续测试
@@ -96,6 +97,24 @@ class TestNeedsCompression(unittest.TestCase):
         """一个维度为 0，最短边为 0，不需要压缩"""
         info = {"width": 0, "height": 720}
         self.assertFalse(needs_compression(info))
+
+
+class TestReferenceVideoPixelCount(unittest.TestCase):
+    """测试参考视频像素下限校验逻辑"""
+
+    def test_reference_video_pixel_validator_exists(self):
+        """视频工具应提供参考视频像素下限校验函数"""
+        self.assertTrue(hasattr(video_compressor, "is_reference_video_pixel_count_valid"))
+
+    def test_rejects_640x368_below_seedance_minimum(self):
+        """640x368 低于 409600 像素，不满足 Seedance r2v 参考视频要求"""
+        validator = getattr(video_compressor, "is_reference_video_pixel_count_valid", lambda info: False)
+        self.assertFalse(validator({"width": 640, "height": 368}))
+
+    def test_accepts_even_dimensions_over_minimum_when_short_edge_exceeds_480(self):
+        """846x486 虽然短边超过 480，但总像素满足参考视频下游要求，应允许上传"""
+        validator = getattr(video_compressor, "is_reference_video_pixel_count_valid", lambda info: False)
+        self.assertTrue(validator({"width": 846, "height": 486}))
 
 
 if __name__ == '__main__':
