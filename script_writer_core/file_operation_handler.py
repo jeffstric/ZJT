@@ -119,17 +119,26 @@ class FileOperationHandler:
         try:
             # 只保存到文件系统
             file_result = self.file_manager.save_character(
-                name, 
-                content, 
-                self.user_id, 
+                name,
+                content,
+                self.user_id,
                 self.world_id
             )
-            
+
+            if not file_result:
+                return {
+                    'type': 'character',
+                    'name': name,
+                    'success': False,
+                    'error': '保存到文件失败（内容可能不是合法JSON或写入异常）',
+                    'message': f'保存角色卡 "{name}" 失败: 文件写入未成功'
+                }
+
             return {
                 'type': 'character',
                 'name': name,
                 'success': True,
-                'file_saved': file_result,
+                'file_saved': True,
                 'message': f'角色卡 "{name}" 已保存到文件（使用"提交到数据库"按钮可同步到数据库）'
             }
                 
@@ -181,17 +190,26 @@ class FileOperationHandler:
             
             # 保存到文件系统
             file_result = self.file_manager.save_script(
-                name, 
-                script_json, 
-                self.user_id, 
+                name,
+                script_json,
+                self.user_id,
                 self.world_id
             )
-            
+
+            if not file_result:
+                return {
+                    'type': 'script',
+                    'name': name,
+                    'success': False,
+                    'error': '保存到文件失败（写入异常）',
+                    'message': f'保存剧本 "{name}" 失败: 文件写入未成功'
+                }
+
             return {
                 'type': 'script',
                 'name': name,
                 'success': True,
-                'file_saved': file_result,
+                'file_saved': True,
                 'message': f'剧本 "{name}" 已保存到文件（使用"提交到数据库"按钮可同步到数据库）'
             }
                 
@@ -229,17 +247,26 @@ class FileOperationHandler:
         try:
             # 只保存到文件系统
             file_result = self.file_manager.save_location(
-                name, 
-                content, 
-                self.user_id, 
+                name,
+                content,
+                self.user_id,
                 self.world_id
             )
-            
+
+            if not file_result:
+                return {
+                    'type': 'location',
+                    'name': name,
+                    'success': False,
+                    'error': '保存到文件失败（内容可能不是合法JSON或写入异常）',
+                    'message': f'保存场景 "{name}" 失败: 文件写入未成功'
+                }
+
             return {
                 'type': 'location',
                 'name': name,
                 'success': True,
-                'file_saved': file_result,
+                'file_saved': True,
                 'message': f'场景 "{name}" 已保存到文件（使用"提交到数据库"按钮可同步到数据库）'
             }
                 
@@ -277,17 +304,26 @@ class FileOperationHandler:
         try:
             # 保存到文件系统
             file_result = self.file_manager.save_prop(
-                name, 
-                content, 
-                self.user_id, 
+                name,
+                content,
+                self.user_id,
                 self.world_id
             )
-            
+
+            if not file_result:
+                return {
+                    'type': 'prop',
+                    'name': name,
+                    'success': False,
+                    'error': '保存到文件失败（内容可能不是合法JSON或写入异常）',
+                    'message': f'保存道具 "{name}" 失败: 文件写入未成功'
+                }
+
             return {
                 'type': 'prop',
                 'name': name,
                 'success': True,
-                'file_saved': file_result,
+                'file_saved': True,
                 'message': f'道具 "{name}" 已保存到文件'
             }
                 

@@ -1043,7 +1043,6 @@ GRID_DEFAULT_SIZE_BY_TYPE = GridConfig.DEFAULT_SIZE_BY_TYPE
 GRID_LOCK_TIMEOUT_SECONDS = GridConfig.LOCK_TIMEOUT_SECONDS
 GRID_IMAGE_DOWNLOAD_TIMEOUT = GridConfig.IMAGE_DOWNLOAD_TIMEOUT
 
-
 class LocationReferenceStatus:
     """
     分镜首帧生图对 location 参考图的依赖状态。
@@ -1055,6 +1054,23 @@ class LocationReferenceStatus:
     WAITING_GRID = 'waiting_location_grid_reference'   # 九宫格任务仍在 QUEUED/PROCESSING，本 tick 等待
     FALLBACK_PARENT = 'fallback_parent_location_reference'  # 九宫格失败，降级用父场景图
     MISSING = 'missing_location_reference'       # 父子场景均无图，走纯文生图兜底
+
+
+# ==================== 实体文件安全写入相关常量 ====================
+# 受保护的元数据字段：写入实体（角色/场景/道具/剧本）JSON 时，若新内容缺失这些字段，
+# 自动从旧文件补回，避免 world_id/user_id/创建时间/更新时间 等被覆盖丢失
+ENTITY_PROTECTED_META_FIELDS = (
+    'world_id', 'user_id',
+    'created_at', 'create_time',
+    'updated_at', 'update_time',
+)
+
+# 实体类型 -> JSON 文件名前缀映射（文件名规则：{prefix}{name}.json）
+ENTITY_FILE_PREFIX_MAP = {
+    'character': 'character_',
+    'location': 'location_',
+    'prop': 'prop_',
+}
 
 
 class FilePathConstants:

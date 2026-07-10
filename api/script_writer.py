@@ -3342,6 +3342,24 @@ class FileContentRequest(BaseModel):
     world_id: str
     content: str
 
+
+def _validate_entity_content(content: str, label: str = "内容"):
+    """
+    校验实体文件内容：若内容看起来是 JSON（以 { 或 [ 开头）但解析失败，返回错误。
+    非 JSON 内容（纯文本/markdown 等）放行，交由下层 FileManager 原样写入。
+    与 FileManager._safe_write_entity_json 的策略保持一致。
+    """
+    if not content or not content.strip():
+        return False, f'{label}不能为空'
+    stripped = content.strip()
+    if stripped[:1] in ('{', '['):
+        try:
+            json.loads(stripped)
+        except (json.JSONDecodeError, ValueError) as e:
+            return False, f'{label}JSON格式错误: {e}'
+    return True, None
+
+
 # 角色卡管理接口
 
 @router.get('/characters-files')
@@ -3423,12 +3441,10 @@ async def save_character(request: Request, character_name: str, file_request: Fi
     """保存角色卡"""
     try:
         content = file_request.content.strip()
-        
-        if not content:
-            return JSONResponse({
-                'success': False,
-                'error': '角色卡内容不能为空'
-            }, status_code=400)
+
+        ok, err = _validate_entity_content(content, '角色卡内容')
+        if not ok:
+            return JSONResponse({'success': False, 'error': err}, status_code=400)
         
         success = file_manager.save_character(character_name, content, file_request.user_id, file_request.world_id)
         
@@ -3522,12 +3538,10 @@ async def save_script(request: Request, script_name: str, file_request: FileCont
     """保存剧本"""
     try:
         content = file_request.content.strip()
-        
-        if not content:
-            return JSONResponse({
-                'success': False,
-                'error': '剧本内容不能为空'
-            }, status_code=400)
+
+        ok, err = _validate_entity_content(content, '剧本内容')
+        if not ok:
+            return JSONResponse({'success': False, 'error': err}, status_code=400)
         
         success = file_manager.save_script(script_name, content, file_request.user_id, file_request.world_id)
         
@@ -3621,12 +3635,10 @@ async def save_location(request: Request, location_name: str, file_request: File
     """保存场景"""
     try:
         content = file_request.content
-        
-        if not content:
-            return JSONResponse({
-                'success': False,
-                'error': '场景内容不能为空'
-            }, status_code=400)
+
+        ok, err = _validate_entity_content(content, '场景内容')
+        if not ok:
+            return JSONResponse({'success': False, 'error': err}, status_code=400)
         
         success = file_manager.save_location(location_name, content, file_request.user_id, file_request.world_id)
         
@@ -3957,12 +3969,10 @@ async def save_prop(request: Request, prop_name: str, file_request: FileContentR
     """保存道具"""
     try:
         content = file_request.content
-        
-        if not content:
-            return JSONResponse({
-                'success': False,
-                'error': '道具内容不能为空'
-            }, status_code=400)
+
+        ok, err = _validate_entity_content(content, '道具内容')
+        if not ok:
+            return JSONResponse({'success': False, 'error': err}, status_code=400)
         
         success = file_manager.save_prop(prop_name, content, file_request.user_id, file_request.world_id)
         
