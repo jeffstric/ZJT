@@ -169,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--sequence-mode",
         choices=["speed", "balanced", "quality"],
         default="balanced",
-        help="speed=no references, balanced=parallel by group, quality=global serial references.",
+        help="speed=no references, balanced=parallel by parsed group, quality=enterprise grid first-frame generation.",
     )
     auto_generate.add_argument("--continue-on-error", action="store_true")
 

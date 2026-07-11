@@ -2,6 +2,12 @@ import state, { getCurrentScene, getTotalDuration } from './state.js';
 import { formatDuration, mapAssetAvatar } from './adapters.js';
 import { icon } from './icons.js';
 import { t as i18nT } from './utils.js';
+import {
+    getAutoCompleteButtonViewModel,
+    getAutoCompleteSummary,
+    getFirstFrameDisplayStatus,
+    getFirstFrameStatusLabel,
+} from './auto_missing_images_state.js';
 
 // 确保 i18n 在首次 render 前已初始化（bootstrap 中已调用 initI18n）
 
@@ -167,6 +173,13 @@ function hasAsset(scene, kind) {
 }
 
 function assetBadge(scene, kind, label) {
+    if (kind === 'first_frame') {
+        const status = getFirstFrameDisplayStatus(scene);
+        if (status === 'ready') return `<span class="status ready">${label}已生成</span>`;
+        if (status === 'running' || status === 'pending') return `<span class="status running">${label}${getFirstFrameStatusLabel(status)}</span>`;
+        if (status === 'failed') return `<span class="status failed">${label}生成失败</span>`;
+        return `<span class="status idle">${label}待生成</span>`;
+    }
     return hasAsset(scene, kind)
         ? `<span class="status ready">${label}已生成</span>`
         : `<span class="status idle">${label}待生成</span>`;
@@ -198,7 +211,54 @@ export function mediaFrame(scene) {
     if (scene.firstFrameUrl) {
         return `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}" class="preview-media">`;
     }
-    return '<div class="preview-empty">当前分镜还没有画面</div>';
+    const displayStatus = getFirstFrameDisplayStatus(scene);
+    return `<div class="preview-empty preview-empty-${displayStatus}">${escapeHtml(getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面')}</div>`;
+}
+
+function renderFirstFrameStatusMark(scene) {
+    const status = getFirstFrameDisplayStatus(scene);
+    if (status === 'ready') return '';
+    const label = getFirstFrameStatusLabel(status);
+    const spinner = status === 'running' ? icon('loading', 12) : '';
+    return `<span class="first-frame-status-mark ${status}">${spinner}${escapeHtml(label)}</span>`;
+}
+
+function renderTimelineMediaFrame(scene) {
+    const status = getFirstFrameDisplayStatus(scene);
+    const label = getFirstFrameStatusLabel(status);
+    return `<span class="scene-timeline-media-frame first-frame-${status}">
+        ${renderFirstFrameStatusMark(scene)}
+        ${scene.firstFrameUrl
+            ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">`
+            : `<span>${escapeHtml(label || '无画面')}</span>`}
+    </span>`;
+}
+
+function renderAutoCompleteControl() {
+    const vm = getAutoCompleteButtonViewModel();
+    const lockedAttrs = vm.locked ? 'aria-disabled="true" data-batch-locked="true"' : '';
+    const disabledAttr = vm.disabled ? 'disabled' : '';
+    const busyAttr = vm.busy ? 'aria-busy="true"' : '';
+    return `
+        <button
+            class="${vm.className}"
+            data-action="auto-complete-missing-frames"
+            ${lockedAttrs}
+            ${disabledAttr}
+            ${busyAttr}
+        >${icon(vm.icon, 15)} <span>${escapeHtml(vm.label)}</span></button>`;
+}
+
+function renderAutoCompleteHeader(title, actionsHtml = '') {
+    const summary = getAutoCompleteSummary();
+    return `
+        <div class="auto-complete-header" data-auto-complete-header>
+            <span class="auto-complete-title">${escapeHtml(title)} · ${summary.totalScenes} 个分镜 · ${summary.missingCount} 个待生成</span>
+            <div class="auto-complete-actions" aria-live="polite">
+                ${renderAutoCompleteControl()}
+                ${actionsHtml}
+            </div>
+        </div>`;
 }
 
 // 预览媒体（img/video）的稳定 key，用于判断新旧是否同一资源
@@ -540,10 +600,7 @@ export function renderStoryboardGrid() {
 
     return `
         <main class="center-panel">
-            <div class="storyboard-grid-header">
-                <span>故事板总览</span>
-                <button class="btn-ghost" data-action="toggle-view">${icon('list', 16)} 时间轴</button>
-            </div>
+            ${renderAutoCompleteHeader('故事板总览', `<button class="btn-ghost" data-action="toggle-view">${icon('list', 16)} 时间轴</button>`)}
             <div class="storyboard-grid">${cards}<button class="add-board-card" data-action="add-scene">${icon('add', 24)} 添加分镜</button></div>
         </main>`;
 }
@@ -554,9 +611,7 @@ export function renderTimeline() {
         return `
             <div class="scene-timeline-item">
                 <button class="scene-timeline-thumb ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
-                    <span class="scene-timeline-media-frame">
-                        ${scene.firstFrameUrl ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">` : '<span>无画面</span>'}
-                    </span>
+                    ${renderTimelineMediaFrame(scene)}
                     <div class="scene-timeline-meta">${icon('play', 14)} <b>${escapeHtml(scene.durationLabel)}</b></div>
                 </button>
                 <div class="scene-timeline-actions">
@@ -576,7 +631,7 @@ export function renderTimeline() {
                 <button class="timeline-view-toggle" data-action="toggle-view">${icon('grid', 16)}</button>
             </div>
             <div class="scene-timeline">
-                <div class="scene-timeline-header"><span>分镜序列</span></div>
+                ${renderAutoCompleteHeader('分镜序列')}
                 <div class="scene-timeline-list" data-ratio="${escapeHtml(state.workflowRatio || '16:9')}">${scenes}<button class="add-scene-btn" data-action="add-scene">${icon('add', 22)}</button></div>
             </div>
         </section>`;
@@ -1066,9 +1121,7 @@ export function renderApp() {
 
 // 生成单个分镜的时间线缩略图按钮 innerHTML（不含外层 button，仅 img/span + 时长）。
 function renderTimelineThumbInner(scene) {
-    return `<span class="scene-timeline-media-frame">
-                        ${scene.firstFrameUrl ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">` : '<span>无画面</span>'}
-                    </span>
+    return `${renderTimelineMediaFrame(scene)}
                     <div class="scene-timeline-meta">${icon('play', 14)} <b>${escapeHtml(scene.durationLabel)}</b></div>`;
 }
 
@@ -1199,4 +1252,19 @@ export function updateTimelineProgress() {
     if (!span) return false;
     span.textContent = `${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}`;
     return true;
+}
+
+export function updateAutoCompleteHeader() {
+    let updated = false;
+    const gridHeader = document.querySelector('.center-panel > .auto-complete-header');
+    if (gridHeader && state.viewMode === 'grid') {
+        gridHeader.outerHTML = renderAutoCompleteHeader('故事板总览', `<button class="btn-ghost" data-action="toggle-view">${icon('list', 16)} 时间轴</button>`);
+        updated = true;
+    }
+    const timelineHeader = document.querySelector('.scene-timeline > .auto-complete-header');
+    if (timelineHeader) {
+        timelineHeader.outerHTML = renderAutoCompleteHeader('分镜序列');
+        updated = true;
+    }
+    return updated;
 }

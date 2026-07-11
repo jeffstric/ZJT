@@ -5,7 +5,13 @@
 import state from './state.js';
 import * as api from './api.js';
 import { formatDuration } from './adapters.js';
-import { updateSceneThumb, updateCurrentSceneDetail, updateDialogueRow, updateTimelineProgress } from './render.js';
+import {
+    updateAutoCompleteHeader,
+    updateSceneThumb,
+    updateCurrentSceneDetail,
+    updateDialogueRow,
+    updateTimelineProgress,
+} from './render.js';
 
 const POLL_INTERVAL = 4000;
 const pollTimers = {};
@@ -87,6 +93,7 @@ function applySceneUpdate(scene, changedDialogueIds) {
     if (!scene) return;
     // 1. 时间线/grid 中该分镜的缩略图（durationLabel 变化会随此重渲）
     updateSceneThumb(scene);
+    updateAutoCompleteHeader();
     // 2 & 3. 当前选中分镜的主预览 + 右侧候选网格（预览 caption 含 durationLabel）
     updateCurrentSceneDetail(scene);
     // 4. audio 发生变化的单条对话行（按行粒度，避免触碰正在编辑的其他行）
@@ -128,11 +135,12 @@ export function pollSceneTaskStatus(sceneId) {
     poll();
 }
 
-export function pollImageBatchStatus(batchId) {
+export function pollImageBatchStatus(batchId, callbacks = {}) {
     if (!batchId || batchPollTimers[batchId]) return;
     const poll = async () => {
         try {
             const data = await api.getStoryboardImageBatchStatus(batchId);
+            if (callbacks.onUpdate) callbacks.onUpdate(data);
             for (const item of data.items || []) {
                 if (item.scene_id && (item.status === 'running' || item.status === 'completed')) {
                     pollSceneTaskStatus(item.scene_id);
@@ -142,8 +150,10 @@ export function pollImageBatchStatus(batchId) {
                 batchPollTimers[batchId] = setTimeout(poll, POLL_INTERVAL);
             } else {
                 delete batchPollTimers[batchId];
+                if (callbacks.onTerminal) callbacks.onTerminal(data);
             }
         } catch (e) {
+            if (callbacks.onRecoverableError) callbacks.onRecoverableError(e);
             batchPollTimers[batchId] = setTimeout(poll, POLL_INTERVAL * 2);
         }
     };

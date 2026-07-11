@@ -123,9 +123,35 @@ Existing completed scenes participate in dependencies. For example, if A1 alread
 
 ## Frontend Behavior
 
-`web/js/storyboard/auto_missing_images.js` exposes `autoGenerateMissingFirstFrames()`.
+`web/js/storyboard/auto_missing_images.js` exposes two entry points:
+
+- `autoGenerateMissingFirstFrames()`: used on first page load and after script splitting. It first attempts to recover a stored active batch, then falls back to the existing first-open auto-submit behavior.
+- `autoCompleteMissingFirstFrames()`: used by the visible title-bar button. It submits only scenes that still do not have a first frame and are not already pending/running in the current batch.
 
 `web/js/storyboard/bootstrap.js` calls it after the storyboard is loaded and rendered. `web/js/storyboard/events.js` also calls it after `generate-from-script-confirm` succeeds and `loadStoryboardData(response)` has written the newly split scenes into state. Both paths use the browser user's normal API wrapper, so the request carries the current `Authorization` header and is handled as a user/cgi call.
+
+Both timeline and grid views render the same `renderAutoCompleteHeader()` control in their title area:
+
+- Timeline: `分镜序列 · {total} 个分镜 · {missing} 个待生成 [自动补全未生成分镜]`
+- Grid: `故事板总览 · {total} 个分镜 · {missing} 个待生成 [自动补全未生成分镜] [时间轴]`
+
+The button is driven by `state.autoImageBatch`, not by ad-hoc DOM state:
+
+- no active batch and missing first frames: `自动补全未生成分镜`;
+- `submitting=true`: `正在提交补全任务`;
+- active `pending/running` batch: `补全中 {completed}/{target}`;
+- no missing frames: `分镜已全部生成`.
+
+Running buttons use `aria-disabled="true"` and `data-batch-locked="true"` instead of native `disabled`, so a duplicate click can show a clear message without submitting a second request. The target count excludes `already_ready` and `limit_reached` batch items; progress is computed only from real current-round targets (`plan_status in {pending, already_running}`).
+
+Thumbnail status is derived through `getFirstFrameDisplayStatus(scene)`:
+
+- `ready`: existing `scene.firstFrameUrl`;
+- `running` / `pending`: current batch item or scene task status is active;
+- `failed`: current batch item failed and the scene still has no image;
+- `missing`: no image and no active generation.
+
+This selector is shared by timeline thumbnails, grid cards, title counters, and the auto-complete button, so partial/failed batches return the remaining blank scenes to a clickable completion state.
 
 The split-script dialog exposes two choices:
 
@@ -134,7 +160,7 @@ The split-script dialog exposes two choices:
 
 In community edition, clicking `quality` in the empty-storyboard split dialog shows a blocking alert: "效果模式仅商业版支持，请购买商业版后使用". The selection remains on the previous allowed mode and is not persisted.
 
-If the browser session has not already submitted an auto batch for that storyboard, it calls:
+When submitting an automatic or manual completion batch, the frontend calls:
 
 ```js
 api.autoGenerateMissingImages(storyboardId, {
@@ -147,13 +173,30 @@ api.autoGenerateMissingImages(storyboardId, {
 });
 ```
 
-Submitted or already-running scenes are passed to the existing polling function, so the UI uses the same task-status refresh path as manual generation.
+Submitted or already-running scenes are passed to the existing polling function, so the UI uses the same task-status refresh path as manual generation. `pollImageBatchStatus(batchId, callbacks)` also applies batch item updates directly to `state.autoImageBatch`, writes `result_url` / `asset_id` back to the matching scene, and locally refreshes the title header and affected thumbnails.
 
-### 去重标志位与重置
+### 批次恢复、去重标志位与重置
 
-为避免页面刷新/重复加载时对同一个 storyboard 反复提交自动批量任务，`autoGenerateMissingFirstFrames()` 用 `sessionStorage` 的 `storyboard_auto_missing_images_{storyboardId}` 作为一次性去重标志：请求抛异常时会清除该标志以便重试。
+为避免页面刷新/重复加载时对同一个 storyboard 反复提交自动批量任务，`autoGenerateMissingFirstFrames()` 使用 `sessionStorage` 的 `storyboard_auto_missing_images_{storyboardId}` 保存可恢复批次，而不是旧版布尔标志。值为 JSON：
 
-由于该标志以 `storyboardId` 为 key，而「删除所有分镜后重新拆分」时 `storyboardId` 不变、分镜集合却被重建，若不清除旧标志会导致新一轮自动生成被静默跳过（`return`，不报错）。因此 `events.js` 在 `generate-from-script-confirm` 成功后、调用 `autoGenerateMissingFirstFrames()` 之前，会先调用 `resetAutoMissingImagesFlag(storyboardId)` 清除旧标志，保证重新拆分后总能重新触发一次自动生成。
+```json
+{
+  "version": 2,
+  "storyboardId": 16,
+  "batchId": 38,
+  "targetSceneIds": [544, 545, 546],
+  "updatedAt": "2026-07-11T10:00:00.000Z"
+}
+```
+
+恢复时前端只信任 `batchId`，会重新请求 `GET /api/storyboard/image-batches/{batch_id}/status`：
+
+- if the batch is still `pending/running`, the UI restores `state.autoImageBatch`, locks the button, and continues polling;
+- if the batch is terminal, the cache is cleared and remaining blank scenes become manually completable;
+- if the cached value is legacy `'1'`, invalid JSON, or belongs to a different storyboard, it is deleted and the current missing-frame check runs normally;
+- if a submit receives HTTP `409 active_batch_exists`, the frontend reads `active_batch_id` (or `payload.active_batch_id` if a nested payload is returned), takes over that batch, and polls it instead of creating a duplicate job.
+
+由于该缓存以 `storyboardId` 为 key，而「删除所有分镜后重新拆分」时 `storyboardId` 不变、分镜集合却被重建，因此 `events.js` 在 `generate-from-script-confirm` 成功后、调用 `autoGenerateMissingFirstFrames()` 之前，会先调用 `resetAutoMissingImagesFlag(storyboardId)` 清除缓存并重置内存中的 `autoImageBatch`，保证重新拆分后总能重新触发一次自动生成。
 
 ## Auth Boundary
 

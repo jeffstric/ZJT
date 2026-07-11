@@ -701,6 +701,57 @@ button {
 .subtitle-toggle { display: inline-flex; gap: 6px; align-items: center; }
 .scene-timeline { margin-top: 12px; }
 .scene-timeline-header { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.auto-complete-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 700;
+}
+.auto-complete-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.auto-complete-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+.auto-complete-button {
+    min-height: 32px;
+    padding: 0 12px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(47, 109, 246, 0.1);
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.auto-complete-button:hover { background: rgba(47, 109, 246, 0.16); }
+.auto-complete-button.is-running {
+    background: var(--primary);
+    color: #fff;
+    cursor: progress;
+}
+.auto-complete-button.is-complete {
+    background: var(--panel-soft);
+    color: var(--success);
+}
+.auto-complete-button[disabled] {
+    cursor: default;
+    opacity: 0.85;
+}
+.auto-complete-button .sb-spin,
+.first-frame-status-mark .sb-spin { animation: spin 1s linear infinite; }
 .scene-timeline-list { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; align-items: flex-start; }
 /* 缩略图框尺寸跟随故事板 workflowRatio 自适应：统一以 96px 高度为基准，按比例反推宽度。
    横屏(16:9→171px) / 方图(1:1→96px) / 竖屏(9:16→54px)，竖屏图不再被裁成一条 */
@@ -722,6 +773,38 @@ button {
 .scene-timeline-thumb.active { border: 3px solid var(--primary); box-shadow: 0 0 0 3px rgba(47, 109, 246, 0.25); transform: scale(1.04); z-index: 1; }
 .scene-timeline-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .scene-timeline-thumb b { position: absolute; right: 5px; bottom: 5px; color: #fff; background: rgba(0,0,0,0.55); border-radius: 4px; font-size: 11px; padding: 2px 4px; }
+.scene-timeline-media-frame {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #cbd5e1;
+    font-size: 12px;
+}
+.scene-timeline-media-frame.first-frame-pending { background: #eff6ff; color: #2563eb; }
+.scene-timeline-media-frame.first-frame-running { background: #2f6df6; color: #fff; }
+.scene-timeline-media-frame.first-frame-failed { background: #fee2e2; color: var(--danger); }
+.scene-timeline-media-frame.first-frame-missing { background: #f8fafc; color: #64748b; }
+.first-frame-status-mark {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(15, 23, 42, 0.72);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.3;
+}
+.first-frame-status-mark.pending { background: #dbeafe; color: #2563eb; }
+.first-frame-status-mark.running { background: rgba(47, 109, 246, 0.92); color: #fff; }
+.first-frame-status-mark.failed { background: #fee2e2; color: var(--danger); }
+.first-frame-status-mark.missing { background: rgba(241, 245, 249, 0.92); color: #475569; }
 .scene-timeline-actions { justify-content: center; gap: 4px; margin-top: 4px; opacity: 0.8; }
 .scene-timeline-actions button { width: 24px; height: 24px; border-radius: 4px; background: var(--panel-soft); color: var(--muted); }
 /* 加号按钮跟随当前比例，与缩略图等高等比例对齐 */
@@ -1088,12 +1171,24 @@ button {
 .storyboard-grid-cell { position: relative; min-width: 0; }
 .storyboard-card { overflow: hidden; }
 .storyboard-card.active { outline: 3px solid var(--primary); box-shadow: 0 0 0 3px rgba(47, 109, 246, 0.25); }
-.storyboard-thumb { height: 126px; background: #111827; display: grid; place-items: center; overflow: hidden; }
+.storyboard-thumb { height: 126px; background: #111827; display: grid; place-items: center; overflow: hidden; position: relative; }
 .storyboard-thumb .preview-media {
     /* 网格缩略图回归普通流（覆盖主预览区的 position:absolute），保留 cover 裁剪 */
     position: static;
     object-fit: cover;
 }
+.storyboard-thumb .preview-empty {
+    position: static;
+    inset: auto;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+}
+.storyboard-thumb .preview-empty-pending { background: #eff6ff; color: #2563eb; }
+.storyboard-thumb .preview-empty-running { background: #2f6df6; color: #fff; }
+.storyboard-thumb .preview-empty-failed { background: #fee2e2; color: var(--danger); }
+.storyboard-thumb .preview-empty-missing { background: #f8fafc; color: #64748b; }
 .storyboard-card-body { padding: 10px; }
 .storyboard-card h3 { margin: 0 0 4px; font-size: 14px; }
 .storyboard-card p { margin: 0; color: var(--muted); font-size: 12px; }
@@ -1113,6 +1208,24 @@ button {
 .storyboard-card-actions { gap: 6px; }
 .storyboard-card-actions button { flex: 1; padding: 6px; border-radius: 6px; background: var(--panel-soft); color: var(--muted); }
 .add-board-card { min-height: 220px; border: 1px dashed var(--border); border-radius: 8px; background: #fff; color: var(--primary); display: grid; place-items: center; }
+
+@media (max-width: 720px) {
+    .auto-complete-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+    .auto-complete-title {
+        white-space: normal;
+    }
+    .auto-complete-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+    .auto-complete-button {
+        flex: 1 1 220px;
+        justify-content: center;
+    }
+}
 .grid-insert-slot {
     position: absolute;
     z-index: 5;

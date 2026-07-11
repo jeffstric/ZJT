@@ -14,7 +14,12 @@ import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
 import { renderApp, renderPromptWithInlineRoles, getThumbnailUrl } from './render.js';
 import { pollSceneTaskStatus } from './polling.js';
-import { autoGenerateMissingFirstFrames, resetAutoMissingImagesFlag } from './auto_missing_images.js';
+import {
+    autoCompleteMissingFirstFrames,
+    autoGenerateMissingFirstFrames,
+    resetAutoMissingImagesFlag,
+} from './auto_missing_images.js';
+import { getAutoCompleteSummary } from './auto_missing_images_state.js';
 
 let generateProgressTimer = null;
 let isTimelineHovered = false;
@@ -334,6 +339,18 @@ async function sendStoryboardAgentMessage(current) {
 
 async function handleAction(action, target) {
     const current = getCurrentScene();
+
+    if (action === 'auto-complete-missing-frames') {
+        if (target.dataset.batchLocked === 'true' || target.getAttribute('aria-disabled') === 'true') {
+            const summary = getAutoCompleteSummary();
+            const count = summary.batch.totalCount || summary.missingCount || 0;
+            notify(`已有 ${count} 个分镜正在排队或生成，请等待当前任务完成。`);
+            return;
+        }
+        if (target.disabled) return;
+        await autoCompleteMissingFirstFrames();
+        return;
+    }
 
     if (action === 'generate-from-script-cancel') {
         if (state.isGeneratingFromScript) return;

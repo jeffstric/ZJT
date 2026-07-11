@@ -21,7 +21,12 @@ function authHeaders(json = true) {
 async function readJson(resp) {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-        throw new Error(data.error || data.message || `HTTP ${resp.status}`);
+        const error = new Error(data.message || data.error || `HTTP ${resp.status}`);
+        error.status = resp.status;
+        error.code = data.error_code || data.error || data.code || '';
+        error.payload = data.payload || data || {};
+        error.response = data;
+        throw error;
     }
     return data;
 }
