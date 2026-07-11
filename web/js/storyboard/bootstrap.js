@@ -7,6 +7,10 @@ import state, {
     setAssets,
     setModels,
     setLlmVendors,
+    ensureVideoImageModeSupported,
+    ensureVideoGenerationPrefsSupported,
+    syncVideoMediaFromScene,
+    getCurrentScene,
 } from './state.js';
 import * as api from './api.js';
 import { bindEvents, loadSceneAgentMessages } from './events.js';
@@ -161,6 +165,12 @@ async function main() {
     }
 
     maybePromptGenerateFromScript();
+    // 视频生成模式：模型能力就绪后注入当前分镜首帧到首帧槽
+    if (state.chatMode === 'video') {
+        ensureVideoImageModeSupported();
+        ensureVideoGenerationPrefsSupported();
+        syncVideoMediaFromScene(getCurrentScene(), { resetUploads: true });
+    }
     renderApp();
     loadSceneAgentMessages(state.currentSceneId).catch(() => {});
     resumePollingTasks();

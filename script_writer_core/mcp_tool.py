@@ -544,12 +544,14 @@ def check_image_status(user_id: str, world_id: str, auth_token: str, project_id:
 
 def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                image_url: str, aspect_ratio: str = "16:9", count: int = 1,
-               image_size: Optional[str] = None) -> Dict[str, Any]:
+               image_size: Optional[str] = None,
+               item_type: Optional[int] = None, item_name: Optional[str] = None,
+               force_update_exist_image: bool = False) -> Dict[str, Any]:
     """
     图片编辑（图生图）- MCP工具函数（非阻塞版本，支持后台任务处理）
 
     根据用户提供的图片 URL 和编辑指令，调用图片编辑 API 生成新图片。
-    后台 scheduler 会自动跟踪进度，可通过 check_image_status 查询结果。
+    后台 scheduler 会自动跟踪进度，可通过 check_image_status / get_task_status 查询结果。
 
     注意：图片编辑模型由用户在前端界面选择，不同模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。
 
@@ -562,6 +564,9 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
         aspect_ratio: 图片宽高比（默认：16:9）
         count: 生成图片数量（默认：1）
         image_size: 图片分辨率（可选），如 1K/2K/3K/4K
+        item_type: 物品类型（可选）：1=角色, 2=地点, 3=道具, 7=角色变体图。传入后会绑定后台任务并自动写回对应字段
+        item_name: 物品名称（可选），当指定 item_type 时必填；变体图格式为 "角色名|变体标签"
+        force_update_exist_image: 是否强制覆盖已有图像/同标签变体（默认：False）
 
     Returns:
         dict: 操作结果，包含 success 状态、project_ids、task_id 等
@@ -610,6 +615,68 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             if parsed.scheme not in ('http', 'https'):
                 return {'success': False, 'error': f'图片URL仅支持 http/https 协议: {u[:100]}'}
         logger.info(f"[edit_image] 解析到 {len(parsed_urls)} 张图片: {parsed_urls}")
+
+        # 绑定 item 时做冲突与已有图像检查（与 generate_text_to_image 对齐）
+        if item_type is not None:
+            if not isinstance(item_type, int) or item_type not in [1, 2, 3, 7]:
+                return {
+                    'success': False,
+                    'error': 'item_type参数错误。图片编辑支持：1=角色, 2=地点, 3=道具, 7=角色变体图'
+                }
+            if not item_name or not isinstance(item_name, str):
+                return {
+                    'success': False,
+                    'error': '当指定item_type时，必须同时提供item_name参数'
+                }
+
+            task_manager = get_task_manager()
+            if task_manager.is_item_generating(item_type, item_name, user_id):
+                return {
+                    'success': False,
+                    'error': f'该项目正在生成图片中，请等待完成后再试。可以调用相关API查询任务状态。'
+                }
+
+            if not force_update_exist_image:
+                file_manager = get_file_manager()
+                if item_type == 1:
+                    existing_data = file_manager.get_character_json(item_name, user_id, world_id)
+                    if existing_data and existing_data.get('reference_image'):
+                        return {
+                            'success': False,
+                            'error': f'角色 "{item_name}" 已存在参考图像，如需更新请设置 force_update_exist_image=True',
+                            'existing_image': existing_data.get('reference_image'),
+                            'skip_reason': 'already_has_image'
+                        }
+                elif item_type == 2:
+                    existing_data = file_manager.get_location_json(item_name, user_id, world_id)
+                    if existing_data and existing_data.get('reference_image'):
+                        return {
+                            'success': False,
+                            'error': f'地点 "{item_name}" 已存在参考图像，如需更新请设置 force_update_exist_image=True',
+                            'existing_image': existing_data.get('reference_image'),
+                            'skip_reason': 'already_has_image'
+                        }
+                elif item_type == 3:
+                    existing_data = file_manager.get_prop_json(item_name, user_id, world_id)
+                    if existing_data and existing_data.get('reference_image'):
+                        return {
+                            'success': False,
+                            'error': f'道具 "{item_name}" 已存在参考图像，如需更新请设置 force_update_exist_image=True',
+                            'existing_image': existing_data.get('reference_image'),
+                            'skip_reason': 'already_has_image'
+                        }
+                elif item_type == 7:
+                    char_name = item_name.split('|')[0] if '|' in item_name else item_name
+                    variant_label = item_name.split('|')[1] if '|' in item_name else ''
+                    existing_data = file_manager.get_character_json(char_name, user_id, world_id)
+                    if existing_data and variant_label:
+                        existing_variants = existing_data.get('reference_images', [])
+                        if any(v.get('label') == variant_label for v in existing_variants if isinstance(v, dict)):
+                            return {
+                                'success': False,
+                                'error': f'角色 "{char_name}" 已存在标签为 "{variant_label}" 的变体图，如需更新请设置 force_update_exist_image=True',
+                                'skip_reason': 'already_has_variant'
+                            }
 
         server_config = get_config().get("server", {})
         comfyui_base_url = server_config.get("comfyui_base_url_inner") or server_config.get("host", "")
@@ -703,29 +770,83 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                     'error': '图片编辑请求成功但未返回project_ids'
                 }
 
-            # 创建通用后台任务记录（复用 item_type=0 机制）
-            task_id = None
+            # 读取自动重试配置
+            max_retries = 0
             try:
-                from model import GridImageTasksModel, GridImageTaskStatus
-                general_task_key = f"{user_id}_0_{project_ids[0]}"
-                existing = GridImageTasksModel.get_by_task_key(general_task_key)
-                if existing and existing.status not in [GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING]:
-                    GridImageTasksModel.delete_by_task_key(general_task_key)
-                GridImageTasksModel.create(
-                    task_key=general_task_key,
-                    project_id=project_ids[0],
-                    item_type=0,
-                    item_name=project_ids[0],
-                    user_id=user_id,
-                    world_id=world_id,
-                    comfyui_base_url=comfyui_base_url,
-                    auth_token=auth_token,
-                    max_attempts=60
-                )
-                task_id = general_task_key
-                logger.info(f"创建图片编辑后台任务: {general_task_key}, project_id: {project_ids[0]}")
-            except Exception as e:
-                logger.warning(f"图片编辑后台任务创建失败（不影响编辑请求）: {e}")
+                max_retries = get_config().get("image", {}).get("max_retry_count", 0) or 0
+            except Exception:
+                pass
+
+            task_id = None
+            bound_item_type = 0
+            bound_item_name = project_ids[0]
+
+            if item_type is not None and item_name:
+                # 绑定到具体角色/场景/道具/变体的任务
+                try:
+                    task_manager = get_task_manager()
+                    task_id = task_manager.create_image_task(
+                        project_id=project_ids[0],
+                        item_type=item_type,
+                        item_name=item_name,
+                        comfyui_base_url=comfyui_base_url,
+                        auth_token=auth_token,
+                        user_id=user_id,
+                        world_id=world_id,
+                        prompt=prompt,
+                        task_config_id=text_to_image_task_id,
+                        aspect_ratio=aspect_ratio,
+                        image_size=image_size,
+                        is_grid=False,
+                        max_retries=max_retries
+                    )
+                    bound_item_type = item_type
+                    bound_item_name = item_name
+                    logger.info(
+                        f"创建图片编辑绑定任务: item_type={item_type}, item_name={item_name}, "
+                        f"project_id={project_ids[0]}"
+                    )
+                except ValueError as e:
+                    return {'success': False, 'error': str(e)}
+                except Exception as e:
+                    return {
+                        'success': True,
+                        'project_ids': project_ids,
+                        'status': 'submitted',
+                        'message': f'图片编辑请求已提交，但后台任务创建失败: {str(e)}',
+                        'warning': f'后台任务创建失败: {str(e)}',
+                        'comfyui_base_url': comfyui_base_url,
+                        'model_used': model_name,
+                    }
+            else:
+                # 通用后台任务记录（复用 item_type=0 机制）
+                try:
+                    from model import GridImageTasksModel, GridImageTaskStatus
+                    general_task_key = f"{user_id}_0_{project_ids[0]}"
+                    existing = GridImageTasksModel.get_by_task_key(general_task_key)
+                    if existing and existing.status not in [GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING]:
+                        GridImageTasksModel.delete_by_task_key(general_task_key)
+                    GridImageTasksModel.create(
+                        task_key=general_task_key,
+                        project_id=project_ids[0],
+                        item_type=0,
+                        item_name=project_ids[0],
+                        user_id=user_id,
+                        world_id=world_id,
+                        comfyui_base_url=comfyui_base_url,
+                        auth_token=auth_token,
+                        max_attempts=60,
+                        prompt=prompt,
+                        task_config_id=text_to_image_task_id,
+                        aspect_ratio=aspect_ratio,
+                        image_size=image_size,
+                        is_grid=False,
+                        max_retries=max_retries
+                    )
+                    task_id = general_task_key
+                    logger.info(f"创建图片编辑后台任务: {general_task_key}, project_id: {project_ids[0]}")
+                except Exception as e:
+                    logger.warning(f"图片编辑后台任务创建失败（不影响编辑请求）: {e}")
 
             result = {
                 'success': True,
@@ -736,8 +857,8 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                 'image_size_used': image_size,
                 'computing_power_required': computing_power_per_image,
                 'computing_power_total': computing_power_total,
-                'item_type': 0,
-                'item_name': project_ids[0],
+                'item_type': bound_item_type,
+                'item_name': bound_item_name,
             }
 
             if task_id:
@@ -3273,7 +3394,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_character_variant_image",
-        "description": "为角色生成造型变体图（服装/造型三视角参考图）。变体图与主图格式一致（正面、侧面、背面三视角），只是服装/造型不同。生成完成后自动写入角色的 reference_images 数组。注意：角色必须已存在且已有主参考图(reference_image)，才能生成变体图。不同生图模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。",
+        "description": "为角色生成造型变体图（服装/造型三视角参考图）。基于角色已有主参考图(reference_image)做图片编辑（图生图），保证五官/身份一致，仅改变服装/造型。禁止用文生图生成额外形象。生成完成后自动写入角色的 reference_images 数组。注意：角色必须已存在且已有主参考图，才能生成变体图。请先调用 get_text_to_image_model_info 了解当前模型。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -3287,7 +3408,7 @@ MCP_TOOLS = [
                 },
                 "variant_prompt": {
                     "type": "string",
-                    "description": "三视角提示词（必填），与主图模板一致但服装/造型描述不同。必须包含三视角（正面、侧面、背面）的描述，末尾必须包含反文字声明"
+                    "description": "三视角编辑提示词（必填）。必须强调保持参考图中同一人物的五官/体型/身份一致，仅改变服装/造型；必须包含三视角（正面、侧面、背面）描述，末尾必须包含反文字声明"
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -4827,12 +4948,13 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
                                       variant_prompt: str, aspect_ratio: str = "16:9",
                                       force_update: bool = False) -> Dict[str, Any]:
     """
-    生成角色造型变体图 - 为角色生成指定造型/服装的三视角参考图，并写入 reference_images 数组
+    生成角色造型变体图 - 基于已有主参考图做图片编辑（图生图），写入 reference_images 数组
 
     变体图与主图（reference_image）格式相同，都是三视角参考图（正面、侧面、背面），但服装/造型不同。
+    为保持五官/身份一致，内部走 edit_image（基于 reference_image），而不是文生图。
     生成的图片完成后会自动追加到角色 JSON 的 reference_images 数组中。
 
-    注意：不同生图模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。
+    注意：图片编辑模型由用户在前端界面选择，请先调用 get_text_to_image_model_info 了解当前模型。
 
     Args:
         user_id: 用户ID（必填）
@@ -4840,7 +4962,7 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
         auth_token: 认证令牌（必填）
         character_name: 角色名称（必填），如"豆包"
         variant_label: 变体标签（必填），如"晚礼服"、"战斗装"，用于在 reference_images 中标识该变体
-        variant_prompt: 三视角提示词（必填），与主图模板一致但服装/造型描述不同
+        variant_prompt: 三视角提示词（必填），强调保持参考图人物身份一致，仅改变服装/造型
         aspect_ratio: 图片宽高比（默认：16:9）
         force_update: 是否覆盖已有同标签变体图（默认：False）
 
@@ -4867,28 +4989,39 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
                 'skip_reason': 'already_has_variant'
             }
 
-    # 检查角色是否已有主参考图（变体图需要基于主图的角色特征）
-    if not character_data.get('reference_image'):
+    # 检查角色是否已有主参考图（变体图必须基于主图做图片编辑）
+    main_image_url = (character_data.get('reference_image') or '').strip()
+    if not main_image_url:
         return {
             'success': False,
             'error': f'角色 "{character_name}" 尚未生成主参考图(reference_image)，请先生成主图后再生成变体图',
             'skip_reason': 'no_main_image'
         }
 
+    # 主图必须是 http/https，否则 edit_image 无法引用
+    from urllib.parse import urlparse
+    parsed_main = urlparse(main_image_url)
+    if parsed_main.scheme not in ('http', 'https'):
+        return {
+            'success': False,
+            'error': f'角色 "{character_name}" 的主参考图URL无效（仅支持 http/https）: {main_image_url[:100]}',
+            'skip_reason': 'invalid_main_image_url'
+        }
+
     # 构造复合 item_name：角色名|变体标签，用于任务追踪和回调时区分
     composite_item_name = f"{character_name}|{variant_label}"
 
-    # 调用 generate_text_to_image 提交生图任务，item_type=7 表示角色变体图
-    result = generate_text_to_image(
+    # 基于主参考图做图片编辑（图生图），item_type=7 表示角色变体图
+    result = edit_image(
         user_id=user_id,
         world_id=world_id,
         auth_token=auth_token,
         prompt=variant_prompt,
+        image_url=main_image_url,
         aspect_ratio=aspect_ratio,
         item_type=7,
         item_name=composite_item_name,
         force_update_exist_image=force_update,
-        is_grid=False
     )
 
     # 添加角色名和变体标签到返回结果中
@@ -4896,6 +5029,7 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
         result['character_name'] = character_name
         result['variant_label'] = variant_label
         result['composite_item_name'] = composite_item_name
+        result['source_image_url'] = main_image_url
 
     return result
 

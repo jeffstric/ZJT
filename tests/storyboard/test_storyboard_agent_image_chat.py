@@ -104,6 +104,7 @@ def test_storyboard_scene_asset_candidates_enrich_result_url_from_ai_tool(monkey
         status = 2
         message = "done"
         project_id = "project-1"
+        image_path = "https://cdn.example.com/a.png,https://cdn.example.com/b.png"
 
     monkeypatch.setattr(storyboard_api.AIToolsModel, "get_by_id", lambda record_id: FakeTool())
 
@@ -123,10 +124,64 @@ def test_storyboard_scene_asset_candidates_enrich_result_url_from_ai_tool(monkey
     assert assets[0]["project_id"] == "project-1"
 
 
+def test_storyboard_scene_asset_enrich_ignores_image_path_while_generating(monkeypatch):
+    """生成中 image_path 是输入参考图，不能当作候选 result_url。"""
+    from api import storyboard as storyboard_api
+
+    class FakeTool:
+        result_url = None
+        status = 1  # PROCESSING
+        message = None
+        project_id = "project-running"
+        image_path = (
+            "http://localhost:9003/upload/cache/a.png,"
+            "http://localhost:9003/upload/character/pic/b.png,"
+            "http://localhost:9003/upload/location/pic/c.png"
+        )
+        video_path = None
+
+    monkeypatch.setattr(storyboard_api.AIToolsModel, "get_by_id", lambda record_id: FakeTool())
+
+    assets = storyboard_api._enrich_scene_asset_result_urls([
+        {
+            "id": 389,
+            "scene_id": 10,
+            "asset_type": "first_frame",
+            "ai_tool_id": 202,
+            "result_url": None,
+        }
+    ])
+
+    assert not assets[0].get("result_url")
+    assert assets[0]["status"] == 1
+    assert assets[0]["project_id"] == "project-running"
+
+
 def test_storyboard_scene_asset_list_enrichment_runs_off_event_loop():
     api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
 
     assert "await asyncio.to_thread(_enrich_scene_asset_result_urls, assets)" in api_py
+
+
+def test_storyboard_scene_asset_enrich_does_not_fallback_to_image_path():
+    """候选 URL 补全只能用 result_url，不能回退 image_path（输入参考图）。"""
+    api_py = (PROJECT_ROOT / "api" / "storyboard.py").read_text(encoding="utf-8")
+    # 在 _enrich_scene_asset_result_urls 函数体内不应再把 image_path 当作 result_url
+    start = api_py.find("def _enrich_scene_asset_result_urls")
+    assert start > 0
+    end = api_py.find("\ndef ", start + 1)
+    body = api_py[start:end if end > 0 else None]
+    assert "tool_info.get('result_url')" in body
+    assert "tool_info.get('image_path')" not in body
+    assert "getattr(tool, 'image_path'" not in body
+
+
+def test_storyboard_candidate_loading_placeholder_in_frontend():
+    render_js = (PROJECT_ROOT / "web" / "js" / "storyboard" / "render.js").read_text(encoding="utf-8")
+    assert "renderCandidatePlaceholder" in render_js
+    assert "isRenderableCandidateUrl" in render_js
+    assert "candidate-loading" in render_js
+    assert "includes(',')" in render_js
 
 
 def test_storyboard_dialogue_model_selection_distinguishes_same_model_across_vendors():

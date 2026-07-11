@@ -9,6 +9,18 @@ import state, {
     resolveSelectedScriptSplitLlmModel,
     serializeUiConfig,
     loadStoryboardData,
+    syncVideoMediaFromScene,
+    refreshSceneFirstFrameSlot,
+    ensureVideoImageModeSupported,
+    ensureVideoGenerationPrefsSupported,
+    buildVideoSlotUrls,
+    buildVideoGenerationPayloadExtras,
+    canAddVideoMedia,
+    createVideoMediaItem,
+    syncReferenceImagesCompat,
+    getMaxVideoMediaCount,
+    videoModelSupportsLastFrame,
+    getSupportedVideoImageModes,
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
@@ -65,15 +77,28 @@ function buildQuery(base, params) {
     return qs ? `${base}?${qs}` : base;
 }
 
+/**
+ * 候选媒体可展示 URL：必须是单条路径/URL。
+ * 生成中的 ai_tools.image_path 常为逗号拼接的多张参考图，不能当作结果图。
+ */
+export function isRenderableCandidateUrl(url) {
+    if (url == null) return false;
+    const value = String(url).trim();
+    if (!value) return false;
+    if (value.includes(',')) return false;
+    return true;
+}
+
 function getSceneAssetCandidateUrl(asset) {
     if (!asset) return '';
-    return asset.result_url
+    const raw = asset.result_url
         || asset.url
         || asset.image_url
         || asset.video_url
         || asset.ai_tool?.result_url
         || asset.tool?.result_url
         || '';
+    return isRenderableCandidateUrl(raw) ? String(raw).trim() : '';
 }
 
 function mapSceneAssetCandidates(response, assetType) {
@@ -82,6 +107,7 @@ function mapSceneAssetCandidates(response, assetType) {
     return assets.map(asset => ({
         id: asset.id,
         url: getSceneAssetCandidateUrl(asset),
+        status: asset.status ?? asset.ai_tool?.status ?? asset.tool?.status ?? null,
         selected: selectedId !== null && selectedId !== undefined && String(asset.id) === String(selectedId),
     }));
 }
@@ -126,6 +152,9 @@ async function selectSceneCandidate(target) {
     candidates.forEach(item => {
         item.selected = String(item.id) === String(assetId);
     });
+    if (assetType === 'first_frame' && state.chatMode === 'video') {
+        refreshSceneFirstFrameSlot(current);
+    }
     pollSceneTaskStatus(current.id);
     rerender();
 }
@@ -205,32 +234,78 @@ async function bindSubmittedAgentTasks(sceneId, projectIds, assetType = 'first_f
     pollSceneTaskStatus(sceneId);
 }
 
+function resolveNextVideoUploadRole() {
+    const items = state.videoMediaItems || [];
+    if (state.videoImageMode === 'multi_reference') {
+        if (!items.some(item => item.role === 'first_frame')) return 'first_frame';
+        return 'reference';
+    }
+    if (!items.some(item => item.role === 'first_frame')) return 'first_frame';
+    if (videoModelSupportsLastFrame() && !items.some(item => item.role === 'last_frame')) return 'last_frame';
+    return null;
+}
+
 async function handleReferenceFileChange(input) {
+    if (state.chatMode !== 'video') {
+        input.value = '';
+        return;
+    }
     const files = Array.from(input.files || []);
     if (!files.length) return;
     for (const file of files) {
-        const tempId = `ref_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        state.referenceImages = [...(state.referenceImages || []), {
-            id: tempId, url: null, thumbnailUrl: null, name: file.name, uploading: true,
-        }];
+        if (!canAddVideoMedia()) {
+            notify(`当前模式最多 ${getMaxVideoMediaCount()} 张图片`);
+            break;
+        }
+        const role = resolveNextVideoUploadRole();
+        if (!role) {
+            notify(state.videoImageMode === 'first_last_frame'
+                ? (videoModelSupportsLastFrame() ? '首尾帧已满（最多2张）' : '该模型仅支持1张首帧')
+                : '参考图数量已达上限');
+            break;
+        }
+        const tempId = `vm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const item = createVideoMediaItem({
+            id: tempId,
+            role,
+            source: 'upload',
+            url: '',
+            thumbnailUrl: '',
+            name: file.name,
+            uploading: true,
+        });
+        if (role === 'first_frame') {
+            state.videoMediaItems = (state.videoMediaItems || []).filter(m => m.role !== 'first_frame');
+            state.videoFirstFrameDismissedSceneId = null;
+        }
+        if (role === 'last_frame') {
+            state.videoMediaItems = (state.videoMediaItems || []).filter(m => m.role !== 'last_frame');
+        }
+        state.videoMediaItems = [...(state.videoMediaItems || []), item];
+        state.videoMediaItems.sort((a, b) => {
+            const order = { first_frame: 0, last_frame: 1, reference: 2 };
+            return (order[a.role] ?? 9) - (order[b.role] ?? 9);
+        });
+        syncReferenceImagesCompat();
         rerender();
         try {
             const res = await api.uploadReferenceImage(file);
-            const item = (state.referenceImages || []).find(r => r.id === tempId);
+            const current = (state.videoMediaItems || []).find(r => r.id === tempId);
             if (res && res.success && res.url) {
-                if (item) {
-                    item.url = res.url;
-                    item.thumbnailUrl = res.thumbnail_url || res.url;
-                    item.uploading = false;
+                if (current) {
+                    current.url = res.url;
+                    current.thumbnailUrl = res.thumbnail_url || res.url;
+                    current.uploading = false;
                 }
             } else {
-                state.referenceImages = (state.referenceImages || []).filter(r => r.id !== tempId);
+                state.videoMediaItems = (state.videoMediaItems || []).filter(r => r.id !== tempId);
                 notify((res && res.error) || '参考图上传失败');
             }
         } catch (err) {
-            state.referenceImages = (state.referenceImages || []).filter(r => r.id !== tempId);
+            state.videoMediaItems = (state.videoMediaItems || []).filter(r => r.id !== tempId);
             notify('参考图上传失败: ' + (err.message || err));
         }
+        syncReferenceImagesCompat();
         rerender();
     }
     // 重置以允许重复选择同一文件
@@ -261,19 +336,20 @@ async function sendStoryboardAgentMessage(current) {
     rerender();
 
     try {
-        // 视频生成模式下，附上用户上传的补充参考图 URL（首帧图由后端 scene_context 自动提供）
-        const referenceImageUrls = state.chatMode === 'video'
-            ? (state.referenceImages || []).filter(r => r.url && !r.uploading).map(r => r.url)
-            : [];
+        // 视频模式：按首尾帧/全能参考组装有序槽位 URL + image_mode + 时长/分辨率/裁剪配置
+        const isVideo = state.chatMode === 'video';
+        const referenceImageUrls = isVideo ? buildVideoSlotUrls() : [];
+        const videoExtras = isVideo ? buildVideoGenerationPayloadExtras(current) : {};
         const response = await api.startSceneAgentChat(current.id, {
             message,
             model,
             model_id: modelId,
             vendor_id: vendorId,
-            generation_target: state.chatMode === 'video' ? 'video' : 'image',
+            generation_target: isVideo ? 'video' : 'image',
             image_task_id: state.selectedImageTaskId,
             video_task_id: state.selectedVideoTaskId,
             language: localStorage.getItem('zjt_locale') || 'zh-CN',
+            ...(isVideo ? { image_mode: state.videoImageMode || 'first_last_frame', ...videoExtras } : {}),
             ...(referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
         });
         state.activeAgentTaskId = response.task_id;
@@ -719,17 +795,76 @@ async function handleAction(action, target) {
 
     if (action === 'add-reference-image') {
         if (state.chatMode !== 'video') return;
+        if (!canAddVideoMedia()) {
+            notify(`当前模式最多 ${getMaxVideoMediaCount()} 张图片`);
+            return;
+        }
         const fileInput = document.getElementById('reference-file-input');
         if (fileInput) fileInput.click();
         return;
     }
 
-    if (action === 'remove-reference-image') {
-        const refId = target.getAttribute('data-reference-id');
+    if (action === 'remove-reference-image' || action === 'remove-video-media') {
+        const refId = target.getAttribute('data-video-media-id') || target.getAttribute('data-reference-id');
         if (refId) {
-            state.referenceImages = (state.referenceImages || []).filter(r => r.id !== refId);
+            const removed = (state.videoMediaItems || []).find(r => String(r.id) === String(refId));
+            state.videoMediaItems = (state.videoMediaItems || []).filter(r => String(r.id) !== String(refId));
+            if (removed?.role === 'first_frame') {
+                const scene = getCurrentScene();
+                state.videoFirstFrameDismissedSceneId = scene?.id ?? null;
+            }
+            syncReferenceImagesCompat();
             rerender();
         }
+        return;
+    }
+
+    if (action === 'restore-scene-first-frame') {
+        const scene = getCurrentScene();
+        if (!scene) return;
+        state.videoFirstFrameDismissedSceneId = null;
+        refreshSceneFirstFrameSlot(scene);
+        if (!(state.videoMediaItems || []).some(item => item.role === 'first_frame')) {
+            syncVideoMediaFromScene(scene, { resetUploads: false });
+        }
+        rerender();
+        return;
+    }
+
+    if (action === 'toggle-video-mode-panel') {
+        if (state.isAgentRunning) return;
+        state.showVideoModePanel = !state.showVideoModePanel;
+        rerender();
+        return;
+    }
+
+    if (action === 'set-video-image-mode') {
+        if (state.isAgentRunning) return;
+        const mode = target.dataset.videoImageMode;
+        const supported = getSupportedVideoImageModes();
+        if (!supported.includes(mode)) return;
+        state.videoImageMode = mode;
+        state.showVideoModePanel = false;
+        syncVideoMediaFromScene(getCurrentScene(), { resetUploads: false });
+        await persistUiConfig();
+        rerender();
+        return;
+    }
+
+    if (action === 'set-video-resolution') {
+        const res = target.dataset.videoResolution;
+        if (!res) return;
+        state.videoResolution = res;
+        await persistUiConfig();
+        rerender();
+        return;
+    }
+
+    if (action === 'toggle-clip-to-audio') {
+        // click 监听里对 action 做了 preventDefault，checkbox 不会自动翻转，这里手动取反
+        state.clipToAudioDuration = !state.clipToAudioDuration;
+        await persistUiConfig();
+        rerender();
         return;
     }
 
@@ -871,6 +1006,15 @@ export function bindEvents() {
             state.currentTime = 0;
             state.agentMessages = [];
             state.referenceImages = [];
+            state.showVideoModePanel = false;
+            const scene = state.scenes.find(s => s.id === sceneId) || null;
+            if (state.chatMode === 'video') {
+                ensureVideoImageModeSupported();
+                syncVideoMediaFromScene(scene, { resetUploads: true });
+            } else {
+                state.videoMediaItems = [];
+                state.videoFirstFrameDismissedSceneId = null;
+            }
             rerender();
             // 异步加载该 scene 的候选资产
             (async () => {
@@ -879,12 +1023,25 @@ export function bindEvents() {
                     const historyPromise = loadSceneAgentMessages(sceneId, true).catch(() => {});
                     await loadSceneCandidates(sceneId);
                     await historyPromise;
+                    // 候选加载后首帧 URL 可能更新
+                    if (state.chatMode === 'video' && state.currentSceneId === sceneId) {
+                        refreshSceneFirstFrameSlot(getCurrentScene());
+                    }
                     rerender();
                 } catch (e) {
                     // 静默失败，不影响主流程
                 }
             })();
             return;
+        }
+
+        // 点击空白关闭视频模式面板
+        if (state.showVideoModePanel && !event.target.closest('[data-video-mode-panel]') && !event.target.closest('[data-action="toggle-video-mode-panel"]')) {
+            state.showVideoModePanel = false;
+            if (!actionTarget && !sceneTarget) {
+                rerender();
+                return;
+            }
         }
 
         // Handle model config tabs (must be before action guard since tabs have no data-action)
@@ -953,6 +1110,14 @@ export function bindEvents() {
         state.currentTime = 0;
         state.agentMessages = [];
         state.referenceImages = [];
+        state.showVideoModePanel = false;
+        if (state.chatMode === 'video') {
+            ensureVideoImageModeSupported();
+            syncVideoMediaFromScene(state.scenes[newIndex], { resetUploads: true });
+        } else {
+            state.videoMediaItems = [];
+            state.videoFirstFrameDismissedSceneId = null;
+        }
         rerender();
 
         requestAnimationFrame(() => {
@@ -983,6 +1148,15 @@ export function bindEvents() {
         const target = event.target;
         if (target.id === 'chat-mode-select') {
             state.chatMode = target.value;
+            state.showVideoModePanel = false;
+            if (state.chatMode === 'video') {
+                ensureVideoImageModeSupported();
+                syncVideoMediaFromScene(getCurrentScene(), { resetUploads: true });
+            } else {
+                state.videoMediaItems = [];
+                state.videoFirstFrameDismissedSceneId = null;
+                state.referenceImages = [];
+            }
             rerender();
             await persistUiConfig();
             return;
@@ -1048,6 +1222,18 @@ export function bindEvents() {
                 try {
                     localStorage.setItem('storyboard_lastSelectedVideoTaskId', String(state.selectedVideoTaskId));
                 } catch {}
+                ensureVideoImageModeSupported();
+                ensureVideoGenerationPrefsSupported();
+                if (state.chatMode === 'video') {
+                    syncVideoMediaFromScene(getCurrentScene(), { resetUploads: false });
+                }
+            } else if (type === 'videoDuration') {
+                if (val === 'auto') {
+                    state.videoDurationMode = 'auto';
+                } else {
+                    const n = parseInt(val, 10);
+                    state.videoDurationMode = Number.isFinite(n) ? n : 'auto';
+                }
             } else if (type === 'maxGroupDuration') {
                 const d = parseInt(val, 10);
                 if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
@@ -1093,10 +1279,22 @@ export function bindEvents() {
             persistUiConfig();
         }
 
+        // @ 角色/场景/道具选择框：点击框外自动隐藏（点 @ 按钮本身仍走 toggle）
+        if (state.showMentionPopup) {
+            const inPopup = event.target.closest('.mention-popup');
+            const onMentionBtn = event.target.closest('[data-action="mention"]');
+            if (!inPopup && !onMentionBtn) {
+                state.showMentionPopup = false;
+                rerender();
+                // 继续处理其它点击（如切分镜），不 return
+            }
+        }
+
         const mentionTab = event.target.closest('[data-mention-tab]');
         if (mentionTab) {
             state.mentionTab = mentionTab.dataset.mentionTab;
             rerender();
+            return;
         }
 
         const mentionItem = event.target.closest('[data-mention-item]');
@@ -1104,6 +1302,7 @@ export function bindEvents() {
             state.inputMessage = `${state.inputMessage || ''}@${mentionItem.dataset.mentionItem} `;
             state.showMentionPopup = false;
             rerender();
+            return;
         }
 
         // 提示词框点击切换为编辑 (直接在左侧，角色图片以 <img>角色名 格式内联在内容中)

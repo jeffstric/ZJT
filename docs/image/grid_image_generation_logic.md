@@ -79,23 +79,29 @@ SUCCESS → 下载大图 → ImageGridSplitter 切分 2x2
 
 | 函数 | item_type | 说明 |
 |---|---|---|
-| `generate_character_variant_image` | `7`（角色变体图） | 为角色生成指定造型/服装的三视角参考图 |
+| `generate_character_variant_image` | `7`（角色变体图） | 基于主参考图做图片编辑，生成指定造型/服装的三视角变体图 |
 
 **与主图生成的关键差异**：
+- **主图走文生图**（`generate_text_to_image` / 4宫格）；**变体图走图生图**（内部调用 `edit_image`，源图为角色 `reference_image`）
 - 变体图写入角色的 `reference_images` 数组（而非 `reference_image` 字段）
 - `item_name` 使用复合格式 `"角色名|变体标签"`（如 `"豆包|黑化形态"`）
-- 前置条件：角色必须已存在且已有主参考图(reference_image)
-- 变体图不能使用4宫格批量生成，必须逐个调用
+- 前置条件：角色必须已存在且已有主参考图(reference_image)，且 URL 为 http/https
+- 变体图不能使用4宫格/文生图批量生成，必须逐个调用，以保证脸部/身份一致性
 
 **调用链路**：
 ```text
 generate_character_variant_image(character_name, variant_label, variant_prompt)
     |
     v
-generate_text_to_image(prompt, item_type=7, item_name="角色名|变体标签")
+edit_image(
+  prompt=variant_prompt,
+  image_url=角色.reference_image,
+  item_type=7,
+  item_name="角色名|变体标签"
+)
     |
     v
-POST /api/text-to-image → 创建 grid_image_tasks 记录
+POST /api/image-edit → 创建 grid_image_tasks 记录 (item_type=7)
     |
     v
 APScheduler 轮询 → SUCCESS → 下载图片

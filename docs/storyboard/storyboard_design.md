@@ -278,7 +278,7 @@ World 对象通过 world_id 查询
 | prompt_json | JSON | 画面提示词（生图）：perspective / style / scene_desc / character_desc |
 | **video_prompt** | **TEXT** | **视频提示词（生视频/数字人的动作描述）** |
 | **video_type** | **VARCHAR(32)** | **分镜类型，取 `SceneVideoType`：image / video / digital_human（见 2.3.1）** |
-| video_config_json | JSON | 视频生成参数偏好（模型 / 分辨率 / 时长） |
+| video_config_json | JSON | 视频生成参数快照（生成时写入）：`task_id` / `duration_mode` / `duration_seconds` / `resolution` / `clip_to_audio_duration` / `audio_duration`；导出时若 `clip_to_audio_duration=true` 将视频裁到分镜配音时长 |
 | **difficulty** | **VARCHAR(8)** | **分镜难易程度：易/中/难，见 `SceneDifficulty`（config/constant.py），由 LLM 综合人物数量/动作/时长/道具/镜头运动判定，默认"中"** |
 | **act_name** | **VARCHAR(255)** | **所属幕/分镜组名称，源自 LLM `shot_group.group_name`（提升为独立列；`prompt_json.source.group_name` 仍保留作溯源）** |
 | **selected_first_frame_id** | **INT UNSIGNED** | **当前选中首帧 → storyboard_scene_asset.id** |

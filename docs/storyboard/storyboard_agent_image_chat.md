@@ -10,20 +10,75 @@
 4. 前端通过 `GET /api/storyboard/agent-task/{task_id}/stream` 使用 fetch 流式读取 SSE 消息，保留鉴权请求头。
 5. 智能体调用 `generate_text_to_image` 或 `edit_image` 后，会推送 `image_task_submitted` 消息。
 6. 前端调用 `POST /api/storyboard/scene/{scene_id}/bind-agent-image-task`，由后端把 `project_ids` 写入 `storyboard_scene_asset` 并选为当前首帧。
-7. 前端切换分镜时调用 `GET /api/storyboard/scene/{scene_id}/assets` 加载「分镜图候选」和「视频候选」；后端会在返回前用 `ai_tool_id` 查询 `ai_tools.result_url` 补全候选 URL，避免绑定任务后资产表尚未写入 `result_url` 时出现空缩略图。
-8. 如果当前分镜还没有首帧，智能体图片任务绑定后会立即成为当前选中首帧；任务完成轮询到 `result_url` 后，前端会自动回填主预览图和右侧候选图 URL。
-9. 右侧「分镜图候选」一行只显示一个候选图。用户点击候选图时，前端调用 `POST /api/storyboard/scene/{scene_id}/asset/select` 把该候选设置为当前首帧，并同步更新主预览和候选选中态。
+7. 前端切换分镜时调用 `GET /api/storyboard/scene/{scene_id}/assets` 加载「分镜图候选」和「视频候选」；后端会在返回前用 `ai_tool_id` 查询 `ai_tools`，**仅**用 `result_url`（任务产出）补全候选 URL，并附带 `status`。**禁止**把 `image_path` / `video_path`（输入参考图，图生图时常为逗号拼接的多张 URL）当作 `result_url`，否则生成中会渲染出无法显示的破图。
+8. 如果当前分镜还没有首帧，智能体图片任务绑定后会立即成为当前选中首帧；任务完成轮询到合法单条 `result_url` 后，前端会自动回填主预览图和右侧候选图 URL。
+9. 右侧「分镜图候选」：任务未完成（无合法 `result_url`）时展示 loading 占位（旋转图标 +「生成中」），不输出无效 `img src`；完成后显示缩略图。用户点击已完成的候选图时，前端调用 `POST /api/storyboard/scene/{scene_id}/asset/select` 把该候选设置为当前首帧，并同步更新主预览和候选选中态。
 
-## 视频生成的补充参考图
+## 视频生成模式：首尾帧 / 全能参考 + 首帧槽
 
-「视频生成」模式下，分镜助手输入框下方会显示补充参考图预览条，用户可上传额外参考图辅助生成：
+「视频生成」模式下，分镜助手对齐 `marketing_agent` 的图生视频交互：
 
-- 参考图通过 `POST /api/upload-agent-image` 上传（复用 marketing_agent 的端点），返回 `{ success, url, thumbnail_url }`；上传后立即在预览条显示缩略图，支持多选和逐个删除。
-- **首帧图始终由该分镜选中的首帧自动提供**（来自 `scene_context.selected_assets.first_frame`），用户上传的图作为补充参考追加在首帧之后，不会替代首帧。
-- 发送消息时，前端把已上传的 URL 列表作为 `reference_image_urls` 随 `POST /api/storyboard/scene/{scene_id}/ai-chat` 请求体发送。
-- 后端 `scene_ai_chat` 把 `reference_image_urls` 合并进 `reference_images` 和 `reference_image_items`（仅保留 http/https URL，去重，补充 label 为「用户上传参考图N」），随后注入智能体提示词的【参考图清单】和 `task.image_urls`。
-- 智能体会把首帧和用户上传图一起用英文逗号拼接为 `image_to_video` 的 `image_urls`。
-- 用户上传的参考图保存在前端 `state.referenceImages`，**切换分镜时清空**（发送后保留，便于对同一分镜连续多轮调整）；不纳入 UI 配置持久化，刷新页面即清空。
+### 图片模式切换
+
+工具栏显示 **首尾帧 / 全能参考** 选择器（选项受当前视频模型 `supported_image_modes` 过滤）：
+
+| 模式 | 含义 | `image_mode` | 槽位 |
+|------|------|--------------|------|
+| 首尾帧 | 第1张为首帧，第2张可选为尾帧 | `first_last_frame` | 最多 2 张（`supports_last_frame=false` 时仅 1 张） |
+| 全能参考 | 多图综合驱动 | `multi_reference` | 最多 `max_multi_ref_images`（默认 5） |
+
+模式写入 `config_json.videoImageMode`，刷新后恢复。
+
+### 首帧自动带入
+
+- 当前分镜存在合法 `firstFrameUrl` 时，自动注入媒体条 **「首帧」** 槽（`source=scene`），缩略图可见。
+- 用户可移除；移除后显示「使用当前首帧」按钮可重新带入。
+- 切换候选首帧或首帧生成完成轮询到结果时，未 dismiss 的 scene 首帧槽会同步 URL。
+- 切换分镜时清空用户上传槽，并按新分镜重新注入 scene 首帧/尾帧。
+
+### 上传与发送
+
+- 上传仍走 `POST /api/upload-agent-image`。
+- 发送时组装有序绝对 URL 列表 `reference_image_urls`，并带上 `image_mode`。
+- 后端视频目标：**`image_to_video.image_urls` 仅使用槽位列表**；角色/场景参考图只作为【参考图说明】文案，不混入 `image_urls`。
+- 槽位为空时 Agent 走 `generate_text_to_video`。
+
+### 模型列表字段
+
+`GET /api/storyboard/models` 的图生视频项额外返回：
+
+- `supported_image_modes`
+- `supports_last_frame`
+- `max_multi_ref_images`
+- `supported_durations` / `default_duration`
+- `supported_video_resolutions` / `default_video_resolution`
+
+### 齿轮：分辨率 / 时长 / 裁剪至配音
+
+分镜助手齿轮 →「视频模型」Tab 提供：
+
+| 项 | 说明 |
+|----|------|
+| 分辨率 | 随当前模型 `supported_video_resolutions` 变化；无选项则隐藏 |
+| 视频时长 | `Auto` + 模型档位；Auto = 选 **≥ 当前分镜 `duration`** 的最小支持秒数，若无则取最长档 |
+| 裁剪至配音时长 | 默认开启；写入故事板 `config_json` 偏好，生成时再快照到 `scene.video_config_json` |
+
+发送视频对话时 body 额外带：`duration`（解析后整数秒）、`duration_mode`、`resolution`、`clip_to_audio_duration`。  
+后端校验后写入分镜 `video_config_json`：
+
+```json
+{
+  "task_id": 123,
+  "duration_mode": "auto",
+  "duration_seconds": 8,
+  "resolution": "720p",
+  "clip_to_audio_duration": true,
+  "audio_duration": 7.1,
+  "updated_at": "..."
+}
+```
+
+导出（后续实现）按 `clip_to_audio_duration` 决定是否把视频裁到 `scene.duration`；关闭则使用完整生成视频。
 
 ## 对话模型选择
 分镜助手的对话模型来自 `/api/models`，前端会把选中的模型标准化为 `{ model, model_id, vendor_id }`。这一步兼容旧配置中只保存模型字符串的情况，也兼容模型列表使用 `model_id` 而不是 `id` 作为主键的返回格式，避免用户已在齿轮弹框中选中模型后，发送时仍被误判为未选择对话模型。
@@ -67,7 +122,7 @@
 
 所有 Web API 中涉及同步数据库读取/写入的位置均通过 `asyncio.to_thread` 包装，避免阻塞 FastAPI 事件循环。该功能没有新增或修改数据库表结构。
 
-`storyboard_scene_asset` 可能只保存 `ai_tool_id`，尤其是分镜助手提交生成任务后立即绑定的候选图/视频。资产列表接口需要把同步的 `AIToolsModel.get_by_id` 放到 `asyncio.to_thread` 中执行，并用任务表中的 `result_url`、`status`、`message` 和 `project_id` 补全返回数据；前端候选区再从补全后的 URL 渲染缩略图。
+`storyboard_scene_asset` 可能只保存 `ai_tool_id`，尤其是分镜助手提交生成任务后立即绑定的候选图/视频。资产列表接口需要把同步的 `AIToolsModel.get_by_id` 放到 `asyncio.to_thread` 中执行，并用任务表中的 **`result_url`（产出）**、`status`、`message` 和 `project_id` 补全返回数据；**不得**用 `image_path` 兜底 `result_url`（`image_path` 是输入）。前端候选区：有合法单条 URL 才渲染 `<img>`/`<video>`，否则按 `status` 显示 loading 或失败占位。
 
 ## 角色/道具 chip 缩略图
 
@@ -79,4 +134,4 @@
 
 道具 chip 只在 `〖〖道具名〗〗` 能匹配到当前世界道具库时渲染；如果历史提示词中残留了大模型幻觉出的道具（例如当前道具库没有“足球”），前端会去掉外层道具标记并按普通文本显示，避免把不存在的道具误展示为可引用资产。
 
-前端轮询 `/scene/{scene_id}/task-status` 时，需要同时更新当前分镜的 `firstFrameUrl` / `videoUrl` 和 `sceneCandidates` 缓存。这样生成任务完成后，即使用户没有重新切换分镜，空首帧也会自动显示新生成图片；如果候选资产尚未拿到 URL，候选区显示“生成中”占位，不输出空 `img src`。
+前端轮询 `/scene/{scene_id}/task-status` 时，需要同时更新当前分镜的 `firstFrameUrl` / `videoUrl` 和 `sceneCandidates` 缓存（含 `status`）。这样生成任务完成后，即使用户没有重新切换分镜，空首帧也会自动显示新生成图片。判定「可展示 URL」时须排除逗号拼接的多图字符串；候选资产尚未拿到合法单条 URL 时，候选区显示 loading 占位（含旋转图标），不输出空或非法 `img src`。

@@ -16,7 +16,13 @@ allowed-tools: ["generate_text_to_image", "edit_image", "generate_text_to_video"
 
 1. 图片生成前必须调用 `get_text_to_image_model_info()` 获取模型与算力信息。
 2. 生成前必须调用 `get_user_computing_power()` 查询算力余额。
-3. 如果任务说明写明“本次目标是生成视频”，必须调用视频工具：有参考图、首帧、尾帧或风格参考图时调用 `image_to_video()`，没有任何参考图时才调用 `generate_text_to_video()`；不要调用图片工具。
+3. 如果任务说明写明“本次目标是生成视频”，必须调用视频工具：
+   - 存在【图生视频输入图】时，必须调用 `image_to_video()`，`image_urls` **只能**使用【图生视频输入图】中的 URL（按顺序用英文逗号拼接），**严禁**把【参考图清单】里的角色/场景图混进 `image_urls`。
+   - `image_mode` 必须与【视频图片模式】一致：`first_last_frame`（首尾帧：第1张首帧、第2张可选尾帧）或 `multi_reference`（全能参考：全部为参考图）。
+   - `duration_seconds` **必须**使用【视频生成参数】中给出的数值，严禁擅自改时长。
+   - 若上下文提供了 `resolution` 且工具支持，原样传入。
+   - 没有任何【图生视频输入图】时才调用 `generate_text_to_video()`，同样必须使用给定 `duration_seconds`。
+   - 不要调用图片工具。
 4. 如果任务目标是生成/编辑首帧图片，参考图清单非空时必须调用 `edit_image()`，并把清单中的真实 HTTP/HTTPS URL 按顺序用英文逗号拼接为 `image_url`。
 5. 图片目标下不要再询问用户选择文生图还是图生图；只有参考图清单为空时，才调用 `generate_text_to_image()`。
 6. 调用 `edit_image()` 或 `image_to_video()` 时只能使用任务上下文或对话中真实出现的 HTTP/HTTPS 图片 URL，严禁捏造 URL，严禁传入 `/upload/...`、`upload/...` 或本地文件路径。

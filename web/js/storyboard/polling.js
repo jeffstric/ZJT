@@ -2,7 +2,7 @@
 // ai_tools/ai_audio 状态：0=PENDING, 1=PROCESSING, 2=COMPLETED, -1=FAILED（进行中=0或1）。
 // 渲染策略：某分镜产出/状态变化时，只局部更新该分镜相关的 UI（缩略图、主预览、候选、单条对话行），
 //          不再全量 renderApp()——避免对话框焦点被销毁、DevTools 选中节点失效。
-import state from './state.js';
+import state, { refreshSceneFirstFrameSlot } from './state.js';
 import * as api from './api.js';
 import { formatDuration } from './adapters.js';
 import {
@@ -17,6 +17,15 @@ const POLL_INTERVAL = 4000;
 const pollTimers = {};
 const batchPollTimers = {};
 
+function isRenderableCandidateUrl(url) {
+    if (url == null) return false;
+    const value = String(url).trim();
+    if (!value) return false;
+    // 逗号拼接多图是输入参考图，不是单张结果图
+    if (value.includes(',')) return false;
+    return true;
+}
+
 function upsertSceneCandidateFromTask(sceneId, assetType, taskInfo) {
     if (!taskInfo || !taskInfo.asset_id) return;
     if (!state.sceneCandidates) state.sceneCandidates = {};
@@ -26,10 +35,21 @@ function upsertSceneCandidateFromTask(sceneId, assetType, taskInfo) {
     const assetId = taskInfo.asset_id;
     let candidate = list.find(item => String(item.id) === String(assetId));
     if (!candidate) {
-        candidate = { id: assetId, url: '', selected: true };
+        candidate = { id: assetId, url: '', status: null, selected: true };
         list.unshift(candidate);
     }
-    candidate.url = taskInfo.result_url || candidate.url || '';
+    const nextUrl = taskInfo.result_url;
+    if (isRenderableCandidateUrl(nextUrl)) {
+        candidate.url = String(nextUrl).trim();
+    } else if (nextUrl === '' || nextUrl == null) {
+        // 任务尚未产出：保留已有合法 URL；非法多图 URL 清空为 loading
+        if (!isRenderableCandidateUrl(candidate.url)) candidate.url = '';
+    } else if (!isRenderableCandidateUrl(candidate.url)) {
+        candidate.url = '';
+    }
+    if (taskInfo.status !== undefined && taskInfo.status !== null) {
+        candidate.status = taskInfo.status;
+    }
     list.forEach(item => {
         item.selected = String(item.id) === String(assetId);
     });
@@ -48,12 +68,22 @@ function snapshotDialogueAudio(scene) {
 function applyTaskStatus(scene, data) {
     if (!scene) return;
     if (data.first_frame && data.first_frame.asset_id) scene.selectedFirstFrameId = data.first_frame.asset_id;
-    if (data.first_frame && data.first_frame.result_url) scene.firstFrameUrl = data.first_frame.result_url;
-    if (data.last_frame && data.last_frame.result_url) scene.lastFrameUrl = data.last_frame.result_url;
+    if (data.first_frame && isRenderableCandidateUrl(data.first_frame.result_url)) {
+        scene.firstFrameUrl = String(data.first_frame.result_url).trim();
+    }
+    if (data.last_frame && isRenderableCandidateUrl(data.last_frame.result_url)) {
+        scene.lastFrameUrl = String(data.last_frame.result_url).trim();
+    }
     if (data.video && data.video.asset_id) scene.selectedVideoId = data.video.asset_id;
-    if (data.video && data.video.result_url) scene.videoUrl = data.video.result_url;
+    if (data.video && isRenderableCandidateUrl(data.video.result_url)) {
+        scene.videoUrl = String(data.video.result_url).trim();
+    }
     upsertSceneCandidateFromTask(scene.id, 'first_frame', data.first_frame);
     upsertSceneCandidateFromTask(scene.id, 'video', data.video);
+    // 视频助手模式下，首帧生成完成后同步到输入区首帧槽
+    if (state.chatMode === 'video' && state.currentSceneId === scene.id) {
+        refreshSceneFirstFrameSlot(scene);
+    }
     (data.dialogues || []).forEach(d => {
         const dialogue = (scene.dialogues || []).find(item => item.id === d.dialogue_id);
         if (dialogue) {

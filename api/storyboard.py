@@ -702,13 +702,12 @@ def _enrich_scene_asset_result_urls(assets: list) -> list:
             continue
 
         tool_info = tool.to_dict() if hasattr(tool, 'to_dict') else {}
+        # 仅补全真正的任务产出 URL。image_path / video_path 是输入参考图/视频路径
+        # （图生图时多为逗号拼接的多张参考图），不能当作候选缩略图 result_url，
+        # 否则生成中的资产会渲染出无法显示的破图。
         result_url = (
             tool_info.get('result_url')
             or getattr(tool, 'result_url', None)
-            or tool_info.get('video_path')
-            or getattr(tool, 'video_path', None)
-            or tool_info.get('image_path')
-            or getattr(tool, 'image_path', None)
         )
         if result_url and not item.get('result_url'):
             item['result_url'] = result_url
@@ -854,12 +853,21 @@ def _build_storyboard_agent_message(
     reference_images: Optional[List[str]] = None,
     reference_image_items: Optional[List[Dict[str, Any]]] = None,
     generation_target: str = "image",
+    image_mode: Optional[str] = None,
+    video_input_urls: Optional[List[str]] = None,
+    video_duration_seconds: Optional[int] = None,
+    video_resolution: Optional[str] = None,
+    clip_to_audio_duration: Optional[bool] = None,
 ) -> str:
     prompt = _scene_prompt_dict(scene)
     prompt_json = json.dumps(prompt, ensure_ascii=False, indent=2)
     first_frame_line = first_frame_url or "无"
     reference_images = reference_images or []
     reference_image_items = reference_image_items or []
+    video_input_urls = [str(u).strip() for u in (video_input_urls or []) if str(u).strip()]
+    image_mode = (image_mode or 'first_last_frame').strip().lower()
+    if image_mode not in ('first_last_frame', 'multi_reference'):
+        image_mode = 'first_last_frame'
     reference_legend = build_reference_legend(reference_image_items)
     if reference_image_items:
         reference_lines = [
@@ -871,11 +879,53 @@ def _build_storyboard_agent_message(
     reference_block = "\n".join(reference_lines) if reference_lines else "无"
     if generation_target == "video":
         target_intro = "请基于当前分镜画面提示词、视频提示词与用户要求，生成该分镜视频。"
+        if video_input_urls:
+            if image_mode == 'multi_reference':
+                mode_desc = "全能参考模式（multi_reference）：【图生视频输入图】中的全部 URL 均为参考图，按顺序用英文逗号拼接为 image_urls，image_mode 必须传 multi_reference。"
+                slot_labels = [f"- 图{idx}（参考）：{url}" for idx, url in enumerate(video_input_urls, start=1)]
+            else:
+                mode_desc = (
+                    "首尾帧模式（first_last_frame）：【图生视频输入图】第1张为首帧，第2张（若有）为尾帧；"
+                    "按顺序用英文逗号拼接为 image_urls，image_mode 必须传 first_last_frame。"
+                )
+                slot_labels = []
+                for idx, url in enumerate(video_input_urls, start=1):
+                    role = "首帧" if idx == 1 else ("尾帧" if idx == 2 else f"图{idx}")
+                    slot_labels.append(f"- 图{idx}（{role}）：{url}")
+            video_input_block = "\n".join(slot_labels)
+            tool_instruction = (
+                f"本次目标是生成视频。{mode_desc}"
+                "必须调用 image_to_video，image_urls 只能使用【图生视频输入图】中的 URL，严禁混入【角色/场景参考说明】中的图，严禁捏造 URL。"
+                "不要调用图片生成工具。"
+            )
+        else:
+            video_input_block = "无"
+            tool_instruction = (
+                "本次目标是生成视频。当前没有任何图生视频输入图，必须调用 generate_text_to_video。"
+                "不要调用 image_to_video 或图片生成工具。"
+            )
+        duration_line = str(int(video_duration_seconds)) if video_duration_seconds else str(scene.duration or 5)
+        resolution_line = video_resolution or '模型默认'
+        clip_line = '开启（导出时裁到配音时长）' if clip_to_audio_duration else '关闭（导出使用完整视频）'
+        video_mode_block = f"""
+【视频图片模式】
+{image_mode}
+
+【视频生成参数】
+- duration_seconds（必须原样传给 image_to_video / generate_text_to_video）：{duration_line}
+- resolution：{resolution_line}
+- 裁剪至配音时长（仅导出使用，生成时不必处理）：{clip_line}
+
+【图生视频输入图】（image_to_video.image_urls 唯一来源，按顺序）
+{video_input_block}
+"""
         tool_instruction = (
-            "本次目标是生成视频。当前分镜有参考图或已有首帧时，必须调用 image_to_video，并把【参考图清单】中的 URL 按顺序用英文逗号拼接为 image_urls；"
-            "没有任何参考图时才调用 generate_text_to_video。不要调用图片生成工具。"
+            tool_instruction
+            + f" 调用视频工具时 duration_seconds 必须为 {duration_line}，严禁擅自改时长。"
+            + (f" 若工具支持 resolution 参数，传入 {resolution_line}。" if video_resolution else "")
         )
     else:
+        video_mode_block = ""
         target_intro = "请基于当前分镜画面提示词，与用户对话并生成/编辑该分镜首帧。"
         tool_instruction = (
             "当前分镜有参考图，必须调用 edit_image，并把【参考图清单】中的 URL 按顺序用英文逗号拼接为 image_url；"
@@ -895,7 +945,7 @@ def _build_storyboard_agent_message(
 - 构图倾向：{getattr(storyboard, 'composition_preference', '') or ''}
 - 画幅比例：{getattr(storyboard, 'workflow_ratio', '') or ''}
 - 已有首帧 URL：{first_frame_line}
-
+{video_mode_block}
 【参考图清单】
 {reference_block}
 
@@ -1201,6 +1251,113 @@ async def list_storyboard_folders(
     return JSONResponse({'success': True, 'total': len(folders), 'folders': folders})
 
 
+def _video_resolution_options_from_task(task_config) -> tuple:
+    """从任务实现方配置提取视频分辨率选项。返回 (options, default_value)。"""
+    try:
+        impls = task_config._get_implementations_info() if hasattr(task_config, '_get_implementations_info') else []
+    except Exception:
+        impls = []
+    if not impls:
+        # 回退：直接读默认实现方
+        impl_name = getattr(task_config, 'implementation', None)
+        if impl_name:
+            impl_cfg = UnifiedConfigRegistry.get_implementation(impl_name) if hasattr(UnifiedConfigRegistry, 'get_implementation') else None
+            if impl_cfg is None:
+                impl_cfg = UnifiedConfigRegistry.get_all_implementations().get(impl_name) if hasattr(UnifiedConfigRegistry, 'get_all_implementations') else None
+            if impl_cfg:
+                raw = list(getattr(impl_cfg, 'supported_video_resolutions', None) or [])
+                default = getattr(impl_cfg, 'default_video_resolution', '') or ''
+                opts = [
+                    {'value': str(x.get('value') or x.get('label') or ''), 'label': str(x.get('label') or x.get('value') or '')}
+                    for x in raw if isinstance(x, dict) and (x.get('value') or x.get('label'))
+                ]
+                opts = [o for o in opts if o['value']]
+                if not default and opts:
+                    default = opts[0]['value']
+                return opts, default or None
+        return [], None
+
+    first = impls[0] if isinstance(impls, list) and impls else {}
+    raw = list(first.get('supported_video_resolutions') or [])
+    default = first.get('default_video_resolution') or ''
+    opts = []
+    for x in raw:
+        if not isinstance(x, dict):
+            continue
+        val = str(x.get('value') or x.get('label') or '').strip()
+        if not val:
+            continue
+        opts.append({'value': val, 'label': str(x.get('label') or val)})
+    if not default and opts:
+        default = opts[0]['value']
+    return opts, (default or None)
+
+
+def _resolve_storyboard_video_duration_seconds(
+    scene_duration,
+    supported_durations,
+    duration_mode,
+    explicit_duration=None,
+) -> int:
+    """
+    解析视频生成时长（整数秒）。
+    duration_mode='auto'：选 >= scene_duration 的最小支持时长；若无则取最大支持时长。
+    手动模式：使用 explicit_duration / duration_mode 数字，并校正到支持列表。
+    """
+    options = sorted({
+        int(d) for d in (supported_durations or [])
+        if d is not None and str(d).strip() != '' and int(float(d)) > 0
+    })
+    if not options:
+        # 无模型时长表时，ceil 分镜时长兜底
+        try:
+            target = float(scene_duration or 5)
+        except (TypeError, ValueError):
+            target = 5.0
+        return max(1, int(math.ceil(target)))
+
+    mode = duration_mode
+    if mode is None or mode == '':
+        mode = 'auto'
+    if isinstance(mode, (int, float)) and not isinstance(mode, bool):
+        mode = int(mode)
+
+    if mode == 'auto' or str(mode).lower() == 'auto':
+        try:
+            target = float(scene_duration or 0)
+        except (TypeError, ValueError):
+            target = 0.0
+        if target <= 0:
+            return options[0]
+        ge = [d for d in options if d >= target]
+        return min(ge) if ge else max(options)
+
+    # 手动秒数
+    try:
+        wanted = int(explicit_duration if explicit_duration is not None else mode)
+    except (TypeError, ValueError):
+        wanted = options[0]
+    if wanted in options:
+        return wanted
+    # 校正：优先 >= wanted 的最小项，否则最大项
+    ge = [d for d in options if d >= wanted]
+    return min(ge) if ge else max(options)
+
+
+def _merge_scene_video_config_json(existing, snapshot: dict) -> dict:
+    base = existing if isinstance(existing, dict) else {}
+    if isinstance(existing, str):
+        try:
+            base = json.loads(existing) or {}
+        except Exception:
+            base = {}
+    if not isinstance(base, dict):
+        base = {}
+    merged = dict(base)
+    merged.update(snapshot or {})
+    return merged
+
+
 @router.get('/models')
 @require_permission("storyboard:view")
 async def get_storyboard_models(
@@ -1225,8 +1382,11 @@ async def get_storyboard_models(
 
     def _list(category):
         configs = UnifiedConfigRegistry.get_by_category(category)
-        return [
-            {
+        items = []
+        for c in configs:
+            if not c.enabled or c.hidden:
+                continue
+            item = {
                 'task_id': c.id,
                 'key': c.key,
                 'name': c.name,
@@ -1235,8 +1395,18 @@ async def get_storyboard_models(
                 'default_duration': c.default_duration,
                 'supported_ratios': c.supported_ratios or [],
             }
-            for c in configs if c.enabled and not c.hidden
-        ]
+            # 图生视频 / 文生视频：分辨率 + 图模式能力
+            if category in (TaskCategory.IMAGE_TO_VIDEO, TaskCategory.TEXT_TO_VIDEO):
+                res_opts, default_res = _video_resolution_options_from_task(c)
+                item['supported_video_resolutions'] = res_opts
+                item['default_video_resolution'] = default_res
+            if category == TaskCategory.IMAGE_TO_VIDEO:
+                modes = list(getattr(c, 'supported_image_modes', None) or ['first_last_frame'])
+                item['supported_image_modes'] = [str(m) for m in modes]
+                item['supports_last_frame'] = bool(getattr(c, 'supports_last_frame', True))
+                item['max_multi_ref_images'] = int(getattr(c, 'max_multi_ref_images', None) or 5)
+            items.append(item)
+        return items
 
     return JSONResponse({
         'success': True,
@@ -1926,21 +2096,68 @@ async def generate_scene_video(
         image_path = ff.result_url
 
     prompt = data.get('prompt') or scene.video_prompt or ''
-    # scene.duration 现为 DECIMAL(10,3)（可能为 Decimal / float），视频生成 API 只接受整数秒。
-    # 统一向上取整，确保视频不短于音频/分镜时长。
-    raw_duration = data.get('duration') or scene.duration
-    video_duration = math.ceil(float(raw_duration)) if raw_duration else 5
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
     ratio = data.get('ratio') or (sb.workflow_ratio if sb else None)
 
     config = UnifiedConfigRegistry.get_by_id(task_type)
+    supported_durations = list(getattr(config, 'supported_durations', None) or []) if config else []
+    duration_mode = data.get('duration_mode', data.get('duration', 'auto'))
+    video_duration = _resolve_storyboard_video_duration_seconds(
+        scene.duration,
+        supported_durations,
+        duration_mode=duration_mode,
+        explicit_duration=data.get('duration'),
+    )
+    res_opts, default_res = _video_resolution_options_from_task(config) if config else ([], None)
+    allowed_res = {str(o.get('value')) for o in res_opts if o.get('value')}
+    raw_res = data.get('resolution')
+    if raw_res and str(raw_res) in allowed_res:
+        video_resolution = str(raw_res)
+    elif default_res:
+        video_resolution = str(default_res)
+    else:
+        video_resolution = None
+    clip_to_audio_duration = bool(data.get('clip_to_audio_duration', True))
+    try:
+        audio_duration = float(scene.duration) if scene.duration is not None else None
+    except (TypeError, ValueError):
+        audio_duration = None
+    snapshot = {
+        'task_id': int(task_type) if task_type is not None else None,
+        'model_key': getattr(config, 'key', None) if config else None,
+        'duration_mode': 'auto' if str(duration_mode).lower() == 'auto' else duration_mode,
+        'duration_seconds': video_duration,
+        'resolution': video_resolution,
+        'clip_to_audio_duration': clip_to_audio_duration,
+        'audio_duration': audio_duration,
+        'updated_at': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+    }
+    existing_vcfg = getattr(scene, 'video_config_json', None)
+    merged_vcfg = _merge_scene_video_config_json(existing_vcfg, snapshot)
+    try:
+        await asyncio.to_thread(
+            StoryboardSceneModel.update,
+            scene_id,
+            video_config_json=merged_vcfg,
+            last_modified_user_id=user_id,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
+
     computing_power = config.get_computing_power(duration=video_duration) if config else 0
     transaction_id = str(uuid.uuid4())
     ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
     if not ok:
         return JSONResponse(status_code=400, content={'error': msg or '算力不足或扣费失败'})
 
-    extra_config = json.dumps({'video_type': video_type, 'source': 'storyboard'})
+    extra_payload = {
+        'video_type': video_type,
+        'source': 'storyboard',
+        'clip_to_audio_duration': clip_to_audio_duration,
+    }
+    if video_resolution:
+        extra_payload['resolution'] = video_resolution
+    extra_config = json.dumps(extra_payload, ensure_ascii=False)
     ai_tool_id = await asyncio.to_thread(
         AIToolsModel.create,
         prompt=prompt, user_id=user_id, type=task_type,
@@ -2147,29 +2364,120 @@ async def scene_ai_chat(
         logger.warning(f"Failed to build storyboard scene generation context: {e}")
         scene_generation_context = {}
 
+    # 角色/场景等资产参考（仅用于生图或视频提示说明，视频模式下不强制进 image_to_video.image_urls）
     reference_images = scene_generation_context.get("reference_images") or ([first_frame_url] if first_frame_url else [])
     reference_image_items = scene_generation_context.get("reference_image_items") or []
 
-    # 视频生成模式下，合并用户在前端上传的补充参考图。
-    # 首帧图始终由 scene_context 提供（该分镜选中的首帧），用户上传的图作为补充追加在末尾，整体去重。
     raw_user_refs = data.get('reference_image_urls') or []
     if isinstance(raw_user_refs, str):
         raw_user_refs = [u.strip() for u in raw_user_refs.split(',') if u.strip()]
-    user_reference_urls = [
-        str(u) for u in raw_user_refs
-        if str(u).startswith(('http://', 'https://')) and str(u) not in reference_images
+    # 前端视频槽位有序 URL（首帧/尾帧/用户参考）；仅接受 http(s)
+    slot_urls = [
+        str(u).strip() for u in raw_user_refs
+        if str(u).strip().startswith(('http://', 'https://'))
     ]
-    if user_reference_urls:
-        reference_images = list(reference_images) + user_reference_urls
-        existing_item_urls = {it.get('url') for it in reference_image_items if isinstance(it, dict)}
-        for idx, url in enumerate(user_reference_urls, start=1):
-            if url not in existing_item_urls:
-                reference_image_items.append({
-                    'url': url,
-                    'label': f'用户上传参考图{idx}',
-                    'type': '参考图',
-                    'name': '',
-                })
+    # 去重但保序
+    seen_slot = set()
+    ordered_slot_urls = []
+    for url in slot_urls:
+        if url in seen_slot:
+            continue
+        seen_slot.add(url)
+        ordered_slot_urls.append(url)
+
+    image_mode = str(data.get('image_mode') or 'first_last_frame').strip().lower()
+    if image_mode not in ('first_last_frame', 'multi_reference'):
+        image_mode = 'first_last_frame'
+
+    video_duration_seconds = None
+    video_resolution = None
+    clip_to_audio_duration = None
+    if generation_target == 'video':
+        # 视频：image_to_video 只使用前端槽位有序图；角色/场景参考仅作文案说明
+        video_input_urls = ordered_slot_urls
+        reference_images_for_msg = list(reference_images or [])
+        reference_image_items_for_msg = list(reference_image_items or [])
+        task_image_urls = video_input_urls or None
+
+        # 解析时长 / 分辨率 / 裁剪开关，并写入 scene.video_config_json 快照
+        video_task_cfg = None
+        if video_task_id:
+            try:
+                video_task_cfg = UnifiedConfigRegistry.get_by_id(int(video_task_id))
+            except Exception:
+                video_task_cfg = None
+        supported_durations = list(getattr(video_task_cfg, 'supported_durations', None) or []) if video_task_cfg else []
+        duration_mode = data.get('duration_mode', data.get('duration', 'auto'))
+        video_duration_seconds = _resolve_storyboard_video_duration_seconds(
+            scene.duration,
+            supported_durations,
+            duration_mode=duration_mode,
+            explicit_duration=data.get('duration'),
+        )
+        res_opts, default_res = _video_resolution_options_from_task(video_task_cfg) if video_task_cfg else ([], None)
+        allowed_res = {str(o.get('value')) for o in res_opts if o.get('value')}
+        raw_res = data.get('resolution')
+        if raw_res and str(raw_res) in allowed_res:
+            video_resolution = str(raw_res)
+        elif default_res:
+            video_resolution = str(default_res)
+        else:
+            video_resolution = None
+        clip_to_audio_duration = bool(data.get('clip_to_audio_duration', True))
+
+        try:
+            audio_duration = float(scene.duration) if scene.duration is not None else None
+        except (TypeError, ValueError):
+            audio_duration = None
+        snapshot = {
+            'task_id': int(video_task_id) if video_task_id else None,
+            'model_key': getattr(video_task_cfg, 'key', None) if video_task_cfg else None,
+            'duration_mode': 'auto' if str(duration_mode).lower() == 'auto' else (
+                int(duration_mode) if str(duration_mode).isdigit() else duration_mode
+            ),
+            'duration_seconds': video_duration_seconds,
+            'resolution': video_resolution,
+            'clip_to_audio_duration': clip_to_audio_duration,
+            'audio_duration': audio_duration,
+            'updated_at': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+        }
+        existing_vcfg = getattr(scene, 'video_config_json', None)
+        if isinstance(existing_vcfg, str):
+            try:
+                existing_vcfg = json.loads(existing_vcfg)
+            except Exception:
+                existing_vcfg = {}
+        merged_vcfg = _merge_scene_video_config_json(existing_vcfg, snapshot)
+        try:
+            await asyncio.to_thread(
+                StoryboardSceneModel.update,
+                scene_id,
+                video_config_json=merged_vcfg,
+                last_modified_user_id=user_id,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist scene video_config_json for scene {scene_id}: {e}")
+    else:
+        # 图片：兼容旧逻辑——合并用户补充参考图到资产参考
+        user_reference_urls = [
+            str(u) for u in ordered_slot_urls
+            if str(u) not in reference_images
+        ]
+        if user_reference_urls:
+            reference_images = list(reference_images) + user_reference_urls
+            existing_item_urls = {it.get('url') for it in reference_image_items if isinstance(it, dict)}
+            for idx, url in enumerate(user_reference_urls, start=1):
+                if url not in existing_item_urls:
+                    reference_image_items.append({
+                        'url': url,
+                        'label': f'用户上传参考图{idx}',
+                        'type': '参考图',
+                        'name': '',
+                    })
+        reference_images_for_msg = reference_images
+        reference_image_items_for_msg = reference_image_items
+        video_input_urls = None
+        task_image_urls = reference_images or None
 
     selected_first_frame = (
         (scene_generation_context.get("selected_assets") or {}).get("first_frame") or {}
@@ -2181,9 +2489,14 @@ async def scene_ai_chat(
         scene,
         sb,
         first_frame_url=first_frame_url_for_prompt,
-        reference_images=reference_images,
-        reference_image_items=reference_image_items,
+        reference_images=reference_images_for_msg,
+        reference_image_items=reference_image_items_for_msg,
         generation_target=generation_target,
+        image_mode=image_mode if generation_target == 'video' else None,
+        video_input_urls=video_input_urls if generation_target == 'video' else None,
+        video_duration_seconds=video_duration_seconds if generation_target == 'video' else None,
+        video_resolution=video_resolution if generation_target == 'video' else None,
+        clip_to_audio_duration=clip_to_audio_duration if generation_target == 'video' else None,
     )
     conversation_history = await asyncio.to_thread(_list_storyboard_agent_messages, scene_id, True)
     await asyncio.to_thread(
@@ -2209,7 +2522,7 @@ async def scene_ai_chat(
         auth_token=token,
         vendor_id=vendor_id,
         model_id=model_id,
-        image_urls=reference_images or None,
+        image_urls=task_image_urls,
         language=data.get('language') or 'zh-CN',
     )
     task = await asyncio.to_thread(task_manager.get_task, task_id)

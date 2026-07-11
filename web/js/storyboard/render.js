@@ -1,4 +1,16 @@
-import state, { getCurrentScene, getTotalDuration } from './state.js';
+import state, {
+    getCurrentScene,
+    getTotalDuration,
+    getSupportedVideoImageModes,
+    videoModelSupportsLastFrame,
+    getMaxVideoMediaCount,
+    canAddVideoMedia,
+    isRenderableMediaUrl,
+    getSelectedVideoModel,
+    getVideoSupportedDurations,
+    resolveVideoDurationSeconds,
+    getVideoResolutionOptions,
+} from './state.js';
 import { characterReferenceSelectionKey, formatDuration, mapAssetAvatar } from './adapters.js';
 import { icon } from './icons.js';
 import { t as i18nT } from './utils.js';
@@ -490,6 +502,66 @@ function renderLeftSidebar(scene) {
         </aside>`;
 }
 
+function videoRoleLabel(role, mode) {
+    if (role === 'first_frame') return '首帧';
+    if (role === 'last_frame') return '尾帧';
+    if (mode === 'multi_reference') return '参考';
+    return '参考';
+}
+
+function renderVideoModeSelector(disabled) {
+    const modes = getSupportedVideoImageModes();
+    const mode = modes.includes(state.videoImageMode) ? state.videoImageMode : (modes[0] || 'first_last_frame');
+    const modeLabel = mode === 'multi_reference' ? '全能参考' : '首尾帧';
+    const panelOpen = state.showVideoModePanel && !disabled;
+    const options = [
+        {
+            value: 'first_last_frame',
+            title: '首尾帧模式',
+            desc: '第1张为首帧，第2张可选为尾帧',
+            emoji: '🎬',
+        },
+        {
+            value: 'multi_reference',
+            title: '全能参考',
+            desc: '多张图片作为综合参考驱动',
+            emoji: '🖼',
+        },
+    ].filter(opt => modes.includes(opt.value));
+
+    const panel = panelOpen ? `
+        <div class="video-mode-panel" data-video-mode-panel>
+            ${options.map(opt => `
+                <button type="button" class="video-mode-option ${mode === opt.value ? 'active' : ''}"
+                        data-action="set-video-image-mode" data-video-image-mode="${opt.value}" ${disabled ? 'disabled' : ''}>
+                    <span class="video-mode-emoji">${opt.emoji}</span>
+                    <span class="video-mode-texts">
+                        <strong>${opt.title}</strong>
+                        <small>${opt.desc}</small>
+                    </span>
+                    ${mode === opt.value ? '<span class="video-mode-check">✓</span>' : ''}
+                </button>
+            `).join('')}
+        </div>` : '';
+
+    if (options.length <= 1) {
+        return `
+            <div class="video-mode-dropdown is-static" title="${escapeHtml(options[0]?.desc || '')}">
+                <span class="video-mode-static-label">${escapeHtml(modeLabel)}</span>
+            </div>`;
+    }
+
+    return `
+        <div class="video-mode-dropdown">
+            <button type="button" class="tool-button video-mode-btn" data-action="toggle-video-mode-panel"
+                    ${disabled ? 'disabled' : ''} title="视频图片模式">
+                ${icon('video', 14)}
+                <span>${escapeHtml(modeLabel)}</span>
+            </button>
+            ${panel}
+        </div>`;
+}
+
 function renderAiPanel() {
     const scene = getCurrentScene();
     const modes = [
@@ -503,15 +575,31 @@ function renderAiPanel() {
         ? '和智能体描述要如何调整当前分镜画面'
         : '和智能体描述要如何生成当前分镜视频';
 
-    // 视频生成模式下渲染补充参考图预览条（首帧图由该分镜选中首帧自动提供，此处仅展示用户上传的补充图）
-    const referenceBar = state.chatMode === 'video' ? renderReferenceBar(disabled) : '';
+    const isVideo = state.chatMode === 'video';
+    const canAdd = isVideo && canAddVideoMedia();
+    const addTitle = !isVideo
+        ? '上传参考图'
+        : (state.videoImageMode === 'first_last_frame'
+            ? (videoModelSupportsLastFrame() ? '上传首帧/尾帧' : '上传首帧')
+            : '上传参考图');
+    const videoMediaBar = isVideo ? renderVideoMediaBar(disabled) : '';
+    const videoModeSelector = isVideo ? renderVideoModeSelector(disabled) : '';
+    const restoreFirstBtn = isVideo
+        && scene
+        && isRenderableMediaUrl(scene.firstFrameUrl)
+        && !(state.videoMediaItems || []).some(item => item.role === 'first_frame')
+        ? `<button type="button" class="restore-first-frame-btn" data-action="restore-scene-first-frame" ${disabled}
+                title="将当前分镜首帧重新带入首帧位">使用当前首帧</button>`
+        : '';
 
     return `
         <section class="ai-chat-section">
             <div class="ai-chat-header">${icon('send', 16)} 分镜助手</div>
             ${agentMessages}
+            ${videoMediaBar}
+            ${restoreFirstBtn}
             <div class="chat-textarea-row">
-                <button class="reference-add-btn" data-action="add-reference-image" ${disabled} title="上传参考图">
+                <button class="reference-add-btn" data-action="add-reference-image" ${disabled || !canAdd ? 'disabled' : ''} title="${escapeHtml(addTitle)}">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M12 5v14M5 12h14"/>
                     </svg>
@@ -519,36 +607,53 @@ function renderAiPanel() {
                 <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple hidden>
                 <textarea id="chat-textarea" class="chat-textarea" placeholder="${placeholder}" ${disabled}>${escapeHtml(state.inputMessage)}</textarea>
             </div>
-            ${referenceBar}
             <div class="chat-toolbar">
                 <button class="tool-button" data-action="open-model-config" title="模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）">${icon('settings', 14)}</button>
                 <select id="chat-mode-select" class="chat-mode-select">${modes}</select>
+                ${videoModeSelector}
                 <button class="tool-button" data-action="mention">@</button>
                 <button class="chat-send-btn" data-action="send-ai" ${disabled}>${icon('send', 16)}</button>
             </div>
         </section>`;
 }
 
-function renderReferenceBar(disabled) {
-    const thumbs = (state.referenceImages || []).map(img => {
+function renderVideoMediaBar(disabled) {
+    const mode = state.videoImageMode;
+    const items = state.videoMediaItems || [];
+    if (!items.length) {
+        const hint = mode === 'multi_reference'
+            ? '可上传参考图；有首帧时会自动带入'
+            : (videoModelSupportsLastFrame()
+                ? '有首帧时会自动带入首帧位，可再上传尾帧'
+                : '有首帧时会自动带入首帧位');
+        return `<div class="reference-bar video-media-bar empty"><div class="video-media-hint">${escapeHtml(hint)}</div></div>`;
+    }
+
+    const thumbs = items.map((img, index) => {
         const src = img.uploading
             ? ''
             : escapeHtml(getThumbnailUrl(img.thumbnailUrl || img.url || '', 32));
-        const name = escapeHtml(img.name || '');
+        const role = videoRoleLabel(img.role, mode);
+        const name = escapeHtml(img.name || role);
+        const sourceTag = img.source === 'scene' ? '分镜' : '';
         return `
-            <div class="reference-thumb ${img.uploading ? 'uploading' : ''}" data-reference-id="${escapeHtml(img.id)}" title="${name}">
+            <div class="reference-thumb video-media-thumb ${img.uploading ? 'uploading' : ''}" data-video-media-id="${escapeHtml(img.id)}" title="${name}">
+                <span class="video-media-role">${escapeHtml(role)}${sourceTag ? `·${sourceTag}` : ''}</span>
                 <div class="reference-thumb-inner">
                     ${src ? `<img src="${src}" alt="${name}">` : '<div class="reference-placeholder"></div>'}
                     ${img.uploading ? `<div class="reference-spinner">${icon('loading', 14)}</div>` : ''}
                 </div>
                 <span class="reference-name">${name}</span>
-                <button class="reference-remove" data-action="remove-reference-image" data-reference-id="${escapeHtml(img.id)}" title="移除">×</button>
+                <button class="reference-remove" data-action="remove-video-media" data-video-media-id="${escapeHtml(img.id)}" ${disabled ? 'disabled' : ''} title="移除">×</button>
             </div>`;
     }).join('');
+
+    const count = items.length;
+    const max = getMaxVideoMediaCount();
     return `
-        <div class="reference-bar">
+        <div class="reference-bar video-media-bar">
             <div class="reference-thumbs">${thumbs}</div>
-            <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple hidden>
+            <div class="video-media-count">${count}/${max}</div>
         </div>`;
 }
 
@@ -662,6 +767,64 @@ export function renderTimeline() {
         </section>`;
 }
 
+/** 单条可渲染媒体 URL（排除逗号拼接的多参考图输入） */
+function isRenderableCandidateUrl(url) {
+    if (url == null) return false;
+    const value = String(url).trim();
+    if (!value) return false;
+    if (value.includes(',')) return false;
+    return true;
+}
+
+function isCandidateTaskFailed(status) {
+    return status === -1 || status === 'failed';
+}
+
+function isCandidateTaskRunning(status) {
+    // ai_tools: 0=PENDING, 1=PROCESSING；也兼容字符串态
+    return status === 0 || status === 1
+        || status === 'pending' || status === 'running'
+        || status === 'queued' || status === 'processing';
+}
+
+function renderCandidatePlaceholder(status, kind = 'image') {
+    if (isCandidateTaskFailed(status)) {
+        return `<div class="candidate-placeholder candidate-failed">
+            ${icon('error', 16)}
+            <span>生成失败</span>
+        </div>`;
+    }
+    // 无合法 URL：生成中 / 排队中 / 绑定后等待首轮轮询
+    const label = kind === 'video' ? '视频生成中' : '生成中';
+    return `<div class="candidate-placeholder candidate-loading">
+        ${icon('loading', 18)}
+        <span>${label}</span>
+    </div>`;
+}
+
+function renderCandidateMedia(item, kind = 'image') {
+    const url = isRenderableCandidateUrl(item?.url) ? String(item.url).trim() : '';
+    if (url) {
+        if (kind === 'video') {
+            // 仅展示缩略帧 + 播放标识，不内嵌可操作播放器（避免候选区看不清、误操作）
+            // preload=metadata 让浏览器拉取首帧作为预览；poster 优先用分镜首帧（若有）
+            const poster = isRenderableCandidateUrl(item?.posterUrl)
+                ? String(item.posterUrl).trim()
+                : (isRenderableCandidateUrl(getCurrentScene()?.firstFrameUrl)
+                    ? String(getCurrentScene().firstFrameUrl).trim()
+                    : '');
+            const posterAttr = poster ? ` poster="${escapeHtml(poster)}"` : '';
+            return `
+                <div class="candidate-video-thumb">
+                    <video src="${escapeHtml(url)}"${posterAttr} muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>
+                    <span class="candidate-video-badge" aria-hidden="true" title="视频">${icon('video', 12)}</span>
+                </div>`;
+        }
+        return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || '分镜图')}">`;
+    }
+    return renderCandidatePlaceholder(item?.status, kind);
+}
+
 export function renderRightSidebar(scene) {
     const candidates = state.sceneCandidates?.[scene?.id] || {};
     const imageCandidates = candidates.images || [];
@@ -669,30 +832,45 @@ export function renderRightSidebar(scene) {
 
     // 回退：若尚未加载候选列表，用当前选中的 URL 展示
     const fallbackImages = [];
-    if (scene?.firstFrameUrl) fallbackImages.push({ id: 'ff', url: scene.firstFrameUrl });
-    if (scene?.lastFrameUrl) fallbackImages.push({ id: 'lf', url: scene.lastFrameUrl });
+    if (isRenderableCandidateUrl(scene?.firstFrameUrl)) {
+        fallbackImages.push({ id: 'ff', url: scene.firstFrameUrl, status: null });
+    }
+    if (isRenderableCandidateUrl(scene?.lastFrameUrl)) {
+        fallbackImages.push({ id: 'lf', url: scene.lastFrameUrl, status: null });
+    }
+    // 有候选列表时用列表；若列表为空但任务在跑，用空候选 + loading 不回退到坏 URL
     const displayImages = imageCandidates.length ? imageCandidates : fallbackImages;
 
     const fallbackVideos = [];
-    if (scene?.videoUrl) fallbackVideos.push({ id: 'vd', url: scene.videoUrl });
+    if (isRenderableCandidateUrl(scene?.videoUrl)) {
+        fallbackVideos.push({ id: 'vd', url: scene.videoUrl, status: null });
+    }
     const displayVideos = videoCandidates.length ? videoCandidates : fallbackVideos;
+
+    // 无候选资产时，若当前分镜首帧任务仍在跑，显示一个 loading 占位
+    const imageRunning = isCandidateTaskRunning(scene?.taskStatus?.first_frame);
+    const videoRunning = isCandidateTaskRunning(scene?.taskStatus?.video);
 
     const imageGrid = displayImages.length
         ? `<div class="candidate-grid">${displayImages.map(img => `
-            <div class="candidate-thumb ${img.selected ? 'selected' : ''}" data-candidate-id="${img.id}" data-candidate-type="image">
-                ${img.url
-                    ? `<img src="${escapeHtml(img.url)}" alt="${escapeHtml(img.label || '分镜图')}">`
-                    : '<div class="candidate-placeholder">生成中</div>'}
+            <div class="candidate-thumb ${img.selected ? 'selected' : ''}${!isRenderableCandidateUrl(img.url) ? ' is-loading' : ''}" data-candidate-id="${img.id}" data-candidate-type="image">
+                ${renderCandidateMedia(img, 'image')}
                 ${img.label ? `<span class="candidate-label">${escapeHtml(img.label)}</span>` : ''}
             </div>`).join('')}</div>`
-        : '<div class="candidate-empty">暂无分镜图候选</div>';
+        : (imageRunning
+            ? `<div class="candidate-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.first_frame, 'image')}</div></div>`
+            : '<div class="candidate-empty">暂无分镜图候选</div>');
 
-    const videoList = displayVideos.length
-        ? `<div class="candidate-list">${displayVideos.map(vid => `
-            <div class="candidate-video-item ${vid.selected ? 'selected' : ''}" data-candidate-id="${vid.id}" data-candidate-type="video">
-                <video src="${escapeHtml(vid.url)}" controls></video>
+    const videoGrid = displayVideos.length
+        ? `<div class="candidate-grid candidate-video-grid">${displayVideos.map(vid => `
+            <div class="candidate-thumb candidate-video-thumb-wrap ${vid.selected ? 'selected' : ''}${!isRenderableCandidateUrl(vid.url) ? ' is-loading' : ''}"
+                 data-candidate-id="${vid.id}" data-candidate-type="video" title="点击选中该视频">
+                ${renderCandidateMedia(vid, 'video')}
+                ${vid.label ? `<span class="candidate-label">${escapeHtml(vid.label)}</span>` : ''}
             </div>`).join('')}</div>`
-        : '<div class="candidate-empty">暂无视频候选</div>';
+        : (videoRunning
+            ? `<div class="candidate-grid candidate-video-grid"><div class="candidate-thumb is-loading">${renderCandidatePlaceholder(scene?.taskStatus?.video, 'video')}</div></div>`
+            : '<div class="candidate-empty">暂无视频候选</div>');
 
     return `
         <aside class="right-sidebar">
@@ -702,7 +880,7 @@ export function renderRightSidebar(scene) {
             </div>
             <div class="candidate-section">
                 <span class="section-title">视频候选</span>
-                ${videoList}
+                ${videoGrid}
             </div>
         </aside>`;
 }
@@ -998,6 +1176,14 @@ function renderImageModelConfig(disabled = false) {
 
 function renderVideoModelConfig() {
     const models = state.imageToVideoModels.length ? state.imageToVideoModels : state.videoModels;
+    const model = getSelectedVideoModel();
+    const scene = getCurrentScene();
+    const durations = getVideoSupportedDurations(model);
+    const resOpts = getVideoResolutionOptions(model);
+    const resolvedAuto = resolveVideoDurationSeconds(scene, model, 'auto');
+    const sceneDur = Number(scene?.duration);
+    const sceneDurLabel = Number.isFinite(sceneDur) ? sceneDur.toFixed(sceneDur % 1 ? 1 : 0) : '—';
+
     let html = '<label class="config-label">视频模型</label><div class="config-hint">用于图片生成视频</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="video">';
     models.forEach(m => {
         const val = m.task_id;
@@ -1005,6 +1191,46 @@ function renderVideoModelConfig() {
         html += `<option value="${val}" ${sel}>${escapeHtml(m.name)}</option>`;
     });
     html += '</select></div>';
+
+    if (resOpts.length) {
+        const curRes = state.videoResolution && resOpts.some(o => o.value === state.videoResolution)
+            ? state.videoResolution
+            : (resOpts[0]?.value || '');
+        html += `<label class="config-label" style="margin-top:14px;">分辨率</label>
+            <div class="config-hint">与 marketing 一致，随当前视频模型变化</div>
+            <div class="config-chip-row">`;
+        resOpts.forEach(opt => {
+            const active = String(curRes) === String(opt.value) ? 'active' : '';
+            html += `<button type="button" class="config-chip ${active}" data-action="set-video-resolution" data-video-resolution="${escapeHtml(opt.value)}">${escapeHtml(opt.label || opt.value)}</button>`;
+        });
+        html += '</div>';
+    }
+
+    html += `<label class="config-label" style="margin-top:14px;">视频时长</label>
+        <div class="config-hint">Auto 会按当前分镜时长（含配音同步后）匹配「≥分镜时长且最接近」的模型档位</div>
+        <div class="config-select-wrapper">
+            <select class="chat-mode-select" data-config-select="videoDuration">`;
+    const mode = state.videoDurationMode;
+    const autoSel = mode === 'auto' ? 'selected' : '';
+    html += `<option value="auto" ${autoSel}>Auto（${escapeHtml(String(sceneDurLabel))}s → ${resolvedAuto}s）</option>`;
+    durations.forEach(d => {
+        const sel = String(mode) === String(d) ? 'selected' : '';
+        html += `<option value="${d}" ${sel}>${d} 秒</option>`;
+    });
+    html += `</select></div>`;
+    if (mode === 'auto') {
+        html += `<div class="config-hint config-hint-inline">当前分镜 ${escapeHtml(String(sceneDurLabel))} 秒，将请求 <strong>${resolvedAuto}</strong> 秒视频</div>`;
+    }
+
+    const clipChecked = state.clipToAudioDuration !== false ? 'checked' : '';
+    html += `<div class="config-toggle-row" style="margin-top:14px;">
+        <label class="config-toggle-label">
+            <input type="checkbox" data-action="toggle-clip-to-audio" ${clipChecked}>
+            <span>裁剪至配音时长</span>
+        </label>
+        <div class="config-hint">开启后写入分镜配置，导出时将视频裁到与配音（分镜时长）一致；关闭则导出完整视频</div>
+    </div>`;
+
     return html;
 }
 
