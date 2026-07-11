@@ -1136,10 +1136,6 @@
       getGenerationMode(item) {
         return getGenerationModeLabel(item);
       },
-      
-      goToCharacterCard(projectId) {
-        window.location.href = '/character_card.html?task_id=' + projectId;
-      },
     },
     
     beforeUnmount() {
@@ -1465,7 +1461,6 @@
                 <div v-if="item.result_url" style="margin-top: 8px;">
                   <a :href="item.result_url" target="_blank" class="btn secondary" style="display: inline-block; text-decoration: none;">{{ $t('view_result') }}</a>
                   <button v-if="item.status == 2 && item.type == 3" class="btn" @click="enhanceVideo(item, item.id)" :disabled="enhancingVideos[item.id]" style="margin-left: 8px;">{{ enhancingVideos[item.id] ? ($t('enhanced_button') || '已修复') : ($t('generate_hd_video') || '生成高清视频') }}</button>
-                  <button v-if="item.status == 2 && item.project_id" class="btn" @click="goToCharacterCard(item.project_id)" style="margin-left: 8px;">{{ $t('create_character_card') || '创建角色卡' }}</button>
                 </div>
                 <div style="margin-top: 8px;">
                   <button class="btn secondary" @click="timelineAiToolId = item.id">{{ $t('view_timeline') }}</button>

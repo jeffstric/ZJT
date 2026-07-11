@@ -1981,18 +1981,6 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=51,
     ),
 
-    # ==================== 角色卡 ====================
-    UnifiedTaskConfig(
-        id=TaskTypeId.CHARACTER_CARD,
-        key='character_card',
-        short_key='character_card',
-        name='创建角色卡',
-        category=TaskCategory.OTHER,
-        provider=TaskProvider.LOCAL,
-        implementation='character_card',
-        sort_order=60,
-    ),
-
     # ==================== 音频 ====================
     UnifiedTaskConfig(
         id=TaskTypeId.AUDIO_GENERATE,
@@ -2664,14 +2652,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         default_computing_power=10,
         enabled=True,
         description='本地视频增强'
-    ),
-    ImplementationConfig(
-        name='character_card',
-        display_name='本地处理',
-        driver_class='CharacterCardDriver',
-        default_computing_power=20,
-        enabled=True,
-        description='角色卡生成'
     ),
     ImplementationConfig(
         name='audio_generate',

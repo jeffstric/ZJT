@@ -6,7 +6,6 @@
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
     { path: '/video-enhance', name: 'video-enhance', component: VideoEnhance },
-    { path: '/video-remix', name: 'video-remix', component: VideoRemix },
     { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate },
     { path: '/digital-human', name: 'digital-human', component: DigitalHuman },
     { path: '/skill-config', name: 'skill-config', component: SkillConfig }

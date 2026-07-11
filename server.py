@@ -8817,7 +8817,6 @@ async def get_sitemap_xml():
         ("video-workflow-list", "0.9"),
         ("video-workflow", "0.9"),
         ("image-style-guide", "0.8"),
-        ("character_card.html", "0.8"),
     ]
     
     xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
