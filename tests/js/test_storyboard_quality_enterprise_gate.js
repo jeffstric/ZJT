@@ -10,7 +10,7 @@ const events = fs.readFileSync(eventsPath, 'utf8');
 const render = fs.readFileSync(renderPath, 'utf8');
 const state = fs.readFileSync(statePath, 'utf8');
 
-assert.match(render, /data-auto-image-sequence-mode="quality"/, 'quality button should remain visible');
+assert.match(render, /\['quality',/, 'quality mode card should remain visible');
 assert.match(events, /notify\('效果模式仅商业版支持，请购买商业版后使用'\)/, 'community quality click should show commercial-only alert');
 assert.match(events, /state\.editionInfo\?\.mode !== 'enterprise'/, 'quality click should check enterprise mode');
 assert.match(events, /return;/, 'community quality click should not fall through to state mutation');

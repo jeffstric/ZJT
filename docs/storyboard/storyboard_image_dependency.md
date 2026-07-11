@@ -105,7 +105,7 @@ mode 决策前已注入 `_check_location_grid_readiness`。单张入口不传 se
 
 Effect/quality grid generation also waits across parsed groups: the first grid in a new group uses the previous group's last split first-frame as `previous_group_first_frame`. If that previous frame never becomes available, the waiting item now increments `extra_json.previous_group_reference_wait_count` on each scheduler tick.
 
-- The cap is `StoryboardAutoGenerateConstants.QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS`, default 30 ticks.
-- Before the cap, the item remains `PENDING` with `extra_json.waiting=previous_group_first_frame`.
-- After the cap, waiting items fail with `error_code=previous_group_reference_timeout` and `failure_source=previous_group_reference_timeout`.
+- The cap is `StoryboardAutoGenerateConstants.QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS`, default 30 ticks, and is applied only after the previous group item is no longer active.
+- While the previous group item is still `PENDING` or `RUNNING`, the item remains `PENDING` with `extra_json.waiting=previous_group_first_frame`; the wait counter is diagnostic and must not fail the later group early.
+- After the cap, if the previous group item is terminal but still has no split first-frame URL, waiting items fail with `error_code=previous_group_reference_timeout` and `failure_source=previous_group_reference_timeout`.
 - The batch count updater then settles the job as `failed` or `partial`, so it no longer occupies the active batch queue indefinitely.

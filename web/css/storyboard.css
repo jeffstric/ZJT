@@ -1149,6 +1149,12 @@ button {
     padding: 16px;
     box-shadow: var(--shadow);
 }
+/* generate-from-script 弹窗：加宽为两列，并兜底高度防止小屏溢出 */
+.generate-from-script-dialog {
+    width: min(760px, calc(100vw - 32px));
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+}
 .edit-dialog header,
 .edit-dialog footer,
 .export-dialog header {
@@ -1228,40 +1234,58 @@ button {
     opacity: 0.6;
     cursor: not-allowed;
 }
-.sequence-mode-control {
+.sequence-mode-intro {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
-}
-.sequence-mode-button {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: #fff;
-    color: var(--text);
-    padding: 8px 10px;
-    font-size: 13px;
-    cursor: pointer;
-}
-.sequence-mode-button.active {
-    border-color: var(--primary);
-    background: rgba(37, 99, 235, 0.08);
-    color: var(--primary);
-    font-weight: 600;
-}
-.sequence-mode-button:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-}
-.sequence-mode-intro {
-    display: grid;
-    gap: 8px;
     margin-top: 10px;
+}
+@media (max-width: 540px) {
+    .sequence-mode-intro { grid-template-columns: 1fr; }
+}
+/* 弹窗两列布局 */
+.generate-from-script-dialog .gfs-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0 20px;
+    align-items: start;
+}
+.generate-from-script-dialog .gfs-col {
+    min-width: 0;
+}
+.generate-from-script-dialog .gfs-mode-section {
+    grid-column: 1 / -1;
+    min-width: 0;
+}
+.generate-from-script-dialog .gfs-col .generate-from-script-model:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+@media (max-width: 640px) {
+    .generate-from-script-dialog .gfs-body { grid-template-columns: 1fr; }
+}
+.generate-from-script-dialog .config-hint-inline {
+    display: inline;
+    margin: 0 0 0 6px;
+    font-weight: 400;
 }
 .sequence-mode-intro-card {
     border: 1px solid var(--border);
     border-radius: 8px;
     background: #f8fafc;
     padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.sequence-mode-intro-card:hover:not(.is-disabled):not(.active) {
+    border-color: rgba(37, 99, 235, 0.35);
+    background: #fff;
+}
+.sequence-mode-intro-card.is-disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    pointer-events: none;
 }
 .sequence-mode-intro-card.active {
     border-color: rgba(37, 99, 235, 0.45);

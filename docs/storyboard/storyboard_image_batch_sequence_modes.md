@@ -6,17 +6,15 @@
 
 - `speed`: submit all missing images up to `limit` without previous-frame references.
 - `balanced`: default. Submit the first ready scene in each parsed group concurrently. Later scenes in the same group wait for the previous scene result and submit through `image_edit` with that result as `source_image`.
-- `quality`: enterprise-only for first-frame generation. When `StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED` is enabled, ready scenes in the same parsed group are submitted as 2x2 or 3x3 storyboard first-frame grids and then split back to each scene. The old global previous-frame chain is only the fallback path when this feature flag is disabled.
+- `quality`: enterprise-only for first-frame generation. When `StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED` is enabled, ready scenes in the same parsed group (`storyboard_image_batch_item.group_key` / `prompt_json.source.group_id`) are submitted as 2x2 or 3x3 storyboard first-frame grids and then split back to each scene; `act_name` is display/fallback metadata and must not merge multiple parsed groups into one grid. The old global previous-frame chain is only the fallback path when this feature flag is disabled.
 
 ## Frontend Dialog Copy
 
-When `storyboard.html` opens a storyboard without any scenes, the "generate from script" dialog shows three user-facing modes:
+When `storyboard.html` opens a storyboard without any scenes, the "generate from script" dialog shows three user-facing modes. The dialog uses a two-column layout for model config and split options, followed by a full-width image generation mode section; it collapses to a single column on narrow screens. Each mode is a single clickable card that both explains and selects the mode (no separate button row). The currently selected mode card is visually highlighted. `quality` remains enterprise-only in the existing click handling.
 
-- 速度模式 (`speed`): 快速拆分剧本，适合草稿预览和方案试跑；核心是先出结果。
-- 均衡模式 (`balanced`): 兼顾生成速度与分镜质量，适合大多数创作场景；核心是质量和效率折中。
-- 效果模式 (`quality`): 先建立剧本级空间关系，再规划镜头拆分，提升场景连续性、角色站位一致性和镜头调度表现；核心是先搭空间，再做分镜。
-
-The frontend keeps the mode buttons compact and places these descriptions below them as explanation cards. The currently selected mode is visually highlighted. `quality` remains enterprise-only in the existing click handling.
+- 速度模式 (`speed`): 快速拆分剧本，适合草稿预览和方案试跑；标签：先出结果。
+- 均衡模式 (`balanced`): 兼顾生成速度与分镜质量，质量与效率折中；标签：质量和效率折中。
+- 效果模式 (`quality`): 为长篇连续叙事打造，锁定场景、光影与角色站位一致性，呈现影院级镜头质感；标签：影院级一致性。商业版专属，非商业版用户点击会提示购买。
 
 Inserted scenes without parsed group metadata inherit the previous scene's group. If the first scene has no group metadata, it uses a temporary manual group.
 

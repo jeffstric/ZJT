@@ -730,17 +730,13 @@ function renderGenerateFromScriptDialog() {
     const splitModelConfig = renderScriptSplitModelConfig(busy);
     const imageModelConfig = renderImageModelConfig(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
-    const autoImageModeButtons = `
-        <button type="button" class="sequence-mode-button ${state.autoImageSequenceMode === 'balanced' ? 'active' : ''}" data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="balanced" ${busy ? 'disabled' : ''}>均衡</button>
-        <button type="button" class="sequence-mode-button ${state.autoImageSequenceMode === 'quality' ? 'active' : ''}" data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="quality" ${busy ? 'disabled' : ''}>效果</button>
-        <button type="button" class="sequence-mode-button ${state.autoImageSequenceMode === 'speed' ? 'active' : ''}" data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="speed" ${busy ? 'disabled' : ''}>速度</button>
-    `;
     const modeIntroCards = [
-        ['balanced', '均衡模式', '兼顾生成速度与分镜质量，适合大多数创作场景。', '质量和效率折中'],
-        ['quality', '效果模式', '先建立剧本级空间关系，再规划镜头拆分，提升场景连续性、角色站位一致性和镜头调度表现。', '先搭空间，再做分镜'],
+        ['balanced', '均衡模式', '兼顾生成速度与分镜质量，质量与效率折中。', '质量和效率折中'],
+        ['quality', '效果模式', '为长篇连续叙事打造，锁定场景、光影与角色站位一致性，呈现影院级镜头质感。', '影院级一致性'],
         ['speed', '速度模式', '快速拆分剧本，适合草稿预览和方案试跑。', '先出结果']
     ].map(([mode, title, desc, tag]) => `
-        <div class="sequence-mode-intro-card ${state.autoImageSequenceMode === mode ? 'active' : ''}">
+        <div class="sequence-mode-intro-card ${state.autoImageSequenceMode === mode ? 'active' : ''}${busy ? ' is-disabled' : ''}"
+             data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="${mode}">
             <div class="sequence-mode-intro-head">
                 <strong>${title}</strong>
                 <span>${tag}</span>
@@ -759,17 +755,24 @@ function renderGenerateFromScriptDialog() {
                     是否根据本集剧本自动拆分并生成分镜、对话数据？
                     ${state.generateFromScriptError ? `<p class="dialog-error">${escapeHtml(state.generateFromScriptError)}</p>` : ''}
                 </div>
-                <div class="generate-from-script-model">
-                    ${splitModelConfig}
-                </div>
-                <div class="generate-from-script-model">
-                    ${imageModelConfig}
-                </div>
-                ${splitOptionsConfig}
-                <div class="generate-from-script-model">
-                    <label class="config-label">分镜图生成模式</label>
-                    <div class="sequence-mode-control">${autoImageModeButtons}</div>
-                    <div class="sequence-mode-intro">${modeIntroCards}</div>
+                <div class="gfs-body">
+                    <div class="gfs-col">
+                        <div class="generate-from-script-model">
+                            ${splitModelConfig}
+                        </div>
+                        <div class="generate-from-script-model">
+                            ${imageModelConfig}
+                        </div>
+                    </div>
+                    <div class="gfs-col">
+                        ${splitOptionsConfig}
+                    </div>
+                    <div class="gfs-mode-section">
+                        <div class="generate-from-script-model">
+                            <label class="config-label">分镜图生成模式${state.editionInfo?.mode !== 'enterprise' ? '<span class="config-hint config-hint-inline">效果模式为商业版专属</span>' : ''}</label>
+                            <div class="sequence-mode-intro">${modeIntroCards}</div>
+                        </div>
+                    </div>
                 </div>
                 <footer class="dialog-footer">
                     <button class="btn-ghost" data-action="generate-from-script-cancel" ${busy ? 'disabled' : ''}>暂不生成</button>

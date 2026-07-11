@@ -201,9 +201,10 @@ class StoryboardFirstFrameGridService:
         prompt = _as_prompt_json(scene.get("prompt_json"))
         source = prompt.get("source") if isinstance(prompt.get("source"), dict) else {}
         return _first_non_empty(
-            scene.get("act_name"),
-            source.get("group_id"),
             item.get("group_key"),
+            source.get("group_id"),
+            source.get("group_name"),
+            scene.get("act_name"),
             f"storyboard:{scene.get('storyboard_id')}",
         )
 
@@ -259,6 +260,10 @@ class StoryboardFirstFrameGridService:
         previous_reference: Dict[str, Any],
     ) -> bool:
         previous_status = previous_reference.get("item_status")
+        previous_is_active = previous_status in (
+            StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
+            StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
+        )
         should_fail = (
             int(job.get("stop_on_error") or 0)
             and previous_status == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
@@ -284,7 +289,7 @@ class StoryboardFirstFrameGridService:
                     extra_json={**wait_extra, "failure_source": "previous_group_failed"},
                 )
                 item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
-            elif wait_count > max_wait_ticks:
+            elif not previous_is_active and wait_count > max_wait_ticks:
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
                     status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
