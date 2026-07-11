@@ -87,6 +87,15 @@ role_description 被拼进 grid_prompt JSON 的全局说明区（`reference_imag
 - **当前**：分镜首帧宫格（item_type=8）→ 同一幕下缺失首帧的分镜按 2x2/3x3 批量生成，参考图列表可包含角色、道具、场景，各格 prompt 写明本格使用的图号和空间位置
 - **其他**：任意"参考图列表 + 宫格生图"场景
 
+### 分镜级参考图变体
+
+Storyboard 分镜可在 `prompt_json.reference_selections` 中保存角色服装和场景角度选择。效果模式首帧宫格（`item_type=8`）构建每格参考图 manifest 时会调用 `services.storyboard_reference_prompt_service.select_reference_variant_for_asset()`：
+
+- 每个分镜独立读取自己的角色/场景选择，不跨分镜继承。
+- 选中 URL 必须仍属于对应资产的 `reference_image` 或 `reference_images`，否则自动回退主参考图。
+- `role_description` 会带上变体标签，例如“角色：奶昔，商务服装”或“场景：大厅，右侧视角”。
+- manifest 仍按最终 URL 去重并分配图号，LLM 只能使用服务层给出的图号，不能自行推测变体。
+
 ## Phase 4：grid_image_tasks 表扩展
 
 ### 新增列（迁移 `no_111_20260706_grid_tasks_3x3_columns.py`）

@@ -20,7 +20,10 @@ from model.storyboard_image_batch import StoryboardImageBatchItemModel
 from model.storyboard_scene import StoryboardSceneModel
 from script_writer_core.constant import ItemType
 from script_writer_core.mcp_tool import submit_grid_image_task
-from services.storyboard_reference_prompt_service import extract_storyboard_reference_names
+from services.storyboard_reference_prompt_service import (
+    extract_storyboard_reference_names,
+    select_reference_variant_for_asset,
+)
 from services.storyboard_spatial import build_spatial_prompt_context
 
 logger = logging.getLogger(__name__)
@@ -545,13 +548,15 @@ class StoryboardFirstFrameGridService:
 
         for character_id, fallback_name in self._character_refs_from_spatial(spatial):
             character = _to_dict(CharacterModel.get_by_id(int(character_id))) if character_id else {}
-            url = _reference_url(character)
+            selected = select_reference_variant_for_asset(prompt_json, character, "character") if character else {"url": ""}
+            url = selected.get("url") or _reference_url(character)
             if url:
+                variant_label = selected.get("label") if selected.get("label") != "默认" else ""
                 refs.append({
                     "source_type": "character",
                     "name": character.get("name") or fallback_name,
                     "url": url,
-                    "role_description": f"角色：{character.get('name') or fallback_name}",
+                    "role_description": f"角色：{character.get('name') or fallback_name}{('，' + variant_label) if variant_label else ''}",
                 })
 
         referenced_names = extract_storyboard_reference_names(prompt_json)
@@ -564,13 +569,15 @@ class StoryboardFirstFrameGridService:
             if name in referenced_character_names or name in hidden_character_names or world_id is None:
                 continue
             character = _to_dict(CharacterModel.get_by_name(int(world_id), name))
-            url = _reference_url(character)
+            selected = select_reference_variant_for_asset(prompt_json, character, "character") if character else {"url": ""}
+            url = selected.get("url") or _reference_url(character)
             if url:
+                variant_label = selected.get("label") if selected.get("label") != "默认" else ""
                 refs.append({
                     "source_type": "character",
                     "name": character.get("name") or name,
                     "url": url,
-                    "role_description": f"角色：{character.get('name') or name}",
+                    "role_description": f"角色：{character.get('name') or name}{('，' + variant_label) if variant_label else ''}",
                 })
                 referenced_character_names.add(name)
 
@@ -610,13 +617,15 @@ class StoryboardFirstFrameGridService:
                 referenced_prop_names.add(name)
 
         location = self._resolve_location(prompt_json)
-        location_url = _reference_url(location)
+        selected_location = select_reference_variant_for_asset(prompt_json, location, "location") if location else {"url": ""}
+        location_url = selected_location.get("url") or _reference_url(location)
         if location_url:
+            variant_label = selected_location.get("label") if selected_location.get("label") != "默认" else ""
             refs.append({
                 "source_type": "location",
                 "name": location.get("name") or "",
                 "url": location_url,
-                "role_description": f"场景：{location.get('name') or ''}",
+                "role_description": f"场景：{location.get('name') or ''}{('，' + variant_label) if variant_label else ''}",
             })
 
         deduped: List[Dict[str, str]] = []

@@ -18,11 +18,12 @@ const adaptersFactory = new Function(
 const { assetFromApi, mapAssetAvatar, normalizePagedList } = adaptersFactory();
 
 const renderSource = fs.readFileSync(renderPath, 'utf8')
-  .replace(/^import\s+.*?;\r?\n/gm, '')
+  .replace(/^import[\s\S]*?from\s+['"][^'"]+['"];\r?\n/gm, '')
   .replace(/export\s+function\s+/g, 'function ');
 
 const renderFactory = new Function(
   'mapAssetAvatar',
+  'characterReferenceSelectionKey',
   renderSource + '\nreturn { renderPromptWithInlineRoles };'
 );
 
@@ -53,8 +54,18 @@ class FakeElement {
     this.title = '';
     this.src = '';
     this.alt = '';
+    this.dataset = {};
     this.style = { cssText: '' };
     this._textContent = '';
+    this.classList = {
+      add: (...classes) => {
+        const existing = this.className ? this.className.split(/\s+/) : [];
+        for (const cls of classes) {
+          if (cls && !existing.includes(cls)) existing.push(cls);
+        }
+        this.className = existing.join(' ');
+      },
+    };
   }
 
   appendChild(child) {
@@ -97,7 +108,12 @@ global.document = {
   createElement: tagName => new FakeElement(tagName),
   createTextNode: text => new FakeTextNode(text),
 };
-const { renderPromptWithInlineRoles } = renderFactory(mapAssetAvatar);
+function characterReferenceSelectionKey(character) {
+  const id = character?.id ?? character?.character_id ?? character?.characterId ?? character?.db_id;
+  if (id !== null && id !== undefined && id !== '') return String(id);
+  return character?.name ? `name:${String(character.name).trim().toLowerCase()}` : '';
+}
+const { renderPromptWithInlineRoles } = renderFactory(mapAssetAvatar, characterReferenceSelectionKey);
 
 const prop = assetFromApi({
   id: 18,

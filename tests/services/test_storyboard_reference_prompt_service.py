@@ -87,6 +87,104 @@ def test_build_reference_legend_renders_empty_name_without_colon():
     )
 
 
+def test_reference_selection_uses_valid_character_variant():
+    prompt_json = {
+        "scene_desc": "【【奶昔】】站在大厅。",
+        "reference_selections": {
+            "schema_version": 1,
+            "characters": {
+                "4": {
+                    "character_id": 4,
+                    "name": "奶昔",
+                    "url": "/upload/character/milkshake_business.png",
+                    "label": "商务服装",
+                    "source": "reference_images",
+                }
+            },
+        },
+    }
+    characters = [{
+        "id": 4,
+        "name": "奶昔",
+        "reference_image": "/upload/character/milkshake.png",
+        "reference_images": [
+            {"url": "/upload/character/milkshake_business.png", "label": "商务服装"},
+        ],
+    }]
+
+    items = build_storyboard_reference_items(
+        prompt_json=prompt_json,
+        characters=characters,
+        location=None,
+    )
+
+    assert items[0]["url"] == "/upload/character/milkshake_business.png"
+    assert items[0]["variant_label"] == "商务服装"
+    assert "图1是角色：奶昔，商务服装" in build_reference_legend(items)
+
+
+def test_reference_selection_rejects_cross_asset_url_and_falls_back():
+    prompt_json = {
+        "scene_desc": "【【奶昔】】站在大厅。",
+        "reference_selections": {
+            "schema_version": 1,
+            "characters": {
+                "4": {
+                    "character_id": 4,
+                    "name": "奶昔",
+                    "url": "/upload/character/other_role.png",
+                    "label": "伪造服装",
+                    "source": "reference_images",
+                }
+            },
+            "location": {
+                "location_id": 9,
+                "name": "大厅",
+                "url": "/upload/location/other_room.png",
+                "label": "伪造角度",
+                "source": "reference_images",
+            },
+        },
+    }
+    characters = [{
+        "id": 4,
+        "name": "奶昔",
+        "reference_image": "/upload/character/milkshake.png",
+        "reference_images": [{"url": "/upload/character/milkshake_business.png", "label": "商务服装"}],
+    }]
+    location = {
+        "id": 9,
+        "name": "大厅",
+        "reference_image": "/upload/location/hall.png",
+        "reference_images": [{"url": "/upload/location/hall_right.png", "label": "右侧视角"}],
+    }
+
+    items = build_storyboard_reference_items(
+        prompt_json=prompt_json,
+        characters=characters,
+        location=location,
+    )
+
+    assert [item["url"] for item in items] == [
+        "/upload/character/milkshake.png",
+        "/upload/location/hall.png",
+    ]
+    assert all("variant_label" not in item for item in items)
+
+
+def test_reference_selection_keeps_legacy_url_only_asset_fallback():
+    prompt_json = {"scene_desc": "【【奶昔】】站在大厅。"}
+    characters = [{"id": 4, "name": "奶昔", "url": "/upload/character/legacy.png"}]
+
+    items = build_storyboard_reference_items(
+        prompt_json=prompt_json,
+        characters=characters,
+        location=None,
+    )
+
+    assert items[0]["url"] == "/upload/character/legacy.png"
+
+
 def test_storyboard_image_skill_requires_reference_legend_and_prompt_matched_assets():
     from pathlib import Path
 

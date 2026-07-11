@@ -53,6 +53,9 @@
 - 参考图清单现在复用 `services/storyboard_reference_prompt_service.py`：只包含当前画面提示词/视频提示词反向匹配出的角色、道具，再追加当前场景图；不会因为 `character_desc`、历史 `prompt_json.props`、全局画风图或已有首帧自动增加参考图。
 - 道具参考图以当前分镜的画面提示词和视频提示词为准，优先识别 `〖〖道具名〗〗`；历史 `prompt_json.props` 只作为候选信息，不能单独决定本次参考图。
 - 前端提示词框会把 `〖〖道具名〗〗` 渲染为道具 chip，并从道具库的 `reference_image` / `reference_images` 等字段读取缩略图；道具列表加载上限保持足够大，避免世界道具较多时后面的道具无法显示参考图。
+- 前端提示词框会把角色 chip 渲染为可点击参考图选择入口。用户可在当前分镜内为角色选择主参考图或 `reference_images` 中的服装变体；场景 chip 可选择主参考图或多角度变体，浮层右侧的“切换场景”继续进入原有场景切换流程。
+- 角色服装和场景角度选择保存在 `storyboard_scene.prompt_json.reference_selections`，同一分镜的图片提示词、视频提示词、普通首帧生成、分镜助手视频生成共用这一套选择。刷新页面后 adapter 会重新解析该字段恢复 chip 选中态。
+- 后端参考图服务会校验选择结果。选中的 URL 只有在仍属于对应角色/场景的 `reference_image` 或 `reference_images` 时才会采用；跨角色、跨场景或已删除的 URL 会自动回退主参考图，不阻塞生成。
 - 参考图清单非空时必须调用 `edit_image`，把清单中的 HTTP/HTTPS URL 按顺序用英文逗号拼接为 `image_url`，不要再询问用户选择文生图还是图生图，也不要传入相对路径或本地路径。
 - 调用 `edit_image` 时，最终 `prompt` 末尾必须包含 `参考图说明：图1是角色：...`，确保模型知道每张参考图对应的角色、道具或场景。
 - 图片目标没有任何参考图时才调用 `generate_text_to_image`。

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 ROLE_TAG_RE = re.compile(r"【【([^】]+)】】")
@@ -78,6 +78,112 @@ def _reference_url(asset: Dict[str, Any]) -> str:
     return ""
 
 
+def _reference_image_variants(asset: Dict[str, Any]) -> List[Dict[str, str]]:
+    asset = asset or {}
+    variants: List[Dict[str, str]] = []
+    primary = ""
+    for key in ("selected_reference_image", "reference_image", "image_url", "avatar", "pic", "url", "file_url", "path"):
+        if asset.get(key):
+            primary = asset[key]
+            break
+    if primary:
+        variants.append({
+            "url": str(primary),
+            "label": "默认",
+            "source": "reference_image",
+            "angle": "",
+        })
+    refs = asset.get("reference_images")
+    if isinstance(refs, str):
+        try:
+            refs = json.loads(refs)
+        except Exception:
+            refs = []
+    if isinstance(refs, list):
+        for index, item in enumerate(refs, start=1):
+            if isinstance(item, str):
+                url = item
+                label = f"参考图{index}"
+                angle = ""
+            elif isinstance(item, dict):
+                url = (
+                    item.get("url")
+                    or item.get("file_url")
+                    or item.get("image_url")
+                    or item.get("reference_image")
+                    or item.get("path")
+                    or ""
+                )
+                label = item.get("label") or item.get("name") or item.get("title") or item.get("caption") or item.get("angle") or item.get("view") or f"参考图{index}"
+                angle = item.get("angle") or item.get("view") or ""
+            else:
+                continue
+            if url and not any(variant["url"] == str(url) for variant in variants):
+                variants.append({
+                    "url": str(url),
+                    "label": str(label or ""),
+                    "source": "reference_images",
+                    "angle": str(angle or ""),
+                })
+    return variants
+
+
+def _selection_key(asset: Dict[str, Any]) -> str:
+    asset_id = asset.get("id") or asset.get("db_id") or asset.get("character_db_id") or asset.get("location_db_id")
+    if asset_id not in (None, ""):
+        return str(asset_id)
+    name = _clean_name(asset.get("name")).replace(" ", "")
+    return f"name:{name}" if name else ""
+
+
+def _selected_variant(asset: Dict[str, Any], selection: Optional[Dict[str, Any]]) -> Tuple[str, str, str]:
+    variants = _reference_image_variants(asset)
+    fallback = variants[0] if variants else {"url": "", "label": "", "source": ""}
+    selected_url = str((selection or {}).get("url") or "")
+    if selected_url:
+        for variant in variants:
+            if variant["url"] == selected_url:
+                return variant["url"], variant.get("label") or str((selection or {}).get("label") or ""), variant.get("source") or ""
+    return fallback.get("url", ""), fallback.get("label", ""), fallback.get("source", "")
+
+
+def _reference_selections(prompt_json: Dict[str, Any]) -> Dict[str, Any]:
+    selections = prompt_json.get("reference_selections")
+    return selections if isinstance(selections, dict) else {}
+
+
+def select_reference_variant_for_asset(
+    prompt_json: Any,
+    asset: Dict[str, Any],
+    asset_type: str,
+) -> Dict[str, str]:
+    """Safely resolve a scene-level reference-image selection for one asset.
+
+    The selected URL is accepted only when it still belongs to the asset's
+    `reference_image` or `reference_images`; otherwise the asset's primary
+    reference image is returned.
+    """
+    asset = asset or {}
+    prompt = _as_dict(prompt_json)
+    selections = _reference_selections(prompt)
+    selection: Optional[Dict[str, Any]] = None
+    if asset_type == "character":
+        character_selections = selections.get("characters") if isinstance(selections.get("characters"), dict) else {}
+        selection = character_selections.get(_selection_key(asset))
+        if selection is None:
+            name_key = f"name:{_clean_name(asset.get('name')).replace(' ', '')}"
+            selection = character_selections.get(name_key)
+    elif asset_type == "location":
+        raw_location = selections.get("location")
+        selection = raw_location if isinstance(raw_location, dict) else None
+    url, label, source = _selected_variant(asset or {}, selection)
+    return {
+        "url": url,
+        "label": label,
+        "source": source,
+    }
+
+
 def _asset_by_name(assets: Iterable[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:
     target = _clean_name(name)
     for asset in assets or []:
@@ -123,12 +229,25 @@ def _prompt_text(prompt_json: Dict[str, Any], video_prompt: str = "") -> str:
     return "\n".join(str(part) for part in parts if part)
 
 
-def _add_reference_item(items: List[Dict[str, str]], asset_type: str, name: str, url: str) -> None:
+def _add_reference_item(
+    items: List[Dict[str, str]],
+    asset_type: str,
+    name: str,
+    url: str,
+    *,
+    variant_label: str = "",
+    variant_source: str = "",
+) -> None:
     if not name or not url:
         return
     if any(item["url"] == url or (item["type"] == asset_type and item["name"] == name) for item in items):
         return
-    items.append({"type": asset_type, "name": name, "url": url})
+    item = {"type": asset_type, "name": name, "url": url}
+    if variant_label and variant_label != "默认":
+        item["variant_label"] = variant_label
+    if variant_source:
+        item["variant_source"] = variant_source
+    items.append(item)
 
 
 def extract_storyboard_reference_names(
@@ -176,7 +295,19 @@ def build_storyboard_reference_items(
     referenced_names = extract_storyboard_reference_names(prompt, video_prompt)
     for name in referenced_names["characters"]:
         asset = _asset_by_name(characters, name)
-        _add_reference_item(items, "角色", name, _reference_url(asset or {}))
+        if asset:
+            selected = select_reference_variant_for_asset(prompt, asset, "character")
+            url, variant_label, variant_source = selected["url"], selected["label"], selected["source"]
+        else:
+            url, variant_label, variant_source = _reference_url({}), "", ""
+        _add_reference_item(
+            items,
+            "角色",
+            name,
+            url,
+            variant_label=variant_label,
+            variant_source=variant_source,
+        )
 
     for name in referenced_names["props"]:
         prompt_candidate = next(
@@ -193,7 +324,19 @@ def build_storyboard_reference_items(
             "name": prompt["source"].get("location_name"),
         }
     loc_name = _clean_name(loc.get("name")) if isinstance(loc, dict) else ""
-    _add_reference_item(items, "场景", loc_name, _reference_url(loc if isinstance(loc, dict) else {}))
+    if isinstance(loc, dict):
+        selected = select_reference_variant_for_asset(prompt, loc, "location")
+        url, variant_label, variant_source = selected["url"], selected["label"], selected["source"]
+    else:
+        url, variant_label, variant_source = "", "", ""
+    _add_reference_item(
+        items,
+        "场景",
+        loc_name,
+        url,
+        variant_label=variant_label,
+        variant_source=variant_source,
+    )
 
     return items
 
@@ -205,7 +348,9 @@ def build_reference_legend(items: List[Dict[str, str]], start_index: int = 1) ->
     for index, item in enumerate(items, start=start_index):
         item_type = item.get("type") or "参考图"
         name = _clean_name(item.get("name"))
-        parts.append(f"图{index}是{item_type}：{name}" if name else f"图{index}是{item_type}")
+        variant_label = _clean_name(item.get("variant_label"))
+        suffix = f"，{variant_label}" if variant_label else ""
+        parts.append(f"图{index}是{item_type}：{name}{suffix}" if name else f"图{index}是{item_type}{suffix}")
     return "参考图说明：" + "。".join(parts) + "。"
 
 

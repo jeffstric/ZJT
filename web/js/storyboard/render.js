@@ -1,5 +1,5 @@
 import state, { getCurrentScene, getTotalDuration } from './state.js';
-import { formatDuration, mapAssetAvatar } from './adapters.js';
+import { characterReferenceSelectionKey, formatDuration, mapAssetAvatar } from './adapters.js';
 import { icon } from './icons.js';
 import { t as i18nT } from './utils.js';
 import {
@@ -89,7 +89,7 @@ function tagPlainRolesOutsideProps(text, names) {
 
 // 将提示词文本中的角色标记替换为 <img>角色名 格式
 // 参考 video_workflow.html 分镜节点的 renderPromptWithInlineChars
-export function renderPromptWithInlineRoles(text, usedChars, usedProps) {
+export function renderPromptWithInlineRoles(text, usedChars, usedProps, scene = null) {
     if (!text) return '<span style="color:#999;">(空)</span>';
 
     text = String(text).trim();
@@ -134,6 +134,18 @@ export function renderPromptWithInlineRoles(text, usedChars, usedProps) {
         const chip = document.createElement('span');
         chip.className = isProp ? 'prop-chip' : 'role-chip';
         chip.title = assetName;
+        if (!isProp) {
+            const selectionKey = characterReferenceSelectionKey(asset || { name: assetName });
+            const selection = scene?.referenceSelections?.characters?.[selectionKey];
+            chip.dataset.referenceVariant = 'character';
+            chip.dataset.action = 'select-character-reference';
+            chip.dataset.characterName = assetName;
+            if (asset?.id != null) chip.dataset.characterId = String(asset.id);
+            if (selection?.url) {
+                chip.classList.add('has-reference-selection');
+                chip.title = `${assetName} · ${selection.label || '已选择参考图'}`;
+            }
+        }
         if (avatarUrl) {
             const avatar = document.createElement('img');
             avatar.src = getThumbnailUrl(avatarUrl, 16);
@@ -148,6 +160,16 @@ export function renderPromptWithInlineRoles(text, usedChars, usedProps) {
         const nameSpan = document.createElement('span');
         nameSpan.textContent = assetName;
         chip.appendChild(nameSpan);
+        if (!isProp) {
+            const selectionKey = characterReferenceSelectionKey(asset || { name: assetName });
+            const selection = scene?.referenceSelections?.characters?.[selectionKey];
+            if (selection?.label) {
+                const label = document.createElement('span');
+                label.className = 'reference-selection-label';
+                label.textContent = selection.label;
+                chip.appendChild(label);
+            }
+        }
         displayEl.appendChild(chip);
         lastIndex = match.index + match[0].length;
     }
@@ -349,9 +371,12 @@ function renderScenePanel(scene) {
     if (currentLocation) {
         const loc = currentLocation;
         const locImg = loc.avatar || loc.reference_image;
-        locationHtml = `<span class="asset-chip" data-action="switch-location" data-scene-id="${scene.id}" title="点击切换场景">
+        const locationSelection = scene.referenceSelections?.location;
+        const locationLabel = locationSelection?.label || locationSelection?.angle || '';
+        locationHtml = `<span class="asset-chip ${locationSelection?.url ? 'has-reference-selection' : ''}" data-action="select-location-reference" data-scene-id="${scene.id}" data-location-id="${escapeHtml(loc.id || loc.db_id || '')}" title="点击选择场景角度">
             ${locImg ? `<img src="${escapeHtml(getThumbnailUrl(locImg, 24))}" alt="">` : ''}
             ${escapeHtml(loc.name || '场景')}
+            ${locationLabel ? `<span class="reference-selection-label">${escapeHtml(locationLabel)}</span>` : ''}
             <span class="remove-x" data-action="remove-location" data-scene-id="${scene.id}" title="移除">×</span>
         </span>`;
     } else {
@@ -373,7 +398,7 @@ function renderScenePanel(scene) {
                 </div>
                 <div class="info-card-body">
                     <div style="font-size:10px;color:#9ca3af;margin-bottom:2px;">提示：输入 @ 可插入角色或道具</div>
-                    <div class="prompt-display" data-prompt-type="scene" data-scene-id="${scene.id}" style="border:1px solid #ccc; padding:8px; border-radius:4px; background:#fff; min-height:80px; white-space:pre-wrap; font-size:12px; cursor:text; overflow:auto;">${renderPromptWithInlineRoles(prompt.scene_desc || '', allChars, state.props)}</div>
+                    <div class="prompt-display" data-prompt-type="scene" data-scene-id="${scene.id}" style="border:1px solid #ccc; padding:8px; border-radius:4px; background:#fff; min-height:80px; white-space:pre-wrap; font-size:12px; cursor:text; overflow:auto;">${renderPromptWithInlineRoles(prompt.scene_desc || '', allChars, state.props, scene)}</div>
                 </div>
             </div>
 
@@ -383,7 +408,7 @@ function renderScenePanel(scene) {
                 </div>
                 <div class="info-card-body">
                     <div style="font-size:10px;color:#9ca3af;margin-bottom:2px;">提示：输入 @ 可插入角色或道具</div>
-                    <div class="prompt-display" data-prompt-type="video" data-scene-id="${scene.id}" style="border:1px solid #ccc; padding:8px; border-radius:4px; background:#fff; min-height:80px; white-space:pre-wrap; font-size:12px; cursor:text; overflow:auto;">${renderPromptWithInlineRoles(scene.videoPrompt || '', allChars, state.props)}</div>
+                    <div class="prompt-display" data-prompt-type="video" data-scene-id="${scene.id}" style="border:1px solid #ccc; padding:8px; border-radius:4px; background:#fff; min-height:80px; white-space:pre-wrap; font-size:12px; cursor:text; overflow:auto;">${renderPromptWithInlineRoles(scene.videoPrompt || '', allChars, state.props, scene)}</div>
                 </div>
             </div>
         </div>`;

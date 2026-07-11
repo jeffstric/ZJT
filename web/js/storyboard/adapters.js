@@ -84,7 +84,7 @@ export function assetFromApi(item) {
     };
 }
 
-function parseReferenceImages(value) {
+export function parseReferenceImages(value) {
     if (!value) return [];
     if (Array.isArray(value)) return value;
     if (typeof value !== 'string') return [];
@@ -96,6 +96,48 @@ function parseReferenceImages(value) {
     } catch {
         return [];
     }
+}
+
+function normalizeReferenceSelectionItem(value) {
+    if (!value || typeof value !== 'object') return null;
+    const url = value.url || value.reference_image || value.image_url || value.file_url || '';
+    if (!url) return null;
+    return {
+        character_id: value.character_id ?? value.characterId ?? null,
+        location_id: value.location_id ?? value.locationId ?? null,
+        name: value.name || '',
+        url,
+        label: value.label || '',
+        angle: value.angle || '',
+        source: value.source || '',
+    };
+}
+
+export function normalizeReferenceSelections(value) {
+    const raw = value && typeof value === 'object' ? value : {};
+    const characters = {};
+    const rawCharacters = raw.characters && typeof raw.characters === 'object' ? raw.characters : {};
+    Object.entries(rawCharacters).forEach(([key, item]) => {
+        const normalized = normalizeReferenceSelectionItem(item);
+        if (normalized) characters[key] = normalized;
+    });
+    const location = normalizeReferenceSelectionItem(raw.location);
+    return {
+        schema_version: 1,
+        characters,
+        location,
+    };
+}
+
+function hasReferenceSelections(value) {
+    return Boolean(value?.location || Object.keys(value?.characters || {}).length > 0);
+}
+
+export function characterReferenceSelectionKey(character) {
+    const id = character?.id ?? character?.character_id ?? character?.characterId ?? character?.db_id;
+    if (id !== null && id !== undefined && id !== '') return String(id);
+    const name = String(character?.name || '').trim().replace(/\s+/g, '');
+    return name ? `name:${name}` : '';
 }
 
 export function dialogueFromApi(raw = {}) {
@@ -172,6 +214,8 @@ export function sceneFromApi(raw = {}) {
         // 当前分镜关联的场景/道具（从 prompt_json 或顶层提取，后端创建时会放在 prompt 里）
         location: raw.location || prompt.location || (prompt.source ? { id: prompt.source.location_db_id || prompt.source.location_id, name: prompt.source.location_name } : null),
         props: raw.props || prompt.props || [],
+        referenceSelections: normalizeReferenceSelections(prompt.reference_selections),
+        _fullPrompt: prompt,
         raw,
     };
 }
@@ -189,16 +233,27 @@ export function sceneToPromptPayload(scene) {
     let original = {};
     if (scene.raw && scene.raw.prompt_json) {
         original = typeof scene.raw.prompt_json === 'string' ? JSON.parse(scene.raw.prompt_json) : scene.raw.prompt_json;
-    } else if (scene._fullPrompt) {
-        original = scene._fullPrompt;
     }
-    return {
+    if (scene._fullPrompt && typeof scene._fullPrompt === 'object') {
+        original = { ...original, ...scene._fullPrompt };
+    }
+    if (p && typeof p === 'object') {
+        original = { ...original, ...p };
+    }
+    const referenceSelections = normalizeReferenceSelections(scene.referenceSelections || original.reference_selections);
+    const payload = {
         ...original,
         perspective: p.perspective || info.perspective || '',
         style: p.style || info.style || '',
         scene_desc: p.scene_desc || info.sceneDesc || '',
         character_desc: p.character_desc || info.charDesc || '',
     };
+    if (hasReferenceSelections(referenceSelections)) {
+        payload.reference_selections = referenceSelections;
+    } else {
+        delete payload.reference_selections;
+    }
+    return payload;
 }
 
 export function sceneToUpdatePayload(scene) {

@@ -21,7 +21,7 @@ assert.match(
 
 assert.match(
   renderSource,
-  /<span class="scene-timeline-media-frame">[\s\S]*<img src="\$\{escapeHtml\(scene\.firstFrameUrl\)\}"/,
+  /function renderTimelineMediaFrame\(scene\)[\s\S]*class="scene-timeline-media-frame first-frame-\$\{status\}"[\s\S]*<img src="\$\{escapeHtml\(scene\.firstFrameUrl\)\}"/,
   'timeline thumbnails should wrap media in a dedicated contain frame'
 );
 

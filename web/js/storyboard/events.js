@@ -20,6 +20,11 @@ import {
     resetAutoMissingImagesFlag,
 } from './auto_missing_images.js';
 import { getAutoCompleteSummary } from './auto_missing_images_state.js';
+import {
+    clearLocationReferenceSelection,
+    closeReferenceVariantSelector,
+    openReferenceVariantSelector,
+} from './reference_variant_selector.js';
 
 let generateProgressTimer = null;
 let isTimelineHovered = false;
@@ -605,6 +610,31 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'select-character-reference' && current) {
+        openReferenceVariantSelector({
+            type: 'character',
+            sceneId: current.id,
+            characterId: target.dataset.characterId || '',
+            characterName: target.dataset.characterName || target.textContent || '',
+            anchor: target,
+            notify,
+        });
+        return;
+    }
+
+    if (action === 'select-location-reference') {
+        const sceneId = parseInt(target.dataset.sceneId || target.closest('[data-scene-id]')?.dataset.sceneId, 10);
+        openReferenceVariantSelector({
+            type: 'location',
+            sceneId,
+            locationId: target.dataset.locationId || '',
+            anchor: target,
+            notify,
+            openLocationSwitcher: showLocationDropdown,
+        });
+        return;
+    }
+
     if (action === 'switch-location' || action === 'add-prop' || action === 'remove-location' || action === 'remove-prop') {
         const sceneId = parseInt(target.dataset.sceneId || target.closest('[data-scene-id]')?.dataset.sceneId, 10);
         const sc = state.scenes.find(s => s.id === sceneId);
@@ -612,6 +642,7 @@ async function handleAction(action, target) {
 
         if (action === 'remove-location') {
             sc.location = null;
+            clearLocationReferenceSelection(sc);
             await persistSceneLocationProps(sc);
             return;
         }
@@ -1077,9 +1108,13 @@ export function bindEvents() {
 
         // 提示词框点击切换为编辑 (直接在左侧，角色图片以 <img>角色名 格式内联在内容中)
         // 参考 video_workflow.html 分镜节点 prompt 显示
+        if (event.target.closest('[data-reference-variant]')) {
+            return;
+        }
         const promptDisplay = event.target.closest('.prompt-display');
         if (promptDisplay && !promptDisplay.querySelector('textarea')) {
             closeAllDropdowns();
+            closeReferenceVariantSelector();
             const type = promptDisplay.dataset.promptType;
             const scene = getCurrentScene();
             if (!scene) return;
@@ -1139,11 +1174,14 @@ export function bindEvents() {
 }
 
 async function persistSceneLocationProps(sc) {
-    const prompt = { ...(sc.promptJson || {}) };
+    const prompt = sceneToPromptPayload(sc);
     prompt.location = sc.location ? { id: sc.location.id, name: sc.location.name } : null;
     prompt.props = (sc.props || []).map(p => ({ id: p.id, name: p.name }));
     await api.updateScenePrompt(sc.id, prompt);
     sc.promptJson = prompt;
+    sc.referenceSelections = prompt.reference_selections || sc.referenceSelections;
+    sc._fullPrompt = prompt;
+    if (sc.raw) sc.raw.prompt_json = prompt;
     rerender();
 }
 
@@ -1152,7 +1190,11 @@ async function persistPromptValue(scene, type, value) {
         if (type === 'scene') {
             if (!scene.promptJson) scene.promptJson = {};
             scene.promptJson.scene_desc = value;
-            await api.updateScenePrompt(scene.id, sceneToPromptPayload(scene));
+            const payload = sceneToPromptPayload(scene);
+            await api.updateScenePrompt(scene.id, payload);
+            scene.promptJson = payload;
+            scene._fullPrompt = payload;
+            if (scene.raw) scene.raw.prompt_json = payload;
         } else if (type === 'video') {
             scene.videoPrompt = value;
             await api.updateScene(scene.id, sceneToUpdatePayload(scene));
@@ -1186,6 +1228,7 @@ function showLocationDropdown(sc, anchorEl) {
                     avatar: loc.avatar || loc.reference_image,
                     reference_image: loc.reference_image || loc.avatar
                 };
+                clearLocationReferenceSelection(sc);
                 await persistSceneLocationProps(sc);
                 dropdown.remove();
             };

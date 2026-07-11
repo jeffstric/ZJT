@@ -2468,11 +2468,16 @@ class StoryboardAgentCliService:
             seen.add(url)
             item_type = item.get("type") or "参考图"
             name = item.get("name") or ""
+            variant_label = item.get("variant_label") or ""
+            display_label = f"{item_type}：{name}" if name else item_type
+            if variant_label:
+                display_label = f"{display_label}，{variant_label}"
             items.append({
                 "type": item_type,
                 "source_type": source_type_map.get(item_type, "reference"),
                 "name": name,
-                "label": f"{item_type}：{name}" if name else item_type,
+                "variant_label": variant_label,
+                "label": display_label,
                 "url": url,
             })
         return items
