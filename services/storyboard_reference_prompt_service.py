@@ -131,6 +131,27 @@ def _add_reference_item(items: List[Dict[str, str]], asset_type: str, name: str,
     items.append({"type": asset_type, "name": name, "url": url})
 
 
+def extract_storyboard_reference_names(
+    prompt_json: Any,
+    video_prompt: str = "",
+) -> Dict[str, List[str]]:
+    """Extract ordered role/prop names explicitly referenced by a shot prompt."""
+    prompt = _as_dict(prompt_json)
+    text = _prompt_text(prompt, video_prompt)
+    character_names = _extract_tagged_names(text, ROLE_TAG_RE)
+    prop_names = _extract_tagged_names(text, PROP_TAG_RE)
+    if not prop_names:
+        prompt_props = prompt.get("props") if isinstance(prompt.get("props"), list) else []
+        for candidate in prompt_props:
+            name = _clean_name(candidate.get("name")) if isinstance(candidate, dict) else ""
+            if name and _plain_text_contains_name(text, name):
+                prop_names.append(name)
+    return {
+        "characters": character_names,
+        "props": _dedupe_keep_order(prop_names),
+    }
+
+
 def build_storyboard_reference_items(
     *,
     prompt_json: Any,
@@ -148,23 +169,16 @@ def build_storyboard_reference_items(
     - at most one scene/location reference is appended after matched roles/props.
     """
     prompt = _as_dict(prompt_json)
-    text = _prompt_text(prompt, video_prompt)
     items: List[Dict[str, str]] = []
     characters = characters or []
     props = props or []
 
-    for name in _extract_tagged_names(text, ROLE_TAG_RE):
+    referenced_names = extract_storyboard_reference_names(prompt, video_prompt)
+    for name in referenced_names["characters"]:
         asset = _asset_by_name(characters, name)
         _add_reference_item(items, "角色", name, _reference_url(asset or {}))
 
-    prop_names = _extract_tagged_names(text, PROP_TAG_RE)
-    if not prop_names:
-        prompt_props = prompt.get("props") if isinstance(prompt.get("props"), list) else []
-        for candidate in prompt_props:
-            name = _clean_name(candidate.get("name")) if isinstance(candidate, dict) else ""
-            if name and _plain_text_contains_name(text, name):
-                prop_names.append(name)
-    for name in _dedupe_keep_order(prop_names):
+    for name in referenced_names["props"]:
         prompt_candidate = next(
             (item for item in (prompt.get("props") or []) if isinstance(item, dict) and _clean_name(item.get("name")) == name),
             {"name": name},

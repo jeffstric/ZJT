@@ -1242,6 +1242,123 @@ def test_character_references_from_spatial_skip_offscreen_characters():
     assert refs == [(1, "奶昔_Milkshake")]
 
 
+def test_character_references_from_loose_positions_infer_missing_occupant_type():
+    service = StoryboardFirstFrameGridService(enable_llm_refine=False)
+
+    refs = list(service._character_refs_from_spatial({
+        "loose_positions": [
+            {
+                "character_id": "char_001",
+                "character_db_id": 868,
+                "name": "陈逸飞",
+                "visibility": "visible",
+                "framing_role": "primary_subject",
+            },
+            {
+                "character_id": "char_002",
+                "character_db_id": 867,
+                "name": "林星辰",
+                "visibility": "partial",
+                "framing_role": "secondary_continuity",
+            },
+            {
+                "occupant_type": "prop",
+                "db_id": 6868,
+                "name": "银色指环",
+                "visibility": "visible",
+            },
+        ]
+    }))
+
+    assert refs == [(868, "陈逸飞"), (867, "林星辰")]
+
+
+def test_scene_reference_items_fall_back_to_tagged_character_and_prop_names(monkeypatch):
+    from services import storyboard_first_frame_grid_service as grid_service_module
+
+    class FakeCharacterModel:
+        @staticmethod
+        def get_by_name(world_id, name):
+            assert world_id == 9
+            if name != "陈逸飞":
+                return None
+            return SimpleNamespace(
+                id=868,
+                name=name,
+                reference_image="https://cdn.test/chen.png",
+            )
+
+    class FakePropsModel:
+        @staticmethod
+        def get_by_name(world_id, name):
+            assert world_id == 9
+            if name != "笔记本大别墅计划":
+                return None
+            return SimpleNamespace(
+                id=6867,
+                name=name,
+                reference_image="https://cdn.test/notebook.png",
+            )
+
+    monkeypatch.setattr(grid_service_module, "CharacterModel", FakeCharacterModel)
+    monkeypatch.setattr(grid_service_module, "PropsModel", FakePropsModel)
+
+    refs = StoryboardFirstFrameGridService(enable_llm_refine=False)._scene_reference_items(
+        {
+            "scene_desc": "【【陈逸飞】】翻开〖〖笔记本大别墅计划〗〗。",
+            "spatial_layout": {},
+            "props": [],
+        },
+        world_id=9,
+    )
+
+    assert refs == [
+        {
+            "source_type": "character",
+            "name": "陈逸飞",
+            "url": "https://cdn.test/chen.png",
+            "role_description": "角色：陈逸飞",
+        },
+        {
+            "source_type": "prop",
+            "name": "笔记本大别墅计划",
+            "url": "https://cdn.test/notebook.png",
+            "role_description": "道具：笔记本大别墅计划",
+        },
+    ]
+
+
+def test_scene_reference_items_do_not_restore_tagged_offscreen_character(monkeypatch):
+    from services import storyboard_first_frame_grid_service as grid_service_module
+
+    class FakeCharacterModel:
+        @staticmethod
+        def get_by_name(world_id, name):
+            raise AssertionError("offscreen characters must not be restored from prompt tags")
+
+    monkeypatch.setattr(grid_service_module, "CharacterModel", FakeCharacterModel)
+
+    refs = StoryboardFirstFrameGridService(enable_llm_refine=False)._scene_reference_items(
+        {
+            "scene_desc": "镜头外的【【林星辰】】仍留在原位。",
+            "spatial_layout": {
+                "loose_positions": [
+                    {
+                        "character_id": "char_002",
+                        "character_db_id": 867,
+                        "name": "林星辰",
+                        "visibility": "offscreen",
+                        "framing_role": "offscreen_continuity",
+                    }
+                ]
+            },
+        },
+        world_id=9,
+    )
+
+    assert not any(ref["source_type"] == "character" for ref in refs)
+
+
 def test_llm_refiner_receives_previous_grid_prompt_context(monkeypatch):
     from llm import llm_client_factory
 

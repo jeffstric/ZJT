@@ -20,6 +20,7 @@ from model.storyboard_image_batch import StoryboardImageBatchItemModel
 from model.storyboard_scene import StoryboardSceneModel
 from script_writer_core.constant import ItemType
 from script_writer_core.mcp_tool import submit_grid_image_task
+from services.storyboard_reference_prompt_service import extract_storyboard_reference_names
 from services.storyboard_spatial import build_spatial_prompt_context
 
 logger = logging.getLogger(__name__)
@@ -352,7 +353,11 @@ class StoryboardFirstFrameGridService:
     ) -> bool:
         grid_size = GridConfig.SIZE_2X2 if len(chunk) <= GridConfig.SIZE_2X2 else GridConfig.SIZE_3X3
         real_scenes = [scenes_by_id[int(item["scene_id"])] for item in chunk]
-        manifest, per_scene_indices = self._build_reference_manifest(real_scenes, previous_reference=previous_reference)
+        manifest, per_scene_indices = self._build_reference_manifest(
+            real_scenes,
+            world_id=_safe_int(storyboard.get("world_id")),
+            previous_reference=previous_reference,
+        )
         item_names = [str(scene.get("title") or f"scene_{scene.get('id')}") for scene in real_scenes]
         prompts = [
             self._build_cell_prompt(scene, per_scene_indices.get(int(scene["id"]), []), manifest)
@@ -487,6 +492,7 @@ class StoryboardFirstFrameGridService:
         self,
         scenes: Sequence[Dict[str, Any]],
         *,
+        world_id: Optional[int] = None,
         previous_reference: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[int, List[int]]]:
         manifest: List[Dict[str, Any]] = []
@@ -496,7 +502,7 @@ class StoryboardFirstFrameGridService:
         for scene in scenes:
             scene_id = int(scene["id"])
             prompt = _as_prompt_json(scene.get("prompt_json"))
-            refs = self._scene_reference_items(prompt)
+            refs = self._scene_reference_items(prompt, world_id=world_id)
             indices = []
             for ref in refs:
                 key = (ref["source_type"], ref["name"], ref["url"])
@@ -522,9 +528,20 @@ class StoryboardFirstFrameGridService:
                     per_scene_indices[scene_id].append(previous_index)
         return manifest, per_scene_indices
 
-    def _scene_reference_items(self, prompt_json: Dict[str, Any]) -> List[Dict[str, str]]:
+    def _scene_reference_items(
+        self,
+        prompt_json: Dict[str, Any],
+        *,
+        world_id: Optional[int] = None,
+    ) -> List[Dict[str, str]]:
         refs: List[Dict[str, str]] = []
         spatial = prompt_json.get("spatial_layout") if isinstance(prompt_json.get("spatial_layout"), dict) else {}
+        _, hidden_entities = self._spatial_entities(spatial)
+        hidden_character_names = {
+            str(entity.get("name") or "").strip()
+            for entity in hidden_entities
+            if str(entity.get("occupant_type") or "character").strip().lower() == "character"
+        }
 
         for character_id, fallback_name in self._character_refs_from_spatial(spatial):
             character = _to_dict(CharacterModel.get_by_id(int(character_id))) if character_id else {}
@@ -536,6 +553,26 @@ class StoryboardFirstFrameGridService:
                     "url": url,
                     "role_description": f"角色：{character.get('name') or fallback_name}",
                 })
+
+        referenced_names = extract_storyboard_reference_names(prompt_json)
+        referenced_character_names = {
+            str(ref.get("name") or "").strip()
+            for ref in refs
+            if ref.get("source_type") == "character"
+        }
+        for name in referenced_names["characters"]:
+            if name in referenced_character_names or name in hidden_character_names or world_id is None:
+                continue
+            character = _to_dict(CharacterModel.get_by_name(int(world_id), name))
+            url = _reference_url(character)
+            if url:
+                refs.append({
+                    "source_type": "character",
+                    "name": character.get("name") or name,
+                    "url": url,
+                    "role_description": f"角色：{character.get('name') or name}",
+                })
+                referenced_character_names.add(name)
 
         for prop in prompt_json.get("props") or []:
             if not isinstance(prop, dict):
@@ -552,6 +589,25 @@ class StoryboardFirstFrameGridService:
                     "url": url,
                     "role_description": f"道具：{name}",
                 })
+
+        referenced_prop_names = {
+            str(ref.get("name") or "").strip()
+            for ref in refs
+            if ref.get("source_type") == "prop"
+        }
+        for name in referenced_names["props"]:
+            if name in referenced_prop_names or world_id is None:
+                continue
+            prop_data = _to_dict(PropsModel.get_by_name(int(world_id), name))
+            url = _reference_url(prop_data)
+            if url:
+                refs.append({
+                    "source_type": "prop",
+                    "name": prop_data.get("name") or name,
+                    "url": url,
+                    "role_description": f"道具：{prop_data.get('name') or name}",
+                })
+                referenced_prop_names.add(name)
 
         location = self._resolve_location(prompt_json)
         location_url = _reference_url(location)
@@ -579,13 +635,24 @@ class StoryboardFirstFrameGridService:
             for slot in container.get("slots") or []:
                 if not isinstance(slot, dict):
                     continue
-                if slot.get("occupant_type") in (None, "character") and _is_visible_spatial_item(slot):
+                if self._is_character_spatial_item(slot) and _is_visible_spatial_item(slot):
                     yield slot.get("character_db_id") or slot.get("db_id"), str(slot.get("name") or "")
         for position in spatial_layout.get("loose_positions") or []:
             if not isinstance(position, dict):
                 continue
-            if position.get("occupant_type") == "character" and _is_visible_spatial_item(position):
+            if self._is_character_spatial_item(position) and _is_visible_spatial_item(position):
                 yield position.get("character_db_id") or position.get("db_id"), str(position.get("name") or "")
+
+    @staticmethod
+    def _is_character_spatial_item(item: Dict[str, Any]) -> bool:
+        occupant_type = str(item.get("occupant_type") or "").strip().lower()
+        if occupant_type:
+            return occupant_type == "character"
+        return bool(
+            item.get("character_id")
+            or item.get("occupant_character_id")
+            or item.get("character_db_id")
+        )
 
     def _spatial_entities(
         self,
