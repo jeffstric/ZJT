@@ -782,7 +782,9 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             bound_item_name = project_ids[0]
 
             if item_type is not None and item_name:
-                # 绑定到具体角色/场景/道具/变体的任务
+                # 绑定到具体角色/场景/道具/变体的任务（必须成功，否则无法回写 JSON）
+                # 图生图源图写入 reference_images，供失败重试时走 image-edit
+                source_refs = [{'url': u, 'role_description': 'source'} for u in parsed_urls]
                 try:
                     task_manager = get_task_manager()
                     task_id = task_manager.create_image_task(
@@ -794,27 +796,32 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                         user_id=user_id,
                         world_id=world_id,
                         prompt=prompt,
-                        task_config_id=text_to_image_task_id,
+                        task_config_id=str(text_to_image_task_id) if text_to_image_task_id is not None else None,
                         aspect_ratio=aspect_ratio,
                         image_size=image_size,
                         is_grid=False,
-                        max_retries=max_retries
+                        max_retries=max_retries,
+                        reference_images=source_refs,
                     )
                     bound_item_type = item_type
                     bound_item_name = item_name
                     logger.info(
                         f"创建图片编辑绑定任务: item_type={item_type}, item_name={item_name}, "
-                        f"project_id={project_ids[0]}"
+                        f"project_id={project_ids[0]}, task_key={task_id}"
                     )
                 except ValueError as e:
-                    return {'success': False, 'error': str(e)}
+                    return {'success': False, 'error': str(e), 'project_ids': project_ids}
                 except Exception as e:
+                    # 绑定失败则无法自动写回 reference_images，必须对调用方报失败
+                    logger.error(
+                        f"图片编辑绑定任务创建失败: item_type={item_type}, item_name={item_name}, "
+                        f"project_id={project_ids[0]}, err={e}",
+                        exc_info=True,
+                    )
                     return {
-                        'success': True,
+                        'success': False,
+                        'error': f'图片编辑请求已提交，但后台绑定任务创建失败（结果无法写回资产）: {str(e)}',
                         'project_ids': project_ids,
-                        'status': 'submitted',
-                        'message': f'图片编辑请求已提交，但后台任务创建失败: {str(e)}',
-                        'warning': f'后台任务创建失败: {str(e)}',
                         'comfyui_base_url': comfyui_base_url,
                         'model_used': model_name,
                     }
@@ -2044,20 +2051,17 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
                 'error': '角色名称不能为空且必须是字符串'
             }
         
-        # 生成安全的文件名
-        safe_name = _sanitize_filename(name)
-        filename = f"character_{safe_name}.json"
-        
-        # 使用FileManager统一路径管理
+        # 使用FileManager统一路径管理，按 name 解析真实文件路径
+        # （兼容 character_中文名.json / sanitize 名 / 拼音临时文件名）
         file_manager = get_file_manager()
-        file_path = file_manager.get_content_file_path(user_id, world_id, "characters", filename)
-        
-        # 检查文件是否存在
-        if not os.path.exists(file_path):
+        resolved_path = file_manager.resolve_character_file_path(name, user_id, world_id)
+        if not resolved_path or not resolved_path.exists():
             return {
                 'success': False,
                 'error': f'角色 "{name}" 不存在，无法更新'
             }
+        file_path = str(resolved_path)
+        filename = resolved_path.name
         
         # 读取现有数据
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -2096,8 +2100,14 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
         # 更新修改时间
         existing_data['updated_at'] = datetime.now().isoformat()
         
-        # 保存更新后的数据
-        success = file_manager.save_json_content(user_id, world_id, "characters", filename, existing_data)
+        # 直接写回已解析到的真实文件路径，避免 sanitize 后写到另一个新文件
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, ensure_ascii=False, indent=2)
+            success = True
+        except Exception as e:
+            logger.error(f"保存角色JSON失败 {file_path}: {e}")
+            success = False
 
         if not success:
             return {

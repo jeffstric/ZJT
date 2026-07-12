@@ -57,6 +57,18 @@ export async function getEditionInfo() {
 export async function createStoryboard(data) {
     return request('/create', { method: 'POST', body: JSON.stringify(data) });
 }
+
+/** 当前用户在某世界下的「集」文件夹（剧本 + 故事板），含尚未创建故事板的集 */
+export async function listStoryboardFolders(worldId) {
+    const qs = worldId != null && worldId !== ''
+        ? `?world_id=${encodeURIComponent(worldId)}`
+        : '';
+    const data = await request(`/folders${qs}`);
+    if (Array.isArray(data?.folders)) return data.folders;
+    if (Array.isArray(data?.data?.folders)) return data.data.folders;
+    if (Array.isArray(data)) return data;
+    return [];
+}
 export async function getStoryboard(storyboardId) {
     return request(`/${storyboardId}`);
 }

@@ -10,6 +10,9 @@ import state, {
     getVideoSupportedDurations,
     resolveVideoDurationSeconds,
     getVideoResolutionOptions,
+    getAgentChatFontSizes,
+    AGENT_CHAT_FONT_STEP_MIN,
+    AGENT_CHAT_FONT_STEP_MAX,
 } from './state.js';
 import { characterReferenceSelectionKey, formatDuration, mapAssetAvatar } from './adapters.js';
 import { icon } from './icons.js';
@@ -20,6 +23,7 @@ import {
     getFirstFrameDisplayStatus,
     getFirstFrameStatusLabel,
 } from './auto_missing_images_state.js';
+import { onDomWillRerender, updatePlayheadPosition } from './playback.js';
 
 // 确保 i18n 在首次 render 前已初始化（bootstrap 中已调用 initI18n）
 
@@ -239,7 +243,11 @@ export function mediaFrame(scene) {
     if (!scene) {
         return '<div class="preview-empty">选择一个分镜开始编辑</div>';
     }
+    // 时间轴预览播放中由 playback.js 接管媒体元素；静态渲染时保留 controls。
     if (scene.videoUrl) {
+        if (state.isPlaying) {
+            return `<video src="${escapeHtml(scene.videoUrl)}" playsinline muted class="preview-media is-playback"></video>`;
+        }
         return `<video src="${escapeHtml(scene.videoUrl)}" controls class="preview-media"></video>`;
     }
     if (scene.firstFrameUrl) {
@@ -247,6 +255,11 @@ export function mediaFrame(scene) {
     }
     const displayStatus = getFirstFrameDisplayStatus(scene);
     return `<div class="preview-empty preview-empty-${displayStatus}">${escapeHtml(getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面')}</div>`;
+}
+
+/** 主预览字幕层 HTML（播放引擎写入文本） */
+export function previewSubtitleHtml() {
+    return '<div class="preview-subtitle" hidden></div>';
 }
 
 function renderFirstFrameStatusMark(scene) {
@@ -331,8 +344,61 @@ export function attachPreviewMediaTransition(newPreview, oldKey) {
     }
 }
 
+function episodeFolderStatusLabel(folder) {
+    if (!folder) return '';
+    if (folder.storyboard_id) {
+        const n = Number(folder.scene_count) || 0;
+        return n > 0 ? `${n} 分镜` : '已创建';
+    }
+    if (folder.status === 'not_created' || folder.script_id) return '未建故事板';
+    return '可新建';
+}
+
+function renderEpisodePicker() {
+    if (!state.showEpisodePicker) return '';
+    const folders = [...(state.episodeFolders || [])]
+        .sort((a, b) => (Number(a.episode_number) || 0) - (Number(b.episode_number) || 0));
+    const currentEp = Number(state.episodeNumber) || 1;
+    const rows = folders.length
+        ? folders.map((f) => {
+            const ep = Number(f.episode_number) || 1;
+            const active = ep === currentEp ? 'active' : '';
+            const title = f.script_title || f.storyboard_title || `第${ep}集`;
+            const status = episodeFolderStatusLabel(f);
+            return `
+                <button type="button" class="episode-picker-item ${active}"
+                    data-action="switch-episode"
+                    data-episode="${ep}"
+                    data-script-id="${f.script_id || ''}"
+                    data-storyboard-id="${f.storyboard_id || ''}"
+                    title="${escapeHtml(title)}">
+                    <span class="episode-picker-ep">第${ep}集</span>
+                    <span class="episode-picker-title">${escapeHtml(truncateText(title, 18))}</span>
+                    <span class="episode-picker-status">${escapeHtml(status)}</span>
+                </button>`;
+        }).join('')
+        : `<div class="episode-picker-empty">${state.episodeFoldersLoading ? '加载中…' : '暂无集列表，可在下方输入集数进入'}</div>`;
+
+    return `
+        <div class="episode-picker-panel" data-episode-picker-panel>
+            <div class="episode-picker-list">${rows}</div>
+            <div class="episode-picker-custom">
+                <label class="episode-picker-custom-label">其他集数</label>
+                <div class="episode-picker-custom-row">
+                    <input type="number" min="1" step="1" class="episode-picker-input"
+                        data-episode-custom-input
+                        placeholder="输入集数"
+                        value="">
+                    <button type="button" class="btn-primary episode-picker-go" data-action="switch-episode-custom">进入</button>
+                </div>
+                <p class="episode-picker-hint">无故事板时将自动创建；有剧本的集会自动关联剧本。</p>
+            </div>
+        </div>`;
+}
+
 function renderHeader() {
     const power = state.computingPower == null ? '--' : state.computingPower;
+    const epOpen = state.showEpisodePicker ? 'open' : '';
     return `
         <header class="header">
             <div class="header-left">
@@ -340,7 +406,15 @@ function renderHeader() {
                 <div>
                     <h1 class="header-title">${escapeHtml(state.title)}</h1>
                     <div class="header-subtitle">
-                        <span>第${state.episodeNumber}集 · </span>
+                        <div class="episode-switcher ${epOpen}" data-episode-switcher>
+                            <button type="button" class="episode-switcher-btn" data-action="toggle-episode-picker"
+                                title="切换集数（可进入尚未创建的故事板）" aria-expanded="${state.showEpisodePicker ? 'true' : 'false'}">
+                                第${state.episodeNumber || 1}集
+                                <span class="episode-switcher-caret" aria-hidden="true">▾</span>
+                            </button>
+                            ${renderEpisodePicker()}
+                        </div>
+                        <span class="header-subtitle-sep">·</span>
                         <select class="header-ratio-select" data-ratio-select title="点击切换画面比例">
                             ${['9:16','3:4','1:1','4:3','16:9'].map(r => 
                                 `<option value="${r}" ${state.workflowRatio === r ? 'selected' : ''}>${r}</option>`
@@ -502,11 +576,18 @@ function renderLeftSidebar(scene) {
         </aside>`;
 }
 
-function videoRoleLabel(role, mode) {
+/**
+ * 媒体槽角标文案：
+ * - 首尾帧模式：首帧 / 尾帧
+ * - 全能参考：图1 / 图2 / …（对齐 marketing_agent 的编号展示）
+ */
+function videoRoleLabel(role, mode, index = 0) {
+    if (mode === 'multi_reference') {
+        return `图${index + 1}`;
+    }
     if (role === 'first_frame') return '首帧';
     if (role === 'last_frame') return '尾帧';
-    if (mode === 'multi_reference') return '参考';
-    return '参考';
+    return `图${index + 1}`;
 }
 
 function renderVideoModeSelector(disabled) {
@@ -562,8 +643,108 @@ function renderVideoModeSelector(disabled) {
         </div>`;
 }
 
-function renderAiPanel() {
+function mediaPlusSvg(size = 18) {
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
+}
+
+function mediaStackRoleText(img, mode, index = 0) {
+    return videoRoleLabel(img.role, mode, index);
+}
+
+function renderMediaStack(disabled) {
+    if (state.chatMode !== 'video') return '';
+
     const scene = getCurrentScene();
+    const mode = state.videoImageMode;
+    const items = state.videoMediaItems || [];
+    const canAdd = canAddVideoMedia();
+    const addTitle = mode === 'first_last_frame'
+        ? (videoModelSupportsLastFrame() ? '上传首帧/尾帧' : '上传首帧')
+        : '上传参考图';
+    const canRestore = scene
+        && isRenderableMediaUrl(scene.firstFrameUrl)
+        && !items.some(item => item.role === 'first_frame');
+    const restoreLabel = mode === 'multi_reference' ? '使用当前分镜图' : '使用当前首帧';
+    const restoreTitle = mode === 'multi_reference'
+        ? '将当前分镜图重新带入参考槽'
+        : '将当前分镜首帧重新带入首帧位';
+
+    const addBtn = (extraClass = '') => canAdd
+        ? `<button type="button" class="media-stack-add ${extraClass}" data-action="add-reference-image"
+                ${disabled ? 'disabled' : ''} title="${escapeHtml(addTitle)}">${mediaPlusSvg(extraClass.includes('is-fab') ? 14 : 18)}</button>`
+        : '';
+
+    const restoreBtn = canRestore
+        ? `<button type="button" class="media-stack-restore" data-action="restore-scene-first-frame" ${disabled ? 'disabled' : ''}
+                title="${escapeHtml(restoreTitle)}">${escapeHtml(restoreLabel)}</button>`
+        : '';
+
+    if (!items.length) {
+        return `
+            <div class="media-stack is-empty">
+                <div class="media-stack-stage">
+                    ${addBtn() || `<div class="media-stack-add" style="opacity:.4;pointer-events:none" title="当前模式无法添加图片">${mediaPlusSvg()}</div>`}
+                </div>
+                ${restoreBtn}
+                <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple>
+            </div>`;
+    }
+
+    const count = items.length;
+    const isMulti = count > 1;
+    const expanded = Boolean(state.mediaStackExpanded);
+    // 叠放视觉最多 3 层；展开/hover 时 DOM 内已有全部卡片（hover 用 CSS，点击用 is-expanded）
+    const stackClass = [
+        'media-stack',
+        isMulti ? 'is-stacked' : 'is-single',
+        expanded ? 'is-expanded' : '',
+    ].filter(Boolean).join(' ');
+
+    const cards = items.map((img, index) => {
+        const isTop = index === items.length - 1;
+        // 非展开叠放时只露最后 3 张，更早的卡片隐藏以免层数过多
+        const hideInStack = isMulti && !expanded && index < items.length - 3;
+        const src = img.uploading
+            ? ''
+            : escapeHtml(getThumbnailUrl(img.thumbnailUrl || img.url || '', 96));
+        const roleText = mediaStackRoleText(img, mode, index);
+        const name = escapeHtml(roleText || img.name || '');
+        return `
+            <div class="media-stack-card ${img.uploading ? 'uploading' : ''} ${isTop ? 'is-top' : ''} ${hideInStack ? 'is-stack-hidden' : ''}"
+                 data-video-media-id="${escapeHtml(String(img.id))}" title="${name}">
+                ${src ? `<img src="${src}" alt="${name}">` : '<div class="media-stack-placeholder"></div>'}
+                ${img.uploading ? `<div class="reference-spinner">${icon('loading', 14)}</div>` : ''}
+                <span class="media-stack-role">${escapeHtml(roleText)}</span>
+                <button type="button" class="media-stack-remove" data-action="remove-video-media"
+                    data-video-media-id="${escapeHtml(String(img.id))}" ${disabled ? 'disabled' : ''} title="移除">×</button>
+            </div>`;
+    }).join('');
+
+    const countBadge = isMulti
+        ? `<span class="media-stack-count">${count}</span>`
+        : '';
+
+    // 右侧虚线 +：仅 hover / focus / expanded 时显示
+    // 注意：toggle 只挂在 thumbs 上，不要挂在整个 stack，否则点 + 会被父级 data-action 抢走并 preventDefault
+    const maxCount = getMaxVideoMediaCount();
+    const addControl = canAdd ? addBtn('is-hover-add') : '';
+
+    return `
+        <div class="${stackClass}">
+            <div class="media-stack-stage">
+                <div class="media-stack-thumbs" data-action="toggle-media-stack"
+                     title="${canAdd ? '添加图片 / 查看全部' : `图片 ${count}/${maxCount}`}">
+                    ${cards}
+                    ${countBadge}
+                </div>
+                ${addControl}
+            </div>
+            ${restoreBtn}
+            <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple>
+        </div>`;
+}
+
+function renderAiPanel() {
     const modes = [
         ['dialogue', '对话改图', '选择对话模型后，可让智能体基于当前画面提示词生成或调整首帧'],
         ['video', '视频生成', '选择对话模型和视频模型后，可让智能体基于当前分镜生成视频'],
@@ -576,98 +757,91 @@ function renderAiPanel() {
         : '和智能体描述要如何生成当前分镜视频';
 
     const isVideo = state.chatMode === 'video';
-    const canAdd = isVideo && canAddVideoMedia();
-    const addTitle = !isVideo
-        ? '上传参考图'
-        : (state.videoImageMode === 'first_last_frame'
-            ? (videoModelSupportsLastFrame() ? '上传首帧/尾帧' : '上传首帧')
-            : '上传参考图');
-    const videoMediaBar = isVideo ? renderVideoMediaBar(disabled) : '';
     const videoModeSelector = isVideo ? renderVideoModeSelector(disabled) : '';
-    const restoreFirstBtn = isVideo
-        && scene
-        && isRenderableMediaUrl(scene.firstFrameUrl)
-        && !(state.videoMediaItems || []).some(item => item.role === 'first_frame')
-        ? `<button type="button" class="restore-first-frame-btn" data-action="restore-scene-first-frame" ${disabled}
-                title="将当前分镜首帧重新带入首帧位">使用当前首帧</button>`
+    const historyOpen = state.agentChatHistoryOpen !== false;
+    const msgCount = (state.agentMessages || []).length;
+    // 常态历史收起时提示条数；hover 可展开
+    const historyMeta = msgCount
+        ? `<span class="ai-chat-header-meta">${msgCount} 条消息</span>`
         : '';
+    const mediaStack = isVideo
+        ? renderMediaStack(disabled)
+        : `<input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple hidden>`;
+    const fontSizes = getAgentChatFontSizes();
+    const fontDownDisabled = fontSizes.step <= AGENT_CHAT_FONT_STEP_MIN ? 'disabled' : '';
+    const fontUpDisabled = fontSizes.step >= AGENT_CHAT_FONT_STEP_MAX ? 'disabled' : '';
+    const fontControls = `
+        <div class="ai-chat-font-controls" title="调节助手区正文字号">
+            <button type="button" class="ai-chat-font-btn" data-action="agent-chat-font-down"
+                ${fontDownDisabled} title="缩小字体 (A−)" aria-label="缩小字体">A−</button>
+            <button type="button" class="ai-chat-font-btn" data-action="agent-chat-font-up"
+                ${fontUpDisabled} title="放大字体 (A+)" aria-label="放大字体">A+</button>
+        </div>`;
+    // 固定展开：点击「展开」后 pin，避免 rerender 丢失 hover；鼠标离开后由 events 清 pin
+    const logPinned = Boolean(state.agentChatLogPinned) || Boolean(state.isAgentRunning);
+    const sectionClass = [
+        'ai-chat-section',
+        historyOpen ? '' : 'is-history-collapsed',
+        state.isAgentRunning ? 'is-agent-running' : '',
+        logPinned ? 'is-chat-log-pinned' : '',
+    ].filter(Boolean).join(' ');
 
     return `
-        <section class="ai-chat-section">
-            <div class="ai-chat-header">${icon('send', 16)} 分镜助手</div>
-            ${agentMessages}
-            ${videoMediaBar}
-            ${restoreFirstBtn}
-            <div class="chat-textarea-row">
-                <button class="reference-add-btn" data-action="add-reference-image" ${disabled || !canAdd ? 'disabled' : ''} title="${escapeHtml(addTitle)}">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 5v14M5 12h14"/>
-                    </svg>
-                </button>
-                <input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple hidden>
-                <textarea id="chat-textarea" class="chat-textarea" placeholder="${placeholder}" ${disabled}>${escapeHtml(state.inputMessage)}</textarea>
-            </div>
-            <div class="chat-toolbar">
-                <button class="tool-button" data-action="open-model-config" title="模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）">${icon('settings', 14)}</button>
-                <select id="chat-mode-select" class="chat-mode-select">${modes}</select>
-                ${videoModeSelector}
-                <button class="tool-button" data-action="mention">@</button>
-                <button class="chat-send-btn" data-action="send-ai" ${disabled}>${icon('send', 16)}</button>
+        <section class="${sectionClass}" style="--agent-chat-font-size:${fontSizes.bodyPx}px;--agent-chat-label-size:${fontSizes.labelPx}px;">
+            <div class="ai-chat-dock">
+                ${agentMessages}
+                <div class="ai-chat-header">
+                    <button type="button" class="ai-chat-header-toggle" data-action="toggle-agent-chat-history"
+                        title="${historyOpen ? '折叠对话历史（收起后悬停也不展开）' : '展开对话历史'}">
+                        <span class="ai-chat-header-chevron">${icon('chevronDown', 14)}</span>
+                        ${icon('send', 16)} 分镜助手
+                    </button>
+                    ${fontControls}
+                    ${historyMeta}
+                </div>
+                <div class="chat-composer">
+                    <div class="chat-textarea-row">
+                        ${mediaStack}
+                        <textarea id="chat-textarea" class="chat-textarea" placeholder="${placeholder}" ${disabled}>${escapeHtml(state.inputMessage)}</textarea>
+                    </div>
+                    <div class="chat-toolbar">
+                        <button class="tool-button" data-action="open-model-config" title="模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）">${icon('settings', 14)}</button>
+                        <select id="chat-mode-select" class="chat-mode-select">${modes}</select>
+                        ${videoModeSelector}
+                        <button class="tool-button" data-action="mention">@</button>
+                        <button class="chat-send-btn" data-action="send-ai" ${disabled}>${icon('send', 16)}</button>
+                    </div>
+                </div>
             </div>
         </section>`;
 }
 
-function renderVideoMediaBar(disabled) {
-    const mode = state.videoImageMode;
-    const items = state.videoMediaItems || [];
-    if (!items.length) {
-        const hint = mode === 'multi_reference'
-            ? '可上传参考图；有首帧时会自动带入'
-            : (videoModelSupportsLastFrame()
-                ? '有首帧时会自动带入首帧位，可再上传尾帧'
-                : '有首帧时会自动带入首帧位');
-        return `<div class="reference-bar video-media-bar empty"><div class="video-media-hint">${escapeHtml(hint)}</div></div>`;
-    }
-
-    const thumbs = items.map((img, index) => {
-        const src = img.uploading
-            ? ''
-            : escapeHtml(getThumbnailUrl(img.thumbnailUrl || img.url || '', 32));
-        const role = videoRoleLabel(img.role, mode);
-        const name = escapeHtml(img.name || role);
-        const sourceTag = img.source === 'scene' ? '分镜' : '';
-        return `
-            <div class="reference-thumb video-media-thumb ${img.uploading ? 'uploading' : ''}" data-video-media-id="${escapeHtml(img.id)}" title="${name}">
-                <span class="video-media-role">${escapeHtml(role)}${sourceTag ? `·${sourceTag}` : ''}</span>
-                <div class="reference-thumb-inner">
-                    ${src ? `<img src="${src}" alt="${name}">` : '<div class="reference-placeholder"></div>'}
-                    ${img.uploading ? `<div class="reference-spinner">${icon('loading', 14)}</div>` : ''}
-                </div>
-                <span class="reference-name">${name}</span>
-                <button class="reference-remove" data-action="remove-video-media" data-video-media-id="${escapeHtml(img.id)}" ${disabled ? 'disabled' : ''} title="移除">×</button>
-            </div>`;
-    }).join('');
-
-    const count = items.length;
-    const max = getMaxVideoMediaCount();
-    return `
-        <div class="reference-bar video-media-bar">
-            <div class="reference-thumbs">${thumbs}</div>
-            <div class="video-media-count">${count}/${max}</div>
-        </div>`;
+function agentMessageKey(message, index) {
+    return String(message.id || message.message_id || `${message.role || 'msg'}-${index}-${(message.content || message.status || '').slice(0, 24)}`);
 }
 
 function renderAgentMessages() {
     if (!state.agentMessages.length) {
         return '';
     }
-    const rows = state.agentMessages.slice(-8).map(message => {
+    const expandedMap = state.expandedAgentMessageIds || {};
+    const rows = state.agentMessages.slice(-8).map((message, index) => {
         const role = message.role || 'assistant';
         const label = role === 'user' ? '你' : (role === 'status' ? '状态' : '智能体');
+        const full = String(message.content || message.status || '');
+        const key = agentMessageKey(message, index);
+        const limit = role === 'status' ? 160 : 280;
+        const isExpanded = Boolean(expandedMap[key]);
+        const needsTruncate = full.length > limit;
+        const shown = needsTruncate && !isExpanded ? `${full.slice(0, limit)}…` : full;
+        const expandBtn = needsTruncate
+            ? `<button type="button" class="agent-chat-expand" data-action="toggle-agent-message-expand" data-message-key="${escapeHtml(key)}">${isExpanded ? '收起' : '展开'}</button>`
+            : '';
         return `
-            <div class="agent-chat-message ${escapeHtml(role)}">
+            <div class="agent-chat-message ${escapeHtml(role)}" data-message-key="${escapeHtml(key)}">
                 <span>${label}</span>
-                <p>${escapeHtml(message.content || message.status || '')}</p>
+                <p>${escapeHtml(shown)}</p>
+                ${expandBtn}
             </div>`;
     }).join('');
     const running = state.isAgentRunning ? '<div class="agent-chat-running">正在处理当前分镜...</div>' : '';
@@ -680,6 +854,7 @@ function renderCenter(scene) {
         <main class="center-panel">
             <section class="preview-wrapper">
                 ${mediaFrame(scene)}
+                ${previewSubtitleHtml()}
                 <div class="preview-caption">
                     <strong>${escapeHtml(scene ? scene.title : '未选择分镜')}</strong>
                     <span>${scene ? scene.durationLabel : '00:00'}</span>
@@ -762,7 +937,10 @@ export function renderTimeline() {
             </div>
             <div class="scene-timeline">
                 ${renderAutoCompleteHeader('分镜序列')}
-                <div class="scene-timeline-list" data-ratio="${escapeHtml(state.workflowRatio || '16:9')}">${scenes}<button class="add-scene-btn" data-action="add-scene">${icon('add', 22)}</button></div>
+                <div class="scene-timeline-list" data-ratio="${escapeHtml(state.workflowRatio || '16:9')}">
+                    <div class="scene-timeline-playhead" aria-hidden="true" title="播放位置" ${state.scenes.length ? '' : 'hidden'}></div>
+                    ${scenes}<button class="add-scene-btn" data-action="add-scene">${icon('add', 22)}</button>
+                </div>
             </div>
         </section>`;
 }
@@ -1325,17 +1503,25 @@ export function renderApp() {
         return;
     }
 
+    // 全量重建会销毁 video/audio，播放中必须先停播，避免幽灵声音
+    onDomWillRerender();
+
     const scrollSelectors = [
         { selector: '.scene-timeline-list', prop: 'scrollLeft' },
         { selector: '.storyboard-grid', prop: 'scrollTop' },
         { selector: '.right-sidebar', prop: 'scrollTop' },
         { selector: '.sidebar-content', prop: 'scrollTop' },
+        { selector: '.agent-chat-log', prop: 'scrollTop' },
     ];
     const savedScrolls = [];
     scrollSelectors.forEach(({ selector, prop }) => {
         const el = document.querySelector(selector);
         if (el) savedScrolls.push({ selector, prop, value: el[prop] });
     });
+    const prevAgentLog = document.querySelector('.agent-chat-log');
+    const agentLogWasAtBottom = prevAgentLog
+        ? (prevAgentLog.scrollHeight - prevAgentLog.scrollTop - prevAgentLog.clientHeight) < 48
+        : true;
 
     // 记录旧的主预览媒体（img/video），用于重建后避免相同图片再次解码/绘制导致闪烁
     const oldPreviewKey = previewMediaKey(document.querySelector('.preview-media'));
@@ -1364,6 +1550,12 @@ export function renderApp() {
             const el = document.querySelector(selector);
             if (el) el[prop] = value;
         });
+        const agentLog = document.querySelector('.agent-chat-log');
+        if (agentLog && (state.isAgentRunning || agentLogWasAtBottom) && state.agentChatHistoryOpen !== false) {
+            agentLog.scrollTop = agentLog.scrollHeight;
+        }
+        // 滚动恢复后再摆 playhead，避免用错 scrollLeft / 布局未稳定
+        updatePlayheadPosition({ followScroll: false });
     });
 }
 
@@ -1455,12 +1647,14 @@ export function updateCurrentSceneDetail(scene) {
     let updated = false;
 
     // 中央主预览（仅 timeline 模式存在 .preview-wrapper）
+    // 播放引擎占用预览区时跳过，避免打断音画
     const previewWrapper = document.querySelector('.preview-wrapper');
-    if (previewWrapper) {
+    if (previewWrapper && !state.isPlaying) {
         const oldKey = previewMediaKey(previewWrapper.querySelector('.preview-media'));
         // 重建 .preview-wrapper 内容（含 mediaFrame + caption），与 renderCenter 保持一致
         previewWrapper.innerHTML = `
                 ${mediaFrame(scene)}
+                ${previewSubtitleHtml()}
                 <div class="preview-caption">
                     <strong>${escapeHtml(scene.title)}</strong>
                     <span>${escapeHtml(scene.durationLabel)}</span>
@@ -1502,6 +1696,8 @@ export function updateTimelineProgress() {
     const span = document.querySelector('.timeline-progress-row span');
     if (!span) return false;
     span.textContent = `${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}`;
+    // duration 变化后重算 playhead 映射
+    updatePlayheadPosition({ followScroll: false });
     return true;
 }
 

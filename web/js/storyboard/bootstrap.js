@@ -17,6 +17,7 @@ import { bindEvents, loadSceneAgentMessages } from './events.js';
 import { renderApp } from './render.js';
 import { resumePollingTasks } from './polling.js';
 import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';
+import { stopPlayback, updatePlayheadPosition } from './playback.js';
 
 async function loadStoryboard() {
     if (state.storyboardId) {
@@ -175,6 +176,16 @@ async function main() {
     loadSceneAgentMessages(state.currentSceneId).catch(() => {});
     resumePollingTasks();
     autoGenerateMissingFirstFrames();
+
+    // 页面隐藏/卸载时停播，避免后台继续出声
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopPlayback();
+    });
+    window.addEventListener('pagehide', () => stopPlayback());
+    // 窗口尺寸变化后缩略图宽度可能变，重算播放头
+    window.addEventListener('resize', () => {
+        updatePlayheadPosition({ followScroll: false });
+    });
 }
 
 main().catch((error) => {

@@ -87,6 +87,9 @@ SUCCESS → 下载大图 → ImageGridSplitter 切分 2x2
 - `item_name` 使用复合格式 `"角色名|变体标签"`（如 `"豆包|黑化形态"`）
 - 前置条件：角色必须已存在且已有主参考图(reference_image)，且 URL 为 http/https
 - 变体图不能使用4宫格/文生图批量生成，必须逐个调用，以保证脸部/身份一致性
+- **绑定任务必须创建成功**：`edit_image` 在传入 `item_type=7` 时若 `grid_image_tasks` 写入失败会返回 `success=false`（避免图已生成却无回写）
+- **回写解析**：`get_character_json` / `update_character_json` 通过 `resolve_character_file_path` 按文件名与 JSON 内 `name` 字段定位角色文件
+- 完成后请**重新打开**角色编辑弹窗查看「多形象」列表（异步生成完成时前端不会自动刷新已打开的表单）
 
 **调用链路**：
 ```text

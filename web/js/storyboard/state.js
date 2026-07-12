@@ -10,6 +10,11 @@ const state = {
     storyboardId: null,
     worldId: null,
     episodeNumber: 1,
+    /** 当前世界下可切换的集列表（/api/storyboard/folders） */
+    episodeFolders: [],
+    episodeFoldersLoaded: false,
+    episodeFoldersLoading: false,
+    showEpisodePicker: false,
     scriptId: null,
     workflowId: null,
     userId: null,
@@ -44,10 +49,35 @@ const state = {
     agentMessages: [],
     isAgentRunning: false,
     activeAgentTaskId: null,
+    /** 分镜助手历史消息区是否展开 */
+    agentChatHistoryOpen: true,
+    /** 媒体栈多图展开（触控/点击兜底；桌面主要靠 hover） */
+    mediaStackExpanded: false,
+    /** 长消息展开 id 集合：Set 或普通对象 map */
+    expandedAgentMessageIds: {},
+    /**
+     * 聊天历史浮层是否固定展开（点击「展开」完整内容时置 true，
+     * 避免 rerender 丢失 :hover 导致浮层消失）
+     */
+    agentChatLogPinned: false,
+    /**
+     * 分镜助手正文字号档位：-2…+8，基准 12px，每档 ±1px（约 10–20px，照顾大龄用户）
+     * 持久化 key: storyboard_agentChatFontStep
+     */
+    agentChatFontStep: 0,
     aiOptimize: true,
     subtitleEnabled: true,
     isPlaying: false,
     currentTime: 0,
+    // 时间轴预览播放细粒度状态（由 playback.js 维护）
+    playback: {
+        sceneId: null,
+        sceneLocalTime: 0,
+        audioDialogueId: null,
+        status: 'idle', // idle | playing | paused | ended
+        generation: 0,
+        buffering: false, // 本镜媒体预加载中，时钟未走
+    },
     showExportDialog: false,
     showMentionPopup: false,
     showGlobalStyleDialog: false,
@@ -212,6 +242,45 @@ export function initStateFromUrl() {
     //   const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
     // storyboard 页面与 script_writer 保持一致，不再依赖 ?auth_token= 传参
     state.authToken = localStorage.getItem('auth_token') || localStorage.getItem('token') || null;
+
+    // 分镜助手字号档位（跨故事板）
+    try {
+        const raw = localStorage.getItem('storyboard_agentChatFontStep');
+        if (raw != null && raw !== '') {
+            const step = parseInt(raw, 10);
+            if (Number.isFinite(step)) {
+                state.agentChatFontStep = clampAgentChatFontStep(step);
+            }
+        }
+    } catch (_) { /* ignore */ }
+}
+
+/** 分镜助手字号档位边界与计算（上限偏高，方便大龄用户） */
+export const AGENT_CHAT_FONT_STEP_MIN = -2;
+export const AGENT_CHAT_FONT_STEP_MAX = 8;
+export const AGENT_CHAT_FONT_BASE_PX = 12;
+
+export function clampAgentChatFontStep(step) {
+    const n = Number(step);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(AGENT_CHAT_FONT_STEP_MIN, Math.min(AGENT_CHAT_FONT_STEP_MAX, Math.round(n)));
+}
+
+/** @returns {{ step: number, bodyPx: number, labelPx: number }} */
+export function getAgentChatFontSizes(step = state.agentChatFontStep) {
+    const s = clampAgentChatFontStep(step);
+    const bodyPx = AGENT_CHAT_FONT_BASE_PX + s;
+    const labelPx = Math.max(10, bodyPx - 1);
+    return { step: s, bodyPx, labelPx };
+}
+
+export function setAgentChatFontStep(step) {
+    const next = clampAgentChatFontStep(step);
+    state.agentChatFontStep = next;
+    try {
+        localStorage.setItem('storyboard_agentChatFontStep', String(next));
+    } catch (_) { /* ignore */ }
+    return next;
 }
 
 export function loadStoryboardData(data) {

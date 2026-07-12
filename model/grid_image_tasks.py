@@ -384,7 +384,7 @@ class GridImageTasksModel:
               AND a.status = %s
               AND a.result_url IS NOT NULL
               AND a.result_url <> ''
-              AND g.item_type IN (4, 5, 6, 8)
+              AND g.item_type IN (1, 2, 3, 4, 5, 6, 7, 8)
             ORDER BY g.updated_at ASC
             LIMIT %s
         """

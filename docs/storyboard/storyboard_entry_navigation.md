@@ -65,6 +65,31 @@
 - `storyboard_scene`、`storyboard_dialogue`、`storyboard_dialogue_audio`、`storyboard_scene_asset` 表对应的实体和 CRUD 分别拆分到同名 model 文件；`model/storyboard.py` 只保留主表模型，并继续 re-export 这些子表模型以兼容旧导入。
 - 故事板首次创建不再按段落自动拆分剧本；只有用户在空故事板弹框中确认后，才调用后端接口解析剧本并事务写入分镜/对话数据。
 
+## 编辑器内切换集数
+
+故事板编辑器 header 副标题中的「第 N 集」可点击，展开集数选择器：
+
+1. 列表数据来自 `GET /api/storyboard/folders?world_id={当前世界}`（与列表页同源）。
+2. 点某一集：跳转  
+   `/storyboard?world_id=…&episode_number=…&script_id?=…&id?=…&user_id=…&workflow_id?=…`  
+   - 已有 `storyboard_id` 时带 `id` 直接打开。  
+   - **无故事板**时不传 `id`，由 `bootstrap` → `POST /api/storyboard/create` **幂等 get-or-create** 新建后进入。  
+3. 「其他集数」可输入任意正整数进入（列表中不存在也可），同样走 create 新建。  
+4. 前端：`render.js` 集数按钮/面板，`events.js` `navigateToEpisode` / `ensureEpisodeFoldersLoaded`，`api.listStoryboardFolders`。
+
+## 新建故事板标题（title）
+
+`storyboard.title` 为库表字段（`VARCHAR(255)`），创建时写入：
+
+| 优先级 | 来源 |
+|--------|------|
+| 1 | Body 显式非空 `title` |
+| 2 | 关联剧本 `script.title`（`resolve_storyboard_script_id` 解析到的剧本） |
+| 3 | 兜底 `第{episode_number}集故事板`（与前端 `buildStoryboardTitle` 一致） |
+
+实现：`api/storyboard.py` → `resolve_storyboard_create_title` + `create_storyboard`。  
+get-or-create 命中已有故事板时**不改** title。历史空 title 不自动回填。
+
 ## 入口行为
 
 ### 首页

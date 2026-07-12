@@ -136,6 +136,40 @@ def resolve_storyboard_script_id(
     return script.id if script else None
 
 
+def resolve_storyboard_create_title(
+    title: Optional[str],
+    script_id: Optional[int],
+    episode_number: int,
+) -> str:
+    """
+    新建故事板时的标题：
+    1) body 显式非空 title
+    2) 关联剧本 script.title
+    3) 兜底「第{N}集故事板」（与前端 buildStoryboardTitle 一致）
+    """
+    explicit = str(title or '').strip()
+    if explicit:
+        return explicit[:255]
+
+    if script_id:
+        try:
+            script = ScriptModel.get_by_id(int(script_id))
+            script_title = str(getattr(script, 'title', None) or '').strip() if script else ''
+            if script_title:
+                return script_title[:255]
+        except Exception as e:
+            logger.warning(f"resolve_storyboard_create_title script_id={script_id}: {e}")
+
+    ep = episode_number if isinstance(episode_number, int) else 1
+    try:
+        ep = int(episode_number) if episode_number is not None else 1
+    except (TypeError, ValueError):
+        ep = 1
+    if ep < 1:
+        ep = 1
+    return f'第{ep}集故事板'
+
+
 def build_storyboard_defaults(world, data: dict) -> dict:
     """Build inherited storyboard defaults without assuming optional world fields."""
     style = getattr(world, 'visual_style', None) if world else None
@@ -1126,7 +1160,7 @@ async def create_storyboard(
         episode_number: int    默认 1
         script_id: int         可选，关联剧本
         workflow_id: int       可选，关联工作流
-        title: str             可选
+        title: str             可选；为空时继承关联剧本 script.title，再兜底「第N集故事板」
     """
     user_id = get_user_id_from_header(user_id)
     data = await request.json()
@@ -1167,6 +1201,14 @@ async def create_storyboard(
     world = await asyncio.to_thread(WorldModel.get_by_id, world_id)
     defaults = build_storyboard_defaults(world, data)
 
+    # 标题：显式 title > 剧本 title > 第N集故事板（写入 storyboard.title）
+    title = await asyncio.to_thread(
+        resolve_storyboard_create_title,
+        data.get('title'),
+        script_id,
+        episode_number,
+    )
+
     # 不存在 → 事务创建（同步函数，asyncio.to_thread 会把同步函数放进线程执行）
     def _create():
         return StoryboardModel.create_with_scenes(
@@ -1176,7 +1218,7 @@ async def create_storyboard(
             scenes=[],
             workflow_id=data.get('workflow_id'),
             script_id=script_id,
-            title=data.get('title', ''),
+            title=title,
             style=defaults['style'],
             style_reference_image=defaults['style_reference_image'],
             workflow_ratio=defaults['workflow_ratio'],

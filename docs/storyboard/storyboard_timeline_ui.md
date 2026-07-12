@@ -3,6 +3,11 @@
 `web/storyboard.html` 的分镜时间轴由 `web/js/storyboard/render.js` 渲染，样式位于
 `web/css/storyboard.css`。
 
+时间轴顶部的播放预览（类剪影试看、图/视频/配音编排）见
+[storyboard_timeline_playback.md](./storyboard_timeline_playback.md)。
+
+分镜序列 `.scene-timeline-list` 内含 `.scene-timeline-playhead` 竖线，随预览播放进度在卡片上滑动，并在靠近视口边缘时带动列表横向滚动。
+
 ## 分镜卡片
 
 - 时间轴分镜使用固定横向卡片尺寸，通过 CSS 变量

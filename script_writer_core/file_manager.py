@@ -255,6 +255,62 @@ class FileManager:
         
         return None
     
+    def resolve_character_file_path(
+        self, character_name: str, user_id: str = "0", world_id: str = "0"
+    ) -> Optional[Path]:
+        """
+        解析角色 JSON 文件真实路径。
+
+        查找顺序：
+        1. character_{name}.json
+        2. character_{sanitize(name)}.json（空格/特殊字符转下划线）
+        3. {name}.json
+        4. 扫描 characters/character_*.json，按 JSON 内 name 字段匹配
+        """
+        self._ensure_directories(user_id, world_id)
+        characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
+        if not characters_dir.exists():
+            return None
+
+        name = (character_name or "").strip()
+        if not name:
+            return None
+
+        # 与 mcp_tool._sanitize_filename 对齐的轻量清理（避免循环导入）
+        safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+        safe_name = re.sub(r'\s+', '_', safe_name).strip('._')
+        if len(safe_name) > 50:
+            safe_name = safe_name[:50]
+
+        candidates = [
+            characters_dir / f"character_{name}.json",
+            characters_dir / f"character_{safe_name}.json",
+            characters_dir / f"{name}.json",
+        ]
+        # 去重但保序
+        seen = set()
+        unique_candidates = []
+        for p in candidates:
+            key = str(p)
+            if key not in seen:
+                seen.add(key)
+                unique_candidates.append(p)
+
+        for file_path in unique_candidates:
+            if file_path.exists():
+                return file_path
+
+        # 回退：扫描 JSON 内 name 字段（兼容拼音/临时文件名）
+        for file_path in characters_dir.glob("character_*.json"):
+            try:
+                char_data = json.loads(file_path.read_text(encoding='utf-8'))
+                if isinstance(char_data, dict) and (char_data.get('name') or '').strip() == name:
+                    return file_path
+            except Exception as e:
+                print(f"扫描角色卡失败 {file_path}: {e}")
+
+        return None
+
     def get_character_json(self, character_name: str, user_id: str = "0", world_id: str = "0") -> Optional[dict]:
         """
         获取指定角色卡的原始JSON数据（用于数据库操作）
@@ -267,25 +323,16 @@ class FileManager:
         Returns:
             角色卡JSON字典，如果不存在返回 None
         """
-        self._ensure_directories(user_id, world_id)
-        characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
-        
-        # 尝试多种文件名格式
-        possible_files = [
-            characters_dir / f"character_{character_name}.json",
-            characters_dir / f"{character_name}.json"
-        ]
-        
-        for file_path in possible_files:
-            if file_path.exists():
-                try:
-                    json_content = file_path.read_text(encoding='utf-8')
-                    char_data = json.loads(json_content)
-                    return char_data  # 直接返回JSON字典
-                except Exception as e:
-                    print(f"读取角色卡JSON失败 {character_name}: {e}")
-        
-        return None
+        file_path = self.resolve_character_file_path(character_name, user_id, world_id)
+        if not file_path:
+            return None
+
+        try:
+            json_content = file_path.read_text(encoding='utf-8')
+            return json.loads(json_content)
+        except Exception as e:
+            print(f"读取角色卡JSON失败 {character_name} ({file_path}): {e}")
+            return None
     
     def save_character(self, character_name: str, content: str, user_id: str = "0", world_id: str = "0") -> bool:
         """

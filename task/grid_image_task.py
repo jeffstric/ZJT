@@ -588,24 +588,37 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
                     )
                 elif task.item_type == 7:  # character_variant (角色变体图)
                     # item_name 格式为 "角色名|变体标签"
-                    parts = task.item_name.split('|', 1)
-                    char_name = parts[0]
-                    variant_label = parts[1] if len(parts) > 1 else '变体'
-                    # 读取角色当前数据
+                    parts = (task.item_name or '').split('|', 1)
+                    char_name = parts[0].strip()
+                    variant_label = parts[1].strip() if len(parts) > 1 else '变体'
+                    # 读取角色当前数据（resolve 支持中文名/sanitize/扫描 name 字段）
                     file_manager = mcp_tool.get_file_manager()
+                    resolved_path = file_manager.resolve_character_file_path(
+                        char_name, task.user_id, task.world_id
+                    )
                     char_data = file_manager.get_character_json(char_name, task.user_id, task.world_id)
                     if char_data:
-                        existing_variants = char_data.get('reference_images', [])
+                        existing_variants = char_data.get('reference_images', []) or []
+                        if not isinstance(existing_variants, list):
+                            existing_variants = []
                         new_variant = {'id': str(uuid.uuid4()), 'label': variant_label, 'url': local_image_url}
                         # 移除同标签的旧条目（如果有）
-                        existing_variants = [v for v in existing_variants if v.get('label') != variant_label]
+                        existing_variants = [
+                            v for v in existing_variants
+                            if not (isinstance(v, dict) and v.get('label') == variant_label)
+                        ]
                         existing_variants.append(new_variant)
                         # 更新角色的 reference_images
-                        result = mcp_tool.update_character_json(task.user_id, task.world_id, task.auth_token,
-                                                                 char_name, reference_images=existing_variants)
+                        result = mcp_tool.update_character_json(
+                            task.user_id, task.world_id, task.auth_token,
+                            char_name, reference_images=existing_variants
+                        )
                         update_success = result.get('success', False)
                         if update_success:
-                            logger.info(f"已追加角色 {char_name} 的变体图 [{variant_label}]: {local_image_url}")
+                            logger.info(
+                                f"已追加角色 {char_name} 的变体图 [{variant_label}]: {local_image_url} "
+                                f"(file={resolved_path})"
+                            )
                             # 同步更新数据库中的 reference_images，确保前端通过 API 能获取到变体图
                             try:
                                 from model.character import CharacterModel
@@ -614,11 +627,22 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
                                     CharacterModel.update(db_char.id, reference_images=existing_variants)
                                     logger.info(f"已同步角色 {char_name} 的变体图到数据库 (id={db_char.id})")
                                 else:
-                                    logger.warning(f"数据库中未找到角色 {char_name} (world_id={task.world_id})，跳过同步")
+                                    logger.warning(
+                                        f"数据库中未找到角色 {char_name} (world_id={task.world_id})，跳过同步"
+                                    )
                             except Exception as db_err:
                                 logger.warning(f"同步角色 {char_name} 变体图到数据库失败(非阻塞): {db_err}")
+                        else:
+                            logger.error(
+                                f"角色变体图写回失败: char={char_name}, label={variant_label}, "
+                                f"file={resolved_path}, error={result.get('error')}"
+                            )
                     else:
-                        logger.warning(f"角色 {char_name} 不存在，无法更新变体图")
+                        logger.error(
+                            f"角色 {char_name} 不存在，无法更新变体图 "
+                            f"(user_id={task.user_id}, world_id={task.world_id}, "
+                            f"item_name={task.item_name}, resolved={resolved_path})"
+                        )
         except Exception as e:
             logger.error(f"更新item失败: {str(e)}")
             update_success = False

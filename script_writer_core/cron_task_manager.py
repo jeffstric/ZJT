@@ -211,8 +211,13 @@ class TaskManager:
                          comfyui_base_url: str, auth_token: str, user_id: str, world_id: str,
                          prompt: str = None, task_config_id: str = None,
                          aspect_ratio: str = None, image_size: str = None,
-                         is_grid: bool = False, max_retries: int = 0) -> str:
-        """创建图片生成后台任务（全局唯一性约束）"""
+                         is_grid: bool = False, max_retries: int = 0,
+                         reference_images: list = None) -> str:
+        """创建图片生成后台任务（全局唯一性约束）
+
+        reference_images: 可选，图生图/图片编辑的源图列表 [{url, role_description}, ...]，
+                          用于失败重试时复原 image-edit 请求。
+        """
         task_key = self._generate_task_key(item_type, item_name)
         
         # 获取该任务的专用锁
@@ -243,9 +248,10 @@ class TaskManager:
                     aspect_ratio=aspect_ratio,
                     image_size=image_size,
                     is_grid=is_grid,
-                    max_retries=max_retries
+                    max_retries=max_retries,
+                    reference_images=reference_images,
                 )
-                logger.info(f"创建宫格生图任务: {task_key}, project_id: {project_id}")
+                logger.info(f"创建宫格生图任务: {task_key}, project_id: {project_id}, item_type={item_type}")
             except Exception as e:
                 # 数据库插入失败，可能是重复任务
                 if "Duplicate entry" in str(e) or "UNIQUE" in str(e):
@@ -256,8 +262,8 @@ class TaskManager:
             self._update_task_status_file(item_type, item_name, 'scheduled', user_id, world_id)
         
         # 注意：不再创建APScheduler任务，轮询逻辑已迁移到scheduler进程
-        job_id = f"image_task_{project_id}"
-        return job_id
+        # 返回真实 task_key，便于调用方追踪 item 绑定任务
+        return task_key
     
     def _process_image_task(self, project_id: str, item_type: int, item_name: str, 
                            comfyui_base_url: str, auth_token: str, user_id: str, world_id: str):

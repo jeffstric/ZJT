@@ -21,11 +21,13 @@ import state, {
     getMaxVideoMediaCount,
     videoModelSupportsLastFrame,
     getSupportedVideoImageModes,
+    setAgentChatFontStep,
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
 import { renderApp, renderPromptWithInlineRoles, getThumbnailUrl } from './render.js';
 import { pollSceneTaskStatus } from './polling.js';
+import { togglePlayback, stopPlayback, syncSelectionToTimeline } from './playback.js';
 import {
     autoCompleteMissingFirstFrames,
     autoGenerateMissingFirstFrames,
@@ -621,6 +623,7 @@ async function handleAction(action, target) {
     }
 
     if (action === 'toggle-view') {
+        stopPlayback();
         state.viewMode = state.viewMode === 'grid' ? 'timeline' : 'grid';
         rerender();
         await persistUiConfig();
@@ -628,13 +631,58 @@ async function handleAction(action, target) {
     }
 
     if (action === 'toggle-play') {
-        state.isPlaying = !state.isPlaying;
+        togglePlayback();
+        return;
+    }
+
+    if (action === 'toggle-episode-picker') {
+        state.showEpisodePicker = !state.showEpisodePicker;
         rerender();
+        if (state.showEpisodePicker) {
+            ensureEpisodeFoldersLoaded().catch((e) => notify(e.message || '加载集列表失败'));
+        }
+        return;
+    }
+
+    if (action === 'switch-episode') {
+        const ep = parseInt(target.dataset.episode, 10);
+        if (!Number.isFinite(ep) || ep < 1) return;
+        const scriptRaw = target.dataset.scriptId;
+        const sbRaw = target.dataset.storyboardId;
+        navigateToEpisode(ep, {
+            scriptId: scriptRaw ? parseInt(scriptRaw, 10) : null,
+            storyboardId: sbRaw ? parseInt(sbRaw, 10) : null,
+        });
+        return;
+    }
+
+    if (action === 'switch-episode-custom') {
+        const input = document.querySelector('[data-episode-custom-input]');
+        const ep = parseInt(input?.value, 10);
+        if (!Number.isFinite(ep) || ep < 1) {
+            notify('请输入有效的集数（正整数）');
+            return;
+        }
+        // 自定义集：若列表中已有则带上 script/storyboard，否则纯新建
+        const folder = (state.episodeFolders || []).find(f => Number(f.episode_number) === ep);
+        navigateToEpisode(ep, {
+            scriptId: folder?.script_id ? Number(folder.script_id) : null,
+            storyboardId: folder?.storyboard_id ? Number(folder.storyboard_id) : null,
+        });
         return;
     }
 
     if (action === 'toggle-subtitle') {
         state.subtitleEnabled = target.checked;
+        // 播放中仅切换字幕层可见性，不 rerender
+        const sub = document.querySelector('.preview-subtitle');
+        if (sub) {
+            if (!state.subtitleEnabled) {
+                sub.hidden = true;
+            } else if (state.playback?.audioDialogueId != null && sub.textContent) {
+                sub.hidden = false;
+            }
+        }
         await persistUiConfig();
         return;
     }
@@ -793,6 +841,7 @@ async function handleAction(action, target) {
         return;
     }
 
+    // add-reference-image 已在 bindEvents 顶部同步处理（保证文件选择器手势），此处兜底
     if (action === 'add-reference-image') {
         if (state.chatMode !== 'video') return;
         if (!canAddVideoMedia()) {
@@ -835,6 +884,60 @@ async function handleAction(action, target) {
         if (state.isAgentRunning) return;
         state.showVideoModePanel = !state.showVideoModePanel;
         rerender();
+        return;
+    }
+
+    if (action === 'toggle-agent-chat-history') {
+        state.agentChatHistoryOpen = !(state.agentChatHistoryOpen !== false);
+        rerender();
+        return;
+    }
+
+    if (action === 'agent-chat-font-up' || action === 'agent-chat-font-down') {
+        const delta = action === 'agent-chat-font-up' ? 1 : -1;
+        setAgentChatFontStep((state.agentChatFontStep || 0) + delta);
+        // 固定展开态：避免 rerender 丢失 hover 后 textarea 缩回、按钮位置跳动
+        state.agentChatLogPinned = true;
+        rerender();
+        requestAnimationFrame(() => {
+            const btn = document.querySelector(`.ai-chat-section [data-action="${action}"]:not([disabled])`)
+                || document.querySelector(`.ai-chat-section [data-action="${action}"]`);
+            if (btn && typeof btn.focus === 'function') btn.focus({ preventScroll: true });
+        });
+        return;
+    }
+
+    if (action === 'toggle-media-stack') {
+        // 删除/上传按钮自带更具体的 data-action，closest 会优先命中它们，不会进入本分支
+        state.mediaStackExpanded = !state.mediaStackExpanded;
+        rerender();
+        return;
+    }
+
+    if (action === 'toggle-agent-message-expand') {
+        const key = target.getAttribute('data-message-key');
+        if (!key) return;
+        const map = { ...(state.expandedAgentMessageIds || {}) };
+        if (map[key]) {
+            delete map[key];
+        } else {
+            map[key] = true;
+        }
+        // 无论展开/收起都 pin 住浮层，避免全量 rerender 后丢失 :hover 导致弹层消失
+        state.agentChatLogPinned = true;
+        state.expandedAgentMessageIds = map;
+        rerender();
+        requestAnimationFrame(() => {
+            const log = document.querySelector('.agent-chat-log');
+            if (!log) return;
+            const safe = (window.CSS && typeof CSS.escape === 'function')
+                ? CSS.escape(key)
+                : String(key).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            const row = log.querySelector(`[data-message-key="${safe}"]`);
+            if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            // 展开后尽量滚到可见区底部，方便看长文
+            if (map[key]) log.scrollTop = Math.min(log.scrollHeight, row ? row.offsetTop : log.scrollHeight);
+        });
         return;
     }
 
@@ -954,6 +1057,66 @@ async function handleAction(action, target) {
     }
 }
 
+/**
+ * 加载当前世界下的集列表（剧本 + 故事板 folders）
+ */
+async function ensureEpisodeFoldersLoaded(force = false) {
+    if (!state.worldId) return;
+    if (!force && state.episodeFoldersLoaded) return;
+    if (state.episodeFoldersLoading) return;
+    state.episodeFoldersLoading = true;
+    try {
+        const folders = await api.listStoryboardFolders(state.worldId);
+        // 只保留当前世界
+        state.episodeFolders = (folders || []).filter(
+            f => !state.worldId || Number(f.world_id) === Number(state.worldId)
+        );
+        state.episodeFoldersLoaded = true;
+        if (state.showEpisodePicker) rerender();
+    } finally {
+        state.episodeFoldersLoading = false;
+    }
+}
+
+/**
+ * 跳转到指定集。无故事板时不传 id，由 bootstrap create get-or-create 新建。
+ */
+function navigateToEpisode(episodeNumber, options = {}) {
+    const ep = parseInt(episodeNumber, 10);
+    if (!Number.isFinite(ep) || ep < 1) {
+        notify('集数无效');
+        return;
+    }
+    if (ep === Number(state.episodeNumber) && !options.force) {
+        state.showEpisodePicker = false;
+        rerender();
+        return;
+    }
+    if (!state.worldId) {
+        notify('缺少 world_id，无法切换集数');
+        return;
+    }
+
+    stopPlayback();
+    const params = new URLSearchParams();
+    params.set('world_id', String(state.worldId));
+    params.set('episode_number', String(ep));
+    // 有故事板 id 时直接打开；没有则不传 id，进入页会 POST /create 幂等创建
+    if (options.storyboardId) {
+        params.set('id', String(options.storyboardId));
+    }
+    if (options.scriptId) {
+        params.set('script_id', String(options.scriptId));
+    }
+    if (state.workflowId) {
+        params.set('workflow_id', String(state.workflowId));
+    }
+    if (state.userId) {
+        params.set('user_id', String(state.userId));
+    }
+    window.location.href = `/storyboard?${params.toString()}`;
+}
+
 function handleRoute(route) {
     if (route === 'storyboard-list') {
         window.location.href = '/storyboard-list';
@@ -980,7 +1143,44 @@ function handleRoute(route) {
 }
 
 export function bindEvents() {
+    // 鼠标离开分镜助手区：解除浮层 pin，恢复「移出渐隐」
+    document.addEventListener('mouseout', (event) => {
+        const section = event.target?.closest?.('.ai-chat-section');
+        if (!section) return;
+        const related = event.relatedTarget;
+        // related 为 null 常见于 rerender 拆 DOM 或离开窗口，不能当成「移出助手区」
+        if (!related || !(related instanceof Node)) return;
+        if (section.contains(related)) return;
+        if (!state.agentChatLogPinned) return;
+        state.agentChatLogPinned = false;
+        section.classList.remove('is-chat-log-pinned');
+    });
+
     document.addEventListener('click', async (event) => {
+        // 集数切换面板：点外部关闭
+        if (state.showEpisodePicker && !event.target.closest('[data-episode-switcher]')) {
+            state.showEpisodePicker = false;
+            rerender();
+            // 继续处理本次点击（例如点到分镜）
+        }
+
+        // 上传参考图：必须在同步用户手势内触发 fileInput.click()，
+        // 且 stopPropagation，避免父级 toggle-media-stack + preventDefault 吞掉点击
+        const addRefTarget = event.target.closest('[data-action="add-reference-image"]');
+        if (addRefTarget) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (addRefTarget.disabled || addRefTarget.getAttribute('aria-disabled') === 'true') return;
+            if (state.chatMode !== 'video') return;
+            if (!canAddVideoMedia()) {
+                notify(`当前模式最多 ${getMaxVideoMediaCount()} 张图片`);
+                return;
+            }
+            const fileInput = document.getElementById('reference-file-input');
+            if (fileInput) fileInput.click();
+            return;
+        }
+
         const routeTarget = event.target.closest('[data-route]');
         if (routeTarget) {
             handleRoute(routeTarget.dataset.route);
@@ -1002,11 +1202,15 @@ export function bindEvents() {
 
         if (sceneTarget && !actionTarget) {
             const sceneId = parseInt(sceneTarget.dataset.scene, 10);
+            stopPlayback();
             state.currentSceneId = sceneId;
-            state.currentTime = 0;
+            // 选中 = 播放起点：对齐时间轴偏移，并清除 ended，避免再点播放从片头重来
+            syncSelectionToTimeline(sceneId);
             state.agentMessages = [];
             state.referenceImages = [];
             state.showVideoModePanel = false;
+            state.mediaStackExpanded = false;
+            state.expandedAgentMessageIds = {};
             const scene = state.scenes.find(s => s.id === sceneId) || null;
             if (state.chatMode === 'video') {
                 ensureVideoImageModeSupported();
@@ -1042,6 +1246,16 @@ export function bindEvents() {
                 rerender();
                 return;
             }
+        }
+
+        // 点击媒体栈外部时收起展开态
+        if (state.mediaStackExpanded && !event.target.closest('.media-stack')) {
+            state.mediaStackExpanded = false;
+            if (!actionTarget && !sceneTarget) {
+                rerender();
+                return;
+            }
+            // 有其它 action 时只改状态，后续 handler 会 rerender
         }
 
         // Handle model config tabs (must be before action guard since tabs have no data-action)
@@ -1091,6 +1305,18 @@ export function bindEvents() {
             if (btn) btn.click();
             return;
         }
+        // 集数自定义输入：Enter 进入
+        if (event.key === 'Enter' && target && target.matches && target.matches('[data-episode-custom-input]')) {
+            event.preventDefault();
+            const btn = document.querySelector('[data-action="switch-episode-custom"]');
+            if (btn) btn.click();
+            return;
+        }
+        if (event.key === 'Escape' && state.showEpisodePicker) {
+            state.showEpisodePicker = false;
+            rerender();
+            return;
+        }
         if (!isTimelineHovered) return;
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
 
@@ -1106,11 +1332,14 @@ export function bindEvents() {
         if (newIndex === currentIndex) return;
 
         event.preventDefault();
+        stopPlayback();
         state.currentSceneId = state.scenes[newIndex].id;
-        state.currentTime = 0;
+        syncSelectionToTimeline(state.currentSceneId);
         state.agentMessages = [];
         state.referenceImages = [];
         state.showVideoModePanel = false;
+        state.mediaStackExpanded = false;
+        state.expandedAgentMessageIds = {};
         if (state.chatMode === 'video') {
             ensureVideoImageModeSupported();
             syncVideoMediaFromScene(state.scenes[newIndex], { resetUploads: true });
