@@ -540,21 +540,48 @@ def _relaunch_detached(project_dir):
 
     这样 uv run 返回 -> cmd 退出 -> 命令行窗口自动关闭；托盘由 detached 副本作为
     独立进程常驻，与启动它的控制台彻底解耦。
+
+    使用 uv run --with-requirements 确保 pystray/Pillow 等依赖在 detached 进程中可用。
     """
     env = dict(os.environ)
     env[DETACHED_ENV_FLAG] = "1"
+    env["PYTHONUTF8"] = "1"
     flags = 0
     for name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
         flags |= getattr(subprocess, name, 0)
+
+    # 构建 uv run 命令，确保依赖可用
+    uv_exe = os.path.join(project_dir, "bin", "uv", "uv.exe")
+    requirements_file = os.path.join(project_dir, "requirements.txt")
+    script_path = os.path.abspath(__file__)
+
+    if os.path.exists(uv_exe) and os.path.exists(requirements_file):
+        cmd = [
+            uv_exe, "run",
+            "--python", "cpython-3.10-windows-x86_64-none",
+            "--with-requirements", requirements_file,
+            script_path,
+        ]
+    else:
+        # 回退：直接用当前 Python（可能缺依赖，但至少尝试）
+        cmd = [sys.executable, "-X", "utf8", script_path]
+
+    # stderr 写入日志文件，便于排查 detached 进程崩溃
+    log_file_path = os.path.join(project_dir, "launcher_detached.log")
+    try:
+        log_file = open(log_file_path, "w", encoding="utf-8")
+    except Exception:
+        log_file = subprocess.DEVNULL
+
     subprocess.Popen(
-        [sys.executable, "-X", "utf8", os.path.abspath(__file__)],
+        cmd,
         creationflags=flags,
         cwd=project_dir,
         env=env,
         close_fds=True,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=log_file,
     )
 
 

@@ -131,31 +131,30 @@ class TestGetMediaUrl(unittest.TestCase):
 class TestGetSignedDownloadUrl(unittest.TestCase):
     """测试 CDNUtil.get_signed_download_url()"""
 
-    @patch('utils.file_storage.qiniu_storage.QiniuFileStorage')
+    @patch('utils.file_storage.try_get_file_storage')
     @patch('config.config_util.get_dynamic_config_value')
-    def test_matching_long_term_domain(self, mock_get_config, MockStorage):
+    def test_matching_long_term_domain(self, mock_get_config, mock_try_get_storage):
         """匹配 qiniu_long_term 域名时生成签名 URL"""
         def side_effect(section, subsection, key, default=""):
             mapping = {
                 ('file_storage', 'qiniu_long_term', 'cdn_domain'): 'cdn.example.com',
-                ('file_storage', 'qiniu_long_term', 'access_key'): 'ak_test',
-                ('file_storage', 'qiniu_long_term', 'secret_key'): 'sk_test',
-                ('file_storage', 'qiniu_long_term', 'bucket_name'): 'bucket1',
                 ('file_storage', 'qiniu', 'cdn_domain'): '',
             }
             return mapping.get((section, subsection, key), default)
         mock_get_config.side_effect = side_effect
 
-        mock_instance = MagicMock()
-        mock_instance.get_download_url.return_value = 'https://cdn.example.com/img.png?signed=1'
-        MockStorage.return_value = mock_instance
+        # mock 工厂入口（参数化单例），避免触发真实 _load_config / QiniuFileStorage 实例化
+        mock_storage = MagicMock()
+        mock_storage.get_download_url.return_value = 'https://cdn.example.com/img.png?signed=1'
+        mock_try_get_storage.return_value = mock_storage
 
         result = CDNUtil.get_signed_download_url(
             'https://cdn.example.com/upload/img/a.png', 'my_file.png'
         )
 
-        self.assertIsNotNone(result)
-        mock_instance.get_download_url.assert_called_once_with(
+        self.assertEqual(result, 'https://cdn.example.com/img.png?signed=1')
+        mock_try_get_storage.assert_called_once_with(section='qiniu_long_term')
+        mock_storage.get_download_url.assert_called_once_with(
             'upload/img/a.png', expires=100800, attname='my_file.png'
         )
 
@@ -169,9 +168,14 @@ class TestGetSignedDownloadUrl(unittest.TestCase):
         )
         self.assertIsNone(result)
 
+    @patch('utils.file_storage.try_get_file_storage', return_value=None)
     @patch('config.config_util.get_dynamic_config_value')
-    def test_incomplete_config_returns_none(self, mock_get_config):
-        """配置不完整返回 None"""
+    def test_incomplete_config_returns_none(self, mock_get_config, mock_try_get_storage):
+        """配置不完整（factory 返回 None）时返回 None
+
+        配置完整性的校验已下沉到 try_get_file_storage 内部（缺失返回 None），
+        这里 mock factory 返回 None 模拟该场景，验证 cdn_util 的 None 分支。
+        """
         def side_effect(section, subsection, key, default=""):
             if key == 'cdn_domain':
                 return 'cdn.example.com'
@@ -208,25 +212,23 @@ class TestRefreshCdnSignedUrl(unittest.TestCase):
         url = 'http://localhost:8000/upload/img.png'
         self.assertEqual(CDNUtil.refresh_cdn_signed_url(url), url)
 
-    @patch('utils.file_storage.qiniu_storage.QiniuFileStorage')
+    @patch('utils.file_storage.try_get_file_storage')
     @patch('config.config_util.get_dynamic_config_value')
     @patch('utils.cdn_util.CDNUtil.is_cdn_url', return_value=True)
-    def test_cdn_url_refreshed(self, mock_is_cdn, mock_get_config, MockStorage):
+    def test_cdn_url_refreshed(self, mock_is_cdn, mock_get_config, mock_try_get_storage):
         """CDN URL 成功刷新签名"""
         def side_effect(section, subsection, key, default=""):
             mapping = {
                 ('file_storage', 'qiniu_long_term', 'cdn_domain'): 'cdn.example.com',
-                ('file_storage', 'qiniu_long_term', 'access_key'): 'ak_test',
-                ('file_storage', 'qiniu_long_term', 'secret_key'): 'sk_test',
-                ('file_storage', 'qiniu_long_term', 'bucket_name'): 'bucket1',
                 ('file_storage', 'qiniu', 'cdn_domain'): '',
             }
             return mapping.get((section, subsection, key), default)
         mock_get_config.side_effect = side_effect
 
-        mock_instance = MagicMock()
-        mock_instance.get_download_url.return_value = 'https://cdn.example.com/img.png?fresh_sig=1'
-        MockStorage.return_value = mock_instance
+        # mock 工厂入口，避免触发真实 _load_config / QiniuFileStorage 实例化
+        mock_storage = MagicMock()
+        mock_storage.get_download_url.return_value = 'https://cdn.example.com/img.png?fresh_sig=1'
+        mock_try_get_storage.return_value = mock_storage
 
         result = CDNUtil.refresh_cdn_signed_url('https://cdn.example.com/upload/img.png?old_sig=x')
         self.assertEqual(result, 'https://cdn.example.com/img.png?fresh_sig=1')

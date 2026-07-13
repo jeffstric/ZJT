@@ -298,6 +298,14 @@ def _get_wechat_pay_util():
 # 兼容旧代码，初始化时创建一个实例
 wechat_pay_util = _get_wechat_pay_util()
 
+# 注册 MIME 类型：部分系统/容器的 Python mimetypes 数据库不认识 .webp 等现代格式，
+# 导致 StaticFiles 提供静态文件时 Content-Type 回退为 text/plain，
+# 进而被图生视频等场景的图片资源校验（要求 Content-Type: image/*）误判为非图片。
+# 必须在 StaticFiles 挂载前注册（下方 app.mount("/upload", ...) 依赖此处的类型映射）。
+import mimetypes
+mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("image/avif", ".avif")
+
 app = FastAPI(title="ZJT Server")
 
 @app.on_event("startup")
@@ -1926,7 +1934,8 @@ async def ai_app_run_image(
     audio_urls: str = Form(None, description="Comma-separated reference audio URLs (alternative to uploading audio file)"),
     video_urls: str = Form(None, description="Comma-separated reference video URLs (alternative to uploading video file)"),
     media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution"),
-    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）")
+    resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）"),
+    enable_face_mask: bool = Form(False, description="是否启用人脸遮盖预处理（仅 Seedance 2.0 系列商业版生效，默认关闭）")
 ):
     """
     Submit image to video task.
@@ -2162,12 +2171,15 @@ async def ai_app_run_image(
                         )
                         need_pipeline_steps = (
                             is_seedance_face_mask
+                            and enable_face_mask
+                            and not Edition.is_community()
                             and runninghub_api_key
                             and has_any_param_prepare_input
                         )
                         logger.info(
                             f"Pipeline steps condition check: image_to_video_type={image_to_video_type}, "
                             f"is_seedance_face_mask={is_seedance_face_mask}, "
+                            f"enable_face_mask={enable_face_mask}, is_community={Edition.is_community()}, "
                             f"has_api_key={bool(runninghub_api_key)}, has_video={bool(video_path)}, "
                             f"face_mask_enabled={bool(seedance_face_mask_enabled)}, "
                             f"has_image_input={has_image_input}, need_pipeline_steps={need_pipeline_steps}"

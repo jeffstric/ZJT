@@ -47,21 +47,11 @@ class MediaCacheManager:
         self._ensure_cache_dir()
 
     def _init_storage(self):
-        """初始化云端存储"""
+        """初始化云端存储（复用 factory 参数化单例，避免 ThreadPoolExecutor 泄漏）"""
         try:
-            from utils.file_storage.qiniu_storage import QiniuFileStorage
-            access_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "access_key")
-            secret_key = get_dynamic_config_value("file_storage", "qiniu_long_term", "secret_key")
-            bucket_name = get_dynamic_config_value("file_storage", "qiniu_long_term", "bucket_name")
-            cdn_domain = get_dynamic_config_value("file_storage", "qiniu_long_term", "cdn_domain")
-
-            if access_key and secret_key and bucket_name and cdn_domain:
-                self._storage = QiniuFileStorage(
-                    access_key=access_key,
-                    secret_key=secret_key,
-                    bucket_name=bucket_name,
-                    cdn_domain=cdn_domain
-                )
+            from utils.file_storage import try_get_file_storage
+            self._storage = try_get_file_storage(section="qiniu_long_term")
+            if self._storage is not None:
                 logger.info("云端存储初始化成功")
             else:
                 logger.warning("七牛云配置不完整，无法启用云端存储")

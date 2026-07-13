@@ -24,7 +24,7 @@
 - **Markdown 渲染**：marked.js（`marked.min.js`）
 - **代码高亮**：highlight.js（`github.min.css` 主题）
 - **任务配置**：`task_config.js`（统一任务类型/模型/算力配置模块）
-- **视频压缩**：`video_compressor.js`（Canvas + MediaRecorder 方案，480p 压缩）
+- **视频压缩**：`video_compressor.js`（Canvas + MediaRecorder 方案，按参考视频最低像素要求转码）
 - **国际化**：`i18n-core.js` + `i18n-vue-plugin.js` + `i18n-dom.js`
 
 ### 三栏布局
@@ -299,7 +299,7 @@ Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指�
 | 类型 | 最大数量 | 大小限制 | 时长限制 | 说明 |
 |------|----------|----------|----------|------|
 | 图片 | 9 张 | 10MB（可配置） | - | 上传到 `/api/upload-agent-image` 获取 HTTP URL |
-| 视频 | 3 个 | 100MB（可配置） | 15 秒（可配置） | 前端压缩到 480p 后上传到 `/api/upload-agent-video` |
+| 视频 | 3 个 | 100MB（可配置） | 15 秒（可配置） | 前端按 480px 目标短边和 409600 最低总像素转码后上传到 `/api/upload-agent-video` |
 | 音频 | 5 个 | 20MB | 15 秒（可配置） | 上传到 `/api/upload-agent-audio` |
 
 #### Agent 视频模式
@@ -321,10 +321,10 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 
 使用 `VIDEO_COMPRESSOR` 模块（Canvas + MediaRecorder 方案）：
 
-- 目标短边：480px
+- 目标短边：480px；若总像素低于 409600，会按原比例补足到下游参考视频最低要求
 - 帧率：24fps
 - 视频码率：1.5Mbps
-- 压缩阈值：文件 > 10MB 或短边 > 480px
+- 压缩阈值：文件 > 10MB、短边 > 480px、总像素 < 409600 或超过最大时长
 - 支持 WebM (VP9/VP8) 和 MP4 格式
 - 超过最大时长的视频自动截断
 
@@ -542,6 +542,7 @@ Agent 对话模式即使当前自定义面板停留在“图片”，前端也�
 | `AGENT_VIDEO_MAX_COUNT` | 3 | Agent 模式最大视频数 |
 | `AGENT_AUDIO_MAX_COUNT` | 5 | Agent 模式最大音频数 |
 | `VIDEO_COMPRESSOR.TARGET_SHORT_EDGE` | 480 | 视频压缩目标短边（px） |
+| `VIDEO_COMPRESSOR.MIN_REFERENCE_VIDEO_PIXELS` | 409600 | 参考视频最低总像素数 |
 | `VIDEO_COMPRESSOR.FPS` | 24 | 视频压缩帧率 |
 | `VIDEO_COMPRESSOR.VIDEO_BITRATE` | 1500000 | 视频压缩码率（bps） |
 

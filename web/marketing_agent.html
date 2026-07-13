@@ -490,6 +490,14 @@
                                                 </div>
                                                 </div>
                                             </div>
+                                            <!-- 是否处理人脸（仅 seedance2.0 系列显示；社区版置灰提示） -->
+                                            <div v-if="isVideoMode && currentVideoModelNeedsFaceMask" style="margin-top: 12px;">
+                                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: #1a1a1a;">
+                                                    <input type="checkbox" v-model="processFace" :disabled="!isEnterprise" style="cursor: pointer; width: 14px; height: 14px;" />
+                                                    <span>{{ $t('process_face_label') }}</span>
+                                                </label>
+                                                <div v-if="!isEnterprise" style="margin-top: 4px; font-size: 11px; color: #d97706;">{{ $t('process_face_community_hint') }}</div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

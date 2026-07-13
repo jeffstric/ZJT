@@ -80,7 +80,7 @@
     }
 
     // 生成视频API调用
-    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences, resolution){
+    async function generateVideoFromImage(imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences, resolution, enableFaceMask){
       // 测试模式：模拟API响应
       if(TEST_MODE){
         console.log('[TEST MODE] 模拟生成视频API调用', { imageUrl, prompt, duration, count, ratio, videoModel, imageMode, referenceImages, audioUrls, videoUrls, mediaReferences });
@@ -133,6 +133,10 @@
       // 媒体引用（用于 @ 提及解析）
       if(mediaReferences){
         form.append('media_references', mediaReferences);
+      }
+      // 是否处理人脸（仅 seedance2.0 商业版生效）
+      if(enableFaceMask){
+        form.append('enable_face_mask', 'true');
       }
 
       if(userId){

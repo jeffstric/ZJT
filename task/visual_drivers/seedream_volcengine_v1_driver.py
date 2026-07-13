@@ -319,6 +319,12 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
             # 1. 构建请求参数
             request_params = self.build_create_request(ai_tool)
 
+            # build_create_request 在图片解析/上传/压缩失败时会返回错误 dict（无 "url" 字段），
+            # 直接透传，避免访问 request_params["url"] 抛 KeyError → UNEXPECTED_EXCEPTION
+            # 误报警，掩盖真实的用户级错误（如"图片上传到CDN超时"）
+            if isinstance(request_params, dict) and request_params.get("success") is False:
+                return request_params
+
             # 2. 发送请求
             result = self._request(
                 url=request_params["url"],

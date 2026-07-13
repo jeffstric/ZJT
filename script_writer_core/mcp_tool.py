@@ -845,7 +845,7 @@ def validate_image_url(url: str, field_name: str = "reference_image") -> Dict[st
 
 def create_character_json(user_id: str, world_id: str, auth_token: str, name: str, age: str = None, identity: str = None,
                          appearance: str = None, personality: str = None, behavior: str = None,
-                         other_info: str = None, reference_image: str = None,
+                         other_info: str = None, reference_image: str = None, default_voice: str = None,
                          _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的角色JSON文件 - MCP工具函数
@@ -918,7 +918,9 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
             character_data['other_info'] = other_info
         if reference_image is not None:
             character_data['reference_image'] = reference_image
-        
+        if default_voice is not None:
+            character_data['default_voice'] = default_voice
+
         # 添加额外字段
         for key, value in additional_fields.items():
             if key not in character_data:  # 避免覆盖核心字段

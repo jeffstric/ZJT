@@ -226,5 +226,7 @@
   "audio_exceeds_remaining_duration": "音频时长 {dur}s 超出剩余时长 {remaining}s",
   "video_tag": "[视频]",
   "audio_tag": "[音频]",
-  "video_label": "[视频{num}]"
+  "video_label": "[视频{num}]",
+  "process_face_label": "是否处理人脸",
+  "process_face_community_hint": "此功能为商业版功能，请联系购买商业版本后使用"
 }

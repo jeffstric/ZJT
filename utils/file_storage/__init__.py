@@ -7,7 +7,7 @@ File Storage Module - 文件存储抽象层
 from .base import BaseFileStorage, UploadResult
 from .qiniu_storage import QiniuFileStorage
 from .runninghub_storage import RunningHubFileStorage
-from .factory import get_file_storage
+from .factory import get_file_storage, try_get_file_storage, reset_file_storage
 
 __all__ = [
     "BaseFileStorage",
@@ -15,4 +15,6 @@ __all__ = [
     "QiniuFileStorage",
     "RunningHubFileStorage",
     "get_file_storage",
+    "try_get_file_storage",
+    "reset_file_storage",
 ]

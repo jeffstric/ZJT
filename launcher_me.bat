@@ -68,6 +68,10 @@ if errorlevel 1 (
     echo ========================================
     echo.
     pause
+) else (
+    REM Launcher exited normally (detached process spawned).
+    REM Brief pause to let user see output before window closes.
+    timeout /t 2 /nobreak >nul
 )
 
 endlocal

@@ -190,6 +190,11 @@ REM ==========================================
 
 REM === 启动前检查更新 ===
 echo [1.5/4] Checking for updates...
+
+REM 自愈：清理 litellm 的 uv 缓存（litellm>=1.92 引入 Rust 编译，普通用户机器无 MSVC linker 会构建失败）
+REM 客户机器上可能残留旧版 requirements.txt 解析决策导致 uv 仍选 1.92.0，每次启动前清一次确保走 1.91.x 纯 Python 路径
+"!UV_CMD!" cache clean litellm >nul 2>&1
+
 "!UV_CMD!" run --python cpython-3.10-windows-x86_64-none --with-requirements requirements.txt scripts\upgrade_check.py
 set "UPGRADE_RC=%errorlevel%"
 if %UPGRADE_RC% equ 2 (
@@ -232,7 +237,7 @@ echo [4/4] Starting services...
 echo ========================================
 echo.
 
-!UV_CMD! run --python cpython-3.10-windows-x86_64-none --with-requirements requirements.txt scripts\launchers\start_windows.py
+"!UV_CMD!" run --python cpython-3.10-windows-x86_64-none --with-requirements requirements.txt scripts\launchers\start_windows.py
 
 if errorlevel 1 (
     echo.
@@ -243,4 +248,9 @@ if errorlevel 1 (
     pause
 )
 
+if not "%TRAY_MODE%"=="1" (
+    echo.
+    echo Press any key to exit...
+    pause >nul
+)
 endlocal
