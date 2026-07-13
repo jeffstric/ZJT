@@ -25,6 +25,17 @@ from config.unified_config import (
 
 IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
 IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT = 120
+SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT = 300
+SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT = 10
+SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT = 120
+
+# ===== 七牛云 SDK 网络超时 =====
+# qiniu SDK 内部 requests 单请求超时（秒）；SDK 默认 30。
+# 显式设置避免依赖 SDK 内部默认，且便于统一调优。
+QINIU_HTTP_CONNECTION_TIMEOUT = 30
+# _sync_upload_file 单次调用硬看门狗（秒）：qiniu.put_file 内部可能重试/分片，
+# 单请求 30s 超时会被穿透累积；给一个明确的上限，超过则视为失败上抛。
+QINIU_UPLOAD_HARD_TIMEOUT = 90
 
 # ===== 图片 URL 过期保护（签名 URL 自动刷新/转存）=====
 # 探测只针对「非自有 CDN」的第三方 URL（自有 CDN 走重签名，不探测）。
@@ -653,8 +664,11 @@ class UploadPathConstants:
 class MediaConstants:
     """媒体处理相关常量"""
     ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.avi', '.mkv'}
+    # 图片后缀白名单（tuple，适配 str.endswith）；含 webp/gif/bmp，避免下载图片时被兜底改名导致扩展名与内容错配
+    ALLOWED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
     VIDEO_COMPRESS_TARGET_HEIGHT = 480  # 前端压缩目标分辨率（480p）
     VIDEO_COMPRESS_THRESHOLD_MB = 10    # 超过此大小的视频触发前端压缩
+    VIDEO_REFERENCE_MIN_PIXEL_COUNT = 409600  # Seedance r2v 参考视频最低总像素数
 
 
 class RunningHubImageFaceMaskConstants:

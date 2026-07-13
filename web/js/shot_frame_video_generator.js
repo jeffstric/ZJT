@@ -147,6 +147,10 @@ async function generateShotFrameVideo(nodeId, node){
     if(typeof appendVideoResolutionToForm === 'function') {
       appendVideoResolutionToForm(form, videoModel, node.data.videoResolution);
     }
+    // 是否处理人脸（仅 seedance2.0 商业版生效）
+    if(node.data.processFace === true) {
+      form.append('enable_face_mask', 'true');
+    }
 
     let res;
 

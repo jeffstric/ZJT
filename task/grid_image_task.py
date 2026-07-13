@@ -11,7 +11,7 @@ import httpx
 from datetime import datetime
 from typing import Dict, Any
 from model import GridImageTasksModel, GridImageTaskStatus, AIToolsModel
-from config.constant import AI_TOOL_STATUS_WAITING_BEFORE_FINISH
+from config.constant import AI_TOOL_STATUS_WAITING_BEFORE_FINISH, MediaConstants
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from config.config_util import get_config
 from utils.network_utils import is_local_file_path
@@ -69,7 +69,7 @@ def _download_and_store_image(file_url: str, item_type: int, comfyui_base_url: s
     # 生成文件名
     parsed_url = urllib.parse.urlparse(file_url)
     filename = os.path.basename(parsed_url.path)
-    if not filename or not filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+    if not filename or not filename.lower().endswith(MediaConstants.ALLOWED_IMAGE_EXTENSIONS):
         filename = f"generated_{uuid.uuid4().hex[:8]}.png"
     
     local_file_path = os.path.join(upload_dir, filename)

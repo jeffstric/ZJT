@@ -704,6 +704,8 @@
   "video_prompt_dialogue": "Dialogue: {value}",
   "video_prompt_audio_notes": "Audio Notes: {value}",
   "video_prompt_environment_sound": "Environment Sound: {value}",
-  "video_prompt_background_music": "Background Music: {value}"
+  "video_prompt_background_music": "Background Music: {value}",
+  "process_face_label": "Process face",
+  "process_face_community_hint": "This is a commercial-edition feature. Please contact us to upgrade."
 }
 

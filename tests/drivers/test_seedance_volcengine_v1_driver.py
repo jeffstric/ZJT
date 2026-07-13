@@ -11,9 +11,26 @@ SeedanceVolcengineV1 驱动单元测试
 - 子类实例化测试
 """
 import json
+import os
 import sys
 import unittest
 from unittest.mock import patch, MagicMock, PropertyMock
+
+# 必须在导入会触发 model/database 的模块前，给 config_unit.yml 塞进一个最小配置缓存。
+os.environ.setdefault("comfyui_env", "unit")
+from config import config_util  # noqa: E402
+
+config_util._config_cache["config_unit.yml"] = {
+    "database": {
+        "host": "localhost",
+        "port": 3306,
+        "user": "root",
+        "password": "",
+        "database": "unit",
+    },
+    "server": {},
+    "file_storage": {},
+}
 
 from model.ai_tool_pipeline_steps import PipelineStepStatus
 
@@ -478,6 +495,45 @@ class TestBuildCreateRequestMultiReference(unittest.TestCase):
         video_items = [c for c in result['json']['content'] if c['type'] == 'video_url']
         self.assertEqual(len(video_items), 1)
         self.assertEqual(video_items[0].get('role'), 'reference_video')
+        self.assertEqual(video_items[0]['video_url']['url'], 'https://cdn.example.com/video.mp4')
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver._cleanup_seedance_reference_video_temps')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.prepare_seedance_reference_video_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_reference_video_normalized_before_cdn_upload(
+        self,
+        mock_compress,
+        mock_upload_cdn,
+        mock_prepare_video,
+        mock_cleanup,
+    ):
+        """Seedance 参考视频先规范化为 MP4，再上传 CDN，避免 WebM 缺 duration 元数据"""
+        mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
+        mock_prepare_video.return_value = (
+            True,
+            'G:/tmp/seedance_reference_normalized.mp4',
+            None,
+            ['G:/tmp/seedance_reference_source.webm', 'G:/tmp/seedance_reference_normalized.mp4'],
+        )
+        mock_upload_cdn.return_value = (True, 'https://cdn.example.com/video.mp4', None)
+        ai_tool = _make_ai_tool(
+            image_path=None,
+            extra_config={'image_mode': 'multi_reference', 'reference_video': 'http://example.com/video.webm'},
+            reference_images=json.dumps(['http://example.com/ref1.jpg']),
+            video_path=None
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        mock_prepare_video.assert_called_once_with('http://example.com/video.webm', self.driver._config)
+        mock_upload_cdn.assert_any_call('G:/tmp/seedance_reference_normalized.mp4', self.driver._config)
+        mock_cleanup.assert_called_once_with([
+            'G:/tmp/seedance_reference_source.webm',
+            'G:/tmp/seedance_reference_normalized.mp4',
+        ])
+        video_items = [c for c in result['json']['content'] if c['type'] == 'video_url']
+        self.assertEqual(len(video_items), 1)
         self.assertEqual(video_items[0]['video_url']['url'], 'https://cdn.example.com/video.mp4')
 
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')

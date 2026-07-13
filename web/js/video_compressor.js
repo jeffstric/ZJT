@@ -1,11 +1,12 @@
 /**
  * 前端视频压缩模块 — Canvas + MediaRecorder 方案
- * 将视频最短边缩放至 480px 并重新编码，适用于 15 秒内短视频
+ * 将参考视频转码到满足下游像素下限的轻量尺寸，适用于 15 秒内短视频
  * 兼容 iOS Safari / Chrome / Firefox，无需额外依赖
  */
 
 const VIDEO_COMPRESSOR = {
     TARGET_SHORT_EDGE: 480,
+    MIN_REFERENCE_VIDEO_PIXELS: 409600,
     FPS: 24,
     VIDEO_BITRATE: 1_500_000,
     COMPRESSION_THRESHOLD_MB: 10,
@@ -48,13 +49,54 @@ const VIDEO_COMPRESSOR = {
 
     needsCompression(file, videoInfo, maxDuration) {
         const sizeMB = file.size / (1024 * 1024);
+        const pixelCount = (videoInfo.width || 0) * (videoInfo.height || 0);
         if (sizeMB > this.COMPRESSION_THRESHOLD_MB) return true;
         if (Math.min(videoInfo.width, videoInfo.height) > this.TARGET_SHORT_EDGE) return true;
+        if (pixelCount > 0 && pixelCount < this.MIN_REFERENCE_VIDEO_PIXELS) return true;
         if (maxDuration && videoInfo.duration > maxDuration) return true;
         return false;
     },
 
-    async compressVideoTo480p(file, onProgress, maxDuration) {
+    roundToEven(value) {
+        return Math.max(2, Math.round(value / 2) * 2);
+    },
+
+    ceilToEven(value) {
+        return Math.max(2, Math.ceil(value / 2) * 2);
+    },
+
+    calculateOutputDimensions(videoInfo) {
+        const sourceW = Number(videoInfo?.width) || 0;
+        const sourceH = Number(videoInfo?.height) || 0;
+        if (sourceW <= 0 || sourceH <= 0) {
+            return { width: 0, height: 0 };
+        }
+
+        const shortestEdge = Math.min(sourceW, sourceH);
+        const sourcePixels = sourceW * sourceH;
+        let scale = Math.min(1, this.TARGET_SHORT_EDGE / shortestEdge);
+
+        const scaledPixels = sourcePixels * scale * scale;
+        if (scaledPixels < this.MIN_REFERENCE_VIDEO_PIXELS) {
+            scale = Math.sqrt(this.MIN_REFERENCE_VIDEO_PIXELS / sourcePixels);
+        }
+
+        const toEven = scale > 1 ? this.ceilToEven.bind(this) : this.roundToEven.bind(this);
+        let outW = toEven(sourceW * scale);
+        let outH = toEven(sourceH * scale);
+
+        while (outW * outH < this.MIN_REFERENCE_VIDEO_PIXELS) {
+            if (outW >= outH) {
+                outW += 2;
+            } else {
+                outH += 2;
+            }
+        }
+
+        return { width: outW, height: outH };
+    },
+
+    async compressVideoForReference(file, onProgress, maxDuration) {
         const effectiveMaxDuration = maxDuration || this.MAX_DURATION_SECONDS;
         const videoInfo = await this.getVideoResolution(file);
 
@@ -63,10 +105,9 @@ const VIDEO_COMPRESSOR = {
             return { blob: file, compressed: false, info: videoInfo };
         }
 
-        const shortestEdge = Math.min(videoInfo.width, videoInfo.height);
-        const scale = Math.min(1, this.TARGET_SHORT_EDGE / shortestEdge);
-        const outW = Math.round(videoInfo.width * scale / 2) * 2;
-        const outH = Math.round(videoInfo.height * scale / 2) * 2;
+        const outputDimensions = this.calculateOutputDimensions(videoInfo);
+        const outW = outputDimensions.width;
+        const outH = outputDimensions.height;
 
         return new Promise((resolve, reject) => {
             const video = document.createElement('video');
@@ -159,7 +200,7 @@ const VIDEO_COMPRESSOR = {
                         blob,
                         compressed: true,
                         truncated: duration > effectiveDuration,
-                        info: { ...videoInfo, outputWidth: outW, outputHeight: outH, outputDuration: effectiveDuration }
+                        info: { ...videoInfo, outputWidth: outW, outputHeight: outH, outputDuration: effectiveDuration, outputType }
                     });
                 };
 
@@ -203,5 +244,9 @@ const VIDEO_COMPRESSOR = {
                 }
             }, timeout);
         });
+    },
+
+    async compressVideoTo480p(file, onProgress, maxDuration) {
+        return this.compressVideoForReference(file, onProgress, maxDuration);
     }
 };
