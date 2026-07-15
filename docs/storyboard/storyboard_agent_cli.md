@@ -8,6 +8,7 @@
 
 ```bash
 python -m scripts.storyboard_agent_cli create-storyboard-from-script --script-id 20 --user-id 1
+python -m scripts.storyboard_agent_cli create-storyboard-from-script --script-id 20 --user-id 1 --model deepseek-v4-pro --model-id 1008 --vendor-id 10
 python -m scripts.storyboard_agent_cli scene-context --scene-id 123 --user-id 1
 python -m scripts.storyboard_agent_cli split-from-script --storyboard-id 10 --user-id 1
 python -m scripts.storyboard_agent_cli list-scenes --storyboard-id 10 --user-id 1
@@ -24,7 +25,7 @@ python -m scripts.storyboard_agent_cli task-status --scene-id 123
 - `scene-context` 聚合分镜画面提示词、视频提示词、关联角色、场景、道具、参考图和当前选中素材；同时返回 `reference_image_items`，包含参考图 URL、来源类型和给模型看的“图 N 是谁”的标签。道具以当前画面/视频提示词中的 `〖〖道具名〗〗` 或实际出现的道具名为准，历史 `prompt_json.props` 只作为候选，不会单独带入参考图。
   - **画面提示词文本（`image_prompt`）只保留画面本身需要呈现的信息**：标题 + 画风(style) + 构图(composition_preference) + 画面描述(scene_desc) + 镜头景别(perspective) + 光照(lighting)。**不再拼接** 角色名/外貌、场景名/描述、道具名/描述——这些实体的视觉特征已通过「参考图 + 参考图说明」由生图模型识别；把设定档案（尤其道具的“规格/功能/背景/剧情作用/象征意义”、场景的“类型/规模/剧情作用”）塞进文本会浪费 token 且干扰画面，也与「角色外貌交给角色库/参考图」的剧本解析规则保持一致。`video_prompt` 在无独立值时回退到 `image_prompt`，因此同样精简。
 - `create-storyboard-from-script` 根据 `script_id` 创建或复用空 storyboard，返回 `storyboard_id`，
-  供下一步 `split-from-script` 使用；重复调用同一 `user_id + world_id + episode_number` 会返回既有 storyboard。
+  供下一步 `split-from-script` 使用；重复调用同一 `user_id + world_id + episode_number` 会返回既有 storyboard。可显式传 `model/model_id/vendor_id`；未传时继承当前用户在该世界的拆分模型偏好，没有偏好时使用服务端默认模型，并写入 `config_json.selectedScriptSplitLlmModel`。
 - `split-from-script` 复用 `api.storyboard.build_storyboard_scenes_from_parsed_script` 和
   `StoryboardModel.create_scenes`，把已关联剧本拆分为分镜。`storyboard.html` 在空分镜弹框中提供“拆分剧本模型”和“生图模型”选择，前端会把用户选择的 `model`、`model_id`、`vendor_id` 传给后端，避免落回服务端默认模型；“生图模型”选择写入 `state.selectedImageTaskId` 并持久化到 `config_json`，拆分完成后由 `auto-generate-missing-images` 直接读取，无需改动拆分接口本身。
 - `generate-image` 支持 `auto`、`text_to_image` 和 `image_edit`，默认 `auto`。`auto` 会先收集当前分镜涉及的画风、角色、场景、道具和已有分镜图参考；只要存在参考图，就把这些 URL 按顺序发送给 `edit_image`，并把“图 1 是角色/场景/道具”的说明追加到 prompt；没有参考图时才调用 `generate_text_to_image`。`upload/...` 和 `/upload/...` 会按 `server.host` 转为 HTTP/HTTPS URL 后再暴露给智能体和工具。提交成功后把返回的 `project_ids` 绑定为 `storyboard_scene_asset`，默认选中第一条素材。
@@ -58,10 +59,45 @@ python -m scripts.storyboard_agent_cli list-scenes --storyboard-id <storyboard_i
 
 ## Agent 默认配置
 
-- `split-from-script` 未显式传 `model` 时，后端优先读取 `storyboard.config_json.selectedScriptSplitLlmModel`，再回退到服务端默认模型。
-- `split-from-script --force-overwrite-subscene-grids` 会让已有参考图的子场景重新提交九宫格 i2i；仍有运行中九宫格任务的子场景会继续跳过，避免并发回写竞态。
-- `split-from-script` 返回 `scenes` 概要；也可以用 `list-scenes` 按 `storyboard_id` 查询场次 ID、标题、时长和素材概要。
+- `split-from-script` 未显式传 `model` 时，后端优先读取 `storyboard.config_json.selectedScriptSplitLlmModel`（支持字符串或 `{model,model_id,vendor_id}` 对象，对象会被解包并精确路由到对应 vendor/model），再回退到服务端默认模型。
+- `split-from-script` 是**异步命令**：它创建持久化拆分任务后立即返回 `task_id` + `status_url`，不再同步阻塞等待 LLM 解析（原同步路径会占用线程池约 7 分钟）。实际拆分、资产化、create_scenes、子场景九宫格全部由 `task/script_split_task.py` worker 推进（与 `generate-from-script` 路由收敛到同一 worker）。调用方需轮询 `GET /api/script-split/tasks/{task_id}` 直到终态，再用 `list-scenes` 查询结果。
+- `split-from-script --force-overwrite-subscene-grids` 已废弃：字段仍被接受但不再生效，子场景九宫格 i2i 只填充无参考图的子场景，永不覆盖已有参考图。
 - `auto-generate-missing-images` 未显式传 `task_type` 时，后端优先读取 `storyboard.config_json.selectedImageTaskId`。只有需要覆盖当前分镜配置时才传 `task_type`。
+
+`world-context` 的 `scripts`、`characters`、`locations`、`props` 均为
+`{total,page,page_size,data}` 分页对象，列表必须从对应 `.data` 读取。
+
+`GET /api/storyboard/{storyboard_id}/task-status?asset_type=first_frame` 返回每个分镜的
+`selected_assets`；首帧 URL 路径固定为
+`scenes[].selected_assets.first_frame.result_url`。同一素材对象还包含 `id`、
+`ai_tool_id`、`status`、`message` 和嵌套 `ai_tool`。
+
+```json
+{
+  "success": true,
+  "storyboard_id": 10,
+  "asset_type": "first_frame",
+  "scene_count": 1,
+  "scenes": [
+    {
+      "scene_id": 123,
+      "title": "分镜28",
+      "selected_assets": {
+        "first_frame": {
+          "id": 900,
+          "ai_tool_id": 501,
+          "status": 2,
+          "message": "done",
+          "result_url": "https://example.com/upload/storyboard/first_frame/example.png",
+          "ai_tool": {"id": 501, "status": 2}
+        },
+        "last_frame": null,
+        "video": null
+      }
+    }
+  ]
+}
+```
 
 ## Agent Token 与 HTTP 调用
 

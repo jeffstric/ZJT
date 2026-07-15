@@ -299,9 +299,8 @@ function updatePlayButtonIcon() {
 }
 
 function updateProgressChrome() {
-    const row = document.querySelector('.timeline-progress-row');
-    if (!row) return;
-    const span = row.querySelector(':scope > span');
+    // 专用 .timeline-time，避免命中 .play-btn 内 .sb-icon
+    const span = document.querySelector('.timeline-progress-row .timeline-time');
     if (!span) return;
     const total = state.scenes.reduce((t, s) => t + resolveSceneSpan(s), 0);
     span.textContent = `${formatDuration(state.currentTime)} / ${formatDuration(total)}`;
@@ -376,6 +375,34 @@ function ensurePlayheadVisible(list, contentX) {
     } else if (contentX > right - margin) {
         list.scrollLeft = Math.max(0, contentX - list.clientWidth + margin);
     }
+}
+
+/**
+ * 将时间轴横向滚动到指定分镜缩略图可见（键盘/点击切镜共用）。
+ * @param {number|string|null} sceneId
+ * @param {{ margin?: number }} [options]
+ * @returns {boolean}
+ */
+export function scrollTimelineToScene(sceneId, options = {}) {
+    if (sceneId == null) return false;
+    const list = document.querySelector('.scene-timeline-list');
+    if (!list) return false;
+    const thumb = document.querySelector(`.scene-timeline-thumb[data-scene="${sceneId}"]`);
+    if (!thumb) return false;
+    const margin = Number.isFinite(options.margin) ? options.margin : 48;
+    const listRect = list.getBoundingClientRect();
+    const thumbRect = thumb.getBoundingClientRect();
+    // 换算到 list 内容坐标，再滚到完整可见
+    const thumbLeft = thumbRect.left - listRect.left + list.scrollLeft;
+    const thumbRight = thumbLeft + thumbRect.width;
+    const viewLeft = list.scrollLeft;
+    const viewRight = viewLeft + list.clientWidth;
+    if (thumbLeft < viewLeft + margin) {
+        list.scrollLeft = Math.max(0, thumbLeft - margin);
+    } else if (thumbRight > viewRight - margin) {
+        list.scrollLeft = Math.max(0, thumbRight - list.clientWidth + margin);
+    }
+    return true;
 }
 
 /**
@@ -933,6 +960,27 @@ export function onDomWillRerender() {
     }
 }
 
+/** 时间轴试看引擎是否占用（含暂停态，此时仍绑定预览区媒体） */
 export function isPlaybackActive() {
-    return Boolean(state.isPlaying);
+    return Boolean(
+        state.isPlaying
+        || state.playback?.status === 'playing'
+        || state.playback?.status === 'paused'
+    );
+}
+
+/** 主预览原生 video.controls 是否正在播（不设 isPlaying） */
+export function isNativePreviewPlaying() {
+    const video = document.querySelector('.preview-wrapper video.preview-media');
+    if (!video) return false;
+    try {
+        return !video.paused && !video.ended && video.readyState > 0;
+    } catch {
+        return false;
+    }
+}
+
+/** 任一路径占用主预览：禁止拆 .preview-wrapper 媒体节点 */
+export function isPreviewMediaBusy() {
+    return isPlaybackActive() || isNativePreviewPlaying();
 }

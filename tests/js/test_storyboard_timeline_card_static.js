@@ -21,13 +21,25 @@ assert.match(
 
 assert.match(
   renderSource,
+  /function renderTimelineThumbInner\(scene\)[\s\S]*class="scene-timeline-id-badge\$\{statusClass\}"[\s\S]*分镜\$\{escapeHtml\(scene\.id\)\}/,
+  'timeline cards should render the real scene id as a thumbnail badge'
+);
+
+assert.match(
+  renderSource,
+  /class="scene-timeline-thumb[^\n]*[\s\S]*\$\{renderTimelineThumbInner\(scene\)\}[\s\S]*<\/button>/,
+  'initial timeline rendering should reuse the same thumbnail renderer as partial refreshes'
+);
+
+assert.match(
+  renderSource,
   /function renderTimelineMediaFrame\(scene\)[\s\S]*class="scene-timeline-media-frame first-frame-\$\{status\}"[\s\S]*<img src="\$\{escapeHtml\(scene\.firstFrameUrl\)\}"/,
   'timeline thumbnails should wrap media in a dedicated contain frame'
 );
 
 assert.match(
   renderSource,
-  /<div class="scene-timeline-item">[\s\S]*<button class="scene-timeline-thumb[\s\S]*<\/button>\s*<div class="scene-timeline-actions">[\s\S]*data-action="duplicate-scene"[\s\S]*data-action="delete-scene"[\s\S]*<\/div>[\s\S]*<\/div>/,
+  /<div class="scene-timeline-item"[^>]*>[\s\S]*<button class="scene-timeline-thumb[\s\S]*<\/button>\s*<div class="scene-timeline-actions">[\s\S]*data-action="duplicate-scene"[\s\S]*data-action="delete-scene"[\s\S]*<\/div>[\s\S]*<\/div>/,
   'timeline duplicate/delete actions should remain valid sibling buttons within each timeline card'
 );
 
@@ -65,6 +77,18 @@ assert.match(
   cssSource,
   /\.scene-timeline-actions\s*\{[\s\S]*position:\s*absolute;[\s\S]*right:\s*8px;[\s\S]*bottom:\s*8px;/,
   'timeline actions should sit on the bottom-right overlay'
+);
+
+assert.match(
+  cssSource,
+  /\.scene-timeline-id-badge\s*\{[\s\S]*position:\s*absolute;[\s\S]*top:\s*8px;[\s\S]*left:\s*8px;/,
+  'timeline scene id badge should sit on the top-left overlay'
+);
+
+assert.match(
+  cssSource,
+  /\.scene-timeline-id-badge\.has-first-frame-status\s*\{[\s\S]*top:\s*32px;/,
+  'timeline scene id badge should move below the first-frame status badge'
 );
 
 assert.match(cssSource, /\.scene-timeline-insert-slot::before/);

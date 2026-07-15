@@ -2879,3 +2879,65 @@ html.marketing-mode .container {
   color: var(--primary);
   font-weight: 600;
 }
+
+/* ===== 数字人顶部卡片标签 tab ===== */
+/* 仅覆盖「直接包含 .dh-tabs」的 .form（即数字人页根容器），
+   不影响其他页面的 .form。让 tab+body 撑满容器形成一体卡片。*/
+.form > .dh-tabs {
+  padding: 0;
+  border-top: none;
+}
+.dh-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 4px -1px; /* 左右 4px 与 body 对齐；-1px 让选中项底边与下方卡片无缝衔接 */
+}
+
+.dh-tab {
+  position: relative;
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-align: center;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease, transform .06s ease;
+}
+
+.dh-tab:hover:not(:disabled):not(.active) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dh-tab:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.dh-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 选中态：绿色凸起卡片，底边与下方表单卡片重合 */
+.dh-tab.active {
+  color: #051b0d; /* 与 .btn 文字色一致 */
+  background: var(--primary);
+  border-color: var(--border);
+  box-shadow: 0 8px 20px rgba(34, 197, 94, 0.25),
+              inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+/* 表单主体卡片：承接 tab，形成「标签翻起 + 卡片」一体感 */
+.dh-tab-body {
+  margin: 0 4px; /* 与 .dh-tabs 左右对齐 */
+  border: 1px solid var(--border);
+  border-radius: 0 0 10px 10px;
+  padding: 16px;
+  background: var(--panel);
+}

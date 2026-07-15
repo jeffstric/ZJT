@@ -49,6 +49,7 @@ web/js/storyboard/
 | `prompt_json.character_desc` | `scene.promptJson.character_desc` | 角色描述 |
 | `video_prompt` | `scene.videoPrompt` | 视频提示词（生视频/数字人动作描述） |
 | `video_type` | `scene.videoType` | 分镜类型 image/video/digital_human |
+| `audio_embedded` | `scene.audioEmbedded` | 声音同出：选中视频已内嵌对话声音，导出完整视频时保留原音轨、跳过 TTS 混音；digital_human 默认 1 |
 | `video_config_json` | `scene.videoConfigJson` | 视频生成参数偏好 |
 | `difficulty` | `scene.difficulty` | 分镜难易程度 易/中/难（见 2.3.1.1），卡片 badge 展示 |
 | `act_name` | `scene.actName` | 所属幕/分镜组名称（见 2.3.1.2），卡片标签展示 |
@@ -344,9 +345,14 @@ class SceneVideoType:
 |------|------|------|
 | `image` | 文生图/图片编辑（16/1/25/26） | 首帧 |
 | `video` | 图生视频（3/10/12/14/15/21/22/23…） | 首帧 + 尾帧 + 视频 |
-| `digital_human` | 数字人（13/32） | 视频（数字人），输入=人物形象图 + 当前对话配音 |
+| `digital_human` | **仅 LTX2.3 数字人（32）** | 视频（对口型），输入=人物形象图 + **已生成的说话音频** |
 
-> 数字人形式下，`selected_video_id` 指向的 asset 其 `ai_tool` 为数字人任务；人物形象图可复用 `selected_first_frame_id` 指向的 asset。
+> 对口型（`digital_human`）一期规则：拆分时仅 **单说话人** 对话分镜可标此类型，多人对话强制 `video`。生成必须先完成 TTS 配音，再提交 LTX2.3（不接 wan type=13）。详见 `docs/storyboard/storyboard_digital_human.md`。
+
+### 模型配置弹窗
+
+- 视频分辨率选择即时写入前端状态并刷新弹窗选中态，随后持久化到 `storyboard.config_json`；弹窗保持打开，便于继续设置时长和裁剪选项。
+- 弹窗只保留右上角圆形关闭按钮，底部不再重复提供关闭操作。
 
 ### 2.3.1.1 分镜难易程度枚举 `SceneDifficulty`（config/constant.py）
 
@@ -761,6 +767,7 @@ async def create_storyboard(request: Request):
 |------|------|------|------|
 | POST | `/api/storyboard/{id}/scene` | `storyboard:update` | 新增分镜（默认追加末尾；可传 `prev_id`/`next_id` 指定位置） |
 | PUT | `/api/storyboard/scene/{scene_id}` | `storyboard:update` | 更新分镜内容（title/duration/prompt_json/video_prompt/video_type/video_config_json；选中指针由 asset/select 维护） |
+| PUT | `/api/storyboard/scene/{scene_id}/video-type` | `storyboard:update` | 在普通视频/对口型之间切换；保留已有候选，运行中的旧模式任务完成后不自动替换当前视频 |
 | DELETE | `/api/storyboard/scene/{scene_id}` | `storyboard:update` | 删除分镜（CASCADE 删除其对话与资产） |
 | PUT | `/api/storyboard/{id}/scene/reorder` | `storyboard:update` | 移动单个分镜（浮点二分，Body: `{scene_id, prev_id, next_id}`） |
 | POST | `/api/storyboard/scene/{scene_id}/duplicate` | `storyboard:update` | 复制分镜（含对话，不含生成资产） |
@@ -967,7 +974,7 @@ await ZJTi18n.init(['common', 'storyboard']);
 - **Logo + 标题**：显示当前集数标题，如 "第1集：虚实之间·流离中的微光"
 - **导航 Tab**：剧本策划（跳回 script_writer） | 画布（跳 video_workflow） | 编辑器（当前页面，高亮）
 - **操作按钮**：一键转视频 | 导出
-- **算力显示**：⚡ 余额（复用现有 `/api/computing-power` 接口）
+- **算力显示**：⚡ 余额（`GET /api/user/computing_power`）；按余额着色（不足 100 红 / 不足 1000 橙 / 否则绿）。**点击**打开算力日志弹窗（iframe `/computing_power_logs.html`）；日志弹窗内提供 **算力充值** 入口（`GET /api/recharge/packages` + `POST /api/recharge/wechat-pay` 微信扫码；本地环境 `is_local` 禁用并提示走后台加算力）
 
 #### 4.5.2 Left Sidebar（左侧编辑面板）
 
@@ -997,9 +1004,15 @@ await ZJTi18n.init(['common', 'storyboard']);
 - 右侧浮动缩略图栏（首帧选择）
 
 **故事板视图（网格切换）：**
-- 3 列卡片网格布局
-- 每张卡片包含：分镜图片 + 标题 + 时长 + 复制/删除操作
-- 卡片底部显示各类型生成状态图标（图/视频/配音）
+- 自适应列卡片网格（`minmax(240px, 1fr)`）
+- 每张卡片包含：
+  - **缩略图叠加**：分镜类型徽章（视频/对口型/图片）、时长、幕号（`groupId`→幕01）
+  - **标题行**：分镜标题 + 难度（易/中/难）
+  - **状态行**：图/视频生成状态 + 配音进度（有对白时「配 a/b」）
+  - **场景行**：场景头像 chip；未绑定时灰字「未选场景」
+  - **角色行**：最多 3 头像叠放 + 名称/ +N（来源：对话角色 → 参考选择 → 提示词 `【【角色】】`）
+  - **景别**：`prompt_json.perspective` 单行截断（空则不占位）
+  - 复制/删除操作
 - 底部 "添加分镜" 虚线卡片
 
 #### 4.5.4 Timeline Controls（底部时间线）

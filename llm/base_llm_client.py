@@ -22,13 +22,36 @@ class BaseLLMClient(ABC):
             self.reasoning_content = reasoning_content
 
     class Choice:
-        def __init__(self, message: 'BaseLLMClient.Message'):
+        def __init__(self, message: 'BaseLLMClient.Message', finish_reason: Optional[str] = None):
             self.message = message
+            # 归一化后的完成原因（小写下划线），如 stop / length / tool_calls / content_filter
+            self.finish_reason = BaseLLMClient.normalize_finish_reason(finish_reason)
+
+        @property
+        def is_truncated(self) -> bool:
+            """是否因输出上限被截断（finish_reason == 'length'）"""
+            return self.finish_reason == "length"
 
     class Response:
         def __init__(self, choices: List['BaseLLMClient.Choice'], usage: Optional[Dict] = None):
             self.choices = choices
             self.usage = usage or {}
+
+    @staticmethod
+    def normalize_finish_reason(raw: Optional[str]) -> Optional[str]:
+        """将各 provider 的 finish_reason 归一化为小写下划线风格。
+
+        - OpenAI / Ollama / OpenAI 兼容：stop / length / tool_calls / content_filter
+        - Gemini：STOP / MAX_TOKENS / SAFETY 等（驼峰 key，值全大写）
+        归一化后 engine 只需判断 == 'length'，无需关心 provider 差异。
+        """
+        if not raw:
+            return None
+        value = str(raw).strip().lower()
+        # Gemini MAX_TOKENS 映射为 OpenAI 风格的 length
+        if value in ("max_tokens",):
+            return "length"
+        return value
 
     @abstractmethod
     def call_api(
@@ -73,10 +96,10 @@ class BaseLLMClient(ABC):
         if agent_scope:
             llm_logger.info(f"  Agent scope: {agent_scope}")
 
-    def _create_response(self, content: str, tool_calls: Optional[List] = None, usage: Optional[Dict] = None, reasoning_content: Optional[str] = None) -> 'Response':
+    def _create_response(self, content: str, tool_calls: Optional[List] = None, usage: Optional[Dict] = None, reasoning_content: Optional[str] = None, finish_reason: Optional[str] = None) -> 'Response':
         """创建标准响应格式"""
         message = self.Message(content, tool_calls, reasoning_content=reasoning_content)
-        return self.Response([self.Choice(message)], usage)
+        return self.Response([self.Choice(message, finish_reason)], usage)
 
     def _log_token_usage(self, usage: Dict, auth_token: str, vendor_id: int, model_id: int):
         """记录 token 使用量到 perseids"""

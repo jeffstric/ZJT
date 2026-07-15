@@ -33,11 +33,13 @@ function numericId(value) {
 
 function normalizeItem(item = {}) {
     const sceneId = numericId(item.scene_id ?? item.sceneId);
+    const extra = item.extra_json || item.extraJson || {};
     return {
         id: item.id,
         sceneId,
         status: String(item.status || '').toLowerCase(),
-        planStatus: String(item.plan_status || item.planStatus || '').toLowerCase(),
+        planStatus: String(item.plan_status || item.planStatus || extra.plan_status || '').toLowerCase(),
+        waiting: String(item.waiting || extra.waiting || '').toLowerCase(),
         assetId: item.asset_id ?? item.assetId ?? null,
         resultUrl: item.result_url || item.resultUrl || '',
         errorCode: item.error_code || item.errorCode || '',
@@ -89,7 +91,18 @@ export function applyImageBatchStatus(batchStatus = {}) {
 
         const scene = state.scenes.find(entry => String(entry.id) === String(item.sceneId));
         if (!scene) continue;
-        if (item.resultUrl) scene.firstFrameUrl = item.resultUrl;
+        // 仅 completed/ready 写 URL；禁止用宫格整图覆盖已有单格首帧（避免缩略图/主预览闪烁）
+        if (item.resultUrl) {
+            const next = String(item.resultUrl).trim();
+            const cur = String(scene.firstFrameUrl || '').trim();
+            const nextIsGrid = /\/storyboard\/temp\//i.test(next) || /grid/i.test(next);
+            const curIsGrid = /\/storyboard\/temp\//i.test(cur) || /grid/i.test(cur);
+            const statusOk = !item.status || item.status === 'completed' || item.status === 'already_ready'
+                || item.status === 'running' || item.status === 'submitted';
+            if (statusOk && next && !(nextIsGrid && cur && !curIsGrid)) {
+                scene.firstFrameUrl = next;
+            }
+        }
         if (item.assetId) scene.selectedFirstFrameId = item.assetId;
     }
 
@@ -120,8 +133,12 @@ export function getFirstFrameDisplayStatus(scene) {
     const item = state.autoImageBatch?.itemsBySceneId?.[scene?.id];
     if (item) {
         if (RUNNING_ITEM_STATUSES.has(item.status)) return 'running';
-        if (PENDING_ITEM_STATUSES.has(item.status)) return 'pending';
         if (item.status === 'failed') return 'failed';
+        if (PENDING_ITEM_STATUSES.has(item.status)) {
+            if (item.waiting === 'location_grid_reference') return 'waiting_location';
+            if (item.waiting === 'previous_group_first_frame') return 'waiting_prev';
+            return 'pending';
+        }
     }
     if (isFirstFrameRunning(scene)) return 'running';
     return 'missing';
@@ -196,6 +213,8 @@ export function getFirstFrameStatusLabel(status) {
     return {
         missing: '待生成',
         pending: '排队中',
+        waiting_location: '等场景参考',
+        waiting_prev: '等前置分镜',
         running: '生成中',
         failed: '生成失败',
         ready: '',

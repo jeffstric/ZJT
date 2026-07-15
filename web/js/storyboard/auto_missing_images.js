@@ -1,7 +1,7 @@
 import state from './state.js';
 import * as api from './api.js';
 import {
-    renderApp,
+    patchHeaderPower,
     updateAutoCompleteHeader,
     updateCurrentSceneDetail,
     updateSceneThumb,
@@ -63,7 +63,8 @@ async function refreshComputingPower() {
     try {
         const power = await api.fetchComputingPower();
         state.computingPower = power.computing_power ?? power.balance ?? state.computingPower;
-        renderApp();
+        // 禁止 renderApp：批量生成时若用户正在预览，全量重建会打断视频
+        patchHeaderPower();
     } catch {}
 }
 

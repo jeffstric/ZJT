@@ -56,6 +56,17 @@ curl http://localhost:9003/api/storyboard/10/task-status?asset_type=first_frame 
   -H "Authorization: Bearer short-lived-auth-token"
 ```
 
+## 前端闪烁防护（宫格整图 vs 单格首帧）
+
+效果模式九宫格/四宫格生成时，`ai_tools.result_url` 先是整张宫格图（常在 `storyboard/temp/`），拆分后 `storyboard_scene_asset.result_url` 才是单格 `first_frame/`。
+
+若轮询里用宫格 URL 覆盖已有单格 URL，时间轴缩略图会在「整图 / 单格」间来回闪。前端约定：
+
+- `preferSceneMediaUrl` / batch apply：**禁止用宫格整图覆盖非宫格首帧 URL**
+- `updateSceneThumb` / 主预览：媒体签名未变时跳过 `innerHTML` 重建，避免同 URL 重复解码闪烁
+
+后端 `_asset_task_info` 仅在 asset 无 `result_url` 时才用 `ai_tools.result_url` 兜底。
+
 ## Billing Boundary
 
 `auto-generate-missing-images` creates one orchestration job. In `speed` and `balanced` it selects scenes that need an image and calls the existing `StoryboardAgentCliService.generate_image()` method for each submitted scene. In `quality + first_frame` it submits same-act storyboard first-frame grids through `StoryboardFirstFrameGridService`, then `task/grid_image_task.py` cuts the grid and writes each cell back as `storyboard_scene_asset(first_frame)`.
@@ -66,7 +77,9 @@ That means billing and permission behavior remain on the existing image-generati
 2. Those tools call the existing image endpoints with `auth_token`.
 3. The image endpoints perform the current auth and computing-power deduction.
 
-The batch command requires a non-empty `auth_token`. It skips scenes that already have a result URL, skips scenes whose selected task is already pending or processing, and caps one batch with `StoryboardAutoGenerateConstants.DEFAULT_BATCH_LIMIT` / `MAX_BATCH_LIMIT`.
+The batch command requires a non-empty `auth_token`. It skips scenes that already have a result URL and skips scenes whose selected task is already pending or processing.
+
+`limit` semantics: **omitting `limit` (or passing `limit=0`) means "no cap"** — all missing scenes are planned in one batch. The scheduler still paces submission per tick (`QUALITY_GRID_BATCHES_PER_TICK`, etc.), so an uncapped batch does not flood the generation chain. Passing a positive `limit` caps the number of *planned* (pending) scenes for this batch; excess missing scenes are marked `limit_reached`/`skipped` within this batch and must be picked up by a later request. A positive `limit` is clamped to `[1, StoryboardAutoGenerateConstants.MAX_BATCH_LIMIT]`.
 
 ## Idempotency and Duplicate Click Protection
 
@@ -80,7 +93,9 @@ The batch command requires a non-empty `auth_token`. It skips scenes that alread
 
 `auto-generate-missing-images` creates a storyboard image batch orchestration job and returns `batch_id` immediately. The job is advanced solely by the scheduler (`task/storyboard_image_batch_task.py` → `process_image_batch_jobs`), which runs every `StoryboardAutoGenerateConstants.BATCH_SCHEDULER_INTERVAL_SECONDS` (7s). The HTTP handler intentionally does **not** advance the job synchronously: doing so would race with the scheduler and could double-submit the same pending item (producing two `ai_tools` records with identical prompts for one scene). The orchestration job never writes generation tasks directly; it calls `generate_image()` only when an item is ready.
 
-- `speed`: submit all missing images up to `limit` without referencing neighboring frames.
+Because the handler returns before the scheduler submits anything, the response's `submitted_count` is **not** "tasks already pushed this tick". It is the fixed **planned count** for this round (`pending` + `already_running` items), written once at plan time and never mutated by later ticks. Poll the status endpoint to follow actual progress through the `pending` → `running` → `completed`/`failed` transitions (see "Status Response Fields" below). Do **not** interpret `submitted_count` as a live submission counter.
+
+- `speed`: submit all missing images (up to `limit`; omitted/`0` = no cap) without referencing neighboring frames.
 - `balanced` (default): scenes in different parsed groups can submit concurrently. Within the same group, each missing scene waits for the previous scene result and then submits as `image_edit` with the previous result URL as `source_image`.
 - `quality + first_frame`: pending scenes in the same parsed `shot_group` (`storyboard_image_batch_item.group_key` / `prompt_json.source.group_id`) are submitted as 2x2 or 3x3 storyboard first-frame grids; `act_name` is only a display/fallback grouping value. Scenes whose location reference image is missing remain pending with `waiting=location_grid_reference`; ready scenes in the same parsed group can still proceed. The old global previous-frame chain is used only when `StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED` is disabled.
 
@@ -90,7 +105,7 @@ Quality grid details:
 
 - 1-4 ready scenes use a 2x2 grid; 5-9 use a 3x3 grid; a single ready scene still uses 2x2 with placeholders to keep the quality-mode grid path uniform.
 - Grid size is decided after parsed-group partitioning. For example, if one displayed act contains multiple parsed groups of 3, 2, and 1 shots, each group is processed independently instead of being merged into one 3x3 grid.
-- `limit` keeps its planning meaning: maximum real scenes planned for the batch. Per scheduler tick throughput is controlled separately by `StoryboardAutoGenerateConstants.QUALITY_GRID_BATCHES_PER_TICK`.
+- `limit` keeps its planning meaning: maximum real scenes planned for the batch (omitted/`0` = no cap; positive value clamped to `MAX_BATCH_LIMIT`). Per scheduler tick throughput is controlled separately by `StoryboardAutoGenerateConstants.QUALITY_GRID_BATCHES_PER_TICK`.
 - The grid uses the storyboard/job ratio (`job.ratio` or `storyboard.workflow_ratio`), not a hard-coded `16:9`.
 - Each real cell prompt is built with a two-layer prompt flow. In enterprise edition, `storyboard_scene.prompt_json.spatial_world` provides an episode-level registry of multiple local `space_units`; `storyboard_scene.prompt_json.spatial_layout` references the current shot's `space_unit_refs`, anchors, and `camera_pose`. The enterprise spatial engine (`enterprise.services.storyboard_spatial`) derives `derived_screen_position` from `camera_pose + position_3d`, so raw LLM `screen_position` is only a fallback. The community facade (`services.storyboard_spatial`) keeps legacy v1 `spatial_layout` payloads readable but does not enable quality-grid projection. The optional LLM prompt rewriter receives `spatial_layout`, `visible_entities`, `hidden_continuity_entities`, and the derived projection context, so it can reason about continuity without inventing new seat/slot positions. The final image-generation prompt stays clean: it describes only visible/partial entities in natural image language; `offscreen`/`occluded` continuity entities are not written as visible subjects, their names are removed from the final prompt if the source text leaks them, and they do not enter that cell's reference indices. The service stores each submitted cell's final prompt and spatial summary in `storyboard_image_batch_item.extra_json.grid_prompt_cell_context`; the group-level summary is stored in `grid_prompt_group_context` and is passed to the next act/group as `previous_grid_prompt_context` for continuity reference.
 - Quality-grid reference images are resolved from visible/partial structured spatial entities first. A `slot` or `loose_position` with `character_id` / `character_db_id` and no explicit `occupant_type` is treated as a character, matching the shared spatial schema; an explicit non-character type is not. If structured references are incomplete, `【【角色名】】` and `〖〖道具名〗〗` markers in the shot prompt are resolved by `world_id + name` as a fallback. Explicitly `offscreen`/`occluded` characters remain excluded even when their names occur in source text. A fallback asset is appended only when its database record has a usable reference image, and the resulting character/prop/location URLs are stored in `grid_image_tasks.reference_images` and sent to `/api/image-edit` through `ref_image_urls`.
@@ -106,6 +121,26 @@ Quality grid details:
 Inserted scenes that have no parsed group metadata inherit the previous scene's group. If the first scene has no group metadata, it uses a temporary manual group.
 
 Existing completed scenes participate in dependencies. For example, if A1 already has a first frame and A2 is missing, A2 can reference A1 without regenerating A1. Existing running scenes also participate; dependent scenes wait until their selected asset has a result URL.
+
+### Status Response Fields
+
+`GET /api/storyboard/image-batches/{batch_id}/status` returns aggregated progress fields computed live from `items[]`, so callers do not need to recount items themselves:
+
+| Field | Meaning |
+|-------|---------|
+| `total` | Total batch item count. |
+| `pending` | Items still waiting to be submitted (planned, not yet pushed to the generation chain). |
+| `running` | Items currently being generated. |
+| `completed` | Items with a successful result. |
+| `failed` | Items that errored out. |
+| `skipped` | Items skipped this round (`already_ready`, `already_running`, `limit_reached`, `missing_first_frame`, `missing_audio`, …). |
+| `progress` | `completed / total` rounded to 4 decimals (`0` when `total == 0`). |
+| `submitted_count` | **Planned count** for this round (`pending` + `running` at plan time). Fixed once written; does not change across scheduler ticks. Use `pending`/`running`/`completed` to follow live progress. |
+| `completed_count` / `failed_count` / `skipped_count` | Legacy snake_case mirrors of `completed` / `failed` / `skipped` (kept for backward compatibility). |
+| `status` | Job-level status name: `pending` / `running` / `completed` / `failed` / `partial`. |
+| `items[]` | Per-scene detail (`status`, `plan_status`, `project_ids`, `result_url`, `error_code`, …). |
+
+Polling rule of thumb: keep polling until `status` is terminal (`completed` / `failed` / `partial`) **and** there are no `pending`/`running` items.
 
 ### 诊断日志（排查链式参考未生效）
 
@@ -201,3 +236,43 @@ Submitted or already-running scenes are passed to the existing polling function,
 ## Auth Boundary
 
 Storyboard-level HTTP routes parse the real user from `Authorization: Bearer <auth_token>` and overwrite any caller-provided `user_id`. The route bodies call the shared command service through `asyncio.to_thread()`, keeping synchronous database and service work off the FastAPI event loop.
+
+## 首帧图 CDN 分发（带宽优化）
+
+宫格拆分生成的首帧单图默认只存本地 `upload/storyboard/first_frame/`，前端访问时由本机静态文件直接回源，业务机承担全部图片带宽。在云端部署（`server.is_local=false`）下可通过七牛云图床分发降低业务机带宽。
+
+### 触发条件
+
+同时满足以下两项才会为新生成的首帧单图建立 CDN 映射：
+
+1. `server.auto_upload_to_cdn = true`（CDN 总开关，`config_prod.yml` / `system_config` 表）
+2. `file_storage.qiniu_long_term` 的 `access_key` / `secret_key` / `bucket_name` / `cdn_domain` 配置完整
+
+任一不满足时，不建映射、走本地静态文件，行为与未启用 CDN 完全一致。
+
+### 工作机制
+
+接入点位于宫格拆图 pipeline driver（`task/pipeline_drivers/storyboard_grid_split_driver.py`），每成功创建一张首帧单图资产后调用 `_ensure_asset_media_mapping(...)`：
+
+1. 在 `media_file_mapping` 表建记录：
+   - `entity_type = MediaFileEntity.STORYBOARD_SCENE_ASSET`(=6)
+   - `source_id = storyboard_scene_asset.id`
+   - `local_path = upload/storyboard/first_frame/xxx.png`（相对路径，无前导 `/`）
+   - `policy_code = MEDIA_CACHE`，`label = first_frame`
+2. 调 `CDNUtil.trigger_cdn_upload(mapping_id, local_path)` **异步**上传到七牛云 `qiniu_long_term` 桶（非阻塞，线程池执行）。
+3. 回写 `storyboard_scene_asset.media_mapping_id`（新字段，见迁移 `no_115_20260713_asset_media_mapping_id`）。
+
+之后前端访问 `/upload/storyboard/first_frame/xxx.png` 时，`cdn_redirect_middleware`（`server.py`）按 `local_path_hash` 查到该映射，**302 重定向**到七牛云签名 URL（28 小时有效），浏览器直接从 CDN 拉取，业务机不再承担该图片的下行带宽。
+
+### 关键设计点
+
+- **前端无需改动**：中间件 302 对前端完全透明，`<img src="/upload/...">` 浏览器自动跟随重定向。这与 `video_workflow.html` 用 `/api/proxy-image` 代理是两种不同架构，storyboard 走中间件方案，不需要在前端拼接 CDN 域名。
+- **宫格整图不上 CDN**：`upload/storyboard/temp/` 下的宫格整图是中间产物，拆分后用户看不到，保持本地存储。
+- **幂等**：按 `local_path_hash` 查已有 active mapping，命中则复用、不重建、不重传。
+- **非阻塞**：CDN 建映射 / 上传失败只记 `warning` 日志，绝不影响 asset 创建、选中、batch 回写的主流程。
+- **仅增量生效**：本次改动只作用于新生成的首帧图；已生成的历史首帧图未建立 CDN 映射，仍走本地静态文件。
+
+### 相关参考
+
+- `docs/backend/download_queue_decouple.md` —— 视觉/视频任务的标准 CDN 上传链路（`update_with_cdn_sync`）
+- `docs/backend/image_url_expiry_refresh.md` —— CDN 签名 URL 过期恢复与降级原则

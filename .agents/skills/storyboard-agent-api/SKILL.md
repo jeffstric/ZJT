@@ -54,6 +54,7 @@ Fixed v1 endpoint paths:
 - `POST /api/storyboard/{storyboard_id}/auto-generate-missing-images`
 - `GET /api/storyboard/image-batches/{batch_id}/status`
 - `GET /api/storyboard/{storyboard_id}/task-status?asset_type=first_frame`
+- `GET /api/script-split/tasks/{task_id}`
 
 ## Auth
 
@@ -105,6 +106,18 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/world-context" \
   -d '{"world_id":1,"page_size":100}'
 ```
 
+`world-context` 的 `scripts`、`characters`、`locations`、`props` 都是分页对象，
+不是数组。真实列表统一位于 `.data`：
+
+```json
+{
+  "scripts": {"total": 2, "page": 1, "page_size": 100, "data": []},
+  "characters": {"total": 4, "page": 1, "page_size": 100, "data": []},
+  "locations": {"total": 3, "page": 1, "page_size": 100, "data": []},
+  "props": {"total": 5, "page": 1, "page_size": 100, "data": []}
+}
+```
+
 Use `get-script` only when full script content is needed:
 
 ```bash
@@ -125,6 +138,10 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/create-storyboard-from-
   -d '{"script_id":20,"title":"optional"}'
 ```
 
+创建命令可选传 `model`、`model_id`、`vendor_id`。未传时，新故事板继承当前用户
+在该世界最近保存的拆分模型偏好；没有偏好时使用服务端默认模型。解析结果写入
+`storyboard.config_json.selectedScriptSplitLlmModel`，后续 `split-from-script` 无需重复传模型。
+
 Split linked script into storyboard scenes:
 
 ```bash
@@ -133,7 +150,16 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/split-from-script" \
   -d '{"storyboard_id":10,"max_group_duration":15}'
 ```
 
-When `model` is omitted, the server uses `storyboard.config_json.selectedScriptSplitLlmModel`, then falls back to the server default. The legacy `force_overwrite_subscene_grids` field is accepted for compatibility but no longer takes effect; subscene 9-grid i2i only fills subscenes without a reference image, and existing subscene reference images are never overwritten.
+This is an **asynchronous** command. It creates a persistent split task and returns immediately with `task_id` and `status_url` (it does **not** block for the ~7-minute LLM parse). Poll the task until it reaches a terminal status, then list scenes:
+
+```bash
+curl -s "$BASE_URL/api/script-split/tasks/<task_id>" -H "$AUTH"
+# poll until status is completed / failed / cancelled, then:
+curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/list-scenes" \
+  -H "$AUTH" -H "Content-Type: application/json" -d '{"storyboard_id":10}'
+```
+
+When `model` is omitted, the server reads `storyboard.config_json.selectedScriptSplitLlmModel`, then falls back to the server default. `selectedScriptSplitLlmModel` may be either a string (`"deepseek-v4-pro"`) or an object (`{"model":"deepseek-v4-pro","model_id":1008,"vendor_id":10}`); the server unpacks the object and routes to the exact vendor/model — pass `model_id` + `vendor_id` explicitly only to override. The legacy `force_overwrite_subscene_grids` field is accepted for compatibility but no longer takes effect.
 
 List scenes after splitting:
 
@@ -168,8 +194,10 @@ Batch-generate missing first-frame images:
 ```bash
 curl -s -X POST "$BASE_URL/api/storyboard/10/auto-generate-missing-images" \
   -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"asset_type":"first_frame","mode":"auto","limit":5,"sequence_mode":"balanced"}'
+  -d '{"asset_type":"first_frame","mode":"auto","sequence_mode":"balanced"}'
 ```
+
+`limit` semantics: **omit `limit` (or pass `limit=0`) to plan ALL missing scenes in one batch** — this is the recommended way to "generate images for this episode". The scheduler still paces per-tick submission, so an uncapped batch will not overload the system. Passing a positive `limit` caps the number of *planned* scenes; excess scenes are marked `limit_reached`/`skipped` within this batch and need a later request. A positive `limit` is clamped to `[1, 20]` (`MAX_BATCH_LIMIT`).
 
 When `task_type` is omitted, the server uses `storyboard.config_json.selectedImageTaskId`. Pass `task_type` only to intentionally override the storyboard image workflow/model choice.
 
@@ -179,11 +207,13 @@ When `task_type` is omitted, the server uses `storyboard.config_json.selectedIma
 - `quality` runs one global chain and references the previous scene even across group boundaries.
 - `speed` submits all missing images without previous-frame references.
 
-The response includes `batch_id`. Poll the orchestration batch when the request returns a `batch_id`:
+The response includes `batch_id` and a fixed `submitted_count` (the **planned count** for this round, not a live submission counter). Poll the orchestration batch when the request returns a `batch_id`:
 
 ```bash
 curl -s "$BASE_URL/api/storyboard/image-batches/<batch_id>/status" -H "$AUTH"
 ```
+
+The status response carries aggregated fields computed from `items[]`, so you do not need to recount items yourself: `total`, `pending`, `running`, `completed`, `failed`, `skipped`, and `progress` (= `completed / total`). `submitted_count` mirrors the fixed planned count. Keep polling until `status` is terminal (`completed` / `failed` / `partial`) and `pending` + `running` are both `0`.
 
 You can also query it through the command endpoint:
 
@@ -197,6 +227,32 @@ Query all scene image statuses in a storyboard:
 
 ```bash
 curl -s "$BASE_URL/api/storyboard/10/task-status?asset_type=first_frame" -H "$AUTH"
+```
+
+首帧结果 URL 位于 `scenes[].selected_assets.first_frame.result_url`：
+
+```json
+{
+  "success": true,
+  "storyboard_id": 10,
+  "scenes": [
+    {
+      "scene_id": 123,
+      "selected_assets": {
+        "first_frame": {
+          "id": 900,
+          "ai_tool_id": 501,
+          "status": 2,
+          "message": "done",
+          "result_url": "https://example.com/upload/storyboard/first_frame/example.png",
+          "ai_tool": {"id": 501, "status": 2}
+        },
+        "last_frame": null,
+        "video": null
+      }
+    }
+  ]
+}
 ```
 
 Generate a single scene image:

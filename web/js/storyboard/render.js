@@ -13,6 +13,8 @@ import state, {
     getAgentChatFontSizes,
     AGENT_CHAT_FONT_STEP_MIN,
     AGENT_CHAT_FONT_STEP_MAX,
+    getSelectedLlmMeta,
+    isSceneAgentRunning,
 } from './state.js';
 import { characterReferenceSelectionKey, formatDuration, mapAssetAvatar } from './adapters.js';
 import { icon } from './icons.js';
@@ -23,7 +25,20 @@ import {
     getFirstFrameDisplayStatus,
     getFirstFrameStatusLabel,
 } from './auto_missing_images_state.js';
-import { onDomWillRerender, updatePlayheadPosition } from './playback.js';
+import {
+    getAutoVideoCompleteButtonViewModel,
+    getAutoVideoCompleteSummary,
+} from './auto_missing_videos_state.js';
+import {
+    onDomWillRerender,
+    updatePlayheadPosition,
+    isPreviewMediaBusy,
+} from './playback.js';
+import { Region } from './ui_regions.js';
+import { choosePreviewMedia } from './candidate_selection_state.js';
+import { canSwitchToDigitalHuman } from './video_type_switch_state.js';
+
+export { Region } from './ui_regions.js';
 
 // 确保 i18n 在首次 render 前已初始化（bootstrap 中已调用 initI18n）
 
@@ -34,6 +49,18 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+/** Map scene.videoType to Chinese label for UI. */
+export function videoTypeLabel(videoType) {
+    const key = String(videoType || 'video').toLowerCase();
+    if (key === 'digital_human') return '对口型';
+    if (key === 'image') return '图片';
+    return '视频';
+}
+
+export function isDigitalHumanScene(scene) {
+    return String(scene?.videoType || scene?.video_type || '').toLowerCase() === 'digital_human';
 }
 
 // 缩略图服务（参考 video_workflow.html 中 shot_frame_node.js 的实现）
@@ -239,19 +266,270 @@ function actNameTag(scene) {
         : '';
 }
 
+/** 幕号：grp_001 → 幕01；无 groupId 返回空 */
+function groupActLabel(scene) {
+    if (!scene || !scene.groupId) return '';
+    const numStr = String(scene.groupId).replace(/^grp_?0*/i, '');
+    const num = parseInt(numStr, 10);
+    if (!Number.isFinite(num) || num <= 0) return '';
+    return `幕${String(num).padStart(2, '0')}`;
+}
+
+function videoTypeBadgeClass(videoType) {
+    const key = String(videoType || 'video').toLowerCase();
+    if (key === 'digital_human') return 'type-digital-human';
+    if (key === 'image') return 'type-image';
+    return 'type-video';
+}
+
+/** 场景：补全 avatar（与左侧栏一致） */
+function resolveSceneLocation(scene) {
+    if (!scene || !scene.location) return null;
+    let loc = { ...scene.location };
+    const locId = loc.id || loc.db_id;
+    if (locId && !loc.avatar && !loc.reference_image) {
+        const fullLoc = (state.locations || []).find((l) => String(l.id) === String(locId));
+        if (fullLoc) loc = { ...fullLoc, ...loc };
+    }
+    const avatar = loc.avatar || loc.reference_image || mapAssetAvatar(loc.raw || loc) || '';
+    return {
+        id: locId,
+        name: loc.name || '场景',
+        avatar,
+    };
+}
+
+/**
+ * 角色列表（去重保序）：
+ * 1) 对话 characterId  2) referenceSelections.characters  3) 提示词【【角色】】
+ */
+function resolveSceneCharacters(scene) {
+    if (!scene) return [];
+    const byKey = new Map();
+    const worldChars = state.characters || [];
+
+    const findById = (id) => worldChars.find((c) => String(c.id) === String(id));
+    const findByName = (name) => {
+        const n = String(name || '').trim().replace(/\s+/g, '');
+        if (!n) return null;
+        return worldChars.find((c) => String(c.name || '').trim().replace(/\s+/g, '') === n);
+    };
+    const avatarOf = (c, fallback = '') =>
+        (c && (c.avatar || c.reference_image || mapAssetAvatar(c.raw || c))) || fallback || '';
+
+    const add = (id, name, avatar) => {
+        const nm = String(name || '').trim();
+        if (!nm) return;
+        const key = id != null && id !== '' ? `id:${id}` : `name:${nm.replace(/\s+/g, '')}`;
+        if (byKey.has(key)) return;
+        byKey.set(key, { id: id ?? null, name: nm, avatar: avatar || '' });
+    };
+
+    (scene.dialogues || []).forEach((d) => {
+        if (d.characterId == null || d.characterId === '') return;
+        const c = findById(d.characterId);
+        if (c) add(c.id, c.name, avatarOf(c));
+    });
+
+    const refChars = scene.referenceSelections?.characters || {};
+    Object.entries(refChars).forEach(([key, item]) => {
+        const id = item?.character_id ?? item?.characterId ?? null;
+        const nameFromKey = String(key || '').replace(/^name:/, '');
+        const name = (item?.name || nameFromKey || '').trim();
+        const c = (id != null ? findById(id) : null) || findByName(name);
+        if (c) add(c.id, c.name, avatarOf(c, item?.url || ''));
+        else if (name) add(id, name, item?.url || '');
+    });
+
+    const texts = [
+        scene.promptJson?.scene_desc || '',
+        scene.promptJson?.character_desc || '',
+        scene.videoPrompt || '',
+    ].join('\n');
+    const re = /【【([^】]+)】】/g;
+    let match;
+    while ((match = re.exec(texts)) !== null) {
+        const name = String(match[1] || '').trim();
+        const c = findByName(name);
+        if (c) add(c.id, c.name, avatarOf(c));
+        else if (name) add(null, name, '');
+    }
+
+    return Array.from(byKey.values());
+}
+
+/** 有台词的对白配音进度；无对白返回 null（不展示） */
+function dialogueAudioProgress(scene) {
+    const dialogues = (scene?.dialogues || []).filter((d) => String(d.text || '').trim());
+    if (!dialogues.length) return null;
+    const done = dialogues.filter((d) => String(d.audioUrl || d.audio_url || '').trim()).length;
+    return { done, total: dialogues.length };
+}
+
+function audioProgressBadge(scene) {
+    const p = dialogueAudioProgress(scene);
+    if (!p) return '';
+    const cls = p.done >= p.total ? 'ready' : (p.done > 0 ? 'running' : 'idle');
+    return `<span class="status ${cls}" title="配音进度">配 ${p.done}/${p.total}</span>`;
+}
+
+function digitalHumanAudioHint(scene) {
+    const dialogues = scene?.dialogues || [];
+    const hasReadyAudio = dialogues.some((dialogue) =>
+        String(dialogue.audioUrl || dialogue.audio_url || '').trim()
+    );
+    if (hasReadyAudio) {
+        return {
+            label: '配音已就绪',
+            cssClass: 'ready',
+            title: '对口型分镜配音已完成，可以生成 LTX2.3 数字人视频',
+        };
+    }
+
+    const runningStatuses = new Set([0, 1, '0', '1', 'pending', 'queued', 'running', 'processing']);
+    const hasRunningAudio = dialogues.some((dialogue) => {
+        const status = dialogue.audioStatus ?? dialogue.audio_status ?? dialogue.status;
+        return runningStatuses.has(typeof status === 'string' ? status.toLowerCase() : status);
+    });
+    if (hasRunningAudio) {
+        return {
+            label: '配音生成中',
+            cssClass: 'running',
+            title: '对口型分镜的配音正在生成，完成后即可生成 LTX2.3 数字人视频',
+        };
+    }
+
+    return {
+        label: '需先配音',
+        cssClass: 'missing',
+        title: '对口型分镜：请先在对话 Tab 生成配音，再生成 LTX2.3 数字人视频',
+    };
+}
+
+export function updateDigitalHumanAudioHint(scene) {
+    if (!scene || scene.id !== state.currentSceneId) return false;
+    const element = document.querySelector('.ai-dh-hint');
+    if (!element) return false;
+    const hint = digitalHumanAudioHint(scene);
+    element.className = `ai-dh-hint ${hint.cssClass}`;
+    element.title = hint.title;
+    element.textContent = `对口型 · LTX2.3 · ${hint.label}`;
+    return true;
+}
+
+function renderGridThumb(scene) {
+    const act = groupActLabel(scene);
+    const typeLabel = videoTypeLabel(scene?.videoType);
+    const typeCls = videoTypeBadgeClass(scene?.videoType);
+    return `
+        <div class="storyboard-thumb">
+            ${mediaFrame(scene)}
+            <span class="grid-type-badge ${typeCls}">${escapeHtml(typeLabel)}</span>
+            <span class="grid-thumb-duration">${escapeHtml(scene.durationLabel || '00:00')}</span>
+            ${act ? `<span class="grid-thumb-act">${escapeHtml(act)}</span>` : ''}
+        </div>`;
+}
+
+function renderGridLocationRow(scene) {
+    const loc = resolveSceneLocation(scene);
+    if (!loc) {
+        return `<div class="card-meta-row card-location is-empty" title="未选场景">
+            <span class="card-meta-icon" aria-hidden="true">📍</span>
+            <span class="card-meta-text is-muted">未选场景</span>
+        </div>`;
+    }
+    const img = loc.avatar
+        ? `<img class="card-meta-avatar is-square" src="${escapeHtml(getThumbnailUrl(loc.avatar, 24))}" alt="">`
+        : `<span class="card-meta-avatar is-square is-placeholder" aria-hidden="true"></span>`;
+    return `<div class="card-meta-row card-location" title="${escapeHtml(loc.name)}">
+        <span class="card-meta-icon" aria-hidden="true">📍</span>
+        ${img}
+        <span class="card-meta-text">${escapeHtml(truncateText(loc.name, 14))}</span>
+    </div>`;
+}
+
+function renderGridCharactersRow(scene) {
+    const chars = resolveSceneCharacters(scene);
+    if (!chars.length) {
+        return `<div class="card-meta-row card-characters is-empty" title="无角色">
+            <span class="card-meta-icon" aria-hidden="true">👤</span>
+            <span class="card-meta-text is-muted">无角色</span>
+        </div>`;
+    }
+    const maxShow = 3;
+    const shown = chars.slice(0, maxShow);
+    const rest = chars.length - maxShow;
+    const avatars = shown.map((c) => {
+        if (c.avatar) {
+            return `<img class="card-char-avatar" src="${escapeHtml(getThumbnailUrl(c.avatar, 24))}" alt="${escapeHtml(c.name)}" title="${escapeHtml(c.name)}">`;
+        }
+        const initial = (c.name || '?').slice(0, 1);
+        return `<span class="card-char-avatar is-placeholder" title="${escapeHtml(c.name)}">${escapeHtml(initial)}</span>`;
+    }).join('');
+    const nameParts = shown.map((c) => c.name);
+    if (rest > 0) nameParts.push(`+${rest}`);
+    const nameText = nameParts.join(' · ');
+    const fullTitle = chars.map((c) => c.name).join('、');
+    return `<div class="card-meta-row card-characters" title="${escapeHtml(fullTitle)}">
+        <span class="card-char-stack">${avatars}</span>
+        <span class="card-meta-text">${escapeHtml(truncateText(nameText, 18))}</span>
+    </div>`;
+}
+
+function renderGridPerspective(scene) {
+    const perspective = String(
+        scene?.promptJson?.perspective || scene?.sceneInfo?.perspective || ''
+    ).trim();
+    if (!perspective) return '';
+    return `<div class="card-perspective" title="${escapeHtml(perspective)}">${escapeHtml(truncateText(perspective, 22))}</div>`;
+}
+
+/** 单张 Grid 卡片（cell 含 insert slot），renderGridInner / 局部刷新共用 */
+function renderStoryboardCardCell(scene, nextScene) {
+    if (!scene) return '';
+    const groupLabel = groupActLabel(scene);
+    const actName = String(scene.actName || '').trim();
+    // 幕号已在缩略图展示时，body 仅在 actName 与幕号不同时再显示长名称
+    const showActName = actName && actName !== groupLabel;
+    return `
+            <div class="storyboard-grid-cell" data-scene-id="${scene.id}">
+                <article class="storyboard-card ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
+                    ${renderGridThumb(scene)}
+                    <div class="storyboard-card-body">
+                        <div class="card-title-row">
+                            <h3>${escapeHtml(scene.title)}</h3>
+                            ${difficultyBadge(scene)}
+                        </div>
+                        <div class="card-status">${assetBadge(scene, 'first_frame', '图')} ${assetBadge(scene, 'video', '视频')} ${audioProgressBadge(scene)}</div>
+                        ${renderGridLocationRow(scene)}
+                        ${renderGridCharactersRow(scene)}
+                        ${renderGridPerspective(scene)}
+                        ${showActName ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
+                        <div class="storyboard-card-actions">
+                            <button data-action="edit-scene" data-id="${scene.id}">${icon('edit', 14)} 编辑</button>
+                            <button data-action="duplicate-scene" data-id="${scene.id}">${icon('copy', 14)} 复制</button>
+                            <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
+                        </div>
+                    </div>
+                </article>
+                ${nextScene ? renderInsertSceneSlot(scene, nextScene, 'grid') : ''}
+            </div>`;
+}
+
 export function mediaFrame(scene) {
     if (!scene) {
         return '<div class="preview-empty">选择一个分镜开始编辑</div>';
     }
     // 时间轴预览播放中由 playback.js 接管媒体元素；静态渲染时保留 controls。
-    if (scene.videoUrl) {
+    const previewMedia = choosePreviewMedia(scene);
+    if (previewMedia.kind === 'video') {
         if (state.isPlaying) {
-            return `<video src="${escapeHtml(scene.videoUrl)}" playsinline muted class="preview-media is-playback"></video>`;
+            return `<video src="${escapeHtml(previewMedia.url)}" playsinline muted class="preview-media is-playback"></video>`;
         }
-        return `<video src="${escapeHtml(scene.videoUrl)}" controls class="preview-media"></video>`;
+        return `<video src="${escapeHtml(previewMedia.url)}" controls class="preview-media"></video>`;
     }
-    if (scene.firstFrameUrl) {
-        return `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}" class="preview-media">`;
+    if (previewMedia.kind === 'image') {
+        return `<img src="${escapeHtml(previewMedia.url)}" alt="${escapeHtml(scene.title)}" class="preview-media">`;
     }
     const displayStatus = getFirstFrameDisplayStatus(scene);
     return `<div class="preview-empty preview-empty-${displayStatus}">${escapeHtml(getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面')}</div>`;
@@ -270,11 +548,17 @@ function renderFirstFrameStatusMark(scene) {
     return `<span class="first-frame-status-mark ${status}">${spinner}${escapeHtml(label)}</span>`;
 }
 
+function renderVideoTypeBadge(scene) {
+    if (!isDigitalHumanScene(scene)) return '';
+    return `<span class="scene-video-type-badge digital-human" title="对口型（LTX2.3，需先配音）">对口型</span>`;
+}
+
 function renderTimelineMediaFrame(scene) {
     const status = getFirstFrameDisplayStatus(scene);
     const label = getFirstFrameStatusLabel(status);
     return `<span class="scene-timeline-media-frame first-frame-${status}">
         ${renderFirstFrameStatusMark(scene)}
+        ${renderVideoTypeBadge(scene)}
         ${scene.firstFrameUrl
             ? `<img src="${escapeHtml(scene.firstFrameUrl)}" alt="${escapeHtml(scene.title)}">`
             : `<span>${escapeHtml(label || '无画面')}</span>`}
@@ -293,16 +577,39 @@ function renderAutoCompleteControl() {
             ${lockedAttrs}
             ${disabledAttr}
             ${busyAttr}
+            title="批量补全缺失首帧"
+        >${icon(vm.icon, 15)} <span>${escapeHtml(vm.label)}</span></button>`;
+}
+
+function renderAutoVideoCompleteControl() {
+    const vm = getAutoVideoCompleteButtonViewModel();
+    const lockedAttrs = vm.locked ? 'aria-disabled="true" data-batch-locked="true"' : '';
+    const disabledAttr = vm.disabled ? 'disabled' : '';
+    const busyAttr = vm.busy ? 'aria-busy="true"' : '';
+    const title = escapeHtml(vm.title || '批量生成缺失分镜视频（需已有首帧）');
+    return `
+        <button
+            class="${vm.className}"
+            data-action="auto-complete-missing-videos"
+            ${lockedAttrs}
+            ${disabledAttr}
+            ${busyAttr}
+            title="${title}"
         >${icon(vm.icon, 15)} <span>${escapeHtml(vm.label)}</span></button>`;
 }
 
 function renderAutoCompleteHeader(title, actionsHtml = '') {
     const summary = getAutoCompleteSummary();
+    const videoSummary = getAutoVideoCompleteSummary();
+    const videoHint = videoSummary.missingCount > 0
+        ? ` · 视频 ${videoSummary.missingCount} 待生成`
+        : '';
     return `
         <div class="auto-complete-header" data-auto-complete-header>
-            <span class="auto-complete-title">${escapeHtml(title)} · ${summary.totalScenes} 个分镜 · ${summary.missingCount} 个待生成</span>
+            <span class="auto-complete-title">${escapeHtml(title)} · ${summary.totalScenes} 个分镜 · ${summary.missingCount} 个待生成${videoHint}</span>
             <div class="auto-complete-actions" aria-live="polite">
                 ${renderAutoCompleteControl()}
+                ${renderAutoVideoCompleteControl()}
                 ${actionsHtml}
             </div>
         </div>`;
@@ -396,8 +703,25 @@ function renderEpisodePicker() {
         </div>`;
 }
 
+function getPowerLevelClass(power) {
+    const val = typeof power === 'number' ? power : parseFloat(String(power ?? '').replace(/,/g, ''));
+    if (!Number.isFinite(val)) return '';
+    if (val < 100) return 'low-power';
+    if (val < 1000) return 'medium-power';
+    return 'high-power';
+}
+
+function formatPowerDisplay(power) {
+    if (power == null || power === '') return '--';
+    const num = typeof power === 'number' ? power : Number(power);
+    if (Number.isFinite(num)) return num.toLocaleString();
+    return String(power);
+}
+
 function renderHeader() {
-    const power = state.computingPower == null ? '--' : state.computingPower;
+    const power = state.computingPower;
+    const powerText = formatPowerDisplay(power);
+    const powerLevel = getPowerLevelClass(power);
     const epOpen = state.showEpisodePicker ? 'open' : '';
     return `
         <header class="header">
@@ -432,7 +756,13 @@ function renderHeader() {
                 <button class="header-nav-btn active" type="button">编辑器</button>
             </nav>
             <div class="header-right">
-                <span class="header-badge">算力 ${power}</span>
+                <button type="button"
+                    class="computing-power-display ${powerLevel}"
+                    data-action="open-power-logs"
+                    title="当前算力（点击查看日志）">
+                    <span class="power-icon">⚡</span>
+                    <span class="power-value">${escapeHtml(powerText)}</span>
+                </button>
                 <button class="btn-primary" data-action="export-full">一键转视频</button>
                 <button class="btn-ghost" data-action="open-export">导出</button>
             </div>
@@ -441,6 +771,29 @@ function renderHeader() {
 
 function renderScenePanel(scene) {
     const prompt = scene.promptJson || {};
+    const currentVideoType = String(scene.videoType || 'video');
+    const switchState = state.videoTypeSwitch || {};
+    const switchSaving = Boolean(switchState.saving);
+    const dhAvailability = canSwitchToDigitalHuman(scene);
+    const videoTypeSwitchHtml = currentVideoType === 'image' ? '' : `
+        <div class="scene-video-type-switch">
+            <div class="scene-video-type-switch-header">
+                <span>分镜生成方式</span>
+                <small>${switchSaving ? '正在切换…' : '切换后不会删除已有视频'}</small>
+            </div>
+            <div class="video-type-switch-options" role="group" aria-label="分镜生成方式">
+                <button type="button"
+                    class="video-type-switch-option ${currentVideoType === 'video' ? 'active' : ''}"
+                    data-action="request-video-type-switch" data-video-type="video"
+                    ${switchSaving || currentVideoType === 'video' ? 'disabled' : ''}>视频模式</button>
+                <button type="button"
+                    class="video-type-switch-option ${currentVideoType === 'digital_human' ? 'active' : ''}"
+                    data-action="request-video-type-switch" data-video-type="digital_human"
+                    title="${escapeHtml(dhAvailability.reason || '使用单人配音生成对口型视频')}"
+                    ${switchSaving || currentVideoType === 'digital_human' || !dhAvailability.allowed ? 'disabled' : ''}>对口型</button>
+            </div>
+            ${!dhAvailability.allowed ? `<div class="video-type-switch-warning">对口型模式仅支持单个说话角色</div>` : ''}
+        </div>`;
 
     const allChars = state.characters || [];
 
@@ -471,11 +824,19 @@ function renderScenePanel(scene) {
 
     return `
         <div class="tab-panel">
+            ${videoTypeSwitchHtml}
             <div class="scene-assets-bar">
                 <div class="assets-row">
                     <span class="assets-label">场景:</span>
                     ${locationHtml}
                 </div>
+            </div>
+
+            <div class="scene-toggle-bar">
+                <label class="scene-toggle" data-action="toggle-audio-embedded" data-scene-id="${scene.id}" title="开启后导出完整视频时保留视频原声，不再混入TTS配音（数字人分镜默认开启）">
+                    <input type="checkbox" data-scene-id="${scene.id}" ${scene.audioEmbedded ? 'checked' : ''}>
+                    <span>声音同出</span>
+                </label>
             </div>
 
             <div class="info-card">
@@ -490,7 +851,7 @@ function renderScenePanel(scene) {
 
             <div class="info-card">
                 <div class="info-card-header">
-                    <div class="info-card-title">${icon('image', 18)} 视频提示词（${escapeHtml(scene.videoType || 'video')}）</div>
+                    <div class="info-card-title">${icon('image', 18)} 视频提示词（${escapeHtml(videoTypeLabel(scene.videoType))}）${isDigitalHumanScene(scene) ? ' · 台词以配音为准' : ''}</div>
                 </div>
                 <div class="info-card-body">
                     <div style="font-size:10px;color:#9ca3af;margin-bottom:2px;">提示：输入 @ 可插入角色或道具</div>
@@ -751,20 +1112,28 @@ function renderAiPanel() {
     ].map(([key, label, title]) => `<option value="${key}" ${state.chatMode === key ? 'selected' : ''} title="${title}">${label}</option>`).join('');
 
     const agentMessages = renderAgentMessages();
-    const disabled = state.isAgentRunning ? 'disabled' : '';
+    const currentScene = getCurrentScene();
+    const sceneAgentRunning = isSceneAgentRunning(currentScene?.id);
+    const disabled = sceneAgentRunning ? 'disabled' : '';
     const placeholder = state.chatMode === 'dialogue'
         ? '和智能体描述要如何调整当前分镜画面'
         : '和智能体描述要如何生成当前分镜视频';
 
     const isVideo = state.chatMode === 'video';
-    const videoModeSelector = isVideo ? renderVideoModeSelector(disabled) : '';
+    const isDhScene = isDigitalHumanScene(currentScene);
+    // 对口型不展示图生视频的首尾帧/参考图模式切换，固定 LTX2.3 链路
+    const videoModeSelector = isVideo && !isDhScene ? renderVideoModeSelector(disabled) : '';
+    const dhAudioHint = isVideo && isDhScene ? digitalHumanAudioHint(currentScene) : null;
+    const dhHint = dhAudioHint
+        ? `<div class="ai-dh-hint ${dhAudioHint.cssClass}" title="${escapeHtml(dhAudioHint.title)}">对口型 · LTX2.3 · ${escapeHtml(dhAudioHint.label)}</div>`
+        : '';
     const historyOpen = state.agentChatHistoryOpen !== false;
     const msgCount = (state.agentMessages || []).length;
     // 常态历史收起时提示条数；hover 可展开
     const historyMeta = msgCount
         ? `<span class="ai-chat-header-meta">${msgCount} 条消息</span>`
         : '';
-    const mediaStack = isVideo
+    const mediaStack = isVideo && !isDhScene
         ? renderMediaStack(disabled)
         : `<input type="file" id="reference-file-input" class="reference-file-input" accept="image/*" multiple hidden>`;
     const fontSizes = getAgentChatFontSizes();
@@ -778,11 +1147,11 @@ function renderAiPanel() {
                 ${fontUpDisabled} title="放大字体 (A+)" aria-label="放大字体">A+</button>
         </div>`;
     // 固定展开：点击「展开」后 pin，避免 rerender 丢失 hover；鼠标离开后由 events 清 pin
-    const logPinned = Boolean(state.agentChatLogPinned) || Boolean(state.isAgentRunning);
+    const logPinned = Boolean(state.agentChatLogPinned) || sceneAgentRunning;
     const sectionClass = [
         'ai-chat-section',
         historyOpen ? '' : 'is-history-collapsed',
-        state.isAgentRunning ? 'is-agent-running' : '',
+        sceneAgentRunning ? 'is-agent-running' : '',
         logPinned ? 'is-chat-log-pinned' : '',
     ].filter(Boolean).join(' ');
 
@@ -800,9 +1169,10 @@ function renderAiPanel() {
                     ${historyMeta}
                 </div>
                 <div class="chat-composer">
+                    ${dhHint}
                     <div class="chat-textarea-row">
                         ${mediaStack}
-                        <textarea id="chat-textarea" class="chat-textarea" placeholder="${placeholder}" ${disabled}>${escapeHtml(state.inputMessage)}</textarea>
+                        <textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo ? '描述对口型表演/镜头（台词以配音为准，需先生成配音）' : placeholder}" ${disabled}>${escapeHtml(state.inputMessage)}</textarea>
                     </div>
                     <div class="chat-toolbar">
                         <button class="tool-button" data-action="open-model-config" title="模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）">${icon('settings', 14)}</button>
@@ -844,7 +1214,9 @@ function renderAgentMessages() {
                 ${expandBtn}
             </div>`;
     }).join('');
-    const running = state.isAgentRunning ? '<div class="agent-chat-running">正在处理当前分镜...</div>' : '';
+    const running = isSceneAgentRunning(state.currentSceneId)
+        ? '<div class="agent-chat-running">正在处理当前分镜...</div>'
+        : '';
     return `<div class="agent-chat-log">${rows}${running}</div>`;
 }
 
@@ -882,42 +1254,21 @@ function renderInsertSceneSlot(prevScene, nextScene, mode) {
 }
 
 export function renderStoryboardGrid() {
-    const cards = state.scenes.map((scene, index) => {
-        const nextScene = state.scenes[index + 1];
-        return `
-            <div class="storyboard-grid-cell">
-                <article class="storyboard-card ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
-                    <div class="storyboard-thumb">${mediaFrame(scene)}</div>
-                    <div class="storyboard-card-body">
-                        <h3>${escapeHtml(scene.title)}</h3>
-                        <p>${escapeHtml(scene.durationLabel)}</p>
-                        <div class="card-status">${assetBadge(scene, 'first_frame', '图')} ${assetBadge(scene, 'video', '视频')} ${difficultyBadge(scene)}</div>
-                        ${actNameTag(scene) ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
-                        <div class="storyboard-card-actions">
-                            <button data-action="duplicate-scene" data-id="${scene.id}">${icon('copy', 14)} 复制</button>
-                            <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
-                        </div>
-                    </div>
-                </article>
-                ${nextScene ? renderInsertSceneSlot(scene, nextScene, 'grid') : ''}
-            </div>`;
-    }).join('');
-
     return `
         <main class="center-panel">
             ${renderAutoCompleteHeader('故事板总览', `<button class="btn-ghost" data-action="toggle-view">${icon('list', 16)} 时间轴</button>`)}
-            <div class="storyboard-grid">${cards}<button class="add-board-card" data-action="add-scene">${icon('add', 24)} 添加分镜</button></div>
+            <div class="storyboard-grid" data-scenes-sig="${escapeHtml(scenesStructureSig())}">${renderGridInner()}</div>
         </main>`;
 }
 
-export function renderTimeline() {
+/** 时间轴 list 内部 HTML（playhead + 分镜条 + 添加），供结构 patch 复用 */
+function renderTimelineListInner() {
     const scenes = state.scenes.map((scene, index) => {
         const nextScene = state.scenes[index + 1];
         return `
-            <div class="scene-timeline-item">
+            <div class="scene-timeline-item" data-scene-item="${scene.id}">
                 <button class="scene-timeline-thumb ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
-                    ${renderTimelineMediaFrame(scene)}
-                    <div class="scene-timeline-meta">${icon('play', 14)} <b>${escapeHtml(scene.durationLabel)}</b></div>
+                    ${renderTimelineThumbInner(scene)}
                 </button>
                 <div class="scene-timeline-actions">
                     <button data-action="duplicate-scene" data-id="${scene.id}" title="复制">${icon('copy', 14)}</button>
@@ -926,20 +1277,37 @@ export function renderTimeline() {
             </div>
             ${nextScene ? renderInsertSceneSlot(scene, nextScene, 'timeline') : ''}`;
     }).join('');
+    return `
+        <div class="scene-timeline-playhead" aria-hidden="true" title="播放位置" ${state.scenes.length ? '' : 'hidden'}></div>
+        ${scenes}<button class="add-scene-btn" data-action="add-scene">${icon('add', 22)}</button>`;
+}
 
+/** Grid 内容区 HTML（卡片 + 添加） */
+function renderGridInner() {
+    const cards = state.scenes.map((scene, index) => {
+        const nextScene = state.scenes[index + 1];
+        return renderStoryboardCardCell(scene, nextScene);
+    }).join('');
+    return `${cards}<button class="add-board-card" data-action="add-scene">${icon('add', 24)} 添加分镜</button>`;
+}
+
+function scenesStructureSig() {
+    return (state.scenes || []).map(s => s.id).join(',');
+}
+
+export function renderTimeline() {
     return `
         <section class="timeline-controls">
             <div class="timeline-progress-row">
-                <button class="play-btn" data-action="toggle-play">${icon(state.isPlaying ? 'pause' : 'play', 18)}</button>
-                <span>${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}</span>
+                <button class="play-btn" data-action="toggle-play" aria-label="${state.isPlaying ? '暂停' : '播放'}">${icon(state.isPlaying ? 'pause' : 'play', 18)}</button>
+                <span class="timeline-time">${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}</span>
                 <label class="subtitle-toggle"><input type="checkbox" data-action="toggle-subtitle" ${state.subtitleEnabled ? 'checked' : ''}> 字幕</label>
                 <button class="timeline-view-toggle" data-action="toggle-view">${icon('grid', 16)}</button>
             </div>
             <div class="scene-timeline">
                 ${renderAutoCompleteHeader('分镜序列')}
-                <div class="scene-timeline-list" data-ratio="${escapeHtml(state.workflowRatio || '16:9')}">
-                    <div class="scene-timeline-playhead" aria-hidden="true" title="播放位置" ${state.scenes.length ? '' : 'hidden'}></div>
-                    ${scenes}<button class="add-scene-btn" data-action="add-scene">${icon('add', 22)}</button>
+                <div class="scene-timeline-list" data-ratio="${escapeHtml(state.workflowRatio || '16:9')}" data-scenes-sig="${escapeHtml(scenesStructureSig())}">
+                    ${renderTimelineListInner()}
                 </div>
             </div>
         </section>`;
@@ -995,7 +1363,7 @@ function renderCandidateMedia(item, kind = 'image') {
             return `
                 <div class="candidate-video-thumb">
                     <video src="${escapeHtml(url)}"${posterAttr} muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>
-                    <span class="candidate-video-badge" aria-hidden="true" title="视频">${icon('video', 12)}</span>
+                    <button type="button" class="candidate-video-badge" data-candidate-play aria-label="播放此候选视频">${icon('play', 14)}</button>
                 </div>`;
         }
         return `<img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || '分镜图')}">`;
@@ -1065,12 +1433,120 @@ export function renderRightSidebar(scene) {
 
 function renderExportDialog() {
     if (!state.showExportDialog) return '';
+    const burnSubs = state.exportBurnSubtitles !== false;
     return `
         <div class="modal-overlay">
             <div class="export-dialog">
                 <header><h2>导出故事板</h2><button data-action="close-export">${icon('close', 18)}</button></header>
-                <button class="export-option" data-action="export-full">导出完整视频</button>
-                <button class="export-option" data-action="export-scenes">导出全部分镜</button>
+                <button class="export-option" data-action="export-scenes" title="按分镜导出选中视频/图与配音 zip，上传图床">
+                    导出素材包
+                    <span class="export-option-desc">分镜N.mp4 / 分镜N_M.wav，CDN 下载</span>
+                </button>
+                <label class="export-subtitle-opt" data-action="toggle-export-burn-subtitles">
+                    <input type="checkbox" data-action="toggle-export-burn-subtitles" ${burnSubs ? 'checked' : ''}
+                        aria-checked="${burnSubs ? 'true' : 'false'}">
+                    完整视频烧录字幕（超长自动分页，最多 3 行）
+                </label>
+                <button class="export-option" data-action="export-full" title="按时间轴顺序合成完整视频，上传图床">
+                    导出完整视频
+                    <span class="export-option-desc">对齐预览顺序，异步合成后 CDN 下载</span>
+                </button>
+            </div>
+        </div>`;
+}
+
+function renderPowerLogsDialog() {
+    if (!state.showPowerLogsModal) return '';
+    return `
+        <div class="modal-overlay power-logs-overlay" data-modal="power-logs">
+            <div class="power-logs-dialog" role="dialog" aria-label="算力日志">
+                <header class="power-modal-header">
+                    <h2 class="power-modal-title">⚡ 算力日志</h2>
+                    <div class="power-modal-actions">
+                        <button type="button" class="btn-primary power-recharge-btn" data-action="open-recharge">算力充值</button>
+                        <button type="button" class="power-modal-close" data-action="close-power-logs" title="关闭">${icon('close', 18)}</button>
+                    </div>
+                </header>
+                <div class="power-logs-body">
+                    <iframe class="power-logs-iframe" src="/computing_power_logs.html" title="算力日志"></iframe>
+                </div>
+            </div>
+        </div>`;
+}
+
+function renderRechargeDialog() {
+    if (!state.showRechargeModal) return '';
+    const status = state.rechargeState || 'loading';
+    let body = '';
+
+    if (status === 'loading') {
+        body = `
+            <div class="recharge-center">
+                <div class="loading-spinner"></div>
+                <p class="recharge-hint">加载套餐中...</p>
+            </div>`;
+    } else if (status === 'packages') {
+        const packages = state.rechargePackages || [];
+        if (packages.length === 0) {
+            body = `<div class="recharge-center"><p class="recharge-hint">暂无可用套餐</p></div>`;
+        } else {
+            body = `<div class="package-list">${packages.map((pkg) => {
+                const power = Number(pkg.computing_power) || 0;
+                const price = Number(pkg.price) || 0;
+                const unit = power > 0 ? (price / power * 100).toFixed(2) : '--';
+                return `
+                    <button type="button" class="package-item"
+                        data-action="select-recharge-package"
+                        data-package-id="${escapeHtml(String(pkg.package_id))}"
+                        data-package-desc="${escapeHtml(pkg.description || '')}"
+                        data-package-power="${escapeHtml(String(power))}"
+                        data-package-price="${escapeHtml(String(price))}">
+                        <div class="package-item-main">
+                            <div class="package-item-desc">${escapeHtml(pkg.description || '算力套餐')}</div>
+                            <div class="package-item-power">${power} 算力</div>
+                        </div>
+                        <div class="package-item-price-wrap">
+                            <div class="package-item-price">¥${price}</div>
+                            <div class="package-item-unit">${unit}元/百算力</div>
+                        </div>
+                    </button>`;
+            }).join('')}</div>`;
+        }
+    } else if (status === 'qrcode') {
+        const pkg = state.selectedRechargePackage || {};
+        const qr = state.rechargeQrCodeUrl || '';
+        body = `
+            <div class="recharge-center">
+                <div class="recharge-pkg-title">${escapeHtml(pkg.description || '算力套餐')}</div>
+                <div class="recharge-hint">${Number(pkg.computing_power) || 0} 算力 - ¥${Number(pkg.price) || 0}</div>
+                <div class="recharge-qr-wrap">
+                    ${qr
+                        ? `<div class="recharge-qr-box"><img src="${escapeHtml(qr)}" alt="微信支付二维码" width="200" height="200" /></div>`
+                        : `<div class="loading-spinner"></div><p class="recharge-hint">正在生成支付二维码...</p>`}
+                </div>
+                ${qr ? `
+                    <div class="recharge-pay-tip">
+                        请打开微信「扫一扫」完成支付<br/>
+                        如果已支付，请稍等片刻系统会自动到账
+                    </div>` : ''}
+                <button type="button" class="btn-ghost" data-action="back-to-recharge-packages">返回选择套餐</button>
+            </div>`;
+    } else if (status === 'error') {
+        body = `
+            <div class="recharge-center">
+                <p class="recharge-error">${escapeHtml(state.rechargeError || '加载失败，请重试')}</p>
+                <button type="button" class="btn-ghost" data-action="retry-recharge-packages">返回选择套餐</button>
+            </div>`;
+    }
+
+    return `
+        <div class="modal-overlay recharge-overlay" data-modal="recharge">
+            <div class="recharge-dialog" role="dialog" aria-label="算力充值">
+                <header class="power-modal-header">
+                    <h2 class="power-modal-title">⚡ 算力充值</h2>
+                    <button type="button" class="power-modal-close" data-action="close-recharge" title="关闭">${icon('close', 18)}</button>
+                </header>
+                <div class="recharge-body">${body}</div>
             </div>
         </div>`;
 }
@@ -1120,18 +1596,21 @@ function renderScriptSplitModelConfig(disabled = false) {
     vendorKeys.forEach(vid => {
         const v = vendorMap[vid] || { vendor_name: vid };
         const iconStr = v.icon || '🤖';
-        html += `<optgroup label="${iconStr} ${escapeHtml(v.vendor_name || vid)}">`;
+        const vendorNameAttr = escapeHtml(v.vendor_name || vid);
+        html += `<optgroup label="${iconStr} ${vendorNameAttr}">`;
         groups[vid].forEach(m => {
             const val = m.model || m.name || m.id || '';
             const label = m.name || m.model || val;
             const modelId = m.model_id || m.id || '';
             const vendorId = m.vendor_id || '';
+            const supportsThinking = m.supports_thinking === true || m.supports_thinking === 1 || m.supports_thinking === 'true' ? 'true' : 'false';
             const sel = isSelectedScriptSplitModel(m) ? 'selected' : '';
-            html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(modelId)}" data-vendor-id="${escapeHtml(vendorId)}" ${sel}>${escapeHtml(label)}</option>`;
+            html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(modelId)}" data-vendor-id="${escapeHtml(vendorId)}" data-vendor-name="${vendorNameAttr}" data-supports-thinking="${supportsThinking}" ${sel}>${escapeHtml(label)}</option>`;
         });
         html += '</optgroup>';
     });
     html += '</select></div>';
+    html += renderThinkingControls(state.selectedScriptSplitLlmModel || state.selectedLlmModel);
     return html;
 }
 
@@ -1142,8 +1621,17 @@ function renderScriptSplitOptions(disabled = false) {
     const durationOptions = durations.map(d =>
         `<option value="${d}" ${d === curDuration ? 'selected' : ''}>${d}秒</option>`
     ).join('');
-    const toggleItem = (action, label, checked) => `
-        <label><input type="checkbox" data-action="${action}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}><span>${escapeHtml(label)}</span></label>`;
+    const toggleItem = (action, label, checked, hint = '') => `
+        <label class="script-split-toggle-row">
+            <input type="checkbox" data-action="${action}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+            <span>${escapeHtml(label)}${hint ? `<span class="script-split-warn">${escapeHtml(hint)}</span>` : ''}</span>
+        </label>`;
+    const qcOn = state.enableScriptSplitQc === true;
+    const qcRounds = [1, 2, 3, 4, 5].includes(Number(state.scriptSplitQcMaxRounds))
+        ? Number(state.scriptSplitQcMaxRounds) : 2;
+    const qcRoundsOptions = [1, 2, 3, 4, 5].map(n =>
+        `<option value="${n}" ${n === qcRounds ? 'selected' : ''}>${n} 次</option>`
+    ).join('');
     return `
         <div class="generate-from-script-model">
             <label class="config-label">镜头组时长</label>
@@ -1156,7 +1644,22 @@ function renderScriptSplitOptions(disabled = false) {
                 ${toggleItem('toggle-force-medium-shot', '对话禁止全景（使用近景/中景）', state.forceMediumShot !== false)}
                 ${toggleItem('toggle-no-bg-music', '不生成背景音乐', state.noBgMusic !== false)}
                 ${toggleItem('toggle-split-multi-dialogue', '拆分多人对话镜头（每人尽量一个镜头）', state.splitMultiDialogue === true)}
+                ${toggleItem(
+                    'toggle-enable-script-split-qc',
+                    '开启拆分质检',
+                    qcOn,
+                    '（会大幅增加时间与算力消耗）'
+                )}
             </div>
+            ${qcOn ? `
+            <div class="script-split-qc-rounds-heading">
+                <span class="config-label">质检最大循环次数</span>
+                <span class="script-split-qc-free-badge" aria-label="质检次数限时免费">限时免费</span>
+            </div>
+            <div class="config-hint">拆分→质检最多循环 N 次；仍不通过则强制采用最后一轮结果，避免无法拆分</div>
+            <div class="config-select-wrapper">
+                <select class="chat-mode-select" data-config-select="scriptSplitQcMaxRounds" ${disabled ? 'disabled' : ''}>${qcRoundsOptions}</select>
+            </div>` : ''}
         </div>`;
 }
 
@@ -1166,20 +1669,43 @@ function renderGenerateFromScriptDialog() {
     const splitModelConfig = renderScriptSplitModelConfig(busy);
     const imageModelConfig = renderImageModelConfig(busy);
     const splitOptionsConfig = renderScriptSplitOptions(busy);
+    const isEnterprise = state.editionInfo?.mode === 'enterprise';
     const modeIntroCards = [
         ['balanced', '均衡模式', '兼顾生成速度与分镜质量，质量与效率折中。', '质量和效率折中'],
         ['quality', '效果模式', '为长篇连续叙事打造，锁定场景、光影与角色站位一致性，呈现影院级镜头质感。', '影院级一致性'],
         ['speed', '速度模式', '快速拆分剧本，适合草稿预览和方案试跑。', '先出结果']
-    ].map(([mode, title, desc, tag]) => `
-        <div class="sequence-mode-intro-card ${state.autoImageSequenceMode === mode ? 'active' : ''}${busy ? ' is-disabled' : ''}"
+    ].map(([mode, title, desc, tag]) => {
+        // 效果模式（影院级一致性）：金色影院奢华风 + 商业版门控
+        const isQuality = mode === 'quality';
+        const qualityLocked = isQuality && !isEnterprise;
+        const classes = [
+            'sequence-mode-intro-card',
+            state.autoImageSequenceMode === mode ? 'active' : '',
+            busy ? 'is-disabled' : '',
+            isQuality ? 'sequence-mode-intro-card--cinema' : '',
+            qualityLocked ? 'is-locked' : '',
+        ].filter(Boolean).join(' ');
+        const proBadge = isQuality ? '<span class="sequence-pro-badge">PRO</span>' : '';
+        const lockedBadge = qualityLocked
+            ? `<span class="sequence-locked-badge">${icon('lock', 12)}<span>商业版</span></span>`
+            : '';
+        return `
+        <div class="${classes}"
              data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="${mode}">
             <div class="sequence-mode-intro-head">
-                <strong>${title}</strong>
-                <span>${tag}</span>
+                <span class="sequence-mode-intro-title">
+                    <span class="sequence-mode-radio" aria-hidden="true"></span>
+                    <strong>${escapeHtml(title)}</strong>
+                </span>
+                ${proBadge}
             </div>
-            <p>${desc}</p>
-        </div>
-    `).join('');
+            <p>${escapeHtml(desc)}</p>
+            <div class="sequence-mode-intro-meta">
+                <span class="sequence-mode-benefit">${escapeHtml(tag)}</span>
+                ${lockedBadge}
+            </div>
+        </div>`;
+    }).join('');
     return `
         <div class="modal-overlay">
             <div class="export-dialog generate-from-script-dialog">
@@ -1257,7 +1783,7 @@ function renderModelConfigModal() {
             <div class="export-dialog model-config-dialog" style="max-width: 520px;">
                 <header>
                     <h2>模型配置 - ${modeLabel}</h2>
-                    <button data-action="close-model-config">${icon('close', 18)}</button>
+                    <button type="button" class="model-config-close" data-action="close-model-config" aria-label="关闭模型配置" title="关闭">${icon('close', 18)}</button>
                 </header>
                 <div class="model-config-tabs">
                     <button class="tab-btn ${activeTab==='dialogue'?'active':''}" data-config-tab="dialogue">对话模型</button>
@@ -1270,8 +1796,7 @@ function renderModelConfigModal() {
                     <div class="config-content" data-config-content="video" style="display:${activeTab==='video'?'block':'none'}">${videoContent}</div>
                 </div>
                 <footer class="dialog-footer">
-                    <button class="btn-ghost" data-action="close-model-config">关闭</button>
-                    <div style="font-size:12px;color:var(--muted);">选择后自动应用到助手当前模式</div>
+                    <div class="model-config-apply-hint">选择后自动应用到助手当前模式</div>
                 </footer>
             </div>
         </div>`;
@@ -1323,19 +1848,54 @@ function renderDialogueModelConfig() {
     vendorKeys.forEach(vid => {
         const v = vendorMap[vid] || { vendor_name: vid };
         const iconStr = v.icon || '🤖';
-        html += `<optgroup label="${iconStr} ${escapeHtml(v.vendor_name || vid)}">`;
+        const vendorNameAttr = escapeHtml(v.vendor_name || vid);
+        html += `<optgroup label="${iconStr} ${vendorNameAttr}">`;
         groups[vid].forEach(m => {
             const val = m.model || m.name || m.id || '';
             const label = m.name || m.model || val;
             const modelId = m.model_id || m.id || '';
             const vendorId = m.vendor_id || '';
+            const supportsThinking = m.supports_thinking === true || m.supports_thinking === 1 || m.supports_thinking === 'true' ? 'true' : 'false';
             const sel = isSelectedDialogueModel(m) ? 'selected' : '';
-            html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(modelId)}" data-vendor-id="${escapeHtml(vendorId)}" ${sel}>${escapeHtml(label)}</option>`;
+            html += `<option value="${escapeHtml(val)}" data-model-id="${escapeHtml(modelId)}" data-vendor-id="${escapeHtml(vendorId)}" data-vendor-name="${vendorNameAttr}" data-supports-thinking="${supportsThinking}" ${sel}>${escapeHtml(label)}</option>`;
         });
         html += `</optgroup>`;
     });
     html += `</select></div>`;
+    html += renderThinkingControls(state.selectedLlmModel);
     return html;
+}
+
+/**
+ * 思考模式控件（对齐 script_writer）：
+ * - supports_thinking 的模型显示开关
+ * - DeepSeek：默认开思考
+ * - Doubao/volcengine：开思考后显示强度 low/medium/high
+ */
+function renderThinkingControls(selection) {
+    const meta = getSelectedLlmMeta(selection);
+    if (!meta.supportsThinking) {
+        return '';
+    }
+    const effortVisible = state.enableThinking && meta.isDoubaoEffort;
+    const effort = ['low', 'medium', 'high'].includes(state.thinkingEffort)
+        ? state.thinkingEffort
+        : 'medium';
+    return `
+        <div class="sb-thinking-wrap" data-thinking-wrap title="思考模式：让模型先深度思考再回答">
+            <label class="sb-thinking-toggle">
+                <input type="checkbox" data-action="toggle-enable-thinking" ${state.enableThinking ? 'checked' : ''}>
+                <span class="sb-thinking-slider"></span>
+            </label>
+            <span class="sb-thinking-label" data-action="toggle-enable-thinking-label">思考</span>
+            <select class="sb-thinking-effort" data-config-select="thinkingEffort"
+                style="display:${effortVisible ? 'inline-block' : 'none'}"
+                title="思考强度（Doubao 等模型）">
+                <option value="low" ${effort === 'low' ? 'selected' : ''}>低</option>
+                <option value="medium" ${effort === 'medium' ? 'selected' : ''}>中</option>
+                <option value="high" ${effort === 'high' ? 'selected' : ''}>高</option>
+            </select>
+        </div>`;
 }
 
 function renderImageModelConfig(disabled = false) {
@@ -1442,10 +2002,87 @@ function renderGlobalStyleDialog() {
         </div>`;
 }
 
+/** 分镜编辑弹框：编辑 title / duration / difficulty / act_name（当前 UI 缺失表单的字段） */
+function renderSceneEditDialog() {
+    if (!state.showSceneEditDialog) return '';
+    const scene = state.scenes.find(s => s.id === state.sceneEditTargetId);
+    if (!scene) return '';
+    const titleVal = escapeHtml(scene.title || '');
+    const durationVal = scene.duration ?? '';
+    const difficulty = scene.difficulty || '';
+    const actNameVal = escapeHtml(scene.actName || '');
+    const errHtml = state.sceneEditError ? `<div class="dialog-error">${escapeHtml(state.sceneEditError)}</div>` : '';
+    const saveLabel = state.sceneEditSaving ? '保存中…' : '保存';
+    return `
+        <div class="modal-overlay">
+            <div class="edit-dialog">
+                <header>
+                    <h2>编辑分镜</h2>
+                    <button data-action="close-scene-edit">${icon('close', 18)}</button>
+                </header>
+                <div style="padding:12px 16px;">
+                    <label style="display:block; margin-bottom:14px; font-size:13px;">
+                        标题
+                        <input data-scene-edit-field="title" value="${titleVal}" style="width:100%; margin-top:6px; padding:6px 8px; border:1px solid #ccc; border-radius:4px;">
+                    </label>
+                    <label style="display:block; margin-bottom:14px; font-size:13px;">
+                        时长（秒）
+                        <input type="number" step="0.001" min="0" data-scene-edit-field="duration" value="${durationVal}" style="width:100%; margin-top:6px; padding:6px 8px; border:1px solid #ccc; border-radius:4px;">
+                    </label>
+                    <label style="display:block; margin-bottom:14px; font-size:13px;">
+                        难度
+                        <select data-scene-edit-field="difficulty" style="width:100%; margin-top:6px; padding:6px 8px; border:1px solid #ccc; border-radius:4px;">
+                            ${['易', '中', '难'].map(d => `<option value="${d}" ${difficulty === d ? 'selected' : ''}>${d}</option>`).join('')}
+                        </select>
+                    </label>
+                    <label style="display:block; font-size:13px;">
+                        所属幕
+                        <input data-scene-edit-field="act_name" value="${actNameVal}" style="width:100%; margin-top:6px; padding:6px 8px; border:1px solid #ccc; border-radius:4px;" placeholder="可空">
+                    </label>
+                    ${errHtml}
+                </div>
+                <footer class="dialog-footer">
+                    <button class="btn-ghost" data-action="close-scene-edit">取消</button>
+                    <button class="btn-primary" data-action="save-scene-edit" ${state.sceneEditSaving ? 'disabled' : ''}>${saveLabel}</button>
+                </footer>
+            </div>
+        </div>`;
+}
+
+function renderVideoTypeSwitchDialog() {
+    const switchState = state.videoTypeSwitch || {};
+    const targetType = switchState.targetType;
+    if (!targetType) return '';
+    const switchingToVideo = targetType === 'video';
+    const title = switchingToVideo ? '切换为视频模式？' : '切换为对口型模式？';
+    const description = switchingToVideo
+        ? '已生成的对口型视频仍会保留并继续作为当前视频。正在生成的对口型任务不会中断，完成后只加入候选列表，不会自动替换当前视频。'
+        : '已有普通视频会继续保留。对口型视频生成前需要单个说话角色的配音和人物形象。';
+    return `
+        <div class="modal-overlay" data-modal="video-type-switch">
+            <div class="edit-dialog video-type-switch-dialog" role="dialog" aria-modal="true" aria-labelledby="video-type-switch-title">
+                <header>
+                    <h2 id="video-type-switch-title">${title}</h2>
+                    <button type="button" data-action="cancel-video-type-switch" ${switchState.saving ? 'disabled' : ''}>${icon('close', 18)}</button>
+                </header>
+                <div class="video-type-switch-dialog-body">${description}</div>
+                <footer class="dialog-footer">
+                    <button class="btn-ghost" data-action="cancel-video-type-switch" ${switchState.saving ? 'disabled' : ''}>取消</button>
+                    <button class="btn-primary" data-action="confirm-video-type-switch" ${switchState.saving ? 'disabled' : ''}>${switchState.saving ? '切换中…' : (switchingToVideo ? '切换为视频模式' : '切换为对口型')}</button>
+                </footer>
+            </div>
+        </div>`;
+}
+
 function renderGenerateProgressDialog() {
     if (!state.showGenerateProgressDialog) return '';
     const steps = state.generateProgressSteps || [];
     const error = state.generateProgressError || '';
+    const rawProgress = Number(state.generateProgressPercent);
+    const progressPercent = Number.isFinite(rawProgress)
+        ? Math.round(Math.max(0, Math.min(100, rawProgress)))
+        : 0;
+    const progressMessage = state.generateProgressMessage || '正在处理任务';
     const stepHtml = steps.map((step) => {
         const cls = step.status || 'pending';
         let iconHtml;
@@ -1485,6 +2122,17 @@ function renderGenerateProgressDialog() {
                     <h2>正在生成分镜...</h2>
                     ${error ? `<button data-action="close-generate-progress">${icon('close', 18)}</button>` : ''}
                 </header>
+                <div class="generate-progress-summary">
+                    <div class="generate-progress-meta">
+                        <span class="generate-progress-message">${escapeHtml(progressMessage)}</span>
+                        <strong class="generate-progress-percent">${progressPercent}%</strong>
+                    </div>
+                    <div class="generate-progress-track" role="progressbar"
+                         aria-label="任务总体进度" aria-valuemin="0" aria-valuemax="100"
+                         aria-valuenow="${progressPercent}">
+                        <div class="generate-progress-fill" style="width: ${progressPercent}%"></div>
+                    </div>
+                </div>
                 <div class="progress-steps">
                     ${stepHtml}
                 </div>
@@ -1494,16 +2142,641 @@ function renderGenerateProgressDialog() {
         </div>`;
 }
 
-export function renderApp() {
-    const app = document.getElementById('app');
+// ==================== 分区刷新 refresh(regions) ====================
+
+function renderModalsHtml() {
+    return [
+        renderExportDialog(),
+        renderGenerateFromScriptDialog(),
+        renderGenerateProgressDialog(),
+        renderPowerLogsDialog(),
+        renderRechargeDialog(),
+        renderMentionPopup(),
+        renderModelConfigModal(),
+        renderGlobalStyleDialog(),
+        renderSceneEditDialog(),
+        renderVideoTypeSwitchDialog(),
+    ].join('');
+}
+
+/** 用一段 HTML（单根节点）替换现有节点；返回新节点或 null */
+function replaceElWithHtml(el, html) {
+    if (!el || !html) return null;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html.trim();
+    const next = tmp.firstElementChild;
+    if (!next) return null;
+    el.replaceWith(next);
+    return next;
+}
+
+function normalizeRegions(regions) {
+    if (regions == null || regions === 'all') {
+        return new Set(['all']);
+    }
+    const list = Array.isArray(regions) ? regions : [regions];
+    const set = new Set();
+    list.forEach((r) => {
+        if (r == null || r === '') return;
+        if (r === 'all') set.add('all');
+        else set.add(r);
+    });
+    if (set.size === 0) set.add('all');
+    return set;
+}
+
+/**
+ * 播放占用主预览时禁止拆 preview：补丁非媒体区。
+ */
+export function softRefreshUiWhilePreviewBusy() {
+    patchAgentChatLog();
+    patchHeaderPower();
     const scene = getCurrentScene();
+    if (scene) updateCurrentSceneDetail(scene);
+    updateTimelineProgress();
+    return true;
+}
+
+/** 只刷新 header 算力数字 */
+export function patchHeaderPower() {
+    const el = document.querySelector('.computing-power-display .power-value');
+    if (!el) return false;
+    const power = state.computingPower;
+    const powerText = formatPowerDisplay(power);
+    el.textContent = powerText;
+    const btn = el.closest('.computing-power-display');
+    if (btn) {
+        const level = getPowerLevelClass(power);
+        btn.className = `computing-power-display ${level}`;
+    }
+    return true;
+}
+
+/** 只刷新分镜助手对话列表（Agent SSE 高频路径） */
+export function patchAgentChatLog() {
+    const dock = document.querySelector('.ai-chat-dock');
+    const host = (dock && dock.querySelector('.agent-chat-log'))
+        || document.querySelector('.agent-chat-log');
+    const html = renderAgentMessages();
+    if (!html) {
+        if (host) host.remove();
+        return Boolean(dock || host);
+    }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const next = tmp.firstElementChild;
+    if (!next) return false;
+    if (host) {
+        const wasAtBottom = (host.scrollHeight - host.scrollTop - host.clientHeight) < 48;
+        host.replaceWith(next);
+        if (wasAtBottom || isSceneAgentRunning(state.currentSceneId)) {
+            next.scrollTop = next.scrollHeight;
+        }
+        return true;
+    }
+    if (dock) {
+        dock.insertBefore(next, dock.firstChild);
+        next.scrollTop = next.scrollHeight;
+        return true;
+    }
+    return false;
+}
+
+/** 整块刷新分镜助手（历史 + 输入区），不碰主预览 */
+export function patchAgentPanel() {
+    const section = document.querySelector('.ai-chat-section');
+    if (!section) return false;
+    const html = renderAiPanel();
+    return Boolean(replaceElWithHtml(section, html));
+}
+
+/** 整块 header（含集数选择器等） */
+export function patchHeader() {
+    const header = document.querySelector('.app-shell > header.header, .app-shell > .header, header.header');
+    if (!header) return false;
+    return Boolean(replaceElWithHtml(header, renderHeader()));
+}
+
+/**
+ * 捕获容器内焦点，便于 patch 后恢复（避免编辑提示词/台词时光标丢失）。
+ * @returns {{ selector: string, start: number, end: number } | null}
+ */
+function captureFocusIn(container) {
+    const ae = document.activeElement;
+    if (!container || !ae || !container.contains(ae)) return null;
+    if (!(ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement || ae instanceof HTMLSelectElement)) {
+        return null;
+    }
+    // 用稳定属性拼选择器
+    let selector = ae.tagName.toLowerCase();
+    if (ae.id) selector = `#${CSS.escape ? CSS.escape(ae.id) : ae.id}`;
+    else if (ae.name) selector += `[name="${ae.name}"]`;
+    else if (ae.dataset) {
+        const keys = Object.keys(ae.dataset);
+        for (const k of keys) {
+            const attr = `data-${k.replace(/[A-Z]/g, m => `-${m.toLowerCase()}`)}`;
+            const val = ae.getAttribute(attr);
+            if (val != null) {
+                selector += `[${attr}="${String(val).replace(/"/g, '\\"')}"]`;
+                break;
+            }
+        }
+    }
+    if (ae.className && typeof ae.className === 'string') {
+        const cls = ae.className.trim().split(/\s+/).filter(Boolean)[0];
+        if (cls && !ae.id) selector += `.${CSS.escape ? CSS.escape(cls) : cls}`;
+    }
+    const start = typeof ae.selectionStart === 'number' ? ae.selectionStart : 0;
+    const end = typeof ae.selectionEnd === 'number' ? ae.selectionEnd : start;
+    return { selector, start, end, value: ae.value };
+}
+
+function restoreFocusIn(container, snap) {
+    if (!container || !snap) return;
+    let el = null;
+    try {
+        el = container.querySelector(snap.selector);
+    } catch {
+        el = null;
+    }
+    if (!el || typeof el.focus !== 'function') return;
+    el.focus({ preventScroll: true });
+    if (typeof el.setSelectionRange === 'function' && snap.value === el.value) {
+        try {
+            el.setSelectionRange(snap.start, snap.end);
+        } catch {
+            // ignore
+        }
+    }
+}
+
+/** 仅刷左栏工作台（标题/Tab/画面|对话），不碰助手，保留滚动与焦点 */
+export function patchLeftWorkspace() {
+    const aside = document.querySelector('.main-layout > .left-sidebar');
+    if (!aside) return false;
+    const content = aside.querySelector('.sidebar-content');
+    if (!content) return patchLeftSidebar();
+    const scene = getCurrentScene();
+    const scrollTop = content.scrollTop;
+    const focusSnap = captureFocusIn(content);
+
+    // 与 renderLeftSidebar 内 .sidebar-content 结构对齐
+    const tabs = [
+        ['scene', 'image', '画面'],
+        ['dialogue', 'mic', '对话'],
+    ].map(([key, iconName, label]) => `
+        <button class="tab-btn ${state.activeTab === key ? 'active' : ''}" data-tab="${key}">
+            ${icon(iconName, 16)} ${label}
+        </button>`).join('');
+    const actTag = (() => {
+        if (!scene || !scene.groupId) return '';
+        const numStr = String(scene.groupId).replace(/^grp_?0*/i, '');
+        const num = parseInt(numStr, 10);
+        if (!Number.isFinite(num) || num <= 0) return '';
+        return `<span class="act-tag">幕${String(num).padStart(2, '0')}</span>`;
+    })();
+    content.innerHTML = `
+        <div class="project-info">
+            <div class="project-brand">
+                ${actTag}
+                <div class="brand-icon">${scene ? escapeHtml(scene.title) : '分镜'}</div>
+                <span>分镜工作台</span>
+            </div>
+        </div>
+        <div class="tab-nav">${tabs}</div>
+        ${renderTabs(scene)}`;
+    content.scrollTop = scrollTop;
+    restoreFocusIn(content, focusSnap);
+    return true;
+}
+
+/** 左栏整块（工作台 + 助手）；切镜时用 */
+export function patchLeftSidebar() {
+    const aside = document.querySelector('.main-layout > .left-sidebar');
+    if (!aside) return false;
+    const scene = getCurrentScene();
+    const scrollEl = aside.querySelector('.sidebar-content');
+    const scrollTop = scrollEl ? scrollEl.scrollTop : 0;
+    const focusSnap = captureFocusIn(aside);
+    const agentScroll = aside.querySelector('.agent-chat-log')?.scrollTop ?? null;
+    const next = replaceElWithHtml(aside, renderLeftSidebar(scene));
+    if (next) {
+        const sc = next.querySelector('.sidebar-content');
+        if (sc) sc.scrollTop = scrollTop;
+        const log = next.querySelector('.agent-chat-log');
+        if (log && agentScroll != null) log.scrollTop = agentScroll;
+        restoreFocusIn(next, focusSnap);
+    }
+    return Boolean(next);
+}
+
+/**
+ * 同步时间轴/Grid 选中态（不重建节点）。
+ */
+export function syncTimelineSelectionActive() {
+    const id = state.currentSceneId;
+    document.querySelectorAll('.scene-timeline-thumb.active').forEach((n) => n.classList.remove('active'));
+    document.querySelectorAll('.storyboard-card.active').forEach((n) => n.classList.remove('active'));
+    if (id == null) return false;
+    const thumb = document.querySelector(`.scene-timeline-thumb[data-scene="${id}"]`);
+    if (thumb) thumb.classList.add('active');
+    const card = document.querySelector(`.storyboard-card[data-scene="${id}"]`);
+    if (card) card.classList.add('active');
+    updatePlayheadPosition({ followScroll: false });
+    return true;
+}
+
+/**
+ * 重建时间轴 list（不碰 preview-wrapper）。用于增删分镜。
+ */
+export function patchTimelineListStructure() {
+    if (state.viewMode === 'grid') return false;
+    const list = document.querySelector('.scene-timeline-list');
+    if (!list) return false;
+    const scrollLeft = list.scrollLeft;
+    const sig = scenesStructureSig();
+    list.innerHTML = renderTimelineListInner();
+    list.dataset.scenesSig = sig;
+    list.setAttribute('data-ratio', state.workflowRatio || '16:9');
+    list.scrollLeft = scrollLeft;
+    // 写入各 thumb 的 mediaSig，避免下一轮 updateSceneThumb 误判重复刷
+    (state.scenes || []).forEach((sc) => {
+        const thumbBtn = document.querySelector(`.scene-timeline-thumb[data-scene="${sc.id}"]`);
+        if (!thumbBtn) return;
+        const nextUrl = sc.firstFrameUrl || '';
+        const nextStatus = getFirstFrameDisplayStatus(sc);
+        thumbBtn.dataset.mediaSig = `${nextUrl}|${nextStatus}|${sc.durationLabel || ''}`;
+    });
+    updateAutoCompleteHeader();
+    updatePlayheadPosition({ followScroll: false });
+    return true;
+}
+
+/**
+ * 重建 Grid 卡片区（grid 模式无中央 preview）。
+ */
+export function patchGridStructure() {
+    if (state.viewMode !== 'grid') return false;
+    const grid = document.querySelector('.storyboard-grid');
+    if (!grid) return false;
+    const scrollTop = grid.scrollTop;
+    const sig = scenesStructureSig();
+    grid.innerHTML = renderGridInner();
+    grid.dataset.scenesSig = sig;
+    grid.scrollTop = scrollTop;
+    (state.scenes || []).forEach((sc) => {
+        const cell = document.querySelector(`.storyboard-card[data-scene="${sc.id}"]`)?.closest('.storyboard-grid-cell');
+        if (!cell) return;
+        const nextUrl = sc.firstFrameUrl || '';
+        const nextStatus = getFirstFrameDisplayStatus(sc);
+        cell.dataset.mediaSig = `${nextUrl}|${nextStatus}|${sc.durationLabel || ''}`;
+        cell.dataset.sceneId = String(sc.id);
+    });
+    updateAutoCompleteHeader();
+    return true;
+}
+
+/**
+ * 中栏：仅 viewMode 切换（timeline↔grid）时需要整块替换。
+ * 若仅是分镜集合变化，应走 TIMELINE_LIST / GRID 结构 patch，避免拆 preview。
+ */
+export function patchCenter() {
+    const main = document.querySelector('.main-layout > .center-panel');
+    if (!main) return false;
+    if (isPreviewMediaBusy()) return false;
+    const scene = getCurrentScene();
+    const list = main.querySelector('.scene-timeline-list');
+    const scrollLeft = list ? list.scrollLeft : 0;
+    const grid = main.querySelector('.storyboard-grid');
+    const scrollTop = grid ? grid.scrollTop : 0;
+    const oldKey = previewMediaKey(main.querySelector('.preview-media'));
+    // 同 viewMode 且仅结构变化：优先结构 patch，保留 preview 节点
+    const hasTimeline = Boolean(list);
+    const hasGrid = Boolean(grid);
+    const wantGrid = state.viewMode === 'grid';
+    if (wantGrid && hasGrid) {
+        return patchGridStructure();
+    }
+    if (!wantGrid && hasTimeline) {
+        // 保留 preview-wrapper，只换 timeline 列表
+        const ok = patchTimelineListStructure();
+        patchTimelineChrome();
+        return ok;
+    }
+    // viewMode 与 DOM 不一致（真正切换视图）
+    const next = replaceElWithHtml(main, renderCenter(scene));
+    if (next) {
+        attachPreviewMediaTransition(next.querySelector('.preview-media'), oldKey);
+        const list2 = next.querySelector('.scene-timeline-list');
+        if (list2) list2.scrollLeft = scrollLeft;
+        const grid2 = next.querySelector('.storyboard-grid');
+        if (grid2) grid2.scrollTop = scrollTop;
+        updatePlayheadPosition({ followScroll: false });
+    }
+    return Boolean(next);
+}
+
+/** 右侧候选 */
+export function patchCandidates() {
+    const scene = getCurrentScene();
+    if (!scene) return false;
+    const rightSidebar = document.querySelector('.right-sidebar');
+    if (!rightSidebar) return false;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = renderRightSidebar(scene);
+    const newAside = tmp.querySelector('.right-sidebar');
+    if (!newAside) return false;
+    const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}`;
+    if (rightSidebar.dataset.candidateSig === nextSig) return true;
+    rightSidebar.innerHTML = newAside.innerHTML;
+    rightSidebar.dataset.candidateSig = nextSig;
+    return true;
+}
+
+/**
+ * 清掉预览区残留层：empty 状态字 / buffering 遮罩 / 多余 media。
+ * 历史 bug：empty 不是 .preview-media，切到有图分镜时只 insert 不 remove → 中间残留「等待…」等文案。
+ */
+function clearPreviewMediaLayers(wrapper) {
+    if (!wrapper) return;
+    wrapper.querySelectorAll('.preview-media, .preview-empty, .preview-buffering').forEach((node) => {
+        try {
+            node.remove();
+        } catch {
+            // ignore
+        }
+    });
+    const sub = wrapper.querySelector('.preview-subtitle');
+    if (sub) {
+        sub.hidden = true;
+        sub.textContent = '';
+    }
+}
+
+/**
+ * 主预览局部更新：busy 时只改 caption；否则优先改 src，必要时换媒体子节点。
+ */
+export function patchPreview(scene, options = {}) {
+    const { force = false } = options;
+    const wrapper = document.querySelector('.preview-wrapper');
+    if (!wrapper || !scene) return false;
+
+    const previewMedia = choosePreviewMedia(scene);
+    const nextKey = previewMedia.kind === 'video'
+        ? `VIDEO|${previewMedia.url}`
+        : (previewMedia.kind === 'image' ? `IMG|${previewMedia.url}` : '');
+    const media = wrapper.querySelector('.preview-media');
+    const oldKey = previewMediaKey(media);
+    // 是否存在 empty/buffering 残留（即使已有 media 也要清）
+    const hasStaleOverlay = Boolean(
+        wrapper.querySelector('.preview-empty, .preview-buffering')
+    );
+
+    const setCaption = () => {
+        const captionEl = wrapper.querySelector('.preview-caption');
+        if (!captionEl) return;
+        const strong = captionEl.querySelector('strong');
+        const span = captionEl.querySelector('span');
+        if (strong) strong.textContent = scene.title || '';
+        if (span) span.textContent = scene.durationLabel || '';
+    };
+
+    if (isPreviewMediaBusy() && !force) {
+        setCaption();
+        return true;
+    }
+
+    // 切镜 force：始终清字幕残留
+    if (force) {
+        const sub = wrapper.querySelector('.preview-subtitle');
+        if (sub) {
+            sub.hidden = true;
+            sub.textContent = '';
+        }
+    }
+
+    if (oldKey && nextKey && oldKey === nextKey && !force && !hasStaleOverlay) {
+        setCaption();
+        return true;
+    }
+
+    // 同类型优先改 src，避免销毁节点；但若有 empty 残留仍须清层
+    if (
+        media && media.tagName === 'VIDEO' && previewMedia.kind === 'video' && oldKey.startsWith('VIDEO|')
+        && !hasStaleOverlay
+    ) {
+        const url = String(previewMedia.url).trim();
+        if (media.getAttribute('src') !== url && media.src !== url) {
+            media.src = url;
+            try { media.load(); } catch { /* ignore */ }
+        }
+        setCaption();
+        return true;
+    }
+    if (
+        media && media.tagName === 'IMG' && previewMedia.kind === 'image'
+        && oldKey.startsWith('IMG|') && !hasStaleOverlay
+    ) {
+        const url = String(previewMedia.url).trim();
+        if (media.getAttribute('src') !== url) media.src = url;
+        setCaption();
+        return true;
+    }
+
+    // 类型变化 / empty↔媒体 / 有残留层：整层替换媒体区，保留 subtitle + caption 兄弟
+    clearPreviewMediaLayers(wrapper);
+    const html = mediaFrame(scene);
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html.trim();
+    const newMedia = tmp.firstElementChild;
+    if (!newMedia) return false;
+    const anchor = wrapper.querySelector('.preview-subtitle')
+        || wrapper.querySelector('.preview-caption')
+        || null;
+    if (anchor) {
+        wrapper.insertBefore(newMedia, anchor);
+    } else {
+        wrapper.appendChild(newMedia);
+    }
+    if (!wrapper.querySelector('.preview-subtitle')) {
+        const sub = document.createElement('div');
+        sub.className = 'preview-subtitle';
+        sub.hidden = true;
+        newMedia.after(sub);
+    }
+    if (!wrapper.querySelector('.preview-caption')) {
+        const cap = document.createElement('div');
+        cap.className = 'preview-caption';
+        cap.innerHTML = `<strong></strong><span></span>`;
+        wrapper.appendChild(cap);
+    }
+    setCaption();
+    attachPreviewMediaTransition(wrapper.querySelector('.preview-media'), oldKey);
+    return true;
+}
+
+/** 弹层容器：不碰 app-shell */
+export function syncModals() {
+    const app = document.getElementById('app');
+    if (!app) return false;
+    let host = app.querySelector('[data-region="modals"]');
+    if (!host) {
+        host = document.createElement('div');
+        host.dataset.region = 'modals';
+        host.className = 'storyboard-modals';
+        app.appendChild(host);
+    }
+    host.innerHTML = renderModalsHtml();
+    return true;
+}
+
+function patchTimelineChrome() {
+    updateTimelineProgress();
+    // 字幕勾选（action 名称为 toggle-subtitle）
+    const cb = document.querySelector(
+        '.timeline-progress-row input[type="checkbox"][data-action="toggle-subtitle"]'
+    );
+    if (cb) cb.checked = Boolean(state.subtitleEnabled);
+    return true;
+}
+
+/**
+ * 时间轴 list / grid：
+ * - 分镜 id 序列未变：单卡 thumb + 选中态
+ * - 序列变了（增删/插镜）：结构重建，**不**拆 preview
+ */
+function patchTimelineListOrGrid() {
+    const sig = scenesStructureSig();
+    if (state.viewMode === 'grid') {
+        const grid = document.querySelector('.storyboard-grid');
+        if (!grid) return patchCenter();
+        if (grid.dataset.scenesSig !== sig) {
+            return patchGridStructure();
+        }
+        let n = 0;
+        (state.scenes || []).forEach((sc) => {
+            if (updateSceneThumb(sc)) n += 1;
+        });
+        syncTimelineSelectionActive();
+        updateAutoCompleteHeader();
+        return n >= 0;
+    }
+
+    const list = document.querySelector('.scene-timeline-list');
+    if (!list) {
+        // 当前可能是 grid 或壳未齐
+        if (document.querySelector('.storyboard-grid')) return patchGridStructure();
+        return false;
+    }
+    if (list.dataset.scenesSig !== sig) {
+        return patchTimelineListStructure();
+    }
+    let n = 0;
+    (state.scenes || []).forEach((sc) => {
+        if (updateSceneThumb(sc)) n += 1;
+    });
+    syncTimelineSelectionActive();
+    updateAutoCompleteHeader();
+    updatePlayheadPosition({ followScroll: false });
+    return n >= 0;
+}
+
+/**
+ * 分区刷新主入口。
+ * @param {string|string[]|'all'} [regions='all']
+ * @param {{ forcePreview?: boolean }} [options]
+ */
+export function refresh(regions = 'all', options = {}) {
+    const app = document.getElementById('app');
+    if (!app) return;
 
     if (state.error) {
         app.innerHTML = `<div class="storyboard-error"><h1>故事板打开失败</h1><p>${escapeHtml(state.error)}</p><button class="btn-primary" data-route="script">返回剧本策划</button></div>`;
         return;
     }
 
-    // 全量重建会销毁 video/audio，播放中必须先停播，避免幽灵声音
+    const set = normalizeRegions(regions);
+    const shellReady = Boolean(app.querySelector('.app-shell'));
+
+    // 无壳或请求 all：全量（仍受 preview busy 保护）
+    if (!shellReady || set.has('all')) {
+        if (isPreviewMediaBusy() && !options.forcePreview) {
+            softRefreshUiWhilePreviewBusy();
+            // busy 时仍允许刷弹层（导出等）
+            if (set.has(Region.MODAL) || set.has('all')) syncModals();
+            return;
+        }
+        renderAppFull();
+        return;
+    }
+
+    // 播放保护：剔除 PREVIEW；CENTER 会拆 preview，一并剔除
+    if (isPreviewMediaBusy() && !options.forcePreview) {
+        set.delete(Region.PREVIEW);
+        set.delete(Region.CENTER);
+    }
+
+    const scene = getCurrentScene();
+    for (const r of set) {
+        switch (r) {
+            case Region.HEADER_POWER:
+                patchHeaderPower();
+                break;
+            case Region.HEADER:
+                patchHeader();
+                break;
+            case Region.AGENT_LOG:
+                patchAgentChatLog();
+                break;
+            case Region.AGENT_PANEL:
+            case Region.AGENT_COMPOSER:
+                patchAgentPanel();
+                break;
+            case Region.LEFT_SIDEBAR:
+                patchLeftSidebar();
+                break;
+            case Region.SCENE_CHROME:
+            case Region.LEFT_TABS:
+            case Region.LEFT_TAB_BODY:
+                // 只刷工作台，避免重挂助手导致输入框/历史被拆
+                patchLeftWorkspace();
+                break;
+            case Region.CANDIDATES:
+                patchCandidates();
+                break;
+            case Region.PREVIEW:
+                patchPreview(scene, { force: Boolean(options.forcePreview) });
+                break;
+            case Region.CENTER:
+                patchCenter();
+                break;
+            case Region.TIMELINE_CHROME:
+                patchTimelineChrome();
+                break;
+            case Region.TIMELINE_LIST:
+            case Region.GRID:
+                patchTimelineListOrGrid();
+                break;
+            case Region.MODAL:
+                syncModals();
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+/** 兼容旧名：等价 refresh('all') */
+export function renderApp() {
+    refresh('all');
+}
+
+/** 真正的整页重建（仅 refresh all / 首屏 / 错误恢复） */
+function renderAppFull() {
+    const app = document.getElementById('app');
+    const scene = getCurrentScene();
+    if (!app) return;
+
     onDomWillRerender();
 
     const scrollSelectors = [
@@ -1523,7 +2796,6 @@ export function renderApp() {
         ? (prevAgentLog.scrollHeight - prevAgentLog.scrollTop - prevAgentLog.clientHeight) < 48
         : true;
 
-    // 记录旧的主预览媒体（img/video），用于重建后避免相同图片再次解码/绘制导致闪烁
     const oldPreviewKey = previewMediaKey(document.querySelector('.preview-media'));
 
     app.innerHTML = `
@@ -1535,14 +2807,8 @@ export function renderApp() {
                 ${renderRightSidebar(scene)}
             </div>
         </div>
-        ${renderExportDialog()}
-        ${renderGenerateFromScriptDialog()}
-        ${renderGenerateProgressDialog()}
-        ${renderMentionPopup()}
-        ${renderModelConfigModal()}
-        ${renderGlobalStyleDialog()}`;
+        <div class="storyboard-modals" data-region="modals">${renderModalsHtml()}</div>`;
 
-    // 主图双缓冲：src 未变则立即显示（避免重建空白），src 变化则等加载后淡入
     attachPreviewMediaTransition(app.querySelector('.preview-media'), oldPreviewKey);
 
     requestAnimationFrame(() => {
@@ -1551,10 +2817,9 @@ export function renderApp() {
             if (el) el[prop] = value;
         });
         const agentLog = document.querySelector('.agent-chat-log');
-        if (agentLog && (state.isAgentRunning || agentLogWasAtBottom) && state.agentChatHistoryOpen !== false) {
+        if (agentLog && (isSceneAgentRunning(state.currentSceneId) || agentLogWasAtBottom) && state.agentChatHistoryOpen !== false) {
             agentLog.scrollTop = agentLog.scrollHeight;
         }
-        // 滚动恢复后再摆 playhead，避免用错 scrollLeft / 布局未稳定
         updatePlayheadPosition({ followScroll: false });
     });
 }
@@ -1562,32 +2827,21 @@ export function renderApp() {
 // ==================== 局部更新 API（供 polling 局部刷新，避免全量重建抢焦点/抖动）====================
 // 设计原则：只更新由 applyTaskStatus 真正改动的区域；保留用户正在交互的控件（输入框焦点、滚动位置）。
 
-// 生成单个分镜的时间线缩略图按钮 innerHTML（不含外层 button，仅 img/span + 时长）。
+// 生成单个分镜的时间线缩略图按钮 innerHTML（不含外层 button）。
 function renderTimelineThumbInner(scene) {
+    const statusClass = getFirstFrameDisplayStatus(scene) === 'ready'
+        ? ''
+        : ' has-first-frame-status';
     return `${renderTimelineMediaFrame(scene)}
+                    <div class="scene-timeline-id-badge${statusClass}">${escapeHtml(scene.title)}</div>
                     <div class="scene-timeline-meta">${icon('play', 14)} <b>${escapeHtml(scene.durationLabel)}</b></div>`;
 }
 
-// 生成单个分镜的 grid 卡片 outerHTML（article 整张卡）。
+// 生成单个分镜的 grid 卡片 outerHTML（cell 整块，与 renderGridInner 一致）。
 function renderStoryboardCardOuter(scene) {
-    const nextScene = state.scenes[state.scenes.indexOf(scene) + 1];
-    return `
-            <div class="storyboard-grid-cell">
-                <article class="storyboard-card ${state.currentSceneId === scene.id ? 'active' : ''}" data-scene="${scene.id}">
-                    <div class="storyboard-thumb">${mediaFrame(scene)}</div>
-                    <div class="storyboard-card-body">
-                        <h3>${escapeHtml(scene.title)}</h3>
-                        <p>${escapeHtml(scene.durationLabel)}</p>
-                        <div class="card-status">${assetBadge(scene, 'first_frame', '图')} ${assetBadge(scene, 'video', '视频')} ${difficultyBadge(scene)}</div>
-                        ${actNameTag(scene) ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
-                        <div class="storyboard-card-actions">
-                            <button data-action="duplicate-scene" data-id="${scene.id}">${icon('copy', 14)} 复制</button>
-                            <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} 删除</button>
-                        </div>
-                    </div>
-                </article>
-                ${nextScene ? renderInsertSceneSlot(scene, nextScene, 'grid') : ''}
-            </div>`;
+    const idx = state.scenes.indexOf(scene);
+    const nextScene = idx >= 0 ? state.scenes[idx + 1] : null;
+    return renderStoryboardCardCell(scene, nextScene);
 }
 
 // 生成单个 dialogue 行 outerHTML（供局部更新单条对话的 audio 控件，避免触碰其他正在编辑的行）。
@@ -1620,12 +2874,21 @@ function renderDialogueRowOuter(d) {
 export function updateSceneThumb(scene) {
     if (!scene) return false;
     let updated = false;
+    const nextUrl = scene.firstFrameUrl || '';
+    const nextStatus = getFirstFrameDisplayStatus(scene);
+    const mediaSig = `${nextUrl}|${nextStatus}|${scene.durationLabel || ''}`;
 
     // timeline 模式：替换 thumb 按钮内部内容（保留按钮本身，不破坏 active 态与滚动）
     const thumbBtn = document.querySelector(`.scene-timeline-thumb[data-scene="${scene.id}"]`);
     if (thumbBtn) {
-        thumbBtn.innerHTML = renderTimelineThumbInner(scene);
-        updated = true;
+        // 媒体签名未变时跳过 innerHTML，避免 img 重复加载导致「闪一下」
+        if (thumbBtn.dataset.mediaSig === mediaSig) {
+            updated = true;
+        } else {
+            thumbBtn.innerHTML = renderTimelineThumbInner(scene);
+            thumbBtn.dataset.mediaSig = mediaSig;
+            updated = true;
+        }
     }
 
     // grid 模式：替换整张卡片（含缩略图/角标）
@@ -1633,8 +2896,17 @@ export function updateSceneThumb(scene) {
     if (card) {
         const cell = card.closest('.storyboard-grid-cell');
         if (cell) {
-            cell.outerHTML = renderStoryboardCardOuter(scene);
-            updated = true;
+            if (cell.dataset.mediaSig === mediaSig && cell.dataset.sceneId === String(scene.id)) {
+                updated = true;
+            } else {
+                cell.outerHTML = renderStoryboardCardOuter(scene);
+                const nextCell = document.querySelector(`.storyboard-card[data-scene="${scene.id}"]`)?.closest('.storyboard-grid-cell');
+                if (nextCell) {
+                    nextCell.dataset.mediaSig = mediaSig;
+                    nextCell.dataset.sceneId = String(scene.id);
+                }
+                updated = true;
+            }
         }
     }
     return updated;
@@ -1647,31 +2919,60 @@ export function updateCurrentSceneDetail(scene) {
     let updated = false;
 
     // 中央主预览（仅 timeline 模式存在 .preview-wrapper）
-    // 播放引擎占用预览区时跳过，避免打断音画
+    // 时间轴试看 / 原生 controls 播放中：禁止 innerHTML 拆掉 video（仅可改 caption 文本）
     const previewWrapper = document.querySelector('.preview-wrapper');
-    if (previewWrapper && !state.isPlaying) {
+    const previewBusy = isPreviewMediaBusy();
+    if (previewWrapper && previewBusy) {
+        const captionEl = previewWrapper.querySelector('.preview-caption');
+        if (captionEl) {
+            const strong = captionEl.querySelector('strong');
+            const span = captionEl.querySelector('span');
+            if (strong) strong.textContent = scene.title || '';
+            if (span) span.textContent = scene.durationLabel || '';
+        }
+        updated = true;
+    } else if (previewWrapper && !previewBusy) {
         const oldKey = previewMediaKey(previewWrapper.querySelector('.preview-media'));
-        // 重建 .preview-wrapper 内容（含 mediaFrame + caption），与 renderCenter 保持一致
-        previewWrapper.innerHTML = `
+        const previewMedia = choosePreviewMedia(scene);
+        const nextKey = previewMedia.kind === 'video'
+            ? `VIDEO|${previewMedia.url}`
+            : (previewMedia.kind === 'image' ? `IMG|${previewMedia.url}` : '');
+        const captionEl = previewWrapper.querySelector('.preview-caption');
+        const oldCaption = captionEl
+            ? `${captionEl.querySelector('strong')?.textContent || ''}|${captionEl.querySelector('span')?.textContent || ''}`
+            : '';
+        const nextCaption = `${scene.title || ''}|${scene.durationLabel || ''}`;
+        // 主媒体与标题未变：跳过重建，避免轮询导致主预览反复闪烁
+        if (oldKey && nextKey && oldKey === nextKey && oldCaption === nextCaption) {
+            updated = true;
+        } else {
+            previewWrapper.innerHTML = `
                 ${mediaFrame(scene)}
                 ${previewSubtitleHtml()}
                 <div class="preview-caption">
                     <strong>${escapeHtml(scene.title)}</strong>
                     <span>${escapeHtml(scene.durationLabel)}</span>
                 </div>`;
-        attachPreviewMediaTransition(previewWrapper.querySelector('.preview-media'), oldKey);
-        updated = true;
+            attachPreviewMediaTransition(previewWrapper.querySelector('.preview-media'), oldKey);
+            updated = true;
+        }
     }
 
-    // 右侧候选网格（无输入控件，整块替换安全）
+    // 右侧候选网格（无输入控件，整块替换安全；可用签名跳过无变化刷新）
     const rightSidebar = document.querySelector('.right-sidebar');
     if (rightSidebar) {
-        // renderRightSidebar 返回 <aside>...</aside>，解析出其 innerHTML 写入现有容器，保留元素本身
         const tmp = document.createElement('div');
         tmp.innerHTML = renderRightSidebar(scene);
         const newAside = tmp.querySelector('.right-sidebar');
-        if (newAside) rightSidebar.innerHTML = newAside.innerHTML;
-        updated = true;
+        if (newAside) {
+            const nextHtml = newAside.innerHTML;
+            const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}`;
+            if (rightSidebar.dataset.candidateSig !== nextSig) {
+                rightSidebar.innerHTML = nextHtml;
+                rightSidebar.dataset.candidateSig = nextSig;
+            }
+            updated = true;
+        }
     }
     return updated;
 }
@@ -1693,7 +2994,9 @@ export function updateDialogueRow(scene, dialogueId) {
 // 进度行 span 不会随 updateSceneThumb/updateCurrentSceneDetail 自动重渲（仅全量 renderApp 才刷新），
 // 因此需在轮询局部更新里显式调用本函数。返回 true 表示更新了。
 export function updateTimelineProgress() {
-    const span = document.querySelector('.timeline-progress-row span');
+    // 必须用 .timeline-time，禁止 `.timeline-progress-row span`：
+    // 后者会命中 .play-btn 内 icon() 生成的 .sb-icon，把时间写进播放按钮。
+    const span = document.querySelector('.timeline-progress-row .timeline-time');
     if (!span) return false;
     span.textContent = `${formatDuration(state.currentTime)} / ${formatDuration(getTotalDuration())}`;
     // duration 变化后重算 playhead 映射

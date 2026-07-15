@@ -904,115 +904,135 @@
         setStatusEl(statusEl, '正在调用LLM解析剧本...', '#666');
 
         try {
-          const response = await fetch('/api/parse-script', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...getAuthHeaders()
-            },
-            body: JSON.stringify({
-              script_content: node.data.scriptContent,
-              max_group_duration: node.data.maxGroupDuration || 15,
-              world_id: state.defaultWorldId,
-              force_medium_shot: node.data.forceMediumShot || false,
-              no_bg_music: node.data.noBgMusic || false,
-              split_multi_dialogue: node.data.splitMultiDialogue || false,
-              dialogue_language: node.data.dialogueLanguage || '',
-              prompt_language: node.data.promptLanguage || '',
-              model: node.data.splitModel || 'gemini-3-flash-preview',
-              model_id: node.data.splitModelId || '',
-              vendor_id: node.data.splitModelVendorId || '',
-              enable_thinking: node.data.enableThinking === true,
-              thinking_effort: node.data.thinkingEffort || 'medium'
-            })
-          });
+          // 异步任务：提交后立即返回 task_id，前端轮询直到完成再物化节点。
+          // 见 docs/script/script_parser_incremental_split_design.md §14。
+          const submitData = await window.ScriptSplitTask.submitSplitTask(node.data, state.defaultWorldId);
+          const taskId = submitData.task_id;
+          node.data.splitTaskId = taskId;
+          node.data.splitTaskMode = 'split';
+          node.data.splitTaskResultApplied = false;
+          safeAutoSave();
 
-          const result = await response.json();
-          
-          if(result.code === 0 && result.data) {
-            node.data.parsedData = result.data;
-            
-            setStatusEl(statusEl, `解析成功！共${result.data.shot_groups?.length || 0}个幕`, '#16a34a');
-            if(window.TaskConfig && !window.TaskConfig.isLoaded()) {
-              await window.TaskConfig.load();
-            }
-            
-            // 创建分镜组节点
-            if(result.data.shot_groups && result.data.shot_groups.length > 0) {
-              // 预先创建所有柱子（基于剧本中的所有分镜）
-              const scriptId = id;
-              const maxGroupDuration = result.data.max_group_duration || 15;
-              
-              result.data.shot_groups.forEach((shotGroup) => {
-                if(shotGroup.shots && Array.isArray(shotGroup.shots)) {
-                  shotGroup.shots.forEach((shot) => {
-                    if(shot.shot_number) {
-                      // 为每个分镜预创建柱子
-                      createOrUpdatePillar(scriptId, shot.shot_number, shot.duration || maxGroupDuration);
-                    }
-                  });
-                }
-              });
-              
-              const createdShotGroupNodes = [];
-              const SPLIT_NODE_GAP_Y = 120; // 分镜组节点之间的Y轴间距，与自动排列保持一致
-              let cumulativeY = 0;
-              result.data.shot_groups.forEach((shotGroup, index) => {
-                // 横向排列：shot_group 在 script 右侧，x 固定，y 纵向堆叠
-                const shotGroupNodeId = createShotGroupNode({
-                  x: node.x + 800,  // script右侧 + 2/3 shot_group宽度(200px)，留足间隙
-                  y: node.y + cumulativeY,
-                  shotGroupData: shotGroup,
-                  scriptData: result.data
-                });
-                // 获取实际渲染高度，避免估算不准导致节点堆叠
-                const shotGroupEl = canvasEl.querySelector(`.node[data-node-id="${shotGroupNodeId}"]`);
-                const actualHeight = shotGroupEl ? shotGroupEl.offsetHeight : 300;
-                cumulativeY += actualHeight + SPLIT_NODE_GAP_Y;
-                
-                // 创建从剧本节点到分镜组节点的连线
-                if(shotGroupNodeId) {
-                  state.connections.push({
-                    id: state.nextConnId++,
-                    from: id,
-                    to: shotGroupNodeId
-                  });
-                  createdShotGroupNodes.push(shotGroupNodeId);
-                }
-              });
-              
-              // 渲染时间轴（创建柱子结构），不自动展开
-              renderTimeline();
-              if (!state.timeline.visible) flashExpandButton();
-              
-              renderAllConnections();
-              renderMinimap();
-              safeAutoSave()
-              
-              // 自动为每个分镜组生成分镜
-              statusEl.textContent = '正在自动生成分镜...';
-              for(const shotGroupNodeId of createdShotGroupNodes) {
-                const shotGroupNode = state.nodes.find(n => n.id === shotGroupNodeId);
-                if(shotGroupNode) {
-                  await generateShotFramesIndependentAsync(shotGroupNodeId, shotGroupNode);
-                }
+          window.ScriptSplitTask.pollScriptSplitTask(taskId, {
+            onUpdate: (status) => {
+              setStatusEl(statusEl, status.message || '拆分中…', '#666');
+            },
+            onComplete: async (parsedData) => {
+              try {
+                await applyParsedData(parsedData);
+                node.data.splitTaskResultApplied = true;
+                safeAutoSave();
+              } catch (e) {
+                console.error('应用拆分结果失败:', e);
+                setStatusEl(statusEl, '应用结果失败: ' + (e.message || ''), '#dc2626');
+              } finally {
+                splitBtn.disabled = false;
+                splitGridBtn.disabled = false;
               }
-              setStatusEl(statusEl, `已完成：${createdShotGroupNodes.length}个幕，所有分镜已自动生成`, '#16a34a');
-            }
-            
-            showToast(window.t ? window.t('script_split_complete') : '剧本拆分成功！所有分镜已自动生成', 'success');
-          } else {
-            throw new Error(result.message || '解析失败');
-          }
+            },
+            onPaused: (status) => {
+              // paused / waiting_auth：显示继续按钮，不自动重启用
+              setStatusEl(statusEl, status.message || '任务暂停，等待处理', '#d97706');
+              splitBtn.disabled = false;
+              splitGridBtn.disabled = false;
+            },
+            onError: (error) => {
+              console.error('剧本拆分失败:', error);
+              setStatusEl(statusEl, '拆分失败: ' + (error.message || '未知错误'), '#dc2626');
+              showToast(window.t ? window.t('script_parse_error') : '剧本解析失败', 'error');
+              splitBtn.disabled = false;
+              splitGridBtn.disabled = false;
+            },
+          });
         } catch(error) {
-          console.error('剧本解析失败:', error);
-          setStatusEl(statusEl, '解析失败: ' + (error.message || '未知错误'), '#dc2626');
+          console.error('提交拆分任务失败:', error);
+          setStatusEl(statusEl, '提交失败: ' + (error.message || '未知错误'), '#dc2626');
           showToast(window.t ? window.t('script_parse_error') : '剧本解析失败', 'error');
-        } finally {
           splitBtn.disabled = false;
           splitGridBtn.disabled = false;
         }
       });
+
+      // 将拆分结果物化为柱子、分镜组节点和分镜帧。
+      // 提取为局部函数，供拆分幕、宫格生图、刷新恢复复用（幂等：跳过已存在节点）。
+      async function applyParsedData(parsedData, opts) {
+        opts = opts || {};
+        const autoGenerateFrames = opts.autoGenerateFrames !== false;
+        if (!parsedData || !parsedData.shot_groups || parsedData.shot_groups.length === 0) {
+          setStatusEl(statusEl, '解析结果无分镜组', '#dc2626');
+          return;
+        }
+        node.data.parsedData = parsedData;
+        const groupCount = parsedData.shot_groups.length;
+        setStatusEl(statusEl, `解析成功！共${groupCount}个幕`, '#16a34a');
+        if (window.TaskConfig && !window.TaskConfig.isLoaded()) {
+          await window.TaskConfig.load();
+        }
+
+        // 幂等：已有分镜组节点则跳过创建
+        const hasExistingShotGroup = state.nodes.some(
+          n => n.type === 'shot_group' && n.data && n.data.scriptNodeId === id
+        );
+        if (hasExistingShotGroup) {
+          setStatusEl(statusEl, `已完成：已有 ${groupCount} 个幕`, '#16a34a');
+          return;
+        }
+
+        const scriptId = id;
+        const maxGroupDuration = parsedData.max_group_duration || 15;
+        // 预创建柱子
+        parsedData.shot_groups.forEach((shotGroup) => {
+          if (shotGroup.shots && Array.isArray(shotGroup.shots)) {
+            shotGroup.shots.forEach((shot) => {
+              if (shot.shot_number) {
+                createOrUpdatePillar(scriptId, shot.shot_number, shot.duration || maxGroupDuration);
+              }
+            });
+          }
+        });
+
+        const createdShotGroupNodes = [];
+        const SPLIT_NODE_GAP_Y = 120;
+        let cumulativeY = 0;
+        parsedData.shot_groups.forEach((shotGroup) => {
+          const shotGroupNodeId = createShotGroupNode({
+            x: node.x + 800,
+            y: node.y + cumulativeY,
+            shotGroupData: shotGroup,
+            scriptData: parsedData
+          });
+          const shotGroupEl = canvasEl.querySelector(`.node[data-node-id="${shotGroupNodeId}"]`);
+          const actualHeight = shotGroupEl ? shotGroupEl.offsetHeight : 300;
+          cumulativeY += actualHeight + SPLIT_NODE_GAP_Y;
+          if (shotGroupNodeId) {
+            state.connections.push({ id: state.nextConnId++, from: id, to: shotGroupNodeId });
+            createdShotGroupNodes.push(shotGroupNodeId);
+          }
+        });
+
+        renderTimeline();
+        if (!state.timeline.visible) flashExpandButton();
+        renderAllConnections();
+        renderMinimap();
+        safeAutoSave();
+
+        if (autoGenerateFrames) {
+          statusEl.textContent = '正在自动生成分镜...';
+          for (const shotGroupNodeId of createdShotGroupNodes) {
+            const shotGroupNode = state.nodes.find(n => n.id === shotGroupNodeId);
+            if (shotGroupNode) {
+              await generateShotFramesIndependentAsync(shotGroupNodeId, shotGroupNode);
+            }
+          }
+        }
+        setStatusEl(statusEl, `已完成：${createdShotGroupNodes.length}个幕` + (autoGenerateFrames ? '，所有分镜已自动生成' : ''), '#16a34a');
+        showToast(window.t ? window.t('script_split_complete') : '剧本拆分成功！所有分镜已自动生成', 'success');
+        // 暴露给宫格按钮后续流程
+        return createdShotGroupNodes;
+      }
+
+      // 暴露 applyParsedData 给宫格按钮和恢复逻辑（挂在闭包局部变量上）
+      node.applyParsedData = applyParsedData;
 
       // 宫格生图按钮监听
       console.log('[宫格生图] 正在绑定事件监听器，按钮元素:', splitGridBtn);
@@ -1384,124 +1404,148 @@
         gridStatusEl.textContent = '正在调用LLM解析剧本...';
 
         try {
-          // 第一步：解析剧本
-          const response = await fetch('/api/parse-script', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...getAuthHeaders()
+          // 异步任务：提交拆分 → 轮询 → 完成后执行宫格流程。
+          // 见 docs/script/script_parser_incremental_split_design.md §14。
+          const submitData = await window.ScriptSplitTask.submitSplitTask(node.data, state.defaultWorldId);
+          const taskId = submitData.task_id;
+          node.data.splitTaskId = taskId;
+          node.data.splitTaskMode = 'split_and_generate_grid';
+          node.data.splitTaskResultApplied = false;
+          node.data.splitTaskPostActionStarted = false;
+          safeAutoSave();
+
+          window.ScriptSplitTask.pollScriptSplitTask(taskId, {
+            onUpdate: (status) => {
+              gridStatusEl.style.color = '#666';
+              gridStatusEl.textContent = status.message || '拆分中…';
             },
-            body: JSON.stringify({
-              script_content: node.data.scriptContent,
-              max_group_duration: node.data.maxGroupDuration || 15,
-              world_id: state.defaultWorldId,
-              force_medium_shot: node.data.forceMediumShot || false,
-              no_bg_music: node.data.noBgMusic || false,
-              split_multi_dialogue: node.data.splitMultiDialogue || false,
-              dialogue_language: node.data.dialogueLanguage || '',
-              prompt_language: node.data.promptLanguage || '',
-              model: node.data.splitModel || 'gemini-3-flash-preview',
-              model_id: node.data.splitModelId || '',
-              vendor_id: node.data.splitModelVendorId || '',
-              enable_thinking: node.data.enableThinking === true,
-              thinking_effort: node.data.thinkingEffort || 'medium'
-            })
+            onComplete: async (parsedData) => {
+              if (node.data.splitTaskPostActionStarted) {
+                // 刷新恢复时已启动过宫格流程，不重复
+                return;
+              }
+              node.data.splitTaskPostActionStarted = true;
+              try {
+                await runGridFlow(parsedData);
+                node.data.splitTaskResultApplied = true;
+                safeAutoSave();
+              } catch (e) {
+                gridStatusEl.style.color = '#dc2626';
+                gridStatusEl.textContent = '失败: ' + (e.message || '未知错误');
+                showToast('宫格生图失败: ' + (e.message || '未知错误'), 'error');
+              } finally {
+                splitGridBtn.disabled = false;
+                splitBtn.disabled = false;
+              }
+            },
+            onPaused: (status) => {
+              gridStatusEl.style.color = '#d97706';
+              gridStatusEl.textContent = status.message || '任务暂停，等待处理';
+              splitGridBtn.disabled = false;
+              splitBtn.disabled = false;
+            },
+            onError: (error) => {
+              gridStatusEl.style.color = '#dc2626';
+              gridStatusEl.textContent = '失败: ' + (error.message || '未知错误');
+              showToast('宫格生图失败: ' + (error.message || '未知错误'), 'error');
+              splitGridBtn.disabled = false;
+              splitBtn.disabled = false;
+            },
           });
 
-          const result = await response.json();
-          
-          if(result.code !== 0 || !result.data) {
-            throw new Error(result.message || '解析失败');
-          }
+          // runGridFlow: 解析成功后的完整宫格流程（创建节点→生成分镜→收集参考图→宫格提交）。
+          // 提取为局部 async 函数，供轮询 onComplete 和刷新恢复复用。
+          async function runGridFlow(parsedData) {
+            node.data.parsedData = parsedData;
+            const groupCount = parsedData.shot_groups ? parsedData.shot_groups.length : 0;
+            gridStatusEl.style.color = '#16a34a';
+            gridStatusEl.textContent = `解析成功！共${groupCount}个幕`;
 
-          node.data.parsedData = result.data;
-          gridStatusEl.style.color = '#16a34a';
-          gridStatusEl.textContent = `解析成功！共${result.data.shot_groups?.length || 0}个幕`;
+            if (!parsedData.shot_groups || parsedData.shot_groups.length === 0) {
+              throw new Error('未生成幕');
+            }
 
-          // 第二步：创建分镜组节点和分镜节点
-          if(!result.data.shot_groups || result.data.shot_groups.length === 0) {
-            throw new Error('未生成幕');
-          }
+            // 幂等：已有分镜组节点则跳过创建
+            const hasExistingShotGroup = state.nodes.some(
+              n => n.type === 'shot_group' && n.data && n.data.scriptNodeId === id
+            );
+            const scriptId = id;
+            const maxGroupDuration = parsedData.max_group_duration || 15;
 
-          // 预先创建所有柱子
-          const scriptId = id;
-          const maxGroupDuration = result.data.max_group_duration || 15;
-          
-          result.data.shot_groups.forEach((shotGroup) => {
-            if(shotGroup.shots && Array.isArray(shotGroup.shots)) {
-              shotGroup.shots.forEach((shot) => {
-                if(shot.shot_number) {
-                  createOrUpdatePillar(scriptId, shot.shot_number, shot.duration || maxGroupDuration);
+            let createdShotGroupNodes = [];
+            if (!hasExistingShotGroup) {
+              parsedData.shot_groups.forEach((shotGroup) => {
+                if (shotGroup.shots && Array.isArray(shotGroup.shots)) {
+                  shotGroup.shots.forEach((shot) => {
+                    if (shot.shot_number) {
+                      createOrUpdatePillar(scriptId, shot.shot_number, shot.duration || maxGroupDuration);
+                    }
+                  });
                 }
               });
-            }
-          });
 
-          // 创建分镜组节点
-          const createdShotGroupNodes = [];
-          let cumulativeY = 0;
-          result.data.shot_groups.forEach((shotGroup, index) => {
-            const offsetX = 800;
-            const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
-            const shotGroupNodeId = createShotGroupNode({
-              x: node.x + offsetX,
-              y: node.y + cumulativeY,
-              shotGroupData: shotGroup,
-              scriptData: result.data
-            });
-            cumulativeY += shotCount * 700;
-
-            if(shotGroupNodeId) {
-              state.connections.push({
-                id: state.nextConnId++,
-                from: id,
-                to: shotGroupNodeId
+              let cumulativeY = 0;
+              parsedData.shot_groups.forEach((shotGroup) => {
+                const offsetX = 800;
+                const shotCount = (shotGroup.shots && shotGroup.shots.length) || 1;
+                const shotGroupNodeId = createShotGroupNode({
+                  x: node.x + offsetX,
+                  y: node.y + cumulativeY,
+                  shotGroupData: shotGroup,
+                  scriptData: parsedData
+                });
+                cumulativeY += shotCount * 700;
+                if (shotGroupNodeId) {
+                  state.connections.push({ id: state.nextConnId++, from: id, to: shotGroupNodeId });
+                  createdShotGroupNodes.push(shotGroupNodeId);
+                }
               });
-              createdShotGroupNodes.push(shotGroupNodeId);
+
+              renderTimeline();
+              if (!state.timeline.visible) flashExpandButton();
+              renderAllConnections();
+              renderMinimap();
+            } else {
+              // 恢复时复用已有节点
+              createdShotGroupNodes = state.nodes
+                .filter(n => n.type === 'shot_group' && n.data && n.data.scriptNodeId === id)
+                .map(n => n.id);
             }
-          });
 
-          // 渲染时间轴（创建柱子结构），不自动展开
-          renderTimeline();
-          if (!state.timeline.visible) flashExpandButton();
-          
-          renderAllConnections();
-          renderMinimap();
+            // 第三步：生成分镜节点并收集提示词
+            gridStatusEl.textContent = '正在生成分镜节点...';
+            console.log(`[宫格生图] 开始生成分镜节点，分镜组数量: ${createdShotGroupNodes.length}`);
+            const allShotFrameNodes = [];
 
-          // 第三步：生成分镜节点并收集提示词
-          gridStatusEl.textContent = '正在生成分镜节点...';
-          console.log(`[宫格生图] 开始生成分镜节点，分镜组数量: ${createdShotGroupNodes.length}`);
-          const allShotFrameNodes = [];
-          
-          for(const shotGroupNodeId of createdShotGroupNodes) {
-            const shotGroupNode = state.nodes.find(n => n.id === shotGroupNodeId);
-            if(shotGroupNode) {
-              console.log(`[宫格生图] 处理分镜组 ${shotGroupNodeId}`);
-              const shotFrameNodeIds = await generateShotFramesIndependentAsync(shotGroupNodeId, shotGroupNode);
-              console.log(`[宫格生图] 分镜组 ${shotGroupNodeId} 返回的节点ID: ${shotFrameNodeIds}`);
-              if(shotFrameNodeIds && shotFrameNodeIds.length > 0) {
-                const shotNodes = shotFrameNodeIds.map(nid => state.nodes.find(n => n.id === nid)).filter(Boolean);
-                console.log(`[宫格生图] 找到 ${shotNodes.length} 个有效的分镜节点`);
-                allShotFrameNodes.push(...shotNodes);
-              } else {
-                console.warn(`[宫格生图] 分镜组 ${shotGroupNodeId} 没有返回任何节点ID`);
+            for (const shotGroupNodeId of createdShotGroupNodes) {
+              const shotGroupNode = state.nodes.find(n => n.id === shotGroupNodeId);
+              if (shotGroupNode) {
+                console.log(`[宫格生图] 处理分镜组 ${shotGroupNodeId}`);
+                const shotFrameNodeIds = await generateShotFramesIndependentAsync(shotGroupNodeId, shotGroupNode);
+                console.log(`[宫格生图] 分镜组 ${shotGroupNodeId} 返回的节点ID: ${shotFrameNodeIds}`);
+                if (shotFrameNodeIds && shotFrameNodeIds.length > 0) {
+                  const shotNodes = shotFrameNodeIds.map(nid => state.nodes.find(n => n.id === nid)).filter(Boolean);
+                  console.log(`[宫格生图] 找到 ${shotNodes.length} 个有效的分镜节点`);
+                  allShotFrameNodes.push(...shotNodes);
+                } else {
+                  console.warn(`[宫格生图] 分镜组 ${shotGroupNodeId} 没有返回任何节点ID`);
+                }
               }
             }
-          }
 
-          console.log(`[宫格生图] 总共收集到 ${allShotFrameNodes.length} 个分镜节点`);
-          if(allShotFrameNodes.length === 0) {
-            throw new Error('未生成分镜节点');
-          }
+            console.log(`[宫格生图] 总共收集到 ${allShotFrameNodes.length} 个分镜节点`);
+            if (allShotFrameNodes.length === 0) {
+              throw new Error('未生成分镜节点');
+            }
 
-          // 收集参考图片URL（角色、场景、道具）
-          gridStatusEl.textContent = '正在收集参考图片...';
-          const { referenceImageUrls, promptSuffix } = await collectReferenceImagesForGrid(allShotFrameNodes);
-          console.log(`[宫格生图] 收集到 ${referenceImageUrls.length} 张参考图片URL`);
+            // 收集参考图片URL（角色、场景、道具）
+            gridStatusEl.textContent = '正在收集参考图片...';
+            const { referenceImageUrls, promptSuffix } = await collectReferenceImagesForGrid(allShotFrameNodes);
+            console.log(`[宫格生图] 收集到 ${referenceImageUrls.length} 张参考图片URL`);
 
-          // 第四步：根据分镜数量决定宫格大小
-          const shotCount = allShotFrameNodes.length;
-          if(shotCount === 1) {
+            // 第四步：根据分镜数量决定宫格大小
+            const shotCount = allShotFrameNodes.length;
+            if (shotCount === 1) {
             gridStatusEl.style.color = '#f59e0b';
             gridStatusEl.textContent = '只有1个分镜，无需宫格生图';
             showToast('只有1个分镜，无需宫格生图', 'warning');
@@ -1760,13 +1804,14 @@
               showToast(errorMsg, 'error');
             }
           );
+          } // end of runGridFlow
 
         } catch(error) {
-          console.error('宫格生图失败:', error);
+          // 仅处理提交/启动轮询阶段的错误；轮询中和宫格流程的错误由各自回调处理
+          console.error('提交宫格拆分任务失败:', error);
           gridStatusEl.style.color = '#dc2626';
           gridStatusEl.textContent = '失败: ' + (error.message || '未知错误');
           showToast('宫格生图失败: ' + (error.message || '未知错误'), 'error');
-        } finally {
           splitGridBtn.disabled = false;
           splitBtn.disabled = false;
         }

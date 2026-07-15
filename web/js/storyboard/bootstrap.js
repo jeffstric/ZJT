@@ -11,12 +11,16 @@ import state, {
     ensureVideoGenerationPrefsSupported,
     syncVideoMediaFromScene,
     getCurrentScene,
+    loadThinkingStateFromStorage,
+    applyThinkingDefaultsForModel,
+    applyGenerateProgressStatus,
 } from './state.js';
 import * as api from './api.js';
 import { bindEvents, loadSceneAgentMessages } from './events.js';
 import { renderApp } from './render.js';
-import { resumePollingTasks } from './polling.js';
+import { resumePollingTasks, pollScriptSplitTask, stopScriptSplitTaskPolling } from './polling.js';
 import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';
+import { resumeAutoMissingVideos } from './auto_missing_videos.js';
 import { stopPlayback, updatePlayheadPosition } from './playback.js';
 
 async function loadStoryboard() {
@@ -56,10 +60,74 @@ async function initI18n() {
     }
 }
 
-function maybePromptGenerateFromScript() {
+async function maybePromptGenerateFromScript() {
     if (!state.storyboardId || state.scenes.length > 0) return;
+    // 异步化后：先查是否有进行中的拆分任务，有则恢复轮询而不是弹 config 框。
+    // 见设计文档 §15「页面刷新后恢复真实进度」。
+    try {
+        const activeTask = await api.getActiveScriptSplitTask('storyboard', state.storyboardId);
+        if (activeTask && activeTask.task_id) {
+            state.generateFromScriptTaskId = activeTask.task_id;
+            state.isGeneratingFromScript = true;
+            state.showGenerateProgressDialog = true;
+            state.generateProgressError = '';
+            state.generateProgressSteps = [
+                { name: '规划分段', status: 'pending', phase: 'planning' },
+                { name: '逐段拆分', status: 'pending', phase: 'segment_generation' },
+                { name: '合并校验', status: 'pending', phase: 'merging' },
+                { name: '发布分镜', status: 'pending', phase: 'publishing' },
+            ];
+            applyGenerateProgressStatus(activeTask);
+            renderApp();
+            pollScriptSplitTaskForRecovery(activeTask.task_id);
+            return;
+        }
+    } catch (e) {
+        // 查询失败则降级为弹 config 框
+    }
     state.showGenerateFromScriptDialog = true;
     state.generateFromScriptError = '';
+}
+
+/** 刷新恢复时的轮询：完成后重新加载故事板，失败/暂停则显示提示。 */
+function pollScriptSplitTaskForRecovery(taskId) {
+    const updateStepsByStatus = (statusData) => {
+        applyGenerateProgressStatus(statusData);
+        const steps = state.generateProgressSteps || [];
+        const phaseToStep = { planning: 0, segment_generation: 1, replan_segment: 1, merging: 2, global_qc: 2, publishing: 3, done: 4 };
+        const targetStep = phaseToStep[statusData.phase] !== undefined ? phaseToStep[statusData.phase] : 0;
+        steps.forEach((s, i) => {
+            if (statusData.status === 'completed') s.status = 'completed';
+            else if (i < targetStep) s.status = 'completed';
+            else if (i === targetStep) s.status = 'running';
+            else s.status = 'pending';
+        });
+        renderApp();
+    };
+    pollScriptSplitTask(taskId, {
+        onUpdate: updateStepsByStatus,
+        onComplete: async () => {
+            const steps = state.generateProgressSteps || [];
+            steps.forEach(s => s.status = 'completed');
+            try {
+                const sbResp = await api.getStoryboard(state.storyboardId);
+                loadStoryboardData(sbResp);
+            } catch (e) { /* ignore */ }
+            state.showGenerateProgressDialog = false;
+            state.isGeneratingFromScript = false;
+            renderApp();
+        },
+        onPaused: (statusData) => {
+            state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
+            state.isGeneratingFromScript = false;
+            renderApp();
+        },
+        onError: (error) => {
+            state.generateProgressError = error.message || '生成分镜失败';
+            state.isGeneratingFromScript = false;
+            renderApp();
+        },
+    });
 }
 
 async function main() {
@@ -165,7 +233,11 @@ async function main() {
         } catch (e) {}
     }
 
-    maybePromptGenerateFromScript();
+    // 思考模式：与 script_writer 共用 lastThinkingState；DeepSeek 默认开
+    loadThinkingStateFromStorage();
+    applyThinkingDefaultsForModel(state.selectedLlmModel || state.selectedScriptSplitLlmModel);
+
+    await maybePromptGenerateFromScript();
     // 视频生成模式：模型能力就绪后注入当前分镜首帧到首帧槽
     if (state.chatMode === 'video') {
         ensureVideoImageModeSupported();
@@ -176,6 +248,7 @@ async function main() {
     loadSceneAgentMessages(state.currentSceneId).catch(() => {});
     resumePollingTasks();
     autoGenerateMissingFirstFrames();
+    resumeAutoMissingVideos().catch(() => {});
 
     // 页面隐藏/卸载时停播，避免后台继续出声
     document.addEventListener('visibilitychange', () => {

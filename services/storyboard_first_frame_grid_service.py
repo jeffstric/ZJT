@@ -254,6 +254,8 @@ class StoryboardFirstFrameGridService:
             "scene_id": int(scene.get("id") or 0),
             "item_id": item.get("id"),
             "item_status": item.get("status"),
+            # 仅真正已提交/运行中的任务算 active；无 ai_tool 的 PENDING 视为卡住
+            "ai_tool_id": item.get("ai_tool_id"),
             "grid_prompt_group_context": extra.get("grid_prompt_group_context"),
         }
 
@@ -263,16 +265,25 @@ class StoryboardFirstFrameGridService:
         group_items: Sequence[Dict[str, Any]],
         previous_reference: Dict[str, Any],
     ) -> bool:
+        """缺上一组首帧参考时返回 True=本 tick 跳过该组；False=降级继续提交（不依赖上一组）。"""
         previous_status = previous_reference.get("item_status")
-        previous_is_active = previous_status in (
-            StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
-            StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
+        previous_ai_tool = previous_reference.get("ai_tool_id")
+        # 真正在跑：RUNNING，或已提交 ai_tool 的 PENDING
+        previous_is_generating = previous_status == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING or (
+            previous_status == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
+            and bool(previous_ai_tool)
+        )
+        # 上游卡死在「无 ai_tool 的 PENDING」（如等 location 图）：不视为 active，允许超时降级
+        previous_is_blocked_pending = (
+            previous_status == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
+            and not previous_ai_tool
         )
         should_fail = (
             int(job.get("stop_on_error") or 0)
             and previous_status == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
         )
         max_wait_ticks = int(StoryboardAutoGenerateConstants.QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS)
+        degrade_group = False
         for item in group_items:
             extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
             wait_count = int(extra.get("previous_group_reference_wait_count") or 0) + 1
@@ -293,23 +304,32 @@ class StoryboardFirstFrameGridService:
                     extra_json={**wait_extra, "failure_source": "previous_group_failed"},
                 )
                 item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
-            elif not previous_is_active and wait_count > max_wait_ticks:
+            elif wait_count > max_wait_ticks and (previous_is_blocked_pending or not previous_is_generating):
+                # 超时：不永久挂起；降级为本组无 previous 参考继续提交宫格
+                wait_extra["waiting"] = ""
+                wait_extra["degraded_previous_group_reference"] = True
+                wait_extra["failure_source"] = "previous_group_reference_timeout_degrade"
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
-                    status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
-                    error_code=StoryboardAutoGenerateConstants.ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT,
-                    error_message=(
-                        "previous group last frame was not ready after "
-                        f"{max_wait_ticks} scheduler ticks"
-                    ),
-                    extra_json={**wait_extra, "failure_source": "previous_group_reference_timeout"},
+                    extra_json=wait_extra,
                 )
-                item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+                item["extra_json"] = wait_extra
+                degrade_group = True
+                logger.warning(
+                    "[quality-grid] item=%s scene=%s previous_group wait %s>%s -> degrade continue without prev ref",
+                    item.get("id"), item.get("scene_id"), wait_count, max_wait_ticks,
+                )
             else:
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
                     extra_json=wait_extra,
                 )
+                item["extra_json"] = wait_extra
+        # True=本 tick 跳过；False=调用方继续 ready/submit（可能已降级）
+        if degrade_group:
+            return False
+        if should_fail:
+            return True
         return True
 
     def _ready_items(
@@ -317,20 +337,64 @@ class StoryboardFirstFrameGridService:
         items: Sequence[Dict[str, Any]],
         scenes_by_id: Dict[int, Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
+        """Filter pending items ready for grid submit.
+
+        When location lacks reference_image:
+        - running location grid -> keep waiting
+        - no running task -> count location_grid_wait_count; after QUALITY_WAIT_MAX_TICKS degrade
+          so batch is not stuck forever (storyboard #15 job45)
+        """
+        from model.grid_image_tasks import GridImageTasksModel
+
         ready: List[Dict[str, Any]] = []
+        max_wait_ticks = int(StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS)
         for item in sorted(items, key=lambda it: (it.get("order_index") or 0, it.get("id") or 0)):
             scene = scenes_by_id[int(item["scene_id"])]
             location = self._resolve_location(_as_prompt_json(scene.get("prompt_json")))
             if not _reference_url(location):
                 extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
-                StoryboardImageBatchItemModel.update(
-                    int(item["id"]),
-                    extra_json={
-                        **extra,
-                        "waiting": "location_grid_reference",
-                        "location_db_id": location.get("id") or location.get("db_id") or location.get("location_db_id"),
-                    },
+                loc_db_id = location.get("id") or location.get("db_id") or location.get("location_db_id")
+                try:
+                    loc_db_id_int = int(loc_db_id) if loc_db_id is not None else None
+                except (TypeError, ValueError):
+                    loc_db_id_int = None
+
+                has_running = bool(loc_db_id_int) and GridImageTasksModel.has_running_grid_for_entity(
+                    loc_db_id_int, item_type=5
                 )
+                # 已在 waiting 但无计数（旧代码卡住的 item）：视为已达上限，下一 tick 立即降级
+                prev_count = int(extra.get("location_grid_wait_count") or 0)
+                if prev_count == 0 and extra.get("waiting") == "location_grid_reference":
+                    prev_count = max_wait_ticks
+                wait_count = prev_count + 1
+                wait_extra = {
+                    **extra,
+                    "waiting": "location_grid_reference",
+                    "location_db_id": loc_db_id,
+                    "location_grid_wait_count": wait_count,
+                    "location_grid_wait_max_ticks": max_wait_ticks,
+                    "location_grid_running": bool(has_running),
+                }
+
+                if has_running:
+                    StoryboardImageBatchItemModel.update(int(item["id"]), extra_json=wait_extra)
+                    item["extra_json"] = wait_extra
+                    continue
+
+                if wait_count > max_wait_ticks:
+                    wait_extra["waiting"] = ""
+                    wait_extra["degraded_location_grid_reference"] = True
+                    StoryboardImageBatchItemModel.update(int(item["id"]), extra_json=wait_extra)
+                    item["extra_json"] = wait_extra
+                    logger.warning(
+                        "[quality-grid] item=%s scene=%s location=%s wait %s>%s -> degrade allow submit",
+                        item.get("id"), item.get("scene_id"), loc_db_id, wait_count, max_wait_ticks,
+                    )
+                    ready.append(item)
+                    continue
+
+                StoryboardImageBatchItemModel.update(int(item["id"]), extra_json=wait_extra)
+                item["extra_json"] = wait_extra
                 continue
             ready.append(item)
         return ready

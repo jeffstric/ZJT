@@ -4,6 +4,7 @@
 将文字剧本解析为结构化的分镜数据
 """
 
+import asyncio
 import json
 import re
 from typing import Dict, Any, Optional, List, Tuple
@@ -28,6 +29,11 @@ def _save_log_file(log_dir, filename, content):
                 json.dump(content, f, ensure_ascii=False, indent=2)
             else:
                 f.write(content)
+
+
+async def _save_log_file_async(log_dir, filename, content):
+    """在线程中写解析日志，避免阻塞调用方事件循环。"""
+    await asyncio.to_thread(_save_log_file, log_dir, filename, content)
 
 # 剧本解析的系统提示词
 SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和分镜师,擅长将剧本拆解为人物、场景和分镜。
@@ -80,12 +86,18 @@ SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和�
     - 即使某角色在该镜头没有台词或处于静态（如操控载具、观察、等待），也必须写出其位置与姿态，不能因为"不显眼"就漏写
     - **【模式无关】本条以 characters_present 为准**：列出几个角色就写全几个。若启用了“多人对话拆分”规则，拆分后每个镜头只有一个 `focus_character_ids` 说话主体；但同一空间中仍可见或局部可见的非说话角色必须继续留在 characters_present，并在 spatial_layout 中标为 `secondary_continuity`。完全被裁切到画面外的非说话角色不放入 characters_present，但必须在 spatial_layout 中以 `offscreen_continuity` 保留位置。**严禁为了让多角色同框而拒绝拆分对话镜头，也严禁为了单人近景让角色凭空消失**
     - 错误示例：characters_present 含某角色，但 opening_frame_description/description/action 中完全没有提到该角色 ✗
-19. **【分镜难易程度 difficulty】** 每个 shot 必须输出 difficulty 字段（取值仅限"易"/"中"/"难"三个汉字之一），并附 difficulty_reason 简述依据。综合权衡以下维度，取整体倾向：
+19. **【分镜呈现类型 presentation】** 每个 shot 必须输出 presentation 字段，取值仅限：
+    - `"digital_human"`：对口型/数字人镜头——**本镜只有一个角色在说话**（dialogue 中说话角色唯一），内容以对白表演为主，适合近景/特写固定镜头下的口型视频。
+    - `"video"`：普通 AI 视频镜头——无对白、多人交替说话、旁白、或虽有单人对白但核心是动作/追逐/打斗/复杂调度。
+    - **硬性约束**：dialogue 中出现 2 个及以上不同说话角色时，presentation **必须**为 `"video"`（不可标 digital_human）。
+    - 画内可有听者/配角（characters_present 可多人），但以 **dialogue 说话角色数** 判定是否单人说话。
+    - 可选附 `presentation_reason` 一句话说明。
+20. **【分镜难易程度 difficulty】** 每个 shot 必须输出 difficulty 字段（取值仅限"易"/"中"/"难"三个汉字之一），并附 difficulty_reason 简述依据。综合权衡以下维度，取整体倾向：
     - **易**：单人或无角色、静态/轻微动作、短镜头（≤5秒）、无关键道具或仅普通道具、固定镜头/简单构图。例：一个角色静坐望向窗外的特写。
     - **中**：2-3 人有互动、有连续但常规的动作、中等时长（6-10秒）、1-2 个关键道具、简单镜头运动（推进/跟随）。例：两人对话递接一份文件的中景。
     - **难**：4 人以上群体调度、打斗/追逐/复杂连续动作、长镜头（>10秒）且动作密集、多个关键道具且强交互、复杂镜头运动（升降/摇移组合）/强透视/多层景深。例：多人混战追逐穿越复杂场景的长镜头。
     - difficulty_reason 控制在一句话内，简述判定依据（如"4人群战+长镜头+多个道具交互"）。
-20. **【镜头空间布局 spatial_layout】每个 shot 必须输出 spatial_layout 对象**，用于后续首帧宫格生成保持同一幕内的位置连续性：
+21. **【镜头空间布局 spatial_layout】每个 shot 必须输出 spatial_layout 对象**，用于后续首帧宫格生成保持同一幕内的位置连续性：
     - **整集级空间注册表 `spatial_world`**：全局不是一个坐标系，而是整集级空间注册表。必须在顶层输出 `spatial_world.space_units[]`，每个 `space_unit` 表示一个稳定局部空间（如载具驾驶室、糖浆陷阱区域、城堡大厅、桌面机关区），包含 `space_unit_id`、`owner_type`、`owner_id`、`location_ids`、`coordinate_frame` 和 `anchors`。一集可以有多个完全不同的 `space_units`，不能用单一大坐标系覆盖所有场景。
     - 每个 `space_unit.coordinate_frame` 必须写清 `frame_id`、`origin`、`axes.x_positive/y_positive/z_positive`、`scale`、`locked=true`。同一个 `space_unit_id` 的坐标轴一旦建立，后续分镜只能引用，不允许重写含义。
     - 每个稳定位置必须作为 `anchors[]` 登记，包含 `anchor_id`、`label`、`position_3d`。例如驾驶座、副驾驶座、车门、车窗、糖浆池中心、道路前方等。坐标使用 -1 到 1 的归一化语义坐标，不要求真实米制精度。
@@ -1046,6 +1058,14 @@ async def parse_script_to_shots(
     model_id: Optional[int] = None,
     enable_thinking: bool = False,
     thinking_effort: str = "medium",
+    previous_parsed_result: Optional[Dict[str, Any]] = None,
+    qc_feedback: Optional[Any] = None,
+    # 分段拆分支持（见 docs/script/script_parser_incremental_split_design.md §7.2）
+    # 不传时行为与原调用完全一致；传入后约束模型只为当前分段生成分镜。
+    segment_context: Optional[Dict[str, Any]] = None,
+    # strict_json=True 时禁用末尾补括号修复，解析失败直接交给调用方重试。
+    # 默认 False 保留兼容能力，但补全成功后不再提前 return，会继续走完整后处理。
+    strict_json: bool = False,
 ) -> Dict[str, Any]:
     """
     将剧本内容解析为结构化的人物、场景和分镜数据
@@ -1065,6 +1085,8 @@ async def parse_script_to_shots(
         auth_token: 认证token
         vendor_id: 商家ID
         model_id: 模型ID
+        previous_parsed_result: 质检失败后的上一轮完整拆分 JSON（可选）
+        qc_feedback: 质检报告（QcReport / dict / 文本），注入重拆要求（可选）
     
     Returns:
         包含characters、locations、shots的结构化数据字典
@@ -1082,7 +1104,7 @@ async def parse_script_to_shots(
         
         if ENABLE_SCRIPT_PARSER_LOGGING:
             log_dir = Path("logs/script_parser")
-            log_dir.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(log_dir.mkdir, parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         else:
             log_dir = None
@@ -1373,9 +1395,107 @@ async def parse_script_to_shots(
 
 """
 
+        # 质检失败重拆：注入上一轮结果与问题列表
+        qc_retry_block = ""
+        qc_feedback_log_data = None
+        if previous_parsed_result or qc_feedback:
+            try:
+                from llm.script_split_qc_agent import compact_parsed_for_feedback, QcReport
+            except Exception:
+                compact_parsed_for_feedback = None
+                QcReport = None
+            prev_text = ""
+            if previous_parsed_result and compact_parsed_for_feedback:
+                try:
+                    prev_text = compact_parsed_for_feedback(previous_parsed_result)
+                except Exception:
+                    prev_text = json.dumps(previous_parsed_result, ensure_ascii=False)[:80000]
+            elif previous_parsed_result:
+                prev_text = json.dumps(previous_parsed_result, ensure_ascii=False)[:80000]
+            feedback_text = ""
+            if qc_feedback is not None:
+                if QcReport and isinstance(qc_feedback, QcReport):
+                    qc_feedback_log_data = qc_feedback.to_dict()
+                    feedback_text = qc_feedback.format_for_prompt()
+                elif isinstance(qc_feedback, dict):
+                    qc_feedback_log_data = qc_feedback
+                    try:
+                        issues = qc_feedback.get("issues") or []
+                        lines = [qc_feedback.get("summary") or "质检未通过："]
+                        for i, iss in enumerate(issues[:40], 1):
+                            if isinstance(iss, dict):
+                                lines.append(
+                                    f"{i}. [{iss.get('severity','error').upper()}][{iss.get('code')}] "
+                                    f"{iss.get('shot_ref','')} {iss.get('field','')}: {iss.get('message','')}"
+                                )
+                        feedback_text = "\n".join(lines)
+                    except Exception:
+                        feedback_text = json.dumps(qc_feedback, ensure_ascii=False)[:20000]
+                else:
+                    qc_feedback_log_data = {"text": str(qc_feedback)}
+                    feedback_text = str(qc_feedback)[:20000]
+            qc_retry_block = f"""
+
+**【质检失败 · 必须重拆修复】**
+上一轮拆分未通过质检。请输出**当前段完整 JSON**（不要只输出 diff，也不要只输出 shot_groups）。
+完整 JSON 必须包含顶层 `characters`、`locations`、`props`、`spatial_world`、`shot_groups`。
+优先修复 severity=error 的项；未提及的部分不要无故改坏。
+
+【质检反馈】
+{feedback_text or '（无结构化反馈）'}
+
+【上一轮拆分结果（压缩 JSON，供对照修复）】
+```json
+{prev_text or '{}'}
+```
+
+"""
+
+        # 分段拆分上下文：约束模型只为当前分段生成分镜（见设计文档 §7.2）。
+        # 不传 segment_context 时该块为空，行为与原调用完全一致。
+        segment_context_block = ""
+        if segment_context:
+            import json as _json_for_ctx
+            seg_id = segment_context.get("segment_id", "")
+            seg_idx = segment_context.get("segment_index")
+            total_seg = segment_context.get("total_segments")
+            accepted_registry = segment_context.get("accepted_registry") or {}
+            tail_summary = segment_context.get("previous_tail_summary") or []
+            continuity_state = segment_context.get("continuity_state") or {}
+            id_reservations = segment_context.get("id_reservations") or {}
+            registry_text = _json_for_ctx.dumps(accepted_registry, ensure_ascii=False)[:80000] if accepted_registry else "{}"
+            tail_text = _json_for_ctx.dumps(tail_summary, ensure_ascii=False)[:20000] if tail_summary else "[]"
+            continuity_text = _json_for_ctx.dumps(continuity_state, ensure_ascii=False)[:20000] if continuity_state else "{}"
+            res_text = ", ".join(f"{k}={v}" for k, v in id_reservations.items()) if id_reservations else "（首段，从 char_001/loc_001/prop_001 起）"
+            segment_context_block = f"""
+
+**【分段拆分模式 · 第 {seg_idx}/{total_seg} 段 segment_id={seg_id}】**
+你只需为下方剧本内容中的**当前分段**生成分镜，不要生成其他段。
+- 历史尾部摘要只用于保持连续性，**不得重复生成**已拆过的历史镜头。
+- 优先复用「已接受资产注册表」中的角色/场景/道具/空间 ID。
+- 当前分段首次出现的新实体，必须使用预留的全局 ID 起始编号：{res_text}。
+  不得从 char_001/loc_001/prop_001 重新编号（首段除外）。
+- 分镜编号可以是段内编号，最终由后端统一重排。
+
+【已接受资产注册表（必须复用其中已有全局 ID）】
+```json
+{registry_text}
+```
+
+【上一段最后镜头摘要（仅用于连续性参考，勿重复生成）】
+```json
+{tail_text}
+```
+
+【上一段结束时的空间连续性状态】
+```json
+{continuity_text}
+```
+"""
+
         # 构建用户提示词
         user_prompt = f"""请将以下剧本内容解析为结构化的JSON数据。
-
+{qc_retry_block}{segment_context_block}
 剧本内容：
 ```{script_content} ```
 
@@ -1509,8 +1629,27 @@ JSON格式示例：
 下面请开始解析："""
 
         # 保存提示词和输入内容（仅在启用日志时）
-        _save_log_file(log_dir, f"script_parser_{timestamp}_01_system_prompt.txt", SCRIPT_PARSER_SYSTEM_PROMPT)
-        _save_log_file(log_dir, f"script_parser_{timestamp}_02_user_prompt.txt", user_prompt)
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_01_system_prompt.txt",
+            SCRIPT_PARSER_SYSTEM_PROMPT,
+        )
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_02_user_prompt.txt",
+            user_prompt,
+        )
+        if qc_retry_block:
+            await _save_log_file_async(
+                log_dir,
+                f"script_parser_{timestamp}_03_qc_feedback.json",
+                qc_feedback_log_data or {},
+            )
+            await _save_log_file_async(
+                log_dir,
+                f"script_parser_{timestamp}_03_qc_retry_prompt.txt",
+                qc_retry_block,
+            )
 
         if ENABLE_SCRIPT_PARSER_LOGGING:
             logger.info(f"剧本解析日志保存到: {log_dir}/script_parser_{timestamp}_*.txt")
@@ -1532,7 +1671,6 @@ JSON格式示例：
             model = "gemini-3-flash-preview"
 
         # 使用 asyncio.to_thread 包装同步调用
-        import asyncio
         response = await asyncio.to_thread(
             llm_client.call_api,
             model=model,
@@ -1552,7 +1690,11 @@ JSON格式示例：
         logger.info(f"LLM响应长度: {len(response_content)} 字符")
         
         # 保存原始响应
-        _save_log_file(log_dir, f"script_parser_{timestamp}_04_raw_response.txt", response_content)
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_04_raw_response.txt",
+            response_content,
+        )
         
         # 清理响应内容（移除可能的markdown代码块标记）
         cleaned_content = response_content.strip()
@@ -1567,14 +1709,22 @@ JSON格式示例：
         logger.info(f"清理后内容长度: {len(cleaned_content)} 字符")
         
         # 保存清理后的内容
-        _save_log_file(log_dir, f"script_parser_{timestamp}_05_cleaned_content.txt", cleaned_content)
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_05_cleaned_content.txt",
+            cleaned_content,
+        )
         
         # 解析JSON
         try:
             parsed_data = json.loads(cleaned_content)
             
             # 保存解析成功的JSON
-            _save_log_file(log_dir, f"script_parser_{timestamp}_06_parsed_success.json", parsed_data)
+            await _save_log_file_async(
+                log_dir,
+                f"script_parser_{timestamp}_06_parsed_success.json",
+                parsed_data,
+            )
             
             logger.info("JSON解析成功")
             
@@ -1592,7 +1742,11 @@ JSON格式示例：
 内容末尾500字符:
 ...{cleaned_content[-500:]}
 """
-            _save_log_file(log_dir, f"script_parser_{timestamp}_ERROR_parse_failed.txt", error_info)
+            await _save_log_file_async(
+                log_dir,
+                f"script_parser_{timestamp}_ERROR_parse_failed.txt",
+                error_info,
+            )
             
             logger.error(f"JSON解析失败，完整内容长度: {len(cleaned_content)}")
             logger.error(f"错误位置: {e.lineno}行, {e.colno}列")
@@ -1600,29 +1754,42 @@ JSON格式示例：
             
             # 尝试修复常见的JSON问题
             # 1. 如果JSON被截断，尝试找到最后一个完整的对象
-            if not cleaned_content.endswith('}'):
+            #    strict_json=True（分段任务）禁用补全：截断必须重试当前段，
+            #    防止把不完整分镜误判为成功。
+            #    strict_json=False（兼容旧调用）保留补全，但补全成功后不再提前 return，
+            #    必须继续执行与正常 JSON 相同的完整校验和后处理。
+            if not strict_json and not cleaned_content.endswith('}'):
                 logger.warning("检测到JSON可能被截断，尝试修复...")
                 # 找到最后一个完整的shot_groups数组结束位置
                 last_bracket = cleaned_content.rfind(']')
                 if last_bracket > 0:
                     # 尝试补全JSON
                     fixed_content = cleaned_content[:last_bracket+1] + '\n}'
-                    
+
                     # 保存修复尝试
-                    _save_log_file(log_dir, f"script_parser_{timestamp}_07_fixed_attempt.txt", fixed_content)
-                    
+                    await _save_log_file_async(
+                        log_dir,
+                        f"script_parser_{timestamp}_07_fixed_attempt.txt",
+                        fixed_content,
+                    )
+
                     try:
                         parsed_data = json.loads(fixed_content)
-                        
+
                         # 保存修复成功的JSON
-                        _save_log_file(log_dir, f"script_parser_{timestamp}_08_fixed_success.json", parsed_data)
-                        
-                        logger.info("JSON修复成功")
-                        return parsed_data
+                        await _save_log_file_async(
+                            log_dir,
+                            f"script_parser_{timestamp}_08_fixed_success.json",
+                            parsed_data,
+                        )
+
+                        logger.info("JSON修复成功（兼容模式，将继续执行完整后处理）")
+                        # 不再提前 return：补全结果必须走下面的必需字段验证 + 清洗 + 空间修复 + 分组重排
                     except Exception as fix_error:
                         logger.error(f"JSON修复失败: {str(fix_error)}")
-            
-            raise Exception(f"JSON解析失败: {str(e)}\n响应长度: {len(cleaned_content)} 字符\n错误位置: 第{e.lineno}行, 第{e.colno}列\n建议: 剧本内容可能过长，请尝试缩短剧本或分段处理\n详细日志已保存到: {log_dir}/script_parser_{timestamp}_*.txt")
+                        raise Exception(f"JSON解析失败: {str(e)}\n响应长度: {len(cleaned_content)} 字符\n错误位置: 第{e.lineno}行, 第{e.colno}列\n建议: 剧本内容可能过长，请尝试缩短剧本或分段处理\n详细日志已保存到: {log_dir}/script_parser_{timestamp}_*.txt")
+            else:
+                raise Exception(f"JSON解析失败: {str(e)}\n响应长度: {len(cleaned_content)} 字符\n错误位置: 第{e.lineno}行, 第{e.colno}列\n建议: 剧本内容可能过长，请尝试缩短剧本或分段处理\n详细日志已保存到: {log_dir}/script_parser_{timestamp}_*.txt")
         
         # 验证必需字段
         required_keys = ["characters", "locations", "shot_groups"]
@@ -1631,18 +1798,36 @@ JSON格式示例：
             raise Exception(f"返回的JSON缺少必需字段: {', '.join(missing_keys)}")
         
         parsed_data = sanitize_parsed_prop_references(parsed_data, db_props, script_content)
-        _save_log_file(log_dir, f"script_parser_{timestamp}_06_prop_sanitized.json", parsed_data)
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_06_prop_sanitized.json",
+            parsed_data,
+        )
 
         # 清理 LLM 幻觉出的场景引用：核实 location_db_id 对照数据库主键 + 名称兜底，
         # 失效 location 被丢弃，shot.location_id 悬空则置 null
         parsed_data = sanitize_parsed_location_references(parsed_data, db_locations, script_content)
-        _save_log_file(log_dir, f"script_parser_{timestamp}_07_location_sanitized.json", parsed_data)
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_07_location_sanitized.json",
+            parsed_data,
+        )
 
         parsed_data = repair_spatial_layout_continuity(parsed_data)
-        _save_log_file(log_dir, f"script_parser_{timestamp}_08_spatial_continuity_repaired.json", parsed_data)
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_08_spatial_continuity_repaired.json",
+            parsed_data,
+        )
 
         # 重新组合分镜组，确保每组不超过max_group_duration秒
-        parsed_data = reorganize_shot_groups(parsed_data, max_group_duration, log_dir, timestamp)
+        parsed_data = await asyncio.to_thread(
+            reorganize_shot_groups,
+            parsed_data,
+            max_group_duration,
+            log_dir,
+            timestamp,
+        )
         
         # 计算总分镜数
         total_shots = sum(len(group.get("shots", [])) for group in parsed_data.get("shot_groups", []))
@@ -1696,7 +1881,11 @@ LLM响应:
 
 所有日志文件已保存到: {log_dir.absolute() if log_dir else 'N/A'}
 """
-        _save_log_file(log_dir, f"script_parser_{timestamp}_00_SUMMARY.txt", summary)
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_00_SUMMARY.txt",
+            summary,
+        )
 
         if ENABLE_SCRIPT_PARSER_LOGGING:
             logger.info(f"解析成功，详细日志已保存到: {log_dir}/script_parser_{timestamp}_*.txt")
@@ -1711,67 +1900,85 @@ LLM响应:
 
 def validate_parsed_script(data: Dict[str, Any]) -> tuple[bool, str]:
     """
-    验证解析后的剧本数据结构是否正确
-    
+    验证解析后的剧本数据结构是否正确（shot_groups 协议）。
+
+    历史上该校验器检查扁平的顶层 shots 数组，与 parse_script_to_shots 实际产出的
+    shot_groups[].shots[] 结构不一致，导致长期无人调用。现修正为当前协议，
+    拆出可复用的段级/全局校验逻辑，供分段拆分和原调用复用。
+
     Args:
         data: 解析后的剧本数据
-    
+
     Returns:
         (是否有效, 错误信息)
     """
     try:
         # 检查必需字段
-        required_keys = ["characters", "locations", "shots"]
+        required_keys = ["characters", "locations", "shot_groups"]
         for key in required_keys:
             if key not in data:
                 return False, f"缺少必需字段: {key}"
-        
+
         # 验证characters
         if not isinstance(data["characters"], list):
             return False, "characters必须是数组"
-        
+
         character_ids = set()
         for idx, char in enumerate(data["characters"]):
+            if not isinstance(char, dict):
+                return False, f"characters[{idx}]不是对象"
             if "id" not in char:
                 return False, f"characters[{idx}]缺少id字段"
             if "name" not in char:
                 return False, f"characters[{idx}]缺少name字段"
             character_ids.add(char["id"])
-        
+
         # 验证locations
         if not isinstance(data["locations"], list):
             return False, "locations必须是数组"
-        
+
         location_ids = set()
         for idx, loc in enumerate(data["locations"]):
+            if not isinstance(loc, dict):
+                return False, f"locations[{idx}]不是对象"
             if "id" not in loc:
                 return False, f"locations[{idx}]缺少id字段"
             if "name" not in loc:
                 return False, f"locations[{idx}]缺少name字段"
             location_ids.add(loc["id"])
-        
-        # 验证shots
-        if not isinstance(data["shots"], list):
-            return False, "shots必须是数组"
-        
-        for idx, shot in enumerate(data["shots"]):
-            if "shot_id" not in shot:
-                return False, f"shots[{idx}]缺少shot_id字段"
-            if "duration" not in shot:
-                return False, f"shots[{idx}]缺少duration字段"
-            
-            # 验证location_id引用
-            if "location_id" in shot and shot["location_id"] not in location_ids:
-                return False, f"shots[{idx}]的location_id '{shot['location_id']}'不存在"
-            
-            # 验证characters_present引用
-            if "characters_present" in shot:
-                for char_id in shot["characters_present"]:
-                    if char_id not in character_ids:
-                        return False, f"shots[{idx}]的characters_present包含不存在的character_id '{char_id}'"
-        
+
+        # 验证shot_groups
+        if not isinstance(data["shot_groups"], list):
+            return False, "shot_groups必须是数组"
+
+        for g_idx, group in enumerate(data["shot_groups"]):
+            if not isinstance(group, dict):
+                return False, f"shot_groups[{g_idx}]不是对象"
+            shots = group.get("shots")
+            if not isinstance(shots, list):
+                return False, f"shot_groups[{g_idx}]缺少shots数组"
+
+            for s_idx, shot in enumerate(shots):
+                if not isinstance(shot, dict):
+                    return False, f"shot_groups[{g_idx}].shots[{s_idx}]不是对象"
+                if "shot_id" not in shot:
+                    return False, f"shot_groups[{g_idx}].shots[{s_idx}]缺少shot_id字段"
+                if "duration" not in shot:
+                    return False, f"shot_groups[{g_idx}].shots[{s_idx}]缺少duration字段"
+
+                # 验证location_id引用
+                if "location_id" in shot and shot["location_id"] is not None \
+                        and shot["location_id"] not in location_ids:
+                    return False, f"shot_groups[{g_idx}].shots[{s_idx}]的location_id '{shot['location_id']}'不存在"
+
+                # 验证characters_present引用
+                if "characters_present" in shot:
+                    for char_id in shot["characters_present"]:
+                        if char_id not in character_ids:
+                            return False, f"shot_groups[{g_idx}].shots[{s_idx}]的characters_present包含不存在的character_id '{char_id}'"
+
         return True, ""
-        
+
     except Exception as e:
         return False, f"验证过程出错: {str(e)}"
 

@@ -79,12 +79,53 @@ export async function generateFromScript(storyboardId, data = {}) {
     return request(`/${storyboardId}/generate-from-script`, { method: 'POST', body: JSON.stringify(data) });
 }
 
+// 剧本分段拆分任务接口（前缀 /api/script-split，与 storyboard 独立）
+async function requestSplit(path, options = {}) {
+    const resp = await fetch(`/api/script-split${path}`, {
+        ...options,
+        headers: {
+            ...authHeaders(options.body !== undefined),
+            ...(options.headers || {}),
+        },
+    });
+    return readJson(resp);
+}
+export async function getScriptSplitTaskStatus(taskId) {
+    const result = await requestSplit(`/tasks/${taskId}`);
+    return result.data;
+}
+export async function getScriptSplitTaskResult(taskId) {
+    const result = await requestSplit(`/tasks/${taskId}/result`);
+    return result.data;
+}
+export async function getActiveScriptSplitTask(sourceType, sourceId) {
+    const result = await requestSplit(`/active-task?source_type=${encodeURIComponent(sourceType)}&source_id=${encodeURIComponent(sourceId)}`);
+    return result.data;
+}
+export async function resumeScriptSplitTask(taskId) {
+    const result = await requestSplit(`/tasks/${taskId}/resume`, { method: 'POST' });
+    return result.data;
+}
+export async function cancelScriptSplitTask(taskId) {
+    const result = await requestSplit(`/tasks/${taskId}/cancel`, { method: 'POST' });
+    return result.data;
+}
+
 // ==================== 分镜 ====================
 export async function addScene(storyboardId, data) {
     return request(`/${storyboardId}/scene`, { method: 'POST', body: JSON.stringify(data) });
 }
 export async function updateScene(sceneId, data) {
     return request(`/scene/${sceneId}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+export async function switchSceneVideoType(sceneId, videoType, expectedVideoType) {
+    return request(`/scene/${sceneId}/video-type`, {
+        method: 'PUT',
+        body: JSON.stringify({
+            video_type: videoType,
+            expected_video_type: expectedVideoType,
+        }),
+    });
 }
 export async function updateScenePrompt(sceneId, promptJson) {
     return request(`/scene/${sceneId}/prompt`, { method: 'PUT', body: JSON.stringify({ prompt_json: promptJson }) });
@@ -143,6 +184,12 @@ export async function generateSceneImage(sceneId, config = {}) {
 }
 export async function autoGenerateMissingImages(storyboardId, config = {}) {
     return request(`/${storyboardId}/auto-generate-missing-images`, {
+        method: 'POST',
+        body: JSON.stringify(config),
+    });
+}
+export async function autoGenerateMissingVideos(storyboardId, config = {}) {
+    return request(`/${storyboardId}/auto-generate-missing-videos`, {
         method: 'POST',
         body: JSON.stringify(config),
     });
@@ -223,11 +270,21 @@ export async function fetchStoryboardModels() {
 }
 
 // ==================== 导出 ====================
-export async function exportFullVideo(storyboardId) {
-    return request(`/${storyboardId}/export-full-video`, { method: 'POST' });
+export async function exportFullVideo(storyboardId, options = {}) {
+    const body = {
+        include_subtitles: options.include_subtitles !== false,
+    };
+    return request(`/${storyboardId}/export-full-video`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+    });
 }
 export async function exportAllScenes(storyboardId) {
     return request(`/${storyboardId}/export-all-scenes`, { method: 'POST' });
+}
+/** 查询异步导出任务（完整视频） */
+export async function getExportJob(jobId) {
+    return request(`/export-job/${encodeURIComponent(jobId)}`);
 }
 
 // ==================== 资产（@提及）/ 算力 ====================
@@ -252,6 +309,60 @@ export async function fetchComputingPower() {
     if (!resp.ok) return { computing_power: null };
     const data = await resp.json().catch(() => ({}));
     return data.data || data;
+}
+
+/** 系统配置（含 is_local，用于限制本地环境扫码充值） */
+export async function fetchServerConfig() {
+    try {
+        const resp = await fetch('/api/system/server-config');
+        if (!resp.ok) return {};
+        const data = await resp.json().catch(() => ({}));
+        return data.data || data || {};
+    } catch {
+        return {};
+    }
+}
+
+/** 充值套餐列表 */
+export async function fetchRechargePackages() {
+    const token = state.authToken || localStorage.getItem('auth_token') || '';
+    const resp = await fetch(`/api/recharge/packages?auth_token=${encodeURIComponent(token)}`);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        const err = new Error(data.error || data.message || `HTTP ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+    }
+    return Array.isArray(data.packages) ? data.packages : [];
+}
+
+/**
+ * 创建微信扫码支付订单
+ * @param {{ package_id: number|string, payment_ip?: string }} payload
+ */
+export async function createWechatPayOrder(payload = {}) {
+    const token = state.authToken || localStorage.getItem('auth_token') || '';
+    const userId = state.userId
+        || parseInt(localStorage.getItem('user_id') || '0', 10)
+        || 0;
+    const resp = await fetch('/api/recharge/wechat-pay', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            user_id: userId,
+            package_id: payload.package_id,
+            auth_token: token,
+            is_wechat_browser: false,
+            payment_ip: payload.payment_ip || '0.0.0.0',
+        }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        const err = new Error(data.error || data.message || `HTTP ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+    }
+    return data;
 }
 
 /**

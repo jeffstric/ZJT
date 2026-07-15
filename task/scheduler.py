@@ -519,6 +519,24 @@ def init_scheduler(app):
         coalesce=True
     )
 
+    # 剧本分段拆分任务消费者：单步状态机，每 tick 推进一个任务的一个有限步骤。
+    # 见 docs/script/script_parser_incremental_split_design.md §12。
+    from config.constant import ScriptSplitConstants
+    from task.script_split_task import process_script_split_tasks
+    task_with_app_script_split = partial(_run_async_task, process_script_split_tasks)
+    _script_split_interval = ScriptSplitConstants.SCHEDULER_INTERVAL_SECONDS
+    logger.info('启用剧本分段拆分任务消费者，每%d秒执行一次', _script_split_interval)
+    scheduler.add_job(
+        func=task_with_app_script_split,
+        trigger=IntervalTrigger(seconds=_script_split_interval),
+        id='process_script_split_tasks',
+        name=f'Process script split tasks every {_script_split_interval} seconds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
+    )
+
     # 启动调度器
     scheduler.start()
     logger.info("定时任务启动成功")

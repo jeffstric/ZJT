@@ -109,3 +109,15 @@ Effect/quality grid generation also waits across parsed groups: the first grid i
 - While the previous group item is still `PENDING` or `RUNNING`, the item remains `PENDING` with `extra_json.waiting=previous_group_first_frame`; the wait counter is diagnostic and must not fail the later group early.
 - After the cap, if the previous group item is terminal but still has no split first-frame URL, waiting items fail with `error_code=previous_group_reference_timeout` and `failure_source=previous_group_reference_timeout`.
 - The batch count updater then settles the job as `failed` or `partial`, so it no longer occupies the active batch queue indefinitely.
+
+## Quality 宫格路径超时（2026-07 修复）
+
+效果模式由 `StoryboardFirstFrameGridService` 推进，**不走** `_process_one_image_batch_job` 的 WAITING_GRID 捕获块。
+
+| 等待原因 | 旧行为 | 新行为 |
+|----------|--------|--------|
+| `location_grid_reference`（场景无 reference_image） | 永久 PENDING，不建 ai_tools | 累计 `location_grid_wait_count`；有运行中 location 九宫格则继续等；**无运行中且超 QUALITY_WAIT_MAX_TICKS** 降级放行提交宫格 |
+| `previous_group_first_frame` | 上游 PENDING 算 active，wait 永不超时 | 仅 RUNNING 或「PENDING 且有 ai_tool」算 generating；上游卡住无工具时 **超限后降级无前置参考继续** |
+
+复现案例：故事板 #15 job45，location 712 无图且无 location_grid 任务，分镜 10 永久 waiting，11–15 依赖等待 wait_count>200 仍不前进。
+

@@ -7,11 +7,33 @@
 | 文档 | 说明 |
 |------|------|
 | [script_auto_split_improvement.md](./script_auto_split_improvement.md) | 剧本节点自动拆分分镜功能改进 |
+| [script_parser_incremental_split_design.md](./script_parser_incremental_split_design.md) | 模型语义分段、逐段拆分、断点续传与异步轮询设计 |
 | [shot_frame_references.md](./shot_frame_references.md) | 分镜节点引用显示功能（场景/道具/角色） |
 | [auto_submit_feature.md](./auto_submit_feature.md) | 自动提交数据库功能（定时自动保存） |
 | [world_export_import.md](./world_export_import.md) | 世界导出与导入接口说明 |
 | [character_matching.md](./character_matching.md) | 剧本解析角色匹配功能 |
 | [script_language_sync.md](./script_language_sync.md) | 剧本节点语言联动功能 |
+
+## 剧本语义小段规划日志
+
+剧本拆分分为两个阶段：第一阶段先规划连续的语义小段，第二阶段才由
+`script_parser.py` 把每个小段生成分镜 JSON。第一阶段的专用诊断日志位于：
+
+```text
+logs/script_parser/
+```
+
+调查指定任务时，按以下前缀查找：
+
+```text
+script_segment_planner_task_{task_id}_*
+```
+
+同一次尝试最多包含 `_01_anchors.json`、`_02_prompt.txt`、
+`_03_raw_response.txt`、`_04_parsed_plan.json`、`_05_validation.json` 五个文件。
+如果没有 `_04`，表示模型正文未成功解析为 JSON；查看 `_03` 的原始响应和 `_05` 的
+错误摘要。如果 `_04` 存在但 `_05.passed=false`，表示 JSON 可解析，但没有通过 block
+覆盖、顺序或连续性等业务校验。
 
 ## 资产完成状态检查 API
 

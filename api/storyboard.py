@@ -17,14 +17,22 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from perseids_server.utils.permission import require_permission
 from perseids_server.client import async_make_perseids_request
 
+from api.auth_identity import (
+    normalize_authorization_token as _auth_header_token,
+    resolve_authorization_user_id as _resolve_auth_user_id,
+)
+
 from config.constant import (
     Edition, Action,
     TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO,
     TASK_STATUS_QUEUED, AI_TOOL_STATUS_PENDING, AI_AUDIO_STATUS_PENDING,
     StoryboardAutoGenerateConstants,
     StoryboardAudioGenerateConstants,
+    StoryboardDigitalHumanConstants,
+    StoryboardAgentCommandConstants,
     SceneDifficulty,
 )
+from config.config_util import get_config
 from config.unified_config import SceneVideoType, UnifiedConfigRegistry, TaskTypeId, TaskCategory
 from model.storyboard import (
     StoryboardModel, StoryboardSceneModel,
@@ -39,6 +47,7 @@ from model.character import CharacterModel
 from model.world import WorldModel
 from model.script import ScriptModel
 from model.user_tokens import UserTokensModel
+from model.user_preferences import UserPreferencesModel
 from utils.resource_access import (
     get_user_id_from_header,
     ensure_resource_access,
@@ -46,7 +55,8 @@ from utils.resource_access import (
 )
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
-from services.storyboard_reference_prompt_service import build_reference_legend
+from services.storyboard_reference_prompt_service import build_reference_legend, reference_urls
+from services.storyboard_spatial import build_spatial_prompt_context
 from task.audio_task import recalc_scene_duration_if_all_completed
 
 logger = logging.getLogger(__name__)
@@ -56,7 +66,7 @@ router = APIRouter(prefix="/api/storyboard", tags=["storyboard"])
 # update_scene 允许前端直接修改的字段（选中指针由 asset/select 接口管理，不在此处）
 ALLOWED_SCENE_UPDATE_FIELDS = {
     'title', 'duration', 'prompt_json', 'video_prompt', 'video_type', 'video_config_json',
-    'difficulty', 'act_name',
+    'audio_embedded', 'difficulty', 'act_name',
 }
 ALLOWED_DIALOGUE_UPDATE_FIELDS = {
     'character_id', 'text', 'speed', 'volume',
@@ -65,29 +75,6 @@ VALID_ASSET_TYPES = ('first_frame', 'last_frame', 'video')
 
 
 # ==================== Helpers ====================
-
-def _auth_header_token(token: Optional[str]) -> str:
-    token = (token or '').strip()
-    if token.lower().startswith('bearer '):
-        token = token[7:].strip()
-    return token
-
-
-async def _resolve_auth_user_id(auth_token: Optional[str]):
-    token = _auth_header_token(auth_token)
-    if not token:
-        return None, JSONResponse(
-            status_code=401,
-            content={'success': False, 'error_code': 'missing_auth_token', 'error': 'Authorization is required'},
-        )
-    user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, token)
-    if not user_id:
-        return None, JSONResponse(
-            status_code=401,
-            content={'success': False, 'error_code': 'invalid_auth_token', 'error': 'Authorization is invalid or expired'},
-        )
-    return int(user_id), None
-
 
 async def _read_json_object_body(request: Request):
     raw_body = await request.body()
@@ -106,6 +93,38 @@ async def _read_json_object_body(request: Request):
             content={'success': False, 'error_code': 'invalid_body', 'error': 'JSON body must be an object'},
         )
     return data, None
+
+
+async def _sync_script_split_model_preference(
+    user_id: int,
+    world_id: int,
+    config_json: Any,
+):
+    """把故事板拆分模型选择同步为当前用户在该世界的默认偏好。"""
+    if not isinstance(config_json, dict):
+        return None, None
+    selection = config_json.get("selectedScriptSplitLlmModel")
+    if isinstance(selection, str):
+        selection = selection.strip()
+    if not selection:
+        return None, None
+    try:
+        await asyncio.to_thread(
+            UserPreferencesModel.upsert,
+            str(user_id),
+            str(world_id),
+            StoryboardAgentCommandConstants.SCRIPT_SPLIT_MODEL_PREFERENCE_TYPE,
+            selection,
+        )
+        return True, None
+    except Exception as exc:
+        logger.error(
+            "同步用户 %s 世界 %s 的拆分模型偏好失败: %s",
+            user_id,
+            world_id,
+            exc,
+        )
+        return False, "故事板已保存，但世界级拆分模型偏好同步失败"
 
 
 def _json_bool(value, default: bool = False) -> bool:
@@ -328,6 +347,9 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                     'volume': 100,
                 })
 
+            from services.storyboard_scene_type import resolve_scene_video_type
+            resolved_video_type, presentation_meta = resolve_scene_video_type(shot, dialogues)
+
             prompt_payload = {
                 'perspective': perspective,
                 'style': style or parsed_data.get('style') or '',
@@ -363,11 +385,16 @@ def build_storyboard_scenes_from_parsed_script(parsed_data: dict, style: str = '
                 'act_name': act_name,
                 'prompt': prompt_payload,
                 'video_prompt': video_prompt,
-                'video_type': SceneVideoType.VIDEO,
+                'video_type': resolved_video_type,
+                # 声音同出：数字人分镜 LTX2.3 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
+                'audio_embedded': resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
+                # 发布幂等：用稳定 shot_id 做去重 key（见设计文档 §15）
+                'source_shot_key': shot.get('shot_id') or f'scene_{scene_index}',
                 'video_config': {
                     'shot_type': shot_type,
                     'camera_angle': camera_angle,
                     'camera_movement': shot.get('camera_movement') or '',
+                    **presentation_meta,
                 },
                 'dialogues': dialogues,
             })
@@ -812,6 +839,246 @@ def _scene_prompt_dict(scene) -> Dict[str, Any]:
     return prompt if isinstance(prompt, dict) else {}
 
 
+def _storyboard_value(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def _normalize_storyboard_agent_reference_url(url: Any) -> str:
+    """Return one HTTP(S) image URL suitable for Agent image inputs."""
+    text = str(url or "").strip().replace("\\", "/")
+    if not text or "," in text:
+        return ""
+    if text.startswith(("http://", "https://")):
+        return text
+    relative = text.lstrip("/")
+    if not relative.startswith("upload/"):
+        return ""
+    try:
+        host = str((get_config().get("server", {}) or {}).get("host") or "").strip()
+    except Exception:
+        host = ""
+    return f"{host.rstrip('/')}/{relative}" if host else ""
+
+
+def _build_storyboard_spatial_constraints(prompt_json: Any) -> Dict[str, Any]:
+    """Extract the current shot's actionable spatial constraints for the Agent LLM."""
+    if isinstance(prompt_json, str):
+        try:
+            prompt_json = json.loads(prompt_json)
+        except Exception:
+            prompt_json = {}
+    if not isinstance(prompt_json, dict):
+        return {}
+    spatial = prompt_json.get("spatial_layout")
+    if not isinstance(spatial, dict):
+        return {}
+
+    refs = spatial.get("space_unit_refs")
+    refs = refs if isinstance(refs, list) else []
+    ref_keys = {str(ref) for ref in refs if ref not in (None, "")}
+    spatial_world = prompt_json.get("spatial_world")
+    world_units = spatial_world.get("space_units") if isinstance(spatial_world, dict) else []
+    active_units = []
+    for unit in world_units if isinstance(world_units, list) else []:
+        if not isinstance(unit, dict):
+            continue
+        unit_id = unit.get("space_unit_id") or unit.get("id")
+        if not ref_keys or str(unit_id) in ref_keys:
+            active_units.append(unit)
+
+    spatial_context = build_spatial_prompt_context(
+        spatial,
+        spatial_world if isinstance(spatial_world, dict) else None,
+    )
+    camera_anchor = spatial.get("camera_anchor") if isinstance(spatial.get("camera_anchor"), dict) else {}
+    raw_camera_pose = spatial.get("camera_pose")
+    if not isinstance(raw_camera_pose, dict):
+        raw_camera_pose = camera_anchor.get("camera_pose") if isinstance(camera_anchor.get("camera_pose"), dict) else {}
+
+    continuity = spatial.get("continuity") if isinstance(spatial.get("continuity"), dict) else {}
+    anchor_keys = (
+        "description", "camera_position", "shooting_direction", "relative_to_character",
+        "view_direction", "screen_axis_mapping", "screen_composition",
+    )
+    compact_anchor = {
+        key: camera_anchor.get(key)
+        for key in anchor_keys
+        if camera_anchor.get(key) not in (None, "")
+    }
+    return {
+        "schema_version": spatial.get("schema_version") or 1,
+        "space_unit_refs": refs,
+        "space_units": active_units,
+        "camera_pose": spatial_context.get("camera_pose") or raw_camera_pose,
+        "camera_anchor": compact_anchor,
+        "visible_entities": spatial_context.get("visible_entities") or [],
+        "continuity_only_entities": spatial_context.get("hidden_entities") or [],
+        "continuity": continuity,
+    }
+
+
+def _storyboard_neighbor_summary(scene: Any, direction: str) -> Dict[str, Any]:
+    prompt = _storyboard_value(scene, "prompt_json", {}) or {}
+    if isinstance(prompt, str):
+        try:
+            prompt = json.loads(prompt)
+        except Exception:
+            prompt = {}
+    prompt = prompt if isinstance(prompt, dict) else {}
+    prompt_parts = [
+        prompt.get("scene_desc"),
+        prompt.get("character_desc"),
+    ]
+    return {
+        "scene_id": _storyboard_value(scene, "id"),
+        "direction": direction,
+        "title": _storyboard_value(scene, "title", "") or "",
+        "first_frame_url": _normalize_storyboard_agent_reference_url(
+            _storyboard_value(scene, "first_frame_url", "")
+        ),
+        "prompt_summary": "\n".join(str(part).strip() for part in prompt_parts if str(part or "").strip()),
+        "spatial_constraints": _build_storyboard_spatial_constraints(prompt),
+    }
+
+
+def _load_storyboard_agent_neighbors(scene: Any) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Load only the immediate previous/next storyboard scenes in stable display order."""
+    storyboard_id = _storyboard_value(scene, "storyboard_id")
+    scene_id = _storyboard_value(scene, "id")
+    if not storyboard_id or not scene_id:
+        return {"previous": None, "next": None}
+    scenes = StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or []
+    scenes = sorted(
+        scenes,
+        key=lambda item: (
+            float(_storyboard_value(item, "sort_order", 0) or 0),
+            int(_storyboard_value(item, "id", 0) or 0),
+        ),
+    )
+    index = next(
+        (idx for idx, item in enumerate(scenes) if int(_storyboard_value(item, "id", 0) or 0) == int(scene_id)),
+        None,
+    )
+    if index is None:
+        return {"previous": None, "next": None}
+    previous = scenes[index - 1] if index > 0 else None
+    next_scene = scenes[index + 1] if index + 1 < len(scenes) else None
+    return {
+        "previous": _storyboard_neighbor_summary(previous, "previous") if previous else None,
+        "next": _storyboard_neighbor_summary(next_scene, "next") if next_scene else None,
+    }
+
+
+def _append_storyboard_agent_frame_reference(
+    items: List[Dict[str, Any]],
+    url: Any,
+    *,
+    source_type: str,
+    title: str = "",
+) -> bool:
+    """Append one current/neighbor frame to the ordered reference manifest."""
+    normalized_url = _normalize_storyboard_agent_reference_url(url)
+    if not normalized_url:
+        return False
+    existing_urls = {
+        _normalize_storyboard_agent_reference_url(item.get("url"))
+        for item in items
+        if isinstance(item, dict)
+    }
+    if normalized_url in existing_urls:
+        return False
+
+    metadata = {
+        "current_frame": ("当前分镜已有首帧", "当前分镜已有首帧，仅作为待修改画面"),
+        "previous_frame": ("前一分镜首帧", "前一分镜首帧，仅用于上游连续性"),
+        "next_frame": ("后一分镜首帧", "后一分镜首帧，仅用于下游连续性"),
+    }
+    item_type, label = metadata.get(source_type, ("分镜首帧", "分镜首帧连续性参考"))
+    items.append({
+        "url": normalized_url,
+        "type": item_type,
+        "name": str(title or "").strip(),
+        "label": label,
+        "source_type": source_type,
+    })
+    return True
+
+
+def _append_storyboard_agent_neighbor_references(
+    items: List[Dict[str, Any]],
+    neighbors: Optional[Dict[str, Any]],
+) -> None:
+    neighbors = neighbors if isinstance(neighbors, dict) else {}
+    for direction, source_type in (("previous", "previous_frame"), ("next", "next_frame")):
+        neighbor = neighbors.get(direction)
+        if not isinstance(neighbor, dict):
+            continue
+        _append_storyboard_agent_frame_reference(
+            items,
+            neighbor.get("first_frame_url"),
+            source_type=source_type,
+            title=str(neighbor.get("title") or ""),
+        )
+
+
+def _build_storyboard_agent_image_references(
+    *,
+    base_reference_images: Optional[List[str]],
+    base_reference_items: Optional[List[Dict[str, Any]]],
+    current_first_frame_url: Any,
+    current_title: str,
+    neighbors: Optional[Dict[str, Any]],
+    user_reference_urls: Optional[List[str]],
+) -> tuple[List[str], List[Dict[str, Any]]]:
+    """Build one aligned image-reference manifest without mutating service output."""
+    items: List[Dict[str, Any]] = []
+    for source_item in base_reference_items or []:
+        if not isinstance(source_item, dict):
+            continue
+        normalized_url = _normalize_storyboard_agent_reference_url(source_item.get("url"))
+        if not normalized_url or normalized_url in reference_urls(items):
+            continue
+        item = dict(source_item)
+        item["url"] = normalized_url
+        items.append(item)
+
+    for url in base_reference_images or []:
+        normalized_url = _normalize_storyboard_agent_reference_url(url)
+        if not normalized_url or normalized_url in reference_urls(items):
+            continue
+        items.append({
+            "url": normalized_url,
+            "type": "参考图",
+            "name": "",
+            "label": "当前分镜资产参考图",
+        })
+
+    _append_storyboard_agent_frame_reference(
+        items,
+        current_first_frame_url,
+        source_type="current_frame",
+        title=current_title,
+    )
+    _append_storyboard_agent_neighbor_references(items, neighbors)
+
+    user_index = 0
+    for url in user_reference_urls or []:
+        normalized_url = _normalize_storyboard_agent_reference_url(url)
+        if not normalized_url or normalized_url in reference_urls(items):
+            continue
+        user_index += 1
+        items.append({
+            "url": normalized_url,
+            "label": f"用户上传参考图{user_index}",
+            "type": "参考图",
+            "name": "",
+            "source_type": "user_reference",
+        })
+    return reference_urls(items), items
+
+
 def _normalize_auth_token(token: Optional[str]) -> str:
     token = (token or '').strip()
     if token.lower().startswith('bearer '):
@@ -892,12 +1159,18 @@ def _build_storyboard_agent_message(
     video_duration_seconds: Optional[int] = None,
     video_resolution: Optional[str] = None,
     clip_to_audio_duration: Optional[bool] = None,
+    spatial_constraints: Optional[Dict[str, Any]] = None,
+    neighbor_contexts: Optional[Dict[str, Any]] = None,
 ) -> str:
     prompt = _scene_prompt_dict(scene)
     prompt_json = json.dumps(prompt, ensure_ascii=False, indent=2)
     first_frame_line = first_frame_url or "无"
     reference_images = reference_images or []
     reference_image_items = reference_image_items or []
+    spatial_constraints = spatial_constraints or _build_storyboard_spatial_constraints(prompt)
+    neighbor_contexts = neighbor_contexts if isinstance(neighbor_contexts, dict) else {}
+    spatial_constraints_json = json.dumps(spatial_constraints, ensure_ascii=False, indent=2)
+    neighbor_contexts_json = json.dumps(neighbor_contexts, ensure_ascii=False, indent=2)
     video_input_urls = [str(u).strip() for u in (video_input_urls or []) if str(u).strip()]
     image_mode = (image_mode or 'first_last_frame').strip().lower()
     if image_mode not in ('first_last_frame', 'multi_reference'):
@@ -912,8 +1185,20 @@ def _build_storyboard_agent_message(
         reference_lines = [f"- 图{idx}：{url}" for idx, url in enumerate(reference_images, start=1)]
     reference_block = "\n".join(reference_lines) if reference_lines else "无"
     if generation_target == "video":
-        target_intro = "请基于当前分镜画面提示词、视频提示词与用户要求，生成该分镜视频。"
-        if video_input_urls:
+        is_digital_human = str(getattr(scene, 'video_type', '') or '') == SceneVideoType.DIGITAL_HUMAN
+        duration_line = str(int(video_duration_seconds)) if video_duration_seconds else str(scene.duration or 5)
+        resolution_line = video_resolution or '模型默认'
+        clip_line = '开启（导出时裁到配音时长）' if clip_to_audio_duration else '关闭（导出使用完整视频）'
+        if is_digital_human:
+            target_intro = "请基于当前分镜视频提示词与用户要求，生成该分镜的 LTX2.3 数字人对口型视频。"
+            video_input_block = "系统会从当前分镜解析角色图和已完成的配音，无需也不得由模型传入 URL。"
+            tool_instruction = (
+                "本次目标是生成数字人对口型视频，必须调用 generate_digital_human。"
+                "不得调用 image_to_video、generate_text_to_video 或任何图片生成工具。"
+                "系统会从当前分镜解析角色图和已完成的配音，严禁捏造或传入图片、音频 URL。"
+            )
+        elif video_input_urls:
+            target_intro = "请基于当前分镜画面提示词、视频提示词与用户要求，生成该分镜视频。"
             if image_mode == 'multi_reference':
                 mode_desc = "全能参考模式（multi_reference）：【图生视频输入图】中的全部 URL 均为参考图，按顺序用英文逗号拼接为 image_urls，image_mode 必须传 multi_reference。"
                 slot_labels = [f"- 图{idx}（参考）：{url}" for idx, url in enumerate(video_input_urls, start=1)]
@@ -933,24 +1218,22 @@ def _build_storyboard_agent_message(
                 "不要调用图片生成工具。"
             )
         else:
+            target_intro = "请基于当前分镜画面提示词、视频提示词与用户要求，生成该分镜视频。"
             video_input_block = "无"
             tool_instruction = (
                 "本次目标是生成视频。当前没有任何图生视频输入图，必须调用 generate_text_to_video。"
                 "不要调用 image_to_video 或图片生成工具。"
             )
-        duration_line = str(int(video_duration_seconds)) if video_duration_seconds else str(scene.duration or 5)
-        resolution_line = video_resolution or '模型默认'
-        clip_line = '开启（导出时裁到配音时长）' if clip_to_audio_duration else '关闭（导出使用完整视频）'
         video_mode_block = f"""
 【视频图片模式】
 {image_mode}
 
 【视频生成参数】
-- duration_seconds（必须原样传给 image_to_video / generate_text_to_video）：{duration_line}
+- duration_seconds（必须原样传给本次允许的视频工具）：{duration_line}
 - resolution：{resolution_line}
 - 裁剪至配音时长（仅导出使用，生成时不必处理）：{clip_line}
 
-【图生视频输入图】（image_to_video.image_urls 唯一来源，按顺序）
+【视频输入说明】
 {video_input_block}
 """
         tool_instruction = (
@@ -986,12 +1269,26 @@ def _build_storyboard_agent_message(
 【参考图说明】
 {reference_legend or '无'}
 
+【当前分镜空间硬约束】
+```json
+{spatial_constraints_json}
+```
+
+空间约束执行规则：物理锚点、容器槽位和三维位置优先于画面左右描述；机位或景别变化不代表角色发生了位移。只有 visible、partial 实体可以写成当前画面可见内容；offscreen、occluded 实体只能用于连续性推理，禁止写成当前画面可见主体。
+
+【相邻分镜连续性上下文】
+```json
+{neighbor_contexts_json}
+```
+
+相邻分镜仅用于校验人物、服装、场景、道具状态和空间连续性。前一分镜提供上游状态，后一分镜只提供下游校验，禁止提前复制后一分镜才发生的动作或状态。相邻分镜不能覆盖当前镜头的动作、机位、物理位置和可见实体。
+
 【当前分镜 prompt_json】
 ```json
 {prompt_json}
 ```
 
-请严格围绕当前分镜创作，保留角色、场景、道具一致性，并结合全局画风、构图倾向和画幅比例。{tool_instruction} 如果调用 edit_image，edit_image.prompt 末尾必须原样追加【参考图说明】内容，例如“参考图说明：图1是角色：布冯。图2是场景：布冯的房间。”如果调用 image_to_video，也要在视频提示词末尾追加同样的参考图说明。不要加入未出现在当前画面提示词或视频提示词中的角色/道具参考图。提交成功后返回包含 project_ids 的工作总结。"""
+请严格围绕当前分镜创作，保留角色、场景、道具一致性，并结合全局画风、构图倾向和画幅比例。{tool_instruction} 如果调用 edit_image，edit_image.prompt 末尾必须原样追加【参考图说明】内容，例如“参考图说明：图1是角色：布冯。图2是场景：布冯的房间。”普通视频分镜如果调用 image_to_video，也要在视频提示词末尾追加同样的参考图说明。不要加入未出现在当前画面提示词或视频提示词中的角色/道具参考图。提交成功后返回包含 project_ids 的工作总结。"""
 
 
 class StoryboardImageAgentRunner:
@@ -1005,11 +1302,13 @@ class StoryboardImageAgentRunner:
         scene_context: str,
         conversation_history: Optional[List[Dict[str, Any]]] = None,
         generation_target: str = "image",
+        video_type: str = SceneVideoType.VIDEO,
     ):
         self.scene_id = scene_id
         self.scene_context = scene_context
         self.conversation_history = conversation_history or []
         self.generation_target = generation_target if generation_target == "video" else "image"
+        self.video_type = str(video_type or SceneVideoType.VIDEO)
 
     @staticmethod
     def _resolve_storyboard_agent_model(default_model: str, model_id: Optional[int]) -> str:
@@ -1027,6 +1326,10 @@ class StoryboardImageAgentRunner:
     def execute(self, task, session_data: Dict[str, Any]) -> Dict[str, Any]:
         from api.script_writer import file_manager, tool_executor, agents_config, task_manager
         from script_writer_core.agents.expert_agent import ExpertAgent
+        from services.storyboard_agent_video_tool import (
+            StoryboardAgentVideoToolExecutor,
+            resolve_storyboard_agent_allowed_tools,
+        )
 
         config = dict(agents_config.get("expert_agents", {}).get("storyboard-image") or {})
         allowed_tools = config.get("allowed_tools") or [
@@ -1036,6 +1339,17 @@ class StoryboardImageAgentRunner:
             "get_user_computing_power",
             "ask_user",
         ]
+        allowed_tools = resolve_storyboard_agent_allowed_tools(
+            allowed_tools,
+            generation_target=self.generation_target,
+            video_type=self.video_type,
+        )
+        agent_tool_executor = tool_executor
+        if self.generation_target == "video" and self.video_type == SceneVideoType.DIGITAL_HUMAN:
+            agent_tool_executor = StoryboardAgentVideoToolExecutor(
+                tool_executor,
+                scene_id=self.scene_id,
+            )
         model = self._resolve_storyboard_agent_model(
             config.get("model") or "gemini/gemini-3-flash-preview",
             task.model_id,
@@ -1049,7 +1363,7 @@ class StoryboardImageAgentRunner:
             user_id=str(task.user_id),
             world_id=str(task.world_id),
             auth_token=task.auth_token,
-            tool_executor=tool_executor,
+            tool_executor=agent_tool_executor,
             vendor_id=task.vendor_id,
             model_id=task.model_id,
             enable_thinking=task.enable_thinking,
@@ -1075,10 +1389,16 @@ class StoryboardImageAgentRunner:
         project_ids = result.get("project_ids") or []
         if project_ids:
             is_video = self.generation_target == "video"
+            already_bound = (
+                agent_tool_executor.are_projects_already_bound(project_ids)
+                if hasattr(agent_tool_executor, 'are_projects_already_bound')
+                else False
+            )
             task_manager.push_message(task.task_id, "video_task_submitted" if is_video else "image_task_submitted", {
                 "scene_id": self.scene_id,
                 "project_ids": project_ids,
                 "asset_type": "video" if is_video else "first_frame",
+                "already_bound": already_bound,
                 "message": f"已提交 {len(project_ids)} 个分镜{'视频' if is_video else '图片'}生成任务",
             })
 
@@ -1540,6 +1860,42 @@ async def auto_generate_missing_storyboard_images(
     return JSONResponse(result)
 
 
+@router.post('/{storyboard_id:int}/auto-generate-missing-videos')
+async def auto_generate_missing_storyboard_videos(
+    request: Request,
+    storyboard_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+):
+    """批量生成缺失分镜视频（需已有首帧；复用 image-batches 编排与轮询）。"""
+    user_id, err = await _resolve_auth_user_id(auth_token)
+    if err:
+        return err
+
+    data, body_err = await _read_json_object_body(request)
+    if body_err:
+        return body_err
+
+    params = dict(data)
+    params['storyboard_id'] = storyboard_id
+    params['user_id'] = user_id
+    params['auth_token'] = _auth_header_token(auth_token)
+
+    try:
+        result = await asyncio.to_thread(
+            StoryboardAgentCommandService().execute,
+            'auto-generate-missing-videos',
+            params,
+        )
+    except StoryboardCliError as exc:
+        status_code = {
+            "enterprise_only": 403,
+            "active_batch_exists": 409,
+        }.get(exc.error_code, 400)
+        return JSONResponse(status_code=status_code, content=exc.to_dict())
+
+    return JSONResponse(result)
+
+
 @router.get('/{storyboard_id:int}/task-status')
 async def get_storyboard_task_status(
     storyboard_id: int,
@@ -1633,7 +1989,17 @@ async def update_storyboard(
 
     data = await request.json()
     affected = await asyncio.to_thread(StoryboardModel.update, storyboard_id, **data)
-    return JSONResponse({'success': True, 'affected': affected})
+    preference_saved, preference_warning = await _sync_script_split_model_preference(
+        int(user_id or sb.user_id),
+        int(sb.world_id),
+        data.get("config_json") if isinstance(data, dict) else None,
+    )
+    response = {'success': True, 'affected': affected}
+    if preference_saved is not None:
+        response['preference_saved'] = preference_saved
+    if preference_warning:
+        response['warning'] = preference_warning
+    return JSONResponse(response)
 
 
 @router.post('/{storyboard_id:int}/generate-from-script')
@@ -1672,6 +2038,18 @@ async def generate_storyboard_from_script(
     data = await request.json()
     normalized_auth_token = _auth_header_token(auth_token)
 
+    sequence_mode = str(data.get('sequence_mode') or 'speed').strip().lower()
+    if sequence_mode not in {'speed', 'balanced', 'quality'}:
+        return JSONResponse(
+            status_code=400,
+            content={'error': 'invalid_sequence_mode', 'message': f'不支持的分镜图生成模式: {sequence_mode}'},
+        )
+    if sequence_mode == 'quality' and Edition.is_community():
+        return JSONResponse(
+            status_code=403,
+            content={'error': 'enterprise_only', 'message': '效果模式仅商业版支持'},
+        )
+
     real_vendor_id = data.get('vendor_id')
     model_id = data.get('model_id')
     if not real_vendor_id and model_id:
@@ -1684,121 +2062,86 @@ async def generate_storyboard_from_script(
         except Exception as e:
             logger.warning(f"Failed to resolve vendor for model {model_id}: {e}")
 
-    try:
-        from llm.script_parser import parse_script_to_shots
+    from config.constant import ScriptSplitQcConstants
+    from llm.script_split_qc_agent import run_script_split_qc
 
-        parsed_data = await parse_script_to_shots(
+    enable_qc = _json_bool(data.get('enable_script_split_qc'), False)
+    try:
+        max_rounds = int(data.get('script_split_qc_max_rounds') or ScriptSplitQcConstants.DEFAULT_MAX_ROUNDS)
+    except (TypeError, ValueError):
+        max_rounds = ScriptSplitQcConstants.DEFAULT_MAX_ROUNDS
+    max_rounds = max(
+        ScriptSplitQcConstants.MIN_MAX_ROUNDS,
+        min(ScriptSplitQcConstants.MAX_MAX_ROUNDS, max_rounds),
+    )
+    if not enable_qc:
+        max_rounds = 1
+
+    max_group_duration = data.get('max_group_duration', 15)
+    dialogue_language = data.get('dialogue_language') or data.get('language') or ''
+    prompt_language = data.get('prompt_language') or data.get('language') or ''
+    enable_thinking = _json_bool(data.get('enable_thinking'), False)
+    thinking_effort = data.get('thinking_effort', 'medium')
+
+    # 改为异步任务：创建持久化拆分任务后立即返回 202，前端轮询真实进度。
+    # 见 docs/script/script_parser_incremental_split_design.md §13.2 §15。
+    # 原 QC 循环、parse_script_to_shots、资产化、create_scenes、配音/宫格提交
+    # 全部由 worker 推进，发布阶段在 task/script_split_task.py 的 publishing 步骤完成。
+    from api.script_split import create_split_task
+    from config.constant import ScriptSplitConstants
+    request_config = {
+        'max_group_duration': max_group_duration,
+        'world_id': sb.world_id,
+        'model': data.get('model') or 'gemini-3-flash-preview',
+        'temperature': 0.5,
+        'force_medium_shot': _json_bool(data.get('force_medium_shot'), True),
+        'no_bg_music': _json_bool(data.get('no_bg_music'), True),
+        'split_multi_dialogue': _json_bool(data.get('split_multi_dialogue'), False),
+        'language': data.get('language') or '',
+        'dialogue_language': dialogue_language,
+        'prompt_language': prompt_language,
+        'vendor_id': real_vendor_id,
+        'model_id': int(model_id) if model_id else 1,
+        'enable_thinking': enable_thinking,
+        'thinking_effort': thinking_effort,
+        # 故事板发布专用配置
+        'source': 'storyboard',
+        'storyboard_id': storyboard_id,
+        'enable_qc': enable_qc,
+        'qc_max_rounds': max_rounds,
+        'sequence_mode': sequence_mode,
+    }
+    try:
+        task_id, is_new = await create_split_task(
+            user_id=user_id,
+            source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
+            source_id=storyboard_id,
+            source_node_key=None,
             script_content=script.content,
-            max_group_duration=data.get('max_group_duration', 15),
-            world_id=sb.world_id,
-            model=data.get('model') or 'gemini-3-flash-preview',
-            temperature=0.5,
-            force_medium_shot=bool(data.get('force_medium_shot', False)),
-            no_bg_music=bool(data.get('no_bg_music', False)),
-            split_multi_dialogue=bool(data.get('split_multi_dialogue', False)),
-            language=data.get('language') or '',
-            dialogue_language=data.get('dialogue_language') or data.get('language') or '',
-            prompt_language=data.get('prompt_language') or data.get('language') or '',
+            request_config=request_config,
             auth_token=normalized_auth_token,
-            vendor_id=int(real_vendor_id) if real_vendor_id else None,
-            model_id=int(model_id) if model_id else None,
-            enable_thinking=_json_bool(data.get('enable_thinking'), False),
-            thinking_effort=data.get('thinking_effort', 'medium'),
         )
     except Exception as e:
-        logger.error(f"Failed to parse script for storyboard {storyboard_id}: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={'error': f'剧本解析失败: {str(e)}'})
-
-    if not parsed_data or not parsed_data.get('shot_groups'):
-        return JSONResponse(status_code=500, content={'error': '剧本解析未返回可用分镜'})
-
-    # location 资产化：新场景 / 子场景落库并回填真实 DB id，
-    # 必须在 build_storyboard_scenes_from_parsed_script 之前执行。
-    from services.storyboard_location_bootstrap_service import StoryboardLocationBootstrapService
-    location_bootstrap = await asyncio.to_thread(
-        StoryboardLocationBootstrapService().bootstrap,
-        parsed_data,
-        sb.world_id,
-        user_id,
-    )
-
-    scenes_payload = build_storyboard_scenes_from_parsed_script(
-        parsed_data,
-        style=sb.style or '',
-    )
-    if not scenes_payload:
-        return JSONResponse(status_code=500, content={'error': '未能从解析结果生成故事板分镜'})
-
-    existing_scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
-    if existing_scenes:
-        return JSONResponse(status_code=409, content={'error': '故事板已存在分镜，不能重复生成'})
-
-    try:
-        generated_count = await asyncio.to_thread(
-            StoryboardModel.create_scenes,
-            storyboard_id,
-            user_id,
-            scenes_payload,
+        logger.error(f"create storyboard split task failed: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={'error': f'创建拆分任务失败: {str(e)}'},
         )
-    except Exception as e:
-        logger.error(f"Failed to create storyboard scenes from script: {e}", exc_info=True)
-        return JSONResponse(status_code=500, content={'error': f'生成分镜失败: {str(e)}'})
-
-    sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
-    scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
-    await _attach_dialogues(scenes)
-    _enrich_scene_location_props(scenes)
-    audio_auto_generate = await _auto_submit_storyboard_dialogue_voiceovers(scenes, user_id)
-
-    # 子场景九宫格 i2i：按父场景分批提交，父场景图作为输入生成子场景参考图。
-    # 非阻塞：异常不影响分镜主流程，子场景首帧生图会等待/降级。
-    # 门禁：只要有 auth_token 就尝试（submit_subscene_grids 内部会精确跳过
-    # 已有图 / 有运行中任务的子场景，支持补偿重跑）。
-    # 兼容旧请求读取 force_overwrite_subscene_grids，但该字段已废弃，不再覆盖已有参考图。
-    _legacy_force_overwrite_subscene_grids = bool(data.get('force_overwrite_subscene_grids', False))
-    del _legacy_force_overwrite_subscene_grids
-    subscene_grid = {'enabled': False, 'submitted_batches': 0, 'warnings': []}
-    if normalized_auth_token:
-        try:
-            from services.storyboard_location_bootstrap_service import StoryboardLocationBootstrapService
-            subscene_grid_result = await asyncio.to_thread(
-                StoryboardLocationBootstrapService().submit_subscene_grids,
-                parsed_data,
-                location_bootstrap,
-                sb.world_id,
-                user_id,
-                normalized_auth_token,
-                force_overwrite=False,
-            )
-            subscene_grid = {
-                'enabled': True,
-                'submitted_batches': subscene_grid_result.get('submitted_batches', 0),
-                'submitted_subscene_count': subscene_grid_result.get('submitted_subscene_count', 0),
-                'skipped_no_parent_image': subscene_grid_result.get('skipped_no_parent_image', 0),
-                'warnings': subscene_grid_result.get('warnings', []),
-            }
-        except Exception as e:
-            logger.warning(f"子场景九宫格提交失败(非阻塞): {e}", exc_info=True)
-            subscene_grid = {'enabled': True, 'submitted_batches': 0, 'warnings': [str(e)]}
-
-    if script_id != sb.script_id:
-        await asyncio.to_thread(StoryboardModel.update, storyboard_id, script_id=script_id)
-        sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
-
-    return JSONResponse({
-        'success': True,
-        'storyboard': sb.to_dict(),
-        'scenes': scenes,
-        'generated_count': generated_count,
-        'audio_auto_generate': audio_auto_generate,
-        'location_bootstrap': {
-            'created_location_count': location_bootstrap.get('created_location_count', 0),
-            'reused_location_count': location_bootstrap.get('reused_location_count', 0),
-            'warnings': location_bootstrap.get('warnings', []),
+    return JSONResponse(
+        status_code=202,
+        content={
+            'success': True,
+            'message': '分镜生成任务已创建' if is_new else '已有进行中的生成任务',
+            'data': {
+                'task_id': task_id,
+                'status': 'queued',
+                'status_url': f'/api/script-split/tasks/{task_id}',
+            },
         },
-        'subscene_grid': subscene_grid,
-    })
+    )
 
+    # 以下为原同步流程残留，已迁移到 worker（task/script_split_task.py publishing 阶段）。
+    # 发布逻辑（资产化 → create_scenes → 配音/宫格）在 Step 9 于 publishing 步骤实现。
 
 @router.delete('/{storyboard_id:int}')
 @require_permission("storyboard:delete")
@@ -1863,6 +2206,7 @@ async def add_scene(
         video_prompt=data.get('video_prompt'),
         video_type=data.get('video_type', SceneVideoType.VIDEO),
         video_config_json=data.get('video_config_json'),
+        audio_embedded=data.get('audio_embedded'),
         difficulty=data.get('difficulty'),
         act_name=data.get('act_name'),
         last_modified_user_id=user_id,
@@ -1891,6 +2235,51 @@ async def update_scene(
         StoryboardSceneModel.update, scene_id, **update_data
     )
     return JSONResponse({'success': True, 'affected': affected})
+
+
+@router.put('/scene/{scene_id}/video-type')
+@require_permission("storyboard:update")
+async def switch_scene_video_type(
+    request: Request,
+    scene_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """切换普通视频/对口型模式，并保留已有视频候选。"""
+    from services.storyboard_video_type_service import (
+        StoryboardVideoTypeConflict,
+        StoryboardVideoTypeNotFound,
+        StoryboardVideoTypeValidationError,
+        switch_storyboard_scene_video_type,
+    )
+
+    user_id = get_user_id_from_header(user_id)
+    _scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
+    if err:
+        return err
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    target_type = str(data.get('video_type') or '')
+    expected_type = str(data.get('expected_video_type') or '')
+    try:
+        result = await asyncio.to_thread(
+            switch_storyboard_scene_video_type,
+            scene_id,
+            target_type,
+            expected_type,
+            user_id,
+        )
+    except StoryboardVideoTypeValidationError as exc:
+        return JSONResponse(status_code=400, content={'error': str(exc)})
+    except StoryboardVideoTypeConflict as exc:
+        return JSONResponse(status_code=409, content={'error': str(exc)})
+    except StoryboardVideoTypeNotFound as exc:
+        return JSONResponse(status_code=404, content={'error': str(exc)})
+
+    return JSONResponse({'success': True, **result})
 
 
 @router.delete('/scene/{scene_id}')
@@ -2074,20 +2463,15 @@ async def generate_scene_video(
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
     """
-    生成分镜视频（按 scene.video_type：图生视频 / 数字人）。
+    生成分镜视频（按 scene.video_type：图生视频 / 对口型 LTX2.3）。
 
-    - 图生视频：需已选中首帧图片（image_path）。
-    - 数字人：音频自动取「当前说话角色」的配音（用 `character.default_voice` 作参考生成的 TTS 结果），
-      形象图取该角色 `reference_image`（无则用选中首帧兜底）。
-
-    数据链路：预扣算力 → 创建 ai_tools → TasksModel(GENERATE_VIDEO) → scene_asset(video) + 设选中。
+    - 图生视频：需已选中首帧图片。
+    - 对口型（digital_human）：**必须先有成片配音**；仅提交 LTX2.3 数字人
+      （image=角色形象/首帧，audio=TTS 说话音频，prompt=动作描述）。
 
     Body:
-        task_type: 可选；图生视频默认 SEEDANCE_2_0，数字人默认 DIGITAL_HUMAN
-        prompt: 可选，默认 scene.video_prompt
-        duration / ratio: 可选
-        character_id: 数字人可选，指定说话角色（不传则取第一个有配音的对话所属角色）
-        audio_path: 数字人可选，显式指定音频（默认自动取该角色配音）
+        task_type: 可选；图生视频默认 SEEDANCE_2_0；对口型固定 LTX2.3（忽略其他）
+        prompt / duration / ratio / character_id / resolution / clip_to_audio_duration
     """
     user_id = get_user_id_from_header(user_id)
     scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
@@ -2103,39 +2487,87 @@ async def generate_scene_video(
     is_digital_human = (video_type == SceneVideoType.DIGITAL_HUMAN)
 
     if is_digital_human:
-        task_type = int(data.get('task_type') or TaskTypeId.DIGITAL_HUMAN)
-        # 音频：显式 audio_path > 当前说话角色的配音（character.default_voice 生成的 TTS）
-        audio_path = data.get('audio_path')
+        from services.storyboard_digital_human_service import (
+            StoryboardDigitalHumanError,
+            compute_digital_human_power,
+            orchestrate_digital_human_generation,
+            submit_digital_human_plan,
+        )
+
         character_id = data.get('character_id')
         if character_id is not None:
-            character_id = int(character_id)
-        if not audio_path:
-            character_id, audio_path = await _resolve_digital_human_audio(scene_id, character_id)
-        if not audio_path:
-            return JSONResponse(status_code=400, content={'error': '数字人需要配音：请先生成当前说话角色的配音'})
-        # 形象图：角色 reference_image 优先，选中首帧兜底
-        image_path = None
-        if character_id:
-            character = await asyncio.to_thread(CharacterModel.get_by_id, character_id)
-            if character and character.reference_image:
-                image_path = character.reference_image
-        if not image_path:
-            if not scene.selected_first_frame_id:
-                return JSONResponse(status_code=400, content={'error': '数字人需要角色形象图或选中首帧图片'})
-            ff = await asyncio.to_thread(StoryboardSceneAssetModel.get_by_id, scene.selected_first_frame_id)
-            if not ff or not ff.result_url:
-                return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
-            image_path = ff.result_url
-    else:
-        # 图生视频：必须选中首帧
-        task_type = int(data.get('task_type') or TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO)
-        audio_path = None
-        if not scene.selected_first_frame_id:
-            return JSONResponse(status_code=400, content={'error': '请先生成并选中首帧图片'})
-        ff = await asyncio.to_thread(StoryboardSceneAssetModel.get_by_id, scene.selected_first_frame_id)
-        if not ff or not ff.result_url:
-            return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
-        image_path = ff.result_url
+            try:
+                character_id = int(character_id)
+            except (TypeError, ValueError):
+                character_id = None
+
+        # 统一编排：解析对白 → 加载 TTS → 探测时长 → 路由决策 → 准备音频。
+        # 忽略调用方传入的 prompt/duration/ratio（以服务端规划为准）。
+        try:
+            plan, _segments, _scene, _sb = await asyncio.to_thread(
+                orchestrate_digital_human_generation,
+                scene_id,
+                character_id=character_id,
+            )
+        except StoryboardDigitalHumanError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+        # 记录 video_config_json 快照（模型/比例由服务端规划决定）
+        config = UnifiedConfigRegistry.get_by_id(plan.task_type)
+        clip_to_audio_duration = bool(data.get('clip_to_audio_duration', True))
+        snapshot = {
+            'task_id': plan.task_type,
+            'model_key': getattr(config, 'key', None) if config else None,
+            'digital_human_model': plan.model,
+            'routing_reason': plan.routing_reason,
+            'speech_duration': plan.speech_duration,
+            'ratio': plan.ratio,
+            'clip_to_audio_duration': clip_to_audio_duration,
+            'updated_at': __import__('datetime').datetime.utcnow().isoformat() + 'Z',
+        }
+        existing_vcfg = getattr(scene, 'video_config_json', None)
+        merged_vcfg = _merge_scene_video_config_json(existing_vcfg, snapshot)
+        try:
+            await asyncio.to_thread(
+                StoryboardSceneModel.update,
+                scene_id,
+                video_config_json=merged_vcfg,
+                last_modified_user_id=user_id,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
+
+        # 先规划后扣费：按实际路由模型计算算力
+        computing_power = compute_digital_human_power(plan)
+        transaction_id = str(uuid.uuid4())
+        ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
+        if not ok:
+            return JSONResponse(status_code=400, content={'error': msg or '算力不足或扣费失败'})
+
+        try:
+            result = await asyncio.to_thread(
+                submit_digital_human_plan,
+                plan,
+                scene_id,
+                user_id,
+                transaction_id,
+                computing_power,
+                clip_to_audio_duration,
+                data.get('resolution'),
+            )
+        except StoryboardDigitalHumanError as exc:
+            return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+        return JSONResponse(result)
+
+    # 图生视频：必须选中首帧
+    task_type = int(data.get('task_type') or TaskTypeId.SEEDANCE_2_0_IMAGE_TO_VIDEO)
+    audio_path = None
+    if not scene.selected_first_frame_id:
+        return JSONResponse(status_code=400, content={'error': '请先生成并选中首帧图片'})
+    ff = await asyncio.to_thread(StoryboardSceneAssetModel.get_by_id, scene.selected_first_frame_id)
+    if not ff or not ff.result_url:
+        return JSONResponse(status_code=400, content={'error': '首帧图片尚未生成完成'})
+    image_path = ff.result_url
 
     prompt = data.get('prompt') or scene.video_prompt or ''
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, scene.storyboard_id)
@@ -2407,8 +2839,20 @@ async def scene_ai_chat(
         scene_generation_context = {}
 
     # 角色/场景等资产参考（仅用于生图或视频提示说明，视频模式下不强制进 image_to_video.image_urls）
-    reference_images = scene_generation_context.get("reference_images") or ([first_frame_url] if first_frame_url else [])
-    reference_image_items = scene_generation_context.get("reference_image_items") or []
+    reference_images = list(scene_generation_context.get("reference_images") or [])
+    reference_image_items = [
+        dict(item)
+        for item in (scene_generation_context.get("reference_image_items") or [])
+        if isinstance(item, dict)
+    ]
+    selected_first_frame = (
+        (scene_generation_context.get("selected_assets") or {}).get("first_frame") or {}
+    )
+    first_frame_url_for_prompt = selected_first_frame.get("result_url") or first_frame_url
+    spatial_constraints = _build_storyboard_spatial_constraints(_scene_prompt_dict(scene))
+    neighbor_contexts: Dict[str, Any] = {}
+    if generation_target == 'image':
+        neighbor_contexts = await asyncio.to_thread(_load_storyboard_agent_neighbors, scene)
 
     raw_user_refs = data.get('reference_image_urls') or []
     if isinstance(raw_user_refs, str):
@@ -2437,7 +2881,7 @@ async def scene_ai_chat(
     if generation_target == 'video':
         # 视频：image_to_video 只使用前端槽位有序图；角色/场景参考仅作文案说明
         video_input_urls = ordered_slot_urls
-        reference_images_for_msg = list(reference_images or [])
+        reference_images_for_msg = list(reference_images or ([first_frame_url_for_prompt] if first_frame_url_for_prompt else []))
         reference_image_items_for_msg = list(reference_image_items or [])
         task_image_urls = video_input_urls or None
 
@@ -2500,31 +2944,19 @@ async def scene_ai_chat(
         except Exception as e:
             logger.warning(f"Failed to persist scene video_config_json for scene {scene_id}: {e}")
     else:
-        # 图片：兼容旧逻辑——合并用户补充参考图到资产参考
-        user_reference_urls = [
-            str(u) for u in ordered_slot_urls
-            if str(u) not in reference_images
-        ]
-        if user_reference_urls:
-            reference_images = list(reference_images) + user_reference_urls
-            existing_item_urls = {it.get('url') for it in reference_image_items if isinstance(it, dict)}
-            for idx, url in enumerate(user_reference_urls, start=1):
-                if url not in existing_item_urls:
-                    reference_image_items.append({
-                        'url': url,
-                        'label': f'用户上传参考图{idx}',
-                        'type': '参考图',
-                        'name': '',
-                    })
-        reference_images_for_msg = reference_images
-        reference_image_items_for_msg = reference_image_items
+        # 图片：资产参考之后依次追加当前首帧、前后首帧和用户补充图，并保持 URL/说明严格对齐。
+        reference_images_for_msg, reference_image_items_for_msg = (
+            _build_storyboard_agent_image_references(
+                base_reference_images=reference_images,
+                base_reference_items=reference_image_items,
+                current_first_frame_url=first_frame_url_for_prompt,
+                current_title=str(scene.title or ""),
+                neighbors=neighbor_contexts,
+                user_reference_urls=ordered_slot_urls,
+            )
+        )
         video_input_urls = None
-        task_image_urls = reference_images or None
-
-    selected_first_frame = (
-        (scene_generation_context.get("selected_assets") or {}).get("first_frame") or {}
-    )
-    first_frame_url_for_prompt = selected_first_frame.get("result_url") or first_frame_url
+        task_image_urls = reference_images_for_msg or None
 
     agent_message = _build_storyboard_agent_message(
         message,
@@ -2539,6 +2971,8 @@ async def scene_ai_chat(
         video_duration_seconds=video_duration_seconds if generation_target == 'video' else None,
         video_resolution=video_resolution if generation_target == 'video' else None,
         clip_to_audio_duration=clip_to_audio_duration if generation_target == 'video' else None,
+        spatial_constraints=spatial_constraints,
+        neighbor_contexts=neighbor_contexts,
     )
     conversation_history = await asyncio.to_thread(_list_storyboard_agent_messages, scene_id, True)
     await asyncio.to_thread(
@@ -2551,8 +2985,13 @@ async def scene_ai_chat(
         "both",
         "storyboard_agent_user",
     )
-    session_id = f"storyboard-{scene_id}-{uuid.uuid4()}"
+    session_id = _storyboard_scene_chat_session_id(scene_id)
     token = _normalize_auth_token(auth_token)
+
+    enable_thinking = _json_bool(data.get('enable_thinking'), False)
+    thinking_effort = data.get('thinking_effort') or 'medium'
+    if thinking_effort not in ('low', 'medium', 'high'):
+        thinking_effort = 'medium'
 
     from api.script_writer import task_manager
     task_id = await asyncio.to_thread(
@@ -2564,6 +3003,8 @@ async def scene_ai_chat(
         auth_token=token,
         vendor_id=vendor_id,
         model_id=model_id,
+        enable_thinking=enable_thinking,
+        thinking_effort=thinking_effort,
         image_urls=task_image_urls,
         language=data.get('language') or 'zh-CN',
     )
@@ -2576,6 +3017,7 @@ async def scene_ai_chat(
         scene_context=agent_message,
         conversation_history=conversation_history,
         generation_target=generation_target,
+        video_type=scene.video_type,
     )
     task_manager.start_task(task, runner, {
         'user_id': str(user_id),
@@ -3026,7 +3468,28 @@ async def select_dialogue_audio(
     return JSONResponse({'success': True, 'selected_audio_id': dialogue_audio_id})
 
 
-# ==================== 导出操作（占位） ====================
+# ==================== 导出操作 ====================
+
+@router.get('/export-job/{job_id}')
+@require_permission("storyboard:export")
+async def get_export_job(
+    request: Request,
+    job_id: str,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """查询导出任务状态（完整视频异步 job）。"""
+    user_id = get_user_id_from_header(user_id)
+    from services.storyboard_export_service import get_job
+
+    job = await asyncio.to_thread(get_job, job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={'error': '导出任务不存在'})
+    if int(job.get('user_id') or 0) != int(user_id):
+        return JSONResponse(status_code=403, content={'error': '无权查看该导出任务'})
+    # 不回传内部本地路径
+    public = {k: v for k, v in job.items() if not str(k).startswith('_')}
+    return JSONResponse({'success': True, **public})
+
 
 @router.post('/{storyboard_id:int}/export-full-video')
 @require_permission("storyboard:export")
@@ -3035,7 +3498,13 @@ async def export_full_video(
     storyboard_id: int,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """导出完整视频（占位）"""
+    """
+    导出完整视频：后台合成后上传 CDN，立即返回 job_id。
+    前端轮询 GET /api/storyboard/export-job/{job_id} 获取 download_url。
+
+    Body 可选:
+        include_subtitles: bool  默认 true，硬烧对白字幕（ASS，超长分页）
+    """
     user_id = get_user_id_from_header(user_id)
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
     if not sb:
@@ -3043,8 +3512,82 @@ async def export_full_video(
 
     ensure_resource_access(sb, user_id, Action.VIEW, "故事板")
 
-    # TODO: 接入视频导出任务流
-    return JSONResponse({'success': False, 'error': '完整视频导出功能尚未实现'})
+    include_subtitles = True
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and 'include_subtitles' in body:
+            include_subtitles = bool(body.get('include_subtitles'))
+    except Exception:
+        pass
+
+    from services.storyboard_export_service import (
+        create_job,
+        update_job,
+        make_work_dir,
+        cleanup_dir,
+        collect_export_plan,
+        materialize_package_files,
+        build_merged_video,
+        upload_local_file_to_cdn,
+    )
+    import os
+
+    job = await asyncio.to_thread(create_job, storyboard_id, "full_video", user_id)
+    job_id = job["job_id"]
+
+    async def _run():
+        work = None
+        local_path = None
+        try:
+            await asyncio.to_thread(update_job, job_id, status="running", progress=5)
+
+            def _compose():
+                nonlocal work, local_path
+                work = make_work_dir(storyboard_id)
+                plan = collect_export_plan(storyboard_id)
+                if not plan.scenes:
+                    raise RuntimeError("故事板没有分镜，无法导出")
+                update_job(job_id, progress=15)
+                materialize_package_files(plan, os.path.join(work, "package"))
+                update_job(job_id, progress=45)
+                local_path = build_merged_video(
+                    plan, work, burn_subtitles=include_subtitles
+                )
+                update_job(job_id, progress=80, filename=os.path.basename(local_path))
+                return local_path
+
+            local_path = await asyncio.to_thread(_compose)
+            update_job(job_id, status="uploading", progress=85)
+            download_url, filename = await upload_local_file_to_cdn(
+                local_path, content_type="video/mp4"
+            )
+            await asyncio.to_thread(
+                update_job,
+                job_id,
+                status="completed",
+                progress=100,
+                download_url=download_url,
+                filename=filename,
+                error=None,
+            )
+        except Exception as e:
+            logger.exception(f"export-full-video job={job_id} failed: {e}")
+            await asyncio.to_thread(
+                update_job, job_id, status="failed", progress=100, error=str(e)
+            )
+        finally:
+            if work:
+                await asyncio.to_thread(cleanup_dir, work)
+
+    # 后台跑，不阻塞请求
+    asyncio.create_task(_run())
+
+    return JSONResponse({
+        'success': True,
+        'job_id': job_id,
+        'status': 'pending',
+        'message': '完整视频导出任务已提交，请轮询导出进度',
+    })
 
 
 @router.post('/{storyboard_id:int}/export-all-scenes')
@@ -3054,7 +3597,10 @@ async def export_all_scenes(
     storyboard_id: int,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """导出全部分镜（占位）"""
+    """
+    导出素材包 zip（分镜N 视频/图 + 分镜N_M.wav），上传 CDN 后返回 download_url。
+    流程对齐剧本世界导出 export-world。
+    """
     user_id = get_user_id_from_header(user_id)
     sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
     if not sb:
@@ -3062,5 +3608,44 @@ async def export_all_scenes(
 
     ensure_resource_access(sb, user_id, Action.VIEW, "故事板")
 
-    # TODO: 接入分镜批量导出任务流
-    return JSONResponse({'success': False, 'error': '分镜导出功能尚未实现'})
+    from services.storyboard_export_service import (
+        make_work_dir,
+        cleanup_dir,
+        collect_export_plan,
+        build_package_zip,
+        upload_local_file_to_cdn,
+    )
+    import os
+
+    work = None
+    zip_path = None
+    try:
+        def _pack():
+            nonlocal work, zip_path
+            work = make_work_dir(storyboard_id)
+            plan = collect_export_plan(storyboard_id)
+            if not plan.scenes:
+                raise RuntimeError("故事板没有分镜，无法导出")
+            zip_path = build_package_zip(plan, work)
+            return zip_path
+
+        zip_path = await asyncio.to_thread(_pack)
+        download_url, filename = await upload_local_file_to_cdn(
+            zip_path, content_type="application/zip"
+        )
+        return JSONResponse({
+            'success': True,
+            'download_url': download_url,
+            'filename': filename,
+        })
+    except FileNotFoundError as e:
+        return JSONResponse(status_code=404, content={'success': False, 'error': str(e)})
+    except Exception as e:
+        logger.exception(f"export-all-scenes storyboard={storyboard_id}: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': str(e) or '导出素材包失败'},
+        )
+    finally:
+        if work:
+            await asyncio.to_thread(cleanup_dir, work)

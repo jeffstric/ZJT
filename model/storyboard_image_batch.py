@@ -140,6 +140,7 @@ class StoryboardImageBatchJobModel:
             "skipped_count",
             "message",
             "extra_json",
+            "limit_count",
         }
         fields = []
         params = []

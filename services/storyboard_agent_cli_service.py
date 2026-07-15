@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import threading
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -16,13 +17,14 @@ from config.constant import (
     StoryboardFeatureFlags,
     SceneDifficulty,
 )
-from config.unified_config import SceneVideoType
+from config.unified_config import SceneVideoType, UnifiedConfigRegistry
 from model.ai_tools import AIToolsModel
 from model.character import CharacterModel
 from model.location import LocationModel
 from model.props import PropsModel
 from model.script import ScriptModel
 from model.storyboard import StoryboardModel
+from model.user_preferences import UserPreferencesModel
 from model.storyboard_dialogue import StoryboardDialogueModel
 from model.storyboard_image_batch import StoryboardImageBatchItemModel, StoryboardImageBatchJobModel
 from model.storyboard_scene import StoryboardSceneModel, compute_sort_between, is_precision_exhausted
@@ -39,6 +41,9 @@ from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGri
 
 VALID_IMAGE_MODES = {"auto", "text_to_image", "image_edit"}
 VALID_VIDEO_MODES = {"text_to_video", "image_to_video"}
+# 图生视频的图片输入模式：first_last_frame（首尾帧）/ multi_reference（全能参考）。
+# 对齐 marketing_agent 与驱动层 ImageMode，驱动支持的第三种 first_last_with_ref 仅手动对话用，批量不开放。
+VALID_VIDEO_IMAGE_MODES = {"first_last_frame", "multi_reference"}
 VALID_ASSET_TYPES = {"first_frame", "last_frame", "video"}
 IMAGE_ASSET_TYPES = {"first_frame", "last_frame"}
 
@@ -476,6 +481,9 @@ class StoryboardAgentCliService:
         workflow_ratio: Optional[str] = None,
         composition_preference: Optional[str] = None,
         version: int = 1,
+        model: Optional[Any] = None,
+        model_id: Optional[int] = None,
+        vendor_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         user_id = self._require_user_id(user_id)
         script = self._ensure_script_for_user(script_id, user_id)
@@ -485,6 +493,9 @@ class StoryboardAgentCliService:
             raise StoryboardCliError("script_missing_world", f"script has no world_id: {script_id}")
 
         episode_number = int(_get_field(script, "episode_number") or 1)
+        explicit_model = any(value not in (None, "") for value in (model, model_id, vendor_id))
+        preference_warning = None
+        preference_saved = None
         existing = StoryboardModel.get_by_user_world_episode(int(user_id), int(world_id), episode_number)
         if existing:
             existing_script_id = _get_field(existing, "script_id")
@@ -501,13 +512,52 @@ class StoryboardAgentCliService:
             if not existing_script_id:
                 StoryboardModel.update(int(_get_field(existing, "id")), script_id=int(script_id))
                 existing = StoryboardModel.get_by_id(int(_get_field(existing, "id"))) or existing
-            return {
+            existing_config = self._storyboard_config(existing)
+            existing_selection = self._normalize_script_split_model_selection(
+                existing_config.get("selectedScriptSplitLlmModel")
+            )
+            selection = None
+            if explicit_model:
+                selection = self._normalize_script_split_model_selection(
+                    model, model_id=model_id, vendor_id=vendor_id
+                )
+            elif existing_selection:
+                selection = existing_selection
+            else:
+                selection, preference_warning = self._world_script_split_model_preference(
+                    int(user_id), int(world_id)
+                )
+
+            if explicit_model or not existing_selection:
+                existing_config["selectedScriptSplitLlmModel"] = selection
+                StoryboardModel.update(
+                    int(_get_field(existing, "id")), config_json=existing_config
+                )
+            if explicit_model:
+                preference_saved, preference_warning = self._save_world_script_split_model_preference(
+                    int(user_id), int(world_id), selection
+                )
+
+            result = {
                 "success": True,
                 "storyboard_id": int(_get_field(existing, "id")),
                 "script_id": int(script_id),
                 "created": False,
                 "storyboard": _to_dict(existing),
             }
+            if preference_saved is not None:
+                result["preference_saved"] = preference_saved
+            if preference_warning:
+                result["warning"] = preference_warning
+            return result
+
+        selection, preference_warning = self._world_script_split_model_preference(
+            int(user_id), int(world_id)
+        )
+        if explicit_model:
+            selection = self._normalize_script_split_model_selection(
+                model, model_id=model_id, vendor_id=vendor_id
+            )
 
         storyboard_id = StoryboardModel.create(
             user_id=int(user_id),
@@ -521,15 +571,25 @@ class StoryboardAgentCliService:
             workflow_ratio=workflow_ratio,
             composition_preference=composition_preference,
             version=version,
+            config_json={"selectedScriptSplitLlmModel": selection},
         )
+        if explicit_model:
+            preference_saved, preference_warning = self._save_world_script_split_model_preference(
+                int(user_id), int(world_id), selection
+            )
         storyboard = StoryboardModel.get_by_id(int(storyboard_id))
-        return {
+        result = {
             "success": True,
             "storyboard_id": int(storyboard_id),
             "script_id": int(script_id),
             "created": True,
             "storyboard": _to_dict(storyboard) if storyboard else {"id": int(storyboard_id)},
         }
+        if preference_saved is not None:
+            result["preference_saved"] = preference_saved
+        if preference_warning:
+            result["warning"] = preference_warning
+        return result
 
     def scene_context(self, scene_id: int, user_id: Optional[int] = None) -> Dict[str, Any]:
         scene, storyboard = self._load_scene_pair(scene_id)
@@ -666,6 +726,61 @@ class StoryboardAgentCliService:
         context = self.scene_context(scene_id, user_id=user_id)
         scene = context["scene"]
         storyboard = context["storyboard"]
+        video_type = str(scene.get("video_type") or SceneVideoType.VIDEO)
+
+        # 对口型：双模型路由（Wan2.2 / LTX2.3），统一编排 + 按实际模型扣费。
+        # 忽略调用方传入的 prompt / duration / ratio（以服务端规划为准）。
+        if video_type == SceneVideoType.DIGITAL_HUMAN:
+            from services.storyboard_digital_human_service import (
+                StoryboardDigitalHumanError,
+                deduct_computing_power_sync,
+                compute_digital_human_power,
+                orchestrate_digital_human_generation,
+                submit_digital_human_plan,
+            )
+            # CLI 必须携带可用 auth_token；缺少计费身份时拒绝提交，不再免费建单。
+            normalized_token = str(auth_token or "").strip()
+            if not normalized_token:
+                raise StoryboardCliError(
+                    "missing_auth_token",
+                    "数字人生成需要 auth_token 以扣除算力，缺少计费身份时拒绝提交",
+                )
+            try:
+                plan, _segments, _scene, _sb = orchestrate_digital_human_generation(int(scene_id))
+            except StoryboardDigitalHumanError as exc:
+                raise StoryboardCliError(exc.code, exc.message, payload=exc.payload) from exc
+
+            computing_power = compute_digital_human_power(plan)
+            transaction_id = str(uuid.uuid4())
+            ok, msg = deduct_computing_power_sync(normalized_token, computing_power, transaction_id)
+            if not ok:
+                raise StoryboardCliError("deduct_failed", msg or "算力不足或扣费失败")
+
+            try:
+                dh_result = submit_digital_human_plan(
+                    plan,
+                    scene_id=int(scene_id),
+                    user_id=int(user_id),
+                    transaction_id=transaction_id,
+                    computing_power=computing_power,
+                )
+            except StoryboardDigitalHumanError as exc:
+                raise StoryboardCliError(exc.code, exc.message, payload=exc.payload) from exc
+            return {
+                "success": True,
+                "scene_id": int(scene_id),
+                "video_type": SceneVideoType.DIGITAL_HUMAN,
+                "project_ids": [dh_result["ai_tool_id"]] if dh_result.get("ai_tool_id") else [],
+                "asset_ids": [dh_result["asset_id"]] if dh_result.get("asset_id") else [],
+                "selected_asset_id": dh_result.get("asset_id"),
+                "task_type": dh_result.get("task_type"),
+                "model_used": dh_result.get("model_used"),
+                "routing_reason": dh_result.get("routing_reason"),
+                "speech_duration": dh_result.get("speech_duration"),
+                "status": dh_result.get("status") or "submitted",
+                **{k: v for k, v in dh_result.items() if k not in ("success",)},
+            }
+
         world_id = str(storyboard.get("world_id") or "")
         prompt_text = prompt or context["video_prompt"] or context["image_prompt"]
         ratio_value = ratio or storyboard.get("workflow_ratio") or "16:9"
@@ -785,6 +900,7 @@ class StoryboardAgentCliService:
         video_prompt: Optional[str] = None,
         video_type: str = SceneVideoType.VIDEO,
         video_config_json: Optional[Any] = None,
+        audio_embedded: Optional[bool] = None,
         difficulty: str = SceneDifficulty.MEDIUM,
         act_name: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -814,6 +930,7 @@ class StoryboardAgentCliService:
             video_prompt=video_prompt,
             video_type=video_type or SceneVideoType.VIDEO,
             video_config_json=video_config_payload,
+            audio_embedded=audio_embedded,
             difficulty=difficulty,
             act_name=act_name,
             last_modified_user_id=int(user_id),
@@ -842,6 +959,7 @@ class StoryboardAgentCliService:
         video_prompt: Optional[str] = None,
         video_type: Optional[str] = None,
         video_config_json: Optional[Any] = None,
+        audio_embedded: Optional[bool] = None,
         difficulty: Optional[str] = None,
         act_name: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -850,9 +968,9 @@ class StoryboardAgentCliService:
         All keyword args default to None and are skipped when None, so callers can
         patch a single field (e.g. duration) without touching the others. Only
         duration / title / prompt_json / video_prompt / video_type /
-        video_config_json / difficulty / act_name are mutable here; selected
-        asset pointers stay under bind-projects / asset select endpoints. When
-        duration changes, the storyboard's total_duration is recomputed to stay
+        video_config_json / audio_embedded / difficulty / act_name are mutable here;
+        selected asset pointers stay under bind-projects / asset select endpoints.
+        When duration changes, the storyboard's total_duration is recomputed to stay
         consistent.
         """
         user_id = self._require_user_id(user_id)
@@ -873,6 +991,8 @@ class StoryboardAgentCliService:
             update_fields["video_type"] = video_type or SceneVideoType.VIDEO
         if video_config_json is not None:
             update_fields["video_config_json"] = self._json_dict_param(video_config_json, "video_config_json")
+        if audio_embedded is not None:
+            update_fields["audio_embedded"] = bool(audio_embedded)
         if difficulty is not None:
             update_fields["difficulty"] = SceneDifficulty.normalize(difficulty)
         if act_name is not None:
@@ -1069,6 +1189,10 @@ class StoryboardAgentCliService:
         # 统一处理，避免「同步流 + 调度器流」并发重复提交同一 pending item
         # （曾导致同一分镜生成两条提示词完全相同的 ai_tools 记录）。
         # 前端通过 pollImageBatchStatus(batch_id) 持续轮询进度即可。
+        #
+        # 但 submitted_count 必须在此时一次性写入「计划待生成数」，与状态查询同源，
+        # 否则提交响应恒为 0、轮询返回中间值、完成返回终值，会出现 0→N→M 的跳变。
+        self._persist_image_batch_planned_counts(job_id)
         status = self.storyboard_image_batch_status(job_id=job_id)
 
         return {
@@ -1079,12 +1203,236 @@ class StoryboardAgentCliService:
             "sequence_mode": sequence_mode,
             "batch_id": job_id,
             "limit": batch_limit,
-            "submitted_count": 0,
+            "submitted_count": status.get("submitted_count", 0),
             "skipped_count": status.get("skipped_count", 0),
             "failed_count": status.get("failed_count", 0),
             "status": status.get("status"),
             "items": status.get("items", created_items),
         }
+
+    def auto_generate_missing_videos(
+        self,
+        storyboard_id: int,
+        user_id: int,
+        *,
+        auth_token: str = "",
+        limit: Optional[int] = None,
+        stop_on_error: bool = False,
+        task_type: Optional[int] = None,
+        ratio: Optional[str] = None,
+        sequence_mode: Optional[str] = None,
+        image_mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """批量提交缺失分镜视频：复用 image batch 编排表，asset_type=video。
+
+        仅处理「已有可用首帧、尚无完成视频」的分镜；无首帧的记为 skipped。
+        sequence_mode 默认 speed（无串行依赖，可并行排队）。
+        image_mode 默认 first_last_frame；支持 multi_reference（全能参考），后端自动用
+        [选中首帧] + [角色/场景/道具参考图] + [全局画风参考图] 作为参考图集。
+        """
+        if not int(user_id or 0):
+            raise StoryboardCliError("missing_user_id", "user_id is required")
+        if not str(auth_token or "").strip():
+            raise StoryboardCliError("missing_auth_token", "auth_token is required")
+
+        storyboard = StoryboardModel.get_by_id(int(storyboard_id))
+        if not storyboard:
+            raise StoryboardCliError("not_found", f"storyboard not found: {storyboard_id}")
+
+        asset_type = "video"
+        sequence_mode = self._normalize_sequence_mode(
+            sequence_mode or StoryboardAutoGenerateConstants.SEQUENCE_MODE_SPEED
+        )
+        image_mode = self._normalize_video_image_mode(image_mode)
+        batch_limit = self._normalize_batch_limit(limit)
+        effective_ratio = ratio or _get_field(storyboard, "workflow_ratio")
+        # 视频 task_type：优先入参，其次故事板 config_json.selectedVideoTaskId
+        resolved_task_type = task_type
+        if resolved_task_type is None:
+            cfg = _parse_json(_get_field(storyboard, "config_json"), {}) or {}
+            raw = cfg.get("selectedVideoTaskId") or cfg.get("selected_video_task_id")
+            try:
+                resolved_task_type = int(raw) if raw is not None and str(raw).strip() != "" else None
+            except (TypeError, ValueError):
+                resolved_task_type = None
+
+        idempotency_payload = {
+            "storyboard_id": int(storyboard_id),
+            "user_id": int(user_id),
+            "asset_type": asset_type,
+            "sequence_mode": sequence_mode,
+            "task_type": int(resolved_task_type) if resolved_task_type is not None else None,
+            "ratio": str(effective_ratio or ""),
+            "limit": batch_limit,
+            "stop_on_error": bool(stop_on_error),
+            "image_mode": image_mode,
+            "kind": "auto-video",
+        }
+        idempotency_key = self._image_batch_idempotency_key(idempotency_payload)
+        with _IMAGE_BATCH_CREATE_LOCK:
+            existing_status = self._active_image_batch_status_for_request(
+                storyboard_id=int(storyboard_id),
+                asset_type=asset_type,
+                idempotency_key=idempotency_key,
+            )
+            if existing_status:
+                return existing_status
+
+            planned_items = self._plan_video_batch_items(
+                storyboard_id=int(storyboard_id),
+                limit=batch_limit,
+            )
+            job_id = StoryboardImageBatchJobModel.create(
+                storyboard_id=int(storyboard_id),
+                user_id=int(user_id),
+                auth_token=auth_token,
+                asset_type=asset_type,
+                sequence_mode=sequence_mode,
+                mode="image_to_video",
+                prompt=None,
+                source_image=None,
+                ratio=effective_ratio,
+                image_size=None,
+                count=1,
+                limit_count=batch_limit,
+                stop_on_error=1 if stop_on_error else 0,
+                status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PENDING,
+                extra_json={
+                    "task_type": resolved_task_type,
+                    "image_mode": image_mode,
+                    "idempotency_key": idempotency_key,
+                    "idempotency_payload": idempotency_payload,
+                    "kind": "auto-video",
+                },
+            )
+
+        created_items: List[Dict[str, Any]] = []
+        for item in planned_items:
+            item_id = StoryboardImageBatchItemModel.create(
+                job_id=job_id,
+                storyboard_id=int(storyboard_id),
+                scene_id=item["scene_id"],
+                asset_type=asset_type,
+                group_key=item.get("group_key"),
+                order_index=item.get("order_index") or 0,
+                dependency_item_id=None,
+                status=item.get("batch_status"),
+                ai_tool_id=item.get("ai_tool_id"),
+                asset_id=item.get("asset_id"),
+                project_ids=item.get("project_ids") or [],
+                result_url=item.get("result_url"),
+                extra_json={
+                    "title": item.get("title") or "",
+                    "sort_order": item.get("sort_order"),
+                    "plan_status": item.get("status"),
+                    "skip_reason": item.get("skip_reason") or "",
+                },
+            )
+            created_items.append({**item, "id": item_id})
+
+        # 同图片路径：submitted_count 一次性写入「计划待生成数」，与状态查询同源。
+        self._persist_image_batch_planned_counts(job_id)
+        status = self.storyboard_image_batch_status(job_id=job_id)
+        return {
+            "success": True,
+            "storyboard_id": int(storyboard_id),
+            "user_id": int(user_id),
+            "asset_type": asset_type,
+            "sequence_mode": sequence_mode,
+            "batch_id": job_id,
+            "limit": batch_limit,
+            "submitted_count": status.get("submitted_count", 0),
+            "skipped_count": status.get("skipped_count", 0),
+            "failed_count": status.get("failed_count", 0),
+            "status": status.get("status"),
+            "items": status.get("items", created_items),
+        }
+
+    def _plan_video_batch_items(
+        self,
+        *,
+        storyboard_id: int,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        """规划缺失视频的分镜。
+
+        - video：已有首帧且无完成视频 → pending
+        - digital_human：已有成片配音 + 形象/首帧且无完成视频 → pending；缺配音 skip
+        """
+        from config.constant import StoryboardDigitalHumanConstants
+        from services.storyboard_digital_human_service import plan_digital_human_ready
+
+        scenes = StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or []
+        items: List[Dict[str, Any]] = []
+        missing_count = 0
+        previous_group_key: Optional[str] = None
+
+        for order_index, scene in enumerate(scenes, start=1):
+            scene_id = int(_get_field(scene, "id"))
+            group_key = self._scene_group_key(scene, previous_group_key, storyboard_id)
+            previous_group_key = group_key
+            selected_video = self._selected_asset_for_scene(scene, "video")
+            first_frame = self._selected_asset_for_scene(scene, "first_frame")
+            has_first = bool(first_frame and first_frame.get("result_url"))
+            video_type = str(_get_field(scene, "video_type") or SceneVideoType.VIDEO)
+            is_digital_human = video_type == SceneVideoType.DIGITAL_HUMAN
+            status = "pending"
+            batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
+            result_url = None
+            asset_id = selected_video.get("id") if selected_video else None
+            ai_tool_id = selected_video.get("ai_tool_id") if selected_video else None
+            project_ids = [ai_tool_id] if ai_tool_id else []
+            skip_reason = ""
+
+            if selected_video and selected_video.get("result_url"):
+                status = "already_ready"
+                batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED
+                result_url = selected_video.get("result_url")
+            elif selected_video and selected_video.get("status") in StoryboardAutoGenerateConstants.RUNNING_STATUSES:
+                status = "already_running"
+                batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+            elif is_digital_human:
+                dh_status, dh_skip = plan_digital_human_ready(scene_id)
+                if dh_status != "ready":
+                    status = dh_status or "missing_audio"
+                    batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
+                    skip_reason = dh_skip or StoryboardDigitalHumanConstants.SKIP_REASON_MISSING_AUDIO
+                elif int(limit) > 0 and missing_count >= int(limit):
+                    status = "limit_reached"
+                    batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
+                    skip_reason = "limit_reached"
+                else:
+                    missing_count += 1
+            elif not has_first:
+                status = "missing_first_frame"
+                batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
+                skip_reason = "missing_first_frame"
+            elif int(limit) > 0 and missing_count >= int(limit):
+                status = "limit_reached"
+                batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
+                skip_reason = "limit_reached"
+            else:
+                missing_count += 1
+
+            items.append({
+                "scene_id": scene_id,
+                "title": _get_field(scene, "title") or "",
+                "sort_order": _get_field(scene, "sort_order"),
+                "asset_type": "video",
+                "video_type": video_type,
+                "group_key": group_key,
+                "order_index": order_index,
+                "dependency_scene_id": None,
+                "status": status,
+                "batch_status": batch_status,
+                "asset": selected_video,
+                "asset_id": asset_id,
+                "ai_tool_id": ai_tool_id,
+                "project_ids": project_ids,
+                "result_url": result_url,
+                "skip_reason": skip_reason,
+            })
+        return items
 
     def _image_batch_idempotency_payload(
         self,
@@ -1166,6 +1514,10 @@ class StoryboardAgentCliService:
         if user_id and int(job.get("user_id") or 0) != int(user_id):
             raise StoryboardCliError("forbidden", "storyboard image batch does not belong to user")
         items = StoryboardImageBatchItemModel.list_by_job(int(job_id))
+        counts = self._summarize_batch_items(items)
+        total = counts["total"]
+        completed = counts["completed"]
+        progress = round(completed / total, 4) if total else 0
         return {
             "success": True,
             "batch_id": int(job_id),
@@ -1179,6 +1531,16 @@ class StoryboardAgentCliService:
             "failed_count": int(job.get("failed_count") or 0),
             "skipped_count": int(job.get("skipped_count") or 0),
             "message": job.get("message") or "",
+            # 聚合字段：实时遍历 items 统计，供调用方直接读取进度。
+            # submitted_count 仍保留为「计划待生成数」，progress/pending/running/completed/
+            # failed/skipped/total 反映当前 tick 的实际状态。
+            "progress": progress,
+            "total": total,
+            "pending": counts["pending"],
+            "running": counts["running"],
+            "completed": counts["completed"],
+            "failed": counts["failed"],
+            "skipped": counts["skipped"],
             "items": [self._batch_item_summary(item) for item in items],
         }
 
@@ -1331,9 +1693,12 @@ class StoryboardAgentCliService:
         StoryboardImageBatchJobModel.update(job_id, status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING)
         items = StoryboardImageBatchItemModel.list_by_job(job_id)
         self._reconcile_running_image_batch_items(job_id, items)
+        asset_type = (job.get("asset_type") or StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE)
+        if asset_type == "video":
+            return self._process_one_video_batch_job(job, items)
         if (
             StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED
-            and (job.get("asset_type") or StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE) == "first_frame"
+            and asset_type == "first_frame"
             and self._normalize_sequence_mode(job.get("sequence_mode")) == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY
         ):
             return StoryboardFirstFrameGridService(
@@ -1530,29 +1895,183 @@ class StoryboardAgentCliService:
         self._update_image_batch_job_counts(job_id)
         return {"submitted_count": submitted_count}
 
-    def _update_image_batch_job_counts(self, job_id: int) -> None:
-        items = StoryboardImageBatchItemModel.list_by_job(int(job_id))
+
+    def _process_one_video_batch_job(self, job: Dict[str, Any], items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """推进视频批量任务。generate_video 内部按 scene.video_type 分流图生视频 / LTX 对口型。"""
+        job_id = int(job["id"])
+        submitted_count = 0
+
+        # 从 job.extra_json 读取图生视频图片输入模式（兼容旧批次默认 first_last_frame）。
+        job_extra = job.get("extra_json") if isinstance(job.get("extra_json"), dict) else {}
+        batch_image_mode = self._normalize_video_image_mode(job_extra.get("image_mode"))
+        # 防御配置漂移：若所选 task_type 的模型不支持该 image_mode，降级为 first_last_frame。
+        task_type_raw = job_extra.get("task_type")
+        if batch_image_mode != "first_last_frame" and task_type_raw is not None:
+            try:
+                cfg = UnifiedConfigRegistry.get_by_id(int(task_type_raw))
+                supported = [str(m) for m in (getattr(cfg, "supported_image_modes", None) or [])]
+                if supported and batch_image_mode not in supported:
+                    logger.warning(
+                        "video batch job %s: task_type %s does not support image_mode=%s, fallback to first_last_frame",
+                        job_id, task_type_raw, batch_image_mode,
+                    )
+                    batch_image_mode = "first_last_frame"
+            except Exception:
+                logger.warning("video batch job %s: failed to validate image_mode against task_type", job_id, exc_info=True)
+
+        for item in items:
+            if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING:
+                continue
+            asset = self._asset_info(item.get("asset_id")) if item.get("asset_id") else None
+            if asset and asset.get("result_url"):
+                self._complete_image_batch_item(item, result_url=asset.get("result_url"))
+            elif asset and int(asset.get("status") or 0) == -1:
+                self._fail_image_batch_item(
+                    item,
+                    error_code="generation_failed",
+                    error_message=asset.get("message") or "video generation failed",
+                )
+
+        for item in items:
+            if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING:
+                continue
+            scene_id = int(item["scene_id"])
+            try:
+                result = self.generate_video(
+                    scene_id=scene_id,
+                    user_id=int(job["user_id"]),
+                    auth_token=job.get("auth_token") or "",
+                    mode="image_to_video",
+                    prompt=job.get("prompt"),
+                    ratio=job.get("ratio"),
+                    image_mode=batch_image_mode,
+                )
+            except StoryboardCliError as exc:
+                StoryboardImageBatchItemModel.update(
+                    int(item["id"]),
+                    status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
+                    error_code=exc.error_code,
+                    error_message=exc.message,
+                    extra_json={"payload": exc.payload},
+                )
+                item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+                if int(job.get("stop_on_error") or 0):
+                    break
+                continue
+            except Exception as exc:
+                StoryboardImageBatchItemModel.update(
+                    int(item["id"]),
+                    status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
+                    error_code="submit_error",
+                    error_message=str(exc)[:512],
+                )
+                item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+                if int(job.get("stop_on_error") or 0):
+                    break
+                continue
+
+            project_ids = result.get("project_ids") or []
+            if not project_ids and result.get("ai_tool_id"):
+                project_ids = [result["ai_tool_id"]]
+            asset_ids = result.get("asset_ids") or []
+            if not asset_ids and result.get("asset_id"):
+                asset_ids = [result["asset_id"]]
+            selected_asset_id = (
+                result.get("selected_asset_id")
+                or result.get("asset_id")
+                or (asset_ids[0] if asset_ids else None)
+            )
+            StoryboardImageBatchItemModel.update(
+                int(item["id"]),
+                status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
+                ai_tool_id=project_ids[0] if project_ids else None,
+                asset_id=selected_asset_id,
+                project_ids=project_ids,
+                extra_json={
+                    "submission": result,
+                    "video_type": result.get("video_type") or item.get("video_type"),
+                },
+            )
+            item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+            item["project_ids"] = project_ids
+            item["asset_id"] = selected_asset_id
+            submitted_count += 1
+            logger.info(
+                "[video-batch-submit] job=%s item=#%s scene=%s asset=%s",
+                job_id, item["id"], item["scene_id"], selected_asset_id,
+            )
+
+        self._update_image_batch_job_counts(job_id)
+        return {"submitted_count": submitted_count}
+
+    def _summarize_batch_items(self, items: List[Dict[str, Any]]) -> Dict[str, int]:
+        """按 item.status（数字码）统计各状态计数。
+
+        与 `_update_image_batch_job_counts` / status 接口共用同一口径，
+        避免状态码判据在三处漂移。
+        """
         pending = sum(1 for item in items if int(item.get("status") or 0) == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING)
         running = sum(1 for item in items if int(item.get("status") or 0) == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING)
         completed = sum(1 for item in items if int(item.get("status") or 0) == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED)
         failed = sum(1 for item in items if int(item.get("status") or 0) == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED)
         skipped = sum(1 for item in items if int(item.get("status") or 0) == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED)
-        submitted = sum(1 for item in items if item.get("ai_tool_id") or item.get("project_ids"))
-        if pending or running:
+        return {
+            "total": len(items),
+            "pending": pending,
+            "running": running,
+            "completed": completed,
+            "failed": failed,
+            "skipped": skipped,
+        }
+
+    def _persist_image_batch_planned_counts(self, job_id: int) -> None:
+        """在 batch item 全部落库后调用一次，写入本次计划的 submitted_count（计划待生成数）。
+
+        submitted_count 语义统一为「本轮计划提交的总数」= pending(待生成) + running(已有任务在跑)，
+        该值一旦在 plan 阶段写入就不再随调度 tick 变化；实际进度由 status 接口的
+        pending/running/completed 等聚合字段反映。这避免提交响应返回 0、轮询返回中间值、
+        完成返回终值这种 0→N→M 跳变。
+        """
+        items = StoryboardImageBatchItemModel.list_by_job(int(job_id))
+        counts = self._summarize_batch_items(items)
+        planned_submitted = counts["pending"] + counts["running"]
+        if counts["pending"] or counts["running"]:
             status = StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING
-        elif failed and completed:
+        elif counts["failed"] and counts["completed"]:
             status = StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PARTIAL
-        elif failed:
+        elif counts["failed"]:
             status = StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_FAILED
         else:
             status = StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_COMPLETED
         StoryboardImageBatchJobModel.update(
             int(job_id),
             status=status,
-            submitted_count=submitted,
-            completed_count=completed,
-            failed_count=failed,
-            skipped_count=skipped,
+            submitted_count=planned_submitted,
+            completed_count=counts["completed"],
+            failed_count=counts["failed"],
+            skipped_count=counts["skipped"],
+        )
+
+    def _update_image_batch_job_counts(self, job_id: int) -> None:
+        items = StoryboardImageBatchItemModel.list_by_job(int(job_id))
+        counts = self._summarize_batch_items(items)
+        if counts["pending"] or counts["running"]:
+            status = StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING
+        elif counts["failed"] and counts["completed"]:
+            status = StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_PARTIAL
+        elif counts["failed"]:
+            status = StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_FAILED
+        else:
+            status = StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_COMPLETED
+        # 注意：submitted_count 不在此处更新。它表示「本轮计划待生成数」，
+        # 只在 plan 阶段（_persist_image_batch_planned_counts）一次性写入；
+        # 调度 tick 只推进 status/completed_count/failed_count/skipped_count。
+        StoryboardImageBatchJobModel.update(
+            int(job_id),
+            status=status,
+            completed_count=counts["completed"],
+            failed_count=counts["failed"],
+            skipped_count=counts["skipped"],
         )
 
     def _plan_image_batch_items(
@@ -1590,7 +2109,7 @@ class StoryboardAgentCliService:
             elif selected_asset and selected_asset.get("status") in StoryboardAutoGenerateConstants.RUNNING_STATUSES:
                 status = "already_running"
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
-            elif missing_count >= int(limit):
+            elif int(limit) > 0 and missing_count >= int(limit):
                 status = "limit_reached"
                 batch_status = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_SKIPPED
             else:
@@ -1653,6 +2172,13 @@ class StoryboardAgentCliService:
             raise StoryboardCliError("invalid_sequence_mode", f"invalid sequence_mode: {sequence_mode}")
         return value
 
+    def _normalize_video_image_mode(self, image_mode: Optional[str]) -> str:
+        """规范化图生视频图片输入模式，默认 first_last_frame。"""
+        value = str(image_mode or "first_last_frame").strip().lower()
+        if value not in VALID_VIDEO_IMAGE_MODES:
+            return "first_last_frame"
+        return value
+
     def _batch_job_status_name(self, status: Any) -> str:
         value = int(status or 0)
         return {
@@ -1675,6 +2201,8 @@ class StoryboardAgentCliService:
 
     def _batch_item_summary(self, item: Dict[str, Any]) -> Dict[str, Any]:
         extra = item.get("extra_json") or {}
+        if not isinstance(extra, dict):
+            extra = {}
         return {
             "id": item.get("id"),
             "scene_id": item.get("scene_id"),
@@ -1687,6 +2215,7 @@ class StoryboardAgentCliService:
             "dependency_scene_id": extra.get("dependency_scene_id"),
             "status": self._batch_item_status_name(item.get("status")),
             "plan_status": extra.get("plan_status"),
+            "waiting": extra.get("waiting") or "",
             "project_ids": item.get("project_ids") or [],
             "asset_id": item.get("asset_id"),
             "reference_item_id": item.get("reference_item_id"),
@@ -1712,15 +2241,32 @@ class StoryboardAgentCliService:
         language: str = "",
         dialogue_language: str = "",
         prompt_language: str = "",
+        sequence_mode: str = "speed",
         force_overwrite_subscene_grids: bool = False,
     ) -> Dict[str, Any]:
+        """从剧本拆分生成分镜场景。
+
+        已改为异步路径：创建持久化拆分任务后立即返回 task_id，实际拆分（LLM 解析、
+        资产化、create_scenes、子场景九宫格）由 task/script_split_task.py worker 推进，
+        与 generate-from-script 路由收敛到同一 worker（step_publish 处理 storyboard source）。
+        这样避免同步阻塞约 7 分钟拖垮 asyncio 默认 ThreadPoolExecutor。
+        调用方用 GET /api/script-split/tasks/{task_id} 轮询进度。
+        """
         # 兼容旧 CLI/API 参数名，但不再允许覆盖已有子场景参考图。
         del force_overwrite_subscene_grids
+        sequence_mode = self._normalize_sequence_mode(sequence_mode)
+        if sequence_mode == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY and Edition.is_community():
+            raise StoryboardCliError("enterprise_only", "效果模式仅商业版支持")
         storyboard = StoryboardModel.get_by_id(int(storyboard_id))
         if not storyboard:
             raise StoryboardCliError("not_found", f"storyboard not found: {storyboard_id}")
 
-        model = self._resolve_split_model(storyboard, model)
+        # 解析 model 三元组：config 里可能是 dict（{model,model_id,vendor_id}）也可能是 str。
+        # 旧实现直接 str(dict) 会把 dict repr 当模型名拼进 URL 触发 404。
+        resolved_model, resolved_model_id, resolved_vendor_id = self._resolve_split_model_context(
+            storyboard, model, model_id, vendor_id
+        )
+
         existing_scenes = StoryboardSceneModel.list_by_storyboard(int(storyboard_id))
         if existing_scenes:
             raise StoryboardCliError("scenes_exist", "storyboard already has scenes")
@@ -1737,81 +2283,60 @@ class StoryboardAgentCliService:
         if not str(content or "").strip():
             raise StoryboardCliError("script_empty", "script content is empty")
 
-        parsed_data = self._parse_script_to_shots_sync(
-            script_content=content,
-            max_group_duration=max_group_duration,
-            world_id=_get_field(storyboard, "world_id"),
-            model=model,
-            force_medium_shot=force_medium_shot,
-            no_bg_music=no_bg_music,
-            split_multi_dialogue=split_multi_dialogue,
-            language=language,
-            dialogue_language=dialogue_language or language,
-            prompt_language=prompt_language or language,
-            auth_token=auth_token,
-            vendor_id=vendor_id,
-            model_id=model_id,
-        )
-        if not parsed_data or not parsed_data.get("shot_groups"):
-            raise StoryboardCliError("parse_empty", "script parser returned no shot groups")
-
-        # location 资产化：新场景 / 子场景落库并回填真实 DB id，
-        # 必须在 _build_storyboard_scenes_from_parsed_script 之前执行。
-        # CLI 路径整体已在 to_thread 中运行，此处直接同步调用。
-        from services.storyboard_location_bootstrap_service import StoryboardLocationBootstrapService
-        location_bootstrap = StoryboardLocationBootstrapService().bootstrap(
-            parsed_data,
-            _get_field(storyboard, "world_id"),
-            int(user_id),
-        )
-
-        scenes_payload = self._build_storyboard_scenes_from_parsed_script(
-            parsed_data,
-            style=_get_field(storyboard, "style") or "",
-        )
-        if not scenes_payload:
-            raise StoryboardCliError("scene_payload_empty", "no scene payload generated")
-
-        generated_count = StoryboardModel.create_scenes(int(storyboard_id), int(user_id), scenes_payload)
+        # 若 DB 里 script_id 缺失，补写（快速校验，不阻塞）
         if script_id != _get_field(storyboard, "script_id"):
             StoryboardModel.update(int(storyboard_id), script_id=int(script_id))
 
-        # 子场景九宫格 i2i：按父场景分批提交（非阻塞，异常不影响主流程）
-        # 门禁：只要有 auth_token 就尝试（内部精确跳过已有图 / 运行中任务的子场景，支持补偿重跑）
-        subscene_grid = {"enabled": False, "submitted_batches": 0, "warnings": []}
-        if auth_token:
-            try:
-                subscene_grid_result = StoryboardLocationBootstrapService().submit_subscene_grids(
-                    parsed_data,
-                    location_bootstrap,
-                    _get_field(storyboard, "world_id"),
-                    int(user_id),
-                    auth_token,
-                    force_overwrite=False,
-                )
-                subscene_grid = {
-                    "enabled": True,
-                    "submitted_batches": subscene_grid_result.get("submitted_batches", 0),
-                    "submitted_subscene_count": subscene_grid_result.get("submitted_subscene_count", 0),
-                    "skipped_no_parent_image": subscene_grid_result.get("skipped_no_parent_image", 0),
-                    "warnings": subscene_grid_result.get("warnings", []),
-                }
-            except Exception as exc:
-                subscene_grid = {"enabled": True, "submitted_batches": 0, "warnings": [str(exc)]}
+        # 构造 request_config，对齐 generate-from-script 路由的字段集。
+        # worker 的 _normalize_request_config 会兜底 model 为 dict 的情况，但这里已解包成三元组。
+        from config.constant import ScriptSplitConstants
+        request_config = {
+            "max_group_duration": int(max_group_duration),
+            "world_id": _get_field(storyboard, "world_id"),
+            "model": resolved_model,
+            "temperature": 0.5,
+            "force_medium_shot": bool(force_medium_shot),
+            "no_bg_music": bool(no_bg_music),
+            "split_multi_dialogue": bool(split_multi_dialogue),
+            "language": language or "",
+            "dialogue_language": dialogue_language or language or "",
+            "prompt_language": prompt_language or language or "",
+            "vendor_id": resolved_vendor_id,
+            "model_id": int(resolved_model_id) if resolved_model_id else 1,
+            "enable_thinking": False,
+            "thinking_effort": "medium",
+            # 故事板发布专用配置：worker step_publish 据此走 storyboard source 发布
+            "source": "storyboard",
+            "storyboard_id": int(storyboard_id),
+            "enable_qc": False,
+            "qc_max_rounds": 1,
+            "sequence_mode": sequence_mode,
+        }
+
+        # service 已在路由层 asyncio.to_thread 的子线程中执行，无活动事件循环，
+        # asyncio.run 安全（与 _parse_script_to_shots_sync 的既有模式一致）。
+        import asyncio as _asyncio
+        from api.script_split import create_split_task
+        task_id, is_new = _asyncio.run(
+            create_split_task(
+                user_id=int(user_id),
+                source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
+                source_id=int(storyboard_id),
+                source_node_key=None,
+                script_content=str(content),
+                request_config=request_config,
+                auth_token=auth_token or None,
+            )
+        )
 
         return {
             "success": True,
             "storyboard_id": int(storyboard_id),
             "script_id": int(script_id),
-            "generated_count": int(generated_count),
-            "status": "generated",
-            "scenes": self.list_scenes(int(storyboard_id), user_id=user_id).get("scenes", []),
-            "location_bootstrap": {
-                "created_location_count": location_bootstrap.get("created_location_count", 0),
-                "reused_location_count": location_bootstrap.get("reused_location_count", 0),
-                "warnings": location_bootstrap.get("warnings", []),
-            },
-            "subscene_grid": subscene_grid,
+            "message": "分镜拆分任务已创建" if is_new else "已有进行中的拆分任务",
+            "status": "queued",
+            "task_id": task_id,
+            "status_url": f"/api/script-split/tasks/{task_id}",
         }
 
     def _require_user_id(self, user_id: Any) -> int:
@@ -1890,12 +2415,119 @@ class StoryboardAgentCliService:
     def _storyboard_config(self, storyboard: Any) -> Dict[str, Any]:
         return _parse_json(_get_field(storyboard, "config_json"), {}) or {}
 
-    def _resolve_split_model(self, storyboard: Any, model: Optional[str]) -> str:
-        explicit = str(model or "").strip()
-        if explicit:
-            return explicit
-        config_model = str(self._storyboard_config(storyboard).get("selectedScriptSplitLlmModel") or "").strip()
-        return config_model or StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL
+    def _normalize_script_split_model_selection(
+        self,
+        model: Optional[Any],
+        *,
+        model_id: Optional[int] = None,
+        vendor_id: Optional[int] = None,
+    ) -> Any:
+        """规范化 selectedScriptSplitLlmModel 的字符串/对象两种存储形式。"""
+        if isinstance(model, dict):
+            model_name = str(model.get("model") or model.get("name") or "").strip()
+            if model_id in (None, ""):
+                model_id = model.get("model_id") or model.get("id")
+            if vendor_id in (None, ""):
+                vendor_id = model.get("vendor_id") or model.get("vendorId")
+        else:
+            model_name = str(model or "").strip()
+
+        if not model_name:
+            model_name = StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL
+        if model_id in (None, "") and vendor_id in (None, ""):
+            return model_name
+        return {
+            "model": model_name,
+            "model_id": int(model_id) if model_id not in (None, "") else None,
+            "vendor_id": int(vendor_id) if vendor_id not in (None, "") else None,
+        }
+
+    def _world_script_split_model_preference(
+        self, user_id: int, world_id: int
+    ) -> Tuple[Any, Optional[str]]:
+        try:
+            preference = UserPreferencesModel.get(
+                str(user_id),
+                str(world_id),
+                StoryboardAgentCommandConstants.SCRIPT_SPLIT_MODEL_PREFERENCE_TYPE,
+            )
+            if preference:
+                return self._normalize_script_split_model_selection(preference.get_value()), None
+        except Exception as exc:
+            logger.warning(
+                "读取世界 %s 的剧本拆分模型偏好失败: %s", world_id, exc
+            )
+            return (
+                StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL,
+                "读取世界级拆分模型偏好失败，已使用服务端默认模型",
+            )
+        return StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL, None
+
+    def _save_world_script_split_model_preference(
+        self, user_id: int, world_id: int, selection: Any
+    ) -> Tuple[bool, Optional[str]]:
+        try:
+            UserPreferencesModel.upsert(
+                str(user_id),
+                str(world_id),
+                StoryboardAgentCommandConstants.SCRIPT_SPLIT_MODEL_PREFERENCE_TYPE,
+                selection,
+            )
+            return True, None
+        except Exception as exc:
+            logger.error(
+                "保存世界 %s 的剧本拆分模型偏好失败: %s", world_id, exc
+            )
+            return False, "故事板已保存，但世界级拆分模型偏好同步失败"
+
+    def _resolve_split_model_context(
+        self,
+        storyboard: Any,
+        model: Optional[Any] = None,
+        model_id: Optional[int] = None,
+        vendor_id: Optional[int] = None,
+    ) -> tuple:
+        """解析剧本拆分 LLM 模型三元组 (model, model_id, vendor_id)。
+
+        selectedScriptSplitLlmModel 在前端可能存成 dict
+        ({name/model/model_id/vendor_id}) 而非字符串。直接 str(dict) 会把整个
+        dict 的 repr 当模型名，一路传到 gemini_client._build_url 拼进
+        models/{model}:generateContent 触发 404。这里统一解包，逻辑与
+        storyboard_first_frame_grid_service._llm_model_context 完全对齐。
+
+        优先级：显式入参 > config_json > 默认模型。
+        """
+        # 显式入参优先
+        explicit_model = ""
+        if isinstance(model, dict):
+            explicit_model = str(model.get("model") or model.get("name") or "").strip()
+            if model_id in (None, ""):
+                model_id = model.get("model_id") or model.get("id")
+            if vendor_id in (None, ""):
+                vendor_id = model.get("vendor_id") or model.get("vendorId")
+        elif model not in (None, ""):
+            explicit_model = str(model).strip()
+
+        if explicit_model:
+            resolved_model = explicit_model
+        else:
+            selected = self._storyboard_config(storyboard).get("selectedScriptSplitLlmModel")
+            if isinstance(selected, dict):
+                resolved_model = str(selected.get("model") or selected.get("name") or "").strip()
+                if model_id in (None, ""):
+                    model_id = selected.get("model_id") or selected.get("id")
+                if vendor_id in (None, ""):
+                    vendor_id = selected.get("vendor_id") or selected.get("vendorId")
+            else:
+                resolved_model = str(selected or "").strip()
+
+        if not resolved_model:
+            resolved_model = StoryboardAgentCommandConstants.DEFAULT_SCRIPT_SPLIT_MODEL
+        return (
+            resolved_model,
+            int(model_id) if model_id not in (None, "") else None,
+            int(vendor_id) if vendor_id not in (None, "") else None,
+        )
 
     def _resolve_image_task_type(self, storyboard: Any, task_type: Optional[int]) -> Optional[int]:
         if task_type not in (None, ""):
@@ -2347,12 +2979,22 @@ class StoryboardAgentCliService:
         return self._asset_info(asset_id) if asset_id else None
 
     def _normalize_batch_limit(self, limit: Optional[int]) -> int:
-        default_limit = StoryboardAutoGenerateConstants.DEFAULT_BATCH_LIMIT
+        """归一化 batch limit。
+
+        - limit 缺省/空 → UNLIMITED_BATCH_LIMIT (0)，表示规划全部缺失场景、不截断；
+        - 显式传 0 → 同样视为无限制（与缺省一致，便于调用方显式表达）；
+        - 显式传正整数 → clamp 到 [1, MAX_BATCH_LIMIT]。
+        """
+        unlimited = StoryboardAutoGenerateConstants.UNLIMITED_BATCH_LIMIT
         max_limit = StoryboardAutoGenerateConstants.MAX_BATCH_LIMIT
+        if limit in (None, ""):
+            return unlimited
         try:
-            value = int(limit) if limit not in (None, "") else default_limit
+            value = int(limit)
         except (TypeError, ValueError):
-            value = default_limit
+            return unlimited
+        if value <= 0:
+            return unlimited
         return max(1, min(value, max_limit))
 
     def _sync_image_model_preference(self, user_id: int, storyboard: Any, task_type: Optional[int]) -> None:
@@ -2370,10 +3012,19 @@ class StoryboardAgentCliService:
             pass
 
     def _asset_info(self, asset_id: Any) -> Optional[Dict[str, Any]]:
+        """读取 scene_asset；result_url 优先用 asset 自身，tool 仅作兜底。
+
+        宫格拆分后多个 first_frame asset 共享同一 ai_tool：
+        - asset.result_url = 单格 first_frame/...
+        - ai_tools.result_url = 整张宫格 temp/...
+        若无条件用 tool 覆盖，批量图生视频会误用宫格图作输入（故事板 #15 复现）。
+        对齐 api/storyboard.py::_asset_task_info。
+        """
         asset = StoryboardSceneAssetModel.get_by_id(int(asset_id))
         if not asset:
             return None
         info = _to_dict(asset)
+        asset_result = (info.get("result_url") or "").strip()
         tool_id = info.get("ai_tool_id")
         if tool_id:
             tool = AIToolsModel.get_by_id(int(tool_id))
@@ -2382,10 +3033,16 @@ class StoryboardAgentCliService:
                 info["ai_tool"] = tool_info
                 info["status"] = tool_info.get("status")
                 info["message"] = tool_info.get("message")
-                if tool_info.get("result_url"):
-                    info["result_url"] = _public_upload_url(tool_info.get("result_url"))
-        elif info.get("result_url"):
-            info["result_url"] = _public_upload_url(info.get("result_url"))
+                tool_result = (tool_info.get("result_url") or "").strip()
+                # 仅当 asset 尚无 result_url 时用 tool 兜底；已有单格结果绝不覆盖
+                if asset_result:
+                    info["result_url"] = _public_upload_url(asset_result)
+                elif tool_result:
+                    info["result_url"] = _public_upload_url(tool_result)
+                else:
+                    info["result_url"] = None
+        elif asset_result:
+            info["result_url"] = _public_upload_url(asset_result)
         return info
 
     def _compose_image_prompt(
@@ -2575,18 +3232,44 @@ class StoryboardAgentCliService:
         selected = context["selected_assets"]
         first_url = (selected.get("first_frame") or {}).get("result_url")
         last_url = (selected.get("last_frame") or {}).get("result_url")
+        # 拒绝宫格整图作为图生视频输入（应使用选中分镜单格 first_frame）
+        if first_url and self._is_storyboard_grid_composite_url(first_url):
+            raise StoryboardCliError(
+                "invalid_first_frame_for_video",
+                "选中首帧指向宫格整图，请确认分镜已拆分并选中单格 first_frame 资产",
+                payload={"first_frame_url": first_url},
+            )
         if image_mode == "first_last_frame":
             urls = [first_url, last_url]
         elif image_mode == "first_last_with_ref":
             urls = [first_url, last_url] + context.get("reference_images", [])
         elif image_mode == "multi_reference":
-            urls = context.get("reference_images", [])
+            # 全能参考：首帧优先作为主参考，叠加角色/场景/道具参考图与全局画风参考图。
+            urls = []
+            if first_url:
+                urls.append(first_url)
+            urls.extend(context.get("reference_images", []))
+            storyboard = context.get("storyboard")
+            style_ref = _get_field(storyboard, "style_reference_image") if storyboard else None
+            if style_ref:
+                urls.append(_public_upload_url(style_ref))
         else:
             raise StoryboardCliError("invalid_image_mode", f"invalid image_mode: {image_mode}")
         urls = _dedupe(urls)
         if not urls:
             raise StoryboardCliError("source_image_missing", "image_to_video requires at least one image url")
         return ",".join(str(url) for url in urls)
+
+    @staticmethod
+    def _is_storyboard_grid_composite_url(url: Any) -> bool:
+        value = str(url or "").lower()
+        if not value:
+            return False
+        if "/storyboard/temp/" in value:
+            return True
+        if "/grid/" in value or "grid_result" in value or "grid-image" in value:
+            return True
+        return False
 
     def _build_storyboard_scenes_from_parsed_script(self, parsed_data: dict, style: str = "") -> List[dict]:
         character_db_map = self._build_character_db_map(parsed_data)
@@ -2643,6 +3326,9 @@ class StoryboardAgentCliService:
                         "volume": 100,
                     })
 
+                from services.storyboard_scene_type import resolve_scene_video_type
+                resolved_video_type, presentation_meta = resolve_scene_video_type(shot, dialogues)
+
                 prompt_payload = {
                     "perspective": self._compact_join([camera_angle, shot_type], " / "),
                     "style": style or parsed_data.get("style") or "",
@@ -2687,11 +3373,14 @@ class StoryboardAgentCliService:
                         f"镜头运动：{shot.get('camera_movement')}" if shot.get("camera_movement") else None,
                         f"叙事目的：{shot.get('narrative_purpose')}" if shot.get("narrative_purpose") else None,
                     ]),
-                    "video_type": SceneVideoType.VIDEO,
+                    "video_type": resolved_video_type,
+                    # 声音同出：数字人分镜 LTX2.3 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
+                    "audio_embedded": resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
                     "video_config": {
                         "shot_type": shot_type,
                         "camera_angle": camera_angle,
                         "camera_movement": shot.get("camera_movement") or "",
+                        **presentation_meta,
                     },
                     "dialogues": dialogues,
                 })

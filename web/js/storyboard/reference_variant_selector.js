@@ -5,7 +5,7 @@ import {
     parseReferenceImages,
     sceneToPromptPayload,
 } from './adapters.js';
-import { getThumbnailUrl, renderApp } from './render.js';
+import { getThumbnailUrl, refresh, Region } from './render.js';
 
 let activePopover = null;
 let saving = false;
@@ -98,10 +98,10 @@ async function persistSelection(scene, applySelection) {
         scene.promptJson = payload;
         scene._fullPrompt = payload;
         if (scene.raw) scene.raw.prompt_json = payload;
-        renderApp();
+        refresh([Region.LEFT_TAB_BODY]);
     } catch (error) {
         scene.referenceSelections = previous;
-        renderApp();
+        refresh([Region.LEFT_TAB_BODY]);
         throw error;
     }
 }

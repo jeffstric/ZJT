@@ -2247,6 +2247,13 @@
         node.data.thinkingEffort = nodeData.data.thinkingEffort || 'medium';
         node.data.thinkingExplicitlyDisabled = nodeData.data.thinkingExplicitlyDisabled !== undefined ? nodeData.data.thinkingExplicitlyDisabled : false;
 
+        // 恢复分段拆分任务状态（见设计文档 §14）
+        // 刷新后若有未完成的 splitTaskId，恢复轮询；已应用结果则不重复创建节点。
+        node.data.splitTaskId = nodeData.data.splitTaskId || null;
+        node.data.splitTaskMode = nodeData.data.splitTaskMode || null;
+        node.data.splitTaskResultApplied = nodeData.data.splitTaskResultApplied === true;
+        node.data.splitTaskPostActionStarted = nodeData.data.splitTaskPostActionStarted === true;
+
         const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
         if(el){
           const textareaEl = el.querySelector('.script-textarea');
@@ -2323,6 +2330,51 @@
             if(lengthEl) lengthEl.textContent = `长度: ${node.data.scriptContent.length} 字符`;
             if(infoField) infoField.style.display = 'block';
             if(charCountEl) charCountEl.textContent = `${node.data.scriptContent.length}/2000`;
+          }
+
+          // 恢复未完成的分段拆分任务轮询（见设计文档 §14 createScriptNodeWithData）
+          // 任务已应用结果或已无活跃任务则不恢复。
+          if (window.ScriptSplitTask && node.data.splitTaskId && !node.data.splitTaskResultApplied) {
+            const statusEl2 = el.querySelector('.script-status');
+            const splitBtn2 = el.querySelector('.script-split-btn');
+            const splitGridBtn2 = el.querySelector('.script-split-grid-btn');
+            const gridStatusEl2 = el.querySelector('.script-grid-status');
+            if (splitBtn2) splitBtn2.disabled = true;
+            if (splitGridBtn2) splitGridBtn2.disabled = true;
+            window.ScriptSplitTask.pollScriptSplitTask(node.data.splitTaskId, {
+              onUpdate: (status) => {
+                const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#666'; targetEl.textContent = status.message || '拆分中…'; }
+              },
+              onComplete: async (parsedData) => {
+                if (node.data.splitTaskMode === 'split_and_generate_grid') {
+                  if (node.data.splitTaskPostActionStarted) { if (splitGridBtn2) splitGridBtn2.disabled = false; if (splitBtn2) splitBtn2.disabled = false; return; }
+                  node.data.splitTaskPostActionStarted = true;
+                  // 宫格模式：交给节点的 runGridFlow（通过模拟无法直接调用，降级为先应用结果）
+                  if (node.applyParsedData) { await node.applyParsedData(parsedData, { autoGenerateFrames: false }); }
+                  node.data.splitTaskResultApplied = true;
+                  if (window.safeAutoSave) window.safeAutoSave();
+                } else {
+                  if (node.applyParsedData) { await node.applyParsedData(parsedData); }
+                  node.data.splitTaskResultApplied = true;
+                  if (window.safeAutoSave) window.safeAutoSave();
+                }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+              },
+              onPaused: (status) => {
+                const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#d97706'; targetEl.textContent = status.message || '任务暂停'; }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+              },
+              onError: (error) => {
+                const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#dc2626'; targetEl.textContent = '拆分失败: ' + (error.message || ''); }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+              },
+            });
           }
         }
       }

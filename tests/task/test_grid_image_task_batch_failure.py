@@ -2,8 +2,9 @@
 grid_image_task 模块的单元测试。
 
 重点验证：当分镜首帧宫格任务（item_type=STORYBOARD_FIRST_FRAME_GRID）进入终态失败
-（超时 / FAILED / 异常）时，_mark_storyboard_grid_batch_items_failed 能正确把关联的
-storyboard_image_batch_item 从 RUNNING 回写为 FAILED，避免 batch item 永久卡死。
+（超时 / FAILED / 异常 / 下载失败）时，_mark_storyboard_grid_batch_items_failed 能正确把关联的
+storyboard_image_batch_item 从 RUNNING 回写为 FAILED，并把绑定的 ai_tool_pipeline_steps
+grid split step 从 PENDING 回写为 FAILED，避免 step 永久卡死被全局调度器反复 skip 刷日志。
 """
 import importlib
 import sys
@@ -25,7 +26,11 @@ for _mod in [
         importlib.reload(sys.modules[_mod])
 
 from config.constant import StoryboardAutoGenerateConstants  # noqa: E402
-from task.grid_image_task import _mark_storyboard_grid_batch_items_failed  # noqa: E402
+from task.grid_image_task import (  # noqa: E402
+    _mark_storyboard_grid_batch_items_failed,
+    _fail_pending_grid_split_step_for_task,
+    _cleanup_orphan_grid_split_steps,
+)
 
 if _saved_database is not None:
     sys.modules["model.database"] = _saved_database
@@ -33,12 +38,13 @@ else:
     sys.modules.pop("model.database", None)
 
 
-def _make_task(scene_ids, grid_task_id=454, item_type=8):
+def _make_task(scene_ids, grid_task_id=454, item_type=8, project_id="1075"):
     """构造一个 grid task mock。item_type=8 即 STORYBOARD_FIRST_FRAME_GRID。"""
     return SimpleNamespace(
         id=grid_task_id,
         task_key="grid:1:2:1075",
         item_type=item_type,
+        project_id=project_id,
         get_target_entity_ids_list=lambda: list(scene_ids),
     )
 
@@ -121,6 +127,97 @@ class TestMarkStoryboardGridBatchItemsFailed(unittest.TestCase):
         self.assertEqual(MockBatchModel.find_running_by_grid_task.call_count, 3)
         # 三个 scene 都尝试回写（即使第二个抛异常）
         self.assertEqual(MockBatchModel.update.call_count, 3)
+
+
+class TestFailPendingGridSplitStepForTask(unittest.TestCase):
+    """_fail_pending_grid_split_step_for_task 应把绑定 ai_tool 的 PENDING grid split step 标记 FAILED。"""
+
+    def test_fails_pending_step_with_ai_tool_id(self):
+        """project_id 可解析为 int 时，调用 fail_pending_grid_split_step。"""
+        task = _make_task([415], project_id="1075")
+        with patch("model.ai_tool_pipeline_steps.PipelineStepModel") as MockModel:
+            _fail_pending_grid_split_step_for_task(task, "宫格生图失败")
+
+            MockModel.fail_pending_grid_split_step.assert_called_once_with(1075, "宫格生图失败")
+
+    def test_skips_non_storyboard_grid_type(self):
+        """非 STORYBOARD_FIRST_FRAME_GRID 类型不回写 pipeline step。"""
+        task = _make_task([1], item_type=4)
+        with patch("model.ai_tool_pipeline_steps.PipelineStepModel") as MockModel:
+            _fail_pending_grid_split_step_for_task(task, "error")
+
+            MockModel.fail_pending_grid_split_step.assert_not_called()
+
+    def test_invalid_project_id_does_not_raise(self):
+        """project_id 不可解析时不抛异常、不回写（仅打日志）。"""
+        task = _make_task([1], project_id=None)
+        with patch("model.ai_tool_pipeline_steps.PipelineStepModel") as MockModel:
+            _fail_pending_grid_split_step_for_task(task, "error")
+
+            MockModel.fail_pending_grid_split_step.assert_not_called()
+
+    def test_db_error_does_not_raise(self):
+        """model 抛异常时被吞掉（避免影响上层失败回写流程）。"""
+        task = _make_task([1], project_id="1075")
+        with patch("model.ai_tool_pipeline_steps.PipelineStepModel") as MockModel:
+            MockModel.fail_pending_grid_split_step.side_effect = RuntimeError("db down")
+            # 不应抛异常
+            _fail_pending_grid_split_step_for_task(task, "error")
+
+
+class TestMarkBatchItemsFailedAlsoFailsPipelineStep(unittest.TestCase):
+    """_mark_storyboard_grid_batch_items_failed 应在回写 batch item 后同步回写 pipeline step。"""
+
+    @patch("model.ai_tool_pipeline_steps.PipelineStepModel")
+    @patch("model.storyboard_image_batch.StoryboardImageBatchItemModel")
+    def test_pipeline_step_failed_after_batch_items(self, MockBatchModel, MockStepModel):
+        """超时/FAILED 路径调用该函数时，pipeline step 也被标记 FAILED。"""
+        task = _make_task([415, 416], project_id="1075")
+        MockBatchModel.find_running_by_grid_task.return_value = None  # 无 RUNNING item
+
+        _mark_storyboard_grid_batch_items_failed(task, "宫格生图超时")
+
+        # pipeline step 用正确的 ai_tool_id 回写
+        MockStepModel.fail_pending_grid_split_step.assert_called_once_with(1075, "宫格生图超时")
+
+
+class TestCleanupOrphanGridSplitSteps(unittest.TestCase):
+    """_cleanup_orphan_grid_split_steps 应把 grid task 已失败但 step 仍 PENDING 的孤儿标记 FAILED。"""
+
+    def _step(self, step_id):
+        return SimpleNamespace(id=step_id)
+
+    @patch("model.ai_tool_pipeline_steps.PipelineStepModel")
+    def test_marks_orphans_failed(self, MockModel):
+        """查到的孤儿 step 全部用 fail_steps_by_ids 标记 FAILED。"""
+        MockModel.get_orphan_grid_split_steps.return_value = [self._step(72), self._step(91)]
+        MockModel.fail_steps_by_ids.return_value = 2
+
+        affected = _cleanup_orphan_grid_split_steps()
+
+        self.assertEqual(affected, 2)
+        # 传入的 step_ids 正确
+        args, _ = MockModel.fail_steps_by_ids.call_args
+        self.assertEqual(args[0], [72, 91])
+
+    @patch("model.ai_tool_pipeline_steps.PipelineStepModel")
+    def test_no_orphans_returns_zero(self, MockModel):
+        """没有孤儿时不调用 fail_steps_by_ids。"""
+        MockModel.get_orphan_grid_split_steps.return_value = []
+
+        affected = _cleanup_orphan_grid_split_steps()
+
+        self.assertEqual(affected, 0)
+        MockModel.fail_steps_by_ids.assert_not_called()
+
+    @patch("model.ai_tool_pipeline_steps.PipelineStepModel")
+    def test_query_error_returns_zero(self, MockModel):
+        """查询异常被吞掉，返回 0。"""
+        MockModel.get_orphan_grid_split_steps.side_effect = RuntimeError("db down")
+
+        affected = _cleanup_orphan_grid_split_steps()
+
+        self.assertEqual(affected, 0)
 
 
 if __name__ == "__main__":

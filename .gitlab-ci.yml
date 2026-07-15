@@ -48,6 +48,21 @@ lint:blocking_calls:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
 
+lint:storyboard_render:
+  stage: lint
+  image: m.daocloud.io/docker.io/library/python:3.10-slim
+  script:
+    - python scripts/lint_storyboard_render.py
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - web/js/storyboard/**/*
+        - scripts/lint_storyboard_render.py
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - web/js/storyboard/**/*
+        - scripts/lint_storyboard_render.py
+
 # =============================================================================
 # 单元测试 job
 # =============================================================================

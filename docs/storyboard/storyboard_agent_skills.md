@@ -73,11 +73,16 @@ list-scenes
 5. `split-from-script` 返回 `scenes` 概要；也可以调用 `list-scenes` 按 `storyboard_id` 查询场次 ID、标题、时长和素材概要。
 6. 再调用生成相关命令。
 
+`world-context` 中的 `scripts`、`characters`、`locations`、`props` 不是数组，而是
+统一的 `{total,page,page_size,data}` 分页对象；智能体应读取 `.data`。
+
 `list-world-scripts` 默认不返回剧本全文，只返回 `content_length`。确实需要全文时，可以传 `include_content: true`，或调用 `get-script`。
 
 世界对象里的 `story_outline` 默认只返回预览：前 50 字 + 后 50 字，并带有 `story_outline_preview` 与 `story_outline_truncated` 字段。需要完整故事大纲时，在 HTTP body 里传 `include_full_story_outline: true`；CLI 对应参数是 `--include-full-story-outline`。
 
 `split-from-script` 不传 `model` 时，后端优先读取 `storyboard.config_json.selectedScriptSplitLlmModel`；`auto-generate-missing-images` 不传 `task_type` 时，后端优先读取 `storyboard.config_json.selectedImageTaskId`。只有确实要覆盖当前分镜配置时，智能体才应显式传这些字段。
+
+`create-storyboard-from-script` 可传 `model/model_id/vendor_id` 保存当前世界的拆分模型偏好；未传时自动继承该偏好。故事板任务状态中的首帧地址位于 `scenes[].selected_assets.first_frame.result_url`。
 
 ## CLI 示例
 

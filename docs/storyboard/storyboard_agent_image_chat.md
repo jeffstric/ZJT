@@ -25,7 +25,21 @@
 6. 前端调用 `POST /api/storyboard/scene/{scene_id}/bind-agent-image-task`，由后端把 `project_ids` 写入 `storyboard_scene_asset` 并选为当前首帧。
 7. 前端切换分镜时调用 `GET /api/storyboard/scene/{scene_id}/assets` 加载「分镜图候选」和「视频候选」；后端会在返回前用 `ai_tool_id` 查询 `ai_tools`，**仅**用 `result_url`（任务产出）补全候选 URL，并附带 `status`。**禁止**把 `image_path` / `video_path`（输入参考图，图生图时常为逗号拼接的多张 URL）当作 `result_url`，否则生成中会渲染出无法显示的破图。
 8. 如果当前分镜还没有首帧，智能体图片任务绑定后会立即成为当前选中首帧；任务完成轮询到合法单条 `result_url` 后，前端会自动回填主预览图和右侧候选图 URL。
-9. 右侧「分镜图候选」：任务未完成（无合法 `result_url`）时展示 loading 占位（旋转图标 +「生成中」），不输出无效 `img src`；完成后显示缩略图。用户点击已完成的候选图时，前端调用 `POST /api/storyboard/scene/{scene_id}/asset/select` 把该候选设置为当前首帧，并同步更新主预览和候选选中态。
+9. 右侧「分镜图候选」：任务未完成（无合法 `result_url`）时展示 loading 占位（旋转图标 +「生成中」），不输出无效 `img src`；完成后显示缩略图。用户点击已完成的候选图时，前端调用 `POST /api/storyboard/scene/{scene_id}/asset/select` 把该候选设置为当前首帧，并同步更新主预览和候选选中态。即使该分镜已有选中视频，点击图片候选后主预览也必须切换到刚选中的首帧；点击视频候选时再切回视频预览。
+
+## 分镜会话隔离
+
+每个分镜视为一个独立的助手会话。前端禁止用页面级 `isAgentRunning` 控制所有分镜，否则上一分镜运行时会错误禁用新分镜的输入框。
+
+- `state.agentRunsBySceneId[sceneId]` 保存每个分镜的运行态和 Agent `taskId`。
+- `state.agentMessagesBySceneId[sceneId]` 缓存每个分镜的流式消息；切换分镜时通过 `activateSceneAgentMessages(sceneId)` 激活对应缓存，再异步加载后端历史。
+- SSE 回调必须捕获任务发起时的 `streamSceneId`，消息追加、图片/视频任务绑定、运行态结束都只作用于该分镜。
+- 旧分镜的后台流可以继续运行，但只有 `streamSceneId === currentSceneId` 时才刷新当前助手 UI，禁止把旧流消息写进新分镜。
+- `finishSceneAgentRun(sceneId, expectedTaskId)` 必须校验任务 ID，防止旧任务的迟到回调清除同一分镜后来启动的新任务。
+- 当前分镜运行时仅禁用当前分镜的输入框和发送按钮；切换到没有运行任务的分镜后应立即可继续对话。
+- 任务进入 `done`、`error` 或连接失败等终态时，必须刷新完整 `AGENT_PANEL`，不能只刷新消息列表。`disabled` 是实际 DOM 属性，只刷新日志会导致输入框在状态结束后仍保持禁用。
+
+该设计沿用 `marketing_agent` 的会话任务归属原则，同时允许 Storyboard 中多个分镜的 SSE 流在后台并行完成。
 
 ## 视频生成模式：首尾帧 / 全能参考 + 首帧槽
 
@@ -131,6 +145,8 @@
 
 每个分镜的智能体对话记录复用 `chat_messages` 表，session_id 固定为 `storyboard-scene-{scene_id}`，agent_scope 使用 `storyboard_scene`。前端切换分镜时通过 `GET /api/storyboard/scene/{scene_id}/ai-chat/history` 加载该分镜历史；再次发起对话时，后端会把同一分镜的历史 user/assistant 消息传入 `ExpertAgent` 的 `conversation_history`，让智能体保留上下文。
 
+后台 `agent_tasks` 也复用同一个 `storyboard-scene-{scene_id}` 作为 session_id，每次执行仍由独立 task_id 区分。禁止再拼接 `storyboard-{scene_id}-{uuid}`：该格式会超过 `chat_messages.session_id VARCHAR(36)`，导致 `ConversationRecorder` 写入专家内部消息时触发 MySQL 1406。
+
 ## 智能体约束
 
 智能体技能定义位于：
@@ -139,6 +155,24 @@
 - `script_writer_core/skills/storyboard-image/SKILL.md`
 
 技能要求智能体严格围绕当前分镜提示词工作：
+
+### 对话生图的空间与邻镜参考
+
+图片模式启动 Agent 前，后端会从当前 `storyboard_scene.prompt_json` 提取一份紧凑的【当前分镜空间硬约束】，内容包括当前空间单元、相机位姿、容器槽位、可见实体、仅连续性实体及位移说明。该区块会与原始 `prompt_json` 一起交给 Agent：
+
+- 物理锚点、容器槽位、三维位置优先于会随机位改变的画面左右描述。
+- `visible` / `partial` 可以进入当前画面；`offscreen` / `occluded` 只用于推理角色仍在何处，不得被写成当前可见主体。
+- Agent 应把结构化约束转成自然的当前镜头提示词，不得把完整 JSON 或无关容器说明机械抄给生图模型。
+
+空间上下文统一调用 `services.storyboard_spatial.build_spatial_prompt_context()`：商业版由该门面进入 `enterprise.services.storyboard_spatial`，补充基于相机射线的 `derived_screen_position`；社区版继续读取兼容的槽位和可见性数据，并在门面未返回相机位姿时保留 `spatial_layout` 中的原始 `camera_pose`。API 层不实现第二套坐标投影算法。
+
+图片模式还会按 `sort_order, id` 查询当前分镜紧邻的前一、后一分镜，并把存在合法单张首帧 URL 的图片加入 `edit_image` 参考清单。顺序固定为：当前分镜的角色/场景/道具资产图、当前已有首帧、前一分镜首帧、后一分镜首帧、用户补充参考图。URL 和【参考图说明】使用同一条目列表生成，保证图号严格对齐且自动去重。
+
+- 前一分镜首帧用于恢复上游视觉状态。
+- 后一分镜首帧仅用于检查下游连续性，禁止把未来动作、位移、入场或状态变化提前复制到当前镜头。
+- 相邻分镜不能覆盖当前镜头的动作、机位、物理位置和可见实体；当前 `prompt_json` 和空间硬约束始终优先。
+- 只有图片模式自动加载邻镜。视频模式的 `image_to_video.image_urls` 仍然只使用前端首帧/尾帧/全能参考槽位，不会自动混入邻镜首帧。
+- 邻镜数据库查询通过 `asyncio.to_thread` 执行，不阻塞 FastAPI 事件循环；本功能不新增数据库字段或迁移。
 
 - 后端会把当前分镜涉及的画风、角色、场景、道具和已有分镜图整理为参考图清单，并在提示词里标明“图 N 是谁”；所有 `upload/...` 或 `/upload/...` 会先按 `server.host` 转成 HTTP/HTTPS URL。
 - 参考图清单现在复用 `services/storyboard_reference_prompt_service.py`：只包含当前画面提示词/视频提示词反向匹配出的角色、道具，再追加当前场景图；不会因为 `character_desc`、历史 `prompt_json.props`、全局画风图或已有首帧自动增加参考图。
@@ -170,4 +204,4 @@
 
 道具 chip 只在 `〖〖道具名〗〗` 能匹配到当前世界道具库时渲染；如果历史提示词中残留了大模型幻觉出的道具（例如当前道具库没有“足球”），前端会去掉外层道具标记并按普通文本显示，避免把不存在的道具误展示为可引用资产。
 
-前端轮询 `/scene/{scene_id}/task-status` 时，需要同时更新当前分镜的 `firstFrameUrl` / `videoUrl` 和 `sceneCandidates` 缓存（含 `status`）。这样生成任务完成后，即使用户没有重新切换分镜，空首帧也会自动显示新生成图片。判定「可展示 URL」时须排除逗号拼接的多图字符串；候选资产尚未拿到合法单条 URL 时，候选区显示 loading 占位（含旋转图标），不输出空或非法 `img src`。
+前端轮询 `/scene/{scene_id}/task-status` 时，需要同时更新当前分镜的 `firstFrameUrl` / `videoUrl` 和 `sceneCandidates` 缓存（含 `status`）。这样生成任务完成后，即使用户没有重新切换分镜，空首帧也会自动显示新生成图片。每次请求发起前必须记录首帧/视频选中 ID；若响应返回前用户已切换对应候选，该部分响应视为过期，不得覆盖用户的新选择。判定「可展示 URL」时须排除逗号拼接的多图字符串；候选资产尚未拿到合法单条 URL 时，候选区显示 loading 占位（含旋转图标），不输出空或非法 `img src`。

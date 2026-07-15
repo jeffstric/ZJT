@@ -63,7 +63,12 @@ sceneSpan = scene.duration > 0 ? scene.duration : EMPTY_HOLD_FALLBACK(2s)
 
 - 播放路径**不**用全量 `rerender()` 驱动时钟。  
 - 视频任务**不**进入切镜的 `await` 关键路径；`waitMs(sceneSpan)` 是唯一 await 的进度条件。  
-- `renderApp` 入口 `onDomWillRerender()` 停播。  
+- **分区刷新**：业务默认 `refresh(regions)`（见 `storyboard_ui_refresh.md`），禁止无脑全量 `renderApp`。  
+- **`refresh` / `renderApp('all')` 播放门禁**：若 `isPreviewMediaBusy()`（时间轴试看或原生 `video.controls` 播放中），自动剔除 `preview`/`center`，`all` 时降级 soft 补丁，不 `onDomWillRerender`。  
+- **`patchPreview`**：busy 时只改 caption；否则优先改 media `src`。  
+- Agent SSE → `Region.AGENT_LOG`；算力 → `headerPower`；弹窗 → `modal`。  
+- 用户主动切分镜：`stopPlayback` + `REGIONS_ON_SCENE_CHANGE` + `forcePreview`。  
+- 非 busy 的真正全量 `renderAppFull` 仍会 `onDomWillRerender()` 停播，避免幽灵声音。  
 
 ## 关键文件
 

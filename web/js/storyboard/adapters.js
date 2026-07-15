@@ -180,6 +180,9 @@ export function sceneFromApi(raw = {}) {
         durationLabel: formatDuration(raw.duration || 5),
         videoType: raw.video_type || 'video',
         videoPrompt: raw.video_prompt || '',
+        // 声音同出：选中视频已内嵌对话声音，导出完整视频时保留原音轨、跳过 TTS 混音。
+        // 数字人分镜默认开启。DB 存 TINYINT 0/1，前端统一转 bool。
+        audioEmbedded: raw.audio_embedded === true || raw.audio_embedded === 1,
         videoConfigJson: raw.video_config_json || {},
         // 分镜难易程度（易/中/难，后端 SceneDifficulty；非法值统一回落"中"）
         difficulty: normalizeDifficulty(raw.difficulty),
@@ -264,6 +267,7 @@ export function sceneToUpdatePayload(scene) {
         video_type: scene.videoType || 'video',
         video_prompt: scene.videoPrompt || '',
         video_config_json: scene.videoConfigJson || {},
+        audio_embedded: scene.audioEmbedded ? 1 : 0,
         difficulty: normalizeDifficulty(scene.difficulty),
         act_name: scene.actName || '',
         prompt_json: sceneToPromptPayload(scene),

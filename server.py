@@ -314,6 +314,10 @@ app.include_router(script_writer_router)
 from api.storyboard import router as storyboard_router
 app.include_router(storyboard_router)
 
+# 剧本分段拆分任务 API（见 docs/script/script_parser_incremental_split_design.md §13）
+from api.script_split import router as script_split_router
+app.include_router(script_split_router)
+
 # 导入并注册测试路由（临时测试，完成后移除）
 from api.agent_auth import router as agent_auth_router
 app.include_router(agent_auth_router)
@@ -5794,7 +5798,6 @@ async def parse_script(
                 )
         
         # 导入剧本解析模块
-        from llm.script_parser import parse_script_to_shots
         from model.vendor_model import VendorModelModel
 
         # 获取真实的 vendor_id
@@ -5812,85 +5815,50 @@ async def parse_script(
             except Exception as e:
                 logger.warning(f"Failed to get vendor_id for model {model_id}: {e}")
 
-        # 调用LLM解析剧本
-        parsed_data = await parse_script_to_shots(
+        # 改为异步任务：创建持久化拆分任务后立即返回 202，前端轮询状态。
+        # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
+        # 原 db_location/db_character 后处理在 worker 的 merge 阶段完成后，
+        # 由 GET /api/script-split/tasks/{id}/result 返回时补充（下一轮前端适配时对齐）。
+        from api.script_split import create_split_task
+        from config.constant import ScriptSplitConstants
+        request_config = {
+            "max_group_duration": max_group_duration,
+            "world_id": world_id,
+            "model": model,
+            "temperature": 0.5,
+            "force_medium_shot": force_medium_shot,
+            "no_bg_music": no_bg_music,
+            "split_multi_dialogue": split_multi_dialogue,
+            "language": language,
+            "dialogue_language": dialogue_language,
+            "prompt_language": prompt_language,
+            "vendor_id": real_vendor_id,
+            "model_id": int(model_id) if model_id else 1,
+            "enable_thinking": enable_thinking,
+            "thinking_effort": thinking_effort,
+        }
+        task_id, is_new = await create_split_task(
+            user_id=user_id,
+            source_type=ScriptSplitConstants.SOURCE_TYPE_VIDEO_WORKFLOW,
+            source_id=None,
+            source_node_key=None,
             script_content=script_content,
-            max_group_duration=max_group_duration,
-            world_id=world_id,
-            model=model,
-            temperature=0.5,
-            force_medium_shot=force_medium_shot,
-            no_bg_music=no_bg_music,
-            split_multi_dialogue=split_multi_dialogue,
-            language=language,
-            dialogue_language=dialogue_language,
-            prompt_language=prompt_language,
+            request_config=request_config,
             auth_token=auth_token,
-            vendor_id=real_vendor_id,
-            model_id=int(model_id) if model_id else 1,
-            enable_thinking=enable_thinking,
-            thinking_effort=thinking_effort,
         )
-        
-        if not parsed_data:
-            return JSONResponse(
-                status_code=500,
-                content={"code": -1, "message": "剧本解析失败"}
-            )
-        
-        # 为每个shot添加db_location_id、db_location_pic和location_name字段
-        locations = parsed_data.get('locations', [])
-        characters = parsed_data.get('characters', [])
-        shot_groups = parsed_data.get('shot_groups', [])
+        return JSONResponse(
+            status_code=202,
+            content={
+                "code": 0,
+                "message": "剧本拆分任务已创建" if is_new else "已有进行中的拆分任务",
+                "data": {
+                    "task_id": task_id,
+                    "status": "queued",
+                    "status_url": f"/api/script-split/tasks/{task_id}",
+                },
+            },
+        )
 
-        # 将LLM生成的角色名称替换为数据库中的实际名称
-        for char in characters:
-            db_id = char.get('character_db_id')
-            if db_id is not None:
-                try:
-                    from model.character import CharacterModel
-                    db_character = CharacterModel.get_by_id(db_id)
-                    if db_character:
-                        # 保存LLM生成的名称作为备用
-                        char['llm_name'] = char.get('name')
-                        # 替换为数据库中的实际名称
-                        char['name'] = db_character.name
-                except Exception as e:
-                    logger.warning(f"Failed to get character name for {db_id}: {e}")
-
-        for group in shot_groups:
-            shots = group.get('shots', [])
-            for shot in shots:
-                location_id = shot.get('location_id')
-                if location_id:
-                    db_location_id, db_location_pic, location_name = _match_location_to_db(location_id, locations, user_id)
-                    shot['db_location_id'] = db_location_id
-                    shot['db_location_pic'] = db_location_pic
-                    shot['location_name'] = location_name
-                else:
-                    shot['db_location_id'] = None
-                    shot['db_location_pic'] = None
-                    shot['location_name'] = None
-
-                # 为每个shot中的characters_present添加db_character信息
-                characters_present = shot.get('characters_present', [])
-                db_character_info = []
-                for char_id in characters_present:
-                    db_char_id, db_char_pic, db_char_name = _match_character_to_db(char_id, characters)
-                    db_character_info.append({
-                        'character_id': char_id,
-                        'db_character_id': db_char_id,
-                        'db_character_pic': db_char_pic,
-                        'db_character_name': db_char_name
-                    })
-                shot['db_character_info'] = db_character_info
-
-        return JSONResponse({
-            "code": 0,
-            "message": "解析成功",
-            "data": parsed_data
-        })
-        
     except Exception as e:
         logger.error(f"Failed to parse script: {str(e)}")
         logger.error(traceback.format_exc())

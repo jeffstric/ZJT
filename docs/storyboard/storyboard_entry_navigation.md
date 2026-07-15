@@ -77,6 +77,10 @@
 3. 「其他集数」可输入任意正整数进入（列表中不存在也可），同样走 create 新建。  
 4. 前端：`render.js` 集数按钮/面板，`events.js` `navigateToEpisode` / `ensureEpisodeFoldersLoaded`，`api.listStoryboardFolders`。
 
+## 媒体导出
+
+素材包 / 完整视频导出见 [storyboard_export.md](./storyboard_export.md)（zip/mp4 上传 CDN，返回 `download_url`）。
+
 ## 新建故事板标题（title）
 
 `storyboard.title` 为库表字段（`VARCHAR(255)`），创建时写入：

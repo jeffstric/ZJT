@@ -17,6 +17,13 @@
 3. **支持修改“对话模型”（LLM 模型）**  
    参考 `web/script_writer.html` 的模型选择器实现（从 `/api/models` 加载、vendor 分组、localStorage 记忆）。
 
+4. **思考模式（2026-07 补充）**  
+   对齐 script_writer：当所选 LLM 的 `supports_thinking` 为真时，在「对话模型」「拆分剧本模型」选择器下方显示「思考」开关。  
+   - **DeepSeek**：默认开启思考（用户明确关闭后记住 `lastThinkingState.explicitlyDisabled`）。  
+   - **Doubao / volcengine**：开启思考后显示强度 low/medium/high。  
+   - 请求透传 `enable_thinking` / `thinking_effort` 到 `generate-from-script` 与分镜智能体 `create_task`。  
+   - 状态与 script_writer 共用 `localStorage.lastThinkingState`。
+
 **约束**：
 - 必须说中文。
 - 所有 web 接口内部函数必须非阻塞。
@@ -125,6 +132,16 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 - `render.js` 在 `.scene-timeline-list` 上输出 `data-ratio="${state.workflowRatio}"`。
 - `storyboard.css` 将缩略图框调整为更小的固定横向黑底胶片框（`180×101.25`），不再随 `[data-ratio]` 变成窄竖框；`.add-scene-btn` 与插入槽同步使用同一高度，保证队列布局稳定。
 - 缩略图图片统一包在 `.scene-timeline-media-frame` 中，frame 负责黑底与完整展示；内部 `<img>` 显式 `width:100%; height:100%; object-fit:contain !important; background:#000`，竖屏图按高度 100% 显示并左右留黑边，和上方 preview 一致；横屏图也不裁切。`storyboard.html` 对 `storyboard.css` 使用 `?v=__VERSION__`，避免浏览器继续使用旧 CSS。
+
+### 5.3 视频候选选择与主预览播放
+
+右侧“视频候选”保持窄栏缩略图设计，不在候选卡片内部播放视频：
+
+- 点击缩略图的非播放区域只执行候选选择：调用现有 `selectSceneAsset`，更新 `selectedVideoId` / `videoUrl` / `previewAssetType`，然后局部刷新主预览、候选区和时间轴；主预览不自动播放。
+- 中央圆形播放入口使用语义化 `<button data-candidate-play>`。点击后先在本地把目标候选设为选中并刷新主预览，再在同一用户手势内调用主预览 `<video>.play()`，因此“正在播放的视频”与“当前选中视频”保持一致。
+- 播放启动后异步调用相同的 `selectSceneAsset` 接口持久化 `selected_video_id`。接口失败时用 `candidate_selection_state.js` 的快照恢复原 `selectedVideoId`、URL、预览类型及候选 selected 标志，并重新局部刷新。
+- 浏览器若拒绝自动播放，不回滚已选中的视频；主预览保留原生 controls，用户可以手动继续播放。
+- 全流程只使用 Region 分区刷新。播放中的主预览继续受 `isPreviewMediaBusy()` 保护，轮询不会通过全量 `innerHTML` 拆掉 video。
 
 效果：底部分镜序列统一为较小的横向黑底胶片框（`180x101.25`），竖屏图高度 100% 显示并左右自然留黑边，和上方 preview 的显示方式一致；横屏图也不裁切。切换 `workflowRatio` 时无需刷新即生效（rerender 重写 `data-ratio`）。
 

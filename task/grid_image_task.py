@@ -158,6 +158,33 @@ def _mark_storyboard_grid_batch_items_failed(task: Any, error_message: str) -> N
     except Exception as exc:
         logger.error("分镜首帧宫格 batch item 失败回写整体异常: %s", exc, exc_info=True)
 
+    # 同步终止绑定的 pipeline step，避免其永久卡在 PENDING 被全局调度器反复 skip 刷日志。
+    # 该函数已被超时/ComfyUI FAILED/异常/几何校验失败 四条失败路径调用，在此集中回写即可全覆盖。
+    _fail_pending_grid_split_step_for_task(task, error_message)
+
+
+def _fail_pending_grid_split_step_for_task(task: Any, error_message: str) -> None:
+    """将 task 绑定的仍 PENDING 的 storyboard grid split pipeline step 标记为 FAILED。"""
+    if task.item_type != ItemType.STORYBOARD_FIRST_FRAME_GRID:
+        return
+    try:
+        ai_tool_id = int(task.project_id)
+    except (TypeError, ValueError):
+        logger.error(
+            "回写分镜首帧宫格 pipeline step 失败：缺少可用 ai_tool_id, task_key=%s project_id=%s",
+            getattr(task, "task_key", None), getattr(task, "project_id", None),
+        )
+        return
+    try:
+        from model.ai_tool_pipeline_steps import PipelineStepModel
+
+        PipelineStepModel.fail_pending_grid_split_step(ai_tool_id, error_message)
+    except Exception as exc:
+        logger.error(
+            "回写分镜首帧宫格 pipeline step 失败: ai_tool_id=%s err=%s",
+            ai_tool_id, exc, exc_info=True,
+        )
+
 
 def _handle_grid_validation_failure(task: Any, validation: Any) -> bool:
     reason = getattr(validation, "reason", "invalid grid image")
@@ -670,6 +697,8 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
             error_message=str(e)
         )
         _update_task_status_file(task.item_type, task.item_name, 'failed', task.user_id, task.world_id)
+        # 同步终止绑定的 pipeline step（DOWNLOAD_FAILED 也是失败终态，否则 step 会永久卡 PENDING）
+        _fail_pending_grid_split_step_for_task(task, f"宫格生图下载/处理失败: {e}")
 
 
 def _recover_late_completed_terminal_tasks(limit: int = 20) -> int:
@@ -701,6 +730,57 @@ def _recover_late_completed_terminal_tasks(limit: int = 20) -> int:
     return recovered_count
 
 
+def _cleanup_orphan_grid_split_steps() -> int:
+    """
+    清理孤立的 storyboard grid split pipeline step。
+
+    孤儿定义：step 仍 PENDING，但绑定的 grid_image_tasks 已进入失败终态
+    （FAILED / TIMEOUT / DOWNLOAD_FAILED / CANCELLED）。
+
+    这类 step 是旧版本（未做失败回写）遗留的，或因异常路径漏写导致。
+    全局调度器（task.pipeline_processor）每 13s 会反复 skip 它们刷日志，
+    在此每轮轻量清理，使其尽快终止、退出扫描范围。
+
+    Returns:
+        被标记为 FAILED 的 step 数量
+    """
+    try:
+        from config.constant import GridConfig, GridImageTaskStatus
+        from model.ai_tool_pipeline_steps import PipelineStepModel
+    except Exception as exc:
+        logger.error("加载孤儿 grid split step 清理依赖失败: %s", exc, exc_info=True)
+        return 0
+
+    failed_statuses = (
+        GridImageTaskStatus.FAILED,
+        GridImageTaskStatus.TIMEOUT,
+        GridImageTaskStatus.DOWNLOAD_FAILED,
+        GridImageTaskStatus.CANCELLED,
+    )
+    try:
+        orphans = PipelineStepModel.get_orphan_grid_split_steps(
+            limit=GridConfig.GRID_SPLIT_ORPHAN_CLEANUP_LIMIT,
+            grid_failed_statuses=failed_statuses,
+        )
+    except Exception as exc:
+        logger.error("查询孤儿 grid split step 失败: %s", exc, exc_info=True)
+        return 0
+    if not orphans:
+        return 0
+
+    step_ids = [s.id for s in orphans]
+    logger.info("发现 %s 个孤儿 storyboard grid split step，标记为 FAILED: ids=%s", len(step_ids), step_ids)
+    try:
+        affected = PipelineStepModel.fail_steps_by_ids(
+            step_ids,
+            error_message="宫格生图任务已进入失败终态，绑定 step 由孤儿清理标记为 FAILED",
+        )
+        return affected
+    except Exception as exc:
+        logger.error("标记孤儿 grid split step 失败: ids=%s err=%s", step_ids, exc, exc_info=True)
+        return 0
+
+
 def process_grid_image_tasks(app=None):
     """
     处理宫格生图任务（在scheduler进程中定时执行）
@@ -710,6 +790,7 @@ def process_grid_image_tasks(app=None):
     """
     try:
         _recover_late_completed_terminal_tasks()
+        _cleanup_orphan_grid_split_steps()
 
         # 获取待处理的任务
         pending_tasks = GridImageTasksModel.get_pending_tasks(limit=50)

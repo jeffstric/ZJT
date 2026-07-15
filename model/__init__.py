@@ -32,6 +32,8 @@ from .storyboard_dialogue import StoryboardDialogueModel, StoryboardDialogue
 from .storyboard_dialogue_audio import StoryboardDialogueAudioModel, StoryboardDialogueAudio
 from .storyboard_scene_asset import StoryboardSceneAssetModel, StoryboardSceneAsset
 from .storyboard_image_batch import StoryboardImageBatchJobModel, StoryboardImageBatchItemModel
+from .script_split_task import ScriptSplitTaskModel, ScriptSplitTask
+from .script_split_segment import ScriptSplitSegmentModel, ScriptSplitSegment
 
 __all__ = [
     'AIToolsModel',
@@ -110,4 +112,8 @@ __all__ = [
     'StoryboardSceneAsset',
     'StoryboardImageBatchJobModel',
     'StoryboardImageBatchItemModel',
+    'ScriptSplitTaskModel',
+    'ScriptSplitTask',
+    'ScriptSplitSegmentModel',
+    'ScriptSplitSegment',
 ]

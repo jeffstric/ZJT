@@ -120,8 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
     create_storyboard.add_argument("--workflow-ratio")
     create_storyboard.add_argument("--composition-preference")
     create_storyboard.add_argument("--version", type=int, default=1)
+    create_storyboard.add_argument("--model")
+    create_storyboard.add_argument("--model-id", type=int)
+    create_storyboard.add_argument("--vendor-id", type=int)
 
-    split_script = subparsers.add_parser("split-from-script", help="Parse linked script into storyboard scenes.")
+    split_script = subparsers.add_parser(
+        "split-from-script",
+        help="Parse linked script into storyboard scenes (async: returns task_id, poll GET /api/script-split/tasks/{task_id}).",
+    )
     split_script.add_argument("--storyboard-id", type=int, required=True)
     split_script.add_argument("--user-id", type=int, required=True)
     split_script.add_argument("--auth-token", default="")

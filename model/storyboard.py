@@ -384,13 +384,20 @@ class StoryboardModel:
         storyboard_id: int,
         user_id: int,
         scenes: List[Dict],
+        script_split_task_id: Optional[int] = None,
     ) -> int:
-        """Append scenes and dialogues to an existing storyboard in one transaction."""
+        """Append scenes and dialogues to an existing storyboard in one transaction.
+
+        当传入 script_split_task_id 时，启用发布幂等：每个 scene 写入稳定的
+        (script_split_task_id, source_shot_key)，靠唯一索引去重。发布重试时
+        已存在的 shot_key 会被跳过，不重复创建。
+        """
         insert_scene_sql = """
             INSERT INTO storyboard_scene
             (storyboard_id, sort_order, title, duration, prompt_json, video_prompt,
-             video_type, video_config_json, difficulty, act_name, last_modified_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             video_type, video_config_json, audio_embedded, difficulty, act_name,
+             last_modified_user_id, script_split_task_id, source_shot_key)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         insert_dialogue_sql = """
             INSERT INTO storyboard_dialogue
@@ -411,6 +418,15 @@ class StoryboardModel:
                 prompt_str = json.dumps(prompt, ensure_ascii=False) if prompt else None
                 video_config = scene_data.get('video_config')
                 video_config_str = json.dumps(video_config, ensure_ascii=False) if video_config else None
+                # audio_embedded：调用方未显式提供时，按 video_type 推导
+                # （digital_human 产物已含口型音轨，默认声音同出）。
+                video_type_val = scene_data.get('video_type', SceneVideoType.VIDEO)
+                if 'audio_embedded' in scene_data and scene_data.get('audio_embedded') is not None:
+                    audio_embedded_val = 1 if scene_data.get('audio_embedded') else 0
+                else:
+                    audio_embedded_val = 1 if video_type_val == SceneVideoType.DIGITAL_HUMAN else 0
+                # 发布幂等：source_shot_key 稳定标识每个最终 shot
+                source_shot_key = scene_data.get('source_shot_key') if script_split_task_id else None
                 scene_params = (
                     storyboard_id,
                     float(i),
@@ -418,11 +434,14 @@ class StoryboardModel:
                     scene_data.get('duration', 5),
                     prompt_str,
                     scene_data.get('video_prompt'),
-                    scene_data.get('video_type', SceneVideoType.VIDEO),
+                    video_type_val,
                     video_config_str,
+                    audio_embedded_val,
                     SceneDifficulty.normalize(scene_data.get('difficulty')),
                     scene_data.get('act_name'),
                     user_id,
+                    script_split_task_id,
+                    source_shot_key,
                 )
                 scene_id = execute_insert_in_transaction(conn, insert_scene_sql, scene_params)
                 for j, d in enumerate(scene_data.get('dialogues') or []):
@@ -440,6 +459,17 @@ class StoryboardModel:
                 cursor.execute(update_storyboard_sql, (total_duration, storyboard_id))
             logger.info(f"Created {len(scenes)} scenes for storyboard {storyboard_id}")
             return len(scenes)
+
+    @staticmethod
+    def count_scenes_by_split_task(script_split_task_id: int) -> int:
+        """统计某拆分任务已发布的分镜数（发布恢复时判断是否已全部落库）。"""
+        rows = execute_query(
+            "SELECT COUNT(*) AS cnt FROM storyboard_scene "
+            "WHERE script_split_task_id = %s",
+            (script_split_task_id,),
+            fetch_one=True,
+        )
+        return int(rows['cnt']) if rows else 0
 
     @staticmethod
     def recalc_total_duration(storyboard_id: int) -> float:

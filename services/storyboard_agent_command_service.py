@@ -112,11 +112,22 @@ class StoryboardAgentCommandService:
                     "name": "world-context",
                     "permission": "world:view",
                     "params": ["world_id", "page_size", "include_script_content", "include_full_story_outline"],
+                    "response": {
+                        "scripts": "Page<object>",
+                        "characters": "Page<object>",
+                        "locations": "Page<object>",
+                        "props": "Page<object>",
+                        "page_shape": ["total", "page", "page_size", "data"],
+                    },
                 },
                 {
                     "name": "create-storyboard-from-script",
                     "permission": "storyboard:create",
-                    "params": ["script_id", "title", "workflow_id", "style", "workflow_ratio", "composition_preference"],
+                    "params": [
+                        "script_id", "title", "workflow_id", "style",
+                        "workflow_ratio", "composition_preference",
+                        "model", "model_id", "vendor_id",
+                    ],
                 },
                 {
                     "name": "split-from-script",
@@ -179,6 +190,17 @@ class StoryboardAgentCommandService:
                     ],
                 },
                 {
+                    "name": "auto-generate-missing-videos",
+                    "permission": "storyboard:generate",
+                    "params": [
+                        "storyboard_id",
+                        "limit",
+                        "task_type",
+                        "ratio",
+                        "sequence_mode",
+                    ],
+                },
+                {
                     "name": "generate-video",
                     "permission": "storyboard:generate",
                     "params": ["scene_id", "mode", "image_mode", "prompt", "ratio", "duration_seconds", "count"],
@@ -192,6 +214,10 @@ class StoryboardAgentCommandService:
                     "name": "storyboard-task-status",
                     "permission": "storyboard:view",
                     "params": ["storyboard_id", "asset_type"],
+                    "response": {
+                        "scenes": "array",
+                        "result_url_path": "scenes[].selected_assets.first_frame.result_url",
+                    },
                 },
                 {
                     "name": "storyboard-image-batch-status",
@@ -332,6 +358,9 @@ class StoryboardAgentCommandService:
                 workflow_ratio=data.get("workflow_ratio"),
                 composition_preference=data.get("composition_preference"),
                 version=_to_int(data.get("version"), "version", 1) or 1,
+                model=data.get("model"),
+                model_id=_to_int(data.get("model_id"), "model_id"),
+                vendor_id=_to_int(data.get("vendor_id"), "vendor_id"),
             )
 
         if command == "split-from-script":
@@ -385,6 +414,20 @@ class StoryboardAgentCommandService:
                 stop_on_error=not _to_bool(data.get("continue_on_error")),
                 task_type=_to_int(data.get("task_type") or data.get("image_task_id"), "task_type"),
                 sequence_mode=data.get("sequence_mode") or data.get("batch_mode"),
+            )
+
+        if command == "auto-generate-missing-videos":
+            return self.service.auto_generate_missing_videos(
+                storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
+                user_id=_to_required_int(data.get("user_id"), "user_id"),
+                auth_token=data.get("auth_token") or "",
+                limit=_to_int(data.get("limit"), "limit"),
+                stop_on_error=not _to_bool(
+                    True if data.get("continue_on_error") is None else data.get("continue_on_error")
+                ),
+                task_type=_to_int(data.get("task_type") or data.get("video_task_id"), "task_type"),
+                ratio=data.get("ratio"),
+                sequence_mode=data.get("sequence_mode") or data.get("batch_mode") or "speed",
             )
 
         if command == "generate-video":
@@ -441,6 +484,7 @@ class StoryboardAgentCommandService:
                 video_prompt=data.get("video_prompt"),
                 video_type=data.get("video_type"),
                 video_config_json=data.get("video_config_json"),
+                audio_embedded=data.get("audio_embedded"),
                 difficulty=data.get("difficulty"),
                 act_name=data.get("act_name"),
             )

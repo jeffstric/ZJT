@@ -68,7 +68,13 @@ def patched_storyboard_cli(monkeypatch):
         style_reference_image="https://cdn.test/style.png",
         script_id=123,
         config_json={
-            "selectedScriptSplitLlmModel": "deepseek-v4-flash",
+            # 前端可能存成 dict（{model,model_id,vendor_id}），覆盖 BUG #1 真实场景。
+            "selectedScriptSplitLlmModel": {
+                "name": "deepseek-v4-pro",
+                "model": "deepseek-v4-pro",
+                "model_id": 1008,
+                "vendor_id": 10,
+            },
             "selectedImageTaskId": 1,
         },
     )
@@ -342,6 +348,11 @@ def patched_storyboard_cli(monkeypatch):
     monkeypatch.setattr(svc, "CharacterModel", SimpleNamespace(get_by_id=lambda record_id: character))
     monkeypatch.setattr(svc, "LocationModel", SimpleNamespace(get_by_id=lambda record_id: location))
     monkeypatch.setattr(svc, "PropsModel", SimpleNamespace(get_by_id=lambda record_id: prop))
+    monkeypatch.setattr(
+        svc,
+        "UserPreferencesModel",
+        SimpleNamespace(get=lambda *args: None, upsert=lambda *args: 1),
+    )
 
     return SimpleNamespace(
         module=svc,
@@ -393,6 +404,80 @@ def test_create_storyboard_from_script_creates_blank_storyboard(patched_storyboa
     assert patched_storyboard_cli.storyboard_model.created[0]["episode_number"] == 2
     assert patched_storyboard_cli.storyboard_model.created[0]["script_id"] == 123
     assert patched_storyboard_cli.storyboard_model.created[0]["title"] == "Case Script"
+    assert patched_storyboard_cli.storyboard_model.created[0]["config_json"] == {
+        "selectedScriptSplitLlmModel": "gemini-3-flash-preview"
+    }
+
+
+def test_create_storyboard_from_script_uses_explicit_model_and_saves_world_preference(
+    patched_storyboard_cli, monkeypatch
+):
+    preference_calls = []
+    monkeypatch.setattr(
+        patched_storyboard_cli.module,
+        "UserPreferencesModel",
+        SimpleNamespace(
+            get=lambda *args: None,
+            upsert=lambda *args: preference_calls.append(args) or 1,
+        ),
+        raising=False,
+    )
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+
+    result = service.create_storyboard_from_script(
+        script_id=123,
+        user_id=7,
+        model="deepseek-v4-pro",
+        model_id=1008,
+        vendor_id=10,
+    )
+
+    assert result["created"] is True
+    selection = patched_storyboard_cli.storyboard_model.created[0]["config_json"][
+        "selectedScriptSplitLlmModel"
+    ]
+    assert selection == {
+        "model": "deepseek-v4-pro",
+        "model_id": 1008,
+        "vendor_id": 10,
+    }
+    assert preference_calls == [
+        ("7", "99", "script_split_llm_model", selection)
+    ]
+    assert result["preference_saved"] is True
+
+
+def test_create_storyboard_from_script_inherits_world_model_preference(
+    patched_storyboard_cli, monkeypatch
+):
+    preference = SimpleNamespace(
+        get_value=lambda: {
+            "model": "deepseek-v4-flash",
+            "model_id": 1009,
+            "vendor_id": 10,
+        }
+    )
+    monkeypatch.setattr(
+        patched_storyboard_cli.module,
+        "UserPreferencesModel",
+        SimpleNamespace(get=lambda *args: preference, upsert=lambda *args: 1),
+        raising=False,
+    )
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+
+    service.create_storyboard_from_script(script_id=123, user_id=7)
+
+    assert patched_storyboard_cli.storyboard_model.created[0]["config_json"] == {
+        "selectedScriptSplitLlmModel": {
+            "model": "deepseek-v4-flash",
+            "model_id": 1009,
+            "vendor_id": 10,
+        }
+    }
 
 
 def test_create_storyboard_from_script_reuses_existing_storyboard(patched_storyboard_cli):
@@ -422,6 +507,110 @@ def test_create_storyboard_from_script_reuses_existing_storyboard(patched_storyb
     assert result["storyboard_id"] == 654
     assert result["created"] is False
     assert patched_storyboard_cli.storyboard_model.created == []
+
+
+def test_create_storyboard_from_script_reuse_preserves_existing_model(
+    patched_storyboard_cli, monkeypatch
+):
+    existing = patched_storyboard_cli.module.StoryboardModel.get_by_id(22)
+    patched_storyboard_cli.storyboard_model.existing = existing
+    updates = []
+    monkeypatch.setattr(
+        patched_storyboard_cli.storyboard_model,
+        "update",
+        staticmethod(lambda record_id, **kwargs: updates.append((record_id, kwargs)) or 1),
+    )
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+
+    result = service.create_storyboard_from_script(script_id=123, user_id=7)
+
+    assert result["created"] is False
+    assert updates == []
+
+
+def test_create_storyboard_from_script_explicit_model_overrides_reused_storyboard(
+    patched_storyboard_cli, monkeypatch
+):
+    existing = patched_storyboard_cli.module.StoryboardModel.get_by_id(22)
+    patched_storyboard_cli.storyboard_model.existing = existing
+    updates = []
+    preference_calls = []
+    monkeypatch.setattr(
+        patched_storyboard_cli.storyboard_model,
+        "update",
+        staticmethod(lambda record_id, **kwargs: updates.append((record_id, kwargs)) or 1),
+    )
+    monkeypatch.setattr(
+        patched_storyboard_cli.module,
+        "UserPreferencesModel",
+        SimpleNamespace(
+            get=lambda *args: None,
+            upsert=lambda *args: preference_calls.append(args) or 1,
+        ),
+    )
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+
+    result = service.create_storyboard_from_script(
+        script_id=123,
+        user_id=7,
+        model="deepseek-v4-flash",
+        model_id=1009,
+        vendor_id=10,
+    )
+
+    selection = updates[0][1]["config_json"]["selectedScriptSplitLlmModel"]
+    assert selection["model"] == "deepseek-v4-flash"
+    assert preference_calls[0][-1] == selection
+    assert result["preference_saved"] is True
+
+
+def test_create_storyboard_from_script_reports_preference_save_failure(
+    patched_storyboard_cli, monkeypatch
+):
+    monkeypatch.setattr(
+        patched_storyboard_cli.module,
+        "UserPreferencesModel",
+        SimpleNamespace(
+            get=lambda *args: None,
+            upsert=lambda *args: (_ for _ in ()).throw(RuntimeError("db unavailable")),
+        ),
+    )
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+
+    result = service.create_storyboard_from_script(
+        script_id=123,
+        user_id=7,
+        model="deepseek-v4-pro",
+    )
+
+    assert result["created"] is True
+    assert result["preference_saved"] is False
+    assert "偏好同步失败" in result["warning"]
+
+
+def test_world_context_uses_uniform_pagination_envelopes(
+    patched_storyboard_cli, monkeypatch
+):
+    service = patched_storyboard_cli.module.StoryboardAgentCliService(
+        submitter=patched_storyboard_cli.submitter
+    )
+    page = {"total": 1, "page": 1, "page_size": 100, "data": [{"id": 1}]}
+    monkeypatch.setattr(service, "list_world_scripts", lambda **kwargs: dict(page))
+    monkeypatch.setattr(service, "list_world_characters", lambda *args, **kwargs: dict(page))
+    monkeypatch.setattr(service, "list_world_locations", lambda *args, **kwargs: dict(page))
+    monkeypatch.setattr(service, "list_world_props", lambda *args, **kwargs: dict(page))
+
+    result = service.world_context(world_id=99, user_id=7)
+
+    for field in ("scripts", "characters", "locations", "props"):
+        assert set(result[field]) == {"total", "page", "page_size", "data"}
+        assert isinstance(result[field]["data"], list)
 
 
 def test_generate_image_text_to_image_binds_first_frame_asset(patched_storyboard_cli):
@@ -875,10 +1064,12 @@ def test_auto_generate_missing_images_defaults_task_type_from_storyboard_config(
     result = service.auto_generate_missing_images(storyboard_id=22, user_id=7, auth_token="token")
 
     # 修复后不再同步推进 batch（避免与调度器并发重复提交），交由调度器统一处理。
-    # 因此 submitted_count=0、generate_image 未被同步调用，但 job 已创建（status=pending）。
-    assert result["submitted_count"] == 0
+    # submitted_count 统一为「本次计划待生成数」：此处有 1 个 pending 场景 → submitted_count=1，
+    # 与随后 status 查询同源，不再出现 0→N→M 跳变。
+    # generate_image 未被同步调用，但因 plan 阶段写入 pending>0，job status 推进为 running。
+    assert result["submitted_count"] == 1
     assert result["batch_id"]
-    assert result["status"] == "pending"
+    assert result["status"] == "running"
     assert captured_task_types == [1]
     assert generated == []
 
@@ -1249,61 +1440,84 @@ def test_quality_first_frame_batch_uses_grid_service(patched_storyboard_cli, mon
     assert calls == [job]
 
 
-def test_split_from_script_defaults_model_from_storyboard_config_and_returns_scenes(patched_storyboard_cli, monkeypatch):
+def test_split_from_script_creates_async_task_and_returns_task_id(patched_storyboard_cli, monkeypatch):
+    """BUG #2：split-from-script 改为异步路径，返回 task_id + status_url，不再同步阻塞跑 LLM。"""
     module = patched_storyboard_cli.module
-    captured_parse_kwargs = []
-    created_payloads = []
-    captured_grid_kwargs = []
-    returned_scenes = [
-        {"scene_id": 31, "title": "Scene A", "duration": 5, "sort_order": 0, "selected_first_frame_id": None},
-        {"scene_id": 32, "title": "Scene B", "duration": 6, "sort_order": 1, "selected_first_frame_id": None},
-    ]
-
     monkeypatch.setattr(module.StoryboardSceneModel, "list_by_storyboard", lambda storyboard_id: [])
-    monkeypatch.setattr(
-        module.StoryboardModel,
-        "create_scenes",
-        lambda storyboard_id, user_id, scenes: created_payloads.append(scenes) or len(scenes),
-    )
+
+    captured_configs = []
+
+    async def fake_create_split_task(**kwargs):
+        captured_configs.append(kwargs.get("request_config") or {})
+        return ("task-abc-123", True)
+
+    import api.script_split as script_split_module
+    monkeypatch.setattr(script_split_module, "create_split_task", fake_create_split_task)
+
     service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
-    monkeypatch.setattr(
-        service,
-        "_parse_script_to_shots_sync",
-        lambda **kwargs: captured_parse_kwargs.append(kwargs) or {"shot_groups": [{"title": "Scene A"}]},
-    )
-    monkeypatch.setattr(
-        service,
-        "_build_storyboard_scenes_from_parsed_script",
-        lambda parsed_data, style="": [
-            {"title": "Scene A", "duration": 5, "prompt": {"scene_desc": "A"}},
-            {"title": "Scene B", "duration": 6, "prompt": {"scene_desc": "B"}},
-        ],
-    )
-    monkeypatch.setattr(service, "list_scenes", lambda storyboard_id, user_id=None: {"success": True, "scenes": returned_scenes})
-
-    class FakeLocationBootstrapService:
-        def bootstrap(self, parsed_data, world_id, user_id):
-            return {"id_map": {}, "warnings": [], "created_location_count": 0, "reused_location_count": 0}
-
-        def submit_subscene_grids(self, *args, **kwargs):
-            captured_grid_kwargs.append(kwargs)
-            return {"submitted_batches": 0, "submitted_subscene_count": 0, "skipped_no_parent_image": 0, "warnings": []}
-
-    import services.storyboard_location_bootstrap_service as location_bootstrap_module
-    monkeypatch.setattr(location_bootstrap_module, "StoryboardLocationBootstrapService", FakeLocationBootstrapService)
 
     result = service.split_from_script(
         storyboard_id=22,
         user_id=7,
         auth_token="token",
+        sequence_mode="balanced",
         force_overwrite_subscene_grids=True,
     )
 
-    assert captured_parse_kwargs[0]["model"] == "deepseek-v4-flash"
-    assert captured_grid_kwargs[0]["force_overwrite"] is False
-    assert len(created_payloads[0]) == 2
-    assert result["generated_count"] == 2
-    assert [scene["scene_id"] for scene in result["scenes"]] == [31, 32]
+    # 异步路径：返回 task_id + status_url + queued，不再返回 generated_count/scenes
+    assert result["success"] is True
+    assert result["status"] == "queued"
+    assert result["task_id"] == "task-abc-123"
+    assert result["status_url"] == "/api/script-split/tasks/task-abc-123"
+    # BUG #1：config 里是 dict，应被解包成 model 字符串 + model_id + vendor_id 传入 request_config
+    cfg = captured_configs[0]
+    assert cfg["model"] == "deepseek-v4-pro"
+    assert cfg["model_id"] == 1008
+    assert cfg["vendor_id"] == 10
+    assert cfg["storyboard_id"] == 22
+    assert cfg["source"] == "storyboard"
+    assert cfg["sequence_mode"] == "balanced"
+
+
+def test_resolve_split_model_context_unpacks_dict(patched_storyboard_cli, monkeypatch):
+    """BUG #1：_resolve_split_model_context 正确解包 dict，避免 str(dict) 拼进 URL。"""
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    storyboard = patched_storyboard_cli.module.StoryboardModel.get_by_id(22)
+
+    # fixture 里 selectedScriptSplitLlmModel 是 dict
+    model, model_id, vendor_id = service._resolve_split_model_context(storyboard, None, None, None)
+    assert model == "deepseek-v4-pro"
+    assert model_id == 1008
+    assert vendor_id == 10
+
+    # 显式入参优先
+    model, model_id, vendor_id = service._resolve_split_model_context(storyboard, "gpt-4o", 200, 30)
+    assert model == "gpt-4o"
+    assert model_id == 200
+    assert vendor_id == 30
+
+    # 显式入参为 dict 也应解包
+    model, model_id, vendor_id = service._resolve_split_model_context(
+        storyboard, {"model": "claude-x", "model_id": 300, "vendor_id": 40}, None, None
+    )
+    assert model == "claude-x"
+    assert model_id == 300
+    assert vendor_id == 40
+
+
+def test_resolve_split_model_context_handles_str_config(patched_storyboard_cli, monkeypatch):
+    """BUG #1 向后兼容：config 为字符串时只取 model，model_id/vendor_id 为 None。"""
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    storyboard = patched_storyboard_cli.module.StoryboardModel.get_by_id(22)
+    # 覆盖 config 为字符串
+    storyboard.config_json = {"selectedScriptSplitLlmModel": "gemini-3-flash-preview"}
+
+    model, model_id, vendor_id = service._resolve_split_model_context(storyboard, None, None, None)
+    assert model == "gemini-3-flash-preview"
+    assert model_id is None
+    assert vendor_id is None
 
 
 def test_list_scenes_returns_scene_summaries(patched_storyboard_cli, monkeypatch):
@@ -1624,3 +1838,138 @@ def test_auto_generate_missing_images_rejects_quality_mode_in_community(patched_
 
     assert exc.value.error_code == "enterprise_only"
     assert "效果模式仅商业版支持" in exc.value.message
+
+
+def _scenes_missing(storyboard_id, count):
+    """构造 count 个全部缺首帧的分镜。"""
+    return [
+        {
+            "id": 100 + i,
+            "storyboard_id": storyboard_id,
+            "title": f"Scene {i}",
+            "sort_order": i,
+            "selected_first_frame_id": None,
+        }
+        for i in range(1, count + 1)
+    ]
+
+
+def test_auto_generate_missing_images_no_limit_plans_all_scenes(patched_storyboard_cli, monkeypatch):
+    """BUG #4：不传 limit 时应规划全部缺失场景，无 limit_reached 截断。"""
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(
+        module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda storyboard_id: _scenes_missing(storyboard_id, 25),
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service.auto_generate_missing_images(
+        storyboard_id=22, user_id=7, auth_token="token", sequence_mode="speed"
+    )
+
+    # 25 个全部缺图，不传 limit → 全部规划为 pending，submitted_count=计划数=25
+    assert result["limit"] == module.StoryboardAutoGenerateConstants.UNLIMITED_BATCH_LIMIT
+    assert result["submitted_count"] == 25
+    items = result["items"]
+    assert len(items) == 25
+    assert all(item["plan_status"] == "pending" for item in items)
+    assert all(item["status"] == "pending" for item in items)
+    assert not any(item.get("plan_status") == "limit_reached" for item in items)
+
+
+def test_auto_generate_missing_images_explicit_limit_truncates(patched_storyboard_cli, monkeypatch):
+    """BUG #4：显式传 limit=5 时只规划前 5 个，其余标 limit_reached/skipped。"""
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(
+        module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda storyboard_id: _scenes_missing(storyboard_id, 25),
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service.auto_generate_missing_images(
+        storyboard_id=22, user_id=7, auth_token="token", sequence_mode="speed", limit=5
+    )
+
+    assert result["limit"] == 5
+    assert result["submitted_count"] == 5
+    items = result["items"]
+    assert len(items) == 25
+    pending = [item for item in items if item["plan_status"] == "pending"]
+    limited = [item for item in items if item["plan_status"] == "limit_reached"]
+    assert len(pending) == 5
+    assert len(limited) == 20
+    assert all(item["status"] == "pending" for item in pending)
+    assert all(item["status"] == "skipped" for item in limited)
+
+
+def test_batch_status_returns_aggregated_fields(patched_storyboard_cli, monkeypatch):
+    """BUG #3：status 接口聚合字段 progress/total/pending/... 必须非 null 且正确。"""
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(
+        module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda storyboard_id: _scenes_missing(storyboard_id, 10),
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    create = service.auto_generate_missing_images(
+        storyboard_id=22, user_id=7, auth_token="token", sequence_mode="speed", limit=5
+    )
+    batch_id = create["batch_id"]
+
+    # 提交响应与随后第一次 status 查询的 submitted_count 必须一致（BUG #5）
+    assert create["submitted_count"] == 5
+
+    status = service.storyboard_image_batch_status(job_id=batch_id, user_id=7)
+    assert status["submitted_count"] == 5  # 与提交响应同源，不跳变
+
+    # 聚合字段全部非 None 且与 items 实际统计一致（BUG #3）
+    assert status["total"] == 10
+    assert status["pending"] == 5
+    assert status["running"] == 0
+    assert status["completed"] == 0
+    assert status["failed"] == 0
+    assert status["skipped"] == 5
+    assert status["progress"] == 0.0
+    # 旧字段保留做向后兼容
+    assert status["completed_count"] == status["completed"]
+    assert status["failed_count"] == status["failed"]
+    assert status["skipped_count"] == status["skipped"]
+
+
+def test_batch_status_aggregation_matches_items_after_progress(patched_storyboard_cli, monkeypatch):
+    """BUG #3：模拟 2 个完成、1 个失败后，聚合字段随 items 实时变化且正确。"""
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(
+        module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda storyboard_id: _scenes_missing(storyboard_id, 10),
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    create = service.auto_generate_missing_images(
+        storyboard_id=22, user_id=7, auth_token="token", sequence_mode="speed", limit=5
+    )
+    batch_id = create["batch_id"]
+
+    # 手动推进 item 状态：取前 5 个 pending item，2 个完成、1 个失败、1 个 running、1 个仍 pending
+    items = module.StoryboardImageBatchItemModel.list_by_job(batch_id)
+    pending_items = [it for it in items if it["status"] == 0][:5]
+    module.StoryboardImageBatchItemModel.update(pending_items[0]["id"], status=2)  # completed
+    module.StoryboardImageBatchItemModel.update(pending_items[1]["id"], status=2)  # completed
+    module.StoryboardImageBatchItemModel.update(pending_items[2]["id"], status=-1)  # failed
+    module.StoryboardImageBatchItemModel.update(pending_items[3]["id"], status=1)  # running
+    # pending_items[4] 保持 pending
+
+    status = service.storyboard_image_batch_status(job_id=batch_id, user_id=7)
+    assert status["total"] == 10
+    assert status["pending"] == 1
+    assert status["running"] == 1
+    assert status["completed"] == 2
+    assert status["failed"] == 1
+    assert status["skipped"] == 5
+    assert status["progress"] == round(2 / 10, 4)
+    # submitted_count 仍是计划数，不随进度变化（BUG #5）
+    assert status["submitted_count"] == 5

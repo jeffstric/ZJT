@@ -83,7 +83,7 @@ class StoryboardDialogueModel:
     @staticmethod
     def list_by_scene(scene_id: int) -> List[Dict]:
         sql = """
-            SELECT d.*, da.audio_url
+            SELECT d.*, da.audio_url, da.duration AS audio_duration
             FROM storyboard_dialogue d
             LEFT JOIN storyboard_dialogue_audio da ON da.id = d.selected_audio_id
             WHERE d.scene_id = %s
@@ -95,6 +95,12 @@ class StoryboardDialogueModel:
             for row in (results or []):
                 d = StoryboardDialogue(**row).to_dict()
                 d['audio_url'] = row.get('audio_url')
+                # 选中配音时长（秒），供导出字幕时间轴；无则 None
+                ad = row.get('audio_duration')
+                try:
+                    d['duration'] = float(ad) if ad is not None else None
+                except (TypeError, ValueError):
+                    d['duration'] = None
                 out.append(d)
             return out
         except Exception as e:

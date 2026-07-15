@@ -156,19 +156,28 @@ magic `4` 全部替换。placeholder 格子（`GridConfig.is_placeholder`）跳�
 
 防护：`process_all_pending_steps` 的 PENDING 分发循环和重试循环都**显式跳过** `PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT` 类型的步骤——该步骤的唯一分发者是 `task/grid_image_task.py` 的 `_dispatch_storyboard_first_frame_grid_split`（在宫格图下载成功后调用）。
 
-**2. grid task 终态失败时回写 batch item**
+**2. grid task 终态失败时回写 batch item 与 pipeline step**
 
-grid task 进入终态失败有三条路径，每条都必须调用 `_mark_storyboard_grid_batch_items_failed` 把关联的 `storyboard_image_batch_item`（status=RUNNING）回写为 FAILED，否则 batch item 永久卡在 RUNNING、batch job 永远不结束：
+grid task 进入终态失败有四条路径，每条都必须调用 `_mark_storyboard_grid_batch_items_failed` 把关联的 `storyboard_image_batch_item`（status=RUNNING）回写为 FAILED，否则 batch item 永久卡在 RUNNING、batch job 永远不结束：
 
 | 路径 | 触发条件 | grid task 终态 |
 |---|---|---|
 | 超时 | `try_count > max_attempts`（轮询次数耗尽） | TIMEOUT(-2) |
 | 生成失败 | ComfyUI 返回 FAILED 且重试耗尽/重试提交失败 | FAILED(-1) |
 | 异常 | 轮询/处理过程抛未预期异常 | FAILED(-1) |
+| 下载/处理失败 | `_handle_task_success` 内下载或写回抛异常 | DOWNLOAD_FAILED(-4) |
+
+前 3 条路径由 `_mark_storyboard_grid_batch_items_failed` 统一回写；DOWNLOAD_FAILED 分支（在 `_handle_task_success` 的 except 中）额外调用 `_fail_pending_grid_split_step_for_task` 单独回写 pipeline step。
 
 `_mark_storyboard_grid_batch_items_failed` 只处理 `item_type=STORYBOARD_FIRST_FRAME_GRID`（不误伤角色/场景/道具宫格），按 `task.get_target_entity_ids_list()` 遍历每个 scene，通过 `find_running_by_grid_task(grid_task_id, scene_id)` 定位 RUNNING 的 batch item 并回写 FAILED。单个 scene 回写异常不影响其余 scene。
 
-**3. dispatch_step 同步完成补阶段完成检查**
+回写 batch item 后，该函数**同步终止绑定的 pipeline step**（调 `PipelineStepModel.fail_pending_grid_split_step(ai_tool_id, error_message)`，把同一 `ai_tool_id` 下仍 PENDING 的 `storyboard_first_frame_grid_split` step 标记为 FAILED）。这一步至关重要：若 grid task 失败但 pipeline step 仍 PENDING，全局调度器（每 13s）会反复扫描到它又无条件 skip，导致「Skip storyboard grid split step N」日志永久刷屏。回写是幂等的——只更新 `status=PENDING` 的行，已 COMPLETED/FAILED 的不受影响。
+
+**3. 孤立 step 兜底清理**
+
+即便有了第 2 点的失败回写，仍可能残留历史孤儿（旧版本未回写、或异常路径漏写）：step 仍 PENDING，但绑定的 `grid_image_tasks` 行已进入失败终态。`process_grid_image_tasks`（每 10s）每轮在 `_recover_late_completed_terminal_tasks()` 之后调用 `_cleanup_orphan_grid_split_steps()`：JOIN `ai_tool_pipeline_steps`（PENDING grid split）与 `grid_image_tasks`（`ai_tool_id = CAST(project_id AS UNSIGNED)`），凡是 grid task 已 FAILED/TIMEOUT/DOWNLOAD_FAILED/CANCELLED 的 step，批量调 `PipelineStepModel.fail_steps_by_ids` 标记 FAILED。扫描上限 `GridConfig.GRID_SPLIT_ORPHAN_CLEANUP_LIMIT`（默认 50），异常被吞掉不影响主轮询。部署后存量孤儿会在几分钟内自动清完，日志停止。
+
+**4. dispatch_step 同步完成补阶段完成检查**
 
 `storyboard_first_frame_grid_split` 步骤从 PENDING→PROCESSING→COMPLETED 全程同步发生在一次 `dispatch_step` 调用里，瞬间结束，从不经过全局调度器的 PROCESSING 轮询分支。因此 `dispatch_step` 的"步骤直接完成"分支在标记 COMPLETED 后，需显式调用 `_check_ai_tool_stage_completion(ai_tool_id, stage)`，否则 `before_finish` 阶段完成判定无法触发。
 

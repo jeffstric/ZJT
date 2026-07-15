@@ -20,6 +20,67 @@ def test_storyboard_agent_command_schema_lists_commands():
     assert "insert-scene" in command_names
     assert "auto-generate-missing-images" in command_names
     assert "storyboard-task-status" in command_names
+    create_command = next(
+        item for item in schema["commands"]
+        if item["name"] == "create-storyboard-from-script"
+    )
+    assert {"model", "model_id", "vendor_id"}.issubset(create_command["params"])
+    world_context = next(
+        item for item in schema["commands"] if item["name"] == "world-context"
+    )
+    assert world_context["response"]["scripts"] == "Page<object>"
+    assert world_context["response"]["characters"] == "Page<object>"
+    status_command = next(
+        item for item in schema["commands"] if item["name"] == "storyboard-task-status"
+    )
+    assert (
+        status_command["response"]["result_url_path"]
+        == "scenes[].selected_assets.first_frame.result_url"
+    )
+
+
+def test_create_storyboard_command_dispatches_model_selection():
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+
+    calls = []
+
+    class FakeStoryboardService:
+        def create_storyboard_from_script(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "storyboard_id": 9}
+
+    result = StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+        "create-storyboard-from-script",
+        {
+            "script_id": 20,
+            "user_id": 7,
+            "model": "deepseek-v4-pro",
+            "model_id": 1008,
+            "vendor_id": 10,
+        },
+    )
+
+    assert result["success"] is True
+    assert calls[0]["model"] == "deepseek-v4-pro"
+    assert calls[0]["model_id"] == 1008
+    assert calls[0]["vendor_id"] == 10
+
+
+def test_create_storyboard_cli_accepts_model_selection():
+    from scripts.storyboard_agent_cli import build_parser
+
+    args = build_parser().parse_args([
+        "create-storyboard-from-script",
+        "--script-id", "20",
+        "--user-id", "7",
+        "--model", "deepseek-v4-pro",
+        "--model-id", "1008",
+        "--vendor-id", "10",
+    ])
+
+    assert args.model == "deepseek-v4-pro"
+    assert args.model_id == 1008
+    assert args.vendor_id == 10
 
 
 def test_storyboard_agent_command_execute_dispatches_to_storyboard_service():
@@ -191,7 +252,13 @@ def test_storyboard_agent_command_dispatches_split_force_overwrite_subscene_grid
     class FakeStoryboardService:
         def split_from_script(self, **kwargs):
             calls.append(kwargs)
-            return {"success": True, "storyboard_id": kwargs["storyboard_id"], "generated_count": 1}
+            return {
+                "success": True,
+                "storyboard_id": kwargs["storyboard_id"],
+                "status": "queued",
+                "task_id": "task-fake-1",
+                "status_url": "/api/script-split/tasks/task-fake-1",
+            }
 
     result = StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
         "split-from-script",

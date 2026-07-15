@@ -47,8 +47,10 @@ const state = {
     // 兼容旧字段：同步自 videoMediaItems 中 role=reference 的上传项
     referenceImages: [],
     agentMessages: [],
-    isAgentRunning: false,
-    activeAgentTaskId: null,
+    /** 按分镜隔离 Agent 运行态，避免一个分镜的任务锁住其他分镜。 */
+    agentRunsBySceneId: {},
+    /** 按分镜缓存对话消息，后台流不得写入当前其他分镜的消息列表。 */
+    agentMessagesBySceneId: {},
     /** 分镜助手历史消息区是否展开 */
     agentChatHistoryOpen: true,
     /** 媒体栈多图展开（触控/点击兜底；桌面主要靠 hover） */
@@ -79,8 +81,29 @@ const state = {
         buffering: false, // 本镜媒体预加载中，时钟未走
     },
     showExportDialog: false,
+    /** 导出完整视频时是否硬烧字幕（默认 true） */
+    exportBurnSubtitles: true,
+
+    // 算力日志 / 充值弹窗
+    showPowerLogsModal: false,
+    showRechargeModal: false,
+    rechargeState: 'loading', // loading | packages | qrcode | error
+    rechargePackages: [],
+    selectedRechargePackage: null,
+    rechargeQrCodeUrl: '',
+    rechargeError: '',
     showMentionPopup: false,
     showGlobalStyleDialog: false,
+    // 分镜编辑弹框（grid 视图卡片「编辑」按钮触发；编辑 title/duration/difficulty/act_name）
+    showSceneEditDialog: false,
+    sceneEditTargetId: null,
+    sceneEditSaving: false,
+    sceneEditError: '',
+    videoTypeSwitch: {
+        saving: false,
+        targetType: null,
+        previousType: null,
+    },
     mentionTab: 'character',
     isSaving: false,
     error: '',
@@ -101,17 +124,41 @@ const state = {
         message: '',
         submitting: false,
     },
+    /** 批量生成缺失视频（时间轴「批量生成视频」） */
+    autoVideoBatch: {
+        batchId: null,
+        status: 'idle',
+        totalCount: 0,
+        completedCount: 0,
+        runningCount: 0,
+        pendingCount: 0,
+        failedCount: 0,
+        skippedCount: 0,
+        itemsBySceneId: {},
+        message: '',
+        submitting: false,
+    },
     // 剧本拆分参数（与 video_workflow 剧本节点保持一致：true/true/false/15）
     maxGroupDuration: 15,
     forceMediumShot: true,
     noBgMusic: true,
     splitMultiDialogue: false,
+    /** 是否开启拆分质检（开启后多轮拆分+质检，耗时与算力显著增加） */
+    enableScriptSplitQc: false,
+    /** 质检最大循环次数 1–5，超次强制用最后一轮结果 */
+    scriptSplitQcMaxRounds: 2,
 
     // 生成分镜进度弹框
     showGenerateProgressDialog: false,
     generateProgressSteps: [],
     generateProgressStepIndex: -1,
     generateProgressError: '',
+    /** 后端 script_split_task.progress 提供的真实总体进度（0～100） */
+    generateProgressPercent: 0,
+    /** 后端当前阶段文案，例如“正在拆分第 2/4 段” */
+    generateProgressMessage: '正在准备任务',
+    // 剧本分段拆分任务 ID（异步化后用于轮询恢复，见设计文档 §15）
+    generateFromScriptTaskId: null,
 
     // 模型配置弹框
     showModelConfigModal: false,
@@ -141,7 +188,14 @@ const state = {
     llmVendors: [],
     selectedLlmModel: null,
     selectedScriptSplitLlmModel: null,
+
+    // 思考模式（对齐 script_writer；与 localStorage lastThinkingState 共用）
+    enableThinking: false,
+    thinkingEffort: 'medium', // low | medium | high
+    thinkingExplicitlyDisabled: false,
 };
+
+const THINKING_STATE_KEY = 'lastThinkingState';
 
 function normalizeNumericId(value) {
     if (value === null || value === undefined || value === '') return null;
@@ -217,6 +271,119 @@ export function resolveSelectedScriptSplitLlmModel(selection = state.selectedScr
     const resolved = resolveLlmModelSelection(selection || state.selectedLlmModel);
     if (resolved) state.selectedScriptSplitLlmModel = resolved;
     return resolved;
+}
+
+/**
+ * 解析当前选中 LLM 的元信息（含 supports_thinking / vendor）。
+ * @param {object|string|null} selection 默认 selectedLlmModel
+ */
+export function getSelectedLlmMeta(selection = state.selectedLlmModel) {
+    const models = state.llmModels || [];
+    const vendors = state.llmVendors || [];
+    let matched = null;
+    if (selection && typeof selection === 'object') {
+        const mid = selection.model_id || selection.id;
+        const vid = selection.vendor_id;
+        const name = selection.model || selection.name || '';
+        matched = models.find(m => {
+            if (mid != null && String(m.model_id || m.id) === String(mid)) {
+                if (vid == null || vid === '') return true;
+                return String(m.vendor_id || '') === String(vid);
+            }
+            return name && String(m.model || m.name || '') === String(name);
+        }) || null;
+    } else if (selection) {
+        matched = models.find(m => String(m.model || m.name || m.id) === String(selection)) || null;
+    }
+    if (!matched && models.length) matched = models[0];
+
+    const vendorId = matched?.vendor_id;
+    const vendor = vendors.find(v => String(v.id || v.vendor_name) === String(vendorId))
+        || vendors.find(v => String(v.vendor_name) === String(matched?.vendor_name));
+    const vendorName = String(
+        vendor?.vendor_name || matched?.vendor_name || matched?.vendor || ''
+    ).toLowerCase();
+    const modelName = String(matched?.model || matched?.name || '').toLowerCase();
+    const supportsThinking = Boolean(
+        matched?.supports_thinking === true
+        || matched?.supports_thinking === 1
+        || matched?.supports_thinking === '1'
+        || matched?.supports_thinking === 'true'
+    );
+    return {
+        model: matched,
+        vendorName,
+        modelName,
+        supportsThinking,
+        isDeepSeek: vendorName === 'deepseek'
+            || modelName.includes('deepseek'),
+        isDoubaoEffort: vendorName === 'volcengine'
+            || modelName.startsWith('doubao')
+            || modelName.includes('doubao'),
+    };
+}
+
+/** 从 localStorage 恢复思考开关（与 script_writer 共用 key） */
+export function loadThinkingStateFromStorage() {
+    try {
+        const raw = localStorage.getItem(THINKING_STATE_KEY);
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        if (typeof saved.enabled === 'boolean') state.enableThinking = saved.enabled;
+        if (saved.effort && ['low', 'medium', 'high'].includes(saved.effort)) {
+            state.thinkingEffort = saved.effort;
+        }
+        state.thinkingExplicitlyDisabled = Boolean(saved.explicitlyDisabled);
+    } catch (_) { /* ignore */ }
+}
+
+/**
+ * 按当前模型校正思考 UI 状态（DeepSeek 默认开等）。
+ * @param {object|string|null} selection
+ * @param {{ userToggled?: boolean }} [opts]
+ */
+export function applyThinkingDefaultsForModel(selection = state.selectedLlmModel, opts = {}) {
+    const meta = getSelectedLlmMeta(selection);
+    if (!meta.supportsThinking) {
+        state.enableThinking = false;
+        return meta;
+    }
+    if (opts.userToggled) {
+        return meta;
+    }
+    // DeepSeek：用户未明确关过则默认开启
+    if (meta.isDeepSeek && !state.thinkingExplicitlyDisabled) {
+        state.enableThinking = true;
+    } else if (!meta.isDeepSeek && !state.thinkingExplicitlyDisabled) {
+        // 其它支持思考的模型：沿用 storage 中的 enabled，不强制开
+        // loadThinkingStateFromStorage 已写入 enableThinking
+    }
+    return meta;
+}
+
+/** 持久化思考状态 */
+export function saveThinkingStateToStorage(isUserAction = false) {
+    if (isUserAction) {
+        state.thinkingExplicitlyDisabled = !state.enableThinking;
+    }
+    try {
+        localStorage.setItem(THINKING_STATE_KEY, JSON.stringify({
+            enabled: Boolean(state.enableThinking),
+            effort: state.thinkingEffort || 'medium',
+            explicitlyDisabled: Boolean(state.thinkingExplicitlyDisabled),
+        }));
+    } catch (_) { /* ignore */ }
+}
+
+/** 请求体用的思考参数 */
+export function getThinkingParams() {
+    if (!state.enableThinking) {
+        return { enable_thinking: false, thinking_effort: 'medium' };
+    }
+    const effort = ['low', 'medium', 'high'].includes(state.thinkingEffort)
+        ? state.thinkingEffort
+        : 'medium';
+    return { enable_thinking: true, thinking_effort: effort };
 }
 
 export function initStateFromUrl() {
@@ -433,6 +600,72 @@ export function setLlmVendors(vendors = []) {
 
 export function getCurrentScene() {
     return state.scenes.find(scene => scene.id === state.currentSceneId) || null;
+}
+
+function agentSceneKey(sceneId) {
+    return sceneId === null || sceneId === undefined ? '' : String(sceneId);
+}
+
+export function isSceneAgentRunning(sceneId = state.currentSceneId) {
+    const key = agentSceneKey(sceneId);
+    return Boolean(key && state.agentRunsBySceneId[key]?.running);
+}
+
+export function startSceneAgentRun(sceneId, taskId = null) {
+    const key = agentSceneKey(sceneId);
+    if (!key) return null;
+    const previous = state.agentRunsBySceneId[key] || {};
+    const run = {
+        ...previous,
+        running: true,
+        taskId: taskId || previous.taskId || null,
+    };
+    state.agentRunsBySceneId = { ...state.agentRunsBySceneId, [key]: run };
+    return run;
+}
+
+export function setSceneAgentTaskId(sceneId, taskId) {
+    return startSceneAgentRun(sceneId, taskId);
+}
+
+export function finishSceneAgentRun(sceneId, expectedTaskId = null) {
+    const key = agentSceneKey(sceneId);
+    const current = key ? state.agentRunsBySceneId[key] : null;
+    if (!current) return false;
+    if (expectedTaskId && current.taskId && String(current.taskId) !== String(expectedTaskId)) {
+        return false;
+    }
+    const next = { ...state.agentRunsBySceneId };
+    delete next[key];
+    state.agentRunsBySceneId = next;
+    return true;
+}
+
+export function setSceneAgentMessages(sceneId, messages = []) {
+    const key = agentSceneKey(sceneId);
+    if (!key) return [];
+    const normalized = Array.isArray(messages) ? messages.slice(-40) : [];
+    state.agentMessagesBySceneId = {
+        ...state.agentMessagesBySceneId,
+        [key]: normalized,
+    };
+    if (String(state.currentSceneId) === key) {
+        state.agentMessages = normalized;
+    }
+    return normalized;
+}
+
+export function appendSceneAgentMessage(sceneId, message) {
+    const key = agentSceneKey(sceneId);
+    if (!key || !message) return [];
+    const previous = state.agentMessagesBySceneId[key] || [];
+    return setSceneAgentMessages(sceneId, [...previous.slice(-39), message]);
+}
+
+export function activateSceneAgentMessages(sceneId) {
+    const key = agentSceneKey(sceneId);
+    state.agentMessages = key ? (state.agentMessagesBySceneId[key] || []) : [];
+    return state.agentMessages;
 }
 
 export function getTotalDuration() {
@@ -776,6 +1009,8 @@ export function serializeUiConfig() {
         forceMediumShot: state.forceMediumShot,
         noBgMusic: state.noBgMusic,
         splitMultiDialogue: state.splitMultiDialogue,
+        enableScriptSplitQc: state.enableScriptSplitQc === true,
+        scriptSplitQcMaxRounds: state.scriptSplitQcMaxRounds,
     };
 }
 
@@ -830,6 +1065,12 @@ export function restoreUiConfig(config = {}) {
     if (typeof config.splitMultiDialogue === 'boolean') {
         state.splitMultiDialogue = config.splitMultiDialogue;
     }
+    if (typeof config.enableScriptSplitQc === 'boolean') {
+        state.enableScriptSplitQc = config.enableScriptSplitQc;
+    }
+    if ([1, 2, 3, 4, 5].includes(Number(config.scriptSplitQcMaxRounds))) {
+        state.scriptSplitQcMaxRounds = Number(config.scriptSplitQcMaxRounds);
+    }
 
     if (config.selectedLlmModel) {
         state.selectedLlmModel = config.selectedLlmModel;
@@ -839,6 +1080,15 @@ export function restoreUiConfig(config = {}) {
         state.selectedScriptSplitLlmModel = config.selectedScriptSplitLlmModel;
         resolveSelectedScriptSplitLlmModel();
     }
+}
+
+/** 把剧本拆分轮询状态同步到进度弹框。 */
+export function applyGenerateProgressStatus(statusData = {}) {
+    const progress = Number(statusData.progress);
+    if (Number.isFinite(progress)) {
+        state.generateProgressPercent = Math.round(Math.max(0, Math.min(100, progress)));
+    }
+    state.generateProgressMessage = String(statusData.message || '正在处理任务');
 }
 
 export default state;

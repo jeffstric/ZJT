@@ -9,6 +9,10 @@ import state, {
     resolveSelectedScriptSplitLlmModel,
     serializeUiConfig,
     loadStoryboardData,
+    applyThinkingDefaultsForModel,
+    applyGenerateProgressStatus,
+    saveThinkingStateToStorage,
+    getThinkingParams,
     syncVideoMediaFromScene,
     refreshSceneFirstFrameSlot,
     ensureVideoImageModeSupported,
@@ -22,29 +26,138 @@ import state, {
     videoModelSupportsLastFrame,
     getSupportedVideoImageModes,
     setAgentChatFontStep,
+    isSceneAgentRunning,
+    startSceneAgentRun,
+    setSceneAgentTaskId,
+    finishSceneAgentRun,
+    setSceneAgentMessages,
+    appendSceneAgentMessage,
+    activateSceneAgentMessages,
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
-import { renderApp, renderPromptWithInlineRoles, getThumbnailUrl } from './render.js';
-import { pollSceneTaskStatus } from './polling.js';
-import { togglePlayback, stopPlayback, syncSelectionToTimeline } from './playback.js';
+import {
+    refresh,
+    renderPromptWithInlineRoles,
+    getThumbnailUrl,
+    Region,
+} from './render.js';
+import {
+    REGIONS_ON_SCENE_CHANGE,
+    REGIONS_ON_SCENE_STRUCT,
+    REGIONS_AGENT_STREAM,
+    REGIONS_MODAL,
+} from './ui_regions.js';
+import { pollSceneTaskStatus, pollScriptSplitTask, stopScriptSplitTaskPolling } from './polling.js';
+import {
+    togglePlayback,
+    stopPlayback,
+    syncSelectionToTimeline,
+    scrollTimelineToScene,
+} from './playback.js';
 import {
     autoCompleteMissingFirstFrames,
     autoGenerateMissingFirstFrames,
     resetAutoMissingImagesFlag,
 } from './auto_missing_images.js';
 import { getAutoCompleteSummary } from './auto_missing_images_state.js';
+import { autoCompleteMissingVideos } from './auto_missing_videos.js';
+import {
+    applyVideoTypeSwitchResult,
+    canSwitchToDigitalHuman,
+} from './video_type_switch_state.js';
 import {
     clearLocationReferenceSelection,
     closeReferenceVariantSelector,
     openReferenceVariantSelector,
 } from './reference_variant_selector.js';
+import {
+    applyVideoCandidateSelection,
+    captureVideoCandidateSelection,
+    restoreVideoCandidateSelection,
+} from './candidate_selection_state.js';
 
 let generateProgressTimer = null;
 let isTimelineHovered = false;
 
 function notify(message) {
     window.alert(message);
+}
+
+function resetRechargeState() {
+    state.showRechargeModal = false;
+    state.rechargeState = 'loading';
+    state.rechargePackages = [];
+    state.selectedRechargePackage = null;
+    state.rechargeQrCodeUrl = '';
+    state.rechargeError = '';
+}
+
+async function loadRechargePackages() {
+    state.showRechargeModal = true;
+    state.rechargeState = 'loading';
+    state.selectedRechargePackage = null;
+    state.rechargeQrCodeUrl = '';
+    state.rechargeError = '';
+    rerenderModals();
+    try {
+        const packages = await api.fetchRechargePackages();
+        state.rechargePackages = packages;
+        state.rechargeState = 'packages';
+    } catch (error) {
+        state.rechargeError = error.message || '加载套餐失败';
+        state.rechargeState = 'error';
+    }
+    rerenderModals();
+}
+
+async function openRechargeModal() {
+    try {
+        const config = await api.fetchServerConfig();
+        if (config && config.is_local) {
+            notify('只有云端环境才能开启二维码支付。本地模式下，管理员用户请进入后台增加算力，非管理员用户请通知管理员。');
+            return;
+        }
+    } catch (e) {
+        console.error('获取配置失败:', e);
+    }
+    await loadRechargePackages();
+}
+
+async function selectRechargePackage(pkg) {
+    if (!pkg) return;
+    state.selectedRechargePackage = pkg;
+    state.rechargeState = 'qrcode';
+    state.rechargeQrCodeUrl = '';
+    state.rechargeError = '';
+    rerenderModals();
+
+    try {
+        let paymentIp = '0.0.0.0';
+        try {
+            const ipResponse = await fetch('https://api.ipify.org?format=json');
+            const ipData = await ipResponse.json();
+            paymentIp = ipData.ip || '0.0.0.0';
+        } catch (e) {
+            console.error('获取用户IP失败:', e);
+        }
+
+        const data = await api.createWechatPayOrder({
+            package_id: pkg.package_id,
+            payment_ip: paymentIp,
+        });
+        if (data.code_url) {
+            state.rechargeQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
+            state.rechargeState = 'qrcode';
+        } else {
+            throw new Error(data.error || '创建支付订单失败');
+        }
+    } catch (error) {
+        console.error('创建支付订单失败:', error);
+        state.rechargeError = error.message || '创建支付订单失败';
+        state.rechargeState = 'error';
+    }
+    rerenderModals();
 }
 
 function handleAutoDialogueAudioPolling(response) {
@@ -66,8 +179,37 @@ function handleAutoDialogueAudioPolling(response) {
     return null;
 }
 
-function rerender() {
-    renderApp();
+/**
+ * 分区刷新入口。默认 all（仍受 preview busy 保护）。
+ * 高频路径请传明确 regions，禁止依赖全量。
+ * @param {string|string[]|'all'} [regions]
+ * @param {{ forcePreview?: boolean }} [options]
+ */
+function rerender(regions = 'all', options = {}) {
+    refresh(regions, options);
+}
+
+/** Agent 流式：只刷对话 log */
+function rerenderAgentUi() {
+    refresh(REGIONS_AGENT_STREAM);
+}
+
+/** 弹窗开闭：只刷 modal 层 */
+function rerenderModals() {
+    refresh(REGIONS_MODAL);
+}
+
+/** 助手面板（输入区/模式/字号等） */
+function rerenderAgentPanel() {
+    refresh([Region.AGENT_PANEL]);
+}
+
+function rerenderAgentUiForScene(sceneId) {
+    if (String(state.currentSceneId) === String(sceneId)) rerenderAgentUi();
+}
+
+function rerenderAgentPanelForScene(sceneId) {
+    if (String(state.currentSceneId) === String(sceneId)) rerenderAgentPanel();
 }
 
 function buildQuery(base, params) {
@@ -131,13 +273,15 @@ function applySelectedCandidateToScene(scene, assetType, assetId, url) {
     if (assetType === 'first_frame') {
         scene.selectedFirstFrameId = assetId;
         if (url) scene.firstFrameUrl = url;
+        scene.previewAssetType = 'first_frame';
     } else if (assetType === 'video') {
         scene.selectedVideoId = assetId;
         if (url) scene.videoUrl = url;
+        scene.previewAssetType = 'video';
     }
 }
 
-async function selectSceneCandidate(target) {
+async function selectSceneCandidate(target, { autoplay = false } = {}) {
     const current = getCurrentScene();
     if (!current) return;
     const candidateType = target.dataset.candidateType;
@@ -145,20 +289,48 @@ async function selectSceneCandidate(target) {
     const assetId = parseInt(target.dataset.candidateId, 10);
     if (!Number.isFinite(assetId)) return;
 
-    await api.selectSceneAsset(current.id, assetType, assetId);
-
     const listKey = assetType === 'video' ? 'videos' : 'images';
     const candidates = state.sceneCandidates?.[current.id]?.[listKey] || [];
     const selected = candidates.find(item => String(item.id) === String(assetId));
-    applySelectedCandidateToScene(current, assetType, assetId, selected?.url || '');
-    candidates.forEach(item => {
-        item.selected = String(item.id) === String(assetId);
-    });
+    const shouldAutoplay = autoplay && assetType === 'video' && Boolean(selected?.url);
+    const selectionSnapshot = shouldAutoplay
+        ? captureVideoCandidateSelection(current, candidates)
+        : null;
+
+    if (shouldAutoplay) {
+        applyVideoCandidateSelection(current, candidates, assetId, selected.url);
+        rerender([Region.PREVIEW, Region.CANDIDATES, Region.TIMELINE_LIST], { forcePreview: true });
+        const previewVideo = document.querySelector('.preview-wrapper video.preview-media');
+        const playPromise = previewVideo?.play();
+        if (playPromise?.catch) {
+            playPromise.catch(error => {
+                console.warn('主预览自动播放被浏览器拒绝，可使用原生 controls 手动播放', error);
+            });
+        }
+    }
+
+    try {
+        await api.selectSceneAsset(current.id, assetType, assetId);
+    } catch (error) {
+        if (selectionSnapshot) {
+            restoreVideoCandidateSelection(current, candidates, selectionSnapshot);
+            rerender([Region.PREVIEW, Region.CANDIDATES, Region.TIMELINE_LIST], { forcePreview: true });
+        }
+        throw error;
+    }
+
+    if (!shouldAutoplay) {
+        applySelectedCandidateToScene(current, assetType, assetId, selected?.url || '');
+        candidates.forEach(item => {
+            item.selected = String(item.id) === String(assetId);
+        });
+    }
     if (assetType === 'first_frame' && state.chatMode === 'video') {
         refreshSceneFirstFrameSlot(current);
     }
     pollSceneTaskStatus(current.id);
-    rerender();
+    // 候选选择：预览 + 右侧 +（视频模式时助手首帧槽）
+    rerender([Region.PREVIEW, Region.CANDIDATES, Region.AGENT_PANEL, Region.TIMELINE_LIST], { forcePreview: true });
 }
 
 async function persistUiConfig() {
@@ -177,17 +349,14 @@ function patchDialogueInState(dialogueId, patch) {
     return false;
 }
 
-function pushAgentMessage(role, content, meta = {}) {
+function pushAgentMessageForScene(sceneId, role, content, meta = {}) {
     if (!content && !meta.status) return;
-    state.agentMessages = [
-        ...state.agentMessages.slice(-39),
-        {
-            role,
-            content: content || '',
-            status: meta.status || '',
-            createdAt: new Date().toISOString(),
-        },
-    ];
+    appendSceneAgentMessage(sceneId, {
+        role,
+        content: content || '',
+        status: meta.status || '',
+        createdAt: new Date().toISOString(),
+    });
 }
 
 export async function loadSceneAgentMessages(sceneId, skipRerender = false) {
@@ -197,18 +366,18 @@ export async function loadSceneAgentMessages(sceneId, skipRerender = false) {
     }
     try {
         const response = await api.fetchSceneAgentChatHistory(sceneId);
-        if (state.currentSceneId !== sceneId) return;
         const rows = Array.isArray(response.messages) ? response.messages : [];
-        state.agentMessages = rows.map(item => ({
+        setSceneAgentMessages(sceneId, rows.map(item => ({
             role: item.role || 'assistant',
             content: typeof item.content === 'string'
                 ? item.content
                 : (item.content?.content || item.content?.message || ''),
             status: item.status || '',
             createdAt: item.timestamp || item.create_at || new Date().toISOString(),
-        }));
-        // 点击切换分镜时由调用方统一渲染一次，避免与候选加载竞态导致多次 rerender 闪烁
-        if (!skipRerender) rerender();
+        })));
+        if (String(state.currentSceneId) !== String(sceneId)) return;
+        // 只刷助手对话区，禁止全量 renderApp
+        if (!skipRerender) rerenderAgentUi();
     } catch (error) {
         console.warn('Failed to load storyboard agent chat history', error);
     }
@@ -289,7 +458,7 @@ async function handleReferenceFileChange(input) {
             return (order[a.role] ?? 9) - (order[b.role] ?? 9);
         });
         syncReferenceImagesCompat();
-        rerender();
+        rerenderAgentPanel();
         try {
             const res = await api.uploadReferenceImage(file);
             const current = (state.videoMediaItems || []).find(r => r.id === tempId);
@@ -308,17 +477,30 @@ async function handleReferenceFileChange(input) {
             notify('参考图上传失败: ' + (err.message || err));
         }
         syncReferenceImagesCompat();
-        rerender();
+        rerenderAgentPanel();
     }
     // 重置以允许重复选择同一文件
     input.value = '';
 }
 
 async function sendStoryboardAgentMessage(current) {
+    const streamSceneId = current.id;
+    if (!streamSceneId || isSceneAgentRunning(streamSceneId)) return;
     const message = (state.inputMessage || '').trim();
     if (!message) {
         notify('请输入要调整的内容');
         return;
+    }
+    // 对口型分镜生成视频：必须先有成片配音（LTX 口型跟音频走）
+    const isDh = String(current?.videoType || current?.video_type || '').toLowerCase() === 'digital_human';
+    if (state.chatMode === 'video' && isDh) {
+        const hasAudio = (current.dialogues || []).some(d => String(d.audioUrl || d.audio_url || '').trim());
+        if (!hasAudio) {
+            notify('对口型视频需先生成配音：请到「对话」Tab 生成角色配音后再试');
+            state.activeTab = 'dialogue';
+            rerender([Region.LEFT_SIDEBAR]);
+            return;
+        }
     }
     const llm = resolveSelectedLlmModel();
     const model = typeof llm === 'string' ? llm : (llm?.model || llm?.name || '');
@@ -328,21 +510,23 @@ async function sendStoryboardAgentMessage(current) {
         notify('请先在模型配置中选择对话模型');
         state.showModelConfigModal = true;
         state.currentConfigTab = 'dialogue';
-        rerender();
+        rerenderModals();
         return;
     }
 
-    state.isAgentRunning = true;
-    pushAgentMessage('user', message);
+    startSceneAgentRun(streamSceneId);
+    pushAgentMessageForScene(streamSceneId, 'user', message);
     state.inputMessage = '';
-    rerender();
+    // 清空输入 + running 态：只刷助手面板
+    rerenderAgentPanel();
 
     try {
         // 视频模式：按首尾帧/全能参考组装有序槽位 URL + image_mode + 时长/分辨率/裁剪配置
         const isVideo = state.chatMode === 'video';
         const referenceImageUrls = isVideo ? buildVideoSlotUrls() : [];
         const videoExtras = isVideo ? buildVideoGenerationPayloadExtras(current) : {};
-        const response = await api.startSceneAgentChat(current.id, {
+        const thinking = getThinkingParams();
+        const response = await api.startSceneAgentChat(streamSceneId, {
             message,
             model,
             model_id: modelId,
@@ -351,77 +535,154 @@ async function sendStoryboardAgentMessage(current) {
             image_task_id: state.selectedImageTaskId,
             video_task_id: state.selectedVideoTaskId,
             language: localStorage.getItem('zjt_locale') || 'zh-CN',
+            enable_thinking: thinking.enable_thinking,
+            thinking_effort: thinking.thinking_effort,
             ...(isVideo ? { image_mode: state.videoImageMode || 'first_last_frame', ...videoExtras } : {}),
             ...(referenceImageUrls.length ? { reference_image_urls: referenceImageUrls } : {}),
         });
-        state.activeAgentTaskId = response.task_id;
-        pushAgentMessage('status', state.chatMode === 'video' ? '分镜视频智能体已开始处理' : '分镜图片智能体已开始处理');
-        rerender();
+        const streamTaskId = response.task_id;
+        setSceneAgentTaskId(streamSceneId, streamTaskId);
+        pushAgentMessageForScene(streamSceneId, 'status', isVideo ? '分镜视频智能体已开始处理' : '分镜图片智能体已开始处理');
+        rerenderAgentUiForScene(streamSceneId);
 
-        api.streamStoryboardAgentTask(response.task_id, {
+        api.streamStoryboardAgentTask(streamTaskId, {
             onMessage: async (data) => {
                 if (data.type === 'connected' || data.type === 'heartbeat') return;
                 if (data.type === 'status') {
-                    pushAgentMessage('status', getAgentContent(data) || data.status || '任务状态已更新');
+                    pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || data.status || '任务状态已更新');
                 } else if (data.type === 'tool_call') {
                     const names = Array.isArray(data.tool_names) ? data.tool_names.join(', ') : '';
-                    pushAgentMessage('status', names ? `正在调用工具：${names}` : '正在调用生成工具');
+                    pushAgentMessageForScene(streamSceneId, 'status', names ? `正在调用工具：${names}` : '正在调用生成工具');
                 } else if (data.type === 'image_task_submitted') {
                     const ids = data.project_ids || data.projectIds || [];
-                    pushAgentMessage('status', getAgentContent(data) || '图片生成任务已提交，正在绑定到当前分镜');
+                    pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || '图片生成任务已提交，正在绑定到当前分镜');
                     try {
-                        await bindSubmittedAgentTasks(current.id, ids, 'first_frame');
-                        pushAgentMessage('status', '已绑定图片生成任务，右侧资产状态会自动刷新');
+                        await bindSubmittedAgentTasks(streamSceneId, ids, 'first_frame');
+                        pushAgentMessageForScene(streamSceneId, 'status', '已绑定图片生成任务，右侧资产状态会自动刷新');
                     } catch (error) {
-                        pushAgentMessage('assistant', `图片任务绑定失败：${error.message || error}`);
+                        pushAgentMessageForScene(streamSceneId, 'assistant', `图片任务绑定失败：${error.message || error}`);
                     }
                 } else if (data.type === 'video_task_submitted') {
                     const ids = data.project_ids || data.projectIds || [];
-                    pushAgentMessage('status', getAgentContent(data) || '视频生成任务已提交，正在绑定到当前分镜');
+                    pushAgentMessageForScene(streamSceneId, 'status', getAgentContent(data) || (data.already_bound
+                        ? '数字人视频任务已提交，正在刷新当前分镜'
+                        : '视频生成任务已提交，正在绑定到当前分镜'));
                     try {
-                        await bindSubmittedAgentTasks(current.id, ids, 'video');
-                        pushAgentMessage('status', '已绑定视频生成任务，右侧资产状态会自动刷新');
+                        if (data.already_bound) {
+                            await loadSceneCandidates(streamSceneId);
+                            pollSceneTaskStatus(streamSceneId);
+                            pushAgentMessageForScene(streamSceneId, 'status', '数字人视频任务已关联当前分镜，右侧资产状态会自动刷新');
+                        } else {
+                            await bindSubmittedAgentTasks(streamSceneId, ids, 'video');
+                            pushAgentMessageForScene(streamSceneId, 'status', '已绑定视频生成任务，右侧资产状态会自动刷新');
+                        }
                     } catch (error) {
-                        pushAgentMessage('assistant', `视频任务绑定失败：${error.message || error}`);
+                        pushAgentMessageForScene(streamSceneId, 'assistant', `视频任务绑定失败：${error.message || error}`);
                     }
                 } else if (data.type === 'message') {
-                    pushAgentMessage(data.role || 'assistant', getAgentContent(data));
+                    pushAgentMessageForScene(streamSceneId, data.role || 'assistant', getAgentContent(data));
                 } else if (data.type === 'error') {
-                    pushAgentMessage('assistant', getAgentContent(data) || (state.chatMode === 'video' ? '分镜视频智能体执行失败' : '分镜图片智能体执行失败'));
-                    state.isAgentRunning = false;
-                    state.activeAgentTaskId = null;
+                    pushAgentMessageForScene(streamSceneId, 'assistant', getAgentContent(data) || (isVideo ? '分镜视频智能体执行失败' : '分镜图片智能体执行失败'));
+                    finishSceneAgentRun(streamSceneId, streamTaskId);
                 } else if (data.type === 'done') {
                     const content = getAgentContent(data);
-                    if (content) pushAgentMessage('assistant', content);
-                    state.isAgentRunning = false;
-                    state.activeAgentTaskId = null;
-                    pollSceneTaskStatus(current.id);
-                    loadSceneAgentMessages(current.id).catch(() => {});
+                    if (content) pushAgentMessageForScene(streamSceneId, 'assistant', content);
+                    finishSceneAgentRun(streamSceneId, streamTaskId);
+                    pollSceneTaskStatus(streamSceneId);
+                    loadSceneAgentMessages(streamSceneId, true).catch(() => {});
                 }
-                rerender();
+                // 流式过程只刷对话区，禁止全量 renderApp 打断预览播放
+                if (data.type === 'done' || data.type === 'error') {
+                    rerenderAgentPanelForScene(streamSceneId);
+                } else {
+                    rerenderAgentUiForScene(streamSceneId);
+                }
             },
             onError: () => {
-                pushAgentMessage('assistant', '任务连接中断，请稍后查看生成结果或重新发送');
-                state.isAgentRunning = false;
-                state.activeAgentTaskId = null;
-                rerender();
+                pushAgentMessageForScene(streamSceneId, 'assistant', '任务连接中断，请稍后查看生成结果或重新发送');
+                finishSceneAgentRun(streamSceneId, streamTaskId);
+                rerenderAgentPanelForScene(streamSceneId);
             },
             onClose: () => {
-                state.isAgentRunning = false;
-                state.activeAgentTaskId = null;
-                rerender();
+                finishSceneAgentRun(streamSceneId, streamTaskId);
+                rerenderAgentPanelForScene(streamSceneId);
             },
         });
     } catch (error) {
-        pushAgentMessage('assistant', `启动智能体失败：${error.message || error}`);
-        state.isAgentRunning = false;
-        state.activeAgentTaskId = null;
-        rerender();
+        pushAgentMessageForScene(streamSceneId, 'assistant', `启动智能体失败：${error.message || error}`);
+        finishSceneAgentRun(streamSceneId);
+        rerenderAgentPanelForScene(streamSceneId);
     }
 }
 
 async function handleAction(action, target) {
     const current = getCurrentScene();
+
+    if (action === 'request-video-type-switch' && current) {
+        if (state.videoTypeSwitch.saving) return;
+        const targetType = String(target.dataset.videoType || '');
+        if (!['video', 'digital_human'].includes(targetType) || targetType === current.videoType) return;
+        if (targetType === 'digital_human') {
+            const availability = canSwitchToDigitalHuman(current);
+            if (!availability.allowed) {
+                notify(availability.reason);
+                return;
+            }
+        }
+        state.videoTypeSwitch.targetType = targetType;
+        state.videoTypeSwitch.previousType = current.videoType || 'video';
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'cancel-video-type-switch') {
+        if (state.videoTypeSwitch.saving) return;
+        state.videoTypeSwitch.targetType = null;
+        state.videoTypeSwitch.previousType = null;
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'confirm-video-type-switch' && current) {
+        if (state.videoTypeSwitch.saving) return;
+        const targetType = state.videoTypeSwitch.targetType;
+        const previousType = state.videoTypeSwitch.previousType || current.videoType || 'video';
+        if (!targetType) return;
+        state.videoTypeSwitch.saving = true;
+        rerender([Region.MODAL, Region.LEFT_TAB_BODY]);
+        let switched = false;
+        try {
+            const response = await api.switchSceneVideoType(current.id, targetType, previousType);
+            applyVideoTypeSwitchResult(current, response);
+            await loadSceneCandidates(current.id);
+            if (state.chatMode === 'video') {
+                ensureVideoImageModeSupported();
+                syncVideoMediaFromScene(current, { resetUploads: false });
+            }
+            switched = true;
+            notify(targetType === 'video' ? '已切换为视频模式' : '已切换为对口型模式');
+        } catch (error) {
+            notify(error?.status === 409
+                ? '分镜已被其他操作修改，请刷新后重试'
+                : (error.message || '切换失败，当前模式未改变'));
+        } finally {
+            state.videoTypeSwitch.saving = false;
+            if (switched) {
+                state.videoTypeSwitch.targetType = null;
+                state.videoTypeSwitch.previousType = null;
+            }
+            rerender([
+                Region.MODAL,
+                Region.LEFT_TAB_BODY,
+                Region.PREVIEW,
+                Region.CANDIDATES,
+                Region.TIMELINE_LIST,
+                Region.GRID,
+                Region.AGENT_PANEL,
+            ], { forcePreview: true });
+        }
+        return;
+    }
 
     if (action === 'auto-complete-missing-frames') {
         if (target.dataset.batchLocked === 'true' || target.getAttribute('aria-disabled') === 'true') {
@@ -435,34 +696,57 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'auto-complete-missing-videos') {
+        if (target.dataset.batchLocked === 'true' || target.getAttribute('aria-disabled') === 'true') {
+            notify('视频批量任务进行中，请稍候。');
+            return;
+        }
+        if (target.disabled) return;
+        try {
+            await autoCompleteMissingVideos();
+        } catch (error) {
+            notify(error.message || '批量生成视频失败');
+        }
+        return;
+    }
+
     if (action === 'generate-from-script-cancel') {
         if (state.isGeneratingFromScript) return;
         state.showGenerateFromScriptDialog = false;
         state.generateFromScriptError = '';
-        rerender();
+        rerenderModals();
         return;
     }
 
     if (action === 'close-generate-progress') {
+        if (state.generateFromScriptTaskId) {
+            stopScriptSplitTaskPolling(state.generateFromScriptTaskId);
+        }
         if (generateProgressTimer) {
             clearInterval(generateProgressTimer);
             generateProgressTimer = null;
         }
         state.showGenerateProgressDialog = false;
         state.generateProgressError = '';
-        rerender();
+        rerenderModals();
         return;
     }
 
     if (action === 'retry-generate-progress') {
+        if (state.generateFromScriptTaskId) {
+            stopScriptSplitTaskPolling(state.generateFromScriptTaskId);
+            // 清理本地轮询 ID；再次确认时，同配置由后端恢复原任务，配置变化则创建新任务
+            state.generateFromScriptTaskId = null;
+        }
         if (generateProgressTimer) {
             clearInterval(generateProgressTimer);
             generateProgressTimer = null;
         }
         state.showGenerateProgressDialog = false;
         state.generateProgressError = '';
+        state.isGeneratingFromScript = false;
         state.showGenerateFromScriptDialog = true;
-        rerender();
+        rerenderModals();
         return;
     }
 
@@ -474,7 +758,7 @@ async function handleAction(action, target) {
             return;
         }
         state.autoImageSequenceMode = mode;
-        rerender();
+        rerenderModals();
         if (state.storyboardId) {
             persistUiConfig().catch(() => {});
         }
@@ -486,7 +770,7 @@ async function handleAction(action, target) {
         const splitModel = resolveSelectedScriptSplitLlmModel();
         if (!splitModel || !splitModel.model || !splitModel.model_id) {
             state.generateFromScriptError = '请先选择拆分剧本模型';
-            rerender();
+            rerenderModals();
             return;
         }
         state.isGeneratingFromScript = true;
@@ -494,48 +778,45 @@ async function handleAction(action, target) {
         state.showGenerateFromScriptDialog = false;
         state.showGenerateProgressDialog = true;
         state.generateProgressError = '';
+        state.generateProgressPercent = 0;
+        state.generateProgressMessage = '正在提交任务';
+        // 进度步骤对应后端真实阶段（见设计文档 §15 状态流程）。
+        // 不再用固定 5 秒 setInterval 假进度，改由轮询真实状态驱动。
         const progressSteps = [
-            { name: '构思场景背景', status: 'pending' },
-            { name: '设计画面构图', status: 'pending' },
-            { name: '选择适合景别', status: 'pending' },
-            { name: '调整色彩与灯光', status: 'pending' },
-            { name: '最终细节确认', status: 'pending' },
+            { name: '规划分段', status: 'pending', phase: 'planning' },
+            { name: '逐段拆分', status: 'pending', phase: 'segment_generation' },
+            { name: '合并校验', status: 'pending', phase: 'merging' },
+            { name: '发布分镜', status: 'pending', phase: 'publishing' },
         ];
         state.generateProgressSteps = progressSteps;
-        state.generateProgressStepIndex = 0;
-        progressSteps[0].status = 'running';
-        rerender();
+        state.generateProgressStepIndex = -1;
+        rerenderModals();
 
-        const STEP_DELAY = 5000;
-        if (generateProgressTimer) {
-            clearInterval(generateProgressTimer);
-            generateProgressTimer = null;
-        }
-        const advanceStep = () => {
-            const idx = state.generateProgressStepIndex;
-            if (idx >= 0 && idx < progressSteps.length) {
-                progressSteps[idx].status = 'completed';
-            }
-            const nextIdx = idx + 1;
-            if (nextIdx < progressSteps.length - 1) {
-                progressSteps[nextIdx].status = 'running';
-                state.generateProgressStepIndex = nextIdx;
-                rerender();
-            } else if (nextIdx === progressSteps.length - 1) {
-                progressSteps[nextIdx].status = 'running';
-                state.generateProgressStepIndex = nextIdx;
-                rerender();
-                clearInterval(generateProgressTimer);
-                generateProgressTimer = null;
-            } else {
-                clearInterval(generateProgressTimer);
-                generateProgressTimer = null;
-            }
+        // 根据后端 status/phase 更新步骤状态
+        const updateStepsByStatus = (statusData) => {
+            applyGenerateProgressStatus(statusData);
+            const phase = statusData.phase;
+            const status = statusData.status;
+            const phaseToStep = { planning: 0, segment_generation: 1, replan_segment: 1, merging: 2, global_qc: 2, publishing: 3, done: 4 };
+            const targetStep = phaseToStep[phase] !== undefined ? phaseToStep[phase] : (phaseToStep[status] || 0);
+            progressSteps.forEach((s, i) => {
+                if (status === 'completed') {
+                    s.status = 'completed';
+                } else if (i < targetStep) {
+                    s.status = 'completed';
+                } else if (i === targetStep) {
+                    s.status = 'running';
+                } else {
+                    s.status = 'pending';
+                }
+            });
+            state.generateProgressStepIndex = Math.min(targetStep, progressSteps.length - 1);
+            rerenderModals();
         };
-        generateProgressTimer = setInterval(advanceStep, STEP_DELAY);
 
         try {
-            const response = await api.generateFromScript(state.storyboardId, {
+            const thinking = getThinkingParams();
+            const submitResp = await api.generateFromScript(state.storyboardId, {
                 max_group_duration: state.maxGroupDuration || 15,
                 force_medium_shot: state.forceMediumShot !== false,
                 no_bg_music: state.noBgMusic !== false,
@@ -543,35 +824,63 @@ async function handleAction(action, target) {
                 model: splitModel.model,
                 model_id: splitModel.model_id,
                 vendor_id: splitModel.vendor_id,
+                enable_thinking: thinking.enable_thinking,
+                thinking_effort: thinking.thinking_effort,
+                enable_script_split_qc: state.enableScriptSplitQc === true,
+                script_split_qc_max_rounds: Number(state.scriptSplitQcMaxRounds) || 2,
+                sequence_mode: state.autoImageSequenceMode,
             });
-            clearInterval(generateProgressTimer);
-            generateProgressTimer = null;
-            progressSteps.forEach(s => s.status = 'completed');
-            state.generateProgressStepIndex = progressSteps.length;
-            rerender();
-            setTimeout(() => {
-                state.showGenerateProgressDialog = false;
-                loadStoryboardData(response);
-                const audioMessage = handleAutoDialogueAudioPolling(response);
-                state.isGeneratingFromScript = false;
-                // 拆分已重建分镜集合（含删除后重新拆分），清除旧的自动生成去重标志，
-                // 让本轮新生成的缺失首帧能够重新触发一次自动生成。
-                resetAutoMissingImagesFlag(state.storyboardId);
-                autoGenerateMissingFirstFrames();
-                const generatedMessage = `已生成 ${response.generated_count || state.scenes.length} 个分镜`;
-                notify([generatedMessage, audioMessage].filter(Boolean).join('\n'));
-                rerender();
-            }, 500);
+            // 后端返回 202 + { data: { task_id, status, status_url } }
+            const taskId = (submitResp && submitResp.data && submitResp.data.task_id) || submitResp.task_id;
+            if (!taskId) {
+                throw new Error('未返回任务 ID');
+            }
+            state.generateFromScriptTaskId = taskId;
+
+            pollScriptSplitTask(taskId, {
+                onUpdate: (statusData) => {
+                    updateStepsByStatus(statusData);
+                },
+                onComplete: async (_result, _statusData) => {
+                    progressSteps.forEach(s => s.status = 'completed');
+                    state.generateProgressStepIndex = progressSteps.length;
+                    rerenderModals();
+                    // 发布由 worker 完成，这里重新加载故事板拿到已创建的分镜
+                    try {
+                        const sbResp = await api.getStoryboard(state.storyboardId);
+                        loadStoryboardData(sbResp);
+                    } catch (e) { /* ignore */ }
+                    state.showGenerateProgressDialog = false;
+                    state.isGeneratingFromScript = false;
+                    resetAutoMissingImagesFlag(state.storyboardId);
+                    autoGenerateMissingFirstFrames();
+                    const generatedMessage = `已生成 ${state.scenes.length} 个分镜`;
+                    notify(generatedMessage);
+                    rerender('all', { forcePreview: true });
+                },
+                onPaused: (statusData) => {
+                    state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
+                    state.isGeneratingFromScript = false;
+                    rerenderModals();
+                },
+                onError: (error) => {
+                    const idx = state.generateProgressStepIndex;
+                    if (idx >= 0 && idx < progressSteps.length) {
+                        progressSteps[idx].status = 'failed';
+                    }
+                    state.generateProgressError = error.message || '生成分镜失败';
+                    state.isGeneratingFromScript = false;
+                    rerenderModals();
+                },
+            });
         } catch (error) {
-            clearInterval(generateProgressTimer);
-            generateProgressTimer = null;
             const idx = state.generateProgressStepIndex;
             if (idx >= 0 && idx < progressSteps.length) {
                 progressSteps[idx].status = 'failed';
             }
             state.generateProgressError = error.message || '生成分镜失败';
             state.isGeneratingFromScript = false;
-            rerender();
+            rerenderModals();
         }
         return;
     }
@@ -583,7 +892,8 @@ async function handleAction(action, target) {
             prompt_json: {},
         });
         addSceneToState(response.scene);
-        rerender();
+        // 结构变化：只重建 timeline/grid list，不拆 preview
+        rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         return;
     }
 
@@ -598,34 +908,49 @@ async function handleAction(action, target) {
             next_id: nextId,
         });
         addSceneToState(response.scene);
-        rerender();
+        rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         return;
     }
 
     if (action === 'duplicate-scene') {
         const response = await api.duplicateScene(parseInt(target.dataset.id, 10));
         addSceneToState(response.scene);
-        rerender();
+        rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         return;
     }
 
     if (action === 'delete-scene') {
         const sceneId = parseInt(target.dataset.id, 10);
         if (!window.confirm('确定删除这个分镜吗？')) return;
+        stopPlayback();
         await api.deleteScene(sceneId);
         removeSceneFromState(sceneId);
         if (state.scenes.length === 0) {
             state.showGenerateFromScriptDialog = true;
             state.generateFromScriptError = '';
+            rerender([...REGIONS_ON_SCENE_STRUCT, Region.MODAL], { forcePreview: true });
+            return;
         }
-        rerender();
+        rerender(REGIONS_ON_SCENE_STRUCT, { forcePreview: true });
         return;
     }
 
     if (action === 'toggle-view') {
         stopPlayback();
         state.viewMode = state.viewMode === 'grid' ? 'timeline' : 'grid';
-        rerender();
+        rerender([Region.CENTER], { forcePreview: true });
+        // Grid 返回时间轴后，中栏刚重建，需等布局稳定再将当前选中分镜滚入可见区。
+        // 复用点击/键盘切镜的双 rAF，避免 26 等靠后分镜仍停留在时间轴右端。
+        const targetSceneId = state.currentSceneId;
+        if (state.viewMode === 'timeline' && targetSceneId != null) {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    if (state.viewMode === 'timeline' && state.currentSceneId === targetSceneId) {
+                        scrollTimelineToScene(targetSceneId);
+                    }
+                });
+            });
+        }
         await persistUiConfig();
         return;
     }
@@ -637,7 +962,7 @@ async function handleAction(action, target) {
 
     if (action === 'toggle-episode-picker') {
         state.showEpisodePicker = !state.showEpisodePicker;
-        rerender();
+        rerender([Region.HEADER]);
         if (state.showEpisodePicker) {
             ensureEpisodeFoldersLoaded().catch((e) => notify(e.message || '加载集列表失败'));
         }
@@ -687,26 +1012,33 @@ async function handleAction(action, target) {
         return;
     }
 
-    if (action === 'toggle-force-medium-shot' || action === 'toggle-no-bg-music' || action === 'toggle-split-multi-dialogue') {
+    if (
+        action === 'toggle-force-medium-shot'
+        || action === 'toggle-no-bg-music'
+        || action === 'toggle-split-multi-dialogue'
+        || action === 'toggle-enable-script-split-qc'
+    ) {
         if (state.isGeneratingFromScript) return;
-        if (action === 'toggle-force-medium-shot') state.forceMediumShot = target.checked;
-        else if (action === 'toggle-no-bg-music') state.noBgMusic = target.checked;
-        else state.splitMultiDialogue = target.checked;
+        // click 路径有 preventDefault，checkbox 状态不可靠，按当前 state 翻转
+        if (action === 'toggle-force-medium-shot') state.forceMediumShot = !state.forceMediumShot;
+        else if (action === 'toggle-no-bg-music') state.noBgMusic = !state.noBgMusic;
+        else if (action === 'toggle-split-multi-dialogue') state.splitMultiDialogue = !state.splitMultiDialogue;
+        else state.enableScriptSplitQc = !state.enableScriptSplitQc;
         await persistUiConfig();
-        rerender();
+        rerenderModals();
         return;
     }
 
     if (action === 'toggle-ai') {
         state.aiOptimize = !state.aiOptimize;
-        rerender();
+        rerenderAgentPanel();
         await persistUiConfig();
         return;
     }
 
     if (action === 'close-model-config') {
         state.showModelConfigModal = false;
-        rerender();
+        rerenderModals();
         return;
     }
 
@@ -720,7 +1052,9 @@ async function handleAction(action, target) {
             character_desc: currentPrompt.character_desc || '',
         };
         await api.updateScenePrompt(current.id, sceneToPromptPayload(current));
-        rerender();
+        notify('画面提示词已保存');
+        // 数据已在表单中，无需拆左栏；标题可能影响预览 caption
+        rerender([Region.PREVIEW, Region.TIMELINE_LIST]);
         return;
     }
 
@@ -730,7 +1064,8 @@ async function handleAction(action, target) {
         if (titleEl) current.title = titleEl.value;
         if (videoPromptEl) current.videoPrompt = videoPromptEl.value;
         await api.updateScene(current.id, sceneToUpdatePayload(current));
-        rerender();
+        notify('分镜已保存');
+        rerender([Region.LEFT_TAB_BODY, Region.SCENE_CHROME, Region.PREVIEW, Region.TIMELINE_LIST, Region.GRID]);
         return;
     }
 
@@ -792,7 +1127,7 @@ async function handleAction(action, target) {
             character_id: null, text: '', speed: 1.0, volume: 100,
         });
         addDialogueToState(current.id, response.dialogue);
-        rerender();
+        rerender([Region.LEFT_TAB_BODY]);
         return;
     }
 
@@ -820,7 +1155,7 @@ async function handleAction(action, target) {
         if (!window.confirm('确定删除这句对话吗？')) return;
         await api.deleteDialogue(dialogueId);
         removeDialogueFromState(dialogueId);
-        rerender();
+        rerender([Region.LEFT_TAB_BODY]);
         return;
     }
 
@@ -837,7 +1172,7 @@ async function handleAction(action, target) {
 
     if (action === 'mention') {
         state.showMentionPopup = !state.showMentionPopup;
-        rerender();
+        rerenderModals();
         return;
     }
 
@@ -863,7 +1198,7 @@ async function handleAction(action, target) {
                 state.videoFirstFrameDismissedSceneId = scene?.id ?? null;
             }
             syncReferenceImagesCompat();
-            rerender();
+            rerenderAgentPanel();
         }
         return;
     }
@@ -876,29 +1211,29 @@ async function handleAction(action, target) {
         if (!(state.videoMediaItems || []).some(item => item.role === 'first_frame')) {
             syncVideoMediaFromScene(scene, { resetUploads: false });
         }
-        rerender();
+        rerenderAgentPanel();
         return;
     }
 
     if (action === 'toggle-video-mode-panel') {
-        if (state.isAgentRunning) return;
+        if (isSceneAgentRunning(current?.id)) return;
         state.showVideoModePanel = !state.showVideoModePanel;
-        rerender();
+        rerenderAgentPanel();
         return;
     }
 
     if (action === 'toggle-agent-chat-history') {
         state.agentChatHistoryOpen = !(state.agentChatHistoryOpen !== false);
-        rerender();
+        rerenderAgentPanel();
         return;
     }
 
     if (action === 'agent-chat-font-up' || action === 'agent-chat-font-down') {
         const delta = action === 'agent-chat-font-up' ? 1 : -1;
         setAgentChatFontStep((state.agentChatFontStep || 0) + delta);
-        // 固定展开态：避免 rerender 丢失 hover 后 textarea 缩回、按钮位置跳动
+        // 固定展开态：避免局部刷新丢失 hover 后 textarea 缩回、按钮位置跳动
         state.agentChatLogPinned = true;
-        rerender();
+        rerenderAgentPanel();
         requestAnimationFrame(() => {
             const btn = document.querySelector(`.ai-chat-section [data-action="${action}"]:not([disabled])`)
                 || document.querySelector(`.ai-chat-section [data-action="${action}"]`);
@@ -910,7 +1245,7 @@ async function handleAction(action, target) {
     if (action === 'toggle-media-stack') {
         // 删除/上传按钮自带更具体的 data-action，closest 会优先命中它们，不会进入本分支
         state.mediaStackExpanded = !state.mediaStackExpanded;
-        rerender();
+        rerenderAgentPanel();
         return;
     }
 
@@ -923,10 +1258,10 @@ async function handleAction(action, target) {
         } else {
             map[key] = true;
         }
-        // 无论展开/收起都 pin 住浮层，避免全量 rerender 后丢失 :hover 导致弹层消失
+        // pin 住浮层，避免刷新后丢失 :hover
         state.agentChatLogPinned = true;
         state.expandedAgentMessageIds = map;
-        rerender();
+        rerenderAgentUi();
         requestAnimationFrame(() => {
             const log = document.querySelector('.agent-chat-log');
             if (!log) return;
@@ -935,14 +1270,13 @@ async function handleAction(action, target) {
                 : String(key).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
             const row = log.querySelector(`[data-message-key="${safe}"]`);
             if (row) row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-            // 展开后尽量滚到可见区底部，方便看长文
             if (map[key]) log.scrollTop = Math.min(log.scrollHeight, row ? row.offsetTop : log.scrollHeight);
         });
         return;
     }
 
     if (action === 'set-video-image-mode') {
-        if (state.isAgentRunning) return;
+        if (isSceneAgentRunning(current?.id)) return;
         const mode = target.dataset.videoImageMode;
         const supported = getSupportedVideoImageModes();
         if (!supported.includes(mode)) return;
@@ -950,7 +1284,7 @@ async function handleAction(action, target) {
         state.showVideoModePanel = false;
         syncVideoMediaFromScene(getCurrentScene(), { resetUploads: false });
         await persistUiConfig();
-        rerender();
+        rerenderAgentPanel();
         return;
     }
 
@@ -958,8 +1292,9 @@ async function handleAction(action, target) {
         const res = target.dataset.videoResolution;
         if (!res) return;
         state.videoResolution = res;
+        // 选中态位于 modal 内：先即时刷新弹窗，再异步持久化，避免点击后仍显示旧分辨率。
+        rerender([Region.MODAL, Region.AGENT_PANEL]);
         await persistUiConfig();
-        rerender();
         return;
     }
 
@@ -967,7 +1302,23 @@ async function handleAction(action, target) {
         // click 监听里对 action 做了 preventDefault，checkbox 不会自动翻转，这里手动取反
         state.clipToAudioDuration = !state.clipToAudioDuration;
         await persistUiConfig();
-        rerender();
+        rerenderAgentPanel();
+        return;
+    }
+
+    if (action === 'toggle-audio-embedded') {
+        // 分镜级「声音同出」开关：开启后导出完整视频时保留视频原声、跳过 TTS 混音。
+        // click 路径上有 preventDefault，checkbox 原生翻转被取消，需按 scene 翻转后局部刷新。
+        const scene = getCurrentScene();
+        if (!scene) return;
+        scene.audioEmbedded = !scene.audioEmbedded;
+        try {
+            await api.updateScene(scene.id, { audio_embedded: scene.audioEmbedded ? 1 : 0 });
+        } catch (e) {
+            // 回滚翻转，避免 UI 与后端不一致
+            scene.audioEmbedded = !scene.audioEmbedded;
+        }
+        rerender([Region.LEFT_SIDEBAR]);
         return;
     }
 
@@ -976,7 +1327,7 @@ async function handleAction(action, target) {
         // 默认根据当前助手模式
         const mode = state.chatMode;
         state.currentConfigTab = mode === 'video' ? 'video' : 'dialogue';
-        rerender();
+        rerenderModals();
         return;
     }
 
@@ -985,35 +1336,155 @@ async function handleAction(action, target) {
     if (action === 'send-ai') {
         if (!current) return;
         await sendStoryboardAgentMessage(current);
-        rerender();
+        // send 内部已 refresh agent 面板
         return;
     }
 
     if (action === 'open-export') {
         state.showExportDialog = true;
-        rerender();
+        rerenderModals();
         return;
     }
 
     if (action === 'close-export') {
         state.showExportDialog = false;
-        rerender();
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'open-power-logs') {
+        if (!state.authToken && !localStorage.getItem('auth_token')) {
+            notify('请先登录后再查看算力日志');
+            return;
+        }
+        state.showPowerLogsModal = true;
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'close-power-logs') {
+        state.showPowerLogsModal = false;
+        try {
+            const power = await api.fetchComputingPower();
+            state.computingPower = power.computing_power ?? power.balance ?? state.computingPower;
+        } catch (_) { /* ignore */ }
+        rerender([Region.MODAL, Region.HEADER_POWER]);
+        return;
+    }
+
+    if (action === 'open-recharge') {
+        await openRechargeModal();
+        return;
+    }
+
+    if (action === 'close-recharge') {
+        resetRechargeState();
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'select-recharge-package') {
+        const packageId = target.dataset.packageId;
+        if (!packageId) return;
+        const pkg = (state.rechargePackages || []).find(
+            (item) => String(item.package_id) === String(packageId)
+        ) || {
+            package_id: packageId,
+            description: target.dataset.packageDesc || '',
+            computing_power: Number(target.dataset.packagePower) || 0,
+            price: Number(target.dataset.packagePrice) || 0,
+        };
+        await selectRechargePackage(pkg);
+        return;
+    }
+
+    if (action === 'back-to-recharge-packages' || action === 'retry-recharge-packages') {
+        await loadRechargePackages();
+        return;
+    }
+
+    if (action === 'toggle-export-burn-subtitles') {
+        // click 路径上有 preventDefault，checkbox 原生切换会被取消；
+        // 不能读 target.checked（仍是旧值），需按 state 翻转后只刷 modal
+        state.exportBurnSubtitles = !state.exportBurnSubtitles;
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'toggle-enable-thinking' || action === 'toggle-enable-thinking-label') {
+        // click 路径上有 preventDefault，checkbox 默认勾选可能被取消，统一按 state 翻转
+        state.enableThinking = !state.enableThinking;
+        saveThinkingStateToStorage(true);
+        rerenderModals();
         return;
     }
 
     if (action === 'export-full') {
-        const response = await api.exportFullVideo(state.storyboardId);
-        notify(response.error || '完整视频导出任务已提交');
-        state.showExportDialog = false;
-        rerender();
+        try {
+            const response = await api.exportFullVideo(state.storyboardId, {
+                include_subtitles: state.exportBurnSubtitles !== false,
+            });
+            if (!response.success && response.error) {
+                notify(response.error);
+                return;
+            }
+            const jobId = response.job_id;
+            if (!jobId) {
+                notify(response.error || '导出任务提交失败');
+                return;
+            }
+            state.showExportDialog = false;
+            rerenderModals();
+            notify('完整视频导出任务已提交，正在合成并上传…');
+            // 轮询 job → CDN 链接下载（对齐剧本世界导出：不走本站带宽）
+            const deadline = Date.now() + 30 * 60 * 1000;
+            while (Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 2000));
+                const job = await api.getExportJob(jobId);
+                if (job.status === 'completed' && job.download_url) {
+                    const a = document.createElement('a');
+                    a.href = job.download_url;
+                    a.download = job.filename || 'storyboard_full.mp4';
+                    a.target = '_blank';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    notify('完整视频已生成，已打开下载链接');
+                    return;
+                }
+                if (job.status === 'failed') {
+                    notify(job.error || '完整视频导出失败');
+                    return;
+                }
+            }
+            notify('导出超时，请稍后重试或联系管理员');
+        } catch (e) {
+            notify(e.message || '完整视频导出失败');
+        }
         return;
     }
 
     if (action === 'export-scenes') {
-        const response = await api.exportAllScenes(state.storyboardId);
-        notify(response.error || '分镜导出任务已提交');
-        state.showExportDialog = false;
-        rerender();
+        try {
+            notify('正在打包素材并上传图床…');
+            const response = await api.exportAllScenes(state.storyboardId);
+            if (!response.success || !response.download_url) {
+                notify(response.error || '素材包导出失败');
+                return;
+            }
+            const a = document.createElement('a');
+            a.href = response.download_url;
+            a.download = response.filename || 'storyboard_assets.zip';
+            a.target = '_blank';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            state.showExportDialog = false;
+            rerenderModals();
+            notify('素材包导出成功，已打开图床下载链接');
+        } catch (e) {
+            notify(e.message || '素材包导出失败');
+        }
         return;
     }
 
@@ -1023,13 +1494,13 @@ async function handleAction(action, target) {
 
     if (action === 'edit-global-style') {
         state.showGlobalStyleDialog = true;
-        rerender();
+        rerenderModals();
         return;
     }
 
     if (action === 'close-global-style') {
         state.showGlobalStyleDialog = false;
-        rerender();
+        rerenderModals();
         return;
     }
 
@@ -1048,10 +1519,76 @@ async function handleAction(action, target) {
             state.style = newStyle;
             state.compositionPreference = newComp;
             state.showGlobalStyleDialog = false;
-            rerender();
+            rerender([Region.MODAL, Region.HEADER]);
             notify('画风和构图倾向已更新');
         } catch (e) {
             notify('更新失败: ' + (e.message || e));
+        }
+        return;
+    }
+
+    if (action === 'edit-scene') {
+        state.sceneEditTargetId = parseInt(target.dataset.id, 10);
+        state.sceneEditError = '';
+        state.sceneEditSaving = false;
+        state.showSceneEditDialog = true;
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'close-scene-edit') {
+        state.showSceneEditDialog = false;
+        state.sceneEditTargetId = null;
+        state.sceneEditError = '';
+        state.sceneEditSaving = false;
+        rerenderModals();
+        return;
+    }
+
+    if (action === 'save-scene-edit') {
+        const sceneId = state.sceneEditTargetId;
+        const scene = state.scenes.find(s => s.id === sceneId);
+        if (!scene) return;
+        const titleEl = document.querySelector('[data-scene-edit-field="title"]');
+        const durEl = document.querySelector('[data-scene-edit-field="duration"]');
+        const diffEl = document.querySelector('[data-scene-edit-field="difficulty"]');
+        const actEl = document.querySelector('[data-scene-edit-field="act_name"]');
+        const newTitle = titleEl ? titleEl.value.trim() : (scene.title || '');
+        const newDuration = durEl ? parseFloat(durEl.value) : scene.duration;
+        const newDifficulty = diffEl ? diffEl.value : (scene.difficulty || '');
+        const newActName = actEl ? actEl.value.trim() : (scene.actName || '');
+        // 时长校验（非数字或负数）
+        if (!Number.isFinite(newDuration) || newDuration < 0) {
+            state.sceneEditError = '时长必须为非负数字';
+            rerenderModals();
+            return;
+        }
+        state.sceneEditSaving = true;
+        rerenderModals(); // 禁用按钮并显示「保存中…」
+        try {
+            await api.updateScene(sceneId, {
+                title: newTitle,
+                duration: newDuration,
+                difficulty: newDifficulty,
+                act_name: newActName,
+            });
+            // 写回本地 state
+            scene.title = newTitle;
+            scene.duration = newDuration;
+            scene.difficulty = newDifficulty;
+            scene.actName = newActName;
+            // 关闭弹框 + 刷新 grid 卡片（CENTER 在 grid 视图含卡片网格）
+            state.showSceneEditDialog = false;
+            state.sceneEditTargetId = null;
+            state.sceneEditError = '';
+            rerender([Region.MODAL, Region.CENTER], { forcePreview: true });
+            notify('分镜已更新');
+        } catch (e) {
+            state.sceneEditSaving = false;
+            state.sceneEditError = e.message || String(e);
+            rerenderModals();
+        } finally {
+            state.sceneEditSaving = false;
         }
         return;
     }
@@ -1072,7 +1609,7 @@ async function ensureEpisodeFoldersLoaded(force = false) {
             f => !state.worldId || Number(f.world_id) === Number(state.worldId)
         );
         state.episodeFoldersLoaded = true;
-        if (state.showEpisodePicker) rerender();
+        if (state.showEpisodePicker) rerender([Region.HEADER]);
     } finally {
         state.episodeFoldersLoading = false;
     }
@@ -1089,7 +1626,7 @@ function navigateToEpisode(episodeNumber, options = {}) {
     }
     if (ep === Number(state.episodeNumber) && !options.force) {
         state.showEpisodePicker = false;
-        rerender();
+        rerender([Region.HEADER]);
         return;
     }
     if (!state.worldId) {
@@ -1160,7 +1697,7 @@ export function bindEvents() {
         // 集数切换面板：点外部关闭
         if (state.showEpisodePicker && !event.target.closest('[data-episode-switcher]')) {
             state.showEpisodePicker = false;
-            rerender();
+            rerender([Region.HEADER]);
             // 继续处理本次点击（例如点到分镜）
         }
 
@@ -1192,8 +1729,14 @@ export function bindEvents() {
         const candidateTarget = event.target.closest('[data-candidate-id][data-candidate-type]');
         if (candidateTarget) {
             event.preventDefault();
+            const candidatePlayTarget = event.target.closest('[data-candidate-play]');
             try {
-                await selectSceneCandidate(candidateTarget);
+                await selectSceneCandidate(candidateTarget, {
+                    autoplay: Boolean(
+                        candidatePlayTarget
+                        && candidateTarget.dataset.candidateType === 'video'
+                    ),
+                });
             } catch (error) {
                 notify(error.message || '选择候选图失败');
             }
@@ -1206,7 +1749,7 @@ export function bindEvents() {
             state.currentSceneId = sceneId;
             // 选中 = 播放起点：对齐时间轴偏移，并清除 ended，避免再点播放从片头重来
             syncSelectionToTimeline(sceneId);
-            state.agentMessages = [];
+            activateSceneAgentMessages(sceneId);
             state.referenceImages = [];
             state.showVideoModePanel = false;
             state.mediaStackExpanded = false;
@@ -1219,19 +1762,23 @@ export function bindEvents() {
                 state.videoMediaItems = [];
                 state.videoFirstFrameDismissedSceneId = null;
             }
-            rerender();
+            // 分区刷新：左栏+预览+候选+时间轴，禁止整页 renderApp
+            rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
+            // 布局稳定后滚到当前缩略图（点击切镜与键盘一致）
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => scrollTimelineToScene(sceneId));
+            });
             // 异步加载该 scene 的候选资产
             (async () => {
                 try {
-                    // skipRerender=true：由本 IIFE 末尾统一渲染，避免渲染竞态
                     const historyPromise = loadSceneAgentMessages(sceneId, true).catch(() => {});
                     await loadSceneCandidates(sceneId);
                     await historyPromise;
-                    // 候选加载后首帧 URL 可能更新
                     if (state.chatMode === 'video' && state.currentSceneId === sceneId) {
                         refreshSceneFirstFrameSlot(getCurrentScene());
                     }
-                    rerender();
+                    if (state.currentSceneId !== sceneId) return;
+                    rerender([Region.CANDIDATES, Region.AGENT_PANEL, Region.PREVIEW], { forcePreview: true });
                 } catch (e) {
                     // 静默失败，不影响主流程
                 }
@@ -1243,7 +1790,7 @@ export function bindEvents() {
         if (state.showVideoModePanel && !event.target.closest('[data-video-mode-panel]') && !event.target.closest('[data-action="toggle-video-mode-panel"]')) {
             state.showVideoModePanel = false;
             if (!actionTarget && !sceneTarget) {
-                rerender();
+                rerenderAgentPanel();
                 return;
             }
         }
@@ -1252,10 +1799,10 @@ export function bindEvents() {
         if (state.mediaStackExpanded && !event.target.closest('.media-stack')) {
             state.mediaStackExpanded = false;
             if (!actionTarget && !sceneTarget) {
-                rerender();
+                rerenderAgentPanel();
                 return;
             }
-            // 有其它 action 时只改状态，后续 handler 会 rerender
+            // 有其它 action 时只改状态，后续 handler 会 refresh
         }
 
         // Handle model config tabs (must be before action guard since tabs have no data-action)
@@ -1263,7 +1810,7 @@ export function bindEvents() {
         if (configTabTarget) {
             const tab = configTabTarget.dataset.configTab;
             state.currentConfigTab = tab;
-            rerender();
+            rerenderModals();
             return;
         }
 
@@ -1314,11 +1861,20 @@ export function bindEvents() {
         }
         if (event.key === 'Escape' && state.showEpisodePicker) {
             state.showEpisodePicker = false;
-            rerender();
+            rerender([Region.HEADER]);
             return;
         }
-        if (!isTimelineHovered) return;
+        // 在输入框/可编辑区时不抢左右键
+        const tag = (event.target && event.target.tagName) ? String(event.target.tagName).toUpperCase() : '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable) {
+            return;
+        }
+        // 悬停时间轴，或焦点不在表单时允许全局左右切镜
+        if (!isTimelineHovered && event.target?.closest?.('.left-sidebar, .right-sidebar, .modal-overlay, .ai-chat-section')) {
+            return;
+        }
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        if (!state.scenes.length) return;
 
         const currentIndex = state.scenes.findIndex(s => s.id === state.currentSceneId);
         if (currentIndex === -1) return;
@@ -1333,35 +1889,33 @@ export function bindEvents() {
 
         event.preventDefault();
         stopPlayback();
-        state.currentSceneId = state.scenes[newIndex].id;
+        const nextScene = state.scenes[newIndex];
+        state.currentSceneId = nextScene.id;
         syncSelectionToTimeline(state.currentSceneId);
-        state.agentMessages = [];
+        activateSceneAgentMessages(nextScene.id);
         state.referenceImages = [];
         state.showVideoModePanel = false;
         state.mediaStackExpanded = false;
         state.expandedAgentMessageIds = {};
         if (state.chatMode === 'video') {
             ensureVideoImageModeSupported();
-            syncVideoMediaFromScene(state.scenes[newIndex], { resetUploads: true });
+            syncVideoMediaFromScene(nextScene, { resetUploads: true });
         } else {
             state.videoMediaItems = [];
             state.videoFirstFrameDismissedSceneId = null;
         }
-        rerender();
+        rerender(REGIONS_ON_SCENE_CHANGE, { forcePreview: true });
 
+        // 双 rAF：等区域 patch 完成布局后再滚，避免 scrollLeft 算错 / 不滚动
+        const targetId = nextScene.id;
         requestAnimationFrame(() => {
-            const activeThumb = document.querySelector('.scene-timeline-thumb.active');
-            if (!activeThumb) return;
-            const list = document.querySelector('.scene-timeline-list');
-            if (!list) return;
-            const thumbRect = activeThumb.getBoundingClientRect();
-            const listRect = list.getBoundingClientRect();
-            if (thumbRect.left < listRect.left + 8) {
-                list.scrollLeft -= (listRect.left + 8 - thumbRect.left);
-            } else if (thumbRect.right > listRect.right - 8) {
-                list.scrollLeft += (thumbRect.right - (listRect.right - 8));
-            }
+            requestAnimationFrame(() => {
+                scrollTimelineToScene(targetId);
+            });
         });
+        loadSceneAgentMessages(targetId, true).then(() => {
+            rerenderAgentPanelForScene(targetId);
+        }).catch(() => {});
     });
 
     document.addEventListener('wheel', (event) => {
@@ -1386,7 +1940,7 @@ export function bindEvents() {
                 state.videoFirstFrameDismissedSceneId = null;
                 state.referenceImages = [];
             }
-            rerender();
+            rerenderAgentPanel();
             await persistUiConfig();
             return;
         }
@@ -1423,6 +1977,8 @@ export function bindEvents() {
                     vendor_id: vendorId ? parseInt(vendorId, 10) : null,
                 } : val;
                 resolveSelectedLlmModel();
+                applyThinkingDefaultsForModel(state.selectedLlmModel);
+                saveThinkingStateToStorage(false);
                 try {
                     localStorage.setItem('storyboard_lastSelectedLlmModel', JSON.stringify(state.selectedLlmModel));
                 } catch {}
@@ -1436,9 +1992,21 @@ export function bindEvents() {
                     vendor_id: vendorId ? parseInt(vendorId, 10) : null,
                 } : val;
                 resolveSelectedScriptSplitLlmModel();
+                applyThinkingDefaultsForModel(state.selectedScriptSplitLlmModel || state.selectedLlmModel);
+                saveThinkingStateToStorage(false);
                 try {
                     localStorage.setItem('storyboard_lastScriptSplitLlmModel', JSON.stringify(state.selectedScriptSplitLlmModel));
                 } catch {}
+            } else if (type === 'thinkingEffort') {
+                if (['low', 'medium', 'high'].includes(val)) {
+                    state.thinkingEffort = val;
+                    saveThinkingStateToStorage(false);
+                }
+            } else if (type === 'scriptSplitQcMaxRounds') {
+                const n = parseInt(val, 10);
+                if (Number.isFinite(n) && n >= 1 && n <= 5) {
+                    state.scriptSplitQcMaxRounds = n;
+                }
             } else if (type === 'image') {
                 state.selectedImageTaskId = parseInt(val, 10) || state.selectedImageTaskId;
                 // 跨故事板记忆兜底（与 LLM 模型写法一致），新故事板/首次进入弹框时回显
@@ -1468,8 +2036,12 @@ export function bindEvents() {
                 if ([5, 8, 10, 15].includes(d)) state.maxGroupDuration = d;
             }
 
-            // 如果当前助手模式匹配，也可视为立即生效
-            rerender();
+            // 模型配置在弹层内：只刷 modal；视频相关可能影响助手槽位
+            if (type === 'video' || type === 'videoDuration') {
+                rerender([Region.MODAL, Region.AGENT_PANEL]);
+            } else {
+                rerenderModals();
+            }
             if (state.storyboardId) {
                 persistUiConfig().catch(() => {});
             }
@@ -1479,7 +2051,7 @@ export function bindEvents() {
         if (target.dataset.configTab) {
             const tab = target.dataset.configTab;
             state.currentConfigTab = tab;
-            rerender();
+            rerenderModals();
             return;
         }
         // 画风/构图编辑入口已改为 header 点击（data-action="edit-global-style"）
@@ -1488,23 +2060,52 @@ export function bindEvents() {
     document.addEventListener('click', (event) => {
         const overlay = event.target.closest('.modal-overlay');
         if (overlay && event.target === overlay) {
+            if (state.generateFromScriptTaskId) {
+                stopScriptSplitTaskPolling(state.generateFromScriptTaskId);
+            }
             if (generateProgressTimer) {
                 clearInterval(generateProgressTimer);
                 generateProgressTimer = null;
             }
+            const modalKind = overlay.dataset.modal || '';
+            if (modalKind === 'video-type-switch') {
+                if (state.videoTypeSwitch.saving) return;
+                state.videoTypeSwitch.targetType = null;
+                state.videoTypeSwitch.previousType = null;
+                rerenderModals();
+                return;
+            }
+            // 充值弹窗叠在日志上：点遮罩只关充值
+            if (modalKind === 'recharge' || state.showRechargeModal) {
+                resetRechargeState();
+                rerenderModals();
+                return;
+            }
+            if (modalKind === 'power-logs' || state.showPowerLogsModal) {
+                state.showPowerLogsModal = false;
+                api.fetchComputingPower().then((power) => {
+                    state.computingPower = power.computing_power ?? power.balance ?? state.computingPower;
+                    rerender([Region.MODAL, Region.HEADER_POWER]);
+                }).catch(() => rerenderModals());
+                return;
+            }
             state.showModelConfigModal = false;
             state.showExportDialog = false;
             state.showGlobalStyleDialog = false;
+            state.showSceneEditDialog = false;
+            state.sceneEditTargetId = null;
+            state.sceneEditError = '';
             state.showGenerateFromScriptDialog = false;
             state.showGenerateProgressDialog = false;
-            rerender();
+            rerenderModals();
             return;
         }
 
         const tab = event.target.closest('[data-tab]');
         if (tab) {
             state.activeTab = tab.dataset.tab;
-            rerender();
+            // 只刷工作台 Tab 体，不碰助手与主预览
+            rerender([Region.LEFT_TABS, Region.LEFT_TAB_BODY]);
             persistUiConfig();
         }
 
@@ -1514,7 +2115,7 @@ export function bindEvents() {
             const onMentionBtn = event.target.closest('[data-action="mention"]');
             if (!inPopup && !onMentionBtn) {
                 state.showMentionPopup = false;
-                rerender();
+                rerenderModals();
                 // 继续处理其它点击（如切分镜），不 return
             }
         }
@@ -1522,7 +2123,7 @@ export function bindEvents() {
         const mentionTab = event.target.closest('[data-mention-tab]');
         if (mentionTab) {
             state.mentionTab = mentionTab.dataset.mentionTab;
-            rerender();
+            rerenderModals();
             return;
         }
 
@@ -1530,7 +2131,7 @@ export function bindEvents() {
         if (mentionItem) {
             state.inputMessage = `${state.inputMessage || ''}@${mentionItem.dataset.mentionItem} `;
             state.showMentionPopup = false;
-            rerender();
+            rerender([Region.MODAL, Region.AGENT_PANEL]);
             return;
         }
 
@@ -1579,7 +2180,8 @@ export function bindEvents() {
                 }
                 const val = ta.value;
                 await persistPromptValue(scene, type, val);
-                rerender();
+                // 退出编辑态：只刷工作台展示层，不碰助手/主预览
+                rerender([Region.LEFT_TAB_BODY]);
             };
             ta.addEventListener('blur', () => {
                 // tiny delay lets dropdown mousedown/insert run and set/clear skip flag first
@@ -1610,7 +2212,7 @@ async function persistSceneLocationProps(sc) {
     sc.referenceSelections = prompt.reference_selections || sc.referenceSelections;
     sc._fullPrompt = prompt;
     if (sc.raw) sc.raw.prompt_json = prompt;
-    rerender();
+    rerender([Region.LEFT_TAB_BODY]);
 }
 
 async function persistPromptValue(scene, type, value) {

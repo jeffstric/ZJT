@@ -17,6 +17,7 @@ class StoryboardSceneAsset:
         self.ai_tool_id = kwargs.get('ai_tool_id')
         self.asset_type = kwargs.get('asset_type')
         self.result_url = kwargs.get('result_url')
+        self.media_mapping_id = kwargs.get('media_mapping_id')
         self.create_at = kwargs.get('create_at')
 
     def to_dict(self) -> Dict[str, Any]:
@@ -26,6 +27,7 @@ class StoryboardSceneAsset:
             'ai_tool_id': self.ai_tool_id,
             'asset_type': self.asset_type,
             'result_url': self.result_url,
+            'media_mapping_id': self.media_mapping_id,
             'create_at': self.create_at.isoformat() if self.create_at else None,
         }
 
@@ -45,13 +47,14 @@ class StoryboardSceneAssetModel:
         asset_type: str,
         ai_tool_id: Optional[int] = None,
         result_url: Optional[str] = None,
+        media_mapping_id: Optional[int] = None,
     ) -> int:
         sql = """
             INSERT INTO storyboard_scene_asset
-            (scene_id, ai_tool_id, asset_type, result_url)
-            VALUES (%s, %s, %s, %s)
+            (scene_id, ai_tool_id, asset_type, result_url, media_mapping_id)
+            VALUES (%s, %s, %s, %s, %s)
         """
-        params = (scene_id, ai_tool_id, asset_type, result_url)
+        params = (scene_id, ai_tool_id, asset_type, result_url, media_mapping_id)
         try:
             record_id = execute_insert(sql, params)
             logger.info(f"Created storyboard_scene_asset with ID: {record_id}")
@@ -132,6 +135,20 @@ class StoryboardSceneAssetModel:
             raise
 
     @staticmethod
+    def update_media_mapping_id(record_id: int, media_mapping_id: Optional[int]) -> int:
+        """更新资产的 CDN 媒体映射 ID（用于图床分发降带宽）。"""
+        sql = "UPDATE storyboard_scene_asset SET media_mapping_id = %s WHERE id = %s"
+        try:
+            affected = execute_update(sql, (media_mapping_id, record_id))
+            logger.info(
+                f"Updated storyboard_scene_asset {record_id} media_mapping_id={media_mapping_id}, affected rows: {affected}"
+            )
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to update media_mapping_id for storyboard_scene_asset {record_id}: {e}")
+            raise
+
+    @staticmethod
     def delete(record_id: int) -> int:
         sql = "DELETE FROM storyboard_scene_asset WHERE id = %s"
         try:
@@ -151,10 +168,13 @@ CREATE TABLE IF NOT EXISTS `storyboard_scene_asset` (
     `ai_tool_id` INT DEFAULT NULL COMMENT '→ ai_tools.id（源表 int，不加外键）',
     `asset_type` VARCHAR(32) NOT NULL COMMENT 'first_frame / last_frame / video',
     `result_url` VARCHAR(512) DEFAULT NULL COMMENT '结果 URL（图片或视频，冗余）',
+    `media_mapping_id` INT DEFAULT NULL COMMENT '→ media_file_mapping.id（CDN 媒体映射，用于图床分发降带宽）',
     `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX `idx_scene` (`scene_id`, `asset_type`),
     INDEX `idx_ai_tool` (`ai_tool_id`),
-    FOREIGN KEY (`scene_id`) REFERENCES `storyboard_scene`(`id`) ON DELETE CASCADE
+    INDEX `idx_media_mapping_id` (`media_mapping_id`),
+    FOREIGN KEY (`scene_id`) REFERENCES `storyboard_scene`(`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_asset_media_mapping_id` FOREIGN KEY (`media_mapping_id`) REFERENCES `media_file_mapping`(`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='分镜图片/视频资产表';
 """
 

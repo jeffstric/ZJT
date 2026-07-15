@@ -98,6 +98,10 @@ ASSET_LIST_DB_QUERY_TIMEOUT = 30
 # 音频时长探测（ffprobe）单次执行超时（秒）。用于分镜配音完成后探测时长并回写。
 FFPROBE_AUDIO_DURATION_TIMEOUT = 30
 
+# 数字人双模型路由：分镜待说台词 TTS 总时长 <= 该阈值（秒）时选择 Wan2.2，> 则选择 LTX2.3。
+# 比较前统一按毫秒精度规整，避免浮点误差导致边界值被错误分配。
+WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
+
 
 class AgentAuthConstants:
     """Agent/API token exchange constants."""
@@ -620,12 +624,175 @@ class StoryboardTimeouts:
     _CONSTANT_GROUP = True
 
     FIRST_FRAME_GRID_LLM_PROMPT_TIMEOUT_SECONDS = 60
+    # 故事板导出：单资源下载 / ffmpeg 单步 / 整片任务总超时
+    EXPORT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 120
+    EXPORT_FFMPEG_TIMEOUT_SECONDS = 300
+    EXPORT_PACKAGE_TOTAL_TIMEOUT_SECONDS = 600
+    EXPORT_FULL_VIDEO_TOTAL_TIMEOUT_SECONDS = 1800
+    # 数字人多段 TTS 音频 ffmpeg 合并超时（秒）。独立于导出流程超时，避免相互影响。
+    DIGITAL_HUMAN_AUDIO_MERGE_TIMEOUT_SECONDS = 120
+
+
+class StoryboardExportConstants:
+    """故事板导出路径与命名相关常量。"""
+    _CONSTANT_GROUP = True
+
+    # 相对 upload 目录
+    WORK_SUBDIR = "storyboard_export"
+    JOBS_SUBDIR = "storyboard_export/jobs"
+    DEFAULT_FALLBACK_SPAN_SECONDS = 2.0
+    DEFAULT_VIDEO_WIDTH = 1080
+    DEFAULT_VIDEO_HEIGHT = 1920
+    # 分镜「声音同出」开关（storyboard_scene.audio_embedded）：
+    # =1 时该镜选中视频已内嵌对话声音（如数字人 LTX2.3 产物），
+    # 导出完整视频保留视频原音轨、跳过 TTS 混音。digital_human 默认 1。
+    AUDIO_EMBEDDED_ON = 1
+    AUDIO_EMBEDDED_OFF = 0
+
+
+class StoryboardSubtitleConstants:
+    """整片导出硬烧字幕：版式与超长分页。"""
+    _CONSTANT_GROUP = True
+
+    MAX_LINES = 3
+    # 相对画面宽的可排版宽度（左右各留边）
+    MAX_WIDTH_RATIO = 0.86
+    SIDE_MARGIN_RATIO = 0.07
+    BOTTOM_MARGIN_RATIO = 0.08
+    # 字号 = clamp(height / FONT_SIZE_DIVISOR, FONT_SIZE_MIN, FONT_SIZE_MAX)
+    FONT_SIZE_DIVISOR = 28
+    FONT_SIZE_MIN = 28
+    FONT_SIZE_MAX = 56
+    # 中文近似字宽系数（相对字号）
+    CHAR_WIDTH_RATIO = 1.0
+    MIN_CHARS_PER_LINE = 10
+    # 时间轴分页：单页最短展示秒数
+    MIN_PAGE_DURATION_SECONDS = 0.8
+    # 无探测时长时的单条对白默认秒数
+    DEFAULT_CUE_DURATION_SECONDS = 2.0
+
+
+class ScriptSplitQcConstants:
+    """剧本拆分质检循环与阈值。"""
+    _CONSTANT_GROUP = True
+
+    # 段级 QC 诊断日志：规则说明/实际输入/质检报告。
+    DIAGNOSTIC_LOGGING_ENABLED = True
+    DIAGNOSTIC_LOG_DIR = "logs/script_parser"
+
+    DEFAULT_MAX_ROUNDS = 2
+    MIN_MAX_ROUNDS = 1
+    MAX_MAX_ROUNDS = 5
+    # 提示词/对话语言检测：拉丁字符占比超过该值视为「偏英文」
+    LATIN_RATIO_THRESHOLD = 0.45
+    # 中文检测：CJK 占比低于该值且文本够长 → 不像中文
+    CJK_RATIO_MIN_FOR_ZH = 0.25
+    # 参与语言检测的最短文本长度
+    LANG_CHECK_MIN_CHARS = 12
+    # 压缩上一轮结果写入 prompt 时的大致字符上限
+    PREVIOUS_RESULT_MAX_CHARS = 120000
+
+
+class ScriptSplitConstants:
+    """剧本分段拆分与断点续传（持久化任务）相关常量。
+
+    见 docs/script/script_parser_incremental_split_design.md。
+    注意：分段边界由模型按语义决定，本类不包含任何「每 N 个字符一段」的固定切割常量。
+    """
+    _CONSTANT_GROUP = True
+
+    # ---- 分段规划诊断日志 ----
+    # 记录第一阶段语义分段的输入、提示词、原始响应、解析结果和业务校验结果。
+    PLANNER_DIAGNOSTIC_LOGGING_ENABLED = True
+    PLANNER_DIAGNOSTIC_LOG_DIR = "logs/script_parser"
+
+    # ---- 重试与上界 ----
+    # 阶段一规划失败的最大重试次数（同一边界重试规划）
+    PLAN_MAX_RETRIES = 3
+    # 单段拆分失败的最大重试次数（同一边界重试当前段）
+    SEGMENT_MAX_RETRIES = 3
+    # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
+    QUALITY_SEGMENT_PARALLELISM = 3
+    # 单个持久化分段允许包含的原文字符硬上限；LLM 负责主语义边界，后端仅切细超限段。
+    SEGMENT_MAX_SOURCE_CHARS = 1500
+    # ---- 模型输出预算 ----
+    # 控制单段模型输出的 token 上限，传给 call_api 的 max_tokens
+    SEGMENT_MAX_OUTPUT_TOKENS = 65536
+
+    # ---- 超时（秒）----
+    # 单次模型调用的 transport 超时，传给底层同步 HTTP 请求
+    LLM_TIMEOUT_SECONDS = 300
+    # OpenAI 兼容客户端（DeepSeek/通义/Claude 等）的 HTTP 请求超时。
+    # 专供 OpenAI SDK 的 client.chat.completions.create(timeout=...) 使用，
+    # 防止 TCP 连接建立后等待响应体时永久挂起（Gemini 客户端已有 timeout=300）。
+    LLM_HTTP_TIMEOUT_SECONDS = 300
+    # 单次段级 LLM coroutine 外层超时；必须大于 HTTP timeout，且小于整个 worker step
+    # watchdog，为异常转换、检查点写入和租约释放预留时间。
+    LLM_CALL_TIMEOUT_SECONDS = 330
+    # worker 单步（规划/单段/合并/发布之一）的外层 wait_for 预算，
+    # 必须 > LLM_TIMEOUT_SECONDS，确保底层请求先结束再触发外层取消
+    WORKER_STEP_TIMEOUT_SECONDS = 360
+    # 任务租约时长，必须 > WORKER_STEP_TIMEOUT_SECONDS
+    TASK_LEASE_SECONDS = 600
+    # scheduler tick 间隔
+    SCHEDULER_INTERVAL_SECONDS = 5
+
+    # ---- 轮询 ----
+    DEFAULT_POLL_MS = 3000
+    # 上下文携带的上一段尾部镜头摘要数量
+    HISTORY_TAIL_SHOTS = 2
+
+    # ---- 来源类型 ----
+    SOURCE_TYPE_VIDEO_WORKFLOW = "video_workflow"
+    SOURCE_TYPE_STORYBOARD = "storyboard"
+    SOURCE_TYPE_CLI = "cli"
+
+    # ---- 任务状态 ----
+    STATUS_QUEUED = "queued"
+    STATUS_PLANNING = "planning"
+    STATUS_GENERATING = "generating"
+    STATUS_MERGING = "merging"
+    STATUS_VALIDATING = "validating"
+    STATUS_PUBLISHING = "publishing"
+    STATUS_COMPLETED = "completed"
+    STATUS_PAUSED = "paused"
+    STATUS_WAITING_AUTH = "waiting_auth"
+    STATUS_CANCELLING = "cancelling"
+    STATUS_FAILED = "failed"
+    STATUS_CANCELLED = "cancelled"
+
+    # ---- 可恢复错误码 ----
+    # 旧版本可能以该错误暂停；恢复时必须保留段 QC 轮数，让引擎直接接纳最后候选。
+    ERROR_SEGMENT_QC_FAILED = "segment_qc_failed"
+
+    # 不可恢复终态：进入后释放 active_key（置 NULL），允许同来源新建任务
+    TERMINAL_STATUSES = (
+        STATUS_COMPLETED,
+        STATUS_FAILED,
+        STATUS_CANCELLED,
+    )
+    # 活跃态：active_key 唯一索引保护，重复提交返回同任务
+    ACTIVE_STATUSES = (
+        STATUS_QUEUED,
+        STATUS_PLANNING,
+        STATUS_GENERATING,
+        STATUS_MERGING,
+        STATUS_VALIDATING,
+        STATUS_PUBLISHING,
+        STATUS_PAUSED,
+        STATUS_WAITING_AUTH,
+        STATUS_CANCELLING,
+    )
 
 
 class StoryboardAutoGenerateConstants:
     """Storyboard auto frame generation limits."""
     DEFAULT_BATCH_LIMIT = 5
     MAX_BATCH_LIMIT = 20
+    # limit=0（或调用方不传 limit）表示「无限制」：规划全部缺失场景，不硬截断。
+    # 调度器仍按 per-tick 吞吐量（QUALITY_GRID_BATCHES_PER_TICK 等）控速，不会一次性压垮系统。
+    # 显式传正整数 limit 时，才按该值截断（并受 MAX_BATCH_LIMIT 封顶）。
+    UNLIMITED_BATCH_LIMIT = 0
     DEFAULT_ASSET_TYPE = "first_frame"
     RUNNING_STATUSES = (AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING)
     SEQUENCE_MODE_SPEED = "speed"
@@ -676,6 +843,36 @@ class StoryboardAudioGenerateConstants:
     SKIP_REASON_NARRATION_WITHOUT_VOICE = "narration_without_voice"
 
 
+class StoryboardDigitalHumanConstants:
+    """Storyboard digital-human (lip-sync) generation — dual model routing (Wan2.2 / LTX2.3)."""
+    # LTX2.3 是默认/兜底模型；Wan2.2 仅在 TTS 总时长 <= WAN_MAX_SPEECH_DURATION_SECONDS 时使用。
+    TASK_TYPE = TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE
+    DEFAULT_PROMPT = "角色面向镜头深情的说话，固定镜头。"
+    ERROR_AUDIO_REQUIRED = "audio_required"
+    ERROR_AUDIO_PENDING = "audio_pending"
+    ERROR_AUDIO_FAILED = "audio_failed"
+    ERROR_NO_DIALOGUE = "no_dialogue"
+    ERROR_MISSING_IMAGE = "missing_image"
+    ERROR_MULTI_SPEAKER = "multi_speaker"
+    ERROR_MODEL_UNAVAILABLE = "digital_human_model_unavailable"
+    ERROR_UNSUPPORTED_RATIO = "unsupported_ratio"
+    ERROR_AUDIO_MERGE_FAILED = "audio_merge_failed"
+    SKIP_REASON_MISSING_AUDIO = "missing_audio"
+    SKIP_REASON_AUDIO_PENDING = "audio_pending"
+    SKIP_REASON_MISSING_IMAGE = "missing_image"
+    SOURCE = "storyboard_digital_human"
+    # 路由原因（可观测）
+    ROUTING_REASON_LTE_1S = "speech_duration_lte_1s"
+    ROUTING_REASON_GT_1S = "speech_duration_gt_1s"
+    ROUTING_REASON_UNKNOWN = "speech_duration_unknown"
+    # 模型标识（plan.model / extra_config.digital_human_model）
+    MODEL_WAN = "wan2.2"
+    MODEL_LTX = "ltx2.3"
+    # 音频输入角色（extra_config.audio_input_role）
+    AUDIO_ROLE_VOICE_REFERENCE = "voice_reference"
+    AUDIO_ROLE_SPEECH_AUDIO = "speech_audio"
+
+
 class StoryboardAgentReadConstants:
     """Read-only discovery limits for storyboard agent commands."""
     DEFAULT_PAGE_SIZE = 20
@@ -687,6 +884,7 @@ class StoryboardAgentReadConstants:
 class StoryboardAgentCommandConstants:
     """Storyboard agent command fallback values."""
     DEFAULT_SCRIPT_SPLIT_MODEL = "gemini-3-flash-preview"
+    SCRIPT_SPLIT_MODEL_PREFERENCE_TYPE = "script_split_llm_model"
 
 # 向后兼容别名 - Tasks 状态
 TASK_STATUS_QUEUED = TaskStatus.QUEUED
@@ -718,6 +916,11 @@ class GridConfig:
     VALIDATION_MIN_LINE_COVERAGE = 0.82    # 分割线贯穿比例阈值
     VALIDATION_MIN_CELL_UNIFORMITY = 0.90  # 同方向 cell 尺寸最小/最大比例阈值
     STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES = 2  # 分镜首帧宫格几何校验失败后的重试次数
+
+    # 孤立 grid split pipeline step 兜底清理：每轮扫描的上限。
+    # 用于清理「grid_image_tasks 已进入失败终态，但绑定的 ai_tool_pipeline_steps 仍卡在 PENDING」的孤儿记录，
+    # 避免全局调度器（task.pipeline_processor）每 13s 反复 skip 刷日志。
+    GRID_SPLIT_ORPHAN_CLEANUP_LIMIT = 50
 
     # 分镜首帧宫格（i2i）目标分辨率映射：4宫格→2K，9宫格→4K。
     # 模型不支持目标值时，由 _pick_grid_image_size 自动降级到不超过目标的最大支持档位。

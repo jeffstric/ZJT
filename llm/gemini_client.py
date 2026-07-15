@@ -570,7 +570,7 @@ class GeminiClient(BaseLLMClient):
         if auth_token and model_id:
             self._log_token_usage(usage, auth_token, vendor_id, model_id)
 
-        return self.Response([self.Choice(message)], usage=usage)
+        return self.Response([self.Choice(message, finish_reason)], usage=usage)
 
 
 # 全局单例
