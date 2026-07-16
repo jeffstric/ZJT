@@ -475,16 +475,17 @@ scheduler.add_job(
 )
 ```
 
-仓库根目录 `scheduler.lock` 已通过 `msvcrt.locking/fcntl.flock` 保证只有一个调度器进程运行，因此正常情况下不存在多个调度器竞争同一任务。`worker_id/lease_until` 仍按 `model/download_queue.py:claim_pending()` 的成熟模式保留，用于原子领取和调度器进程崩溃后的超时回收，而不是为了建立另一套多进程 Worker 架构。
+单调度器模式由仓库根目录 `scheduler.lock` 保证唯一；多 worker 模式则依赖数据库租约。`worker_id` 保存 `hostname-pid-claim_uuid` 形式的每次领取唯一令牌，所有可执行状态（包括 `queued`）统一要求租约为空或过期。续租、释放和僵尸段回收都必须匹配该令牌，旧 worker 无法操作新 owner 的租约。
 
 每次 scheduler tick 最多推进一个任务的一个有限步骤：
 
-1. 原子领取一个 `queued`、可继续或 `lease_until < NOW()` 的任务，写入 `worker_id/lease_until`。
-2. 只执行规划、一个分段、合并校验或发布中的一个步骤。
-3. 步骤完成后立即保存检查点并释放 `worker_id/lease_until`。
-4. 下一次 tick 再推进后续步骤。
+1. 原子领取一个租约为空/过期且状态可执行的任务，写入唯一 `worker_id/lease_until`。
+2. claim 后在同一租约保护下集中回收上个进程遗留的 `generating` 段。
+3. 启动续租守护，只执行规划、一个分段、合并校验或发布中的一个步骤。
+4. 步骤完成后立即保存检查点，并按 `task_id + worker_id` 条件释放租约。
+5. 下一次 tick 再推进后续步骤。
 
-这样避免一个 APScheduler job 连续占用数十分钟，也让取消、暂停和进度查询能在段间及时生效。租约时长必须大于单步 LLM transport timeout 与外层 `wait_for` 预算，防止同一步骤尚未结束就被回收。
+这样避免一个 APScheduler job 连续占用数十分钟，也让取消、暂停和进度查询能在段间及时生效。续租周期不超过租期三分之一；续租失败或 owner 已变化时立即取消当前 coroutine，不再覆盖新 owner 状态。僵尸段连续回收达到 3 次后进入可恢复 `paused(segment_repeatedly_interrupted)`。
 
 所有异步 Web 接口中的同步数据库访问使用 `asyncio.to_thread()`。现有同步 LLM 客户端在线程中调用，并使用 `config/constant.py` 中明确的请求超时。禁止无超时的 `Future.result()`，也不使用临时 `ThreadPoolExecutor` 包装 `asyncio.run()`。
 
@@ -976,7 +977,7 @@ start.bat / linux_start_prod.sh
 
 | 场景 | 行为 |
 |------|------|
-| worker 进程崩溃 | 持有的租约 600s（`TASK_LEASE_SECONDS`）后过期，任务可被同 index 的重启 worker 回收 |
+| worker 进程崩溃 | 最后一次续租后等待 `TASK_LEASE_SECONDS` 租约过期；重启 worker claim 后自动把遗留 `generating` 段回收到 `failed`，保留检查点后重试 |
 | worker 被 SIGKILL | OS 级文件锁自动释放；残留锁文件下次启动被无害截断覆盖 |
 | 同 index 重复启动 | per-index 文件锁拒绝第二个进程（退出码 3） |
 | 进程数变更（N=2→3） | 改配置后重启全部 worker；分片变更期间少数跨片任务靠租约回收兜底 |

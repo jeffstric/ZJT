@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 
 import pytest
 
@@ -95,6 +96,7 @@ def test_reset_retry_budget_preserves_feedback_and_resets_internal_counters(monk
     assert reset_errors[0]["code"] == "TOO_MANY_EMPTY_DIALOGUE_SHOTS"
     assert reset_errors[0]["_qc_round"] == 0
     assert reset_errors[0]["_call_failure_count"] == 0
+    assert reset_errors[0]["_stale_recovery_count"] == 0
 
 
 @pytest.mark.parametrize("method_name", ["get_all", "get_completed"])
@@ -144,3 +146,131 @@ def test_get_uncompleted_uses_bounded_ordered_batch(monkeypatch):
     assert "ORDER BY segment_index ASC LIMIT 3" in calls[0][0]
     assert calls[0][3] is True
     assert segments[0].segment_id == "seg_0002"
+
+
+def test_reclaim_stale_generating_requires_current_lease_and_preserves_checkpoint(monkeypatch):
+    executed = []
+
+    class Cursor:
+        _mode = ""
+
+        def execute(self, sql, params):
+            executed.append((sql, params))
+            if "FROM script_split_task" in sql:
+                self._mode = "owner"
+            elif "FROM script_split_segment" in sql and "FOR UPDATE" in sql:
+                self._mode = "segments"
+            else:
+                self._mode = "update"
+
+        def fetchone(self):
+            return {"id": 15} if self._mode == "owner" else None
+
+        def fetchall(self):
+            if self._mode != "segments":
+                return []
+            return [{
+                "segment_index": 1,
+                "validation_errors": json.dumps([
+                    {"code": "QC_REJECTED", "message": "保留的业务反馈"},
+                ], ensure_ascii=False),
+            }]
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+    @contextmanager
+    def fake_transaction():
+        yield Connection()
+
+    monkeypatch.setattr(script_split_segment, "transaction", fake_transaction, raising=False)
+
+    result = ScriptSplitSegmentModel.reclaim_stale_generating(15, "owner-a", 3)
+
+    assert result["lease_owned"] is True
+    assert result["reclaimed_count"] == 1
+    assert result["exhausted_segment_indexes"] == []
+    update_sql, update_params = next(
+        (sql, params) for sql, params in executed
+        if sql.lstrip().startswith("UPDATE script_split_segment")
+    )
+    assert "attempt_count" not in update_sql
+    assert update_params[0] == "failed"
+    errors = json.loads(update_params[1])
+    assert errors[0]["code"] == "QC_REJECTED"
+    assert errors[-1]["code"] == "segment_interrupted"
+    assert errors[-1]["_stale_recovery_count"] == 1
+
+
+def test_reclaim_stale_generating_refuses_wrong_owner(monkeypatch):
+    class Cursor:
+        def execute(self, _sql, _params):
+            pass
+
+        def fetchone(self):
+            return None
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+    @contextmanager
+    def fake_transaction():
+        yield Connection()
+
+    monkeypatch.setattr(script_split_segment, "transaction", fake_transaction, raising=False)
+
+    result = ScriptSplitSegmentModel.reclaim_stale_generating(15, "stale-owner", 3)
+
+    assert result == {
+        "lease_owned": False,
+        "reclaimed_count": 0,
+        "exhausted_segment_indexes": [],
+    }
+
+
+def test_reclaim_stale_generating_stops_after_recovery_limit(monkeypatch):
+    executed = []
+
+    class Cursor:
+        _mode = ""
+
+        def execute(self, sql, params):
+            executed.append((sql, params))
+            self._mode = "owner" if "FROM script_split_task" in sql else (
+                "segments" if "FROM script_split_segment" in sql else "update"
+            )
+
+        def fetchone(self):
+            return {"id": 15} if self._mode == "owner" else None
+
+        def fetchall(self):
+            return [{
+                "segment_index": 2,
+                "validation_errors": json.dumps([{
+                    "code": "segment_interrupted",
+                    "_stale_recovery_count": 2,
+                }]),
+            }] if self._mode == "segments" else []
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+    @contextmanager
+    def fake_transaction():
+        yield Connection()
+
+    monkeypatch.setattr(script_split_segment, "transaction", fake_transaction, raising=False)
+
+    result = ScriptSplitSegmentModel.reclaim_stale_generating(15, "owner-a", 3)
+
+    assert result["exhausted_segment_indexes"] == [2]
+    update_params = next(
+        params for sql, params in executed
+        if sql.lstrip().startswith("UPDATE script_split_segment")
+    )
+    errors = json.loads(update_params[1])
+    assert errors[-1]["code"] == "segment_repeatedly_interrupted"
+    assert errors[-1]["_stale_recovery_count"] == 3

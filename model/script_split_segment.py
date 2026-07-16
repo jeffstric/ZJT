@@ -5,7 +5,7 @@ Script split segment model - per-segment checkpoint for incremental script split
 每个分段一条记录，作为断点续传的检查点。段成功后立即持久化，失败时只重试当前段。
 """
 from typing import Optional, Dict, Any, List
-from .database import execute_query, execute_update, execute_insert
+from .database import execute_query, execute_update, execute_insert, transaction
 from config.constant import ScriptSplitConstants
 import logging
 import json
@@ -331,6 +331,105 @@ class ScriptSplitSegmentModel:
         )
 
     @staticmethod
+    def reclaim_stale_generating(
+        task_id: int,
+        worker_id: str,
+        max_recoveries: int,
+    ) -> Dict[str, Any]:
+        """在当前任务租约保护下回收崩溃遗留的 generating 段。
+
+        调用方不能只依赖进程内判断；本方法在同一事务中锁定根任务并验证
+        owner + lease，再锁定并更新段检查点。attempt_count 不在这里增加。
+        """
+        result = {
+            "lease_owned": False,
+            "reclaimed_count": 0,
+            "exhausted_segment_indexes": [],
+        }
+        safe_limit = max(1, int(max_recoveries))
+        with transaction() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id FROM script_split_task "
+                "WHERE id = %s AND worker_id = %s AND lease_until >= NOW() FOR UPDATE",
+                (task_id, worker_id),
+            )
+            if not cursor.fetchone():
+                return result
+            result["lease_owned"] = True
+
+            cursor.execute(
+                "SELECT segment_index, validation_errors "
+                "FROM script_split_segment "
+                "WHERE task_id = %s AND status = %s "
+                "ORDER BY segment_index ASC FOR UPDATE",
+                (task_id, SEGMENT_STATUS_GENERATING),
+            )
+            rows = cursor.fetchall() or []
+            for row in rows:
+                segment_index = int(
+                    row.get("segment_index")
+                    if isinstance(row, dict) else row[0]
+                )
+                raw_errors = (
+                    row.get("validation_errors")
+                    if isinstance(row, dict) else row[1]
+                )
+                errors = _loads(raw_errors, [])
+                if not isinstance(errors, list):
+                    errors = []
+                prior_count = max(
+                    [
+                        int(error.get("_stale_recovery_count", 0) or 0)
+                        for error in errors
+                        if isinstance(error, dict)
+                    ] or [0]
+                )
+                recovery_count = prior_count + 1
+                errors = [
+                    error for error in errors
+                    if not (
+                        isinstance(error, dict)
+                        and error.get("code") in {
+                            "segment_interrupted",
+                            "segment_repeatedly_interrupted",
+                        }
+                    )
+                ]
+                exhausted = recovery_count >= safe_limit
+                errors.append({
+                    "code": (
+                        "segment_repeatedly_interrupted"
+                        if exhausted else "segment_interrupted"
+                    ),
+                    "severity": "error" if exhausted else "warning",
+                    "message": (
+                        f"段 {segment_index} 连续 {recovery_count} 次在生成中被中断，已暂停等待人工继续"
+                        if exhausted else
+                        f"段 {segment_index} 上一次生成被中断，已自动回收重试"
+                    ),
+                    "_stale_recovery_count": recovery_count,
+                    "_qc_round": 0,
+                    "_call_failure_count": 0,
+                })
+                cursor.execute(
+                    "UPDATE script_split_segment "
+                    "SET status = %s, validation_errors = %s, update_at = NOW() "
+                    "WHERE task_id = %s AND segment_index = %s AND status = %s",
+                    (
+                        SEGMENT_STATUS_FAILED,
+                        json.dumps(errors, ensure_ascii=False),
+                        task_id,
+                        segment_index,
+                        SEGMENT_STATUS_GENERATING,
+                    ),
+                )
+                result["reclaimed_count"] += 1
+                if exhausted:
+                    result["exhausted_segment_indexes"].append(segment_index)
+        return result
+
+    @staticmethod
     def reset_retry_budget(task_id: int) -> None:
         """为用户主动恢复的当前未完成段开启新的重试周期。
 
@@ -347,6 +446,7 @@ class ScriptSplitSegmentModel:
             reset_error = dict(error)
             reset_error["_qc_round"] = 0
             reset_error["_call_failure_count"] = 0
+            reset_error["_stale_recovery_count"] = 0
             errors.append(reset_error)
         execute_update(
             "UPDATE script_split_segment SET status = %s, validation_errors = %s "

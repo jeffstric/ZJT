@@ -22,7 +22,7 @@ from task import script_split_task as worker_mod
 
 
 def _task(status="queued", task_id=101):
-    return SimpleNamespace(id=task_id, status=status)
+    return SimpleNamespace(id=task_id, status=status, worker_id="test-host-claim-101")
 
 
 def _run(coro):
@@ -42,12 +42,21 @@ def patched_worker(monkeypatch):
     def fake_update(task_id, status, **kwargs):
         calls["updates"].append({"task_id": task_id, "status": status, **kwargs})
 
-    def fake_release(task_id):
+    def fake_release(task_id, _worker_id):
         calls["released"].append(task_id)
 
     monkeypatch.setattr(worker_mod.ScriptSplitTaskModel, "claim_next_task", staticmethod(fake_claim))
     monkeypatch.setattr(worker_mod.ScriptSplitTaskModel, "update_status", staticmethod(fake_update))
     monkeypatch.setattr(worker_mod.ScriptSplitTaskModel, "release_lease", staticmethod(fake_release))
+    monkeypatch.setattr(
+        worker_mod.ScriptSplitSegmentModel,
+        "reclaim_stale_generating",
+        staticmethod(lambda *_args: {
+            "lease_owned": True,
+            "reclaimed_count": 0,
+            "exhausted_segment_indexes": [],
+        }),
+    )
     return calls
 
 
@@ -210,7 +219,7 @@ class TestWorkerStateMachineDispatch:
 # ---------------- _transition_to_cancelled ----------------
 
 class TestTransitionToCancelled:
-    def test_sets_cancelled_and_releases(self, monkeypatch):
+    def test_sets_cancelled_and_leaves_release_to_worker_finally(self, monkeypatch):
         released = []
         updates = []
         monkeypatch.setattr(worker_mod.ScriptSplitTaskModel, "update_status",
@@ -219,7 +228,7 @@ class TestTransitionToCancelled:
                             staticmethod(lambda tid: released.append(tid)))
         worker_mod._transition_to_cancelled(202)
         assert updates == [(202, ScriptSplitConstants.STATUS_CANCELLED, {"phase": "cancelled"})]
-        assert released == [202]
+        assert released == []
 
 
 # ---------------- make_scheduler_job ----------------

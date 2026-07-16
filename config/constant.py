@@ -736,6 +736,12 @@ class ScriptSplitConstants:
     WORKER_STEP_TIMEOUT_SECONDS = 360
     # 任务租约时长，必须 > WORKER_STEP_TIMEOUT_SECONDS
     TASK_LEASE_SECONDS = 600
+    # 长步骤续租周期；必须满足 0 < interval <= TASK_LEASE_SECONDS / 3。
+    LEASE_RENEW_INTERVAL_SECONDS = 120
+    # 单次租约数据库续期的异步等待上限，必须小于续租周期。
+    LEASE_RENEW_DB_TIMEOUT_SECONDS = 15
+    # 同一段连续被 worker 崩溃/中断回收达到该次数后暂停，避免无限重跑。
+    STALE_SEGMENT_MAX_RECOVERIES = 3
     # scheduler tick 间隔
     SCHEDULER_INTERVAL_SECONDS = 5
 
@@ -775,6 +781,7 @@ class ScriptSplitConstants:
     # 旧版本可能以该错误暂停；恢复时必须保留段 QC 轮数，让引擎直接接纳最后候选。
     ERROR_SEGMENT_QC_FAILED = "segment_qc_failed"
     ERROR_SEGMENT_MAX_RETRIES = "segment_max_retries"
+    ERROR_SEGMENT_REPEATEDLY_INTERRUPTED = "segment_repeatedly_interrupted"
 
     # 不可恢复终态：进入后释放 active_key（置 NULL），允许同来源新建任务
     TERMINAL_STATUSES = (

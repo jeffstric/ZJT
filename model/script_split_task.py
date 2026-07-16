@@ -18,13 +18,16 @@ import logging
 import json
 import os
 import socket
+import uuid
 
 logger = logging.getLogger(__name__)
 
 
 def _get_worker_id() -> str:
-    """生成 worker 标识：hostname-pid，与 download_queue 一致。"""
-    return f"{socket.gethostname()}-{os.getpid()}"
+    """为每次 claim 生成唯一租约令牌，避免旧步骤操作新租约。"""
+    suffix = uuid.uuid4().hex[:16]
+    prefix = f"{socket.gethostname()}-{os.getpid()}"
+    return f"{prefix[:47]}-{suffix}"[:64]
 
 
 class ScriptSplitTask:
@@ -57,7 +60,7 @@ class ScriptSplitTask:
         self.last_error_message = kwargs.get('last_error_message')
         self.auth_token = kwargs.get('auth_token')
         self.cancel_requested = bool(kwargs.get('cancel_requested'))
-        # 租约：worker_id=hostname-pid, lease_until=NOW()+TASK_LEASE_SECONDS
+        # 租约：worker_id=hostname-pid-claim_uuid（每次领取唯一）
         self.worker_id = kwargs.get('worker_id')
         self.lease_until = kwargs.get('lease_until')
         self.create_at = kwargs.get('create_at')
@@ -372,16 +375,16 @@ class ScriptSplitTaskModel:
         """原子领取一个可执行任务，写入 worker_id/lease_until。
 
         复用 download_queue.claim_pending 模式（事务 + FOR UPDATE）。
-        可领取的任务：
-        - status=queued，或
-        - 处于可恢复活跃态且租约已过期或未持有（lease_until IS NULL OR < NOW()）。
+        可领取的任务：queued 或可恢复活跃态，并且租约已过期或未持有
+        （lease_until IS NULL OR < NOW()）。所有状态统一受租约条件约束。
           ⚠️ 必须显式处理 lease_until IS NULL：MySQL 中 NULL < NOW() 求值为 NULL（falsy），
           若只写 lease_until < NOW()，租约已被 release_lease 置 NULL 的任务永远无法被回收。
         终态、paused、waiting_auth 不被自动领取。
         每次 tick 最多领取一个任务，配合单步推进避免长占用。
         """
         worker_id = _get_worker_id()
-        recoverable = (
+        claimable = (
+            ScriptSplitConstants.STATUS_QUEUED,
             ScriptSplitConstants.STATUS_PLANNING,
             ScriptSplitConstants.STATUS_GENERATING,
             ScriptSplitConstants.STATUS_MERGING,
@@ -389,22 +392,21 @@ class ScriptSplitTaskModel:
             ScriptSplitConstants.STATUS_PUBLISHING,
             ScriptSplitConstants.STATUS_CANCELLING,
         )
-        placeholders = ",".join(["%s"] * len(recoverable))
+        placeholders = ",".join(["%s"] * len(claimable))
         # 多 worker 分片：仅当 WORKER_TOTAL>0 时追加 id MOD N = index 过滤，
         # 让多个独立 worker 进程各 claim 互不重叠的子集（主调度器不分片，走原逻辑）。
         # ⚠️ 与 FOR UPDATE 配合安全：行级锁保证同一行不会被两个事务同时领走，
         #    分片从源头缩小每个 worker 的扫描范围，进一步降低竞争。
         shard_total = ScriptSplitConstants.WORKER_TOTAL
         shard_clause = ""
-        select_params = [ScriptSplitConstants.STATUS_QUEUED, *recoverable]
+        select_params = list(claimable)
         if shard_total and shard_total > 0:
             shard_clause = " AND id MOD %s = %s"
             select_params.extend([shard_total, ScriptSplitConstants.WORKER_INDEX])
         select_sql = f"""
             SELECT id FROM script_split_task
-            WHERE (status = %s
-               OR (status IN ({placeholders})
-                   AND (lease_until IS NULL OR lease_until < NOW())))
+            WHERE status IN ({placeholders})
+              AND (lease_until IS NULL OR lease_until < NOW())
             {shard_clause}
             ORDER BY id ASC
             LIMIT 1
@@ -426,22 +428,24 @@ class ScriptSplitTaskModel:
         return ScriptSplitTaskModel.get_by_id(task_id)
 
     @staticmethod
-    def release_lease(task_id: int) -> None:
-        """单步完成后释放租约，让取消/进度查询及时生效。"""
-        execute_update(
+    def release_lease(task_id: int, worker_id: str) -> bool:
+        """仅当前 claim 持有者可以释放租约。"""
+        affected = execute_update(
             "UPDATE script_split_task SET worker_id = NULL, lease_until = NULL "
-            "WHERE id = %s",
-            (task_id,),
+            "WHERE id = %s AND worker_id = %s",
+            (task_id, worker_id),
         )
+        return int(affected or 0) == 1
 
     @staticmethod
-    def renew_lease(task_id: int, lease_seconds: int) -> None:
-        """长步骤中续租（防止单步超时被回收）。"""
-        execute_update(
+    def renew_lease(task_id: int, worker_id: str, lease_seconds: int) -> bool:
+        """仅当前 claim 持有者可以续租；False 表示租约已经丢失。"""
+        affected = execute_update(
             "UPDATE script_split_task SET lease_until = DATE_ADD(NOW(), INTERVAL %s SECOND) "
-            "WHERE id = %s",
-            (lease_seconds, task_id),
+            "WHERE id = %s AND worker_id = %s",
+            (lease_seconds, task_id, worker_id),
         )
+        return int(affected or 0) == 1
 
 
 # ==================== CREATE_TABLE_SQL ====================
@@ -471,7 +475,7 @@ CREATE TABLE IF NOT EXISTS `script_split_task` (
     `last_error_message` TEXT DEFAULT NULL COMMENT '最近错误信息',
     `auth_token` VARCHAR(512) DEFAULT NULL COMMENT '用户 token(记费用)，不输出到日志/响应',
     `cancel_requested` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '协作式取消标记',
-    `worker_id` VARCHAR(64) DEFAULT NULL COMMENT '领取的 worker(hostname-pid)',
+    `worker_id` VARCHAR(64) DEFAULT NULL COMMENT '每次领取唯一令牌(hostname-pid-claim_uuid)',
     `lease_until` DATETIME DEFAULT NULL COMMENT '租约到期时间，过期可被回收',
     `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `update_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
