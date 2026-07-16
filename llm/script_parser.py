@@ -1467,6 +1467,67 @@ async def parse_script_to_shots(
             tail_text = _json_for_ctx.dumps(tail_summary, ensure_ascii=False)[:20000] if tail_summary else "[]"
             continuity_text = _json_for_ctx.dumps(continuity_state, ensure_ascii=False)[:20000] if continuity_state else "{}"
             res_text = ", ".join(f"{k}={v}" for k, v in id_reservations.items()) if id_reservations else "（首段，从 char_001/loc_001/prop_001 起）"
+
+            # 效果模式（quality）：把空间契约从"参考信息"提升为"硬约束"。
+            # 历史问题：原 continuity_text 只是平铺的 JSON 参考，模型不知道首/末镜头
+            # 的角色位置必须逐字段等于契约值，导致 quality_continuity_in/out_mismatch
+            # 占质检错误 50%+。同时 spatial_world（合法 space_unit/anchor 清单）从未下发，
+            # 模型自行编造容器/锚点 → ref_prop_unknown / ref_anchor_unknown 占 30%+。
+            quality_mode = bool(segment_context.get("quality_mode"))
+            spatial_contract_block = ""
+            if quality_mode:
+                spatial_contract = segment_context.get("spatial_contract") or {}
+                continuity_in = spatial_contract.get("continuity_in") or {}
+                continuity_out = spatial_contract.get("continuity_out") or {}
+                state_changes = spatial_contract.get("state_changes") or []
+                spatial_world = segment_context.get("spatial_world") or {}
+                global_registry = segment_context.get("global_registry") or {}
+
+                # 合法空间引用清单：从 spatial_world 提取 space_unit_id 与 (space_unit_id, anchor_id)
+                su_ids = [u.get("space_unit_id") for u in (spatial_world.get("space_units") or []) if u.get("space_unit_id")]
+                anchor_pairs = []
+                for u in (spatial_world.get("space_units") or []):
+                    suid = u.get("space_unit_id")
+                    for a in (u.get("anchors") or []):
+                        if suid and a.get("anchor_id"):
+                            anchor_pairs.append(f"{suid}/{a['anchor_id']}")
+                su_text = ", ".join(su_ids) if su_ids else "（无，需在本段 spatial_world 中声明后再引用）"
+                anchor_text = ", ".join(anchor_pairs) if anchor_pairs else "（无）"
+                cin_text = _json_for_ctx.dumps(continuity_in, ensure_ascii=False)[:8000] if continuity_in else "{}"
+                cout_text = _json_for_ctx.dumps(continuity_out, ensure_ascii=False)[:8000] if continuity_out else "{}"
+                sc_text = _json_for_ctx.dumps(state_changes, ensure_ascii=False)[:8000] if state_changes else "[]"
+                gr_text = _json_for_ctx.dumps(global_registry, ensure_ascii=False)[:40000] if global_registry else "{}"
+
+                spatial_contract_block = f"""
+
+**【效果模式 · 空间连续性硬约束（必须严格遵守，否则质检必失败）】**
+本段分镜的**首镜头**与**末镜头**是段间衔接点，其中每个在场角色的物理位置必须**逐字段等于**下方契约值（space_unit_id / container_id / slot_id 三者完全一致，不得近似、不得省略）。
+
+1. **首镜头入点约束**：首镜头 spatial_layout 中，continuity_in.characters 列出的每个 character_id，其在 containers.slots（或 loose_positions）里的 space_unit_id、container_id、slot_id 必须**完全等于**契约给定值。契约中未出现的角色不得在首镜头的 spatial_layout 中出现位置。
+```json
+{cin_text}
+```
+
+2. **末镜头出点约束**：末镜头同理，每个在场角色位置必须**完全等于** continuity_out 的值。
+```json
+{cout_text}
+```
+
+3. **段内位置变化**：仅允许 continuity 契约声明的 state_changes，不得自行增减角色移动。state_changes 如下：
+```json
+{sc_text}
+```
+
+4. **合法空间引用清单**：spatial_layout 中引用的 space_unit_id、anchor_id 必须来自下列合法集合，或在**本段 shot_groups 同级的 spatial_world 中先行声明**。不得编造未声明的容器(container)/锚点(anchor)/空间单元(space_unit)。
+   - 合法 space_unit_id：{su_text}
+   - 合法 anchor（格式 space_unit_id/anchor_id）：{anchor_text}
+
+5. **全局资产真源**：以下为规划阶段确定的全局实体注册表（characters/locations/props/spatial_world），本段必须复用其中的 ID，新实体按预留起始编号续编（见上方 {res_text}）。不得复用已占用编号、不得为同名实体分配新 ID。
+```json
+{gr_text}
+```
+"""
+
             segment_context_block = f"""
 
 **【分段拆分模式 · 第 {seg_idx}/{total_seg} 段 segment_id={seg_id}】**
@@ -1476,7 +1537,7 @@ async def parse_script_to_shots(
 - 当前分段首次出现的新实体，必须使用预留的全局 ID 起始编号：{res_text}。
   不得从 char_001/loc_001/prop_001 重新编号（首段除外）。
 - 分镜编号可以是段内编号，最终由后端统一重排。
-
+{spatial_contract_block}
 【已接受资产注册表（必须复用其中已有全局 ID）】
 ```json
 {registry_text}

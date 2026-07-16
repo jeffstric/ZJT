@@ -133,7 +133,7 @@
 
 如果计划 JSON 或覆盖校验失败，只重试阶段一。规划成功后将计划持久化，正常执行路径不重复调用规划模型。1500 字硬限制在计划持久化之前完成，因此阶段二不再自动触发局部再规划，也不会删除并重建已经存在的 segment 检查点。
 
-阶段二发生 `MAX_TOKENS`、重复截断或调用失败时，只在当前分段的有限重试范围内处理；执行失败达到上限后当前段保留为 `failed`，根任务进入 `paused`，由用户恢复后重试该段。质检失败采用不同终态：拆分与质检最多循环 `qc_max_rounds` 次，仍不通过时将最后一轮已经成功解析的完整 JSON 强制保存为 `completed`，保留带 `_forced_accept=true` 的质检问题后继续合并发布。该线性失败路径避免 `planning/replan → generating → planning` 循环和检查点重建复杂度，同时不会让非致命质检问题永久阻塞拆分。
+阶段二发生 `MAX_TOKENS`、重复截断或调用失败时，只在当前分段的有限重试范围内处理。调用重试达到上限时，如果检查点中已经存在最近一次成功解析的完整 `parsed_result_json`，则强制保存该候选为 `completed`，并在最后一次错误上保留 `_forced_accept=true` 后继续合并发布；只有从未得到任何可解析候选时，当前段才保留为 `failed`、根任务进入 `paused`。质检失败采用相同的可用候选优先原则：拆分与质检最多循环 `qc_max_rounds` 次，仍不通过时采用最后一轮完整 JSON。该线性失败路径避免 `planning/replan → generating → planning` 循环和检查点重建复杂度，同时不会让非致命质检问题或后续修正调用异常永久阻塞拆分。
 
 段级生成严格遵守“一次 scheduler tick 最多一次 LLM 调用”。本轮解析成功但 QC 未通过时，segment 立即持久化最近一次完整 `parsed_result_json`、结构化 `validation_errors` 和重试计数，然后正常结束当前 tick、释放租约；下一 tick 再把这些检查点作为 `previous_parsed_result + qc_feedback` 发起一次定向修复。网络失败计数与 QC 修正轮次分别保存在错误元数据中，互不挤占预算。禁止在一个 `step_generate_segment()` 内循环发起多次模型请求，否则多轮请求会错误共享同一个 worker watchdog 时限。
 
@@ -302,8 +302,8 @@ strict_json: bool = False
 - JSON、Schema、业务错误：携带错误列表立即重试当前段。
 - LLM 限流、网络异常：指数退避后重试当前段。
 - 鉴权失效：任务进入 `waiting_auth`，用户恢复页面后使用新 token 继续。
-- 达到单段最大尝试次数：任务进入 `paused`，保留全部已完成段。
-- 模型返回 `MAX_TOKENS`、连续截断或重复校验失败：当前段在有限次数内携带反馈重试，耗尽后进入 `paused`，不重建分段计划。
+- 达到单段最大尝试次数：已有可解析候选则强制接纳并继续；没有候选才进入 `paused`，保留全部已完成段。
+- 模型返回 `MAX_TOKENS`、连续截断或重复校验失败：当前段在有限次数内携带反馈重试，耗尽后优先复用最近一次完整候选，不重建分段计划。
 
 单次段级 LLM coroutine 使用 `LLM_CALL_TIMEOUT_SECONDS`，底层 HTTP 使用 `LLM_HTTP_TIMEOUT_SECONDS`，整个调度步骤使用更大的 `WORKER_STEP_TIMEOUT_SECONDS`。三者满足 `HTTP < LLM call < worker step`，为异常转换、检查点写入和租约释放保留余量。worker watchdog 触发时根任务进入可恢复的 `paused` 并保留 `active_key` 和 segment 检查点，不再进入终态 `failed`。
 
@@ -797,7 +797,7 @@ web/js/storyboard/state.js
 - 每段成功后立即保存检查点。
 - APScheduler 每个 tick 只推进一个有限步骤，`max_instances=1/coalesce=True` 不发生重叠。
 - 调度器中断后通过 `worker_id/lease_until` 从第一个未完成段恢复。
-- 达到重试上限进入 `paused`。
+- 达到重试上限且没有任何可解析候选时进入 `paused`；已有候选时标记 `_forced_accept=true` 并继续。
 - 同一生成 tick 最多调用一次 LLM；QC 失败候选在下一 tick 作为修复上下文恢复。
 - 单次调用超时先于 worker watchdog；watchdog 触发后任务进入可继续的 `paused`。
 - 执行中取消先进入 `cancelling`，当前 LLM 调用结束后丢弃响应并进入 `cancelled`。
@@ -814,6 +814,8 @@ web/js/storyboard/state.js
 - 宫格生图只在拆分完成后启动一次。
 - 故事板完成前不产生半成品分镜。
 - 故事板页面刷新后恢复真实进度。
+- 故事板拆分进行中：点遮罩**不得**关闭进度弹窗，也**不得**停止前端轮询（否则空故事板无法再进入进度）。
+- 若进度弹窗因错误被关闭，空态提供「查看拆分进度」入口（`reopen-generate-progress`），可恢复弹窗并重挂轮询。
 - 故事板发布事务已提交但任务状态未更新时，按 `script_split_task_id + source_shot_key` 恢复且不重复插入。
 
 ### 20.4 回归测试
@@ -984,3 +986,49 @@ worker 进程与以下系统解耦，多开不会冲突：
 - **不依赖 FastAPI app**：`process_script_split_tasks` 无参，认证/配置全从 DB task 行读取
 - **不经 `SyncTaskExecutor` 进程池**：script split 的 LLM 调用走 `asyncio.to_thread`，不与视觉任务的 `ProcessPoolExecutor` 共享
 - **不与主调度器竞争**：`worker_total>0` 时主调度器通过开关跳过 script split job
+
+## 26. 效果模式分镜质检失败根因与提示词加固
+
+### 26.1 背景：质检错误高度集中
+
+对 quality 模式（效果模式）的历史分段质检错误统计（约 79 条样本）显示错误高度集中在 `spatial_layout` 字段：
+
+| 错误码 | 占比 | 含义 |
+|--------|------|------|
+| `quality_continuity_out_mismatch` | 25% | 末镜头角色位置与 continuity_out 契约不符 |
+| `quality_continuity_in_mismatch` | 23% | 首镜头角色位置与 continuity_in 契约不符 |
+| `ref_prop_unknown` | 18% | 引用了不存在的容器(container)/道具 |
+| `ref_anchor_unknown` | 13% | 引用了不存在的空间锚点(anchor) |
+| `location_id_not_reserved` | 8% | location ID 复用了已占用编号 |
+| 其他（`prop_id_not_reserved`/`CHAR_NOT_IN_FRAME` 等） | 13% | — |
+
+即 **48% 是段间空间连续性不符，31% 是引用了不存在的空间实体**，二者合计 79%，且都集中在 `spatial_layout` 字段。
+
+### 26.2 根因：空间契约"生成时不约束，出错后才告知"
+
+核心缺陷在 `llm/script_parser.py` 的 `segment_context_block`（分段生成分镜的提示词块）：
+
+quality 策略 `build_segment_context`（`enterprise/services/script_split_quality/strategy.py:22-28`）往 `segment_context` 里塞了 4 个键：`quality_mode`、`global_registry`、`spatial_world`、`spatial_contract`（含 `continuity_in`/`continuity_out`/`state_changes`）。但原 `segment_context_block` **只读取了其中 `continuity_state` 一个**（且仅标为"上一段结束时的空间连续性状态"这种**参考性**描述），其余 3 个键完全未渲染。
+
+后果：
+- 质检规则（`validator.py:82-133`）要求**首镜头每个在场角色的 `space_unit_id/container_id/slot_id` 必须逐字段等于 `continuity_in` 的值**，但模型生成时看不到这个硬约束，只看到一段平铺 JSON 参考 → 按语感自由画首/末镜头 → `quality_continuity_in/out_mismatch`（48%）。
+- `spatial_world`（含合法 `space_unit_id`/`anchor_id` 定义）从未下发，模型不知道有哪些合法容器/锚点可引用，自行编造 → `ref_prop_unknown`/`ref_anchor_unknown`（31%）。
+- 重试时虽通过 `qc_feedback` 反馈了 `expected=X,actual=Y`，但模型难以稳定地一次性修正所有字段，多轮重试后仍失败，最终走"强制接受最后候选"或重试耗尽 paused。
+
+### 26.3 修复：把空间契约从"参考"提升为"硬约束"（仅改提示词渲染）
+
+修改 `llm/script_parser.py` 的 `segment_context_block`：在 `quality_mode=True` 时追加 `spatial_contract_block`，明确以指令语气告诉模型：
+
+1. **首镜头入点约束**：首镜头 `spatial_layout` 中，`continuity_in.characters` 列出的每个 `character_id`，其 `space_unit_id/container_id/slot_id` 必须**逐字段完全等于**契约给定值（附完整 JSON）。
+2. **末镜头出点约束**：同理对 `continuity_out`。
+3. **段内位置变化**：仅允许 `state_changes` 声明的移动。
+4. **合法空间引用清单**：列出可用的 `space_unit_id` 与 `(space_unit_id, anchor_id)` 对，明确"不得编造未声明的容器/锚点"。
+5. **全局资产真源**：下发 `global_registry`（characters/locations/props/spatial_world），强调复用既有 ID、新实体按预留起始编号续编。
+
+**非 quality 模式（speed）完全不受影响**——`spatial_contract_block` 为空，走原逻辑。
+
+### 26.4 边界与限制
+
+- 本修复只改提示词渲染，不改质检规则、不改 engine 编排逻辑、不改空间契约编译，风险最小。
+- 并发段共享同一 registry 快照导致的 `location_id_not_reserved`（8%）属另一类问题（并发 ID 预留竞态），不在本次提示词修复范围；提示词已通过强调"复用既有 ID + 按预留起始续编"尽量缓解，但根治需改并发游标逻辑（另案）。
+- 提示词加长会增加单次 LLM 输入 token（`global_registry` 最多 40000 字符、`continuity_in/out` 各 8000 字符），均在 `max_tokens=65536` 预算内，且这些信息原本就该让模型看到。
