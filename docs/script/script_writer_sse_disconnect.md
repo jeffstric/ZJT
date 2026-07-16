@@ -9,6 +9,16 @@
 - 任务正常 `done`、任务返回 `error`、任务最终失败或取消时，必须调用 `resetProcessingState()`。
 - `resetProcessingState()` 负责清理 `isProcessing`、`pendingVerificationId`、`pendingVerificationData`，并恢复发送按钮。
 
+## ask_user / human_verification 输入框保护
+
+AI 通过 `ask_user` 弹出询问选项时，底部 `#message-input` 可能已有用户草稿。提交验证答案的
+`submitVerificationAnswer(userInput, { fromInput })` 约定：
+
+- **点击预设选项**：`fromInput=false`，只提交选项文案，**不清空**输入框草稿。
+- **从输入框发送**（Enter / 发送按钮）：`fromInput=true`，仅在**提交成功后**清空输入框。
+- **提交失败**（业务失败、网络错误等）：始终保留输入框内容，便于用户重试；若仍处于
+  `pendingVerificationId` 状态，会恢复发送按钮。
+
 ## SSE 断线兜底
 
 当 SSE `onerror` 触发时，前端会先调用 `/api/task/{task_id}/status` 确认后台任务状态：

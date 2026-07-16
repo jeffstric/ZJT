@@ -13,6 +13,7 @@
 | [world_export_import.md](./world_export_import.md) | 世界导出与导入接口说明 |
 | [character_matching.md](./character_matching.md) | 剧本解析角色匹配功能 |
 | [script_language_sync.md](./script_language_sync.md) | 剧本节点语言联动功能 |
+| [script_writer_sse_disconnect.md](./script_writer_sse_disconnect.md) | script_writer SSE 断线恢复；ask_user 选项点击不误清输入框 |
 
 ## 剧本语义小段规划日志
 

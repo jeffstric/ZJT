@@ -1057,6 +1057,7 @@
             // 如果有待处理的验证，优先走验证提交路由（不受 isProcessing 限制）
             if (pendingVerificationId) {
                 let message;
+                let fromInput = false;
                 if (customMessage) {
                     message = customMessage;
                 } else {
@@ -1069,11 +1070,16 @@
                         }
                         return;
                     }
-                    input.value = '';
-                    input.style.height = 'auto';
+                    // 成功后再清空，避免提交失败时丢失草稿
+                    fromInput = true;
                 }
                 // 保持 isProcessing = true，Expert 仍在处理中
-                await submitVerificationAnswer(message);
+                await submitVerificationAnswer(message, { fromInput });
+                // 提交失败时恢复发送按钮，便于用户重试
+                if (sendBtn && pendingVerificationId) {
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                }
                 return;
             }
 
@@ -1679,11 +1685,12 @@
                         console.log('[VERIFICATION] 用户选择"其他"，等待自定义输入');
                     } else {
                         // 点击预设选项，直接提交（无需用户再输入）
+                        // fromInput=false：不清理输入框草稿
                         const index = e.target.dataset.optionIndex;
                         const option = verification.options[index];
                         if (option) {
                             console.log('[VERIFICATION] 用户选择选项:', option);
-                            submitVerificationAnswer(option);
+                            submitVerificationAnswer(option, { fromInput: false });
                         }
                     }
                 });
@@ -1698,7 +1705,14 @@
             updateStatus(window.t ? window.t('status_waiting_answer') : '等待您的回答...');
         }
 
-        async function submitVerificationAnswer(userInput) {
+        /**
+         * 提交 human_verification / ask_user 的用户答案。
+         * @param {string} userInput 答案内容
+         * @param {{fromInput?: boolean}} [options]
+         *   - fromInput: true 表示答案来自底部输入框，成功后才清空输入框；
+         *     false（默认）表示来自预设选项点击，保留输入框草稿不被覆盖。
+         */
+        async function submitVerificationAnswer(userInput, { fromInput = false } = {}) {
             if (!pendingVerificationId) {
                 console.error('No pending verification');
                 return;
@@ -1729,24 +1743,26 @@
                     // 显示用户回答
                     addMessage('user', `我的回答：${userInput}`);
 
-                    // 重置输入框
+                    // 仅当答案来自输入框时清空；选项点击保留用户草稿
                     const input = document.getElementById('message-input');
-                    input.value = '';
-                    input.placeholder = '输入消息...';
+                    if (input) {
+                        if (fromInput) {
+                            input.value = '';
+                            input.style.height = 'auto';
+                        }
+                        input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                    }
 
                     updateStatus(window.t ? window.t('status_waiting_ai') : '等待 AI 继续处理...');
                 } else {
                     showError((window.t ? window.t('error_verification_submit_failed_detail', {error: response.data.error}) : '验证提交失败：' + response.data.error + '，请重新输入'));
-                    // 保持 pendingVerificationId，允许用户重试
-                    // 注意：不重置 isProcessing，因为 Expert 仍在等待
+                    // 保持 pendingVerificationId，允许用户重试；失败不清空输入框
                     const input = document.getElementById('message-input');
-                    input.value = '';  // 清空失败的输入
-                    input.focus();
+                    input?.focus();
                 }
             } catch (error) {
                 console.error('Failed to submit verification:', error);
                 const input = document.getElementById('message-input');
-                input.value = '';
 
                 // 401: token 过期
                 if (error.response && error.response.status === 401) {
@@ -1756,11 +1772,13 @@
                     return;
                 }
 
-                // 400 算力不足：清除验证状态，提醒用户充值
+                // 400 算力不足：清除验证状态，提醒用户充值（保留输入框内容便于后续使用）
                 if (error.response && error.response.status === 400 && error.response.data?.error_code === 'INSUFFICIENT_POWER') {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
-                    input.placeholder = '输入消息...';
+                    if (input) {
+                        input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                    }
                     showError(error.response.data.message || '您的算力不足，请充值后再试');
                     return;
                 }
@@ -1769,12 +1787,14 @@
                 if (error.response && (error.response.status === 404 || error.response.status === 410)) {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
-                    input.placeholder = '输入消息...';
+                    if (input) {
+                        input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                    }
                     showError(window.t ? window.t('error_verification_expired') : '验证已过期，请重新发送消息');
                 } else {
-                    // 其他错误（网络问题等），保持状态允许用户重试
+                    // 其他错误（网络问题等），保持状态与输入内容，允许用户重试
                     showError((window.t ? window.t('error_verification_error_detail', {error: error.message}) : '提交验证时出错：' + error.message + '，请重新输入'));
-                    input.focus();
+                    input?.focus();
                 }
             }
         }
