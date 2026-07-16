@@ -10,6 +10,7 @@ const { ensureLoggedIn } = require('../js/video_workflow_list.js');
 
 describe('video_workflow_list - ensureLoggedIn', () => {
   beforeEach(() => {
+    localStorage.clear();
     // mock toast DOM
     const toast = document.createElement('div');
     toast.id = 'toast';
@@ -19,6 +20,7 @@ describe('video_workflow_list - ensureLoggedIn', () => {
 
   afterEach(() => {
     document.body.innerHTML = '';
+    localStorage.clear();
     vi.useRealTimers();
   });
 

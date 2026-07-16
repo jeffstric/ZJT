@@ -112,7 +112,6 @@ async function submitMissingVideoBatch({ manual = false } = {}) {
 
     try {
         const result = await api.autoGenerateMissingVideos(state.storyboardId, {
-            limit: missing.length,
             ratio: state.workflowRatio,
             task_type: state.selectedVideoTaskId,
             sequence_mode: 'speed',

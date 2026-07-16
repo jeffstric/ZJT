@@ -1,6 +1,10 @@
 const { getAuthToken, getUserId, showToast } = require('../js/state.js');
 
 describe('getAuthToken', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   test('localStorage 有值时返回 token', () => {
     localStorage.setItem('auth_token', 'test_token_123');
     expect(getAuthToken()).toBe('test_token_123');
@@ -12,6 +16,10 @@ describe('getAuthToken', () => {
 });
 
 describe('getUserId', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   test('localStorage 有值时返回 user_id', () => {
     localStorage.setItem('user_id', 'user_456');
     expect(getUserId()).toBe('user_456');

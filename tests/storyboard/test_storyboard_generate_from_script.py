@@ -253,7 +253,10 @@ def test_storyboard_frontend_exposes_generate_from_script_flow():
     assert "maybePromptGenerateFromScript" in bootstrap_js
     assert "generateFromScript" in api_js
     assert "autoGenerateMissingFirstFrames" in auto_missing_js
-    assert "limit: missing.length" in auto_missing_js
+    # 前端不再传 limit：旧实现 limit: missing.length 会与 MAX_BATCH_LIMIT=20 冲突，
+    # 当一集 ≥20 个缺失场景时被 clamp 到 20，超过的场景永久标 limit_reached/skipped。
+    # 后端把缺省 limit 视为无限制（UNLIMITED_BATCH_LIMIT），节奏由调度器 per-tick 限流。
+    assert "limit: missing.length" not in auto_missing_js
     assert "sequence_mode: state.autoImageSequenceMode" in auto_missing_js
     assert "autoImageSequenceMode: 'balanced'" in state_js
     assert "autoImageSequenceMode: state.autoImageSequenceMode" in state_js
