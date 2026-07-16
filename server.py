@@ -5870,6 +5870,9 @@ async def parse_script(
 
 class ReduceViolationRequest(BaseModel):
     prompt: str
+    # 可选：上游/任务失败原因摘要，帮助模型针对性弱化敏感表述（方案 D）
+    failure_reason: Optional[str] = None
+    source: Optional[str] = None  # prompt | reference_image | output | copyright | general
 
 @app.post('/api/reduce-violation')
 async def reduce_violation(
@@ -5878,34 +5881,55 @@ async def reduce_violation(
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    降低提示词违规风险
+    降低提示词违规风险（用户主动调用，非任务失败自动路径）。
+
+    兼容仅传 prompt；可选 failure_reason / source 用于结合内容审核失败上下文改写。
+    设计见 docs/image/content_moderation_error_design.md 方案 D。
     """
     try:
         from llm.qwen import call_qwen_chat_async
-        
-        user_prompt = f"""以上提示词中触发了 sora的 This content may violate our content policies. 请你修改以上提示词，避免触发违禁
 
-原提示词：
-{request.prompt}
+        prompt_text = (request.prompt or "").strip()
+        if not prompt_text:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "提示词不能为空"}
+            )
 
-请直接输出修改后的提示词，不要添加任何解释。"""
-        
+        context_parts = []
+        if request.failure_reason:
+            context_parts.append(f"上游/任务失败原因：{request.failure_reason.strip()}")
+        if request.source:
+            context_parts.append(f"判定来源：{request.source.strip()}")
+        context_block = ("\n".join(context_parts) + "\n\n") if context_parts else ""
+
+        user_prompt = f"""你是内容安全提示词改写助手。下列提示词在调用生图/生视频模型时可能触发内容审核
+（safety / content policy / moderation / 敏感内容等，不限单一供应商）。
+
+请改写提示词：弱化或替换可能引发暴力、色情、仇恨、违法、版权商标争议等风险的表述，
+保留创作意图、场景与镜头信息，语言自然可用。
+
+{context_block}原提示词：
+{prompt_text}
+
+请直接输出修改后的提示词，不要添加任何解释、标题或引号包裹。"""
+
         messages = [
             {"role": "user", "content": user_prompt}
         ]
-        
+
         rewritten_prompt = await call_qwen_chat_async(
             messages=messages,
             temperature=0.7,
             max_tokens=2000
         )
-        
+
         return JSONResponse({
             "code": 0,
             "message": "改写成功",
             "data": {"prompt": rewritten_prompt.strip()}
         })
-        
+
     except Exception as e:
         logger.error(f"Failed to reduce violation: {str(e)}")
         logger.error(traceback.format_exc())

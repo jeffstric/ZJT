@@ -667,12 +667,15 @@ class GptImageCommonV1Driver(BaseVideoDriver):
 
             # 检查是否有错误
             if "error" in result:
+                from utils.content_moderation_error import build_user_error_from_api_error
+
                 error_info = result.get("error", {})
-                error_msg = error_info.get("message", "未知错误")
-                self.logger.warning(f"GPT Image 2 API returned error: {error_msg}")
+                error_msg = error_info.get("message", "未知错误") if isinstance(error_info, dict) else str(error_info)
+                user_error = build_user_error_from_api_error(error_info, fallback_prefix="任务提交失败")
+                self.logger.warning(f"GPT Image 2 API returned error: {error_msg} -> {user_error}")
                 return {
                     "success": False,
-                    "error": f"任务提交失败: {error_msg}",
+                    "error": user_error,
                     "error_type": "USER",
                     "retry": False
                 }

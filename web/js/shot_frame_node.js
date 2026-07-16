@@ -1677,15 +1677,11 @@
 
       const reduceViolationBtn = el.querySelector('.reduce-violation-btn');
       
-      // 控制按钮显示的函数
+      // 方案 D：各视频模型均可主动改写提示词；参考图类失败时按钮仍可用但 toast 提示优先换图
       function updateReduceViolationBtnVisibility() {
         if(reduceViolationBtn) {
-          const videoModel = node.data.videoModel || 'sora2';
-          if(videoModel === 'sora2') {
-            reduceViolationBtn.style.display = 'inline-block';
-          } else {
-            reduceViolationBtn.style.display = 'none';
-          }
+          reduceViolationBtn.style.display = 'inline-block';
+          reduceViolationBtn.title = '改写提示词以降低内容审核触发风险（提示词相关失败时推荐）';
         }
       }
       
@@ -1701,17 +1697,27 @@
             showToast('视频提示词为空', 'warning');
             return;
           }
+
+          const lastError = (node.data.lastError || node.data.last_error || '').toString();
+          if(lastError.includes('参考图片')){
+            showToast('当前失败更可能与参考图有关，改写提示词可能无效，建议先更换参考图', 'warning');
+          }
           
           try {
             setBtnLoading(reduceViolationBtn, '改写提示词，修改违规内容...');
             
+            const body = { prompt: currentPrompt };
+            if(lastError){
+              body.failure_reason = lastError;
+            }
+
             const response = await fetch('/api/reduce-violation', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 ...getAuthHeaders()
               },
-              body: JSON.stringify({ prompt: currentPrompt })
+              body: JSON.stringify(body)
             });
             
             const result = await response.json();
