@@ -91,7 +91,8 @@ def test_reset_retry_budget_preserves_feedback_and_resets_internal_counters(monk
     assert "status = %s" in sql
     assert "validation_errors = %s" in sql
     assert "attempt_count" not in sql
-    assert params[0] == "failed"
+    # resume 后写回 pending，供效果模式依赖调度再次选中
+    assert params[0] == "pending"
     reset_errors = json.loads(params[1])
     assert reset_errors[0]["code"] == "TOO_MANY_EMPTY_DIALOGUE_SHOTS"
     assert reset_errors[0]["_qc_round"] == 0

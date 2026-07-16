@@ -435,6 +435,7 @@ class ScriptSplitSegmentModel:
 
         保留最近一次完整候选和业务反馈，只重置反馈中的内部周期计数。
         attempt_count 继续作为全生命周期诊断统计，不在恢复时归零。
+        状态写回 pending，确保效果模式依赖调度会再次选中该段（见 §8.1）。
         """
         segment = ScriptSplitSegmentModel.get_first_uncompleted(task_id)
         if segment is None:
@@ -452,7 +453,7 @@ class ScriptSplitSegmentModel:
             "UPDATE script_split_segment SET status = %s, validation_errors = %s "
             "WHERE task_id = %s AND segment_index = %s",
             (
-                SEGMENT_STATUS_FAILED,
+                SEGMENT_STATUS_PENDING,
                 json.dumps(errors, ensure_ascii=False) if errors else None,
                 task_id,
                 segment.segment_index,

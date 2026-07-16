@@ -793,12 +793,13 @@ async def _step_generate_parallel_batch(task: ScriptSplitTask, strategy) -> None
                 await step_merge(refreshed)
                 return
             if blocked:
-                # 依赖指向终态 failed/缺失，无法推进
+                # 仅当依赖目标缺失、或上游 completed 却无候选时 blocked。
+                # 上游 failed（等待重试）由 classify 归为 waiting，failed 段本身会进 ready。
                 raise EngineError(
                     "quality_dependency_blocked",
                     f"task {task.id} 有 {len(blocked)} 个段依赖终态异常/缺失的上游，无法推进",
                 )
-            # 有 waiting 段但 ready 为空：正常等待上游，让出 tick
+            # 有 waiting 段但 ready 为空：正常等待上游（含上游 failed 重试中），让出 tick
             logger.info(
                 "task %s 无 ready 段（%d 个 waiting），让出 tick",
                 task.id, len(waiting_info),
