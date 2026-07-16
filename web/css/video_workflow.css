@@ -2298,31 +2298,7 @@ textarea:focus{ border-color: var(--primary); }
   line-height: 1.6;
 }
 
-.coloring-canvas-container{
-  position: relative;
-  width: 100%;
-  max-width: 800px;
-  margin: 0 auto;
-  border: 2px solid #e5e7eb;
-  border-radius: 12px;
-  overflow: hidden;
-  background: #f9fafb;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-start;
-}
-.coloring-canvas-container canvas{
-  display: block;
-  max-width: 100%;
-  max-height: 500px;
-  cursor: none;
-}
-.coloring-tools{
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
+/* 涂色编辑样式已抽至 /css/image_coloring_editor.css（跨页面共享） */
 
 /* 文本节点样式 */
 .node[data-type="text"] {
@@ -2926,6 +2902,159 @@ textarea:focus{ border-color: var(--primary); }
   background: #f8fafc;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
+}
+
+/* 紧凑开关：两列网格，降低纵向高度 */
+.script-checkbox-group-compact {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 8px;
+  margin-top: 8px;
+}
+
+.script-checkbox-group-compact .script-inline-check:last-child {
+  grid-column: 1 / -1;
+}
+
+.script-inline-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text, #1f2937);
+  user-select: none;
+}
+
+.script-inline-check input {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.script-thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 参数分组折叠 */
+.script-section-params {
+  min-width: 220px;
+}
+
+.script-param-core {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.script-param-group {
+  margin-top: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafbfc;
+  overflow: hidden;
+}
+
+.script-param-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text, #1f2937);
+}
+
+.script-param-group-toggle:hover {
+  background: #f1f5f9;
+}
+
+.script-param-group-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  font-size: 10px;
+  color: #64748b;
+}
+
+.script-param-group-title {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.script-param-group-summary {
+  margin-left: auto;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 400;
+  color: #64748b;
+}
+
+.script-param-group-body {
+  padding: 4px 10px 10px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.script-param-group-body[hidden] {
+  display: none !important;
+}
+
+.script-param-group.is-open .script-param-group-toggle {
+  background: #f8fafc;
+}
+
+.script-qc-hint {
+  font-size: 11px;
+  color: #d97706;
+  margin-left: 22px;
+  margin-top: 2px;
+}
+
+/* 剧本节点：拆分质检「限时免费」徽章（对齐故事板） */
+.script-split-qc-free-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.script-split-qc-rounds-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.script-qc-rounds-field {
+  margin-top: 6px;
+}
+
+/* 参数区 field 间距收紧 */
+.script-section-params .field {
+  margin-bottom: 6px;
+}
+
+.script-section-params .field .label {
+  margin-bottom: 3px;
+  font-size: 12px;
 }
 
 /* 禁用剧本节点的折叠功能 - 所有字段始终可见 */

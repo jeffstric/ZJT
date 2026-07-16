@@ -7,6 +7,7 @@
   <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/video_workflow.css" />
+  <link rel="stylesheet" href="/css/image_coloring_editor.css" />
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
   <script src="/i18n/i18n-dom.js?v=__VERSION__"></script>
@@ -902,50 +903,8 @@
     </div>
   </div>
 
-  <!-- 涂色编辑模态框 -->
-  <div class="modal" id="coloringEditorModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
-      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
-        <div class="modal-title" style="color: #0f172a;" data-i18n="coloring_edit_modal">图片涂色编辑</div>
-        <button class="modal-close" id="coloringEditorModalClose" type="button" aria-label="关闭" data-i18n="close:aria-label">×</button>
-      </div>
-      <div class="modal-body" style="background: #ffffff; padding: 20px;">
-        <div style="display: flex; flex-direction: column; gap: 16px;">
-          <div class="coloring-canvas-container">
-            <canvas id="coloringCanvas"></canvas>
-          </div>
-          <div class="coloring-tools">
-            <div class="field" style="flex: 1;">
-              <label class="label" style="color: #0f172a;">画笔大小</label>
-              <input type="range" id="coloringBrushSize" min="20" max="200" value="50" style="width: 100%;" />
-              <div style="text-align: center; font-size: 12px; color: #6b7280; margin-top: 4px;">
-                <span id="coloringBrushSizeValue">50</span>px
-              </div>
-            </div>
-            <div class="field" style="flex: 1;">
-              <label class="label" style="color: #0f172a;">颜色</label>
-              <input type="color" id="coloringColor" value="#ff0000" style="width: 100%; height: 40px; border: 1px solid #d1d5db; border-radius: 8px; cursor: pointer;" />
-            </div>
-            <div class="field" style="flex: 1;">
-              <label class="label" style="color: #0f172a;">透明度</label>
-              <input type="range" id="coloringOpacity" min="0" max="100" value="50" style="width: 100%;" />
-              <div style="text-align: center; font-size: 12px; color: #6b7280; margin-top: 4px;">
-                <span id="coloringOpacityValue">50</span>%
-              </div>
-            </div>
-          </div>
-          <div style="display: flex; gap: 8px; justify-content: center;">
-            <button class="mini-btn secondary" id="coloringUndoBtn" type="button" data-i18n="coloring_undo">撤销</button>
-            <button class="mini-btn secondary" id="coloringClearBtn" type="button" data-i18n="coloring_clear">清空</button>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
-        <button class="mini-btn secondary" id="coloringCancelBtn" type="button" data-i18n="cancel">取消</button>
-        <button class="mini-btn" id="coloringConfirmBtn" type="button" data-i18n="coloring_confirm">确认</button>
-      </div>
-    </div>
-  </div>
+  <!-- 涂色编辑模态框：可由 image_coloring_editor.js 自注入；此处保留兼容旧缓存页面 -->
+  <!-- 实际 DOM 优先使用脚本 ensureModalDom 注入的结构 -->
 
   <!-- 时间轴面板 -->
   <div class="timeline-container" id="timelineContainer" style="display:none;">
