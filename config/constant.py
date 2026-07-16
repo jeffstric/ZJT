@@ -829,6 +829,9 @@ class StoryboardAutoGenerateConstants:
     ERROR_PREVIOUS_GROUP_FAILED = "previous_group_failed"
     ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT = "previous_group_reference_timeout"
     ERROR_BATCH_ITEM_RUNNING_TIMEOUT = "batch_item_running_timeout"
+    ERROR_QUALITY_PARENT_REFERENCE_MISSING = "quality_parent_reference_missing"
+    ERROR_WAITING_LOCATION_REFERENCES = "waiting_location_references"
+    LOCATION_REFERENCE_RETRY_AFTER_MS = 3000
     BATCH_RUNNING_ITEM_TIMEOUT_SECONDS = 2 * 60 * 60
     BATCH_JOB_STATUS_PENDING = 0
     BATCH_JOB_STATUS_RUNNING = 1

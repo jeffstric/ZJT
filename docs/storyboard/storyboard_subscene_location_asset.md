@@ -47,7 +47,7 @@
 3. **存在但 `parent_id` 不一致**（同名异父）→ 名称追加 ` (子场景)` 后缀后用 `create` 新建，避免覆盖别人的 `parent_id`。
 4. **不存在** → `LocationModel.create`（纯 INSERT）。
 5. 并发唯一键冲突（极罕见）fallback：再查一次 `get_by_name` 复用 id。
-6. 父场景缺失的孤儿子场景 → 降级为顶层创建 + warning，不阻塞。
+6. 父场景缺失的孤儿子场景、父级环或新顶层场景 → 在任何数据库写入前抛结构硬错误，禁止降级创建。
 
 > 关键区别：用 `create`（纯 INSERT）而非 `create_or_update`（upsert）。bootstrap 的职责是"补齐缺失的 location 资产"，不是"更新已有字段"。已有场景的 `reference_image` 等字段由九宫格回写或人工维护，bootstrap 不应触碰。
 
@@ -90,5 +90,5 @@
 - 顶层已匹配场景复用
 - **同名同父复用不清空 reference_image**（P1 数据丢失防护）
 - 名称冲突（不同 parent）改名
-- 孤儿子场景降级
+- 孤儿子场景和新顶层场景硬拦截（数据库零写入）
 - 拓扑排序父先于子

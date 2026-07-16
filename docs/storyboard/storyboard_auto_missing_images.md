@@ -103,6 +103,12 @@ Because the handler returns before the scheduler submits anything, the response'
 
 Quality grid details:
 
+- 企业版效果模式由 `enterprise.services.storyboard_quality_sequence` 决定幕级推进顺序。每个调度周期只允许最早未完成的一幕进入宫格生成；同一幕超过一个宫格时，也必须等待当前宫格完成并回写分镜首帧后才会提交下一宫格。
+- 下一幕只能引用前一幕最后一个分镜的已拆分首帧，不能引用完整宫格图，也不能在参考图缺失时降级无参考生成。前一幕失败会将所有后续未开始幕标记为 `previous_group_failed`；前一幕已经结束但首帧长期未回写时，下一幕以 `previous_group_reference_timeout` 失败。
+- 拆分发布阶段会调用企业版策略预提交第一层可生成的子场景九宫格，但不会因为父场景缺图而阻止分镜数据发布。
+- `quality + first_frame` 在创建 `storyboard_image_batch_job` 前执行全批场景参考图预检。宫格运行中返回 HTTP 202 `waiting_location_references`，不创建 job/item，前端按 `retry_after_ms` 补偿轮询；顶层父场景缺图返回 HTTP 409 `quality_parent_reference_missing`，展示 `blockers` 和受影响分镜，同样不创建 batch。
+- 每次 202 复检都会从数据库恢复状态：父层参考图回写后提交下一层子场景宫格，直到所有目标分镜场景就绪才在全局创建锁内复检并创建首帧 batch。宫格失败返回 409 `location_reference_generation_failed`，禁止自动无限重提，也不回退到普通 t2i。
+- `active_batch_exists` 仍按原语义恢复已有批次；202/409 的场景预检响应不是批次状态，前端不得传给 `applyImageBatchStatus()`。
 - 1-4 ready scenes use a 2x2 grid; 5-9 use a 3x3 grid; a single ready scene still uses 2x2 with placeholders to keep the quality-mode grid path uniform.
 - Grid size is decided after parsed-group partitioning. For example, if one displayed act contains multiple parsed groups of 3, 2, and 1 shots, each group is processed independently instead of being merged into one 3x3 grid.
 - `limit` keeps its planning meaning: maximum real scenes planned for the batch (omitted/`0` = no cap; positive value clamped to `MAX_BATCH_LIMIT`). Per scheduler tick throughput is controlled separately by `StoryboardAutoGenerateConstants.QUALITY_GRID_BATCHES_PER_TICK`.
@@ -203,10 +209,11 @@ api.autoGenerateMissingImages(storyboardId, {
   mode: 'auto',
   ratio: state.workflowRatio,
   task_type: state.selectedImageTaskId,
-  limit: missing.length,
   sequence_mode: state.autoImageSequenceMode,
 });
 ```
+
+The frontend intentionally does **not** send `limit`. The backend treats an omitted `limit` as "no cap" and plans all missing scenes in one batch (`UNLIMITED_BATCH_LIMIT`); per-tick throughput is still paced by the scheduler, so an uncapped batch does not overload the system. Passing a concrete `limit` (the old behavior `limit: missing.length`) was removed because it interacts badly with `MAX_BATCH_LIMIT=20`: when an episode has ≥ 20 missing scenes, the value gets clamped to 20 and any scene beyond the 20th is permanently marked `limit_reached`/`skipped` with no retry. `missing.length` is also computed from the partially-loaded frontend state, so it could undercount scenes that have not rendered yet. The video batch (`autoGenerateMissingVideos`) follows the same rule.
 
 Submitted or already-running scenes are passed to the existing polling function, so the UI uses the same task-status refresh path as manual generation. `pollImageBatchStatus(batchId, callbacks)` also applies batch item updates directly to `state.autoImageBatch`, writes `result_url` / `asset_id` back to the matching scene, and locally refreshes the title header and affected thumbnails.
 

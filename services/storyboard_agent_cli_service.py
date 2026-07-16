@@ -37,6 +37,9 @@ from services.storyboard_reference_prompt_service import (
     reference_urls,
 )
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
+from services.storyboard_quality_sequence import (
+    get_storyboard_quality_location_reference_coordinator,
+)
 
 
 VALID_IMAGE_MODES = {"auto", "text_to_image", "image_edit"}
@@ -1125,12 +1128,52 @@ class StoryboardAgentCliService:
             if existing_status:
                 return existing_status
 
+        planned_items = self._plan_image_batch_items(
+            storyboard_id=int(storyboard_id),
+            asset_type=asset_type,
+            sequence_mode=sequence_mode,
+            limit=batch_limit,
+        )
+        is_quality_first_frame = (
+            sequence_mode == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY
+            and asset_type == "first_frame"
+        )
+        if is_quality_first_frame:
+            self._require_quality_location_references(
+                storyboard_id=int(storyboard_id),
+                world_id=int(_get_field(storyboard, "world_id")),
+                user_id=int(user_id),
+                auth_token=auth_token,
+                scenes=StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or [],
+                planned_items=planned_items,
+                allow_submit=True,
+            )
+
+        with _IMAGE_BATCH_CREATE_LOCK:
+            existing_status = self._active_image_batch_status_for_request(
+                storyboard_id=int(storyboard_id),
+                asset_type=asset_type,
+                idempotency_key=idempotency_key,
+            )
+            if existing_status:
+                return existing_status
             planned_items = self._plan_image_batch_items(
                 storyboard_id=int(storyboard_id),
                 asset_type=asset_type,
                 sequence_mode=sequence_mode,
                 limit=batch_limit,
             )
+            if is_quality_first_frame:
+                # 真正建 batch 前在锁内只读复检；禁止在全局锁内提交外部宫格任务。
+                self._require_quality_location_references(
+                    storyboard_id=int(storyboard_id),
+                    world_id=int(_get_field(storyboard, "world_id")),
+                    user_id=int(user_id),
+                    auth_token=auth_token,
+                    scenes=StoryboardSceneModel.list_by_storyboard(int(storyboard_id)) or [],
+                    planned_items=planned_items,
+                    allow_submit=False,
+                )
             job_id = StoryboardImageBatchJobModel.create(
                 storyboard_id=int(storyboard_id),
                 user_id=int(user_id),
@@ -1209,6 +1252,42 @@ class StoryboardAgentCliService:
             "status": status.get("status"),
             "items": status.get("items", created_items),
         }
+
+    def _require_quality_location_references(
+        self,
+        *,
+        storyboard_id: int,
+        world_id: int,
+        user_id: int,
+        auth_token: str,
+        scenes: Sequence[Any],
+        planned_items: Sequence[Dict[str, Any]],
+        allow_submit: bool,
+    ) -> None:
+        result = get_storyboard_quality_location_reference_coordinator().preflight(
+            storyboard_id=storyboard_id,
+            world_id=world_id,
+            user_id=user_id,
+            auth_token=auth_token,
+            scenes=scenes,
+            planned_items=planned_items,
+            allow_submit=allow_submit,
+        )
+        if result.get("status") == "ready":
+            return
+        error_code = str(
+            result.get("error_code")
+            or StoryboardAutoGenerateConstants.ERROR_WAITING_LOCATION_REFERENCES
+        )
+        raise StoryboardCliError(
+            error_code,
+            str(result.get("message") or "场景参考图尚未就绪"),
+            payload={
+                key: value
+                for key, value in result.items()
+                if key not in {"error_code", "message"}
+            },
+        )
 
     def auto_generate_missing_videos(
         self,
@@ -1809,34 +1888,24 @@ class StoryboardAgentCliService:
                 from config.constant import LocationReferenceStatus
                 if exc.error_code == LocationReferenceStatus.WAITING_GRID:
                     is_quality_wait = bool(exc.payload.get("quality_mode"))
-                    # quality 模式下"缺图+无任务"的重试上限保护：累计超过上限则降级放行（走 t2i），
-                    # 避免九宫格彻底失败时无限等待。balanced/speed 模式的等待（有运行中任务）不计次。
+                    # 正常情况下 quality 首帧 batch 在创建前已完成全批预检，不会进入这里。
+                    # 若创建后发生并发资产变更，严格失败，绝不降级成无参考图 t2i。
                     if is_quality_wait:
                         prev_extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
-                        wait_count = int(prev_extra.get("quality_wait_count") or 0) + 1
-                        if wait_count > StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS:
-                            logger.warning(
-                                "[batch-loc] item=#%s scene=%s quality 等待达上限(%s>%s) → 降级放行(t2i)",
-                                item["id"], item["scene_id"], wait_count,
-                                StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS,
-                            )
-                            # 不 continue，落入下方正常生图流程（mode 已是 auto，会走 t2i）
-                        else:
-                            StoryboardImageBatchItemModel.update(
-                                int(item["id"]),
-                                extra_json={
-                                    **prev_extra,
-                                    "waiting": "location_grid_reference",
-                                    "location_db_id": exc.payload.get("location_db_id"),
-                                    "quality_wait_count": wait_count,
-                                },
-                            )
-                            logger.info(
-                                "[batch-loc] item=#%s scene=%s → 保持 PENDING (quality 等待九宫格 %s/%s)",
-                                item["id"], item["scene_id"], wait_count,
-                                StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS,
-                            )
-                            continue
+                        StoryboardImageBatchItemModel.update(
+                            int(item["id"]),
+                            status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED,
+                            error_code=StoryboardAutoGenerateConstants.ERROR_QUALITY_PARENT_REFERENCE_MISSING,
+                            error_message="效果模式场景参考图前置条件在批次创建后失效",
+                            extra_json={
+                                **prev_extra,
+                                "location_db_id": exc.payload.get("location_db_id"),
+                            },
+                        )
+                        item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+                        if int(job.get("stop_on_error") or 0):
+                            break
+                        continue
                     else:
                         StoryboardImageBatchItemModel.update(
                             int(item["id"]),

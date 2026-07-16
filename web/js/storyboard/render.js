@@ -604,9 +604,23 @@ function renderAutoCompleteHeader(title, actionsHtml = '') {
     const videoHint = videoSummary.missingCount > 0
         ? ` · 视频 ${videoSummary.missingCount} 待生成`
         : '';
+    const gate = state.autoImageLocationGate || {};
+    const parentNames = (gate.blockers || [])
+        .map(item => item.parent_location_name)
+        .filter(Boolean)
+        .join('、');
+    const gateMessage = gate.status && gate.status !== 'idle'
+        ? `<span class="auto-location-reference-alert ${escapeHtml(gate.status)}"
+                 title="${escapeHtml(gate.message || '')}">${escapeHtml(
+                     parentNames
+                         ? `${parentNames} 缺少参考图，后续分镜队列尚未启动`
+                         : (gate.message || '场景参考图尚未就绪'),
+                 )}</span>`
+        : '';
     return `
         <div class="auto-complete-header" data-auto-complete-header>
             <span class="auto-complete-title">${escapeHtml(title)} · ${summary.totalScenes} 个分镜 · ${summary.missingCount} 个待生成${videoHint}</span>
+            ${gateMessage}
             <div class="auto-complete-actions" aria-live="polite">
                 ${renderAutoCompleteControl()}
                 ${renderAutoVideoCompleteControl()}

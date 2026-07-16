@@ -169,6 +169,36 @@ def test_storyboard_auto_generate_missing_images_returns_409_for_active_batch(mo
     assert response.json()["active_batch_id"] == 88
 
 
+def test_storyboard_auto_generate_missing_images_returns_202_while_location_grids_run(monkeypatch):
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    client = _client()
+    monkeypatch.setattr("api.storyboard.UserTokensModel.get_user_id_by_token", lambda token: 7)
+
+    def fake_execute(self, command, params):
+        raise StoryboardCliError(
+            "waiting_location_references",
+            "场景参考图生成中",
+            payload={"retry_after_ms": 3000, "running_tasks": [{"grid_task_id": 9}]},
+        )
+
+    monkeypatch.setattr(
+        "api.storyboard.StoryboardAgentCommandService.execute",
+        fake_execute,
+        raising=False,
+    )
+
+    response = client.post(
+        "/api/storyboard/44/auto-generate-missing-images",
+        headers={"Authorization": "Bearer short-lived-token"},
+        json={"sequence_mode": "quality"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["error_code"] == "waiting_location_references"
+    assert response.json()["retry_after_ms"] == 3000
+
+
 def test_storyboard_batch_task_status_uses_authenticated_user(monkeypatch):
     client = _client()
     calls = []

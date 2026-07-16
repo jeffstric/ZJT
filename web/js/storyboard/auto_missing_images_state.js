@@ -22,6 +22,17 @@ function emptyBatchState() {
     };
 }
 
+function emptyLocationGateState() {
+    return {
+        status: 'idle',
+        errorCode: '',
+        message: '',
+        blockers: [],
+        affectedSceneIds: [],
+        retryAfterMs: 0,
+    };
+}
+
 function getStorageKey(storyboardId = state.storyboardId) {
     return storyboardId ? `storyboard_auto_missing_images_${storyboardId}` : '';
 }
@@ -59,6 +70,42 @@ function isFirstFrameRunning(scene) {
 
 export function resetAutoImageBatchState() {
     state.autoImageBatch = emptyBatchState();
+    state.autoImageLocationGate = emptyLocationGateState();
+}
+
+export function clearLocationReferencePreflight() {
+    state.autoImageLocationGate = emptyLocationGateState();
+}
+
+export function applyLocationReferencePreflight(payload = {}) {
+    const errorCode = String(payload.error_code || payload.errorCode || payload.code || '');
+    const blockers = Array.isArray(payload.blockers) ? payload.blockers : [];
+    const sources = [
+        ...blockers,
+        ...(Array.isArray(payload.failures) ? payload.failures : []),
+        ...(Array.isArray(payload.running_tasks) ? payload.running_tasks : []),
+    ];
+    const affected = new Set(
+        (payload.affected_scene_ids || payload.affectedSceneIds || []).map(numericId).filter(Boolean),
+    );
+    for (const source of sources) {
+        for (const sceneId of source?.affected_scene_ids || source?.affectedSceneIds || []) {
+            const normalized = numericId(sceneId);
+            if (normalized) affected.add(normalized);
+        }
+    }
+    const status = errorCode === 'waiting_location_references'
+        ? 'waiting'
+        : (errorCode === 'location_reference_generation_failed' ? 'failed' : 'blocked');
+    state.autoImageLocationGate = {
+        status,
+        errorCode,
+        message: payload.message || payload.error || '场景参考图尚未就绪',
+        blockers,
+        affectedSceneIds: [...affected],
+        retryAfterMs: Number(payload.retry_after_ms || payload.retryAfterMs || 0),
+    };
+    return state.autoImageLocationGate;
 }
 
 export function setAutoImageBatchSubmitting(submitting) {
@@ -130,6 +177,13 @@ export function applyImageBatchStatus(batchStatus = {}) {
 
 export function getFirstFrameDisplayStatus(scene) {
     if (scene?.firstFrameUrl) return 'ready';
+    const gate = state.autoImageLocationGate || emptyLocationGateState();
+    const affected = (gate.affectedSceneIds || []).some(
+        sceneId => String(sceneId) === String(scene?.id),
+    );
+    if (affected) {
+        return gate.status === 'waiting' ? 'waiting_location' : 'blocked_location';
+    }
     const item = state.autoImageBatch?.itemsBySceneId?.[scene?.id];
     if (item) {
         if (RUNNING_ITEM_STATUSES.has(item.status)) return 'running';
@@ -189,6 +243,27 @@ export function getAutoCompleteButtonViewModel() {
             className: 'auto-complete-button is-running',
         };
     }
+    const gate = state.autoImageLocationGate || emptyLocationGateState();
+    if (gate.status === 'waiting') {
+        return {
+            icon: 'loading',
+            label: '等待场景参考图',
+            locked: true,
+            disabled: false,
+            busy: true,
+            className: 'auto-complete-button is-running',
+        };
+    }
+    if (gate.status === 'blocked' || gate.status === 'failed') {
+        return {
+            icon: 'wand',
+            label: '重新检查并生成',
+            locked: false,
+            disabled: false,
+            busy: false,
+            className: 'auto-complete-button is-location-blocked',
+        };
+    }
     if (summary.missingCount > 0) {
         return {
             icon: 'wand',
@@ -214,6 +289,7 @@ export function getFirstFrameStatusLabel(status) {
         missing: '待生成',
         pending: '排队中',
         waiting_location: '等场景参考',
+        blocked_location: '依赖场景缺图',
         waiting_prev: '等前置分镜',
         running: '生成中',
         failed: '生成失败',

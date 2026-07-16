@@ -234,13 +234,18 @@ class TestStepPublish:
         from model.storyboard import StoryboardModel
         monkeypatch.setattr(StoryboardModel, "count_scenes_by_split_task",
                             staticmethod(lambda tid: 2))
+        reconcile = AsyncMock(return_value=None)
+        monkeypatch.setattr(
+            engine,
+            "_reconcile_voiceover_and_finalize",
+            reconcile,
+        )
         # to_thread 返回 awaitable 包装同步结果
         monkeypatch.setattr(engine.asyncio, "to_thread",
                             lambda fn, *a, **kw: _await_value(fn(*a, **kw)))
 
         _run(step_publish(task))
-        statuses = [s for _, s, _ in patch_models["update_status"]]
-        assert ScriptSplitConstants.STATUS_COMPLETED in statuses
+        reconcile.assert_awaited_once_with(task, final_result)
 
     def test_storyboard_partial_publish_raises_conflict(self, patch_models, monkeypatch):
         """storyboard 来源但已有分镜数 ≠ 预期 → publish_conflict（停止避免重复）。"""
@@ -274,3 +279,161 @@ class TestStepPublish:
         with pytest.raises(EngineError) as exc_info:
             _run(step_publish(task))
         assert exc_info.value.code == "no_final_result"
+
+    def test_publish_hard_gate_runs_before_bootstrap_and_scene_creation(
+        self, patch_models, monkeypatch
+    ):
+        final_result = {
+            "locations": [{
+                "id": "loc_001",
+                "name": "非法新顶层",
+                "location_db_id": None,
+                "parent_id": None,
+            }],
+            "shot_groups": [{"shots": [{"shot_id": "s1"}]}],
+        }
+        task = _task(
+            final_result=final_result,
+            request_config={
+                "source": "storyboard",
+                "storyboard_id": 5,
+                "world_id": 7,
+            },
+        )
+        from model.storyboard import StoryboardModel, StoryboardSceneModel
+
+        monkeypatch.setattr(
+            StoryboardModel,
+            "count_scenes_by_split_task",
+            staticmethod(lambda _task_id: 0),
+        )
+        monkeypatch.setattr(
+            StoryboardSceneModel,
+            "list_by_storyboard",
+            staticmethod(lambda _storyboard_id: []),
+        )
+
+        async def no_db_locations(_config):
+            return []
+
+        monkeypatch.setattr(engine, "_load_current_db_locations", no_db_locations)
+        monkeypatch.setattr(
+            StoryboardModel,
+            "create_scenes",
+            staticmethod(lambda *_args, **_kwargs: pytest.fail("硬门禁后不得创建分镜")),
+        )
+        monkeypatch.setattr(
+            engine.asyncio,
+            "to_thread",
+            lambda fn, *args, **kwargs: _await_value(fn(*args, **kwargs)),
+        )
+
+        with pytest.raises(TaskPaused) as exc_info:
+            _run(step_publish(task))
+
+        assert exc_info.value.code == "new_root_location_forbidden"
+
+    def test_quality_publish_prepares_subscene_location_references(self, patch_models, monkeypatch):
+        """效果模式发布时必须提交缺失的子场景参考图任务。"""
+        final_result = {
+            "locations": [
+                {"id": "loc_parent", "name": "酒店客房", "location_db_id": 10},
+                {"id": "loc_child", "name": "阳台", "parent_id": "loc_parent"},
+            ],
+            "shot_groups": [
+                {"group_id": "grp_001", "shots": [{"shot_id": "s1", "duration": 3}]}
+            ],
+        }
+        task = _task(
+            user_id=7,
+            final_result=final_result,
+            request_config={
+                "source": "storyboard",
+                "storyboard_id": 5,
+                "world_id": 7,
+                "sequence_mode": "quality",
+            },
+        )
+        calls = []
+        bootstrap_result = {
+            "id_map": {"loc_parent": 10, "loc_child": 11},
+            "created_location_count": 1,
+            "reused_location_count": 1,
+            "warnings": [],
+        }
+
+        from api import storyboard as storyboard_api
+        from model.storyboard import StoryboardModel, StoryboardSceneModel
+        from services import storyboard_location_bootstrap_service as bootstrap_module
+
+        monkeypatch.setattr(
+            StoryboardModel,
+            "count_scenes_by_split_task",
+            staticmethod(lambda task_id: 0),
+        )
+        monkeypatch.setattr(
+            StoryboardSceneModel,
+            "list_by_storyboard",
+            staticmethod(lambda storyboard_id: []),
+        )
+        monkeypatch.setattr(
+            StoryboardModel,
+            "get_by_id",
+            staticmethod(lambda storyboard_id: SimpleNamespace(style="电影感")),
+        )
+        monkeypatch.setattr(
+            StoryboardModel,
+            "create_scenes",
+            staticmethod(lambda *args, **kwargs: 1),
+        )
+        monkeypatch.setattr(
+            storyboard_api,
+            "build_storyboard_scenes_from_parsed_script",
+            lambda parsed, style: [{"title": "分镜1", "source_shot_key": "s1"}],
+        )
+
+        class FakeBootstrapService:
+            def bootstrap(self, parsed_data, world_id, user_id):
+                return bootstrap_result
+
+        class FakeQualitySequenceStrategy:
+            def prepare_location_references(
+                self,
+                parsed_data,
+                result,
+                world_id,
+                user_id,
+                auth_token,
+            ):
+                calls.append((parsed_data, result, world_id, user_id, auth_token))
+                return {"submitted_batches": 1, "submitted_subscene_count": 1}
+
+        monkeypatch.setattr(
+            bootstrap_module,
+            "StoryboardLocationBootstrapService",
+            FakeBootstrapService,
+        )
+        monkeypatch.setattr(
+            engine,
+            "get_storyboard_quality_sequence_strategy",
+            lambda: FakeQualitySequenceStrategy(),
+            raising=False,
+        )
+        async def existing_locations(_config):
+            return [{"id": 10, "name": "酒店客房", "parent_id": None}]
+
+        monkeypatch.setattr(engine, "_load_current_db_locations", existing_locations)
+        monkeypatch.setattr(
+            engine,
+            "_reconcile_voiceover_and_finalize",
+            AsyncMock(return_value=None),
+        )
+        monkeypatch.setattr(
+            engine.asyncio,
+            "to_thread",
+            lambda fn, *args, **kwargs: _await_value(fn(*args, **kwargs)),
+        )
+
+        _run(step_publish(task))
+
+        assert calls == [(final_result, bootstrap_result, 7, task.user_id, "tok")]

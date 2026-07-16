@@ -11,7 +11,7 @@ build_storyboard_scenes_from_parsed_script 写入的 prompt_json.source.location
   - LocationModel.create_or_update 的 ON DUPLICATE KEY 只按 (world_id, name) 匹配，
     同名不同 parent 的子场景会被误 upsert，故创建前先 get_by_name 校验 parent_id
     一致性，不一致则给新行名追加 " (子场景)" 后缀并记 warning。
-  - 父场景缺失的孤儿子场景降级为顶层创建，记 warning，不阻塞分镜生成。
+  - 新顶层、孤儿父级和父级环属于结构硬错误，任何数据库写入前直接拒绝。
   - 本服务为纯同步 DB 操作；web 接口调用时须用 asyncio.to_thread 包装。
 
 仅消费 location_db_id / name / parent_id（内部 loc_xxx）/ description 字段；
@@ -27,8 +27,17 @@ from model.location import LocationModel
 
 logger = logging.getLogger(__name__)
 
-# 孤儿子场景降级创建时追加的后缀，避免与同名顶层场景在 (world_id, name) 上撞唯一键
-_ORPHAN_SUBSCENE_SUFFIX = " (子场景)"
+# 同名异父子场景创建时追加的后缀，避免在 (world_id, name) 上撞唯一键
+_SUBSCENE_CONFLICT_SUFFIX = " (子场景)"
+
+
+class LocationBootstrapStructureError(ValueError):
+    """bootstrap 最后防线发现非法场景父级结构。"""
+
+    def __init__(self, code: str, message: str):
+        self.code = code
+        self.message = message
+        super().__init__(f"[{code}] {message}")
 
 
 class StoryboardLocationBootstrapService:
@@ -53,7 +62,7 @@ class StoryboardLocationBootstrapService:
 
         Returns:
             {
-                'created_location_count': int,   # 新建的子/顶层场景数
+                'created_location_count': int,   # 新建的子场景数
                 'reused_location_count': int,    # 复用既有 DB 场景数
                 'id_map': {loc_xxx -> db_id},    # 内部 id 到 DB id 映射
                 'warnings': List[str],           # 名称冲突 / 孤儿场景等告警
@@ -68,6 +77,7 @@ class StoryboardLocationBootstrapService:
         if not isinstance(locations, list):
             return self._empty_result()
 
+        self._validate_structure_before_write(locations)
         ordered = self._topological_order(locations, warnings)
 
         for location in ordered:
@@ -92,12 +102,10 @@ class StoryboardLocationBootstrapService:
                 id_map[loc_key] = None
                 continue
 
-            # 父场景缺失的孤儿子场景：降级为顶层创建
-            is_orphan = bool(parent_key) and parent_db_id is None
-            if is_orphan:
-                warnings.append(
-                    f"子场景 loc_key={loc_key}(name={name}) 的父场景 "
-                    f"{parent_key} 未入库，降级为顶层场景创建"
+            if parent_db_id is None:
+                raise LocationBootstrapStructureError(
+                    "location_parent_invalid",
+                    f"子场景 {loc_key}(name={name}) 的父场景 {parent_key} 未能映射到数据库",
                 )
 
             # 先查同名行：存在则直接复用 id（绝不走 upsert，避免 ON DUPLICATE KEY UPDATE
@@ -122,7 +130,7 @@ class StoryboardLocationBootstrapService:
                         reused_count += 1
                         continue
                 # 同名异父：改名后走新建分支
-                resolved_name = f"{name}{_ORPHAN_SUBSCENE_SUFFIX}"
+                resolved_name = f"{name}{_SUBSCENE_CONFLICT_SUFFIX}"
                 warnings.append(
                     f"loc_key={loc_key} 名称 '{name}' 与 parent_id={existing_parent} 的既有场景"
                     f"冲突（当前 parent_id={parent_db_id}），改名为 '{resolved_name}'"
@@ -190,6 +198,53 @@ class StoryboardLocationBootstrapService:
             "id_map": {},
             "warnings": [],
         }
+
+    def _validate_structure_before_write(
+        self,
+        locations: List[Dict[str, Any]],
+    ) -> None:
+        """写入前验证每个新场景的父链最终到达一个已有 DB 场景。"""
+        by_key = {
+            str(location.get("id") or location.get("location_id")): location
+            for location in locations
+            if isinstance(location, dict)
+            and (location.get("id") or location.get("location_id"))
+        }
+        for location in by_key.values():
+            if self._safe_int(location.get("location_db_id")) is not None:
+                continue
+            key = str(location.get("id") or location.get("location_id") or "")
+            parent_key = str(location.get("parent_id") or "")
+            if not parent_key:
+                raise LocationBootstrapStructureError(
+                    "new_root_location_forbidden",
+                    f"拆分流程不允许创建顶层场景：{location.get('name') or key}",
+                )
+
+            visited = {key}
+            current_key = parent_key
+            while True:
+                if current_key in visited:
+                    raise LocationBootstrapStructureError(
+                        "location_parent_invalid",
+                        f"场景 {key} 的父级形成环：{current_key}",
+                    )
+                visited.add(current_key)
+                current = by_key.get(current_key)
+                if current is None:
+                    raise LocationBootstrapStructureError(
+                        "location_parent_invalid",
+                        f"场景 {key} 的父级 {current_key} 不存在",
+                    )
+                if self._safe_int(current.get("location_db_id")) is not None:
+                    break
+                next_parent = str(current.get("parent_id") or "")
+                if not next_parent:
+                    raise LocationBootstrapStructureError(
+                        "location_parent_invalid",
+                        f"场景 {key} 的父级链无法到达已有数据库场景",
+                    )
+                current_key = next_parent
 
     def _topological_order(
         self, locations: List[Dict[str, Any]], warnings: List[str]

@@ -1854,6 +1854,9 @@ async def auto_generate_missing_storyboard_images(
         status_code = {
             "enterprise_only": 403,
             "active_batch_exists": 409,
+            "quality_parent_reference_missing": 409,
+            "location_reference_generation_failed": 409,
+            "waiting_location_references": 202,
         }.get(exc.error_code, 400)
         return JSONResponse(status_code=status_code, content=exc.to_dict())
 

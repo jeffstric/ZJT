@@ -35,6 +35,10 @@ from services.script_split_strategy import get_script_split_strategy
 from services.storyboard_quality_sequence import (
     get_storyboard_quality_sequence_strategy,
 )
+from services.location_structure_guard import (
+    validate_full_location_structure,
+    validate_segment_new_roots,
+)
 from model.script_split_task import ScriptSplitTaskModel, ScriptSplitTask
 from model.script_split_segment import (
     ScriptSplitSegmentModel,
@@ -72,6 +76,70 @@ class WaitingAuth(EngineError):
 
     def __init__(self, message: str = "鉴权失效，请刷新页面后继续"):
         super().__init__("waiting_auth", message)
+
+
+async def _load_current_db_locations(config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """异步读取当前世界场景树，供独立结构硬门禁使用。"""
+    world_id = config.get("world_id")
+    if world_id in (None, ""):
+        return []
+    from model.location import LocationModel
+
+    return await asyncio.to_thread(
+        LocationModel.get_tree_by_world,
+        int(world_id),
+        None,
+    ) or []
+
+
+async def _validate_segment_location_structure(
+    parsed: Dict[str, Any],
+    config: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    return validate_segment_new_roots(
+        parsed,
+        await _load_current_db_locations(config),
+    )
+
+
+async def _revalidate_saved_full_location_graph(
+    task_id: int,
+    current_segment: Any,
+    current_parsed: Dict[str, Any],
+    config: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """恢复合并级硬错误时，用所有保存候选重建全量 location 图复检。"""
+    segments = await asyncio.to_thread(ScriptSplitSegmentModel.get_all, task_id)
+    locations: List[Dict[str, Any]] = []
+    for segment in segments:
+        parsed = (
+            current_parsed
+            if int(segment.segment_index) == int(current_segment.segment_index)
+            else segment.get_parsed_result()
+        ) or {}
+        locations.extend(
+            location for location in (parsed.get("locations") or [])
+            if isinstance(location, dict)
+        )
+    return validate_full_location_structure(
+        {"locations": locations},
+        await _load_current_db_locations(config),
+    )
+
+
+def _first_hard_gate_error(errors: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    return next(
+        (error for error in errors if isinstance(error, dict) and error.get("_hard_gate")),
+        None,
+    )
+
+
+def _pause_for_hard_gate(errors: List[Dict[str, Any]]) -> None:
+    first = _first_hard_gate_error(errors) or {}
+    raise TaskPaused(
+        str(first.get("code") or "location_structure_invalid"),
+        str(first.get("message") or "场景父级结构不合法，请修正后继续"),
+    )
 
 
 def _build_plan_validation_payload(
@@ -359,7 +427,49 @@ async def step_generate_segment(
             call_failure_count = attempt_count
         elif last_parsed_result is not None:
             qc_rounds = attempt_count
+    checkpoint_hard_errors: List[Dict[str, Any]] = []
+    if last_parsed_result is not None:
+        # 恢复检查点时必须使用最新数据库重新执行硬门禁。用户补齐顶层场景后，
+        # 保存的完整候选可以直接恢复；旧的 _forced_accept 标记不能绕过该检查。
+        checkpoint_hard_errors = await _validate_segment_location_structure(
+            last_parsed_result,
+            cfg,
+        )
+        previous_full_hard_errors = [
+            error for error in last_errors
+            if isinstance(error, dict)
+            and error.get("_hard_gate")
+            and error.get("code") != "new_root_location_forbidden"
+        ]
+        if previous_full_hard_errors:
+            checkpoint_hard_errors = await _revalidate_saved_full_location_graph(
+                task.id,
+                seg,
+                last_parsed_result,
+                cfg,
+            )
+        if not checkpoint_hard_errors:
+            last_errors = [
+                error for error in last_errors
+                if not (isinstance(error, dict) and error.get("_hard_gate"))
+            ]
+            if not last_errors:
+                _complete_segment_result(
+                    task=task,
+                    seg=seg,
+                    parsed=last_parsed_result,
+                    strategy=strategy,
+                    plan=plan,
+                    registry=registry,
+                    total=total,
+                    parallel_child=_parallel_child,
+                )
+                return
+    if checkpoint_hard_errors and not enable_qc:
+        _pause_for_hard_gate(checkpoint_hard_errors)
     if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+        if checkpoint_hard_errors:
+            _pause_for_hard_gate(checkpoint_hard_errors)
         if last_parsed_result is not None:
             _complete_retry_exhausted_candidate(
                 task, seg, last_parsed_result, last_errors,
@@ -368,6 +478,8 @@ async def step_generate_segment(
             return
         _handle_segment_exhausted(task, seg, registry)
     if enable_qc and qc_rounds >= qc_max_rounds and last_parsed_result is not None:
+        if checkpoint_hard_errors:
+            _pause_for_hard_gate(checkpoint_hard_errors)
         forced_errors = _mark_forced_accept_errors(last_errors)
         logger.warning(
             "task %s 段 %d 质检修正已达到上限 %d 轮，强制采用检查点中的最后候选；issues=%s",
@@ -426,6 +538,8 @@ async def step_generate_segment(
         ScriptSplitSegmentModel.save_failure(task.id, seg.segment_index, errors)
         logger.warning("task %s 段 %d 第 %d 次超时", task.id, seg.segment_index, generation_attempt)
         if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+            if checkpoint_hard_errors:
+                _pause_for_hard_gate(checkpoint_hard_errors)
             if last_parsed_result is not None:
                 _complete_retry_exhausted_candidate(
                     task, seg, last_parsed_result, errors,
@@ -445,6 +559,8 @@ async def step_generate_segment(
         logger.warning("task %s 段 %d 第 %d 次调用失败: %s",
                        task.id, seg.segment_index, generation_attempt, msg)
         if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+            if checkpoint_hard_errors:
+                _pause_for_hard_gate(checkpoint_hard_errors)
             if last_parsed_result is not None:
                 _complete_retry_exhausted_candidate(
                     task, seg, last_parsed_result, errors,
@@ -458,6 +574,7 @@ async def step_generate_segment(
     if _is_cancelled(task.id):
         raise CancelledByUser()
 
+    hard_structure_errors = await _validate_segment_location_structure(parsed, cfg)
     errors: List[Dict[str, Any]] = list(
         strategy.validate_segment_result(parsed, plan, seg.segment_id) or []
     )
@@ -478,6 +595,39 @@ async def step_generate_segment(
             qc_round=current_qc_round,
         )
         errors.extend(qc_errors)
+    if hard_structure_errors:
+        current_qc_round = qc_rounds + 1 if enable_qc else qc_rounds
+        hard_structure_errors = [
+            dict(
+                error,
+                _hard_gate=True,
+                _qc_round=current_qc_round,
+                _call_failure_count=call_failure_count,
+            )
+            for error in hard_structure_errors
+        ]
+        ordinary_errors = [
+            dict(error, _qc_round=current_qc_round,
+                 _call_failure_count=call_failure_count)
+            for error in errors
+        ]
+        persisted_errors = hard_structure_errors + ordinary_errors
+        ScriptSplitSegmentModel.save_failure(
+            task.id,
+            seg.segment_index,
+            persisted_errors,
+            parsed_result=parsed,
+        )
+        logger.warning(
+            "task %s 段 %d 场景结构硬门禁失败: %s",
+            task.id,
+            seg.segment_index,
+            [error.get("code") for error in hard_structure_errors],
+        )
+        if enable_qc and current_qc_round < qc_max_rounds:
+            return
+        _pause_for_hard_gate(hard_structure_errors)
+
     if errors:
         current_qc_round = qc_rounds + 1
         errors = [dict(error, _qc_round=current_qc_round,
@@ -529,6 +679,8 @@ def _mark_forced_accept_errors(
     errors: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """保留最后一轮 QC 问题，并标记该段是达到上限后强制接纳。"""
+    if _first_hard_gate_error(errors):
+        _pause_for_hard_gate(errors)
     return [dict(error, _forced_accept=True) for error in errors]
 
 
@@ -718,6 +870,48 @@ def _handle_segment_exhausted(task: ScriptSplitTask, seg, registry) -> None:
     )
 
 
+def _location_internal_key(location: Dict[str, Any]) -> str:
+    return str(location.get("id") or location.get("location_id") or "")
+
+
+def _map_location_errors_to_segments(
+    completed_segments: List[Any],
+    errors: List[Dict[str, Any]],
+) -> Dict[int, List[Dict[str, Any]]]:
+    """按 location 来源把全量图错误精确回写到历史完成段。"""
+    owners: Dict[str, set[int]] = {}
+    for segment in completed_segments:
+        parsed = segment.get_parsed_result() or {}
+        for location in parsed.get("locations") or []:
+            if not isinstance(location, dict):
+                continue
+            key = _location_internal_key(location)
+            if key:
+                owners.setdefault(key, set()).add(int(segment.segment_index))
+
+    mapped: Dict[int, List[Dict[str, Any]]] = {}
+    fallback_index = min(
+        (int(segment.segment_index) for segment in completed_segments),
+        default=1,
+    )
+    for error in errors:
+        involved = {
+            str(error.get("location_id") or ""),
+            str(error.get("parent_id") or ""),
+        }
+        involved.update(
+            str(value) for value in (error.get("involved_location_ids") or [])
+        )
+        indexes: set[int] = set()
+        for location_id in involved:
+            indexes.update(owners.get(location_id) or set())
+        if not indexes:
+            indexes.add(fallback_index)
+        for segment_index in indexes:
+            mapped.setdefault(segment_index, []).append(dict(error, _hard_gate=True))
+    return mapped
+
+
 # ---- 单步：合并与全局校验 ----
 
 async def step_merge(task: ScriptSplitTask) -> None:
@@ -768,6 +962,23 @@ async def step_merge(task: ScriptSplitTask) -> None:
         merged = sanitize_parsed_prop_references(merged)
         merged = sanitize_parsed_location_references(merged, db_locations)
         merged = repair_spatial_layout_continuity(merged)
+
+    hard_structure_errors = validate_full_location_structure(
+        merged,
+        db_locations or [],
+    )
+    if hard_structure_errors:
+        errors_by_segment = _map_location_errors_to_segments(
+            completed,
+            hard_structure_errors,
+        )
+        await asyncio.to_thread(
+            ScriptSplitSegmentModel.reopen_completed_for_hard_errors,
+            task.id,
+            errors_by_segment,
+        )
+        _pause_for_hard_gate(hard_structure_errors)
+
     merged = reorganize_shot_groups(
         merged, cfg.get("max_group_duration", 15))
 
@@ -834,17 +1045,31 @@ async def step_publish(task: ScriptSplitTask) -> None:
             "故事板已存在分镜，不能重复生成",
         )
 
+    # 发布前最后一道独立结构硬门禁。必须位于 bootstrap/create_scenes 之前，
+    # 防止历史检查点、恢复流程或并发修改绕过合并级校验并产生非法场景资产。
+    publish_db_locations = await _load_current_db_locations(cfg)
+    publish_hard_errors = validate_full_location_structure(
+        final_result,
+        publish_db_locations,
+    )
+    if publish_hard_errors:
+        _pause_for_hard_gate(publish_hard_errors)
+
     # 1. 场景资产化（location bootstrap）
     from services.storyboard_location_bootstrap_service import (
+        LocationBootstrapStructureError,
         StoryboardLocationBootstrapService,
     )
     world_id = cfg.get("world_id")
     bootstrap_result = None
     if world_id:
-        bootstrap_result = await asyncio.to_thread(
-            StoryboardLocationBootstrapService().bootstrap,
-            final_result, world_id, task.user_id,
-        )
+        try:
+            bootstrap_result = await asyncio.to_thread(
+                StoryboardLocationBootstrapService().bootstrap,
+                final_result, world_id, task.user_id,
+            )
+        except LocationBootstrapStructureError as exc:
+            raise TaskPaused(exc.code, exc.message) from exc
         if str(cfg.get("sequence_mode") or "").strip().lower() == "quality":
             quality_strategy = get_storyboard_quality_sequence_strategy()
             await asyncio.to_thread(

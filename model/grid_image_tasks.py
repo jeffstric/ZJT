@@ -293,6 +293,24 @@ class GridImageTasksModel:
             return False
 
     @staticmethod
+    def get_latest_grid_for_entity(
+        entity_id: int,
+        item_type: int = 5,
+    ) -> Optional[GridImageTask]:
+        """读取目标场景最近一次宫格任务，供效果模式区分等待与失败终态。"""
+        if not entity_id:
+            return None
+        result = execute_query(
+            "SELECT * FROM grid_image_tasks "
+            "WHERE item_type = %s "
+            "AND JSON_CONTAINS(target_entity_ids_json, %s, '$') "
+            "ORDER BY id DESC LIMIT 1",
+            (item_type, json.dumps(int(entity_id))),
+            fetch_one=True,
+        )
+        return GridImageTask(**result) if result else None
+
+    @staticmethod
     def get_by_task_key(task_key: str) -> Optional[GridImageTask]:
         """
         根据task_key获取任务

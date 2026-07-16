@@ -381,16 +381,32 @@ def sanitize_parsed_location_references(
         if _safe_int(loc.get("id")) is not None
     }
 
+    from services.location_structure_guard import match_location_with_parent
+
+    source_locations = [
+        location for location in (parsed_data.get("locations") or [])
+        if isinstance(location, dict)
+    ]
+    locations_by_key = {
+        str(location.get("id")): location
+        for location in source_locations
+        if location.get("id") not in (None, "")
+    }
     valid_locations: List[Dict[str, Any]] = []
     valid_location_ids = set()  # 合法 location 的内部 loc_xxx
     unpersisted_count = 0
-    for location in parsed_data.get("locations") or []:
-        if not isinstance(location, dict):
-            continue
-
-        db_match = db_locations_by_id.get(_safe_int(location.get("location_db_id")))
-        if not db_match:
-            db_match = _find_unique_location_by_name(location.get("name"), db_flat)
+    for location in source_locations:
+        given_db_id = _safe_int(location.get("location_db_id"))
+        db_match = db_locations_by_id.get(given_db_id)
+        if db_match:
+            # 显式有效 DB id 始终保留；父级冲突由完整硬门禁报告。
+            match_result = match_location_with_parent(location, locations_by_key, db_flat)
+            db_match = match_result.db_location or db_match
+        else:
+            match_result = match_location_with_parent(location, locations_by_key, db_flat)
+            # 名称兜底只有父级一致时才允许绑定。同名异父保留为未入库候选，
+            # 让合并级硬门禁给出 location_parent_conflict，而不是静默洗成复用。
+            db_match = None if match_result.conflict else match_result.db_location
 
         if db_match:
             # 已匹配 DB 场景：写回真实 DB id 与名称
@@ -1548,6 +1564,8 @@ async def parse_script_to_shots(
 你只需为下方剧本内容中的**当前分段**生成分镜，不要生成其他段。
 - 历史尾部摘要只用于保持连续性，**不得重复生成**已拆过的历史镜头。
 - 优先复用「已接受资产注册表」中的角色/场景/道具/空间 ID。
+- **场景层级硬规则**：拆分流程严禁创建新的顶层场景。请尽可能按数据库场景列表中的真实 `location_db_id` 复用已有场景；允许复用已有顶层场景，但 `location_db_id` 必须真实有效。
+- 若确需创建新场景，必须输出 `location_db_id=null` 且 `parent_id` 指向一个合法父场景内部 ID；严禁输出 `location_db_id=null,parent_id=null`，也严禁为绕过父场景缺失而把子场景提升为顶层。
 - 当前分段首次出现的新实体，必须使用预留的全局 ID 起始编号：{res_text}。
   不得从 char_001/loc_001/prop_001 重新编号（首段除外）。
 - 分镜编号可以是段内编号，最终由后端统一重排。

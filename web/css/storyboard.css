@@ -1976,6 +1976,28 @@ button {
     gap: 8px;
     flex: 0 0 auto;
 }
+.auto-location-reference-alert {
+    min-width: 0;
+    padding: 5px 8px;
+    border-radius: 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #b45309;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+}
+.auto-location-reference-alert.blocked,
+.auto-location-reference-alert.failed {
+    color: #b91c1c;
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+.auto-complete-button.is-location-blocked {
+    color: #b91c1c;
+    background: #fef2f2;
+    border-color: #fecaca;
+}
 .auto-complete-button {
     min-height: 32px;
     padding: 0 12px;
@@ -2136,8 +2158,10 @@ button {
 .first-frame-status-mark.missing { background: rgba(241, 245, 249, 0.92); color: #475569; }
 .first-frame-status-mark.waiting_location,
 .first-frame-status-mark.waiting_prev { background: #fef3c7; color: #b45309; }
+.first-frame-status-mark.blocked_location { background: #fee2e2; color: #b91c1c; }
 .scene-timeline-media-frame.first-frame-waiting_location,
 .scene-timeline-media-frame.first-frame-waiting_prev { background: #fffbeb; color: #b45309; }
+.scene-timeline-media-frame.first-frame-blocked_location { background: #fef2f2; color: #b91c1c; }
 
 .scene-timeline-actions { justify-content: center; gap: 4px; margin-top: 4px; opacity: 0.8; }
 .scene-timeline-actions button { width: 24px; height: 24px; border-radius: 4px; background: var(--panel-soft); color: var(--muted); }

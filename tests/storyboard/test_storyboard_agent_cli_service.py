@@ -1147,6 +1147,54 @@ def test_auto_generate_missing_images_rejects_conflicting_active_batch(patched_s
     assert len(patched_storyboard_cli.batch_jobs) == 1
 
 
+def test_quality_location_preflight_blocks_before_batch_creation(
+    patched_storyboard_cli, monkeypatch
+):
+    module = patched_storyboard_cli.module
+    scenes = [{
+        "id": 11,
+        "storyboard_id": 22,
+        "title": "Opening",
+        "sort_order": 1,
+        "selected_first_frame_id": None,
+        "prompt_json": {"source": {"location_db_id": 33}},
+    }]
+    monkeypatch.setattr(module.StoryboardSceneModel, "list_by_storyboard", lambda _id: scenes)
+    monkeypatch.setattr(module.Edition, "is_community", classmethod(lambda cls: False))
+
+    class BlockedCoordinator:
+        def preflight(self, **_kwargs):
+            return {
+                "status": "blocked",
+                "error_code": "quality_parent_reference_missing",
+                "message": "父场景缺少参考图",
+                "blockers": [{
+                    "parent_location_id": 33,
+                    "affected_scene_ids": [11],
+                }],
+            }
+
+    monkeypatch.setattr(
+        module,
+        "get_storyboard_quality_location_reference_coordinator",
+        lambda: BlockedCoordinator(),
+    )
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    with pytest.raises(module.StoryboardCliError) as exc_info:
+        service.auto_generate_missing_images(
+            storyboard_id=22,
+            user_id=7,
+            auth_token="token",
+            sequence_mode="quality",
+        )
+
+    assert exc_info.value.error_code == "quality_parent_reference_missing"
+    assert exc_info.value.payload["blockers"][0]["affected_scene_ids"] == [11]
+    assert patched_storyboard_cli.batch_jobs == {}
+    assert patched_storyboard_cli.batch_items == {}
+
+
 def test_plan_image_batch_dependencies_by_sequence_mode(patched_storyboard_cli, monkeypatch):
     module = patched_storyboard_cli.module
     scenes = [

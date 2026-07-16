@@ -124,6 +124,14 @@ const state = {
         message: '',
         submitting: false,
     },
+    autoImageLocationGate: {
+        status: 'idle',
+        errorCode: '',
+        message: '',
+        blockers: [],
+        affectedSceneIds: [],
+        retryAfterMs: 0,
+    },
     /** 批量生成缺失视频（时间轴「批量生成视频」） */
     autoVideoBatch: {
         batchId: null,

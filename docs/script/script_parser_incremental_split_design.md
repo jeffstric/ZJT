@@ -135,6 +135,8 @@
 
 阶段二发生 `MAX_TOKENS`、重复截断或调用失败时，只在当前分段的有限重试范围内处理。调用重试达到上限时，如果检查点中已经存在最近一次成功解析的完整 `parsed_result_json`，则强制保存该候选为 `completed`，并在最后一次错误上保留 `_forced_accept=true` 后继续合并发布；只有从未得到任何可解析候选时，当前段才保留为 `failed`、根任务进入 `paused`。质检失败采用相同的可用候选优先原则：拆分与质检最多循环 `qc_max_rounds` 次，仍不通过时采用最后一轮完整 JSON。该线性失败路径避免 `planning/replan → generating → planning` 循环和检查点重建复杂度，同时不会让非致命质检问题或后续修正调用异常永久阻塞拆分。
 
+场景父级结构是上述 forced-accept 的明确例外。`new_root_location_forbidden`、`location_parent_invalid`、`location_parent_conflict` 带 `_hard_gate=true`，无论 `enable_qc`、修正轮数或调用重试是否耗尽都不得强制接纳。段级、合并级和发布前会分别重跑结构硬门禁；合并发现历史完成段非法时原子重开具体段并按数据库实际状态校准 `completed_segment_count`，发布前失败则禁止调用 location bootstrap 和创建分镜。
+
 段级生成严格遵守“一次 scheduler tick 最多一次 LLM 调用”。本轮解析成功但 QC 未通过时，segment 立即持久化最近一次完整 `parsed_result_json`、结构化 `validation_errors` 和重试计数，然后正常结束当前 tick、释放租约；下一 tick 再把这些检查点作为 `previous_parsed_result + qc_feedback` 发起一次定向修复。网络失败计数与 QC 修正轮次分别保存在错误元数据中，互不挤占预算。禁止在一个 `step_generate_segment()` 内循环发起多次模型请求，否则多轮请求会错误共享同一个 worker watchdog 时限。
 
 ## 7. 阶段二：复用现有 script_parser 逐段拆分
@@ -303,6 +305,7 @@ strict_json: bool = False
 - LLM 限流、网络异常：指数退避后重试当前段。
 - 鉴权失效：任务进入 `waiting_auth`，用户恢复页面后使用新 token 继续。
 - 达到单段最大尝试次数：已有可解析候选则强制接纳并继续；没有候选才进入 `paused`，保留全部已完成段。
+- 上述规则不适用于场景父级结构硬错误；只要 `_hard_gate=true` 的错误仍存在，即使已有可解析候选也进入可恢复 `paused`，绝不 forced-accept。
 - 模型返回 `MAX_TOKENS`、连续截断或重复校验失败：当前段在有限次数内携带反馈重试，耗尽后优先复用最近一次完整候选，不重建分段计划。
 
 单次段级 LLM coroutine 使用 `LLM_CALL_TIMEOUT_SECONDS`，底层 HTTP 使用 `LLM_HTTP_TIMEOUT_SECONDS`，整个调度步骤使用更大的 `WORKER_STEP_TIMEOUT_SECONDS`。三者满足 `HTTP < LLM call < worker step`，为异常转换、检查点写入和租约释放保留余量。worker watchdog 触发时根任务进入可恢复的 `paused` 并保留 `active_key` 和 segment 检查点，不再进入终态 `failed`。

@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from services.storyboard_location_bootstrap_service import (
+    LocationBootstrapStructureError,
     StoryboardLocationBootstrapService,
 )
 from llm.script_parser import sanitize_parsed_location_references
@@ -97,7 +98,7 @@ class TestBootstrap:
     def test_creates_subscene_with_correct_parent_id(self):
         """子场景入库时 parent_id 填父场景真实 DB id。"""
         created = {}
-        seq = iter([1001, 1002])  # 父先建 → 1001，子 → 1002
+        seq = iter([1002])
 
         def fake_create(world_id, name, user_id, parent_id=None, **kw):
             new_id = next(seq)
@@ -106,7 +107,7 @@ class TestBootstrap:
 
         parsed = {
             "locations": [
-                {"id": "loc_001", "name": "主场景", "location_db_id": None, "level": 0},
+                {"id": "loc_001", "name": "主场景", "location_db_id": 1001, "level": 0},
                 {"id": "loc_002", "name": "子场景", "parent_id": "loc_001",
                  "location_db_id": None, "level": 1, "description": "子"},
             ],
@@ -118,7 +119,7 @@ class TestBootstrap:
             svc = StoryboardLocationBootstrapService()
             result = svc.bootstrap(parsed, WORLD_ID, USER_ID)
 
-        assert result["created_location_count"] == 2
+        assert result["created_location_count"] == 1
         # 子场景 parent_id 必须是父场景真实 DB id
         assert created["子场景"]["parent_id"] == 1001
         # 回填到 location dict
@@ -134,7 +135,9 @@ class TestBootstrap:
 
         parsed = {
             "locations": [
-                {"id": "loc_001", "name": "新场景", "location_db_id": None, "level": 0},
+                {"id": "loc_parent", "name": "已有主场景", "location_db_id": 1000},
+                {"id": "loc_001", "name": "新子场景", "location_db_id": None,
+                 "parent_id": "loc_parent", "level": 1},
             ],
             "shot_groups": [
                 {"shots": [{"location_id": "loc_001", "scene_desc": "x"}]},
@@ -205,8 +208,8 @@ class TestBootstrap:
         """同名但 parent_id 不一致 → 加 (子场景) 后缀后新建，不覆盖既有行。"""
         # DB 已有同名行 "客厅"，parent_id=50（与当前子场景的 parent 不同）
         existing_conflict = _make_db_location(5000, "客厅", parent_id=50)
-        # 父场景 + 改名后的子场景各需一个 id
-        seq = iter([5001, 5002])
+        # 仅创建改名后的子场景
+        seq = iter([5002])
 
         def fake_create(world_id, name, user_id, parent_id=None, **kw):
             return next(seq)
@@ -219,7 +222,7 @@ class TestBootstrap:
 
         parsed = {
             "locations": [
-                {"id": "loc_001", "name": "父场景", "location_db_id": None, "level": 0},
+                {"id": "loc_001", "name": "父场景", "location_db_id": 5001, "level": 0},
                 {"id": "loc_002", "name": "客厅", "parent_id": "loc_001",
                  "location_db_id": None, "level": 1},
             ],
@@ -236,14 +239,8 @@ class TestBootstrap:
         assert sub["location_db_id"] == 5002
         assert any("冲突" in w for w in result["warnings"])
 
-    def test_orphan_subscene_degrades_to_top_level(self):
-        """父场景缺失的孤儿子场景降级为顶层创建，记 warning。"""
-        seq = iter([7001])
-
-        def fake_create(world_id, name, user_id, parent_id=None, **kw):
-            assert parent_id is None, "孤儿场景应作为顶层创建"
-            return next(seq)
-
+    def test_orphan_subscene_is_rejected_without_database_write(self):
+        """父场景缺失时必须硬失败，绝不能降级为顶层创建。"""
         parsed = {
             "locations": [
                 # 子场景的 parent_id 指向不存在的 loc_999
@@ -253,16 +250,36 @@ class TestBootstrap:
             "shot_groups": [],
         }
 
-        with patch(_LM + ".create", side_effect=fake_create), \
+        with patch(_LM + ".create") as mock_create, \
              patch(_LM + ".get_by_name", return_value=None):
             svc = StoryboardLocationBootstrapService()
-            result = svc.bootstrap(parsed, WORLD_ID, USER_ID)
+            with pytest.raises(LocationBootstrapStructureError) as exc_info:
+                svc.bootstrap(parsed, WORLD_ID, USER_ID)
 
-        assert result["created_location_count"] == 1
-        assert any("降级" in w or "孤儿" in w or "父场景" in w for w in result["warnings"])
+        assert exc_info.value.code == "location_parent_invalid"
+        mock_create.assert_not_called()
+
+    def test_new_top_level_location_is_rejected_before_any_database_write(self):
+        parsed = {
+            "locations": [{
+                "id": "loc_root",
+                "name": "拆分流程新顶层",
+                "location_db_id": None,
+                "parent_id": None,
+            }],
+            "shot_groups": [],
+        }
+
+        with patch(_LM + ".create") as mock_create, \
+             patch(_LM + ".get_by_name", return_value=None):
+            with pytest.raises(LocationBootstrapStructureError) as exc_info:
+                StoryboardLocationBootstrapService().bootstrap(parsed, WORLD_ID, USER_ID)
+
+        assert exc_info.value.code == "new_root_location_forbidden"
+        mock_create.assert_not_called()
 
     def test_topological_order_parents_before_children(self):
-        """验证 level 排序：乱序输入时父先于子入库。"""
+        """验证 level 排序：已有根下的多层新子场景按父先于子入库。"""
         creation_order = []
 
         def fake_create(world_id, name, user_id, parent_id=None, **kw):
@@ -273,9 +290,11 @@ class TestBootstrap:
         parsed = {
             "locations": [
                 # 故意把子场景放在父场景前面
+                {"id": "loc_003", "name": "孙", "parent_id": "loc_002",
+                 "location_db_id": None, "level": 2},
                 {"id": "loc_002", "name": "子", "parent_id": "loc_001",
                  "location_db_id": None, "level": 1},
-                {"id": "loc_001", "name": "父", "location_db_id": None, "level": 0},
+                {"id": "loc_001", "name": "父", "location_db_id": 9000, "level": 0},
             ],
             "shot_groups": [],
         }
@@ -285,12 +304,12 @@ class TestBootstrap:
             svc = StoryboardLocationBootstrapService()
             svc.bootstrap(parsed, WORLD_ID, USER_ID)
 
-        # 父必须先于子
+        # 中间层必须先于下一层
         names = [n for n, _ in creation_order]
-        assert names.index("父") < names.index("子")
+        assert names.index("子") < names.index("孙")
         # 子的 parent_id 应是父的 DB id
         sub_entry = next(item for item in creation_order if item[0] == "子")
-        assert sub_entry[1] is not None
+        assert sub_entry[1] == 9000
 
 
 # ---------------------------------------------------------------------------

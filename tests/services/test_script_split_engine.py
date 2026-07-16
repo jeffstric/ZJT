@@ -225,13 +225,21 @@ def test_quality_parallel_batch_starts_multiple_segments_together(monkeypatch):
     release = asyncio.Event()
     saved_fields = []
 
-    async def fake_generate(_task, _segment=None, _parallel_child=False):
+    async def fake_generate(
+        _task, _segment=None, _parallel_child=False, _all_segments=None,
+    ):
         assert _parallel_child is True
+        assert _all_segments == segments
         started.append(_segment.segment_index)
         if len(started) == 3:
             release.set()
         await asyncio.wait_for(release.wait(), timeout=1)
 
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "get_all",
+        lambda _task_id: segments,
+    )
     monkeypatch.setattr(
         script_split_engine.ScriptSplitSegmentModel,
         "get_uncompleted",
@@ -469,6 +477,57 @@ def test_call_failure_does_not_consume_qc_round_budget(monkeypatch):
     assert saved_failures[0][1]["parsed_result"] is parsed
 
 
+def test_retry_exhaustion_reuses_last_parseable_candidate(monkeypatch):
+    parsed = {
+        "characters": [], "locations": [], "props": [],
+        "spatial_world": {"space_units": []},
+        "shot_groups": [{"group_id": "grp_001", "shots": [{"shot_id": "s001"}]}],
+    }
+    segment = ScriptSplitSegment(
+        task_id=72,
+        segment_index=1,
+        segment_id="seg_0001",
+        source_content="短剧本",
+        attempt_count=3,
+        parsed_result_json=parsed,
+        validation_errors=[{
+            "code": "segment_call_failed",
+            "severity": "error",
+            "message": "invalid JSON response",
+            "_call_failure_count": 2,
+            "_qc_round": 1,
+        }],
+    )
+    task = ScriptSplitTask(
+        id=72,
+        request_config={"enable_qc": True, "qc_max_rounds": 2},
+        accepted_registry_json={},
+        continuity_state_json={},
+        total_segment_count=1,
+    )
+    saved = []
+
+    async def failing_parse(**_kwargs):
+        raise ValueError("invalid control character")
+
+    monkeypatch.setattr(script_parser, "parse_script_to_shots", failing_parse)
+    _prepare_segment_generation_test(monkeypatch, task, segment)
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "save_success",
+        lambda *args, **kwargs: saved.append((args, kwargs)),
+    )
+
+    asyncio.run(script_split_engine.step_generate_segment(task))
+
+    assert len(saved) == 1
+    assert saved[0][0][2] == parsed
+    accepted_errors = saved[0][1]["validation_errors"]
+    assert accepted_errors[0]["code"] == "segment_call_failed"
+    assert accepted_errors[0]["_call_failure_count"] == 3
+    assert accepted_errors[0]["_forced_accept"] is True
+
+
 def _prepare_segment_generation_test(monkeypatch, task, segment):
     monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _task_id: False)
     monkeypatch.setattr(
@@ -701,6 +760,165 @@ def test_existing_exhausted_qc_checkpoint_is_completed_without_llm(monkeypatch):
     accepted_errors = saved[0][1]["validation_errors"]
     assert accepted_errors[0]["code"] == "QC_REJECTED"
     assert accepted_errors[0]["_forced_accept"] is True
+
+
+def test_disabled_qc_pauses_on_new_root_location_without_forced_accept(monkeypatch):
+    parsed = {
+        "characters": [],
+        "locations": [{
+            "location_id": "loc_001",
+            "location_name": "模型擅自创建的顶层场景",
+            "location_db_id": None,
+            "parent_id": None,
+        }],
+        "props": [],
+        "spatial_world": {"space_units": []},
+        "shot_groups": [],
+    }
+    segment = ScriptSplitSegment(
+        task_id=101,
+        segment_index=1,
+        segment_id="seg_0001",
+        source_content="短剧本",
+    )
+    task = ScriptSplitTask(
+        id=101,
+        request_config={"enable_qc": False},
+        accepted_registry_json={},
+        continuity_state_json={},
+        total_segment_count=1,
+    )
+    saved_failures = []
+    saved_successes = []
+
+    async def fake_parse(**_kwargs):
+        return parsed
+
+    monkeypatch.setattr(script_parser, "parse_script_to_shots", fake_parse)
+    _prepare_segment_generation_test(monkeypatch, task, segment)
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "save_failure",
+        lambda *args, **kwargs: saved_failures.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "save_success",
+        lambda *args, **kwargs: saved_successes.append((args, kwargs)),
+    )
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_generate_segment(task))
+
+    assert exc_info.value.code == "new_root_location_forbidden"
+    assert saved_successes == []
+    assert saved_failures[0][1]["parsed_result"] is parsed
+    assert saved_failures[0][0][2][0]["_hard_gate"] is True
+
+
+def test_exhausted_qc_checkpoint_cannot_force_accept_hard_location_error(monkeypatch):
+    parsed = {
+        "characters": [],
+        "locations": [{
+            "location_id": "loc_001",
+            "location_name": "非法顶层场景",
+            "location_db_id": None,
+            "parent_id": None,
+        }],
+        "props": [],
+        "spatial_world": {"space_units": []},
+        "shot_groups": [],
+    }
+    segment = ScriptSplitSegment(
+        task_id=102,
+        segment_index=1,
+        segment_id="seg_0001",
+        source_content="短剧本",
+        attempt_count=2,
+        parsed_result_json=parsed,
+        validation_errors=[{
+            "code": "new_root_location_forbidden",
+            "severity": "error",
+            "message": "禁止新建顶层场景",
+            "_hard_gate": True,
+            "_qc_round": 2,
+            "_call_failure_count": 0,
+        }],
+    )
+    task = ScriptSplitTask(
+        id=102,
+        request_config={"enable_qc": True, "qc_max_rounds": 2},
+        accepted_registry_json={},
+        continuity_state_json={},
+        total_segment_count=1,
+    )
+    saved_successes = []
+
+    async def forbidden_parse(**_kwargs):
+        raise AssertionError("硬门禁轮次耗尽时不应继续调用 LLM")
+
+    monkeypatch.setattr(script_parser, "parse_script_to_shots", forbidden_parse)
+    _prepare_segment_generation_test(monkeypatch, task, segment)
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "save_success",
+        lambda *args, **kwargs: saved_successes.append((args, kwargs)),
+    )
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_generate_segment(task))
+
+    assert exc_info.value.code == "new_root_location_forbidden"
+    assert saved_successes == []
+
+
+def test_reopened_full_graph_error_is_not_cleared_by_segment_only_validation(monkeypatch):
+    parsed = {
+        "characters": [],
+        "locations": [{
+            "id": "loc_child",
+            "name": "孤儿子场景",
+            "location_db_id": None,
+            "parent_id": "loc_missing",
+        }],
+        "props": [],
+        "spatial_world": {"space_units": []},
+        "shot_groups": [],
+    }
+    segment = ScriptSplitSegment(
+        task_id=103,
+        segment_index=1,
+        segment_id="seg_0001",
+        source_content="短剧本",
+        attempt_count=2,
+        parsed_result_json=parsed,
+        validation_errors=[{
+            "code": "location_parent_invalid",
+            "severity": "error",
+            "message": "父级不存在",
+            "_hard_gate": True,
+            "_qc_round": 2,
+            "_call_failure_count": 0,
+        }],
+    )
+    task = ScriptSplitTask(
+        id=103,
+        request_config={"enable_qc": True, "qc_max_rounds": 2},
+        accepted_registry_json={},
+        continuity_state_json={},
+        total_segment_count=1,
+    )
+    _prepare_segment_generation_test(monkeypatch, task, segment)
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "get_all",
+        lambda _task_id: [segment],
+    )
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_generate_segment(task))
+
+    assert exc_info.value.code == "location_parent_invalid"
 
 
 def test_explicitly_reset_qc_round_does_not_fall_back_to_attempt_count(monkeypatch):
@@ -987,3 +1205,67 @@ def test_step_merge_converts_quality_strategy_error_to_engine_error(monkeypatch)
 
     assert exc_info.value.code == "quality_merge_invalid"
     assert "loc_001" in exc_info.value.message
+
+
+def test_step_merge_reopens_completed_segment_when_location_graph_is_illegal(monkeypatch):
+    task = ScriptSplitTask(
+        id=15,
+        total_segment_count=1,
+        request_config={"sequence_mode": "speed"},
+    )
+    segment = ScriptSplitSegment(
+        task_id=15,
+        segment_index=1,
+        segment_id="seg_0001",
+        status="completed",
+        parsed_result_json={
+            "locations": [{
+                "id": "loc_001",
+                "name": "非法新顶层",
+                "location_db_id": None,
+                "parent_id": None,
+            }],
+            "shot_groups": [],
+        },
+    )
+    reopened = []
+    saved = []
+
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "get_completed",
+        lambda _task_id: [segment],
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "reopen_completed_for_hard_errors",
+        lambda task_id, errors_by_segment: reopened.append((task_id, errors_by_segment)) or 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "save_field",
+        lambda _task_id, **kwargs: saved.append(kwargs),
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "update_status",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(script_parser, "sanitize_parsed_prop_references", lambda parsed: parsed)
+    monkeypatch.setattr(
+        script_parser,
+        "sanitize_parsed_location_references",
+        lambda parsed, _db_locations=None: parsed,
+    )
+    monkeypatch.setattr(script_parser, "repair_spatial_layout_continuity", lambda parsed: parsed)
+    monkeypatch.setattr(script_parser, "reorganize_shot_groups", lambda parsed, _duration: parsed)
+    monkeypatch.setattr(script_split_engine, "renumber_global", lambda parsed: parsed)
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_merge(task))
+
+    assert exc_info.value.code == "new_root_location_forbidden"
+    assert reopened[0][0] == 15
+    assert reopened[0][1][1][0]["location_id"] == "loc_001"
+    assert not any("final_result_json" in fields for fields in saved)

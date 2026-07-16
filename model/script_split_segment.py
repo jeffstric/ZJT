@@ -257,6 +257,72 @@ class ScriptSplitSegmentModel:
         )
 
     @staticmethod
+    def reopen_completed_for_hard_errors(
+        task_id: int,
+        errors_by_segment: Dict[int, List[Dict[str, Any]]],
+    ) -> int:
+        """原子重开合并级硬门禁命中的历史完成段，并校准根任务计数。"""
+        if not errors_by_segment:
+            return ScriptSplitSegmentModel.count_by_status(
+                task_id, SEGMENT_STATUS_COMPLETED,
+            )
+
+        from .database import transaction
+
+        affected_indexes = sorted(int(index) for index in errors_by_segment)
+        with transaction() as conn:
+            cursor = conn.cursor()
+            for segment_index in affected_indexes:
+                cursor.execute(
+                    "SELECT validation_errors FROM script_split_segment "
+                    "WHERE task_id = %s AND segment_index = %s FOR UPDATE",
+                    (task_id, segment_index),
+                )
+                row = cursor.fetchone() or {}
+                prior_errors = _loads(row.get("validation_errors"), [])
+                retained_diagnostics = [
+                    error for error in prior_errors
+                    if isinstance(error, dict)
+                    and error.get("_forced_accept")
+                    and not error.get("_hard_gate")
+                ]
+                hard_errors = [
+                    dict(error, _hard_gate=True)
+                    for error in (errors_by_segment.get(segment_index) or [])
+                ]
+                cursor.execute(
+                    "UPDATE script_split_segment SET status = %s, "
+                    "validation_errors = %s, completed_at = NULL "
+                    "WHERE task_id = %s AND segment_index = %s",
+                    (
+                        SEGMENT_STATUS_FAILED,
+                        json.dumps(retained_diagnostics + hard_errors, ensure_ascii=False),
+                        task_id,
+                        segment_index,
+                    ),
+                )
+
+            cursor.execute(
+                "SELECT COUNT(*) AS cnt FROM script_split_segment "
+                "WHERE task_id = %s AND status = %s",
+                (task_id, SEGMENT_STATUS_COMPLETED),
+            )
+            count_row = cursor.fetchone() or {}
+            completed_count = int(count_row.get("cnt") or 0)
+            cursor.execute(
+                "UPDATE script_split_task SET completed_segment_count = %s, "
+                "current_segment_index = %s, phase = %s "
+                "WHERE id = %s",
+                (
+                    completed_count,
+                    affected_indexes[0],
+                    "segment_generation",
+                    task_id,
+                ),
+            )
+        return completed_count
+
+    @staticmethod
     def mark_generating(task_id: int, segment_index: int) -> None:
         execute_update(
             "UPDATE script_split_segment SET status = %s "
