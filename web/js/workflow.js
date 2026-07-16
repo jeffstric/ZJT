@@ -2231,6 +2231,21 @@
         node.data.forceMediumShot = nodeData.data.forceMediumShot !== undefined ? nodeData.data.forceMediumShot : true;
         node.data.noBgMusic = nodeData.data.noBgMusic !== undefined ? nodeData.data.noBgMusic : true;
         node.data.splitMultiDialogue = nodeData.data.splitMultiDialogue !== undefined ? nodeData.data.splitMultiDialogue : false;
+        // 分镜拆分模式 + 质检（与故事板对齐；旧工作流缺省 balanced / 关闭质检）
+        const savedSequenceMode = nodeData.data.sequenceMode;
+        node.data.sequenceMode = ['speed', 'balanced', 'quality'].includes(savedSequenceMode)
+          ? savedSequenceMode
+          : 'balanced';
+        node.data.enableScriptSplitQc = nodeData.data.enableScriptSplitQc === true;
+        const savedQcRounds = Number(nodeData.data.scriptSplitQcMaxRounds);
+        node.data.scriptSplitQcMaxRounds = [1, 2, 3, 4, 5].includes(savedQcRounds) ? savedQcRounds : 2;
+        // 参数区分组折叠态（旧数据缺省全折叠；开启质检时 advanced 展开）
+        const savedSections = nodeData.data.uiSections || {};
+        node.data.uiSections = {
+          gridVideo: savedSections.gridVideo === true,
+          language: savedSections.language === true,
+          advanced: savedSections.advanced === true || node.data.enableScriptSplitQc === true,
+        };
         // 恢复语言设置（兼容旧数据：旧的 language 字段作为两个新字段的默认值）
         const legacyLanguage = nodeData.data.language || '';
         node.data.dialogueLanguage = nodeData.data.dialogueLanguage !== undefined ? nodeData.data.dialogueLanguage : legacyLanguage;
@@ -2272,6 +2287,30 @@
           if(forceMediumShotEl) forceMediumShotEl.checked = node.data.forceMediumShot;
           if(noBgMusicEl) noBgMusicEl.checked = node.data.noBgMusic;
           if(splitMultiDialogueEl) splitMultiDialogueEl.checked = node.data.splitMultiDialogue;
+          const sequenceModeEl = el.querySelector('.script-sequence-mode');
+          if(sequenceModeEl) {
+            const isEnterprise = state.editionInfo && state.editionInfo.mode === 'enterprise';
+            if(node.data.sequenceMode === 'quality' && !isEnterprise) {
+              node.data.sequenceMode = 'balanced';
+            }
+            sequenceModeEl.value = node.data.sequenceMode || 'balanced';
+            const qualityOpt = sequenceModeEl.querySelector('option[value="quality"]');
+            if(qualityOpt) qualityOpt.disabled = !isEnterprise;
+          }
+          const enableSplitQcEl = el.querySelector('.script-enable-split-qc');
+          const qcRoundsFieldEl = el.querySelector('.script-qc-rounds-field');
+          const qcMaxRoundsEl = el.querySelector('.script-qc-max-rounds');
+          if(enableSplitQcEl) enableSplitQcEl.checked = node.data.enableScriptSplitQc === true;
+          if(qcMaxRoundsEl) qcMaxRoundsEl.value = String(node.data.scriptSplitQcMaxRounds || 2);
+          if(qcRoundsFieldEl) {
+            qcRoundsFieldEl.style.display = node.data.enableScriptSplitQc === true ? 'block' : 'none';
+          }
+          // 恢复参数分组折叠
+          if(typeof node.setParamGroupOpen === 'function' && node.data.uiSections) {
+            ['gridVideo', 'language', 'advanced'].forEach((key) => {
+              node.setParamGroupOpen(key, node.data.uiSections[key] === true);
+            });
+          }
 
           // 恢复模型选择器的显示状态
           const videoModelEl = el.querySelector('.script-video-model');
@@ -2330,6 +2369,10 @@
             if(lengthEl) lengthEl.textContent = `长度: ${node.data.scriptContent.length} 字符`;
             if(infoField) infoField.style.display = 'block';
             if(charCountEl) charCountEl.textContent = `${node.data.scriptContent.length}/2000`;
+          }
+
+          if(typeof node.updateParamGroupSummaries === 'function') {
+            node.updateParamGroupSummaries();
           }
 
           // 恢复未完成的分段拆分任务轮询（见设计文档 §14 createScriptNodeWithData）

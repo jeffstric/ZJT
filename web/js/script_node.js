@@ -1,4 +1,14 @@
     function createScriptNode(opts){
+      // i18n：缺失 key 时 window.t 常回退为 key 本身，需再用中文 fallback
+      const st = (key, fallback) => {
+        try {
+          if (typeof window.t === 'function') {
+            const v = window.t(key);
+            if (v && v !== key) return v;
+          }
+        } catch (_) { /* ignore */ }
+        return fallback;
+      };
       const id = state.nextNodeId++;
       const scriptId = (opts && typeof opts.scriptId === 'number') ? opts.scriptId : state.nextScriptId++;
       if(opts && typeof opts.scriptId === 'number' && opts.scriptId >= state.nextScriptId) {
@@ -66,94 +76,161 @@
             </div>
           </div>
 
-          <!-- 第2部分：参数配置 -->
-          <div class="script-section">
+          <!-- 第2部分：参数配置（分组折叠，降低纵向拥挤） -->
+          <div class="script-section script-section-params">
             <div class="script-section-header">
               <span class="script-section-number">2</span>
-              <span class="script-section-title" data-i18n="script_section_2">${window.t ? window.t('script_section_2') : '参数配置'}</span>
+              <span class="script-section-title" data-i18n="script_section_2">${st('script_section_2', '参数配置')}</span>
             </div>
-            <div class="field field-always-visible">
-              <div class="label" data-i18n="script_duration_label">${window.t ? window.t('script_duration_label') : '镜头组时长'}</div>
-              <select class="script-duration-select" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-                <option value="5" data-i18n="duration_5s">${window.t ? window.t('duration_5s') : '5秒'}</option>
-                <option value="8" data-i18n="duration_8s">${window.t ? window.t('duration_8s') : '8秒'}</option>
-                <option value="10" data-i18n="duration_10s">${window.t ? window.t('duration_10s') : '10秒'}</option>
-                <option value="15" selected data-i18n="duration_15s">${window.t ? window.t('duration_15s') : '15秒'}</option>
-              </select>
-            </div>
-            <div class="field field-always-visible">
-              <div class="label" data-i18n="script_grid_model_label">${window.t ? window.t('script_grid_model_label') : '宫格生图模型'}</div>
-              <select class="script-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
-            </div>
-            <div class="field field-always-visible">
-              <div class="label" data-i18n="script_grid_layout_label">${window.t ? window.t('script_grid_layout_label') : '宫格类型'}</div>
-              <select class="script-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-                <option value="auto" data-i18n="script_grid_layout_auto">${window.t ? window.t('script_grid_layout_auto') : '自动选择'}</option>
-                <option value="4" data-i18n="script_grid_layout_4">${window.t ? window.t('script_grid_layout_4') : '4宫格 (2x2)'}</option>
-                <option value="9" data-i18n="script_grid_layout_9">${window.t ? window.t('script_grid_layout_9') : '9宫格 (3x3)'}</option>
-              </select>
-            </div>
-            <div class="field field-always-visible">
-              <div class="label" data-i18n="script_split_model_label">${window.t ? window.t('script_split_model_label') : '拆分模型'}</div>
-              <select class="script-split-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-                <option value="" data-i18n="script_loading">${window.t ? window.t('script_loading') : '加载中...'}</option>
-              </select>
-            </div>
-            <div class="field field-always-visible script-thinking-mode-field" style="display: none;">
-              <div class="label" data-i18n="script_thinking_mode_label">${window.t ? window.t('script_thinking_mode_label') : '思考模式'}</div>
-              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px;">
-                  <input type="checkbox" class="script-enable-thinking" style="cursor: pointer;" />
-                  <span data-i18n="script_enable_thinking">${window.t ? window.t('script_enable_thinking') : '启用模型深度思考'}</span>
-                </label>
-                <select class="script-thinking-effort" style="display: none; padding: 4px 6px; border: 1px solid #ddd; border-radius: 4px; background: white; font-size: 12px;">
-                  <option value="low" data-i18n="thinking_effort_low">${window.t ? window.t('thinking_effort_low') : '低'}</option>
-                  <option value="medium" selected data-i18n="thinking_effort_medium">${window.t ? window.t('thinking_effort_medium') : '中'}</option>
-                  <option value="high" data-i18n="thinking_effort_high">${window.t ? window.t('thinking_effort_high') : '高'}</option>
+
+            <!-- 常驻：拆分核心 -->
+            <div class="script-param-core">
+              <div class="field field-always-visible">
+                <div class="label" data-i18n="script_sequence_mode_label">${st('script_sequence_mode_label', '分镜拆分模式')}</div>
+                <select class="script-sequence-mode" title="${st('script_sequence_mode_hint', '均衡：质量与效率折中；速度：先出结果；效果：影院级一致性（商业版）')}" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                  <option value="balanced" data-i18n="script_sequence_mode_balanced">${st('script_sequence_mode_balanced', '均衡模式（推荐）')}</option>
+                  <option value="speed" data-i18n="script_sequence_mode_speed">${st('script_sequence_mode_speed', '速度模式')}</option>
+                  <option value="quality" data-i18n="script_sequence_mode_quality">${st('script_sequence_mode_quality', '效果模式（商业版）')}</option>
                 </select>
               </div>
+              <div class="field field-always-visible">
+                <div class="label" data-i18n="script_split_model_label">${st('script_split_model_label', '拆分模型')}</div>
+                <select class="script-split-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                  <option value="" data-i18n="script_loading">${st('script_loading', '加载中...')}</option>
+                </select>
+              </div>
+              <div class="field field-always-visible script-thinking-mode-field" style="display: none;">
+                <div class="label" data-i18n="script_thinking_mode_label">${st('script_thinking_mode_label', '思考模式')}</div>
+                <div class="script-thinking-row">
+                  <label class="script-inline-check">
+                    <input type="checkbox" class="script-enable-thinking" style="cursor: pointer;" />
+                    <span data-i18n="script_enable_thinking">${st('script_enable_thinking', '深度思考')}</span>
+                  </label>
+                  <select class="script-thinking-effort" style="display: none; padding: 4px 6px; border: 1px solid #ddd; border-radius: 4px; background: white; font-size: 12px;">
+                    <option value="low" data-i18n="thinking_effort_low">${st('thinking_effort_low', '低')}</option>
+                    <option value="medium" selected data-i18n="thinking_effort_medium">${st('thinking_effort_medium', '中')}</option>
+                    <option value="high" data-i18n="thinking_effort_high">${st('thinking_effort_high', '高')}</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field field-always-visible">
+                <div class="label" data-i18n="script_duration_label">${st('script_duration_label', '镜头组时长')}</div>
+                <select class="script-duration-select" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                  <option value="5" data-i18n="duration_5s">${st('duration_5s', '5秒')}</option>
+                  <option value="8" data-i18n="duration_8s">${st('duration_8s', '8秒')}</option>
+                  <option value="10" data-i18n="duration_10s">${st('duration_10s', '10秒')}</option>
+                  <option value="15" selected data-i18n="duration_15s">${st('duration_15s', '15秒')}</option>
+                </select>
+              </div>
+              <div class="script-checkbox-group script-checkbox-group-compact">
+                <label class="script-inline-check">
+                  <input type="checkbox" class="script-force-medium-shot" style="cursor: pointer;" checked />
+                  <span data-i18n="script_force_medium_shot">${st('script_force_medium_shot', '对话禁止全景')}</span>
+                </label>
+                <label class="script-inline-check">
+                  <input type="checkbox" class="script-no-bg-music" style="cursor: pointer;" checked />
+                  <span data-i18n="script_no_bg_music">${st('script_no_bg_music', '不生成背景音乐')}</span>
+                </label>
+                <label class="script-inline-check">
+                  <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
+                  <span data-i18n="script_split_multi_dialogue">${st('script_split_multi_dialogue', '拆分多人对话镜头')}</span>
+                </label>
+              </div>
             </div>
-            <div class="field field-always-visible">
-              <div class="label" data-i18n="script_video_model_label">${window.t ? window.t('script_video_model_label') : '视频生成模型'}</div>
-              <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+
+            <!-- 折叠：宫格与视频 -->
+            <div class="script-param-group" data-script-group="gridVideo">
+              <button type="button" class="script-param-group-toggle" aria-expanded="false">
+                <span class="script-param-group-chevron" aria-hidden="true">▶</span>
+                <span class="script-param-group-title" data-i18n="script_group_grid_video">${st('script_group_grid_video', '宫格与视频')}</span>
+                <span class="script-param-group-summary script-grid-video-summary"></span>
+              </button>
+              <div class="script-param-group-body" hidden>
+                <div class="field field-always-visible">
+                  <div class="label" data-i18n="script_grid_model_label">${st('script_grid_model_label', '宫格生图模型')}</div>
+                  <select class="script-grid-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+                </div>
+                <div class="field field-always-visible">
+                  <div class="label" data-i18n="script_grid_layout_label">${st('script_grid_layout_label', '宫格类型')}</div>
+                  <select class="script-grid-layout" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                    <option value="auto" data-i18n="script_grid_layout_auto">${st('script_grid_layout_auto', '自动选择')}</option>
+                    <option value="4" data-i18n="script_grid_layout_4">${st('script_grid_layout_4', '4宫格 (2x2)')}</option>
+                    <option value="9" data-i18n="script_grid_layout_9">${st('script_grid_layout_9', '9宫格 (3x3)')}</option>
+                  </select>
+                </div>
+                <div class="field field-always-visible">
+                  <div class="label" data-i18n="script_video_model_label">${st('script_video_model_label', '视频生成模型')}</div>
+                  <select class="script-video-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;"></select>
+                </div>
+              </div>
             </div>
-            <div class="field field-always-visible">
-              <div class="label" data-i18n="script_dialogue_language_label">${window.t ? window.t('script_dialogue_language_label') : '对话语言'}</div>
-              <select class="script-dialogue-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-                <option value="" data-i18n="script_language_default">${window.t ? window.t('script_language_default') : '中文（默认）'}</option>
-                <option value="English">English</option>
-                <option value="Deutsch">Deutsch</option>
-                <option value="Français">Français</option>
-                <option value="Русский">Русский</option>
-                <option value="__custom__" data-i18n="script_language_custom">${window.t ? window.t('script_language_custom') : '自定义语言...'}</option>
-              </select>
-              <input type="text" class="script-dialogue-language-custom" placeholder="${window.t ? window.t('script_language_custom') : '或输入自定义语言...'}" style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
+
+            <!-- 折叠：语言 -->
+            <div class="script-param-group" data-script-group="language">
+              <button type="button" class="script-param-group-toggle" aria-expanded="false">
+                <span class="script-param-group-chevron" aria-hidden="true">▶</span>
+                <span class="script-param-group-title" data-i18n="script_group_language">${st('script_group_language', '语言')}</span>
+                <span class="script-param-group-summary script-language-summary"></span>
+              </button>
+              <div class="script-param-group-body" hidden>
+                <div class="field field-always-visible">
+                  <div class="label" data-i18n="script_dialogue_language_label">${st('script_dialogue_language_label', '对话语言')}</div>
+                  <select class="script-dialogue-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                    <option value="" data-i18n="script_language_default">${st('script_language_default', '中文（默认）')}</option>
+                    <option value="English">English</option>
+                    <option value="Deutsch">Deutsch</option>
+                    <option value="Français">Français</option>
+                    <option value="Русский">Русский</option>
+                    <option value="__custom__" data-i18n="script_language_custom">${st('script_language_custom', '自定义语言...')}</option>
+                  </select>
+                  <input type="text" class="script-dialogue-language-custom" placeholder="${st('script_language_custom', '或输入自定义语言...')}" style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
+                </div>
+                <div class="field field-always-visible">
+                  <div class="label" data-i18n="script_prompt_language_label">${st('script_prompt_language_label', '提示词语言')}</div>
+                  <select class="script-prompt-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                    <option value="" data-i18n="script_language_default">${st('script_language_default', '中文（默认）')}</option>
+                    <option value="English">English</option>
+                    <option value="Deutsch">Deutsch</option>
+                    <option value="Français">Français</option>
+                    <option value="Русский">Русский</option>
+                    <option value="__custom__" data-i18n="script_language_custom">${st('script_language_custom', '自定义语言...')}</option>
+                  </select>
+                  <input type="text" class="script-prompt-language-custom" placeholder="${st('script_language_custom', '或输入自定义语言...')}" style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
+                </div>
+              </div>
             </div>
-            <div class="field field-always-visible">
-              <div class="label" data-i18n="script_prompt_language_label">${window.t ? window.t('script_prompt_language_label') : '提示词语言'}</div>
-              <select class="script-prompt-language" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
-                <option value="" data-i18n="script_language_default">${window.t ? window.t('script_language_default') : '中文（默认）'}</option>
-                <option value="English">English</option>
-                <option value="Deutsch">Deutsch</option>
-                <option value="Français">Français</option>
-                <option value="Русский">Русский</option>
-                <option value="__custom__" data-i18n="script_language_custom">${window.t ? window.t('script_language_custom') : '自定义语言...'}</option>
-              </select>
-              <input type="text" class="script-prompt-language-custom" placeholder="${window.t ? window.t('script_language_custom') : '或输入自定义语言...'}" style="display: none; width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white; margin-top: 4px;" />
-            </div>
-            <div class="script-checkbox-group">
-              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                <input type="checkbox" class="script-force-medium-shot" style="cursor: pointer;" checked />
-                <span data-i18n="script_force_medium_shot">${window.t ? window.t('script_force_medium_shot') : '对话禁止全景'}</span>
-              </label>
-              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                <input type="checkbox" class="script-no-bg-music" style="cursor: pointer;" checked />
-                <span data-i18n="script_no_bg_music">${window.t ? window.t('script_no_bg_music') : '不生成背景音乐'}</span>
-              </label>
-              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                <input type="checkbox" class="script-split-multi-dialogue" style="cursor: pointer;" />
-                <span data-i18n="script_split_multi_dialogue">${window.t ? window.t('script_split_multi_dialogue') : '拆分多人对话镜头'}</span>
-              </label>
+
+            <!-- 折叠：高级 / 质检 -->
+            <div class="script-param-group" data-script-group="advanced">
+              <button type="button" class="script-param-group-toggle" aria-expanded="false">
+                <span class="script-param-group-chevron" aria-hidden="true">▶</span>
+                <span class="script-param-group-title" data-i18n="script_group_advanced">${st('script_group_advanced', '高级 · 质检')}</span>
+                <span class="script-param-group-summary script-advanced-summary"></span>
+              </button>
+              <div class="script-param-group-body" hidden>
+                <div class="script-checkbox-group">
+                  <label class="script-inline-check">
+                    <input type="checkbox" class="script-enable-split-qc" style="cursor: pointer;" />
+                    <span>
+                      <span data-i18n="script_enable_split_qc">${st('script_enable_split_qc', '开启拆分质检')}</span>
+                      <span class="script-split-qc-free-badge" aria-label="质检次数限时免费">限时免费</span>
+                    </span>
+                  </label>
+                  <div class="gen-meta script-qc-hint" title="${st('script_enable_split_qc_hint', '会显著增加时间与算力消耗')}" data-i18n="script_enable_split_qc_hint">${st('script_enable_split_qc_hint', '会显著增加时间与算力消耗')}</div>
+                </div>
+                <div class="field field-always-visible script-qc-rounds-field" style="display: none;">
+                  <div class="label script-split-qc-rounds-heading">
+                    <span data-i18n="script_qc_max_rounds_label">${st('script_qc_max_rounds_label', '质检最大循环次数')}</span>
+                  </div>
+                  <select class="script-qc-max-rounds" title="${st('script_qc_max_rounds_hint', '拆分→质检最多循环 N 次；仍不通过则强制采用最后一轮结果')}" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
+                    <option value="1">1 次</option>
+                    <option value="2" selected>2 次</option>
+                    <option value="3">3 次</option>
+                    <option value="4">4 次</option>
+                    <option value="5">5 次</option>
+                  </select>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -195,6 +272,10 @@
       const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
       const noBgMusicEl = el.querySelector('.script-no-bg-music');
       const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
+      const sequenceModeSelectEl = el.querySelector('.script-sequence-mode');
+      const enableSplitQcEl = el.querySelector('.script-enable-split-qc');
+      const qcRoundsFieldEl = el.querySelector('.script-qc-rounds-field');
+      const qcMaxRoundsSelectEl = el.querySelector('.script-qc-max-rounds');
       const dialogueLanguageSelectEl = el.querySelector('.script-dialogue-language');
       const dialogueLanguageCustomEl = el.querySelector('.script-dialogue-language-custom');
       const promptLanguageSelectEl = el.querySelector('.script-prompt-language');
@@ -324,6 +405,7 @@
           videoModelSelect.innerHTML = '<option value="">加载中...</option>';
           window.TaskConfig.onLoaded(() => {
             renderOptions();
+            if(typeof updateParamGroupSummaries === 'function') updateParamGroupSummaries();
           });
         } else {
           renderOptions();
@@ -337,6 +419,7 @@
       if(videoModelSelect) {
         videoModelSelect.addEventListener('change', () => {
           node.data.videoModel = videoModelSelect.value;
+          if(typeof updateParamGroupSummaries === 'function') updateParamGroupSummaries();
           console.log(`[剧本节点] 视频模型切换为: ${videoModelSelect.value}`);
         });
       }
@@ -533,6 +616,10 @@
       if(!node.data.thinkingEffort) node.data.thinkingEffort = 'medium';
       if(node.data.thinkingExplicitlyDisabled === undefined) node.data.thinkingExplicitlyDisabled = false;
 
+      // 思考模式对齐 script_writer / storyboard：
+      // - supports_thinking 或 DeepSeek：显示「开启思考」开关
+      // - 仅豆包（volcengine / doubao*）在开启后显示 低/中/高 effort
+      // - DeepSeek 只支持开关，不展示 effort
       function isThinkingModelOption(option) {
         if(!option) return false;
         const vendorName = (option.dataset.vendorName || '').toLowerCase();
@@ -554,13 +641,30 @@
           || textValue.includes('deepseek');
       }
 
+      function isDoubaoEffortModelOption(option) {
+        if(!option) return false;
+        const vendorName = (option.dataset.vendorName || '').toLowerCase();
+        const modelValue = (option.value || '').toLowerCase();
+        const textValue = (option.textContent || '').toLowerCase();
+        // 与 script_writer.updateThinkingEffortVisibility / storyboard isDoubaoEffort 一致
+        return vendorName === 'volcengine'
+          || modelValue.startsWith('doubao')
+          || modelValue.includes('doubao')
+          || textValue.includes('doubao')
+          || textValue.includes('豆包');
+      }
+
       function updateThinkingModeVisibility() {
         if(!splitModelSelect || !thinkingModeFieldEl) return;
         const selected = splitModelSelect.options[splitModelSelect.selectedIndex];
         const supportsThinking = isThinkingModelOption(selected);
         thinkingModeFieldEl.style.display = supportsThinking ? 'block' : 'none';
         if(thinkingEffortEl) {
-          thinkingEffortEl.style.display = (supportsThinking && enableThinkingEl && enableThinkingEl.checked) ? 'inline-block' : 'none';
+          const showEffort = supportsThinking
+            && enableThinkingEl
+            && enableThinkingEl.checked
+            && isDoubaoEffortModelOption(selected);
+          thinkingEffortEl.style.display = showEffort ? 'inline-block' : 'none';
         }
       }
 
@@ -622,6 +726,7 @@
         function renderOptions() {
           if(!gridModelSelect) return;
           node.data.gridModel = populateGridImageModelSelect(gridModelSelect, node.data.gridModel);
+          if(typeof updateParamGroupSummaries === 'function') updateParamGroupSummaries();
         }
 
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
@@ -644,11 +749,168 @@
       if(node.data.forceMediumShot === undefined) node.data.forceMediumShot = true;
       if(node.data.noBgMusic === undefined) node.data.noBgMusic = true;
       if(node.data.splitMultiDialogue === undefined) node.data.splitMultiDialogue = false;
+      // 与故事板默认一致：均衡模式；质检默认关闭
+      if(!['speed', 'balanced', 'quality'].includes(node.data.sequenceMode)) {
+        node.data.sequenceMode = 'balanced';
+      }
+      if(node.data.enableScriptSplitQc === undefined) node.data.enableScriptSplitQc = false;
+      if(![1, 2, 3, 4, 5].includes(Number(node.data.scriptSplitQcMaxRounds))) {
+        node.data.scriptSplitQcMaxRounds = 2;
+      } else {
+        node.data.scriptSplitQcMaxRounds = Number(node.data.scriptSplitQcMaxRounds);
+      }
       if(!node.data.dialogueLanguage) node.data.dialogueLanguage = node.data.language || '';
       if(!node.data.promptLanguage) node.data.promptLanguage = node.data.language || '';
       if(!node.data.gridModel) node.data.gridModel = 'auto';
       if(!node.data.splitModelVendorId) node.data.splitModelVendorId = '';
       if(!node.data.splitModelVendorName) node.data.splitModelVendorName = '';
+      // 参数区分组折叠态（默认全部折叠；开启质检时 advanced 自动展开）
+      if(!node.data.uiSections || typeof node.data.uiSections !== 'object') {
+        node.data.uiSections = { gridVideo: false, language: false, advanced: false };
+      } else {
+        node.data.uiSections = {
+          gridVideo: node.data.uiSections.gridVideo === true,
+          language: node.data.uiSections.language === true,
+          advanced: node.data.uiSections.advanced === true || node.data.enableScriptSplitQc === true,
+        };
+      }
+
+      function isEnterpriseEdition() {
+        return state.editionInfo && state.editionInfo.mode === 'enterprise';
+      }
+
+      function setParamGroupOpen(groupKey, open) {
+        const groupEl = el.querySelector(`.script-param-group[data-script-group="${groupKey}"]`);
+        if(!groupEl) return;
+        const toggle = groupEl.querySelector('.script-param-group-toggle');
+        const body = groupEl.querySelector('.script-param-group-body');
+        const chevron = groupEl.querySelector('.script-param-group-chevron');
+        const isOpen = open === true;
+        groupEl.classList.toggle('is-open', isOpen);
+        if(toggle) toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        if(body) body.hidden = !isOpen;
+        if(chevron) chevron.textContent = isOpen ? '▼' : '▶';
+        if(!node.data.uiSections) node.data.uiSections = {};
+        node.data.uiSections[groupKey] = isOpen;
+      }
+
+      function selectOptionLabel(selectEl) {
+        if(!selectEl || selectEl.selectedIndex < 0) return '';
+        const opt = selectEl.options[selectEl.selectedIndex];
+        return (opt && (opt.textContent || opt.label) || '').trim();
+      }
+
+      function languageSummaryText(value) {
+        if(!value) return st('script_language_default', '中文（默认）');
+        return value;
+      }
+
+      function updateParamGroupSummaries() {
+        const gridSummary = el.querySelector('.script-grid-video-summary');
+        if(gridSummary) {
+          const gridLabel = selectOptionLabel(gridModelSelect) || (node.data.gridModel || '');
+          const videoLabel = selectOptionLabel(videoModelSelect) || (node.data.videoModel || '');
+          const parts = [];
+          if(gridLabel) parts.push(gridLabel);
+          if(videoLabel) parts.push(videoLabel);
+          gridSummary.textContent = parts.length ? parts.join(' · ') : '';
+          gridSummary.title = parts.join(' · ');
+        }
+        const langSummary = el.querySelector('.script-language-summary');
+        if(langSummary) {
+          const d = languageSummaryText(node.data.dialogueLanguage || '');
+          const p = languageSummaryText(node.data.promptLanguage || '');
+          const text = d === p ? d : `${d} / ${p}`;
+          langSummary.textContent = text;
+          langSummary.title = text;
+        }
+        const advSummary = el.querySelector('.script-advanced-summary');
+        if(advSummary) {
+          if(node.data.enableScriptSplitQc) {
+            const n = node.data.scriptSplitQcMaxRounds || 2;
+            advSummary.textContent = `质检开 · ${n} 次`;
+          } else {
+            advSummary.textContent = '质检关';
+          }
+        }
+      }
+
+      function syncQcRoundsVisibility() {
+        if(!qcRoundsFieldEl || !enableSplitQcEl) return;
+        qcRoundsFieldEl.style.display = enableSplitQcEl.checked ? 'block' : 'none';
+      }
+
+      function syncSequenceModeUi() {
+        if(!sequenceModeSelectEl) return;
+        // 社区版禁止选中效果模式
+        if(node.data.sequenceMode === 'quality' && !isEnterpriseEdition()) {
+          node.data.sequenceMode = 'balanced';
+        }
+        sequenceModeSelectEl.value = node.data.sequenceMode || 'balanced';
+        const qualityOpt = sequenceModeSelectEl.querySelector('option[value="quality"]');
+        if(qualityOpt) {
+          qualityOpt.disabled = !isEnterpriseEdition();
+        }
+      }
+
+      // 绑定参数分组折叠
+      el.querySelectorAll('.script-param-group').forEach((groupEl) => {
+        const key = groupEl.dataset.scriptGroup;
+        if(!key) return;
+        const toggle = groupEl.querySelector('.script-param-group-toggle');
+        if(toggle) {
+          toggle.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const nextOpen = !(node.data.uiSections && node.data.uiSections[key]);
+            setParamGroupOpen(key, nextOpen);
+          });
+          // 阻止拖拽节点时误触
+          toggle.addEventListener('mousedown', (e) => e.stopPropagation());
+        }
+        setParamGroupOpen(key, !!(node.data.uiSections && node.data.uiSections[key]));
+      });
+      // 暴露给重载逻辑
+      node.setParamGroupOpen = setParamGroupOpen;
+      node.updateParamGroupSummaries = updateParamGroupSummaries;
+
+      if(sequenceModeSelectEl) {
+        syncSequenceModeUi();
+        sequenceModeSelectEl.addEventListener('change', () => {
+          const next = sequenceModeSelectEl.value;
+          if(next === 'quality' && !isEnterpriseEdition()) {
+            showToast(st('script_sequence_mode_quality_locked', '效果模式仅商业版支持，请购买商业版后使用'), 'warning');
+            sequenceModeSelectEl.value = node.data.sequenceMode || 'balanced';
+            return;
+          }
+          if(['speed', 'balanced', 'quality'].includes(next)) {
+            node.data.sequenceMode = next;
+          }
+        });
+      }
+
+      if(enableSplitQcEl) {
+        enableSplitQcEl.checked = node.data.enableScriptSplitQc === true;
+        syncQcRoundsVisibility();
+        enableSplitQcEl.addEventListener('change', () => {
+          node.data.enableScriptSplitQc = enableSplitQcEl.checked;
+          syncQcRoundsVisibility();
+          if(enableSplitQcEl.checked) {
+            setParamGroupOpen('advanced', true);
+          }
+          updateParamGroupSummaries();
+        });
+      }
+      if(qcMaxRoundsSelectEl) {
+        qcMaxRoundsSelectEl.value = String(node.data.scriptSplitQcMaxRounds || 2);
+        qcMaxRoundsSelectEl.addEventListener('change', () => {
+          const n = parseInt(qcMaxRoundsSelectEl.value, 10);
+          if([1, 2, 3, 4, 5].includes(n)) {
+            node.data.scriptSplitQcMaxRounds = n;
+            updateParamGroupSummaries();
+          }
+        });
+      }
 
       // 确保已保存的宫格模型值在下拉框中可见，并恢复选中状态
       if(gridModelSelect) {
@@ -749,9 +1011,11 @@
             customEl.style.display = 'none';
             node.data[dataKey] = selectEl.value;
           }
+          updateParamGroupSummaries();
         });
         customEl.addEventListener('input', () => {
           node.data[dataKey] = customEl.value;
+          updateParamGroupSummaries();
         });
         // 恢复之前的选择
         if(node.data[dataKey]) {
@@ -803,6 +1067,7 @@
       if(gridModelSelect) {
         gridModelSelect.addEventListener('change', () => {
           node.data.gridModel = gridModelSelect.value;
+          updateParamGroupSummaries();
         });
       }
 
@@ -815,8 +1080,12 @@
         gridLayoutSelect.value = node.data.gridLayout;
         gridLayoutSelect.addEventListener('change', () => {
           node.data.gridLayout = gridLayoutSelect.value;
+          updateParamGroupSummaries();
         });
       }
+
+      // 初始化折叠摘要
+      updateParamGroupSummaries();
 
       // 文本框输入监听
       textareaEl.addEventListener('input', () => {
@@ -1046,6 +1315,8 @@
         e.stopPropagation();
 
         if(splitGridBtn.disabled) return;
+        // 宫格相关操作时展开对应分组，便于核对模型/类型
+        if(typeof setParamGroupOpen === 'function') setParamGroupOpen('gridVideo', true);
         splitGridBtn.disabled = true;
         splitBtn.disabled = true;
 
@@ -1820,6 +2091,7 @@
       // 批量生成视频按钮监听
       batchGenerateBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if(typeof setParamGroupOpen === 'function') setParamGroupOpen('gridVideo', true);
         
         batchStatusEl.style.display = 'block';
         batchStatusEl.style.color = '#666';
@@ -1951,6 +2223,7 @@
       // 宫格生图（仅生图，不拆分）按钮监听
       gridOnlyBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if(typeof setParamGroupOpen === 'function') setParamGroupOpen('gridVideo', true);
         
         gridOnlyStatusEl.style.display = 'block';
         gridOnlyStatusEl.style.color = '#666';

@@ -10,6 +10,8 @@
 |------|------|
 | 剧本导入 | 支持文本输入或从剧本创作系统导入 |
 | 自动解析 | AI 自动将剧本拆分为分镜组和分镜头 |
+| 分镜拆分模式 | 均衡 / 速度 / 效果（商业版），对齐故事板 |
+| 拆分质检 | 可选多轮质检循环，对齐故事板 |
 | 角色匹配 | 自动识别剧本中的角色标记 |
 | 分镜生成 | 基于剧本内容自动生成分镜 |
 
@@ -48,7 +50,50 @@
 
 ## 拆分模型思考模式
 
+对齐 `script_writer` / 故事板：
+
 - 剧本节点的“拆分模型”下拉框会读取模型配置中的 `supports_thinking` 能力；支持思考模式的模型会显示“思考模式”开关。
-- DeepSeek 系列模型默认开启思考模式；如果用户手动关闭，节点会保存 `thinkingExplicitlyDisabled`，工作流重新加载后继续保持关闭。
-- 普通拆分和“拆分并生成宫格”两条 `/api/parse-script` 调用都会提交 `enable_thinking` 与 `thinking_effort`，后端再透传给 `llm.script_parser.parse_script_to_shots()`。
-- 工作流保存/重载会恢复 `enableThinking`、`thinkingEffort` 和 `thinkingExplicitlyDisabled`，避免重新加载后丢失模型思考设置。
+- **DeepSeek** 系列：默认开启思考开关；若用户手动关闭，节点会保存 `thinkingExplicitlyDisabled`，重载后保持关闭。**不展示** 低/中/高强度。
+- **豆包（volcengine / doubao*）**：开启思考后才显示 **低 / 中 / 高**（`thinking_effort`）；其它支持思考的模型同样只有开关、无强度下拉。
+- 普通拆分和“拆分并生成宫格”两条 `/api/parse-script` 调用都会提交 `enable_thinking` 与 `thinking_effort`（非豆包时 effort 仍可带默认 `medium`，仅 UI 隐藏）。
+- 工作流保存/重载会恢复 `enableThinking`、`thinkingEffort` 和 `thinkingExplicitlyDisabled`。
+
+## 分镜拆分模式与质检（对齐故事板）
+
+剧本节点参数区已与故事板「从剧本生成分镜」弹窗对齐，新增：
+
+| 控件 | 节点字段 | 请求字段 | 默认 |
+|------|----------|----------|------|
+| 分镜拆分模式 | `sequenceMode` | `sequence_mode` | `balanced`（均衡） |
+| 开启拆分质检 | `enableScriptSplitQc` | `enable_script_split_qc` | `false` |
+| 质检最大循环次数 | `scriptSplitQcMaxRounds` | `script_split_qc_max_rounds` | `2`（1–5） |
+
+### 模式说明
+
+- **均衡模式 (`balanced`)**：质量与效率折中，默认推荐。
+- **速度模式 (`speed`)**：快速拆分，适合草稿试跑。
+- **效果模式 (`quality`)**：影院级一致性；**仅商业版**可用。社区版下拉禁用，若强选会 toast 提示并回退。
+
+### 质检
+
+- 勾选「开启拆分质检」后显示「质检最大循环次数」。
+- 开启后后端 `request_config` 写入 `enable_qc=true` 与 `qc_max_rounds`；关闭时 `enable_qc=false` 且 `qc_max_rounds=1`。
+- 普通「拆分幕」与「拆分幕 + 宫格生图」共用 `ScriptSplitTask.buildSplitRequestBody()`，都会携带上述字段。
+- 工作流保存/重载会恢复 `sequenceMode`、`enableScriptSplitQc`、`scriptSplitQcMaxRounds`。
+
+## 参数区分组折叠（UI）
+
+中间「参数配置」采用**渐进披露**，避免纵向拥挤：
+
+| 分组 | 默认 | 内容 |
+|------|------|------|
+| 拆分核心（常驻） | 始终展开 | 分镜拆分模式、拆分模型（+思考）、镜头组时长、3 个常用开关 |
+| 宫格与视频 | 折叠 | 宫格模型、宫格类型、视频模型 |
+| 语言 | 折叠 | 对话语言、提示词语言 |
+| 高级 · 质检 | 折叠 | 开启拆分质检、质检轮次 |
+
+- 折叠条右侧显示当前值摘要（如宫格/视频模型名、质检开·N 次）。
+- 勾选「开启拆分质检」时自动展开「高级 · 质检」。
+- 折叠态保存在 `node.data.uiSections`（`gridVideo` / `language` / `advanced`），工作流保存与重载会恢复。
+- 模式说明等长文案改到 `title` 悬浮提示，节点内不再堆长 hint。
+

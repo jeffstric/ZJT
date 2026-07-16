@@ -13,8 +13,17 @@
     // 需要用户干预的非终态
     const INTERACTIVE_STATUSES = ['paused', 'waiting_auth'];
 
+    /** 规范化分镜拆分模式（与故事板 sequence_mode 对齐）。 */
+    function normalizeSequenceMode(mode) {
+        const value = String(mode || '').trim().toLowerCase();
+        if (value === 'speed' || value === 'balanced' || value === 'quality') return value;
+        // 与故事板前端默认一致
+        return 'balanced';
+    }
+
     /** 构造提交请求体（两个拆分按钮共用）。 */
     function buildSplitRequestBody(scriptNodeData, defaultWorldId) {
+        const qcRounds = Number(scriptNodeData.scriptSplitQcMaxRounds);
         return {
             script_content: scriptNodeData.scriptContent,
             max_group_duration: scriptNodeData.maxGroupDuration || 15,
@@ -29,6 +38,10 @@
             vendor_id: scriptNodeData.splitModelVendorId || '',
             enable_thinking: scriptNodeData.enableThinking === true,
             thinking_effort: scriptNodeData.thinkingEffort || 'medium',
+            // 与故事板 generate-from-script 对齐
+            sequence_mode: normalizeSequenceMode(scriptNodeData.sequenceMode),
+            enable_script_split_qc: scriptNodeData.enableScriptSplitQc === true,
+            script_split_qc_max_rounds: [1, 2, 3, 4, 5].includes(qcRounds) ? qcRounds : 2,
         };
     }
 
@@ -164,6 +177,7 @@
     // 暴露到全局
     window.ScriptSplitTask = {
         buildSplitRequestBody,
+        normalizeSequenceMode,
         submitSplitTask,
         getTaskStatus,
         getTaskResult,
