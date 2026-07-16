@@ -14,6 +14,8 @@ Script split engine - 两阶段编排、上下文构建、合并、局部重试�
 """
 import logging
 import asyncio
+import functools
+from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
 from config.constant import ScriptSplitConstants, ScriptSplitQcConstants
@@ -30,6 +32,9 @@ from services.script_split_registry import (
     renumber_global,
 )
 from services.script_split_strategy import get_script_split_strategy
+from services.storyboard_quality_sequence import (
+    get_storyboard_quality_sequence_strategy,
+)
 from model.script_split_task import ScriptSplitTaskModel, ScriptSplitTask
 from model.script_split_segment import (
     ScriptSplitSegmentModel,
@@ -270,6 +275,7 @@ async def step_generate_segment(
     task: ScriptSplitTask,
     _segment=None,
     _parallel_child: bool = False,
+    _all_segments=None,
 ) -> None:
     """生成下一个未完成段（断点续传从第一个未完成段继续）。
 
@@ -302,10 +308,17 @@ async def step_generate_segment(
     # 构建段上下文
     segment_context = _build_segment_context(task, seg, registry)
     if _parallel_child:
-        segment_context.update(strategy.build_segment_context(plan, seg.segment_id))
-        contract = segment_context.get("spatial_contract") or {}
-        segment_context["previous_tail_summary"] = []
-        segment_context["continuity_state"] = contract.get("continuity_in") or {}
+        # 依赖感知：优先用 build_runtime_segment_context（按依赖类型注入真实 handoff，
+        # 见设计文档 §9.2/§20.2）。仅当策略未提供该方法（如非 quality）时回退到旧逻辑。
+        if _all_segments is not None and hasattr(strategy, "build_runtime_segment_context"):
+            segment_context.update(
+                strategy.build_runtime_segment_context(plan, seg, _all_segments)
+            )
+        else:
+            segment_context.update(strategy.build_segment_context(plan, seg.segment_id))
+            contract = segment_context.get("spatial_contract") or {}
+            segment_context["previous_tail_summary"] = []
+            segment_context["continuity_state"] = contract.get("continuity_in") or {}
     total = task.total_segment_count or 1
 
     last_errors: List[Dict[str, Any]] = []
@@ -347,6 +360,12 @@ async def step_generate_segment(
         elif last_parsed_result is not None:
             qc_rounds = attempt_count
     if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+        if last_parsed_result is not None:
+            _complete_retry_exhausted_candidate(
+                task, seg, last_parsed_result, last_errors,
+                strategy, plan, registry, total, _parallel_child,
+            )
+            return
         _handle_segment_exhausted(task, seg, registry)
     if enable_qc and qc_rounds >= qc_max_rounds and last_parsed_result is not None:
         forced_errors = _mark_forced_accept_errors(last_errors)
@@ -407,6 +426,12 @@ async def step_generate_segment(
         ScriptSplitSegmentModel.save_failure(task.id, seg.segment_index, errors)
         logger.warning("task %s 段 %d 第 %d 次超时", task.id, seg.segment_index, generation_attempt)
         if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+            if last_parsed_result is not None:
+                _complete_retry_exhausted_candidate(
+                    task, seg, last_parsed_result, errors,
+                    strategy, plan, registry, total, _parallel_child,
+                )
+                return
             _handle_segment_exhausted(task, seg, registry)
         return
     except Exception as e:
@@ -420,6 +445,12 @@ async def step_generate_segment(
         logger.warning("task %s 段 %d 第 %d 次调用失败: %s",
                        task.id, seg.segment_index, generation_attempt, msg)
         if call_failure_count >= ScriptSplitConstants.SEGMENT_MAX_RETRIES:
+            if last_parsed_result is not None:
+                _complete_retry_exhausted_candidate(
+                    task, seg, last_parsed_result, errors,
+                    strategy, plan, registry, total, _parallel_child,
+                )
+                return
             _handle_segment_exhausted(task, seg, registry)
         return
 
@@ -430,6 +461,12 @@ async def step_generate_segment(
     errors: List[Dict[str, Any]] = list(
         strategy.validate_segment_result(parsed, plan, seg.segment_id) or []
     )
+    # 跨段空间校验（仅依赖段有 upstream_spatial_handoff，见设计文档 §12）
+    upstream_handoff = segment_context.get("upstream_spatial_handoff")
+    if upstream_handoff and hasattr(strategy, "validate_cross_segment"):
+        errors.extend(
+            strategy.validate_cross_segment(parsed, upstream_handoff, plan, seg.segment_id) or []
+        )
     if enable_qc:
         current_qc_round = qc_rounds + 1
         qc_errors = await _run_enabled_segment_qc(
@@ -495,6 +532,38 @@ def _mark_forced_accept_errors(
     return [dict(error, _forced_accept=True) for error in errors]
 
 
+def _complete_retry_exhausted_candidate(
+    task: ScriptSplitTask,
+    seg,
+    parsed: Dict[str, Any],
+    errors: List[Dict[str, Any]],
+    strategy,
+    plan: Dict[str, Any],
+    registry: AcceptedRegistry,
+    total: int,
+    parallel_child: bool,
+) -> None:
+    """修正调用耗尽时采用最近一次成功解析的完整候选。"""
+    forced_errors = _mark_forced_accept_errors(errors)
+    logger.warning(
+        "task %s 段 %d 调用重试已耗尽，强制采用最近一次可解析候选；issues=%s",
+        task.id,
+        seg.segment_index,
+        [error.get("code", "unknown") for error in forced_errors],
+    )
+    _complete_segment_result(
+        task=task,
+        seg=seg,
+        parsed=parsed,
+        strategy=strategy,
+        plan=plan,
+        registry=registry,
+        total=total,
+        parallel_child=parallel_child,
+        validation_errors=forced_errors,
+    )
+
+
 def _complete_segment_result(
     task: ScriptSplitTask,
     seg,
@@ -547,16 +616,54 @@ def _complete_segment_result(
 
 
 async def _step_generate_parallel_batch(task: ScriptSplitTask, strategy) -> None:
-    """并发生成效果模式的一批独立段，并在批次结束后统一结算检查点。"""
-    segments = ScriptSplitSegmentModel.get_uncompleted(
-        task.id,
-        ScriptSplitConstants.QUALITY_SEGMENT_PARALLELISM,
-    )
-    if not segments:
-        await step_merge(task)
-        return
+    """并发生成效果模式的一批 ready 段，并在批次结束后统一结算检查点。
+
+    依赖感知调度（见设计文档 §8）：用 get_all 读取全量段，按 spatial_dependency
+    选出 ready 集合。入口分流（§8.2 第 3 步）避免空 ready 时误调 step_merge。
+    """
+    all_segments = ScriptSplitSegmentModel.get_all(task.id)
+    total = int(task.total_segment_count or len(all_segments) or 1)
     if _is_cancelled(task.id):
         raise CancelledByUser()
+
+    plan = task.get_segment_plan() or {}
+    # 策略支持 classify/select（quality），否则回退到旧的 get_uncompleted 逻辑
+    if hasattr(strategy, "classify_segments"):
+        ready, waiting_info, blocked = strategy.classify_segments(plan, all_segments)
+        ready = ready[:ScriptSplitConstants.QUALITY_SEGMENT_PARALLELISM]
+        if not ready:
+            completed_now = ScriptSplitSegmentModel.count_by_status(
+                task.id, SEGMENT_STATUS_COMPLETED,
+            )
+            if completed_now >= total:
+                # 全部完成 → 合并
+                refreshed = ScriptSplitTaskModel.get_by_id(task.id) or task
+                await step_merge(refreshed)
+                return
+            if blocked:
+                # 依赖指向终态 failed/缺失，无法推进
+                raise EngineError(
+                    "quality_dependency_blocked",
+                    f"task {task.id} 有 {len(blocked)} 个段依赖终态异常/缺失的上游，无法推进",
+                )
+            # 有 waiting 段但 ready 为空：正常等待上游，让出 tick
+            logger.info(
+                "task %s 无 ready 段（%d 个 waiting），让出 tick",
+                task.id, len(waiting_info),
+            )
+            return
+        segments = ready
+    else:
+        # 非 quality 策略回退：取前 N 个未完成段
+        segments = ScriptSplitSegmentModel.get_uncompleted(
+            task.id,
+            ScriptSplitConstants.QUALITY_SEGMENT_PARALLELISM,
+        )
+        if not segments:
+            refreshed = ScriptSplitTaskModel.get_by_id(task.id) or task
+            await step_merge(refreshed)
+            return
+        all_segments = segments  # 回退路径下下游无需跨段 handoff
 
     ScriptSplitTaskModel.save_field(
         task.id,
@@ -564,7 +671,9 @@ async def _step_generate_parallel_batch(task: ScriptSplitTask, strategy) -> None
     )
     results = await asyncio.gather(
         *(
-            step_generate_segment(task, _segment=seg, _parallel_child=True)
+            step_generate_segment(
+                task, _segment=seg, _parallel_child=True, _all_segments=all_segments,
+            )
             for seg in segments
         ),
         return_exceptions=True,
@@ -575,7 +684,6 @@ async def _step_generate_parallel_batch(task: ScriptSplitTask, strategy) -> None
         SEGMENT_STATUS_COMPLETED,
     )
     next_segment = ScriptSplitSegmentModel.get_first_uncompleted(task.id)
-    total = int(task.total_segment_count or 1)
     progress = 10 + int(75 * completed / total)
     ScriptSplitTaskModel.save_field(
         task.id,
@@ -605,7 +713,7 @@ async def _step_generate_parallel_batch(task: ScriptSplitTask, strategy) -> None
 def _handle_segment_exhausted(task: ScriptSplitTask, seg, registry) -> None:
     """单段重试耗尽后暂停；不再自动重建分段计划和检查点。"""
     raise TaskPaused(
-        "segment_max_retries",
+        ScriptSplitConstants.ERROR_SEGMENT_MAX_RETRIES,
         f"段 {seg.segment_index} 达到重试上限 {ScriptSplitConstants.SEGMENT_MAX_RETRIES}",
     )
 
@@ -705,19 +813,16 @@ async def step_publish(task: ScriptSplitTask) -> None:
         StoryboardModel.count_scenes_by_split_task, task.id
     )
     if existing_count > 0:
-        if existing_count == expected_count:
-            # 已全部发布，直接标记完成
-            ScriptSplitTaskModel.update_status(
-                task.id, ScriptSplitConstants.STATUS_COMPLETED,
-                phase="done", progress=100,
+        if existing_count != expected_count:
+            # 存在但不完整或有冲突：按设计文档 §15 停止发布
+            raise EngineError(
+                "publish_conflict",
+                f"故事板已有 {existing_count} 个分镜（预期 {expected_count}），"
+                f"可能存在手工分镜或发布中断残留，停止发布避免重复",
             )
-            return
-        # 存在但不完整或有冲突：按设计文档 §15 停止发布
-        raise EngineError(
-            "publish_conflict",
-            f"故事板已有 {existing_count} 个分镜（预期 {expected_count}），"
-            f"可能存在手工分镜或发布中断残留，停止发布避免重复",
-        )
+        # 已全部发布：不直接 completed，先走配音对账（关闭 §2.3 的恢复漏洞）
+        await _reconcile_voiceover_and_finalize(task, final_result)
+        return
 
     # 再次检查故事板是否已有非本任务的分镜
     existing_scenes = await asyncio.to_thread(
@@ -734,11 +839,22 @@ async def step_publish(task: ScriptSplitTask) -> None:
         StoryboardLocationBootstrapService,
     )
     world_id = cfg.get("world_id")
+    bootstrap_result = None
     if world_id:
-        await asyncio.to_thread(
+        bootstrap_result = await asyncio.to_thread(
             StoryboardLocationBootstrapService().bootstrap,
             final_result, world_id, task.user_id,
         )
+        if str(cfg.get("sequence_mode") or "").strip().lower() == "quality":
+            quality_strategy = get_storyboard_quality_sequence_strategy()
+            await asyncio.to_thread(
+                quality_strategy.prepare_location_references,
+                final_result,
+                bootstrap_result,
+                int(world_id),
+                int(task.user_id),
+                str(task.auth_token or ""),
+            )
 
     # 2. 构造 scenes_payload
     from api.storyboard import build_storyboard_scenes_from_parsed_script
@@ -758,13 +874,89 @@ async def step_publish(task: ScriptSplitTask) -> None:
         StoryboardModel.create_scenes,
         storyboard_id, task.user_id, scenes_payload, task.id,
     )
+    logger.info("task %s 分镜落库完成，storyboard %s 创建 %d 个分镜",
+                task.id, storyboard_id, len(scenes_payload))
 
+    # 4. 配音对账并决定是否 completed（首次发布路径）
+    await _reconcile_voiceover_and_finalize(task, final_result)
+
+
+async def _reconcile_voiceover_and_finalize(task: ScriptSplitTask, final_result: Dict[str, Any]) -> None:
+    """对账本任务的对话配音，并据此决定拆分任务是否进入 completed。
+
+    方案 §9。无论首次发布还是发布恢复（existing_count==expected_count）都执行：
+    - remaining_count > 0：保持 publishing，下个 worker tick 继续对账（publishing
+      在 claim_next_task 的 recoverable 列表内，lease 过期后会被重新领取）。
+    - remaining_count == 0：写 metadata 摘要后 completed。
+    - 临时系统错误（对账抛异常）：抛 voiceover_bootstrap_failed，按现有任务重试机制处理。
+
+    拆分任务只等待「音频任务已可靠入队」，不等待 TTS 实际生成完成（方案 §9.3）。
+    """
+    from config.constant import StoryboardAudioGenerateConstants
+    from services.storyboard_voiceover_bootstrap_service import (
+        StoryboardVoiceoverBootstrapService,
+    )
+
+    try:
+        # ensure_for_split_task 的 limit 是仅关键字参数，用 partial 包成无参 callable
+        # 交给 to_thread，避免位置参数个数不匹配。
+        _reconcile = functools.partial(
+            StoryboardVoiceoverBootstrapService().ensure_for_split_task,
+            task.id, task.user_id,
+            limit=StoryboardAudioGenerateConstants.AUTO_VOICEOVER_SUBMIT_BATCH_SIZE,
+        )
+        summary = await asyncio.to_thread(_reconcile)
+    except Exception as exc:
+        logger.warning(
+            "task %s 配音对账异常: %s", task.id, exc, exc_info=True,
+        )
+        raise EngineError(
+            "voiceover_bootstrap_failed",
+            f"配音对账失败: {exc}",
+        )
+
+    if int(summary.get("remaining_count") or 0) > 0:
+        # 还有未对账对白：保持 publishing，下个 tick 继续
+        ScriptSplitTaskModel.update_status(
+            task.id, ScriptSplitConstants.STATUS_PUBLISHING,
+            phase="voiceover_bootstrap",
+        )
+        logger.info(
+            "task %s 配音对账进行中，submitted=%s reused=%s skipped=%s failed=%s remaining=%s",
+            task.id,
+            summary.get("submitted_count"), summary.get("reused_count"),
+            summary.get("skipped_count"), summary.get("failed_count"),
+            summary.get("remaining_count"),
+        )
+        return
+
+    # remaining == 0：写 metadata 摘要（方案 §12.1）后 completed
+    # 不保存 token、声音绝对路径或完整台词。
+    skip_reason_counts: Dict[str, int] = {}
+    for item in (summary.get("skipped") or []):
+        reason = item.get("reason") or "unknown"
+        skip_reason_counts[reason] = skip_reason_counts.get(reason, 0) + 1
+    final_result.setdefault("metadata", {})["voiceover_bootstrap"] = {
+        "enabled": bool(summary.get("enabled")),
+        "eligible": int(summary.get("eligible_count") or 0),
+        "submitted": int(summary.get("submitted_count") or 0),
+        "reused": int(summary.get("reused_count") or 0),
+        "skipped": int(summary.get("skipped_count") or 0),
+        "failed": int(summary.get("failed_count") or 0),
+        "skip_reasons": skip_reason_counts,
+        "completed_at": datetime.now().isoformat(),
+    }
+    ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
     ScriptSplitTaskModel.update_status(
         task.id, ScriptSplitConstants.STATUS_COMPLETED,
         phase="done", progress=100,
     )
-    logger.info("task %s 发布完成，storyboard %s 创建 %d 个分镜",
-                task.id, storyboard_id, len(scenes_payload))
+    logger.info(
+        "task %s 发布完成（含配音对账），submitted=%s reused=%s skipped=%s failed=%s",
+        task.id,
+        summary.get("submitted_count"), summary.get("reused_count"),
+        summary.get("skipped_count"), summary.get("failed_count"),
+    )
 
 
 def _merge_segments(segments) -> Dict[str, Any]:

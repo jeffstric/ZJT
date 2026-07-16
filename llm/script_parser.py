@@ -1493,25 +1493,39 @@ async def parse_script_to_shots(
                             anchor_pairs.append(f"{suid}/{a['anchor_id']}")
                 su_text = ", ".join(su_ids) if su_ids else "（无，需在本段 spatial_world 中声明后再引用）"
                 anchor_text = ", ".join(anchor_pairs) if anchor_pairs else "（无）"
-                cin_text = _json_for_ctx.dumps(continuity_in, ensure_ascii=False)[:8000] if continuity_in else "{}"
-                cout_text = _json_for_ctx.dumps(continuity_out, ensure_ascii=False)[:8000] if continuity_out else "{}"
                 sc_text = _json_for_ctx.dumps(state_changes, ensure_ascii=False)[:8000] if state_changes else "[]"
                 gr_text = _json_for_ctx.dumps(global_registry, ensure_ascii=False)[:40000] if global_registry else "{}"
+
+                # 入点/出点约束（①②项）按依赖类型分叉（设计文档 §11.1）：
+                # - 有 upstream_spatial_handoff（依赖段）：用上游真实布局，continuity_in/out 不作硬约束
+                # - 无 handoff（独立段）：用规划契约 continuity_in/out
+                upstream_handoff = segment_context.get("upstream_spatial_handoff") or {}
+                if upstream_handoff:
+                    from enterprise.services.script_split_quality.spatial_handoff import serialize_handoff
+                    handoff_text = serialize_handoff(upstream_handoff)
+                    entry_exit_constraint = f"""1. **首镜头入点约束（继承上游真实布局）**：首镜头每个在场角色的物理位置必须**继承上游段最后镜头的实际 spatial_layout**（space_unit_id / container_id / slot_id / position_3d 完全一致）。以下 JSON 来自上游真实生成结果，不是规划猜测：
+```json
+{handoff_text}
+```
+2. **末镜头出点约束**：末镜头同理，按剧情推进设置出点位置，必须与本段 state_changes 一致。"""
+                else:
+                    cin_text = _json_for_ctx.dumps(continuity_in, ensure_ascii=False)[:8000] if continuity_in else "{}"
+                    cout_text = _json_for_ctx.dumps(continuity_out, ensure_ascii=False)[:8000] if continuity_out else "{}"
+                    entry_exit_constraint = f"""1. **首镜头入点约束**：首镜头 spatial_layout 中，continuity_in.characters 列出的每个 character_id，其在 containers.slots（或 loose_positions）里的 space_unit_id、container_id、slot_id 必须**完全等于**契约给定值。契约中未出现的角色不得在首镜头的 spatial_layout 中出现位置。
+```json
+{cin_text}
+```
+2. **末镜头出点约束**：末镜头同理，每个在场角色位置必须**完全等于** continuity_out 的值。
+```json
+{cout_text}
+```"""
 
                 spatial_contract_block = f"""
 
 **【效果模式 · 空间连续性硬约束（必须严格遵守，否则质检必失败）】**
-本段分镜的**首镜头**与**末镜头**是段间衔接点，其中每个在场角色的物理位置必须**逐字段等于**下方契约值（space_unit_id / container_id / slot_id 三者完全一致，不得近似、不得省略）。
+本段分镜的**首镜头**与**末镜头**是段间衔接点，其中每个在场角色的物理位置必须**逐字段等于**下方给定值（space_unit_id / container_id / slot_id 三者完全一致，不得近似、不得省略）。
 
-1. **首镜头入点约束**：首镜头 spatial_layout 中，continuity_in.characters 列出的每个 character_id，其在 containers.slots（或 loose_positions）里的 space_unit_id、container_id、slot_id 必须**完全等于**契约给定值。契约中未出现的角色不得在首镜头的 spatial_layout 中出现位置。
-```json
-{cin_text}
-```
-
-2. **末镜头出点约束**：末镜头同理，每个在场角色位置必须**完全等于** continuity_out 的值。
-```json
-{cout_text}
-```
+{entry_exit_constraint}
 
 3. **段内位置变化**：仅允许 continuity 契约声明的 state_changes，不得自行增减角色移动。state_changes 如下：
 ```json

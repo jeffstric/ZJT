@@ -713,6 +713,8 @@ class ScriptSplitConstants:
     SEGMENT_MAX_RETRIES = 3
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
+    # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）
+    HANDOFF_MAX_BYTES = 30000
     # 单个持久化分段允许包含的原文字符硬上限；LLM 负责主语义边界，后端仅切细超限段。
     SEGMENT_MAX_SOURCE_CHARS = 1500
     # ---- 模型输出预算 ----
@@ -772,6 +774,7 @@ class ScriptSplitConstants:
     # ---- 可恢复错误码 ----
     # 旧版本可能以该错误暂停；恢复时必须保留段 QC 轮数，让引擎直接接纳最后候选。
     ERROR_SEGMENT_QC_FAILED = "segment_qc_failed"
+    ERROR_SEGMENT_MAX_RETRIES = "segment_max_retries"
 
     # 不可恢复终态：进入后释放 active_key（置 NULL），允许同来源新建任务
     TERMINAL_STATUSES = (
@@ -813,7 +816,7 @@ class StoryboardAutoGenerateConstants:
         SEQUENCE_MODE_QUALITY,
     )
     # quality 模式下，子场景缺图时阻止首帧生图的重试上限（tick 次数）。
-    # 超过后降级放行（走 t2i），避免九宫格彻底失败时无限等待。
+    # 无运行中的场景九宫格且超过上限时严格失败，禁止降级无参考生图。
     # 调度器默认 10s/tick，30 次 ≈ 5 分钟。
     QUALITY_WAIT_MAX_TICKS = 30
     # quality mode waits for the previous group's last first-frame before submitting
@@ -822,6 +825,7 @@ class StoryboardAutoGenerateConstants:
     QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS = 30
     QUALITY_GRID_BATCHES_PER_TICK = 2
     ERROR_GRID_FIRST_FRAME_FAILED = "grid_first_frame_failed"
+    ERROR_LOCATION_REFERENCE_GENERATION_FAILED = "location_reference_generation_failed"
     ERROR_PREVIOUS_GROUP_FAILED = "previous_group_failed"
     ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT = "previous_group_reference_timeout"
     ERROR_BATCH_ITEM_RUNNING_TIMEOUT = "batch_item_running_timeout"
@@ -844,6 +848,10 @@ class StoryboardAudioGenerateConstants:
     """Storyboard dialogue audio generation limits and stable skip reasons."""
     ENABLE_AUTO_AFTER_SCRIPT_SPLIT = True
     MAX_AUTO_SUBMIT_PER_SPLIT = 100
+    # 单个 publishing step 的配音对账批量大小（非整次拆分永久上限）。
+    # remaining>0 时保持 publishing，下个 worker tick 继续对账，不会永久 skip。
+    # 见 docs/storyboard/storyboard_auto_voiceover_after_split_design.md §10。
+    AUTO_VOICEOVER_SUBMIT_BATCH_SIZE = 100
     SKIP_REASON_EMPTY_TEXT = "empty_text"
     SKIP_REASON_MISSING_REFERENCE_AUDIO = "missing_reference_audio"
     SKIP_REASON_ALREADY_HAS_SELECTED_AUDIO = "already_has_selected_audio"
