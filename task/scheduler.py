@@ -523,19 +523,28 @@ def init_scheduler(app):
     # 见 docs/script/script_parser_incremental_split_design.md §12。
     from config.constant import ScriptSplitConstants
     from task.script_split_task import process_script_split_tasks
-    task_with_app_script_split = partial(_run_async_task, process_script_split_tasks)
     _script_split_interval = ScriptSplitConstants.SCHEDULER_INTERVAL_SECONDS
-    logger.info('启用剧本分段拆分任务消费者，每%d秒执行一次', _script_split_interval)
-    scheduler.add_job(
-        func=task_with_app_script_split,
-        trigger=IntervalTrigger(seconds=_script_split_interval),
-        id='process_script_split_tasks',
-        name=f'Process script split tasks every {_script_split_interval} seconds',
-        replace_existing=True,
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=30,
-    )
+    # worker_total>0 时切换为多 worker 模式：由 run_prod/run_dev 拉起的 N 个独立
+    # worker 进程分片接管，主调度器跳过此 job，避免与 worker 竞争。
+    _worker_total = get_dynamic_config_value("script_split", "worker_total", default=0)
+    if _worker_total and _worker_total > 0:
+        logger.info(
+            '剧本分段拆分已切换为 %d 个独立 worker 进程分片接管，主调度器跳过此 job',
+            _worker_total,
+        )
+    else:
+        task_with_app_script_split = partial(_run_async_task, process_script_split_tasks)
+        logger.info('启用剧本分段拆分任务消费者，每%d秒执行一次', _script_split_interval)
+        scheduler.add_job(
+            func=task_with_app_script_split,
+            trigger=IntervalTrigger(seconds=_script_split_interval),
+            id='process_script_split_tasks',
+            name=f'Process script split tasks every {_script_split_interval} seconds',
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=30,
+        )
 
     # 启动调度器
     scheduler.start()

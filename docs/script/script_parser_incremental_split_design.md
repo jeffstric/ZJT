@@ -890,3 +890,97 @@ schema v2 的 canonical `entities` 是对象，固定包含 `characters`、`loca
 普通 `speed/balanced` 和历史 schema v1 任务保持原串行检查点流程。效果模式的提示词、契约编译、物理状态校验及合并修复均位于 `enterprise/services/script_split_quality/`；核心仓库只保留策略门面、通用并发调度和持久化逻辑。
 
 效果模式合并时以规划注册表为身份真源，并补充分段结果中规划遗漏的实体，不能用空的地点或道具集合覆盖有效结果。同一 ID 在分段结果中出现不同名称时，视为“酒店前台/酒店大堂”一类命名粒度差异：保留规划的 canonical ID、名称和 `entity_key`，同时吸收模型补充的描述、外观等非身份字段，镜头引用无需改写。同一名称对应不同 ID 仍以 `quality_merge_invalid` 明确失败，禁止静默生成歧义引用。
+
+## 25. 多 worker 分片扩展（id MOD N = index）
+
+### 25.1 背景与动机
+
+单进程模式下，`process_script_split_tasks` 注册到 APScheduler 的 `max_instances=1` job。quality 模式的单次 tick 内会通过 `asyncio.gather` 并发生成多个段并做多轮质检重试，单次执行可能耗时数分钟，远超 5 秒 tick 间隔，导致大量 misfire（job 被 "maximum number of running instances reached" 跳过），队列被单个慢任务长时间独占。
+
+为横向扩展消费能力，引入「id 分片 + 独立 worker 进程」机制：N 个 worker 进程并行消费，每个只领取 `id MOD N = index` 的任务。
+
+### 25.2 分片原理
+
+`ScriptSplitConstants` 新增两个类属性：
+
+- `WORKER_TOTAL`：总分片数，默认 `0`（不分片，兼容旧行为）
+- `WORKER_INDEX`：本进程分片下标，默认 `0`
+
+`claim_next_task`（`model/script_split_task.py`）在 `WORKER_TOTAL > 0` 时，于 SELECT 的 WHERE 追加 `AND id MOD %s = %s`，参数为 `(WORKER_TOTAL, WORKER_INDEX)`。与既有 `FOR UPDATE` + `worker_id` + `lease_until` 租约机制叠加，从源头缩小每个 worker 的扫描范围，并保证同一行不会被两个事务同时领走。
+
+### 25.3 进程模型
+
+```
+start.bat / linux_start_prod.sh
+  └─ run_prod.py（管理器，注册 SIGTERM/SIGINT/SIGHUP cleanup）
+       ├─ run_scheduler.py        （核心：主调度器，worker_total>0 时跳过 script split job）
+       ├─ uvicorn / gunicorn      （核心：Web 服务）
+       └─ run_script_split_worker.py 0 N  ┐
+         run_script_split_worker.py 1 N  ├ worker_total=N 时拉起 N 个
+         ...                              │
+         run_script_split_worker.py N-1 N┘
+```
+
+- worker 由 `run_prod.py`/`run_dev.py` 统一拉起并纳入 `cleanup`，与核心进程（scheduler/web）同生共死。**重启服务时 worker 随核心进程一起 terminate，不会残留孤儿进程、不会重复新建进程。**
+- worker 放在独立 `worker_processes[]` 列表，与核心进程的 `processes[]` 分离：单个 worker 崩溃只记录告警日志，**不触发共存亡**，不影响 Web/scheduler 运行。
+- `linux_start_prod.sh` 仅调用 `run_prod.py`，无需单独适配。
+
+### 25.4 配置（三层优先级）
+
+`script_split.worker_total` 按以下优先级读取（`run_prod.py` 启动时一次性读取，改后需重启生效）：
+
+1. **数据库 `system_config` 表**（最高，可后台热更新，`get_dynamic_config_value` 读取）
+2. **user yaml**（`config_prod.yml`，被 gitignore，本地私有）
+3. **base yaml**（`config_prod.base.yaml`，进 git，默认值兜底）
+
+各文件默认值：
+
+| 文件 | 默认值 | 说明 |
+|------|--------|------|
+| `config_prod.base.yaml` | `script_split.worker_total: 0` | 生产 base，进 git |
+| `config_dev.base.yml` | `script_split.worker_total: 0` | **新建**，dev 环境补齐 base 兜底（原先 dev 无 base 文件） |
+| `config/default_configs.py` | 注册为可热更新配置项 | 声明该 key 可在后台 DB 修改 |
+
+> `worker_total=0` 完全回退单进程旧行为（主调度器内跑原版不分片 job），**向后兼容**。
+
+#### 25.4.1 ⚠️ 修改后必须重启服务生效（不支持运行期热更新进程数）
+
+虽然 `worker_total` 注册在 DB `system_config` 表里、可后台编辑，但**它只在服务启动时被读取一次**，运行期不会重读。三处读取点都不在循环内：
+
+| 读取点 | 文件 | 时机 | 作用 |
+|--------|------|------|------|
+| 拉起 worker 的循环 | `run_prod.py` / `run_dev.py` 的 `main()` | 管理进程启动 | 决定 `Popen` 几个 worker（`range(worker_total)`） |
+| worker 分片注入 | `run_script_split_worker.py` 的 `main()` | worker 进程启动 | 写入进程内存的 `WORKER_TOTAL/INDEX`，决定 claim 哪些 id |
+| 主调度器开关 | `task/scheduler.py` 的 `init_scheduler` | scheduler 启动 | 决定是否注册 script split job |
+
+因此：**后台改了 `worker_total` 后，必须重启服务（start.bat / linux_start_prod.sh）才会按新值拉起 worker。** 运行中的 worker 进程数不会自动增减。
+
+为什么这样设计是安全的：进程数属于「部署拓扑」而非「运行参数」，进程的创建/销毁必须由管理进程（`run_prod.py`）统一编排（纳入 cleanup、文件锁、监控隔离），无法由某个 worker 自行分裂或退出。后台编辑该值只是修改了「下次启动时生效的配置」，不会破坏当前运行的进程。
+
+**好消息**：即使 DB 改了不重启，已运行的 worker 也不会让任务卡死。每个 worker 启动时把 `total` 和 `index` 一起注入了进程内存，二者自洽——`index ∈ {0..total-1}` 恰好覆盖所有整数取模结果，任意 `id MOD total` 必落在某个 worker 的分片里。所以已运行的 worker 仍会消费掉全部任务，只是进程数仍停留在旧值。
+
+### 25.5 worker 进程入口（`scripts/running/run_script_split_worker.py`）
+
+- 接收命令行参数 `<index> <total>`，校验 `0 <= index < total`
+- **不调用 `init_scheduler`**，绕开全局 `scheduler.lock`；用 per-index 文件锁 `<root>/script_split_worker_<index>.lock` 防止同 index 重复启动（复用 `msvcrt`/`fcntl` + 残留死锁检测，强制 kill 后 OS 锁自动释放）
+- 启动时注入 `ScriptSplitConstants.WORKER_TOTAL/WORKER_INDEX`
+- 主循环：`while True: asyncio.run(process_script_split_tasks()); sleep(SCHEDULER_INTERVAL_SECONDS)`，复用既有单步推进 + 看门狗 + 租约逻辑，单次异常捕获防拖垮进程
+- 日志写入 `logs/app.YYYY-MM-DD.log`（import `utils.logger_config` 自动配置）
+
+### 25.6 故障恢复与边界
+
+| 场景 | 行为 |
+|------|------|
+| worker 进程崩溃 | 持有的租约 600s（`TASK_LEASE_SECONDS`）后过期，任务可被同 index 的重启 worker 回收 |
+| worker 被 SIGKILL | OS 级文件锁自动释放；残留锁文件下次启动被无害截断覆盖 |
+| 同 index 重复启动 | per-index 文件锁拒绝第二个进程（退出码 3） |
+| 进程数变更（N=2→3） | 改配置后重启全部 worker；分片变更期间少数跨片任务靠租约回收兜底 |
+| DB 未就绪读配置 | `get_dynamic_config_value` 安全回退到 YAML |
+
+### 25.7 不依赖关系（已确认）
+
+worker 进程与以下系统解耦，多开不会冲突：
+
+- **不依赖 FastAPI app**：`process_script_split_tasks` 无参，认证/配置全从 DB task 行读取
+- **不经 `SyncTaskExecutor` 进程池**：script split 的 LLM 调用走 `asyncio.to_thread`，不与视觉任务的 `ProcessPoolExecutor` 共享
+- **不与主调度器竞争**：`worker_total>0` 时主调度器通过开关跳过 script split job

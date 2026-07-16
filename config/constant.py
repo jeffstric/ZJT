@@ -737,6 +737,14 @@ class ScriptSplitConstants:
     # scheduler tick 间隔
     SCHEDULER_INTERVAL_SECONDS = 5
 
+    # ---- 多 worker 分片（id MOD WORKER_TOTAL = WORKER_INDEX 才被本进程领取）----
+    # 由独立 worker 进程入口（run_script_split_worker.py）在启动时覆盖。
+    # 默认 0/0 = 不分片（单进程兼容旧行为，主调度器内 claim 所有任务）。
+    # 主调度器进程不会覆盖这两个值，因此 worker_total>0 时它仍走不分片路径——
+    # 但此时主调度器已通过开关跳过 script split job，不会与 worker 竞争。
+    WORKER_TOTAL = 0
+    WORKER_INDEX = 0
+
     # ---- 轮询 ----
     DEFAULT_POLL_MS = 3000
     # 上下文携带的上一段尾部镜头摘要数量
@@ -814,6 +822,7 @@ class StoryboardAutoGenerateConstants:
     QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS = 30
     QUALITY_GRID_BATCHES_PER_TICK = 2
     ERROR_GRID_FIRST_FRAME_FAILED = "grid_first_frame_failed"
+    ERROR_PREVIOUS_GROUP_FAILED = "previous_group_failed"
     ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT = "previous_group_reference_timeout"
     ERROR_BATCH_ITEM_RUNNING_TIMEOUT = "batch_item_running_timeout"
     BATCH_RUNNING_ITEM_TIMEOUT_SECONDS = 2 * 60 * 60

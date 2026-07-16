@@ -390,11 +390,22 @@ class ScriptSplitTaskModel:
             ScriptSplitConstants.STATUS_CANCELLING,
         )
         placeholders = ",".join(["%s"] * len(recoverable))
+        # 多 worker 分片：仅当 WORKER_TOTAL>0 时追加 id MOD N = index 过滤，
+        # 让多个独立 worker 进程各 claim 互不重叠的子集（主调度器不分片，走原逻辑）。
+        # ⚠️ 与 FOR UPDATE 配合安全：行级锁保证同一行不会被两个事务同时领走，
+        #    分片从源头缩小每个 worker 的扫描范围，进一步降低竞争。
+        shard_total = ScriptSplitConstants.WORKER_TOTAL
+        shard_clause = ""
+        select_params = [ScriptSplitConstants.STATUS_QUEUED, *recoverable]
+        if shard_total and shard_total > 0:
+            shard_clause = " AND id MOD %s = %s"
+            select_params.extend([shard_total, ScriptSplitConstants.WORKER_INDEX])
         select_sql = f"""
             SELECT id FROM script_split_task
-            WHERE status = %s
+            WHERE (status = %s
                OR (status IN ({placeholders})
-                   AND (lease_until IS NULL OR lease_until < NOW()))
+                   AND (lease_until IS NULL OR lease_until < NOW())))
+            {shard_clause}
             ORDER BY id ASC
             LIMIT 1
             FOR UPDATE
@@ -406,7 +417,7 @@ class ScriptSplitTaskModel:
         )
         with transaction() as conn:
             cursor = conn.cursor()
-            cursor.execute(select_sql, (ScriptSplitConstants.STATUS_QUEUED, *recoverable))
+            cursor.execute(select_sql, tuple(select_params))
             rows = cursor.fetchall()
             if not rows:
                 return None
