@@ -1,6 +1,7 @@
 import asyncio
 
 from config.constant import ScriptSplitConstants
+from model.script_split_segment import ScriptSplitSegment
 from model.script_split_task import ScriptSplitTask
 from api import script_split
 from api.script_split import _resume_target_state
@@ -141,6 +142,54 @@ def test_resume_qc_exhausted_task_preserves_round_for_forced_accept(monkeypatch)
             "clear_error": True,
         })
     ]
+
+
+def test_resume_retry_exhausted_task_preserves_budget_when_candidate_exists(monkeypatch):
+    task = ScriptSplitTask(
+        id=25,
+        user_id=7,
+        status=ScriptSplitConstants.STATUS_PAUSED,
+        phase="segment_generation",
+        progress=42,
+        segment_plan_json={"segments": [{}]},
+        last_error_code="segment_max_retries",
+    )
+    segment = ScriptSplitSegment(
+        task_id=25,
+        segment_index=1,
+        parsed_result_json={"shot_groups": [{"shots": []}]},
+    )
+    reset_budgets = []
+
+    async def fake_get_task(_task_id):
+        return task
+
+    monkeypatch.setattr(script_split, "_get_task_async", fake_get_task)
+    monkeypatch.setattr(
+        script_split.ScriptSplitSegmentModel,
+        "get_first_uncompleted",
+        lambda _task_id: segment,
+    )
+    monkeypatch.setattr(
+        script_split.ScriptSplitSegmentModel,
+        "reset_retry_budget",
+        lambda task_id: reset_budgets.append(task_id),
+    )
+    monkeypatch.setattr(
+        script_split.ScriptSplitTaskModel,
+        "update_status",
+        lambda *args, **kwargs: None,
+    )
+
+    response = asyncio.run(script_split.resume_task(
+        task_id=25,
+        request=None,
+        auth_token=None,
+        user_id=7,
+    ))
+
+    assert response["data"]["status"] == ScriptSplitConstants.STATUS_GENERATING
+    assert reset_budgets == []
 
 
 def test_duplicate_submission_auto_resumes_paused_task(monkeypatch):

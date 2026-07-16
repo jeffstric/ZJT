@@ -173,13 +173,29 @@ async def _resume_task_from_checkpoint(task, auth_token: Optional[str] = None) -
     }[target_status]
 
     # paused 通常表示上一重试周期已经耗尽。用户显式恢复时重置当前未完成段的
-    # 周期计数，再让根任务进入可领取状态；但旧版 segment_qc_failed 必须保留
-    # 已耗尽的 QC 轮数，供新版引擎直接强制接纳最后一个合法候选，避免再调用 LLM。
+    # 周期计数，再让根任务进入可领取状态；但已有完整候选的耗尽任务必须保留
+    # 计数，供新版引擎在下一 tick 直接强制接纳，避免再调用 LLM。
+    preserve_exhausted_budget = (
+        getattr(task, "last_error_code", None)
+        == ScriptSplitConstants.ERROR_SEGMENT_QC_FAILED
+    )
+    if (
+        getattr(task, "last_error_code", None)
+        == ScriptSplitConstants.ERROR_SEGMENT_MAX_RETRIES
+        and target_status == ScriptSplitConstants.STATUS_GENERATING
+    ):
+        current_segment = await asyncio.to_thread(
+            ScriptSplitSegmentModel.get_first_uncompleted,
+            task.id,
+        )
+        preserve_exhausted_budget = bool(
+            current_segment
+            and current_segment.get_parsed_result() is not None
+        )
     if (
         task.status == ScriptSplitConstants.STATUS_PAUSED
         and target_status == ScriptSplitConstants.STATUS_GENERATING
-        and getattr(task, "last_error_code", None)
-        != ScriptSplitConstants.ERROR_SEGMENT_QC_FAILED
+        and not preserve_exhausted_budget
     ):
         await asyncio.to_thread(
             ScriptSplitSegmentModel.reset_retry_budget,
@@ -307,7 +323,8 @@ def _normalize_request_config(request_config: dict) -> dict:
         cfg["model"] = model.get("model") or model.get("name") or ""
     elif model is not None and not isinstance(model, str):
         cfg["model"] = str(model)
-    sequence_mode = str(cfg.get("sequence_mode") or "speed").strip().lower()
+    # 缺省与故事板前端一致：balanced（速度/均衡共用标准策略，quality 为企业效果模式）
+    sequence_mode = str(cfg.get("sequence_mode") or "balanced").strip().lower()
     if sequence_mode not in {"speed", "balanced", "quality"}:
         raise ValueError(f"invalid sequence_mode: {sequence_mode}")
     cfg["sequence_mode"] = sequence_mode
