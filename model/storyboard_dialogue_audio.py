@@ -2,7 +2,7 @@
 Storyboard dialogue audio model - database operations for storyboard_dialogue_audio table.
 """
 from typing import Optional, Dict, Any, List
-from .database import execute_query, execute_update, execute_insert
+from .database import execute_query, execute_update, execute_insert, execute_insert_in_transaction, execute_update_in_transaction
 from config.constant import AIAudioStatus
 import logging
 
@@ -56,6 +56,31 @@ class StoryboardDialogueAudioModel:
             raise
 
     @staticmethod
+    def create_in_transaction(
+        conn,
+        dialogue_id: int,
+        ai_audio_id: Optional[int] = None,
+        audio_url: Optional[str] = None,
+        duration: Optional[float] = None,
+    ) -> int:
+        """
+        ⚠️ 仅供事务型原子配音提交内部调用，禁止在此 conn 上执行网络/文件/TTS 等慢操作。
+
+        事务必须保持毫秒级短事务。禁止在持有 conn 期间做 HTTP/文件/IO/sleep 等
+        可能超过 ~50ms 的操作，否则行锁长期持有会阻塞并发更新。
+        见 docs/storyboard/storyboard_auto_voiceover_after_split_design.md §8.1。
+
+        SQL 与参数与 create() 完全一致，仅换 execute_insert_in_transaction。
+        """
+        sql = """
+            INSERT INTO storyboard_dialogue_audio
+            (dialogue_id, ai_audio_id, audio_url, duration)
+            VALUES (%s, %s, %s, %s)
+        """
+        params = (dialogue_id, ai_audio_id, audio_url, duration)
+        return execute_insert_in_transaction(conn, sql, params)
+
+    @staticmethod
     def get_by_id(record_id: int) -> Optional[StoryboardDialogueAudio]:
         sql = "SELECT * FROM storyboard_dialogue_audio WHERE id = %s"
         try:
@@ -91,6 +116,19 @@ class StoryboardDialogueAudioModel:
         except Exception as e:
             logger.error(f"Failed to set selected audio for dialogue {dialogue_id}: {e}")
             raise
+
+    @staticmethod
+    def set_selected_in_transaction(conn, dialogue_id: int, dialogue_audio_id: int) -> int:
+        """
+        ⚠️ 仅供事务型原子配音提交内部调用，禁止在此 conn 上执行网络/文件/TTS 等慢操作。
+
+        事务必须保持毫秒级短事务。注意本方法 UPDATE 的是 storyboard_dialogue 表
+        （设置其 selected_audio_id），不是 storyboard_dialogue_audio 表。
+        SQL 与参数与 set_selected() 完全一致，仅换 execute_update_in_transaction。
+        见 docs/storyboard/storyboard_auto_voiceover_after_split_design.md §8.1。
+        """
+        sql = "UPDATE storyboard_dialogue SET selected_audio_id = %s WHERE id = %s"
+        return execute_update_in_transaction(conn, sql, (dialogue_audio_id, dialogue_id))
 
     @staticmethod
     def update_audio_url_by_ai_audio_id(ai_audio_id: int, audio_url: str) -> int:

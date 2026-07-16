@@ -5760,6 +5760,32 @@ async def parse_script(
         vendor_id = body.get('vendor_id', None)
         enable_thinking = _json_bool(body.get('enable_thinking'), False)
         thinking_effort = body.get('thinking_effort', 'medium')
+        # 与故事板 generate-from-script 对齐：分镜拆分模式 + 拆分质检
+        sequence_mode = str(body.get('sequence_mode') or 'balanced').strip().lower()
+        if sequence_mode not in {'speed', 'balanced', 'quality'}:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": f"不支持的分镜拆分模式: {sequence_mode}", "data": None},
+            )
+        if sequence_mode == 'quality' and Edition.is_community():
+            return JSONResponse(
+                status_code=403,
+                content={"code": -1, "message": "效果模式仅商业版支持", "data": None},
+            )
+        from config.constant import ScriptSplitQcConstants
+        enable_qc = _json_bool(body.get('enable_script_split_qc'), False)
+        try:
+            qc_max_rounds = int(
+                body.get('script_split_qc_max_rounds') or ScriptSplitQcConstants.DEFAULT_MAX_ROUNDS
+            )
+        except (TypeError, ValueError):
+            qc_max_rounds = ScriptSplitQcConstants.DEFAULT_MAX_ROUNDS
+        qc_max_rounds = max(
+            ScriptSplitQcConstants.MIN_MAX_ROUNDS,
+            min(ScriptSplitQcConstants.MAX_MAX_ROUNDS, qc_max_rounds),
+        )
+        if not enable_qc:
+            qc_max_rounds = 1
 
         if not script_content:
             return JSONResponse(
@@ -5836,6 +5862,9 @@ async def parse_script(
             "model_id": int(model_id) if model_id else 1,
             "enable_thinking": enable_thinking,
             "thinking_effort": thinking_effort,
+            "sequence_mode": sequence_mode,
+            "enable_qc": enable_qc,
+            "qc_max_rounds": qc_max_rounds,
         }
         task_id, is_new = await create_split_task(
             user_id=user_id,

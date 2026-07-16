@@ -8,11 +8,12 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Request, Header
+from fastapi import APIRouter, Request, Header, File, Form, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from perseids_server.utils.permission import require_permission
 from perseids_server.client import async_make_perseids_request
@@ -32,8 +33,13 @@ from config.constant import (
     StoryboardAgentCommandConstants,
     SceneDifficulty,
 )
-from config.config_util import get_config
+from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import SceneVideoType, UnifiedConfigRegistry, TaskTypeId, TaskCategory
+from utils.project_path import (
+    get_upload_subdir,
+    generate_upload_filename,
+    build_upload_url,
+)
 from model.storyboard import (
     StoryboardModel, StoryboardSceneModel,
     StoryboardDialogueModel, StoryboardDialogueAudioModel,
@@ -574,41 +580,61 @@ def submit_storyboard_dialogue_voiceover(
             raise StoryboardVoiceoverSubmissionError(reason, message)
         return {'success': False, 'skipped': True, **_voiceover_skip(dialogue_id, scene_id, reason, message)}
 
+    # 四步写库（ai_audio/tasks/dialogue_audio/selected_audio_id）复用原子提交服务，
+    # 保证事务内原子一致，不留孤儿记录。事务封闭在 service 内，conn 不外泄。
+    # 见 services/storyboard_voiceover_bootstrap_service.py §事务边界与防腐化设计。
+    from services.storyboard_voiceover_bootstrap_service import (
+        StoryboardVoiceoverBootstrapService,
+    )
     transaction_id = str(uuid.uuid4())
-    audio_id = AIAudioModel.create(
-        text=text,
-        user_id=user_id,
+    result = StoryboardVoiceoverBootstrapService()._submit_dialogue_voiceover_atomically(
+        dialogue_id,
+        user_id,
         ref_path=ref_path,
-        transaction_id=transaction_id,
-        emo_control_method=config.get('emo_control_method'),
-        emo_weight=config.get('emo_weight'),
-        emo_vec=config.get('emo_vec'),
-        emo_text=config.get('emo_text'),
-        status=AI_AUDIO_STATUS_PENDING,
+        text=text,
+        scene_id=scene_id,
+        extra_audio_kwargs={
+            'transaction_id': transaction_id,
+            'emo_control_method': config.get('emo_control_method'),
+            'emo_weight': config.get('emo_weight'),
+            'emo_vec': config.get('emo_vec'),
+            'emo_text': config.get('emo_text'),
+        },
     )
-    TasksModel.create(
-        task_type=TASK_TYPE_GENERATE_AUDIO,
-        task_id=audio_id,
-        status=TASK_STATUS_QUEUED,
-    )
-    dialogue_audio_id = StoryboardDialogueAudioModel.create(
-        dialogue_id=dialogue_id,
-        ai_audio_id=audio_id,
-    )
-    StoryboardDialogueAudioModel.set_selected(dialogue_id, dialogue_audio_id)
+    if result.get('decision') != 'submitted':
+        # 已选中有效配音（reused）或失败：保持与原返回结构兼容
+        if strict and result.get('decision') == 'failed':
+            raise StoryboardVoiceoverSubmissionError(
+                result.get('reason') or constants.SKIP_REASON_SUBMIT_FAILED,
+                result.get('message') or 'submit failed',
+            )
+        return {
+            'success': False,
+            'skipped': True,
+            **_voiceover_skip(
+                dialogue_id, scene_id,
+                result.get('reason') or constants.SKIP_REASON_ALREADY_HAS_SELECTED_AUDIO,
+                result.get('message') or '对话已存在选中配音',
+            ),
+        }
 
     return {
         'success': True,
         'dialogue_id': dialogue_id,
         'scene_id': scene_id,
-        'audio_id': audio_id,
-        'dialogue_audio_id': dialogue_audio_id,
+        'audio_id': result.get('audio_id'),
+        'dialogue_audio_id': result.get('dialogue_audio_id'),
         'status': 'submitted',
     }
 
 
 async def _auto_submit_storyboard_dialogue_voiceovers(scenes: list, user_id: int) -> dict:
-    """Queue dialogue voiceover tasks after script split without blocking for generation."""
+    """Queue dialogue voiceover tasks after script split without blocking for generation.
+
+    ⚠️ 已废弃：自动配音逻辑已迁移到 StoryboardVoiceoverBootstrapService.ensure_for_split_task，
+    由 script_split_engine.step_publish 在 publishing 阶段调用（按 script_split_task_id 对账，
+    支持崩溃恢复与原子提交）。本函数仅保留向后兼容，不应再被新代码调用。
+    """
     constants = StoryboardAudioGenerateConstants
     result = {
         'enabled': bool(constants.ENABLE_AUTO_AFTER_SCRIPT_SPLIT),
@@ -3433,6 +3459,113 @@ async def select_scene_asset(
         StoryboardSceneModel.update, scene_id, last_modified_user_id=user_id
     )
     return JSONResponse({'success': True, 'asset_type': asset_type, 'asset_id': asset_id})
+
+
+@router.post('/scene/{scene_id}/asset/upload')
+@require_permission("storyboard:update")
+async def upload_scene_asset(
+    request: Request,
+    scene_id: int,
+    file: UploadFile = File(...),
+    asset_type: str = Form("first_frame"),
+    set_selected: str = Form("true"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """
+    上传本地图片并登记为分镜资产（如涂色编辑结果）。
+
+    - 图片落盘到 upload/storyboard/{asset_type}/
+    - 创建 storyboard_scene_asset（无 ai_tool_id，result_url 直写）
+    - 默认设为当前选中（set_selected=true）
+    """
+    user_id = get_user_id_from_header(user_id)
+    scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
+    if err:
+        return err
+
+    asset_type = (asset_type or "first_frame").strip()
+    # 涂色/手工上传目前仅支持图片类资产
+    if asset_type not in ("first_frame", "last_frame"):
+        return JSONResponse(
+            status_code=400,
+            content={'success': False, 'error': 'asset_type 必须为 first_frame/last_frame'},
+        )
+
+    content_type = (file.content_type or "").lower()
+    filename = file.filename or "colored.png"
+    ext = os.path.splitext(filename)[1].lower() or ".png"
+    allowed_ext = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    if ext not in allowed_ext and not content_type.startswith("image/"):
+        return JSONResponse(
+            status_code=400,
+            content={'success': False, 'error': '仅支持图片文件'},
+        )
+    if ext not in allowed_ext:
+        # content-type 是 image/* 但扩展名异常时统一为 png
+        ext = ".png"
+
+    content = await file.read()
+    if not content:
+        return JSONResponse(
+            status_code=400,
+            content={'success': False, 'error': '文件内容为空'},
+        )
+
+    max_size_mb = get_dynamic_config_value('upload', 'max_image_size_mb', default=20)
+    try:
+        max_size_mb = float(max_size_mb)
+    except (TypeError, ValueError):
+        max_size_mb = 20
+    max_bytes = int(max_size_mb * 1024 * 1024)
+    if len(content) > max_bytes:
+        return JSONResponse(
+            status_code=400,
+            content={'success': False, 'error': f'图片大小不能超过 {max_size_mb}MB'},
+        )
+
+    should_select = str(set_selected or "true").strip().lower() not in ("0", "false", "no")
+
+    def _save_and_create() -> Dict[str, Any]:
+        # 与宫格拆分单格目录一致：upload/storyboard/first_frame/
+        subdir_parts = ("storyboard", asset_type)
+        abs_dir = get_upload_subdir(*subdir_parts, ensure=True)
+        name_info = generate_upload_filename(prefix=f"sb_{asset_type}", extension=ext)
+        abs_path = os.path.join(abs_dir, name_info.filename)
+        with open(abs_path, "wb") as fh:
+            fh.write(content)
+
+        try:
+            host = (get_config().get("server") or {}).get("host") or ""
+        except Exception:
+            host = ""
+        result_url = build_upload_url(*subdir_parts, name_info.filename, host=host)
+
+        asset_id = StoryboardSceneAssetModel.create(
+            scene_id=scene_id,
+            asset_type=asset_type,
+            ai_tool_id=None,
+            result_url=result_url,
+        )
+        if should_select:
+            StoryboardSceneAssetModel.set_selected(scene_id, asset_type, asset_id)
+        StoryboardSceneModel.update(scene_id, last_modified_user_id=user_id)
+        return {
+            "asset_id": asset_id,
+            "result_url": result_url,
+            "asset_type": asset_type,
+            "selected": should_select,
+        }
+
+    try:
+        payload = await asyncio.to_thread(_save_and_create)
+    except Exception as exc:
+        logger.error(f"upload_scene_asset failed scene={scene_id}: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={'success': False, 'error': f'上传失败: {exc}'},
+        )
+
+    return JSONResponse({'success': True, **payload})
 
 
 @router.post('/dialogue/{dialogue_id}/audio/select')
