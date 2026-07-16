@@ -516,6 +516,22 @@ function renderStoryboardCardCell(scene, nextScene) {
             </div>`;
 }
 
+function renderFirstFrameColoringToolbar(scene) {
+    // 播放中 / 无图 / 当前预览不是图：不展示
+    if (!scene || state.isPlaying) return '';
+    const previewMedia = choosePreviewMedia(scene);
+    if (previewMedia.kind !== 'image' || !previewMedia.url) return '';
+    return `
+        <div class="preview-image-toolbar">
+            <button
+                type="button"
+                class="preview-tool-btn"
+                data-action="color-first-frame"
+                title="涂色编辑分镜图"
+            >${icon('edit', 14)} 涂色编辑</button>
+        </div>`;
+}
+
 export function mediaFrame(scene) {
     if (!scene) {
         return '<div class="preview-empty">选择一个分镜开始编辑</div>';
@@ -529,7 +545,10 @@ export function mediaFrame(scene) {
         return `<video src="${escapeHtml(previewMedia.url)}" controls class="preview-media"></video>`;
     }
     if (previewMedia.kind === 'image') {
-        return `<img src="${escapeHtml(previewMedia.url)}" alt="${escapeHtml(scene.title)}" class="preview-media">`;
+        return `<div class="preview-media-stack">
+            <img src="${escapeHtml(previewMedia.url)}" alt="${escapeHtml(scene.title)}" class="preview-media">
+            ${renderFirstFrameColoringToolbar(scene)}
+        </div>`;
     }
     const displayStatus = getFirstFrameDisplayStatus(scene);
     return `<div class="preview-empty preview-empty-${displayStatus}">${escapeHtml(getFirstFrameStatusLabel(displayStatus) || '当前分镜还没有画面')}</div>`;
@@ -906,6 +925,18 @@ function renderDialoguePanel(scene) {
 
 function renderTabs(scene) {
     if (!scene) {
+        // 拆分进行中但进度弹窗被关掉时：给出恢复入口，避免空板死锁
+        const splitBusy = Boolean(
+            state.generateFromScriptTaskId
+            || state.isGeneratingFromScript
+        );
+        if (splitBusy && !state.showGenerateProgressDialog) {
+            return `
+                <div class="empty-note storyboard-split-recover">
+                    <p>剧本拆分进行中，分镜尚未生成。</p>
+                    <button type="button" class="btn-primary" data-action="reopen-generate-progress">查看拆分进度</button>
+                </div>`;
+        }
         return '<div class="empty-note">暂无分镜。可以从底部添加一个新分镜。</div>';
     }
     if (state.activeTab === 'dialogue') {
@@ -1721,7 +1752,7 @@ function renderGenerateFromScriptDialog() {
         </div>`;
     }).join('');
     return `
-        <div class="modal-overlay">
+        <div class="modal-overlay" data-modal="generate-from-script">
             <div class="export-dialog generate-from-script-dialog">
                 <header>
                     <h2>当前故事板还没有分镜</h2>
@@ -2130,7 +2161,7 @@ function renderGenerateProgressDialog() {
         : '';
 
     return `
-        <div class="modal-overlay">
+        <div class="modal-overlay" data-modal="generate-progress" data-dismissible="${error ? 'true' : 'false'}">
             <div class="export-dialog generate-progress-dialog">
                 <header>
                     <h2>正在生成分镜...</h2>
@@ -2513,7 +2544,10 @@ export function patchCandidates() {
  */
 function clearPreviewMediaLayers(wrapper) {
     if (!wrapper) return;
-    wrapper.querySelectorAll('.preview-media, .preview-empty, .preview-buffering').forEach((node) => {
+    // preview-media-stack 含 img + 涂色工具条，需整层移除
+    wrapper.querySelectorAll(
+        '.preview-media-stack, .preview-media, .preview-empty, .preview-buffering, .preview-image-toolbar'
+    ).forEach((node) => {
         try {
             node.remove();
         } catch {

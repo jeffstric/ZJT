@@ -76,12 +76,113 @@ import {
     captureVideoCandidateSelection,
     restoreVideoCandidateSelection,
 } from './candidate_selection_state.js';
+import { openFirstFrameColoring } from './first_frame_coloring.js';
 
 let generateProgressTimer = null;
 let isTimelineHovered = false;
 
 function notify(message) {
     window.alert(message);
+}
+
+/** 默认拆分进度步骤（与提交 / 刷新恢复共用） */
+function createGenerateProgressSteps() {
+    return [
+        { name: '规划分段', status: 'pending', phase: 'planning' },
+        { name: '逐段拆分', status: 'pending', phase: 'segment_generation' },
+        { name: '合并校验', status: 'pending', phase: 'merging' },
+        { name: '发布分镜', status: 'pending', phase: 'publishing' },
+    ];
+}
+
+/** 根据后端 status/phase 更新进度步骤 UI */
+function updateGenerateProgressStepsByStatus(statusData) {
+    applyGenerateProgressStatus(statusData);
+    const steps = state.generateProgressSteps || [];
+    const phase = statusData.phase;
+    const status = statusData.status;
+    const phaseToStep = {
+        planning: 0,
+        segment_generation: 1,
+        replan_segment: 1,
+        merging: 2,
+        global_qc: 2,
+        publishing: 3,
+        done: 4,
+    };
+    const targetStep = phaseToStep[phase] !== undefined
+        ? phaseToStep[phase]
+        : (phaseToStep[status] || 0);
+    steps.forEach((s, i) => {
+        if (status === 'completed') s.status = 'completed';
+        else if (i < targetStep) s.status = 'completed';
+        else if (i === targetStep) s.status = 'running';
+        else s.status = 'pending';
+    });
+    state.generateProgressStepIndex = Math.min(targetStep, Math.max(steps.length - 1, 0));
+    rerenderModals();
+}
+
+/**
+ * 挂载剧本拆分任务轮询（幂等：同一 taskId 已在轮询则 no-op）。
+ * 用于首次提交、遮罩误关后重开、空态「查看进度」。
+ */
+function attachGenerateFromScriptPolling(taskId) {
+    if (!taskId) return;
+    pollScriptSplitTask(taskId, {
+        onUpdate: (statusData) => {
+            updateGenerateProgressStepsByStatus(statusData);
+        },
+        onComplete: async () => {
+            const steps = state.generateProgressSteps || [];
+            steps.forEach((s) => { s.status = 'completed'; });
+            state.generateProgressStepIndex = steps.length;
+            rerenderModals();
+            try {
+                const sbResp = await api.getStoryboard(state.storyboardId);
+                loadStoryboardData(sbResp);
+            } catch (e) { /* ignore */ }
+            state.showGenerateProgressDialog = false;
+            state.isGeneratingFromScript = false;
+            state.generateFromScriptTaskId = null;
+            resetAutoMissingImagesFlag(state.storyboardId);
+            autoGenerateMissingFirstFrames();
+            notify(`已生成 ${state.scenes.length} 个分镜`);
+            rerender('all', { forcePreview: true });
+        },
+        onPaused: (statusData) => {
+            state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
+            state.isGeneratingFromScript = false;
+            state.showGenerateProgressDialog = true;
+            rerenderModals();
+        },
+        onError: (error) => {
+            const steps = state.generateProgressSteps || [];
+            const idx = state.generateProgressStepIndex;
+            if (idx >= 0 && idx < steps.length) steps[idx].status = 'failed';
+            state.generateProgressError = error.message || '生成分镜失败';
+            state.isGeneratingFromScript = false;
+            state.showGenerateProgressDialog = true;
+            rerenderModals();
+        },
+    });
+}
+
+/** 重新展示进度弹窗并确保轮询在跑（误关/空态恢复） */
+function reopenGenerateProgressDialog() {
+    const taskId = state.generateFromScriptTaskId;
+    if (!taskId) return false;
+    if (!state.generateProgressSteps || !state.generateProgressSteps.length) {
+        state.generateProgressSteps = createGenerateProgressSteps();
+    }
+    state.showGenerateFromScriptDialog = false;
+    state.showGenerateProgressDialog = true;
+    if (!state.generateProgressError) {
+        state.isGeneratingFromScript = true;
+    }
+    attachGenerateFromScriptPolling(taskId);
+    rerenderModals();
+    return true;
 }
 
 function resetRechargeState() {
@@ -719,6 +820,7 @@ async function handleAction(action, target) {
     }
 
     if (action === 'close-generate-progress') {
+        // 仅错误/暂停态可关：停止本页轮询，任务 ID 保留便于刷新恢复
         if (state.generateFromScriptTaskId) {
             stopScriptSplitTaskPolling(state.generateFromScriptTaskId);
         }
@@ -728,7 +830,33 @@ async function handleAction(action, target) {
         }
         state.showGenerateProgressDialog = false;
         state.generateProgressError = '';
-        rerenderModals();
+        state.isGeneratingFromScript = false;
+        // 同步刷左栏空态「查看拆分进度」入口
+        rerender([Region.MODAL, Region.LEFT_TAB_BODY]);
+        return;
+    }
+
+    if (action === 'reopen-generate-progress') {
+        if (!reopenGenerateProgressDialog()) {
+            // 无本地 taskId：重新拉 active-task（与 bootstrap 刷新恢复一致）
+            if (!state.storyboardId) return;
+            api.getActiveScriptSplitTask('storyboard', state.storyboardId).then((activeTask) => {
+                if (activeTask && activeTask.task_id) {
+                    state.generateFromScriptTaskId = activeTask.task_id;
+                    state.generateProgressError = '';
+                    state.generateProgressSteps = createGenerateProgressSteps();
+                    applyGenerateProgressStatus(activeTask);
+                    reopenGenerateProgressDialog();
+                    notify('已恢复拆分进度');
+                } else {
+                    state.showGenerateFromScriptDialog = true;
+                    rerenderModals();
+                }
+            }).catch(() => {
+                state.showGenerateFromScriptDialog = true;
+                rerenderModals();
+            });
+        }
         return;
     }
 
@@ -782,37 +910,9 @@ async function handleAction(action, target) {
         state.generateProgressMessage = '正在提交任务';
         // 进度步骤对应后端真实阶段（见设计文档 §15 状态流程）。
         // 不再用固定 5 秒 setInterval 假进度，改由轮询真实状态驱动。
-        const progressSteps = [
-            { name: '规划分段', status: 'pending', phase: 'planning' },
-            { name: '逐段拆分', status: 'pending', phase: 'segment_generation' },
-            { name: '合并校验', status: 'pending', phase: 'merging' },
-            { name: '发布分镜', status: 'pending', phase: 'publishing' },
-        ];
-        state.generateProgressSteps = progressSteps;
+        state.generateProgressSteps = createGenerateProgressSteps();
         state.generateProgressStepIndex = -1;
         rerenderModals();
-
-        // 根据后端 status/phase 更新步骤状态
-        const updateStepsByStatus = (statusData) => {
-            applyGenerateProgressStatus(statusData);
-            const phase = statusData.phase;
-            const status = statusData.status;
-            const phaseToStep = { planning: 0, segment_generation: 1, replan_segment: 1, merging: 2, global_qc: 2, publishing: 3, done: 4 };
-            const targetStep = phaseToStep[phase] !== undefined ? phaseToStep[phase] : (phaseToStep[status] || 0);
-            progressSteps.forEach((s, i) => {
-                if (status === 'completed') {
-                    s.status = 'completed';
-                } else if (i < targetStep) {
-                    s.status = 'completed';
-                } else if (i === targetStep) {
-                    s.status = 'running';
-                } else {
-                    s.status = 'pending';
-                }
-            });
-            state.generateProgressStepIndex = Math.min(targetStep, progressSteps.length - 1);
-            rerenderModals();
-        };
 
         try {
             const thinking = getThinkingParams();
@@ -836,47 +936,12 @@ async function handleAction(action, target) {
                 throw new Error('未返回任务 ID');
             }
             state.generateFromScriptTaskId = taskId;
-
-            pollScriptSplitTask(taskId, {
-                onUpdate: (statusData) => {
-                    updateStepsByStatus(statusData);
-                },
-                onComplete: async (_result, _statusData) => {
-                    progressSteps.forEach(s => s.status = 'completed');
-                    state.generateProgressStepIndex = progressSteps.length;
-                    rerenderModals();
-                    // 发布由 worker 完成，这里重新加载故事板拿到已创建的分镜
-                    try {
-                        const sbResp = await api.getStoryboard(state.storyboardId);
-                        loadStoryboardData(sbResp);
-                    } catch (e) { /* ignore */ }
-                    state.showGenerateProgressDialog = false;
-                    state.isGeneratingFromScript = false;
-                    resetAutoMissingImagesFlag(state.storyboardId);
-                    autoGenerateMissingFirstFrames();
-                    const generatedMessage = `已生成 ${state.scenes.length} 个分镜`;
-                    notify(generatedMessage);
-                    rerender('all', { forcePreview: true });
-                },
-                onPaused: (statusData) => {
-                    state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
-                    state.isGeneratingFromScript = false;
-                    rerenderModals();
-                },
-                onError: (error) => {
-                    const idx = state.generateProgressStepIndex;
-                    if (idx >= 0 && idx < progressSteps.length) {
-                        progressSteps[idx].status = 'failed';
-                    }
-                    state.generateProgressError = error.message || '生成分镜失败';
-                    state.isGeneratingFromScript = false;
-                    rerenderModals();
-                },
-            });
+            attachGenerateFromScriptPolling(taskId);
         } catch (error) {
+            const steps = state.generateProgressSteps || [];
             const idx = state.generateProgressStepIndex;
-            if (idx >= 0 && idx < progressSteps.length) {
-                progressSteps[idx].status = 'failed';
+            if (idx >= 0 && idx < steps.length) {
+                steps[idx].status = 'failed';
             }
             state.generateProgressError = error.message || '生成分镜失败';
             state.isGeneratingFromScript = false;
@@ -957,6 +1022,15 @@ async function handleAction(action, target) {
 
     if (action === 'toggle-play') {
         togglePlayback();
+        return;
+    }
+
+    if (action === 'color-first-frame') {
+        // 播放中先停播，避免与预览引擎抢 DOM
+        if (state.isPlaying) {
+            stopPlayback();
+        }
+        await openFirstFrameColoring(rerender);
         return;
     }
 
@@ -2060,14 +2134,32 @@ export function bindEvents() {
     document.addEventListener('click', (event) => {
         const overlay = event.target.closest('.modal-overlay');
         if (overlay && event.target === overlay) {
-            if (state.generateFromScriptTaskId) {
-                stopScriptSplitTaskPolling(state.generateFromScriptTaskId);
-            }
-            if (generateProgressTimer) {
-                clearInterval(generateProgressTimer);
-                generateProgressTimer = null;
-            }
             const modalKind = overlay.dataset.modal || '';
+
+            // 拆分进行中：禁止点遮罩关闭进度弹窗，且绝不停轮询（否则空故事板无法再进弹窗）
+            if (
+                modalKind === 'generate-progress'
+                || (state.showGenerateProgressDialog && !state.generateProgressError)
+            ) {
+                if (!state.generateProgressError) {
+                    return;
+                }
+                // 错误/暂停态允许点遮罩关闭弹窗，但不取消后端任务
+                state.showGenerateProgressDialog = false;
+                state.isGeneratingFromScript = false;
+                rerender([Region.MODAL, Region.LEFT_TAB_BODY]);
+                return;
+            }
+
+            // 配置弹窗：生成中不允许关；未开始时点遮罩可关
+            if (modalKind === 'generate-from-script' || state.showGenerateFromScriptDialog) {
+                if (state.isGeneratingFromScript) return;
+                state.showGenerateFromScriptDialog = false;
+                state.generateFromScriptError = '';
+                rerenderModals();
+                return;
+            }
+
             if (modalKind === 'video-type-switch') {
                 if (state.videoTypeSwitch.saving) return;
                 state.videoTypeSwitch.targetType = null;
@@ -2095,8 +2187,7 @@ export function bindEvents() {
             state.showSceneEditDialog = false;
             state.sceneEditTargetId = null;
             state.sceneEditError = '';
-            state.showGenerateFromScriptDialog = false;
-            state.showGenerateProgressDialog = false;
+            // 注意：不再因点遮罩停止剧本拆分轮询 / 清掉进度任务
             rerenderModals();
             return;
         }

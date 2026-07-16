@@ -1881,6 +1881,70 @@ button {
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
 }
 
+/* 主预览：分镜图 + 涂色工具条 */
+.preview-media-stack {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+}
+
+.preview-media-stack .preview-media {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.preview-image-toolbar {
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    z-index: 5;
+    display: flex;
+    gap: 8px;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    pointer-events: none;
+}
+
+.preview-wrapper:hover .preview-image-toolbar,
+.preview-image-toolbar:focus-within {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.preview-tool-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    background: rgba(15, 23, 42, 0.72);
+    color: #f8fafc;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.preview-tool-btn:hover {
+    background: rgba(37, 99, 235, 0.9);
+    border-color: rgba(147, 197, 253, 0.8);
+}
+
+.preview-tool-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 /* 时间轴预览播放：对白字幕层 */
 .preview-subtitle {
     position: absolute;
@@ -3559,6 +3623,21 @@ button {
 }
 
 /* ---------- 生成分镜进度弹框 ---------- */
+/* 空故事板 + 拆分进行中：恢复入口 */
+.storyboard-split-recover {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+}
+.storyboard-split-recover p {
+    margin: 0;
+    color: var(--muted, #64748b);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
 .generate-progress-dialog {
     width: min(480px, calc(100vw - 32px));
     padding: 20px;

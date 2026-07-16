@@ -178,6 +178,27 @@ export async function selectSceneAsset(sceneId, assetType, assetId) {
     });
 }
 
+/**
+ * 上传图片并登记为分镜资产（涂色编辑等手工出图）。
+ * FormData 不可设 Content-Type，由浏览器自动填充 boundary。
+ * @returns {Promise<{success:boolean, asset_id?:number, result_url?:string, asset_type?:string, selected?:boolean, error?:string}>}
+ */
+export async function uploadSceneAsset(sceneId, file, {
+    assetType = 'first_frame',
+    setSelected = true,
+} = {}) {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('asset_type', assetType);
+    form.append('set_selected', setSelected ? 'true' : 'false');
+    const resp = await fetch(`${API_BASE}/scene/${encodeURIComponent(sceneId)}/asset/upload`, {
+        method: 'POST',
+        headers: authHeaders(false),
+        body: form,
+    });
+    return readJson(resp);
+}
+
 // ==================== 生成 / 任务状态 ====================
 export async function generateSceneImage(sceneId, config = {}) {
     return request(`/scene/${sceneId}/generate-image`, { method: 'POST', body: JSON.stringify(config) });
