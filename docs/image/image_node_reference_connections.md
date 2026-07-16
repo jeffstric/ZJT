@@ -35,9 +35,22 @@
 - 角色/场景/道具参考图显示来源类型和名称作为 tooltip
 - 每张图片右上角有 `×` 按钮可移除单个参考连接
 
+## 编辑图片前置条件（上传门禁）
+
+本地选图后会先展示预览并异步上传到 `/api/video-workflow/upload`。在此期间：
+
+- `node.data.uploading = true`，并暂时清空 `node.data.url`（避免误用旧图）
+- 「编辑图片」「涂色编辑」按钮 `disabled`
+- 门禁函数 `canEditImageNode` / `resolveImageEditSubmitData`（`web/js/image_node.js`）要求 **存在非空服务器 `url` 且未在 uploading**
+- 禁止仅凭本地 `File` 提交 `/api/image-edit`（大图上传中途点编辑的历史缺陷）
+
+上传成功后写入 `url`/`preview` 并清除本地 `file`；失败则清理 `file`，有旧图则恢复旧 `url`。
+
+相关单测：`web/tests/image_node_upload_gate.test.js`。
+
 ## 编辑图片时的参考图传递
 
-点击"编辑图片"按钮时：
+点击"编辑图片"按钮时（须已通过上传门禁）：
 1. 收集所有参考连接的来源节点
 2. 根据节点类型获取对应的图片URL：
    - 图片节点：`data.url`

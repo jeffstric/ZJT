@@ -159,6 +159,8 @@ curl -s -X POST "$BASE_URL/api/storyboard/agent/commands/list-scenes" \
   -H "$AUTH" -H "Content-Type: application/json" -d '{"storyboard_id":10}'
 ```
 
+During the publishing phase the worker also **auto-submits dialogue voiceover tasks** for dialogues that have text and a valid character voice reference — the split task only reaches `completed` once all eligible dialogues have been queued for TTS (TTS itself runs asynchronously via the audio scheduler). You do **not** need to call a separate audio command after split; poll the per-scene `task-status` endpoint to follow TTS progress.
+
 When `model` is omitted, the server reads `storyboard.config_json.selectedScriptSplitLlmModel`, then falls back to the server default. `selectedScriptSplitLlmModel` may be either a string (`"deepseek-v4-pro"`) or an object (`{"model":"deepseek-v4-pro","model_id":1008,"vendor_id":10}`); the server unpacks the object and routes to the exact vendor/model — pass `model_id` + `vendor_id` explicitly only to override. The legacy `force_overwrite_subscene_grids` field is accepted for compatibility but no longer takes effect.
 
 List scenes after splitting:
