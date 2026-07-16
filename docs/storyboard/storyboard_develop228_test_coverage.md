@@ -136,7 +136,7 @@
 | 2.5.2 | `step_plan` 已有计划跳过 | task 已有 segment_plan_json | **不**重复调 LLM，直接转 generating（断点续传） | mock `plan_segments`，断言未被调 |
 | 2.5.3 | `step_plan` 重试上界 | 连续 `PLAN_MAX_RETRIES=3` 次失败 | 抛 `TaskPaused`，task 进 paused | mock `plan_segments` 抛错 3 次 |
 | 2.5.4 | `step_generate_segment` 一 tick 一次 LLM | 一个未完成段 | 单次 tick 仅调一次 `parse_script_to_shots`，通过后 commit 到 registry + 保存检查点 + completed+1 + 进度落在 10%~84% | mock `parse_script_to_shots` |
-| 2.5.5 | `step_generate_segment` LLM 超时 | 单次调用超过 `LLM_CALL_TIMEOUT_SECONDS=330` | 抛超时，`_call_failure_count` +1，不进 failed | mock `parse_script_to_shots` sleep |
+| 2.5.5 | `step_generate_segment` LLM 超时 | 单次调用超过 `LLM_CALL_TIMEOUT_SECONDS=480` | 抛超时，`_call_failure_count` +1，不进 failed | mock `parse_script_to_shots` sleep |
 | 2.5.6 | 段级 QC 失败计数独立 | QC 失败 | `_qc_round` +1，与 `_call_failure_count` 独立预算；达上限进 paused | mock QC 返回 issue |
 | 2.5.7 | `step_merge` 合并 | 全段 completed | 合并 + 全局资产清理 + 空间修复 + renumber + 存 `final_result_json`，转 publishing | mock registry/renumber |
 | 2.5.8 | `step_publish` storyboard 幂等 | source_type=storyboard、无已发布分镜 | `count_scenes_by_split_task`=0 → `build_storyboard_scenes_from_parsed_script` → `create_scenes(script_split_task_id=task.id)`，写 `source_shot_key` | mock model 层 |

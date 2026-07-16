@@ -165,6 +165,10 @@
 5. 依赖图必须无环。
 6. `camera_pose_policy` 只允许 `reference`。
 7. `reason` 不允许为空。
+8. **连续性边界（`continuity_in` / `continuity_out`）**：
+   - **`mode=inherit`**：当前段 `continuity_in` 必须与 `from_segment_id` 的 `continuity_out` 规范化后完全相等（连续戏的空间交接；角色位置变化只能写在本段 `state_changes`）。
+   - **`mode=none`**：**跳过**与前段 / 上游的 out=in 检查，允许时间跳跃、硬切场景、独立人物线导致的人物集合与位置不连续。
+   - 本规则约束的是规划期**角色物理状态快照**，不是镜头景别/机位；段内快切始终允许。
 
 非法计划产生 `quality_plan_invalid`，由阶段一在规划重试预算内重新生成，不能把错误留到阶段二形成永久等待。
 
@@ -183,31 +187,34 @@
 
 segment 满足以下**全部**条件时为 ready：
 
-1. **自身状态为 pending**（`status == SEGMENT_STATUS_PENDING`）。`completed`/`generating`/`failed` 状态的段**绝不**进入 ready 集合——尤其 `failed` 段不得被反复当 ready 重试。
+1. **自身状态为 `pending` 或 `failed`**（`failed` = 中间失败等待重试，见 model 注释）。  
+   `completed` / `generating` **不得**进入 ready。  
+   `failed` **必须**可再次进入 ready，以便跨 tick 质检修正（`qc_max_rounds`）与 force-accept；预算由 engine 的 `_qc_round` / `_call_failure_count` 控制，调度器不把 `failed` 当终态。  
+   > **僵尸 `generating`：** worker 崩溃/重启后段可能长期停在 `generating`，永不进 ready，下游 inherit 一直 waiting，UI 假进度而 llm 无新调用。须在 **任务租约 claim 独占之后** 回收为 `failed` 再调度；细节与租约是否续租见 [任务租约与僵尸段回收](./script_split_lease_and_stale_segment_recovery.md)。
 2. 依赖条件满足（二选一）：
    - `mode=none`；或
    - `mode=inherit`，且 `from_segment_id` 对应检查点状态为 `completed`，并存在可读取的 `parsed_result_json`。
 
-> **⚠️ 不得复用 `get_uncompleted()`：** 该方法（`model/script_split_segment.py:182`）的 SQL 是 `status != 'completed'`，会把 `failed`/`generating` 段也取出来。`select_ready_segments` 的输入必须是 `ScriptSplitSegmentModel.get_all(task_id)`（返回**全部**状态的段），然后在策略层显式按 `status == pending` 过滤。
+> **⚠️ 不得复用 `get_uncompleted()` 作为唯一输入：** 该方法（`model/script_split_segment.py`）的 SQL 是 `status != 'completed'`，会把 `generating` 也取出来且无法表达依赖图。`select_ready_segments` 的输入必须是 `ScriptSplitSegmentModel.get_all(task_id)`，再在策略层按 runnable（pending/failed）+ 依赖条件过滤。
 
-以下情况不能运行：
+以下情况不能运行（不进 ready）：
 
-- 自身非 pending（completed/generating/failed）；
-- 上游为 `pending/generating/failed`；
-- 上游标记 `completed` 但缺少合法 `parsed_result_json`；
-- 依赖目标不存在。
+- 自身为 `completed` / `generating`；
+- 上游为 `pending` / `generating` / `failed`（下游应 **waiting**，等上游完成或重试结束）；
+- 上游标记 `completed` 但缺少合法 `parsed_result_json`（下游 **blocked**）；
+- 依赖目标不存在（下游 **blocked**）。
 
 ### 8.2 调度算法
 
 每次 `_step_generate_parallel_batch()`：
 
-1. 用 `ScriptSplitSegmentModel.get_all(task_id)` 读取当前任务的**全部** segment 检查点（含 completed/failed，供依赖判定）。**不要用 `get_uncompleted()`**——它无法区分 failed 与 pending。
-2. 交给企业版策略 `select_ready_segments(plan, all_segments, limit)` 计算 ready 集合（内部按 §8.1 过滤：仅 `status==pending` 且依赖已满足）。
+1. 用 `ScriptSplitSegmentModel.get_all(task_id)` 读取当前任务的**全部** segment 检查点（含 completed/failed，供依赖判定）。**不要用 `get_uncompleted()` 替代全量读取**。
+2. 交给企业版策略 `select_ready_segments(plan, all_segments, limit)` 计算 ready 集合（内部按 §8.1：`pending|failed` 且依赖已满足）。
 3. **入口分流（关键，避免误 FAILED）**：按 ready 集合与全量段状态决定动作，**绝不复用旧的 `if not segments: step_merge` 路径**：
    - `ready 非空`：按 `segment_index` 稳定排序，取前 `QUALITY_SEGMENT_PARALLELISM` 个，`asyncio.gather()` 并发执行。
    - `ready 为空 且 全部 segment 已 completed`（`len(completed) == total`）：调 `step_merge(task)`。
-   - `ready 为空 且 仍有 pending/generating 段`（段在等待上游）：**直接 return，不调 `step_merge`**，让出 tick 等下一调度周期。
-   - `ready 为空 且 存在 failed 段导致无法推进`：抛 `quality_dependency_blocked`（见 §8.3）。
+   - `ready 为空 且 仍有 waiting 段`（含上游 pending/generating/**failed 重试中**）：**直接 return，不调 `step_merge`**，让出 tick。
+   - `ready 为空 且 存在 blocked 段`（上游缺失或 completed 无候选）：抛 `quality_dependency_blocked`（见 §8.3）。
 4. 本批次完成后统一根据数据库真实状态更新进度。
 5. 下一调度周期重新计算依赖。
 
@@ -230,9 +237,11 @@ seg_4: inherit(seg_2)
 
 若仍有未完成 segment，但 ready 集合为空：
 
-- 存在合法的未完成上游（pending/generating）：正常等待，不报错，`_step_generate_parallel_batch` 直接 return 让出 tick；
-- 所有依赖都指向终态异常（failed）或缺失检查点：抛出 `quality_dependency_blocked`；
+- 存在合法未完成上游（pending/generating/**failed 等待重试**）：正常 **waiting**，不报错，`_step_generate_parallel_batch` 直接 return 让出 tick；同时上游 failed 段自身应进入 ready 在同批或下一批被调度。
+- 依赖目标**缺失**，或上游 `completed` 却无可解析 `parsed_result`：抛出 `quality_dependency_blocked`；
 - 检测到不可能推进的依赖图：抛出 `quality_dependency_deadlock`。
+
+> **反例（已修）**：若把中间 `failed` 当成终态并禁止进 ready，则质检第 1 轮失败后会立刻 `quality_dependency_blocked`，`qc_max_rounds` 与 force-accept 永不生效。
 
 不得通过空批次反复占用任务而没有状态变化。
 
@@ -589,14 +598,16 @@ enterprise/services/script_split_quality/
 
 ### 20.1 看门狗与单段墙钟上限（现状代码结构，本方案不改变）
 
-worker 单步看门狗为 `WORKER_STEP_TIMEOUT_SECONDS=360s`（`task/script_split_task.py:39-42`，`asyncio.wait_for` 包住整个 `_advance_one_step`）。但一个 parallel_child 段在一个 tick 内跑**两个串行的 wait_for**：
+worker 单步看门狗为 `WORKER_STEP_TIMEOUT_SECONDS=540s`（`task/script_split_task.py`，`asyncio.wait_for` 包住整个 `_advance_one_step`）。但一个 parallel_child 段在一个 tick 内跑**两个串行的 wait_for**：
 
-1. `parse_script_to_shots`：timeout = `LLM_CALL_TIMEOUT_SECONDS=330s`（`engine.py:411`）
-2. 段级 QC `run_script_split_qc`：timeout = `WORKER_STEP_TIMEOUT_SECONDS=360s`（`engine.py:1037`）
+1. `parse_script_to_shots`：timeout = `LLM_CALL_TIMEOUT_SECONDS=480s`（`engine.py`）
+2. 段级 QC `run_script_split_qc`：timeout = `WORKER_STEP_TIMEOUT_SECONDS=540s`（`engine.py`）
 
-因此单段墙钟理论上限 = 330 + 360 = **690s**，超过 360s 看门狗。当 LLM 偏慢（接近 330s）时，看门狗会先触发，把任务误杀进 `paused(step_watchdog_timeout)`。
+因此单段墙钟理论上限 = 480 + 540 = **1020s**，超过 540s 看门狗。当 LLM 偏慢（接近 480s）且 QC 也占用可观时间时，看门狗可能先触发，把任务误杀进 `paused(step_watchdog_timeout)`。
 
-**缓和因素**：当前 QC `use_llm=False`（`engine.py:1027`，纯规则校验，正常毫秒级），实际触发概率低。这是**现有代码就有的结构**，本方案不改变 timeout 值，也不引入新风险。实现时知晓即可；若要根治，应将段级 QC 的 timeout 调整为独立的小值常量（如 30s），而非复用 `WORKER_STEP_TIMEOUT_SECONDS`。该项不在本方案范围。
+**缓和因素**：当前 QC `use_llm=False`（纯规则校验，正常毫秒级），实际触发概率低。若要根治，应将段级 QC 的 timeout 调整为独立的小值常量（如 30s），而非复用 `WORKER_STEP_TIMEOUT_SECONDS`。
+
+超时层级（秒）：HTTP/transport **450** < 段级 LLM call **480** < worker step **540** < 任务租约 **720**。
 
 ### 20.2 接口命名：build_runtime_segment_context 是新建，不是改造现有
 

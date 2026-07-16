@@ -310,6 +310,8 @@ strict_json: bool = False
 
 单次段级 LLM coroutine 使用 `LLM_CALL_TIMEOUT_SECONDS`，底层 HTTP 使用 `LLM_HTTP_TIMEOUT_SECONDS`，整个调度步骤使用更大的 `WORKER_STEP_TIMEOUT_SECONDS`。三者满足 `HTTP < LLM call < worker step`，为异常转换、检查点写入和租约释放保留余量。worker watchdog 触发时根任务进入可恢复的 `paused` 并保留 `active_key` 和 segment 检查点，不再进入终态 `failed`。
 
+> **租约与僵尸段：** 任务租约在 claim 时写入、步结束时 `release_lease`；**正常运行中当前不会自动续租**（`renew_lease` 未接入调度路径）。段状态卡在 `generating` 时效果模式 ready 不会调度，可导致 UI 假进度而 llm 无新日志。详见 [任务租约与僵尸段回收](./script_split_lease_and_stale_segment_recovery.md)。
+
 用户点击继续后根据持久化检查点恢复：已有最终结果或发布阶段错误恢复到 `publishing`；已有分段计划恢复到 `generating`，只重试当前失败段；尚无计划才恢复到 `queued` 重新规划。对于因重试耗尽进入 `paused` 的生成阶段任务，若当前段已有 `parsed_result_json`，恢复动作保留耗尽计数，使下一 tick 直接强制接纳该候选；只有没有可解析候选时，才把当前未完成段的 `_qc_round` 和 `_call_failure_count` 重置为 0，开启新的重试周期。`parsed_result_json`、错误反馈和全生命周期 `attempt_count` 始终保留用于定向修复与诊断。显式的零值计数不会再被历史 `attempt_count` 覆盖。重试提示要求模型重新输出当前段完整 JSON，不输出 diff。
 
 ## 9. 分段合并与全局校验

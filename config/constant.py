@@ -722,20 +722,23 @@ class ScriptSplitConstants:
     SEGMENT_MAX_OUTPUT_TOKENS = 65536
 
     # ---- 超时（秒）----
+    # 层级约束（必须满足）：
+    #   LLM_HTTP / LLM_TIMEOUT < LLM_CALL < WORKER_STEP < TASK_LEASE
+    # 效果模式 + thinking 模型单段可能 5～8 分钟；过短会误杀为 segment_timeout。
     # 单次模型调用的 transport 超时，传给底层同步 HTTP 请求
-    LLM_TIMEOUT_SECONDS = 300
+    LLM_TIMEOUT_SECONDS = 450
     # OpenAI 兼容客户端（DeepSeek/通义/Claude 等）的 HTTP 请求超时。
     # 专供 OpenAI SDK 的 client.chat.completions.create(timeout=...) 使用，
-    # 防止 TCP 连接建立后等待响应体时永久挂起（Gemini 客户端已有 timeout=300）。
-    LLM_HTTP_TIMEOUT_SECONDS = 300
+    # 防止 TCP 连接建立后等待响应体时永久挂起。
+    LLM_HTTP_TIMEOUT_SECONDS = 450
     # 单次段级 LLM coroutine 外层超时；必须大于 HTTP timeout，且小于整个 worker step
     # watchdog，为异常转换、检查点写入和租约释放预留时间。
-    LLM_CALL_TIMEOUT_SECONDS = 330
+    LLM_CALL_TIMEOUT_SECONDS = 480
     # worker 单步（规划/单段/合并/发布之一）的外层 wait_for 预算，
-    # 必须 > LLM_TIMEOUT_SECONDS，确保底层请求先结束再触发外层取消
-    WORKER_STEP_TIMEOUT_SECONDS = 360
+    # 必须 > LLM_CALL_TIMEOUT_SECONDS，确保段级调用先结束再触发外层取消
+    WORKER_STEP_TIMEOUT_SECONDS = 540
     # 任务租约时长，必须 > WORKER_STEP_TIMEOUT_SECONDS
-    TASK_LEASE_SECONDS = 600
+    TASK_LEASE_SECONDS = 720
     # 长步骤续租周期；必须满足 0 < interval <= TASK_LEASE_SECONDS / 3。
     LEASE_RENEW_INTERVAL_SECONDS = 120
     # 单次租约数据库续期的异步等待上限，必须小于续租周期。
