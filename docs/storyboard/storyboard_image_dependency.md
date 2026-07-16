@@ -35,14 +35,15 @@
 - 查 `grid_image_tasks` 中 `item_type=5`(location_grid)、`status ∈ (QUEUED, PROCESSING)`、`target_entity_ids_json` 含该 entity_id 的任务。
 - 用 MySQL `JSON_CONTAINS(target_entity_ids_json, %s, '$')` 匹配。
 
-## quality 模式重试上限降级（防死锁）
+## quality 模式场景参考等待上限（严格失败）
 
-quality 模式下"缺图+无运行中任务"会持续阻止——如果九宫格从未提交成功（如 `/api/image-edit` 返 400），会死锁。
+quality 模式下，分镜必须取得场景参考图后才允许提交首帧宫格。拆分发布阶段会先通过企业版策略提交缺失的子场景九宫格；首帧任务随后等待对应场景参考图回写。
 
-**解法**：`_process_one_image_batch_job` 的 WAITING_GRID 捕获块对 `quality_mode=True` 的阻止做计数：
+`StoryboardFirstFrameGridService` 对等待状态做如下处理：
 - batch item 的 `extra_json` 记录 `quality_wait_count`，每次阻止 +1
-- 超过 `StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS`（默认 30，约 5 分钟）后**降级放行**（落入正常生图流程，mode=auto 走 t2i）
-- 降级在日志记 `[batch-loc] ... quality 等待达上限 → 降级放行(t2i)`
+- 若存在运行中的 location 九宫格任务，保持 `PENDING`，等待其完成
+- 若不存在运行中的 location 九宫格任务且超过 `StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS`，将分镜标记为 `FAILED`，错误码为 `location_reference_generation_failed`
+- **不允许降级为无场景参考图的 t2i 生图**，避免效果模式破坏空间一致性
 
 `balanced/speed` 模式的阻止（有运行中任务）不计次——九宫格完成后自然解除。
 
@@ -65,11 +66,12 @@ except StoryboardCliError as exc:
     if exc.error_code == LocationReferenceStatus.WAITING_GRID:
         is_quality_wait = exc.payload.get("quality_mode")
         if is_quality_wait:
-            # quality 模式重试上限保护：计数超限则降级放行（走 t2i）
+            # quality 模式重试上限保护：无生成任务且超限时严格失败
             wait_count = prev_extra.get("quality_wait_count", 0) + 1
             if wait_count > QUALITY_WAIT_MAX_TICKS:
-                # 降级：不 continue，落入正常生图流程
-                logger.warning("quality 等待达上限 → 降级放行(t2i)")
+                update(item_id, status="failed",
+                       error_code="location_reference_generation_failed")
+                continue
             else:
                 update(item_id, extra_json={..., "quality_wait_count": wait_count})
                 continue  # 保持 PENDING，下一 tick 重试
@@ -116,8 +118,8 @@ Effect/quality grid generation also waits across parsed groups: the first grid i
 
 | 等待原因 | 旧行为 | 新行为 |
 |----------|--------|--------|
-| `location_grid_reference`（场景无 reference_image） | 永久 PENDING，不建 ai_tools | 累计 `location_grid_wait_count`；有运行中 location 九宫格则继续等；**无运行中且超 QUALITY_WAIT_MAX_TICKS** 降级放行提交宫格 |
-| `previous_group_first_frame` | 上游 PENDING 算 active，wait 永不超时 | 仅 RUNNING 或「PENDING 且有 ai_tool」算 generating；上游卡住无工具时 **超限后降级无前置参考继续** |
+| `location_grid_reference`（场景无 reference_image） | 永久 PENDING，不建 ai_tools | 累计 `location_grid_wait_count`；有运行中 location 九宫格则继续等；无运行中且超限后以 `location_reference_generation_failed` 失败，禁止降级 |
+| `previous_group_first_frame` | 可能扫描并提前处理多个后续幕 | 每个调度周期只推进最早未完成幕；后一幕必须等待前一幕最后分镜的拆分首帧，前幕失败则后续幕以 `previous_group_failed` 失败 |
 
 复现案例：故事板 #15 job45，location 712 无图且无 location_grid 任务，分镜 10 永久 waiting，11–15 依赖等待 wait_count>200 仍不前进。
 

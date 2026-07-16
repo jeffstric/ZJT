@@ -929,6 +929,200 @@ def test_process_job_fails_previous_group_wait_after_terminal_missing_result(mon
     assert items[1]["extra_json"]["failure_source"] == "previous_group_reference_timeout"
 
 
+def test_process_job_strict_act_does_not_skip_blocked_middle_group(monkeypatch):
+    from services import storyboard_first_frame_grid_service as grid_service_module
+
+    scenes = [
+        {
+            "id": 601 + index,
+            "storyboard_id": 40,
+            "sort_order": index + 1,
+            "title": f"分镜{index + 1}",
+            "act_name": f"第{index + 1}幕",
+            "prompt_json": {
+                "scene_desc": f"第{index + 1}幕画面",
+                "location": {"id": 81 + index, "name": f"场景{index + 1}"},
+                "source": {"group_id": f"grp_00{index + 1}"},
+            },
+        }
+        for index in range(3)
+    ]
+    items = [
+        {
+            "id": 61 + index,
+            "job_id": 94,
+            "scene_id": 601 + index,
+            "group_key": f"group:grp_00{index + 1}",
+            "status": StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
+            "order_index": index + 1,
+            "extra_json": {},
+        }
+        for index in range(3)
+    ]
+    items[0]["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+    items[0]["ai_tool_id"] = 900
+    items[2]["extra_json"] = {
+        "previous_group_reference_wait_count": (
+            StoryboardAutoGenerateConstants.QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS
+        )
+    }
+    submissions = []
+
+    class FakeStoryboardModel:
+        @staticmethod
+        def get_by_id(record_id):
+            return SimpleNamespace(id=40, world_id=99, workflow_ratio="16:9")
+
+    class FakeSceneModel:
+        @staticmethod
+        def list_by_storyboard(storyboard_id):
+            return scenes
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return items
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            for item in items:
+                if int(item["id"]) == int(record_id):
+                    item.update(kwargs)
+            return 1
+
+    class FakeLocationModel:
+        @staticmethod
+        def get_by_id(record_id):
+            return SimpleNamespace(
+                id=record_id,
+                name=f"场景{record_id}",
+                reference_image=f"https://cdn.test/location-{record_id}.png",
+                to_dict=lambda: {
+                    "id": record_id,
+                    "name": f"场景{record_id}",
+                    "reference_image": f"https://cdn.test/location-{record_id}.png",
+                },
+            )
+
+    monkeypatch.setattr(grid_service_module, "StoryboardModel", FakeStoryboardModel)
+    monkeypatch.setattr(grid_service_module, "StoryboardSceneModel", FakeSceneModel)
+    monkeypatch.setattr(grid_service_module, "StoryboardImageBatchItemModel", FakeItemModel)
+    monkeypatch.setattr(grid_service_module, "LocationModel", FakeLocationModel)
+    monkeypatch.setattr(
+        grid_service_module,
+        "submit_grid_image_task",
+        lambda **kwargs: submissions.append(kwargs) or {
+            "success": True,
+            "project_ids": ["pid"],
+            "task_key": "grid:test",
+            "grid_task_id": 901 + len(submissions),
+        },
+    )
+
+    result = StoryboardFirstFrameGridService(enable_llm_refine=False).process_job(
+        {"id": 94, "storyboard_id": 40, "user_id": 7, "auth_token": "token"}
+    )
+
+    assert result["submitted_count"] == 0
+    assert submissions == []
+    assert items[0]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+    assert items[1]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
+    assert items[2]["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
+
+
+def test_process_job_quality_missing_location_reference_fails_instead_of_degrading(monkeypatch):
+    from model import grid_image_tasks as grid_task_module
+    from services import storyboard_first_frame_grid_service as grid_service_module
+
+    scene = {
+        "id": 701,
+        "storyboard_id": 41,
+        "sort_order": 1,
+        "title": "分镜1",
+        "act_name": "第一幕",
+        "prompt_json": {
+            "scene_desc": "新场景中的人物",
+            "location": {"id": 91, "name": "新场景"},
+            "source": {"group_id": "grp_001"},
+        },
+    }
+    item = {
+        "id": 71,
+        "job_id": 95,
+        "scene_id": 701,
+        "group_key": "group:grp_001",
+        "status": StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
+        "order_index": 1,
+        "extra_json": {
+            "location_grid_wait_count": StoryboardAutoGenerateConstants.QUALITY_WAIT_MAX_TICKS,
+        },
+    }
+    submissions = []
+
+    monkeypatch.setattr(
+        grid_service_module.StoryboardModel,
+        "get_by_id",
+        lambda record_id: SimpleNamespace(id=41, world_id=99, workflow_ratio="16:9"),
+    )
+    monkeypatch.setattr(
+        grid_service_module.StoryboardSceneModel,
+        "list_by_storyboard",
+        lambda storyboard_id: [scene],
+    )
+    monkeypatch.setattr(
+        grid_service_module.StoryboardImageBatchItemModel,
+        "list_by_job",
+        lambda job_id: [item],
+    )
+
+    def fake_update(record_id, **kwargs):
+        item.update(kwargs)
+        return 1
+
+    monkeypatch.setattr(
+        grid_service_module.StoryboardImageBatchItemModel,
+        "update",
+        fake_update,
+    )
+    monkeypatch.setattr(
+        grid_service_module.LocationModel,
+        "get_by_id",
+        lambda record_id: SimpleNamespace(
+            id=91,
+            name="新场景",
+            reference_image=None,
+            reference_images=None,
+            to_dict=lambda: {
+                "id": 91,
+                "name": "新场景",
+                "reference_image": None,
+                "reference_images": None,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        grid_task_module.GridImageTasksModel,
+        "has_running_grid_for_entity",
+        lambda entity_id, item_type=5: False,
+    )
+    monkeypatch.setattr(
+        grid_service_module,
+        "submit_grid_image_task",
+        lambda **kwargs: submissions.append(kwargs) or {"success": True},
+    )
+
+    result = StoryboardFirstFrameGridService(enable_llm_refine=False).process_job(
+        {"id": 95, "storyboard_id": 41, "user_id": 7, "auth_token": "token"}
+    )
+
+    assert result["submitted_count"] == 0
+    assert submissions == []
+    assert item["status"] == StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    assert item["error_code"] == "location_reference_generation_failed"
+    assert item["extra_json"]["failure_source"] == "location_reference_generation_failed"
+    assert "degraded_location_grid_reference" not in item["extra_json"]
+
+
 def test_llm_refiner_replaces_prompts_by_scene_id_and_grid_index(monkeypatch):
     from llm import llm_client_factory
 
