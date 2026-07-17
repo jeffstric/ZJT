@@ -279,6 +279,7 @@ async def step_plan(task: ScriptSplitTask) -> None:
     planning_prompt = strategy.build_planning_prompt(
         anchors,
         ScriptSplitConstants.SEGMENT_MAX_OUTPUT_TOKENS,
+        db_locations=db_locations,
     )
     last_errors: List[Dict[str, Any]] = []
     for attempt in range(1, ScriptSplitConstants.PLAN_MAX_RETRIES + 1):

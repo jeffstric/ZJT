@@ -177,7 +177,7 @@ def test_step_plan_uses_strategy_prompt_and_persists_compiled_registry(monkeypat
     saved_fields = []
 
     class FakeStrategy:
-        def build_planning_prompt(self, anchors, max_output_tokens):
+        def build_planning_prompt(self, anchors, max_output_tokens, db_locations=None):
             assert anchors == PLAN_ANCHORS
             assert max_output_tokens > 0
             return "enterprise-quality-prompt"
@@ -884,7 +884,7 @@ def test_step_plan_retries_on_new_root_from_compile(monkeypatch):
     attempts = {"n": 0}
 
     class FakeStrategy:
-        def build_planning_prompt(self, anchors, max_output_tokens):
+        def build_planning_prompt(self, anchors, max_output_tokens, db_locations=None):
             return "prompt"
 
         def compile_plan(self, plan, anchors, db_locations=None):

@@ -373,6 +373,7 @@ docker-compose -f docker-compose-test.yml down -v
 | [bin_path_config.md](bin_path_config.md) | 二进制路径配置 |
 | [常量使用示例.md](常量使用示例.md) | 常量定义与使用 |
 | [短信驱动架构说明.md](短信驱动架构说明.md) | 短信服务架构 |
+| [frontend_static_version.md](frontend_static_version.md) | 前端静态资源版本号（`__VERSION__` 替换） |
 
 ---
 

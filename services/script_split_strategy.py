@@ -30,7 +30,9 @@ class StandardScriptSplitStrategy:
         self,
         anchors: List[Dict[str, Any]],
         max_output_tokens: int,
+        db_locations: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[str]:
+        # 社区版 plan 为 schema v1 纯分段，不产出 location，无需注入已有场景列表。
         return None
 
     def compile_plan(

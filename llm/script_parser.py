@@ -1262,6 +1262,10 @@ async def parse_script_to_shots(
                     location_lines = format_location_tree(db_locations)
                     db_locations_text = f"""
 
+**【硬性前提·禁止假设世界资产为空】**
+- 严禁在思考中假设或声称"世界资产为空""没有预置世界资产""这是独立剧本无预置资产"。世界已有场景严格以下方【数据库已有场景列表】为准。
+- 剧本中出现的每个地点，必须先在下方列表中按"名称+描述语义相似"查找匹配项并复用其 location_db_id；列表非空时不得新建无父级的顶层场景（parent_id 为 null 的新场景）。
+
 **【数据库已有场景列表】**
 以下是数据库中已存在的场景（最多20个），如果剧本中的场景与数据库中的场景相同或相似，请在返回的location对象中设置location_db_id字段为对应的数据库场景ID：
 

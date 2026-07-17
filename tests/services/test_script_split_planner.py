@@ -143,6 +143,20 @@ def test_planning_prompt_does_not_request_estimated_shot_count():
     assert "目标镜头数" not in prompt
 
 
+def test_standard_strategy_build_planning_prompt_ignores_db_locations():
+    """社区版 plan 为纯分段（schema v1），不产出 location；db_locations 参数仅做签名兼容。"""
+    from services.script_split_strategy import StandardScriptSplitStrategy
+
+    strategy = StandardScriptSplitStrategy()
+    anchors = _make_anchors(2)
+    # 旧签名仍可用
+    assert strategy.build_planning_prompt(anchors, 65536) is None
+    # 新签名（带 db_locations）向后兼容，社区版不构造 location prompt
+    assert strategy.build_planning_prompt(
+        anchors, 65536, db_locations=[{"id": 1, "name": "露台"}]
+    ) is None
+
+
 def test_plan_duplicate_segment_id():
     anchors = _make_anchors(2)
     plan = {"segments": [
