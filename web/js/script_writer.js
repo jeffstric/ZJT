@@ -290,6 +290,7 @@
             initCarousel();
             restoreInterventionLevel();
             initCustomModelSelectMenus();
+            initImportDropZone();
 
             // 设置发送按钮事件监听器
             const sendButton = document.getElementById('send-btn');
@@ -3093,17 +3094,13 @@
             document.getElementById('import-world-file').click();
         }
 
-        async function handleImportWorld(event) {
-            const fileInput = event.target;
-            const file = fileInput.files[0];
+        async function importWorldFromFile(file) {
             if (!file) return;
             if (!file.name.endsWith('.zip')) {
                 showError(window.t ? window.t('error_zip_only') : '请选择 .zip 格式的文件');
-                fileInput.value = '';
                 return;
             }
             if (!confirm(window.t ? window.t('confirm_import_world', {name: file.name}) : `确定要导入 "${file.name}" 吗？\n\n导入会覆盖当前世界的同名数据，请确认。`)) {
-                fileInput.value = '';
                 return;
             }
             try {
@@ -3128,9 +3125,48 @@
             } catch (error) {
                 showError((window.t ? window.t('error_import_failed', {error: error.message}) : '导入失败: ' + error.message));
                 updateStatus(window.t ? window.t('status_import_failed') : '导入失败');
-            } finally {
-                fileInput.value = '';
             }
+        }
+
+        function handleImportWorld(event) {
+            const fileInput = event.target;
+            const file = fileInput.files[0];
+            importWorldFromFile(file).finally(() => {
+                fileInput.value = '';
+            });
+        }
+
+        function initImportDropZone() {
+            const dropZone = document.getElementById('importDropZone');
+            if (!dropZone) return;
+
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }, false);
+            });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => {
+                    dropZone.classList.add('drag-over');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    // dragleave 仅在真正离开 dropZone 时移除高亮，避免进入子元素时闪烁
+                    if (eventName === 'dragleave' && dropZone.contains(e.relatedTarget)) {
+                        return;
+                    }
+                    dropZone.classList.remove('drag-over');
+                }, false);
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                const file = e.dataTransfer.files[0];
+                importWorldFromFile(file);
+            }, false);
         }
 
         async function loadFiles(fileType) {

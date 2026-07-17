@@ -465,6 +465,7 @@
   "staging_files": "Staging Files",
   "export_world": "Export World Data",
   "import_world": "Import World Data",
+  "drop_import_world_hint": "Drop .zip",
   "refresh_files": "Refresh File List",
   "delete_staging": "Delete Staging and Reset Session",
   "worlds": "Worlds",

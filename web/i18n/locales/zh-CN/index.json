@@ -456,6 +456,7 @@
   "staging_files": "暂存文件",
   "export_world": "导出世界数据",
   "import_world": "导入世界数据",
+  "drop_import_world_hint": "拖入 .zip",
   "refresh_files": "刷新文件列表",
   "delete_staging": "删除暂存，重置会话",
   "worlds": "世界",
