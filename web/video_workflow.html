@@ -49,9 +49,23 @@
           </div>
         </a>
         <div class="world-selector">
-          <select id="defaultWorldSelect" data-i18n="select_world:title">
-            <option value="" data-i18n="select_world">选择世界...</option>
-          </select>
+          <div class="world-searchable-select" id="worldSearchableSelect">
+            <select id="defaultWorldSelect" data-i18n="select_world:title" style="display: none;">
+              <option value="" data-i18n="select_world">选择世界...</option>
+            </select>
+            <button type="button" class="world-search-trigger" id="worldSearchTrigger" aria-haspopup="listbox" aria-expanded="false">
+              <span class="world-search-trigger-text" id="worldSearchTriggerText" data-i18n="select_world">选择世界...</span>
+              <svg class="world-search-trigger-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <div class="world-search-dropdown" id="worldSearchDropdown" role="listbox" aria-hidden="true">
+              <div class="world-search-input-wrap">
+                <input type="text" id="worldSearchInput" placeholder="搜索世界..." data-i18n="search_world_placeholder:placeholder" autocomplete="off">
+              </div>
+              <div class="world-search-options" id="worldSearchOptions"></div>
+            </div>
+          </div>
           <div class="world-selector-actions">
             <button class="mini-btn" id="createWorldBtn" type="button" data-i18n="create_world:title">+</button>
             <button class="mini-btn secondary" id="editWorldBtn" type="button" data-i18n="edit_world:title">✎</button>

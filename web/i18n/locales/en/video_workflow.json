@@ -7,6 +7,8 @@
   "step_nav_current": "Current",
   "return_to_list": "Back to List",
   "select_world": "Select world...",
+  "search_world_placeholder": "Search world...",
+  "no_worlds_found": "No matching worlds found",
   "create_world": "Create World",
   "edit_world": "Edit Current World",
   "delete_world": "Delete Current World",

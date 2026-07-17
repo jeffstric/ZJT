@@ -315,6 +315,42 @@ class TestExportWorld(unittest.TestCase):
 
         os.unlink(zip_path)
 
+    def test_export_filename_uses_world_name_and_timestamp(self):
+        """测试导出文件名使用世界名称+时间戳"""
+        base_path = self.fm._get_user_world_path(self.user_id, self.world_id)
+        worlds_dir = base_path / "worlds"
+        worlds_dir.mkdir(parents=True, exist_ok=True)
+        world_data = {"id": 1, "name": "测试世界", "user_id": 1}
+        (worlds_dir / f"world_{self.world_id}.json").write_text(
+            json.dumps(world_data, ensure_ascii=False), encoding='utf-8'
+        )
+
+        self._create_character_json("角色A")
+        zip_path = self.fm.export_world(self.user_id, self.world_id)
+        self.assertTrue(os.path.exists(zip_path))
+
+        zip_filename = os.path.basename(zip_path)
+        # 文件名应以世界名称开头，并包含时间戳和 .zip 后缀
+        self.assertTrue(zip_filename.startswith("测试世界_"), f"文件名应为世界名称+时间戳，实际为: {zip_filename}")
+        self.assertTrue(zip_filename.endswith(".zip"), f"文件名应以 .zip 结尾，实际为: {zip_filename}")
+        # 时间戳格式为 YYYYMMDD_HHMMSS，中间用下划线连接
+        import re
+        self.assertRegex(zip_filename, r"^测试世界_\d{8}_\d{6}\.zip$")
+
+        os.unlink(zip_path)
+
+    def test_export_filename_fallback_when_world_name_missing(self):
+        """测试世界名称为空时回退到 world_export_{world_id}_{timestamp}.zip"""
+        self._create_character_json("角色A")
+        zip_path = self.fm.export_world(self.user_id, self.world_id)
+        self.assertTrue(os.path.exists(zip_path))
+
+        zip_filename = os.path.basename(zip_path)
+        import re
+        self.assertRegex(zip_filename, r"^world_export_test_world_\d{8}_\d{6}\.zip$")
+
+        os.unlink(zip_path)
+
     def test_export_with_images(self):
         """测试导出包含图片"""
         # 创建图片文件

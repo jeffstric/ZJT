@@ -7,6 +7,8 @@
   "step_nav_current": "当前",
   "return_to_list": "返回列表",
   "select_world": "选择世界...",
+  "search_world_placeholder": "搜索世界...",
+  "no_worlds_found": "未找到匹配的世界",
   "create_world": "新建世界",
   "edit_world": "编辑当前世界",
   "delete_world": "删除当前世界",

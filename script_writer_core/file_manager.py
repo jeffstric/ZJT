@@ -1296,7 +1296,18 @@ class FileManager:
             raise FileNotFoundError(f"世界目录不存在: {base_path}")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_name = f"world_export_{world_id}_{timestamp}.zip"
+
+        # 优先使用世界名称作为导出文件名，便于用户识别
+        world_data = self.get_world_json(user_id, world_id)
+        world_name = (world_data.get('name') or '').strip() if world_data else ''
+        if world_name:
+            safe_name = re.sub(r'[<>:"/\\|?*]', '_', world_name)
+            safe_name = re.sub(r'\s+', '_', safe_name).strip('._')
+            if len(safe_name) > 50:
+                safe_name = safe_name[:50]
+            zip_name = f"{safe_name}_{timestamp}.zip" if safe_name else f"world_export_{world_id}_{timestamp}.zip"
+        else:
+            zip_name = f"world_export_{world_id}_{timestamp}.zip"
         zip_path = Path(tempfile.gettempdir()) / zip_name
 
         collected_images: Set[str] = set()

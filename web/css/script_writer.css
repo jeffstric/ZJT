@@ -1125,6 +1125,14 @@ body {
     box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
 }
 
+.message-input:disabled {
+    background: var(--bg-light);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    border-color: var(--border-color);
+    box-shadow: none;
+}
+
 .send-btn {
     position: absolute;
     right: 8px;
@@ -1478,6 +1486,55 @@ body {
 .world-close-btn:hover {
     background: var(--bg-light);
     color: var(--text-primary);
+}
+
+.world-search-box {
+    position: relative;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: white;
+}
+
+.world-search-input {
+    width: 100%;
+    padding: 10px 32px 10px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-light);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s;
+}
+
+.world-search-input:focus {
+    border-color: var(--primary-color);
+    background: white;
+    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+}
+
+.world-search-clear {
+    position: absolute;
+    right: 22px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 50%;
+    background: var(--text-muted);
+    color: white;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.world-search-clear:hover {
+    background: var(--text-secondary);
 }
 
 .world-list {

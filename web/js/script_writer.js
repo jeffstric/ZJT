@@ -278,6 +278,7 @@
             await loadTextToImageModels();
             await loadComputingPower();
             await loadUserWorlds();
+            bindWorldSearchEvents();
             // 加载任务配置（用于多角度图生成）
             if (window.TaskConfig) {
                 await window.TaskConfig.load();
@@ -3075,7 +3076,7 @@
                 }
                 const a = document.createElement('a');
                 a.href = result.download_url;
-                a.download = result.filename || `world_${WORLD_ID}_export.zip`;
+                a.download = result.filename || `world_export_${WORLD_ID}_${new Date().toISOString().slice(0,19).replace(/[-T:]/g, '')}.zip`;
                 a.target = '_blank';
                 document.body.appendChild(a);
                 a.click();
@@ -5327,6 +5328,103 @@
             return JSON.stringify(data, null, 2);
         }
 
+        // 缓存世界列表，用于侧边栏搜索
+        let cachedWorlds = [];
+
+        function renderWorldList(worlds) {
+            const worldList = document.getElementById('world-list');
+            if (!worldList) return;
+
+            if (worlds.length === 0) {
+                const searchInput = document.getElementById('world-search-input');
+                const hasKeyword = searchInput && searchInput.value.trim();
+                worldList.innerHTML = `<div class="world-empty">${hasKeyword
+                    ? (window.t ? window.t('no_worlds_found') : '未找到匹配的世界')
+                    : (window.t ? window.t('no_worlds') : '暂无世界')}</div>`;
+                return;
+            }
+
+            worldList.innerHTML = '';
+            worlds.forEach(world => {
+                const worldItem = document.createElement('div');
+                worldItem.className = 'world-item' + (world.id == WORLD_ID ? ' active' : '');
+
+                const worldInfo = document.createElement('div');
+                worldInfo.className = 'world-info';
+                worldInfo.onclick = () => switchWorld(world.id);
+
+                const worldName = document.createElement('div');
+                worldName.className = 'world-name';
+                worldName.textContent = world.name;
+                worldInfo.appendChild(worldName);
+
+                if (world.description) {
+                    const worldDesc = document.createElement('div');
+                    worldDesc.className = 'world-desc';
+                    worldDesc.textContent = world.description;
+                    worldInfo.appendChild(worldDesc);
+                }
+
+                const worldActions = document.createElement('div');
+                worldActions.className = 'world-actions';
+
+                const editBtn = document.createElement('button');
+                editBtn.className = 'world-edit-btn';
+                editBtn.title = '编辑世界';
+                editBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    showEditWorldModal(world.id, world.name, world.description || '', world.story_type);
+                };
+                editBtn.innerHTML = `
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                `;
+
+                worldActions.appendChild(editBtn);
+                worldItem.appendChild(worldInfo);
+                worldItem.appendChild(worldActions);
+                worldList.appendChild(worldItem);
+            });
+        }
+
+        function filterWorlds(keyword) {
+            const normalized = (keyword || '').toLowerCase().trim();
+            if (!normalized) {
+                renderWorldList(cachedWorlds);
+                return;
+            }
+            const filtered = cachedWorlds.filter(world => {
+                const name = (world.name || '').toLowerCase();
+                const desc = (world.description || '').toLowerCase();
+                return name.includes(normalized) || desc.includes(normalized);
+            });
+            renderWorldList(filtered);
+        }
+
+        function bindWorldSearchEvents() {
+            const searchInput = document.getElementById('world-search-input');
+            const clearBtn = document.getElementById('world-search-clear');
+            if (!searchInput) return;
+
+            searchInput.addEventListener('input', (e) => {
+                filterWorlds(e.target.value);
+                if (clearBtn) {
+                    clearBtn.style.display = e.target.value ? 'flex' : 'none';
+                }
+            });
+
+            if (clearBtn) {
+                clearBtn.addEventListener('click', () => {
+                    searchInput.value = '';
+                    filterWorlds('');
+                    clearBtn.style.display = 'none';
+                    searchInput.focus();
+                });
+            }
+        }
+
         async function loadUserWorlds() {
             try {
                 const response = await fetch('/api/worlds?page=1&page_size=100', {
@@ -5336,65 +5434,21 @@
                     }
                 });
                 const data = await response.json();
-                
+
                 // 兼容后端返回格式: {code: 0, data: {data: [...]}}
                 const worlds = data.data?.data || data.worlds || [];
                 if (data.code === 0 || data.success) {
-                    const worldList = document.getElementById('world-list');
-                    
-                    if (worlds.length === 0) {
-                        worldList.innerHTML = '<div class="world-empty">暂无世界</div>';
-                        return;
-                    }
-                    
-                    worldList.innerHTML = '';
-                    worlds.forEach(world => {
-                        const worldItem = document.createElement('div');
-                        worldItem.className = 'world-item' + (world.id == WORLD_ID ? ' active' : '');
-                        
-                        const worldInfo = document.createElement('div');
-                        worldInfo.className = 'world-info';
-                        worldInfo.onclick = () => switchWorld(world.id);
-                        
-                        const worldName = document.createElement('div');
-                        worldName.className = 'world-name';
-                        worldName.textContent = world.name;
-                        worldInfo.appendChild(worldName);
-                        
-                        if (world.description) {
-                            const worldDesc = document.createElement('div');
-                            worldDesc.className = 'world-desc';
-                            worldDesc.textContent = world.description;
-                            worldInfo.appendChild(worldDesc);
-                        }
-                        
-                        const worldActions = document.createElement('div');
-                        worldActions.className = 'world-actions';
-                        
-                        const editBtn = document.createElement('button');
-                        editBtn.className = 'world-edit-btn';
-                        editBtn.title = '编辑世界';
-                        editBtn.onclick = (e) => {
-                            e.stopPropagation();
-                            showEditWorldModal(world.id, world.name, world.description || '', world.story_type);
-                        };
-                        editBtn.innerHTML = `
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                            </svg>
-                        `;
-                        
-                        worldActions.appendChild(editBtn);
-                        worldItem.appendChild(worldInfo);
-                        worldItem.appendChild(worldActions);
-                        worldList.appendChild(worldItem);
-                    });
+                    cachedWorlds = worlds;
+                    // 应用当前搜索关键字过滤（如果有）
+                    const searchInput = document.getElementById('world-search-input');
+                    filterWorlds(searchInput ? searchInput.value : '');
                 } else {
+                    cachedWorlds = [];
                     document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
                 }
             } catch (error) {
                 console.error('加载世界列表失败:', error);
+                cachedWorlds = [];
                 document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
             }
         }

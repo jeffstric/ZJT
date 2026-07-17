@@ -38,7 +38,8 @@ body.tour-world-locked .brand-floating{
   z-index: 1600;
   pointer-events:none;
 }
-body.tour-world-locked .brand-floating #defaultWorldSelect{
+body.tour-world-locked .brand-floating #defaultWorldSelect,
+body.tour-world-locked .brand-floating .world-search-trigger{
   pointer-events:none;
   opacity:0.45;
 }
@@ -574,6 +575,117 @@ select{
   font-size: 14px;
   font-weight: 700;
 }
+
+/* 可搜索世界选择器 */
+.world-searchable-select{
+  position: relative;
+  display: inline-block;
+}
+.world-search-trigger{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 140px;
+  max-width: 200px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.world-search-trigger:hover{
+  border-color: var(--primary);
+}
+.world-search-trigger:focus,
+.world-search-trigger[aria-expanded="true"]{
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.15);
+  outline: none;
+}
+.world-search-trigger.no-world-selected{
+  border-color: var(--danger);
+  color: var(--danger);
+  background: #fef2f2;
+}
+.world-search-trigger-text{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.world-search-trigger-arrow{
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+.world-search-trigger[aria-expanded="true"] .world-search-trigger-arrow{
+  transform: rotate(180deg);
+}
+.world-search-dropdown{
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  display: none;
+  flex-direction: column;
+  width: 240px;
+  max-height: 320px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+  overflow: hidden;
+}
+.world-search-dropdown.open{
+  display: flex;
+}
+.world-search-input-wrap{
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  background: #f9fafb;
+}
+.world-search-input-wrap input{
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+.world-search-input-wrap input:focus{
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.12);
+}
+.world-search-options{
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+.world-search-option{
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.world-search-option:hover,
+.world-search-option.selected{
+  background: var(--primary-light);
+  color: #15803d;
+}
+.world-search-empty{
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .tour-trigger{
   padding: 6px 10px;
   font-size: 12px;
