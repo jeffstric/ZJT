@@ -76,6 +76,36 @@ assert.match(
 );
 
 assert.match(
+  cssSource,
+  /\.send-btn\s*\{[\s\S]*top:\s*50%[\s\S]*transform:\s*translateY\(-50%\)/,
+  'send button should be vertically centered in single-line input'
+);
+
+assert.match(
+  cssSource,
+  /\.input-container\.is-expanded\s+\.send-btn\s*\{[\s\S]*bottom:\s*8px/,
+  'send button should stick to bottom-right when input is multi-line expanded'
+);
+
+assert.match(
+  cssSource,
+  /\.input-section\s*\{[\s\S]*safe-area-inset-bottom/,
+  'input section should respect bottom safe-area on notched phones'
+);
+
+assert.match(
+  jsSource,
+  /function\s+syncSendBtnLayout\s*\(/,
+  'syncSendBtnLayout should exist to toggle is-expanded on the input container'
+);
+
+assert.match(
+  jsSource,
+  /function\s+restoreInputControlsAfterHistory\([\s\S]*syncSendBtnLayout/,
+  'history restore should re-sync send button layout after messages render'
+);
+
+assert.match(
   jsSource,
   /function\s+restoreInputControlsAfterHistory\([\s\S]*loadAndDisplayHistory|function\s+loadAndDisplayHistory[\s\S]*restoreInputControlsAfterHistory/,
   'history load should restore input controls after rendering messages'

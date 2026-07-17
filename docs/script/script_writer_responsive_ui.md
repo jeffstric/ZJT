@@ -17,6 +17,13 @@
 - `max-width: 1024px` 时隐藏左侧 `.step-nav` 悬浮导览条（fixed 叠加约 60px，窄屏会遮挡聊天区/输入区），同时将 `.main-layout` 的 `margin-left` 归零。
 - `.chat-area` 设置 `min-width: 0` + `overflow-x: hidden`，防止历史消息中的宽表格/长串把 flex 列撑出视口。
 - `#send-btn` 在所有宽度下绝对定位在输入框内部右侧，避免被裁切后表现为“发送按钮消失”。
+- **发送按钮垂直布局**：
+  - 单行：`top: 50%` + `transform: translateY(-50%)` 在输入框内垂直居中。
+  - 多行：JS `syncSendBtnLayout()` 在 `offsetHeight > 56` 时给 `.input-container` 加 `is-expanded`，按钮改为贴右下（`bottom: 8px`）。
+  - hover 上浮与居中 `translateY` 合并（`calc(-50% - 1px)`），避免 hover 时位置跳动。
+  - `pulse-sending` 只动 opacity，不与 transform 冲突。
+- **输入区钉底**：`.input-section` 为聊天列 `flex-shrink: 0` 子项，并设置 `padding-bottom: max(..., env(safe-area-inset-bottom))`，窄屏/刘海机底部始终可见。
+- **历史加载后**：`restoreInputControlsAfterHistory()` 恢复可点状态后调用 `syncSendBtnLayout()`，窄屏再对 `.input-section` 做 `scrollIntoView` 兜底。
 
 ## AI 介入程度多语言
 

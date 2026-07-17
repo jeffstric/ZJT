@@ -321,6 +321,7 @@
                 messageInput.addEventListener('input', function() {
                     this.style.height = 'auto';
                     this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+                    syncSendBtnLayout();
                 });
 
                 messageInput.addEventListener('keydown', function(e) {
@@ -329,6 +330,8 @@
                         sendMessage();
                     }
                 });
+                // 首屏：单行居中
+                syncSendBtnLayout();
             }
             
             // 检查是否缺少world_id
@@ -512,8 +515,25 @@
         }
 
         /**
+         * 按输入框高度切换发送按钮垂直布局：
+         * - 单行：CSS top:50% 居中
+         * - 多行（is-expanded）：贴右下
+         * 阈值略大于单行自然高度，避免亚像素抖动。
+         */
+        function syncSendBtnLayout() {
+            const input = document.getElementById('message-input');
+            const container = input && input.closest
+                ? input.closest('.input-container')
+                : document.querySelector('.input-container');
+            if (!input || !container) return;
+            const expanded = input.offsetHeight > 56;
+            container.classList.toggle('is-expanded', expanded);
+        }
+
+        /**
          * 历史消息渲染后恢复底部输入/发送控件。
          * 宽内容曾会把 flex 布局撑出视口导致发送按钮被裁切；同时避免 isProcessing 残留导致按钮一直 disabled。
+         * 窄屏兜底：确保输入条滚入视口，避免加载长历史后发送按钮“看不见”。
          */
         function restoreInputControlsAfterHistory() {
             if (!window.WORLD_ID) return;
@@ -526,6 +546,17 @@
             if (sendBtn && !isProcessing && !pendingVerificationId) {
                 sendBtn.disabled = false;
                 sendBtn.classList.remove('sending');
+            }
+            syncSendBtnLayout();
+            // 窄屏：输入区应始终在聊天列底部；极端布局下再 scrollIntoView 兜底
+            const inputSection = document.querySelector('.input-section');
+            if (inputSection && typeof inputSection.scrollIntoView === 'function') {
+                try {
+                    inputSection.scrollIntoView({ block: 'end', behavior: 'instant' });
+                } catch (_) {
+                    // Safari 旧版不支持 behavior:'instant'
+                    inputSection.scrollIntoView(false);
+                }
             }
         }
 
@@ -1135,6 +1166,7 @@
                 }
                 input.value = '';
                 input.style.height = 'auto';
+                syncSendBtnLayout();
             }
 
             if (isSystemMessage) {
@@ -1814,6 +1846,7 @@
                         if (fromInput) {
                             input.value = '';
                             input.style.height = 'auto';
+                            syncSendBtnLayout();
                         }
                         input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
                     }

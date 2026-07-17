@@ -1055,12 +1055,18 @@ body {
 /* Input Section */
 .input-section {
     padding: 24px;
+    /* 窄屏/刘海机底部安全区，避免发送钮被 Home 指示条挡住 */
+    padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
     background: white;
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
     min-width: 0;
     width: 100%;
+    max-width: 100%;
     box-sizing: border-box;
+    /* 始终钉在聊天列底部，历史消息再长也不滚走 */
+    position: relative;
+    z-index: 5;
 }
 
 .input-actions {
@@ -1093,6 +1099,8 @@ body {
 
 /*
  * 发送按钮始终绝对定位在输入框内部右侧。
+ * - 单行：垂直居中（top:50% + translateY）
+ * - 多行：.input-container.is-expanded 时贴右下
  * 避免历史消息撑宽 flex 布局后，发送按钮被挤出视口裁切（表现为“按钮消失”）。
  */
 .input-container {
@@ -1101,21 +1109,25 @@ body {
     margin-bottom: 12px;
     min-width: 0;
     width: 100%;
+    max-width: 100%;
+    overflow: visible;
 }
 
 .message-input {
     display: block;
     width: 100%;
     min-width: 0;
+    max-width: 100%;
     box-sizing: border-box;
     padding: 14px 56px 14px 18px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     font-size: 14px;
     font-family: inherit;
+    line-height: 1.5;
     resize: none;
     outline: none;
-    transition: all 0.2s;
+    transition: border-color 0.2s, box-shadow 0.2s;
     max-height: 120px;
     background: white;
 }
@@ -1136,7 +1148,9 @@ body {
 .send-btn {
     position: absolute;
     right: 8px;
-    bottom: 8px;
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
     z-index: 2;
     display: flex;
     align-items: center;
@@ -1149,13 +1163,24 @@ body {
     background: var(--primary-gradient);
     color: white;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
     box-shadow: 0 2px 8px -2px rgba(139, 92, 246, 0.4);
 }
 
 .send-btn:hover:not(:disabled) {
-    transform: translateY(-1px);
+    transform: translateY(calc(-50% - 1px));
     box-shadow: 0 4px 12px -2px rgba(139, 92, 246, 0.5);
+}
+
+/* 多行增高后贴右下，不挡中间行文字 */
+.input-container.is-expanded .send-btn {
+    top: auto;
+    bottom: 8px;
+    transform: none;
+}
+
+.input-container.is-expanded .send-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
 }
 
 .send-btn:disabled {
@@ -3113,6 +3138,7 @@ body {
 
     .input-section {
         padding: 12px 16px;
+        padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
     }
 
     .input-container {
@@ -3126,6 +3152,16 @@ body {
     .send-btn {
         width: 40px;
         height: 40px;
+        /* 窄屏仍垂直居中；is-expanded 时由通用规则贴底 */
+        top: 50%;
+        bottom: auto;
+        transform: translateY(-50%);
+    }
+
+    .input-container.is-expanded .send-btn {
+        top: auto;
+        bottom: 8px;
+        transform: none;
     }
 
     .form-grid {
@@ -3212,7 +3248,23 @@ body {
         width: 36px;
         height: 36px;
         right: 6px;
+        top: 50%;
+        bottom: auto;
+        transform: translateY(-50%);
+    }
+
+    .send-btn:hover:not(:disabled) {
+        transform: translateY(calc(-50% - 1px));
+    }
+
+    .input-container.is-expanded .send-btn {
+        top: auto;
         bottom: 6px;
+        transform: none;
+    }
+
+    .input-container.is-expanded .send-btn:hover:not(:disabled) {
+        transform: translateY(-1px);
     }
 }
 
