@@ -126,6 +126,26 @@ export function isAutoImageBatchTerminal(status = state.autoImageBatch?.status) 
     return AUTO_IMAGE_BATCH_TERMINAL_STATUSES.has(status);
 }
 
+/**
+ * 是否允许 batch 轮询结果写回场景首帧。
+ * 用户涂色/手动选候选后 selectedFirstFrameId 会指向新资产；batch item 仍挂着生成时的旧 asset，
+ * 若无条件覆盖会出现「涂色后隔一会又变回原图」。
+ */
+export function shouldApplyBatchFirstFrameToScene(scene, item = {}) {
+    if (!scene) return false;
+    const curSel = scene.selectedFirstFrameId;
+    const hasSelection = !(curSel === null || curSel === undefined || curSel === '');
+    const batchAssetId = item.assetId;
+    const hasBatchAsset = !(batchAssetId === null || batchAssetId === undefined || batchAssetId === '');
+
+    // 尚无选中：允许用 batch 结果补全缺失首帧
+    if (!hasSelection) return true;
+    // batch 还没落到 asset：仅当场景仍无图时可写 URL（不改 selected）
+    if (!hasBatchAsset) return !String(scene.firstFrameUrl || '').trim();
+    // 仅当当前选中仍是 batch 对应资产时才同步（URL 更新 / 宫格拆分回写）
+    return String(curSel) === String(batchAssetId);
+}
+
 export function applyImageBatchStatus(batchStatus = {}) {
     const itemsBySceneId = {};
     const targetItems = [];
@@ -138,6 +158,12 @@ export function applyImageBatchStatus(batchStatus = {}) {
 
         const scene = state.scenes.find(entry => String(entry.id) === String(item.sceneId));
         if (!scene) continue;
+
+        // 用户已选其它候选（含涂色上传）时，禁止 batch 用旧 asset 覆盖
+        if (!shouldApplyBatchFirstFrameToScene(scene, item)) {
+            continue;
+        }
+
         // 仅 completed/ready 写 URL；禁止用宫格整图覆盖已有单格首帧（避免缩略图/主预览闪烁）
         if (item.resultUrl) {
             const next = String(item.resultUrl).trim();

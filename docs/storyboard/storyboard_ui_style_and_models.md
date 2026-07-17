@@ -116,6 +116,8 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 
 `pickRememberedTaskId(models, storageKey)` 在读取 localStorage 后会**校验该 task_id 仍存在于当前可用模型列表**，避免读到已下线模型的 task_id 造成空选中；若不存在则回退到列表第一个并同步回写 localStorage 以固化默认。该兜底对齐已有 LLM 模型的 `storyboard_lastSelectedLlmModel` / `storyboard_lastScriptSplitLlmModel` 设计。
 
+`GET /api/storyboard/models` 的列表按各任务 `UnifiedTaskConfig.sort_order` **升序**返回（越小越靠前）。无记忆时默认视频模型即为列表第一项；当前代码配置下 LTX2.3 的 `sort_order=30` 小于 Wan2.2 的 `32`，因此默认会是 LTX2.3。不在前端再硬编码某个模型 key。
+
 ### 5.2 预览区与分镜序列缩略图的比例适配
 
 竖屏（9:16）故事板下，预览区与底部分镜序列缩略图原先会出现显示异常或严重裁切。修复后两者均按故事板 `workflowRatio` 自适应：

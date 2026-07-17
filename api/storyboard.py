@@ -1864,6 +1864,14 @@ async def get_storyboard_models(
 
     def _list(category):
         configs = UnifiedConfigRegistry.get_by_category(category)
+        # 与管理端/工作流一致：按 sort_order 升序，保证默认取「列表第一项」时语义稳定
+        configs = sorted(
+            configs,
+            key=lambda c: (
+                float(getattr(c, 'sort_order', 999999) or 999999),
+                int(getattr(c, 'id', 0) or 0),
+            ),
+        )
         items = []
         for c in configs:
             if not c.enabled or c.hidden:
@@ -1871,6 +1879,7 @@ async def get_storyboard_models(
             item = {
                 'task_id': c.id,
                 'key': c.key,
+                'short_key': getattr(c, 'short_key', None) or '',
                 'name': c.name,
                 'computing_power': c.get_computing_power() if c.computing_power else 0,
                 'supported_durations': c.supported_durations or [],

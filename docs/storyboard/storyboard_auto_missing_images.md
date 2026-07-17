@@ -67,6 +67,19 @@ curl http://localhost:9003/api/storyboard/10/task-status?asset_type=first_frame 
 
 后端 `_asset_task_info` 仅在 asset 无 `result_url` 时才用 `ai_tools.result_url` 兜底。
 
+## 涂色 / 手动选中首帧保护
+
+自动补全 batch 轮询（`applyImageBatchStatus`）会带上 item 的 `asset_id` / `result_url`。  
+若用户已通过**涂色上传**或**右侧候选点击**把 `selectedFirstFrameId` 切到其它资产，batch item 往往仍指向生成时的旧 asset。
+
+前端约定（`shouldApplyBatchFirstFrameToScene`）：
+
+- 场景**无选中** → 允许 batch 写入（补全缺失）
+- 场景选中 **===** batch `asset_id` → 允许同步 URL（宫格拆分、任务完成回写）
+- 场景选中 **!==** batch `asset_id` → **禁止**覆盖 `firstFrameUrl` / `selectedFirstFrameId`
+
+否则会出现：涂色保存成功后，因页面仍在「补全中 x/y」轮询，隔几秒预览又跳回原图。
+
 ## Billing Boundary
 
 `auto-generate-missing-images` creates one orchestration job. In `speed` and `balanced` it selects scenes that need an image and calls the existing `StoryboardAgentCliService.generate_image()` method for each submitted scene. In `quality + first_frame` it submits same-act storyboard first-frame grids through `StoryboardFirstFrameGridService`, then `task/grid_image_task.py` cuts the grid and writes each cell back as `storyboard_scene_asset(first_frame)`.
