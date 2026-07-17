@@ -656,6 +656,7 @@ class StoryboardAgentCliService:
         image_size: Optional[str] = None,
         count: int = 1,
         sequence_mode: Optional[str] = None,
+        force_bypass: bool = False,
     ) -> Dict[str, Any]:
         if mode not in VALID_IMAGE_MODES:
             raise StoryboardCliError("invalid_mode", f"invalid image mode: {mode}")
@@ -674,7 +675,7 @@ class StoryboardAgentCliService:
         # 若当前 scene 引用的子场景 location.reference_image 缺失，按 sequence_mode 决定是否阻止：
         #   - quality（效果模式）：严格阻止，等待九宫格完成（缺图+无运行中任务也阻止，强制保证质量）
         #   - balanced/speed（均衡/速度模式）：仅在九宫格任务运行中时等待；缺图+无任务则放行走 t2i 兜底
-        self._check_location_grid_readiness(context, sequence_mode=sequence_mode)
+        self._check_location_grid_readiness(context, sequence_mode=sequence_mode, force_bypass=force_bypass)
 
         if mode == "auto":
             mode = "image_edit" if reference_urls else "text_to_image"
@@ -1915,17 +1916,69 @@ class StoryboardAgentCliService:
                             break
                         continue
                     else:
+                        # balanced/speed：缺参考图 + 有运行中九宫格任务（可能已卡死）。
+                        # 累加等待计数；超过 BALANCED_LOCATION_REFERENCE_WAIT_MAX_TICKS 后
+                        # 放弃等待，降级走 t2i 文生图（force_bypass 跳过 readiness 检查）。
+                        prev_extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+                        prev_count = int(prev_extra.get("location_grid_wait_count") or 0)
+                        wait_count = prev_count + 1
+                        max_wait = int(StoryboardAutoGenerateConstants.BALANCED_LOCATION_REFERENCE_WAIT_MAX_TICKS)
+                        wait_extra = {
+                            **prev_extra,
+                            "waiting": "location_grid_reference",
+                            "location_db_id": exc.payload.get("location_db_id"),
+                            "location_grid_wait_count": wait_count,
+                            "location_grid_wait_max_ticks": max_wait,
+                        }
+                        if wait_count <= max_wait:
+                            StoryboardImageBatchItemModel.update(int(item["id"]), extra_json=wait_extra)
+                            logger.info(
+                                "[batch-loc] item=#%s scene=%s → 保持 PENDING (等待 location 九宫格，%d/%d)",
+                                item["id"], item["scene_id"], wait_count, max_wait,
+                            )
+                            continue
+                        # 超时降级：放弃等待参考图，走 t2i 文生图
+                        logger.warning(
+                            "[batch-loc] item=#%s scene=%s → 降级 t2i (等待 %d/%d 超时，放弃 location 参考图)",
+                            item["id"], item["scene_id"], wait_count, max_wait,
+                        )
+                        degraded_result = self.generate_image(
+                            scene_id=int(item["scene_id"]),
+                            user_id=int(job["user_id"]),
+                            auth_token=job.get("auth_token") or "",
+                            mode="text_to_image",
+                            asset_type=job.get("asset_type") or StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE,
+                            prompt=job.get("prompt"),
+                            ratio=job.get("ratio"),
+                            image_size=job.get("image_size"),
+                            count=int(job.get("count") or 1),
+                            sequence_mode=job.get("sequence_mode"),
+                            force_bypass=True,
+                        )
+                        degraded_project_ids = degraded_result.get("project_ids") or []
+                        degraded_asset_ids = degraded_result.get("asset_ids") or []
+                        degraded_selected = degraded_result.get("selected_asset_id") or (degraded_asset_ids[0] if degraded_asset_ids else None)
+                        degraded_extra = {
+                            **wait_extra,
+                            "waiting": "",
+                            "degraded_from_location_reference": True,
+                        }
                         StoryboardImageBatchItemModel.update(
                             int(item["id"]),
-                            extra_json={
-                                "waiting": "location_grid_reference",
-                                "location_db_id": exc.payload.get("location_db_id"),
-                            },
+                            status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
+                            ai_tool_id=degraded_project_ids[0] if degraded_project_ids else None,
+                            asset_id=degraded_selected,
+                            project_ids=degraded_project_ids,
+                            reference_item_id=reference_item_id,
+                            reference_url=None,
+                            extra_json=degraded_extra,
                         )
-                        logger.info(
-                            "[batch-loc] item=#%s scene=%s → 保持 PENDING (等待 location 九宫格完成)",
-                            item["id"], item["scene_id"],
-                        )
+                        item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+                        item["project_ids"] = degraded_project_ids
+                        item["asset_id"] = degraded_selected
+                        item["reference_item_id"] = reference_item_id
+                        item["reference_url"] = None
+                        submitted_count += 1
                         continue
                 StoryboardImageBatchItemModel.update(
                     int(item["id"]),
@@ -2925,7 +2978,7 @@ class StoryboardAgentCliService:
                 return _to_dict(location)
         return location_data if isinstance(location_data, dict) else None
 
-    def _check_location_grid_readiness(self, context: Dict[str, Any], *, sequence_mode: Optional[str] = None) -> None:
+    def _check_location_grid_readiness(self, context: Dict[str, Any], *, sequence_mode: Optional[str] = None, force_bypass: bool = False) -> None:
         """
         外部 location grid readiness check（Phase 6）。
 
@@ -2934,12 +2987,14 @@ class StoryboardAgentCliService:
             保证首帧质量，不降级走 t2i。批量调度器对 quality 阻止有重试上限保护（QUALITY_WAIT_MAX_TICKS）。
           - balanced/speed（均衡/速度模式，宽松）：仅在九宫格任务运行中时阻止等待；
             缺图+无运行中任务则放行，走 t2i 兜底（保证生图不卡住）。
+            运行中任务但等待超过 BALANCED_LOCATION_REFERENCE_WAIT_MAX_TICKS 时，
+            调用方传 force_bypass=True 跳过检查降级走 t2i（防止九宫格卡死导致永久等待）。
 
         判定矩阵：
           | reference_image | 运行中任务 | quality 模式     | balanced/speed 模式 |
           |-----------------|------------|------------------|---------------------|
           | 有              | (任意)     | READY 放行       | READY 放行          |
-          | 缺              | 有         | WAITING_GRID 阻止| WAITING_GRID 阻止   |
+          | 缺              | 有         | WAITING_GRID 阻止| WAITING_GRID 阻止（≤BALANCED超时后force_bypass降级）|
           | 缺              | 无         | WAITING_GRID 阻止| 放行(t2i 兜底)      |
 
         quality 模式下"缺图+无任务"抛 WAITING_GRID 时 payload 带 quality_mode=True，
@@ -2947,6 +3002,10 @@ class StoryboardAgentCliService:
         """
         from config.constant import LocationReferenceStatus, StoryboardAutoGenerateConstants
         from model.grid_image_tasks import GridImageTasksModel
+
+        # 降级路径：balanced/speed 等待已超时，强制跳过检查走 t2i
+        if force_bypass:
+            return
 
         location = context.get("location")
         if not isinstance(location, dict):

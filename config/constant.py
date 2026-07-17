@@ -849,6 +849,11 @@ class StoryboardAutoGenerateConstants:
     # the next group grid. Cap that wait too, otherwise one missing previous frame
     # can keep the whole batch active forever.
     QUALITY_PREVIOUS_REFERENCE_WAIT_MAX_TICKS = 30
+    # balanced/speed 模式：location 参考图等待超时 tick 数。
+    # 缺参考图且有运行中（可能已卡死的）九宫格任务时，保持 PENDING 等待；
+    # 超过此上限后放弃等待，降级为 t2i 文生图（保证生图不卡住）。
+    # 与 QUALITY_WAIT_MAX_TICKS 对齐，30 次 ≈ 5 分钟。
+    BALANCED_LOCATION_REFERENCE_WAIT_MAX_TICKS = 30
     QUALITY_GRID_BATCHES_PER_TICK = 2
     ERROR_GRID_FIRST_FRAME_FAILED = "grid_first_frame_failed"
     ERROR_LOCATION_REFERENCE_GENERATION_FAILED = "location_reference_generation_failed"
