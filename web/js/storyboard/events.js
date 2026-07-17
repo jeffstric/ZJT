@@ -478,6 +478,36 @@ function patchDialogueInState(dialogueId, patch) {
     return false;
 }
 
+function collectDialoguePayload(row) {
+    const characterRaw = row.querySelector('[data-dialogue-field="characterId"]')?.value;
+    const text = row.querySelector('[data-dialogue-field="text"]')?.value || '';
+    const speed = parseFloat(row.querySelector('[data-dialogue-field="speed"]')?.value || 1.0);
+    const volume = parseInt(row.querySelector('[data-dialogue-field="volume"]')?.value || 100, 10);
+    return {
+        character_id: characterRaw ? parseInt(characterRaw, 10) : null,
+        text,
+        speed,
+        volume,
+    };
+}
+
+async function saveDialogueFromRow(row, { silent = false } = {}) {
+    const dialogueId = parseInt(row.dataset.dialogueId, 10);
+    if (!dialogueId) return null;
+    const payload = collectDialoguePayload(row);
+    const response = await api.updateDialogue(dialogueId, payload);
+    patchDialogueInState(dialogueId, {
+        characterId: payload.character_id,
+        text: payload.text,
+        speed: payload.speed,
+        volume: payload.volume,
+    });
+    if (!silent) {
+        notify('对话已保存');
+    }
+    return response;
+}
+
 function pushAgentMessageForScene(sceneId, role, content, meta = {}) {
     if (!content && !meta.status) return;
     appendSceneAgentMessage(sceneId, {
@@ -1245,21 +1275,8 @@ async function handleAction(action, target) {
     }
 
     if (action === 'save-dialogue') {
-        const dialogueId = parseInt(target.dataset.dialogueId, 10);
         const row = target.closest('[data-dialogue-row]');
-        const characterRaw = row.querySelector('[data-dialogue-field="characterId"]')?.value;
-        const text = row.querySelector('[data-dialogue-field="text"]')?.value || '';
-        const speed = parseFloat(row.querySelector('[data-dialogue-field="speed"]')?.value || 1.0);
-        const volume = parseInt(row.querySelector('[data-dialogue-field="volume"]')?.value || 100, 10);
-        const payload = {
-            character_id: characterRaw ? parseInt(characterRaw, 10) : null,
-            text, speed, volume,
-        };
-        await api.updateDialogue(dialogueId, payload);
-        patchDialogueInState(dialogueId, {
-            characterId: payload.character_id, text, speed, volume,
-        });
-        notify('对话已保存');
+        await saveDialogueFromRow(row, { silent: false });
         return;
     }
 
@@ -1273,6 +1290,8 @@ async function handleAction(action, target) {
     }
 
     if (action === 'generate-voiceover') {
+        const row = target.closest('[data-dialogue-row]');
+        await saveDialogueFromRow(row, { silent: true });
         const dialogueId = parseInt(target.dataset.dialogueId, 10);
         const response = await api.generateDialogueVoiceover(dialogueId);
         if (response.success) {
@@ -1982,6 +2001,19 @@ export function bindEvents() {
             await handleAction(actionTarget.dataset.action, actionTarget);
         } catch (error) {
             notify(error.message || '操作失败');
+        }
+    });
+
+    // 对话输入控件变更后自动保存，无需用户再点保存按钮
+    document.addEventListener('change', async (event) => {
+        const target = event.target;
+        if (!target.matches('[data-dialogue-field]')) return;
+        const row = target.closest('[data-dialogue-row]');
+        if (!row) return;
+        try {
+            await saveDialogueFromRow(row, { silent: true });
+        } catch (error) {
+            notify(error.message || '自动保存失败');
         }
     });
 
