@@ -478,7 +478,7 @@ async function onWorldCreated(worldId) {
 }
 
 // Initialize world selector
-function initWorldSelector() {
+async function initWorldSelector() {
   const defaultWorldSelect = document.getElementById('defaultWorldSelect');
   const createWorkflowBtn = document.getElementById('createWorkflowBtn');
   const editWorldModal = document.getElementById('editWorldModal');
@@ -491,8 +491,9 @@ function initWorldSelector() {
 
   if (!defaultWorldSelect) return;
 
-  // Load worlds
-  populateWorldSelector();
+  // Load worlds（await 确保下拉框选项填充完成，避免 loadWorkflow 时
+  // defaultWorldSelect.value 设值失效）
+  await populateWorldSelector();
 
   // Handle selection change
   defaultWorldSelect.addEventListener('change', (e) => {

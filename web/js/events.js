@@ -4140,8 +4140,9 @@
         await loadAndDisplayEditionInfo();
       }
       
-      // 初始化世界选择器
-      initWorldSelector();
+      // 初始化世界选择器（await 等待世界下拉框加载完成，确保后续 loadWorkflow
+      // 设置 default_world_id 时下拉选项已就绪）
+      await initWorldSelector();
       
       // 初始化视频提示词后缀
       if(typeof initVideoPromptSuffix === 'function'){

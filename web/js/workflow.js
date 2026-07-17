@@ -808,9 +808,16 @@
             const defaultWorldSelect = document.getElementById('defaultWorldSelect');
             if(defaultWorldSelect){
               defaultWorldSelect.value = workflow.default_world_id;
-              // 更新视觉状态（移除红色警告）
+              // 更新视觉状态（移除红色警告、同步自定义可搜索下拉的触发器文本）
               if(typeof updateWorldSelectorState === 'function'){
                 updateWorldSelectorState();
+              }
+              // 兜底：若世界缓存还没加载完导致 updateWorldSelectorState 取不到世界名，
+              // 主动刷新一次世界选择器（populateWorldSelector 内部会恢复 state.defaultWorldId）
+              const cachedWorld = (typeof getCachedWorld === 'function') ? getCachedWorld(workflow.default_world_id) : null;
+              if(!cachedWorld && typeof populateWorldSelector === 'function'){
+                console.log('[加载工作流] 世界缓存未就绪，重新填充世界选择器');
+                await populateWorldSelector();
               }
             }
           }
