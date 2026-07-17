@@ -5607,6 +5607,7 @@ class MergeGridRequest(BaseModel):
 @app.post('/api/images/merge-grid')
 @require_permission("image:merge_grid")
 async def merge_grid_images(
+    http_request: Request,
     request: MergeGridRequest,
     x_user_id: Optional[int] = Header(None, alias="X-User-Id"),
     authorization: Optional[str] = Header(None)

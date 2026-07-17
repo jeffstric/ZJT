@@ -1537,6 +1537,7 @@ async def _resolve_digital_human_audio(scene_id: int, character_id: Optional[int
 @router.get('/create-defaults')
 @require_permission("storyboard:create")
 async def get_storyboard_create_defaults(
+    request: Request,
     world_id: int,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
