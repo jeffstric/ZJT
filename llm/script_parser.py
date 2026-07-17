@@ -8,20 +8,22 @@ import asyncio
 import json
 import re
 from typing import Dict, Any, Optional, List, Tuple
+from config.constant import ScriptParserConstants
 from llm.llm_client_factory import get_llm_client
 from services.storyboard_spatial import repair_spatial_layout_continuity as _repair_spatial_layout_continuity_core
 
 # ============================================================
 # 日志开关配置
 # ============================================================
-# 设置为 True 启用详细日志记录（保存所有LLM请求和响应到文件）
-# 设置为 False 禁用文件日志记录（仅保留控制台日志）
-ENABLE_SCRIPT_PARSER_LOGGING = True
+# 正式配置见 config.constant.ScriptParserConstants.DIAGNOSTIC_LOGGING_ENABLED
+# 模块级别名保留供测试 monkeypatch；日常请改 constant.py 中的常量。
+ENABLE_SCRIPT_PARSER_LOGGING = ScriptParserConstants.DIAGNOSTIC_LOGGING_ENABLED
+
 
 def _save_log_file(log_dir, filename, content):
     """
     条件性保存日志文件的辅助函数
-    仅在ENABLE_SCRIPT_PARSER_LOGGING为True时保存文件
+    仅在 ENABLE_SCRIPT_PARSER_LOGGING 为 True 时保存文件
     """
     if ENABLE_SCRIPT_PARSER_LOGGING and log_dir:
         with open(log_dir / filename, 'w', encoding='utf-8') as f:
@@ -1229,7 +1231,7 @@ async def parse_script_to_shots(
         logger = logging.getLogger(__name__)
         
         if ENABLE_SCRIPT_PARSER_LOGGING:
-            log_dir = Path("logs/script_parser")
+            log_dir = Path(ScriptParserConstants.DIAGNOSTIC_LOG_DIR)
             await asyncio.to_thread(log_dir.mkdir, parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         else:

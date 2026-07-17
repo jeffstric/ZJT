@@ -149,6 +149,72 @@ class StoryboardModel:
             raise
 
     @staticmethod
+    def list_ratios_by_world(user_id: int, world_id: int) -> List[Dict[str, Any]]:
+        """
+        列出某世界下故事板的集数与画幅比例，按 episode_number ASC。
+        仅查必要字段，供创建时比例继承与 create-defaults 使用。
+        """
+        where_conditions = ["world_id = %s"]
+        params: list = [world_id]
+        if Edition.is_space_isolated():
+            where_conditions.append("user_id = %s")
+            params.append(user_id)
+        where_clause = " AND ".join(where_conditions)
+        sql = f"""
+            SELECT id, episode_number, workflow_ratio
+            FROM storyboard
+            WHERE {where_clause}
+            ORDER BY episode_number ASC, id ASC
+        """
+        try:
+            results = execute_query(sql, tuple(params), fetch_all=True)
+            return list(results) if results else []
+        except Exception as e:
+            logger.error(f"Failed to list storyboard ratios by world: {e}")
+            raise
+
+    @staticmethod
+    def resolve_inherited_workflow_ratio(user_id: int, world_id: int) -> Optional[Dict[str, Any]]:
+        """
+        解析可继承的视频比例。
+        规则：优先第 1 集；无第 1 集则取 episode_number 最小且 ratio 非空的故事板。
+        返回 { workflow_ratio, source_episode_number, storyboard_count }；
+        世界内无故事板时返回 None。
+        """
+        rows = StoryboardModel.list_ratios_by_world(user_id, world_id)
+        if not rows:
+            return None
+
+        def _ratio_of(row) -> str:
+            return str(row.get('workflow_ratio') or '').strip()
+
+        ep1 = next(
+            (r for r in rows if int(r.get('episode_number') or 0) == 1 and _ratio_of(r)),
+            None,
+        )
+        if ep1:
+            return {
+                'workflow_ratio': _ratio_of(ep1),
+                'source_episode_number': 1,
+                'storyboard_count': len(rows),
+            }
+
+        for row in rows:
+            ratio = _ratio_of(row)
+            if ratio:
+                return {
+                    'workflow_ratio': ratio,
+                    'source_episode_number': int(row.get('episode_number') or 0) or None,
+                    'storyboard_count': len(rows),
+                }
+
+        return {
+            'workflow_ratio': None,
+            'source_episode_number': None,
+            'storyboard_count': len(rows),
+        }
+
+    @staticmethod
     def list_by_user(
         user_id: int,
         page: int = 1,

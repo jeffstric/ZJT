@@ -672,12 +672,27 @@ class StoryboardSubtitleConstants:
     DEFAULT_CUE_DURATION_SECONDS = 2.0
 
 
+class ScriptParserConstants:
+    """剧本解析（llm/script_parser）诊断日志相关常量。
+
+    开启后会将 system/user prompt、原始响应、清洗结果、解析 JSON 等
+    详细内容写入 DIAGNOSTIC_LOG_DIR，便于排查拆分问题，但磁盘占用很大。
+    日常运行默认关闭；需要排查时改为 True。
+    """
+    _CONSTANT_GROUP = True
+
+    # 是否写入 script_parser 详细诊断文件（logs/script_parser/script_parser_*）
+    DIAGNOSTIC_LOGGING_ENABLED = False
+    DIAGNOSTIC_LOG_DIR = "logs/script_parser"
+
+
 class ScriptSplitQcConstants:
     """剧本拆分质检循环与阈值。"""
     _CONSTANT_GROUP = True
 
     # 段级 QC 诊断日志：规则说明/实际输入/质检报告。
-    DIAGNOSTIC_LOGGING_ENABLED = True
+    # 默认关闭以减少 logs/script_parser 磁盘占用；排查 QC 问题时改为 True。
+    DIAGNOSTIC_LOGGING_ENABLED = False
     DIAGNOSTIC_LOG_DIR = "logs/script_parser"
 
     DEFAULT_MAX_ROUNDS = 2
@@ -703,7 +718,8 @@ class ScriptSplitConstants:
 
     # ---- 分段规划诊断日志 ----
     # 记录第一阶段语义分段的输入、提示词、原始响应、解析结果和业务校验结果。
-    PLANNER_DIAGNOSTIC_LOGGING_ENABLED = True
+    # 默认关闭以减少 logs/script_parser 磁盘占用；排查分段规划问题时改为 True。
+    PLANNER_DIAGNOSTIC_LOGGING_ENABLED = False
     PLANNER_DIAGNOSTIC_LOG_DIR = "logs/script_parser"
 
     # ---- 重试与上界 ----

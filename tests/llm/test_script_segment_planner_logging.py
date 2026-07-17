@@ -67,6 +67,7 @@ def _run_plan(context, auth_token="secret-token"):
 
 
 def test_plan_segments_writes_correlated_diagnostic_files(monkeypatch, tmp_path):
+    monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOGGING_ENABLED", True)
     monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOG_DIR", str(tmp_path))
     plan_data = _plan_json()
     _install_client(monkeypatch, _response(json.dumps(plan_data, ensure_ascii=False)))
@@ -91,6 +92,7 @@ def test_plan_segments_writes_correlated_diagnostic_files(monkeypatch, tmp_path)
 
 
 def test_invalid_json_keeps_raw_response_without_parsed_plan(monkeypatch, tmp_path):
+    monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOGGING_ENABLED", True)
     monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOG_DIR", str(tmp_path))
     _install_client(monkeypatch, _response("```json\nnot valid json\n```"))
     context = planner.create_plan_log_context(43, "initial", 1)
@@ -106,6 +108,7 @@ def test_invalid_json_keeps_raw_response_without_parsed_plan(monkeypatch, tmp_pa
 
 
 def test_call_failure_writes_empty_raw_response_and_reraises(monkeypatch, tmp_path):
+    monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOGGING_ENABLED", True)
     monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOG_DIR", str(tmp_path))
     _install_client(monkeypatch, RuntimeError("provider unavailable"))
     context = planner.create_plan_log_context(44, "initial", 1)
@@ -145,6 +148,7 @@ def test_log_context_uses_microseconds_to_avoid_overwrite(monkeypatch):
 
 
 def test_diagnostic_file_writes_use_asyncio_to_thread(monkeypatch, tmp_path):
+    monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOGGING_ENABLED", True)
     monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOG_DIR", str(tmp_path))
     _install_client(monkeypatch, _response(json.dumps(_plan_json())))
     original_to_thread = asyncio.to_thread
@@ -164,6 +168,7 @@ def test_diagnostic_file_writes_use_asyncio_to_thread(monkeypatch, tmp_path):
 
 
 def test_validation_log_uses_same_context_prefix(monkeypatch, tmp_path):
+    monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOGGING_ENABLED", True)
     monkeypatch.setattr(ScriptSplitConstants, "PLANNER_DIAGNOSTIC_LOG_DIR", str(tmp_path))
     context = planner.create_plan_log_context(48, "initial", 2)
     payload = {

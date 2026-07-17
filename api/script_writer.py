@@ -656,16 +656,39 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
             else:
                 file_manager.save_script(script.get('title'), new_script_json, user_id, world_id)
         
-        # 3. 同步场景
+        # 3. 同步场景（保留 DB 层级：parent_id + parent_name）
         locations_result = LocationModel.list_by_world(int(world_id), page=1, page_size=1000)
         locations = locations_result.get('data', []) if isinstance(locations_result, dict) else []
+        # id → name，用于把 DB parent_id 还原为文件层 parent_name
+        id_to_name = {}
+        for loc in locations:
+            if loc.get('id') is not None and loc.get('name'):
+                id_to_name[int(loc['id'])] = loc['name']
+
+        def _location_parent_fields(loc: dict) -> dict:
+            pid = loc.get('parent_id')
+            parent_name = None
+            parent_id_val = None
+            if pid is not None and pid != '':
+                try:
+                    parent_id_val = int(pid)
+                    parent_name = id_to_name.get(parent_id_val)
+                except (TypeError, ValueError):
+                    parent_id_val = None
+                    parent_name = None
+            return {
+                'parent_id': parent_id_val,
+                'parent_name': parent_name,
+            }
+
         for loc in locations:
             if loc.get('user_id') != int(user_id):
                 continue
-                
+
+            parent_fields = _location_parent_fields(loc)
             loc_file = base_path / "locations" / f"location_{loc.get('name')}.json"
             file_name = f"location_{loc.get('name')}.json"
-            
+
             if loc_file.exists():
                 temp_filename = f"temp_location_{loc.get('name')}.json"
                 temp_result = create_location_json(
@@ -675,16 +698,19 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     name=loc.get('name'),
                     description=loc.get('description'),
                     reference_image=loc.get('reference_image'),
-                    _temp_filename=temp_filename
+                    parent_id=parent_fields['parent_id'],
+                    parent_name=parent_fields['parent_name'],
+                    _temp_filename=temp_filename,
+                    **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                 )
-                
+
                 if temp_result.get('success'):
                     temp_file = base_path / "locations" / temp_filename
                     if temp_file.exists():
                         try:
                             new_content = temp_file.read_text(encoding='utf-8')
                             existing_content = loc_file.read_text(encoding='utf-8')
-                            
+
                             if not compare_json_content(new_content, existing_content, file_name):
                                 if force_overwrite:
                                     create_location_json(
@@ -693,7 +719,10 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         auth_token=auth_token,
                                         name=loc.get('name'),
                                         description=loc.get('description'),
-                                        reference_image=loc.get('reference_image')
+                                        reference_image=loc.get('reference_image'),
+                                        parent_id=parent_fields['parent_id'],
+                                        parent_name=parent_fields['parent_name'],
+                                        **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                                     )
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
@@ -710,7 +739,10 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     auth_token=auth_token,
                     name=loc.get('name'),
                     description=loc.get('description'),
-                    reference_image=loc.get('reference_image')
+                    reference_image=loc.get('reference_image'),
+                    parent_id=parent_fields['parent_id'],
+                    parent_name=parent_fields['parent_name'],
+                    **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                 )
         
         # 4. 同步道具
@@ -2278,58 +2310,134 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                     results['scripts']['failed'] += 1
                     results['scripts']['errors'].append(f"{script['name']}: {str(e)}")
             
-            # 4. 提交场景
+            # 4. 提交场景（两阶段：先建行再按名称挂 parent_id，避免名称被 int 静默丢弃）
+            def resolve_location_parent_name(loc_data: dict) -> Optional[str]:
+                """文件层父引用：优先 parent_name，其次非纯数字 parent_id 当名称。"""
+                if not isinstance(loc_data, dict):
+                    return None
+                pn = loc_data.get('parent_name')
+                if pn is not None and str(pn).strip():
+                    return str(pn).strip()
+                raw = loc_data.get('parent_id')
+                if raw is None or raw == '':
+                    return None
+                s = str(raw).strip()
+                if not s:
+                    return None
+                # 纯数字视为 DB id，Phase B 单独处理
+                if s.isdigit():
+                    return None
+                return s
+
             locations = file_manager.list_locations(str(user_id), str(world_id))
+            name_to_db_id: Dict[str, int] = {}
+            pending_parent_by_name: Dict[str, Optional[str]] = {}
+            pending_parent_id_raw: Dict[str, Any] = {}
+
+            # Phase A：upsert 全部场景；已存在不覆盖 parent_id，新建 parent=None
             for loc in locations:
                 try:
-                    # 直接使用 list_locations 返回的 json_data，避免用中文名查找拼音文件名导致找不到
                     loc_data = loc.get('json_data')
-                    if loc_data and isinstance(loc_data, dict):
-                        name = loc_data.get('name', loc['name'])
-                        parent_id_raw = loc_data.get('parent_id')
-                        description = loc_data.get('description')
-                        reference_image = loc_data.get('reference_image')
-                        reference_images = loc_data.get('reference_images')
+                    if not loc_data or not isinstance(loc_data, dict):
+                        results['locations']['skipped'] += 1
+                        continue
+                    name = loc_data.get('name', loc['name'])
+                    description = loc_data.get('description')
+                    reference_image = loc_data.get('reference_image')
+                    reference_images = loc_data.get('reference_images')
+                    pending_parent_by_name[name] = resolve_location_parent_name(loc_data)
+                    pending_parent_id_raw[name] = loc_data.get('parent_id')
 
-                        # 处理 parent_id：必须是整数或 None
-                        parent_id = None
-                        if parent_id_raw is not None:
-                            try:
-                                parent_id = int(parent_id_raw) if parent_id_raw else None
-                            except (ValueError, TypeError):
-                                parent_id = None
-
-                        # 使用 create_or_update 避免并发竞态导致的重复创建
-                        loc_id = LocationModel.create_or_update(
+                    existing = LocationModel.get_by_name(world_id, name)
+                    if existing:
+                        LocationModel.update(
+                            existing.id,
+                            description=description,
+                            reference_image=reference_image,
+                            reference_images=reference_images,
+                        )
+                        loc_id = existing.id
+                    else:
+                        loc_id = LocationModel.create(
                             world_id=world_id,
                             name=name,
                             user_id=user_id,
-                            parent_id=parent_id,
+                            parent_id=None,
                             reference_image=reference_image,
                             reference_images=reference_images,
-                            description=description
+                            description=description,
                         )
-                        # 确保 CDN mapping
-                        try:
-                            if reference_image:
-                                from utils.media_mapping_util import ensure_entity_image_mapping
-                                from model.media_file_mapping import MediaFileEntity
-                                ensure_entity_image_mapping(
-                                    user_id=user_id,
-                                    image_url=reference_image,
-                                    entity_type=MediaFileEntity.LOCATION,
-                                    entity_id=loc_id,
-                                    label="image"
-                                )
-                        except Exception as e:
-                            logger.warning(f"CDN mapping for location {name} failed: {e}")
-                        results['locations']['success'] += 1
-                        results['total'] += 1
-                    else:
-                        results['locations']['skipped'] += 1
+                    name_to_db_id[name] = int(loc_id)
+                    try:
+                        if reference_image:
+                            from utils.media_mapping_util import ensure_entity_image_mapping
+                            from model.media_file_mapping import MediaFileEntity
+                            ensure_entity_image_mapping(
+                                user_id=user_id,
+                                image_url=reference_image,
+                                entity_type=MediaFileEntity.LOCATION,
+                                entity_id=loc_id,
+                                label="image"
+                            )
+                    except Exception as e:
+                        logger.warning(f"CDN mapping for location {name} failed: {e}")
+                    results['locations']['success'] += 1
+                    results['total'] += 1
                 except Exception as e:
                     results['locations']['failed'] += 1
-                    results['locations']['errors'].append(f"{loc['name']}: {str(e)}")
+                    results['locations']['errors'].append(f"{loc.get('name', '?')}: {str(e)}")
+
+            # Phase B：按 parent_name / 数字 parent_id 挂接父级（父必须是顶级）
+            for child_name, parent_name in pending_parent_by_name.items():
+                child_id = name_to_db_id.get(child_name)
+                if not child_id:
+                    continue
+                parent_db_id = None
+                raw_parent = pending_parent_id_raw.get(child_name)
+                if parent_name:
+                    parent_db_id = name_to_db_id.get(parent_name)
+                    if not parent_db_id:
+                        parent_row = LocationModel.get_by_name(world_id, parent_name)
+                        if parent_row:
+                            parent_db_id = int(parent_row.id)
+                elif raw_parent is not None and str(raw_parent).strip().isdigit():
+                    try:
+                        cand = int(raw_parent)
+                        parent_obj = LocationModel.get_by_id(cand)
+                        if parent_obj and int(parent_obj.world_id) == world_id:
+                            parent_db_id = cand
+                    except (TypeError, ValueError):
+                        parent_db_id = None
+
+                if not parent_name and not parent_db_id:
+                    # 明确顶层：清空父级
+                    try:
+                        LocationModel.update(child_id, parent_id=None)
+                    except Exception as e:
+                        logger.warning(f"Clear parent for location {child_name} failed: {e}")
+                    continue
+
+                if not parent_db_id:
+                    results['locations']['errors'].append(
+                        f"{child_name}: 找不到父场景「{parent_name or raw_parent}」，未写入 parent_id"
+                    )
+                    continue
+                if parent_db_id == child_id:
+                    results['locations']['errors'].append(f"{child_name}: 不能将自己设为父场景")
+                    continue
+                parent_obj = LocationModel.get_by_id(parent_db_id)
+                if not parent_obj:
+                    results['locations']['errors'].append(f"{child_name}: 父场景 id={parent_db_id} 不存在")
+                    continue
+                if parent_obj.parent_id is not None:
+                    results['locations']['errors'].append(
+                        f"{child_name}: 父场景「{parent_obj.name}」不是顶级场景，已跳过挂接"
+                    )
+                    continue
+                try:
+                    LocationModel.update(child_id, parent_id=parent_db_id)
+                except Exception as e:
+                    results['locations']['errors'].append(f"{child_name}: 挂接父级失败 {e}")
             
             # 5. 提交道具
             props = file_manager.list_props(str(user_id), str(world_id))

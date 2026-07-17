@@ -500,8 +500,30 @@
                 } else {
                     console.log('没有历史消息');
                 }
+
+                // 历史加载完成后确保输入区可用（发送按钮始终可点；仅未选世界时保持禁用）
+                restoreInputControlsAfterHistory();
             } catch (error) {
                 console.error('加载历史消息失败:', error);
+                restoreInputControlsAfterHistory();
+            }
+        }
+
+        /**
+         * 历史消息渲染后恢复底部输入/发送控件。
+         * 宽内容曾会把 flex 布局撑出视口导致发送按钮被裁切；同时避免 isProcessing 残留导致按钮一直 disabled。
+         */
+        function restoreInputControlsAfterHistory() {
+            if (!window.WORLD_ID) return;
+            const input = document.getElementById('message-input');
+            const sendBtn = document.getElementById('send-btn');
+            if (input) {
+                input.disabled = false;
+            }
+            // 仅当当前没有进行中的任务/验证时恢复发送按钮，避免打断流式回复
+            if (sendBtn && !isProcessing && !pendingVerificationId) {
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('sending');
             }
         }
 
@@ -1278,8 +1300,16 @@
                                 pendingVerificationId = null;
                                 pendingVerificationData = null;
                                 const input = document.getElementById('message-input');
-                                input.value = '';
-                                input.placeholder = '输入消息...';
+                                if (input) {
+                                    input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                                }
+                                // 超时后需允许用户重新发送，恢复发送按钮与处理状态
+                                isProcessing = false;
+                                const sendBtn = document.getElementById('send-btn');
+                                if (sendBtn) {
+                                    sendBtn.disabled = false;
+                                    sendBtn.classList.remove('sending');
+                                }
                             }
                             showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
                         } else if (data.type === 'status') {
@@ -1429,8 +1459,16 @@
                             pendingVerificationId = null;
                             pendingVerificationData = null;
                             const input = document.getElementById('message-input');
-                            input.value = '';
-                            input.placeholder = '输入消息...';
+                            if (input) {
+                                input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                            }
+                            // 超时后需允许用户重新发送，恢复发送按钮与处理状态
+                            isProcessing = false;
+                            const sendBtn = document.getElementById('send-btn');
+                            if (sendBtn) {
+                                sendBtn.disabled = false;
+                                sendBtn.classList.remove('sending');
+                            }
                         }
                         showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
                     } else if (data.type === 'status') {
@@ -1672,6 +1710,7 @@
             // 为选项按钮添加事件监听器
             const optionBtns = contentDiv.querySelectorAll('.option-btn');
             const input = document.getElementById('message-input');
+            const sendBtn = document.getElementById('send-btn');
 
             optionBtns.forEach(btn => {
                 btn.addEventListener('click', (e) => {
@@ -1681,6 +1720,11 @@
                         // 点击"其他"按钮，焦点转移到下方的消息输入框
                         input.placeholder = window.t ? window.t('placeholder_custom_answer') : '请输入您的自定义答案...';
                         input.focus();
+                        // 等待自定义输入时保持发送按钮可用
+                        if (sendBtn) {
+                            sendBtn.disabled = false;
+                            sendBtn.classList.remove('sending');
+                        }
                         updateStatus('💬 ' + (window.t ? window.t('status_custom_answer') : '请在下方输入框中输入您的自定义答案'));
                         console.log('[VERIFICATION] 用户选择"其他"，等待自定义输入');
                     } else {
@@ -1690,17 +1734,36 @@
                         const option = verification.options[index];
                         if (option) {
                             console.log('[VERIFICATION] 用户选择选项:', option);
-                            submitVerificationAnswer(option, { fromInput: false });
+                            // 提交中禁用按钮，避免重复点击
+                            if (sendBtn) {
+                                sendBtn.disabled = true;
+                                sendBtn.classList.add('sending');
+                            }
+                            submitVerificationAnswer(option, { fromInput: false }).finally(() => {
+                                // 失败仍 pending 时 submitVerificationAnswer 外层/调用方会恢复；
+                                // 成功则保持 disabled，等待 SSE 继续；失败由下方 pending 恢复兜底
+                                if (sendBtn && pendingVerificationId) {
+                                    sendBtn.disabled = false;
+                                    sendBtn.classList.remove('sending');
+                                }
+                            });
                         }
                     }
                 });
             });
 
-            // 启用输入框
-            input.disabled = false;
-            input.placeholder = verification.options && verification.options.length > 0
-                ? (window.t ? window.t('placeholder_select_or_custom') : '点击上方选项或选择"其他"输入自定义答案')
-                : (window.t ? window.t('placeholder_enter_answer') : '请输入您的回答...');
+            // 启用输入框与发送按钮：原始 sendMessage 在发起任务时会把按钮置为 disabled+sending，
+            // ask_user 出现后若不恢复，按钮会一直半透明，选中输入框后看起来像“消失”
+            if (input) {
+                input.disabled = false;
+                input.placeholder = verification.options && verification.options.length > 0
+                    ? (window.t ? window.t('placeholder_select_or_custom') : '点击上方选项或选择"其他"输入自定义答案')
+                    : (window.t ? window.t('placeholder_enter_answer') : '请输入您的回答...');
+            }
+            if (sendBtn) {
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('sending');
+            }
 
             updateStatus(window.t ? window.t('status_waiting_answer') : '等待您的回答...');
         }
@@ -3362,11 +3425,114 @@
             document.getElementById('view-modal-title').textContent = `🏛️ 查看场景 - ${fileName}`;
             document.getElementById('location-view-form').style.display = 'block';
             document.getElementById('view-loc-name').textContent = data.name || '未设置';
-            document.getElementById('view-loc-parent').textContent = data.parent_id || '无';
+            const parentLabel = resolveParentName(data) || '无';
+            document.getElementById('view-loc-parent').textContent = parentLabel;
             document.getElementById('view-loc-description').textContent = data.description || '未设置';
             
             const imageContainer = document.getElementById('view-loc-image-container');
             displayImage(imageContainer, data.reference_image);
+        }
+
+        // ==================== 场景父级（仅顶级可选） ====================
+        /** 缓存本世界场景 JSON 列表：[{name, parent_name, parent_id, ...}] */
+        let cachedLocationJsonList = [];
+
+        /** 无父引用 = 顶级（未落库只看文件字段，不查 DB） */
+        function isTopLevelLocation(locJson) {
+            if (!locJson || typeof locJson !== 'object') return true;
+            const parentName = String(locJson.parent_name ?? '').trim();
+            if (parentName) return false;
+            const pid = locJson.parent_id;
+            if (pid === null || pid === undefined || pid === '') return true;
+            return false;
+        }
+
+        /**
+         * 解析父场景名称（兼容 parent_name / 数字 parent_id / 名称字符串 parent_id）
+         * @param {object} locJson
+         * @param {Array} [allLocs]
+         */
+        function resolveParentName(locJson, allLocs) {
+            if (!locJson || typeof locJson !== 'object') return null;
+            const pn = String(locJson.parent_name ?? '').trim();
+            if (pn) return pn;
+            const pid = locJson.parent_id;
+            if (pid === null || pid === undefined || pid === '') return null;
+            const pidStr = String(pid).trim();
+            if (!pidStr) return null;
+            // 纯数字：尝试在列表中用 id 反查 name（历史同步残留）
+            if (/^\d+$/.test(pidStr) && Array.isArray(allLocs)) {
+                const byId = allLocs.find((l) => String(l.id) === pidStr || String(l.db_id) === pidStr);
+                if (byId && byId.name) return String(byId.name).trim();
+            }
+            // 非纯数字或反查失败：当作名称
+            if (!/^\d+$/.test(pidStr)) return pidStr;
+            return pidStr;
+        }
+
+        /** 拉取本世界场景 JSON 列表（含 json_data） */
+        async function fetchLocationJsonList() {
+            try {
+                const response = await fetch(
+                    `/api/locations-files?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`
+                );
+                const data = await response.json();
+                const locs = data.locations || data.data?.data || [];
+                cachedLocationJsonList = locs.map((l) => {
+                    const jd = l.json_data && typeof l.json_data === 'object' ? l.json_data : l;
+                    return {
+                        name: jd.name || l.name || '',
+                        parent_name: jd.parent_name ?? null,
+                        parent_id: jd.parent_id ?? null,
+                        id: jd.id ?? null,
+                        ...jd,
+                    };
+                }).filter((l) => l.name);
+                return cachedLocationJsonList;
+            } catch (e) {
+                console.warn('获取场景列表失败:', e);
+                cachedLocationJsonList = [];
+                return [];
+            }
+        }
+
+        /**
+         * 填充父级场景下拉：仅顶级场景
+         * @param {HTMLSelectElement} selectEl
+         * @param {{ excludeName?: string, selectedParentName?: string|null }} [opts]
+         */
+        async function loadTopLevelParentOptions(selectEl, opts = {}) {
+            if (!selectEl) return;
+            const excludeName = (opts.excludeName || '').trim();
+            const selectedParentName = (opts.selectedParentName || '').trim();
+            const list = await fetchLocationJsonList();
+            const tops = list.filter((l) => isTopLevelLocation(l) && l.name !== excludeName);
+
+            selectEl.innerHTML = '';
+            const emptyOpt = document.createElement('option');
+            emptyOpt.value = '';
+            emptyOpt.textContent = '无（顶层场景）';
+            selectEl.appendChild(emptyOpt);
+
+            tops.forEach((loc) => {
+                const opt = document.createElement('option');
+                opt.value = loc.name;
+                opt.textContent = loc.name;
+                if (selectedParentName && loc.name === selectedParentName) {
+                    opt.selected = true;
+                }
+                selectEl.appendChild(opt);
+            });
+
+            // 历史父级已非顶级或已删除：保留可见但禁用，避免静默丢失
+            if (selectedParentName && !tops.some((t) => t.name === selectedParentName)) {
+                const stale = document.createElement('option');
+                stale.value = selectedParentName;
+                stale.textContent = `${selectedParentName}（已非顶级或已删除，请重选）`;
+                stale.disabled = true;
+                stale.selected = true;
+                selectEl.appendChild(stale);
+            }
         }
 
         function showPropViewer(fileName, data) {
@@ -3649,13 +3815,19 @@
             }
         }
 
-        function showLocationEditor(fileName, data) {
+        async function showLocationEditor(fileName, data) {
             document.getElementById('edit-modal-title').textContent = `✏️ 编辑场景 - ${fileName}`;
             document.getElementById('location-edit-form').style.display = 'block';
             document.getElementById('loc-name').value = data.name || '';
-            document.getElementById('loc-parent').value = data.parent_id || '';
             document.getElementById('loc-description').value = data.description || '';
             document.getElementById('loc-image').value = data.reference_image || '';
+
+            const parentSelect = document.getElementById('loc-parent');
+            const selectedParent = resolveParentName(data, cachedLocationJsonList);
+            await loadTopLevelParentOptions(parentSelect, {
+                excludeName: data.name || '',
+                selectedParentName: selectedParent,
+            });
 
             // 如果有图片，显示预览
             if (data.reference_image) {
@@ -5014,10 +5186,12 @@
         });
 
         function collectLocationData() {
-            const parentId = document.getElementById('loc-parent').value.trim();
+            const parentName = (document.getElementById('loc-parent').value || '').trim() || null;
             const data = {
                 name: document.getElementById('loc-name').value.trim(),
-                parent_id: parentId === '' ? null : parentId,
+                // 文件层主字段：父场景名称；parent_id 过渡期双写同名，同步时按名称解析
+                parent_name: parentName,
+                parent_id: parentName,
                 description: document.getElementById('loc-description').value.trim(),
                 reference_image: document.getElementById('loc-image').value.trim()
             };
@@ -5553,10 +5727,8 @@
 
         async function fetchExistingLocations() {
             try {
-                const response = await fetch(`/api/locations-files?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
-                const data = await response.json();
-                const locs = data.locations || data.data?.data || [];
-                existingLocations = locs.map(l => l.name).filter(Boolean);
+                const list = await fetchLocationJsonList();
+                existingLocations = list.map((l) => l.name).filter(Boolean);
             } catch (e) {
                 console.warn('获取已有场景列表失败:', e);
                 existingLocations = [];
@@ -5579,12 +5751,15 @@
             }
         }
 
-        function showNewLocationModal() {
-            ['new-loc-name','new-loc-parent'].forEach(id => document.getElementById(id).value = '');
+        async function showNewLocationModal() {
+            document.getElementById('new-loc-name').value = '';
             document.getElementById('new-loc-description').value = '';
             const hint = document.getElementById('loc-name-hint');
             hint.style.display = 'none'; hint.textContent = '';
-            fetchExistingLocations();
+            await fetchExistingLocations();
+            await loadTopLevelParentOptions(document.getElementById('new-loc-parent'), {
+                selectedParentName: '',
+            });
             document.getElementById('new-location-modal').classList.add('show');
             document.getElementById('new-loc-name').focus();
             document.getElementById('new-loc-name').oninput = checkLocationNameDuplicate;
@@ -5602,11 +5777,13 @@
             try {
                 updateStatus(window.t ? window.t('status_creating_scene') : '正在创建场景...');
                 const now = new Date().toISOString();
+                const parentName = (document.getElementById('new-loc-parent').value || '').trim() || null;
                 const data = {
                     user_id: USER_ID,
                     world_id: WORLD_ID,
                     name: name,
-                    parent_id: document.getElementById('new-loc-parent').value.trim() || null,
+                    parent_name: parentName,
+                    parent_id: parentName,
                     description: document.getElementById('new-loc-description').value.trim(),
                     reference_image: '',
                     reference_images: [],

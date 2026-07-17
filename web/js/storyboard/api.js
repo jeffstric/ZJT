@@ -58,6 +58,14 @@ export async function createStoryboard(data) {
     return request('/create', { method: 'POST', body: JSON.stringify(data) });
 }
 
+/** 新建前探测默认画幅：是否需要弹窗确认、可继承的比例 */
+export async function getStoryboardCreateDefaults(worldId) {
+    const qs = worldId != null && worldId !== ''
+        ? `?world_id=${encodeURIComponent(worldId)}`
+        : '';
+    return request(`/create-defaults${qs}`);
+}
+
 /** 当前用户在某世界下的「集」文件夹（剧本 + 故事板），含尚未创建故事板的集 */
 export async function listStoryboardFolders(worldId) {
     const qs = worldId != null && worldId !== ''

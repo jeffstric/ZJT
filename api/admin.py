@@ -17,7 +17,7 @@ from model.video_workflow import VideoWorkflowModel
 from model.ai_tools import AIToolsModel
 from model.ai_tools_log import AIToolsLogModel
 from model.implementation_attempts import ImplementationAttemptModel
-from config.unified_config import UnifiedConfigRegistry, IMPLEMENTATION_FROM_ID
+from config.unified_config import UnifiedConfigRegistry, IMPLEMENTATION_FROM_ID, TaskCategory
 from model.system_config import SystemConfigModel
 from model.system_config_history import SystemConfigHistoryModel
 from config.config_util import get_current_env, invalidate_dynamic_cache
@@ -155,8 +155,19 @@ async def admin_model_analysis(
         # 获取类型ID -> 名称映射
         type_name_map = UnifiedConfigRegistry.get_name_map()
 
-        # 按 type 分组
-        type_groups = {}
+        # 预置所有启用的视频类任务类型，避免新增模型后因暂无数据而在仪表盘消失
+        video_categories = {
+            TaskCategory.IMAGE_TO_VIDEO,
+            TaskCategory.TEXT_TO_VIDEO,
+            TaskCategory.DIGITAL_HUMAN,
+        }
+        all_video_type_ids = {
+            c.id for c in UnifiedConfigRegistry.get_all_enabled()
+            if c.category in video_categories or any(cat in video_categories for cat in c.categories)
+        }
+
+        # 按 type 分组（无数据的类型保留空列表，total=0）
+        type_groups = {t: [] for t in all_video_type_ids}
         for row in raw_stats:
             t = row['type']
             if t not in type_groups:

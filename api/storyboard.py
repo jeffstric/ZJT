@@ -195,14 +195,56 @@ def resolve_storyboard_create_title(
     return f'第{ep}集故事板'
 
 
-def build_storyboard_defaults(world, data: dict) -> dict:
+# 创建/继承允许的画幅比例（兼容 header 历史选项）
+STORYBOARD_WORKFLOW_RATIOS = frozenset({'16:9', '9:16', '3:4', '1:1', '4:3'})
+DEFAULT_STORYBOARD_WORKFLOW_RATIO = '16:9'
+
+
+def normalize_storyboard_workflow_ratio(value: Any) -> Optional[str]:
+    """校验并规范化 workflow_ratio；非法或空返回 None。"""
+    ratio = str(value or '').strip()
+    if not ratio:
+        return None
+    if ratio not in STORYBOARD_WORKFLOW_RATIOS:
+        return None
+    return ratio
+
+
+def resolve_storyboard_create_ratio(user_id: int, world_id: int, data: dict) -> str:
+    """
+    新建故事板时解析 workflow_ratio：
+    1) body 显式合法值
+    2) 同世界已有故事板：优先第 1 集，否则最小集号
+    3) 兜底 16:9（API/Agent 无 UI；Web 首建应先弹窗再显式传入）
+    """
+    explicit = normalize_storyboard_workflow_ratio(data.get('workflow_ratio') if data else None)
+    if explicit:
+        return explicit
+
+    inherited = StoryboardModel.resolve_inherited_workflow_ratio(user_id, world_id)
+    if inherited:
+        ratio = normalize_storyboard_workflow_ratio(inherited.get('workflow_ratio'))
+        if ratio:
+            return ratio
+        # 有故事板但 ratio 全空：仍用默认
+        return DEFAULT_STORYBOARD_WORKFLOW_RATIO
+
+    return DEFAULT_STORYBOARD_WORKFLOW_RATIO
+
+
+def build_storyboard_defaults(world, data: dict, *, workflow_ratio: Optional[str] = None) -> dict:
     """Build inherited storyboard defaults without assuming optional world fields."""
     style = getattr(world, 'visual_style', None) if world else None
+    ratio = normalize_storyboard_workflow_ratio(workflow_ratio)
+    if not ratio:
+        ratio = normalize_storyboard_workflow_ratio(data.get('workflow_ratio') if data else None)
+    if not ratio:
+        ratio = DEFAULT_STORYBOARD_WORKFLOW_RATIO
     return {
-        'style': data.get('style', style),
-        'workflow_ratio': data.get('workflow_ratio') or '16:9',
+        'style': data.get('style', style) if data else style,
+        'workflow_ratio': ratio,
         'style_reference_image': getattr(world, 'style_reference_image', None) if world else None,
-        'composition_preference': data.get('composition_preference') or (
+        'composition_preference': (data.get('composition_preference') if data else None) or (
             getattr(world, 'composition_preference', None) if world else None
         ),
     }
@@ -1492,6 +1534,49 @@ async def _resolve_digital_human_audio(scene_id: int, character_id: Optional[int
 
 # ==================== 故事板 CRUD ====================
 
+@router.get('/create-defaults')
+@require_permission("storyboard:create")
+async def get_storyboard_create_defaults(
+    world_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """
+    新建故事板前探测默认画幅比例。
+
+    - needs_ratio_confirm=true：世界内尚无故事板，Web 应弹窗确认 16:9/9:16
+    - needs_ratio_confirm=false：可继承已有集（优先第 1 集）的 workflow_ratio
+    """
+    user_id = get_user_id_from_header(user_id)
+    if not world_id:
+        return JSONResponse(status_code=400, content={'error': 'world_id is required'})
+
+    ensure_world_access(world_id, user_id, Action.VIEW)
+
+    inherited = await asyncio.to_thread(
+        StoryboardModel.resolve_inherited_workflow_ratio,
+        user_id,
+        world_id,
+    )
+    if not inherited:
+        return JSONResponse({
+            'success': True,
+            'needs_ratio_confirm': True,
+            'workflow_ratio': None,
+            'source_episode_number': None,
+            'storyboard_count': 0,
+        })
+
+    ratio = normalize_storyboard_workflow_ratio(inherited.get('workflow_ratio'))
+    # 有故事板但 ratio 全空：仍视为可继续创建（后端 create 会兜底 16:9），无需再弹窗
+    return JSONResponse({
+        'success': True,
+        'needs_ratio_confirm': False,
+        'workflow_ratio': ratio or DEFAULT_STORYBOARD_WORKFLOW_RATIO,
+        'source_episode_number': inherited.get('source_episode_number'),
+        'storyboard_count': int(inherited.get('storyboard_count') or 0),
+    })
+
+
 @router.post('/create')
 @require_permission("storyboard:create")
 async def create_storyboard(
@@ -1507,6 +1592,7 @@ async def create_storyboard(
         script_id: int         可选，关联剧本
         workflow_id: int       可选，关联工作流
         title: str             可选；为空时继承关联剧本 script.title，再兜底「第N集故事板」
+        workflow_ratio: str    可选；Web 首建应传 16:9/9:16；未传时继承同世界已有集（优先第1集）
     """
     user_id = get_user_id_from_header(user_id)
     data = await request.json()
@@ -1543,9 +1629,17 @@ async def create_storyboard(
             'created': False,
         })
 
+    # 画幅比例：显式传入 > 同世界继承（优先第1集）> 16:9
+    workflow_ratio = await asyncio.to_thread(
+        resolve_storyboard_create_ratio,
+        user_id,
+        world_id,
+        data,
+    )
+
     # 画风继承：从 World 获取
     world = await asyncio.to_thread(WorldModel.get_by_id, world_id)
-    defaults = build_storyboard_defaults(world, data)
+    defaults = build_storyboard_defaults(world, data, workflow_ratio=workflow_ratio)
 
     # 标题：显式 title > 剧本 title > 第N集故事板（写入 storyboard.title）
     title = await asyncio.to_thread(
@@ -2046,6 +2140,10 @@ async def generate_storyboard_from_script(
         return JSONResponse(status_code=404, content={'error': '故事板不存在'})
 
     ensure_resource_access(sb, user_id, Action.EDIT, "故事板")
+
+    # 硬门禁：无有效画幅比例时禁止拆分，避免整集分镜构图错误
+    if not str(getattr(sb, 'workflow_ratio', None) or '').strip():
+        return JSONResponse(status_code=400, content={'error': '请先设定视频比例'})
 
     existing_scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
     if existing_scenes:

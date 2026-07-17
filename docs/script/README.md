@@ -15,10 +15,23 @@
 | [script_language_sync.md](./script_language_sync.md) | 剧本节点语言联动功能 |
 | [script_writer_sse_disconnect.md](./script_writer_sse_disconnect.md) | script_writer SSE 断线恢复；ask_user 选项点击不误清输入框 |
 
+## 剧本诊断日志开关
+
+`logs/script_parser/` 下的详细诊断文件（prompt、原始响应、解析 JSON 等）默认**关闭**，
+避免日常运行占满磁盘。排查拆分/规划/质检问题时，在 `config/constant.py` 中按需打开：
+
+| 开关 | 作用 | 文件前缀 |
+|------|------|----------|
+| `ScriptParserConstants.DIAGNOSTIC_LOGGING_ENABLED` | 第二阶段 script_parser 解析诊断 | `script_parser_{timestamp}_*` |
+| `ScriptSplitConstants.PLANNER_DIAGNOSTIC_LOGGING_ENABLED` | 第一阶段语义分段规划诊断 | `script_segment_planner_task_{task_id}_*` |
+| `ScriptSplitQcConstants.DIAGNOSTIC_LOGGING_ENABLED` | 段级 QC 诊断 | `script_split_qc_task_{task_id}_*` |
+
+三者默认均为 `False`；日志目录均可分别配置为对应 `*_LOG_DIR` 常量（默认 `logs/script_parser`）。
+
 ## 剧本语义小段规划日志
 
 剧本拆分分为两个阶段：第一阶段先规划连续的语义小段，第二阶段才由
-`script_parser.py` 把每个小段生成分镜 JSON。第一阶段的专用诊断日志位于：
+`script_parser.py` 把每个小段生成分镜 JSON。开启规划诊断开关后，日志位于：
 
 ```text
 logs/script_parser/

@@ -49,7 +49,7 @@ P0 以规则预检为主；LLM 语义质检可后续打开 `use_llm=True`。
 
 ### 质检重试日志
 
-启用 `llm/script_parser.py` 的 `ENABLE_SCRIPT_PARSER_LOGGING` 后，发生质检重试时会在 `logs/script_parser` 额外生成：
+启用 `ScriptParserConstants.DIAGNOSTIC_LOGGING_ENABLED`（`config/constant.py`，默认关闭；模块内别名 `ENABLE_SCRIPT_PARSER_LOGGING`）后，发生质检重试时会在 `logs/script_parser` 额外生成：
 
 - `script_parser_{timestamp}_03_qc_feedback.json`：原始结构化质检反馈；`QcReport` 会转换为字典，纯文本反馈保存到 `text` 字段。
 - `script_parser_{timestamp}_03_qc_retry_prompt.txt`：实际注入用户提示词的质检重试块，包含格式化反馈和上一轮压缩 JSON。

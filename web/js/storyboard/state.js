@@ -27,6 +27,18 @@ const state = {
     compositionPreference: '',
     computingPower: null,
 
+    /**
+     * 比例门禁：世界内首个故事板创建前为 true。
+     * 为 true 时禁止拆分/生图/生视频/导出等一切业务操作。
+     */
+    ratioGateActive: false,
+    showRatioConfirmDialog: false,
+    pendingCreateRatio: '16:9',
+    ratioConfirmError: '',
+    isCreatingStoryboard: false,
+    /** @type {{ needs_ratio_confirm?: boolean, workflow_ratio?: string|null, source_episode_number?: number|null, storyboard_count?: number }|null} */
+    createDefaults: null,
+
     scenes: [],
     currentSceneId: null,
     activeTab: 'scene',          // 'scene' | 'dialogue'（音乐 Tab 已移除）
@@ -1097,6 +1109,11 @@ export function applyGenerateProgressStatus(statusData = {}) {
         state.generateProgressPercent = Math.round(Math.max(0, Math.min(100, progress)));
     }
     state.generateProgressMessage = String(statusData.message || '正在处理任务');
+}
+
+/** 比例门禁是否拦截业务操作（首建未确认比例）。 */
+export function isRatioGateBlocking() {
+    return !!state.ratioGateActive;
 }
 
 export default state;

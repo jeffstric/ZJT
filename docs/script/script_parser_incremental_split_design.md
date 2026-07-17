@@ -875,8 +875,8 @@ script_segment_planner_task_{task_id}_{plan_kind}_{timestamp}_attempt_{attempt}_
 
 所有目录创建和文件写入都通过 `asyncio.to_thread()` 离开事件循环执行。日志写入失败
 只记录 warning，不改变任务原有结果；日志不记录 `auth_token`、API Key 或请求头，也不
-参与断点恢复。开关 `ScriptSplitConstants.PLANNER_DIAGNOSTIC_LOGGING_ENABLED` 默认开启，
-日志目录由 `ScriptSplitConstants.PLANNER_DIAGNOSTIC_LOG_DIR` 配置。
+参与断点恢复。开关 `ScriptSplitConstants.PLANNER_DIAGNOSTIC_LOGGING_ENABLED` 默认关闭（减少磁盘占用），
+排查分段规划问题时改为 `True`；日志目录由 `ScriptSplitConstants.PLANNER_DIAGNOSTIC_LOG_DIR` 配置。
 
 ## 23. 段级 QC 诊断日志
 
@@ -893,7 +893,11 @@ script_split_qc_task_{task_id}_segment_{segment_index}_{segment_id}_{timestamp}_
 - `_03_report.json` 保存完整 `QcReport`，包括 `passed`、统计数据以及每条 issue 的 `severity/shot_ref/field/evidence`。
 - 如果规则执行本身抛出异常，则以同前缀写入 `_03_error.json`，随后保持原异常处理流程。
 
-QC 日志开关为 `ScriptSplitQcConstants.DIAGNOSTIC_LOGGING_ENABLED`，目录为 `ScriptSplitQcConstants.DIAGNOSTIC_LOG_DIR`，默认开启并指向 `logs/script_parser`。文件写入统一通过 `asyncio.to_thread()` 离开事件循环；失败只记录 warning，不改变 QC 结论。日志输入由明确字段组装，不写入 `auth_token`、API Key 或请求头。
+QC 日志开关为 `ScriptSplitQcConstants.DIAGNOSTIC_LOGGING_ENABLED`，目录为 `ScriptSplitQcConstants.DIAGNOSTIC_LOG_DIR`，默认关闭并指向 `logs/script_parser`（排查 QC 时改为 `True`）。文件写入统一通过 `asyncio.to_thread()` 离开事件循环；失败只记录 warning，不改变 QC 结论。日志输入由明确字段组装，不写入 `auth_token`、API Key 或请求头。
+
+第二阶段 `script_parser` 的详细诊断（system/user prompt、原始响应、解析 JSON 等）由
+`ScriptParserConstants.DIAGNOSTIC_LOGGING_ENABLED` 控制，默认关闭；目录为
+`ScriptParserConstants.DIAGNOSTIC_LOG_DIR`。模块内仍保留别名 `ENABLE_SCRIPT_PARSER_LOGGING` 供测试 monkeypatch。
 
 ## 24. 效果模式：空间契约前置与并发拆分
 

@@ -53,6 +53,36 @@ assert.match(
 
 assert.match(
   cssSource,
+  /@media\s*\(max-width:\s*1024px\)[\s\S]*\.step-nav\s*\{[\s\S]*display:\s*none/,
+  'left floating step-nav should hide on narrow screens to avoid covering chat/input'
+);
+
+assert.match(
+  cssSource,
+  /\.chat-area\s*\{[\s\S]*min-width:\s*0[\s\S]*overflow-x:\s*hidden/,
+  'chat area must not expand past viewport when history has wide content'
+);
+
+assert.match(
+  cssSource,
+  /\.input-container\s*\{[\s\S]*position:\s*relative/,
+  'input container should be positioning context for the send button'
+);
+
+assert.match(
+  cssSource,
+  /\.send-btn\s*\{[\s\S]*position:\s*absolute[\s\S]*right:\s*8px/,
+  'send button should stay inside the input box at all widths'
+);
+
+assert.match(
+  jsSource,
+  /function\s+restoreInputControlsAfterHistory\([\s\S]*loadAndDisplayHistory|function\s+loadAndDisplayHistory[\s\S]*restoreInputControlsAfterHistory/,
+  'history load should restore input controls after rendering messages'
+);
+
+assert.match(
+  cssSource,
   /@media\s*\(max-width:\s*1400px\)[\s\S]*\.file-sidebar-toggle-btn\s*\{[\s\S]*right:\s*28px[\s\S]*bottom:\s*156px/,
   'staging sidebar floating button should keep distance from the send button'
 );

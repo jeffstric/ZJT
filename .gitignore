@@ -27,6 +27,7 @@ enterprise/
 .agents/skills/lark*
 *.spec
 scripts/build_enterprise.py
+*.lock
 
 # Node modules
 node_modules/

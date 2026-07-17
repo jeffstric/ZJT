@@ -3620,6 +3620,11 @@ button {
     .left-sidebar,
     .right-sidebar { display: none; }
     .center-panel { min-height: calc(100vh - 128px); }
+    .chat-toolbar { flex-wrap: nowrap; }
+    .chat-mode-select { max-width: 92px; font-size: 12px; padding: 5px 6px; }
+    .video-mode-dropdown .video-mode-btn span { display: none; }
+    .video-mode-btn { width: 32px; height: 32px; justify-content: center; padding: 0; }
+    .chat-send-btn { margin-left: auto; }
 }
 
 /* ---------- 生成分镜进度弹框 ---------- */
@@ -3849,3 +3854,140 @@ button {
 }
 .sb-toast-error { background: rgba(185, 28, 28, 0.94); }
 .sb-toast-info { background: rgba(32, 39, 55, 0.92); }
+
+/* ==================== 首建视频比例门禁弹窗 ==================== */
+.storyboard-ratio-gate {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--background);
+}
+.sb-ratio-gate-overlay {
+    z-index: 10060;
+}
+.sb-ratio-gate-overlay[data-dismissible="false"] {
+    /* 门禁不可点遮罩关闭 */
+    pointer-events: auto;
+}
+.sb-ratio-confirm-dialog {
+    width: min(420px, 92vw);
+    max-width: 420px;
+    padding: 0;
+}
+.sb-ratio-confirm-dialog header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px 0;
+}
+.sb-ratio-confirm-dialog header h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+}
+.sb-ratio-confirm-dialog .empty-note {
+    padding: 12px 20px 0;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.6;
+}
+.sb-ratio-confirm-error {
+    margin: 10px 0 0;
+    color: var(--danger);
+    font-size: 13px;
+}
+.sb-ratio-options {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px 20px;
+}
+.sb-ratio-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px 12px;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    transition: all 0.3s ease;
+    background: #fff;
+    min-height: 120px;
+    cursor: pointer;
+    gap: 8px;
+}
+.sb-ratio-option input[type="radio"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    margin: 0;
+    flex-shrink: 0;
+}
+.sb-ratio-option input[type="radio"]:checked {
+    accent-color: var(--primary);
+}
+.sb-ratio-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+    border: 2px solid #a5b4fc;
+    border-radius: 4px;
+}
+.sb-ratio-icon-landscape {
+    width: 64px;
+    height: 36px;
+}
+.sb-ratio-icon-portrait {
+    width: 36px;
+    height: 64px;
+}
+.sb-ratio-text {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+.sb-ratio-value {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--foreground);
+}
+.sb-ratio-label {
+    font-size: 12px;
+    color: var(--muted);
+}
+.sb-ratio-option:has(input[type="radio"]:checked),
+.sb-ratio-option.checked {
+    border-color: var(--primary);
+    background: linear-gradient(135deg, rgba(47, 109, 246, 0.12), rgba(47, 109, 246, 0.06));
+    box-shadow: 0 0 0 3px rgba(47, 109, 246, 0.1);
+}
+.sb-ratio-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 0 20px 20px;
+}
+.sb-ratio-confirm-actions .btn-secondary,
+.sb-ratio-confirm-actions .btn-primary {
+    min-width: 96px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.sb-ratio-confirm-actions .btn-secondary {
+    background: var(--panel-soft);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+}
+.sb-ratio-confirm-actions .btn-primary {
+    background: var(--primary);
+    color: var(--primary-foreground);
+}
+.sb-ratio-confirm-actions button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}

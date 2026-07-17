@@ -617,15 +617,22 @@ body {
 /* Chat Area */
 .chat-area {
     flex: 1;
+    /* flex 子项默认 min-width:auto，历史消息中的宽表格/长串会把整列撑出视口，
+       右侧发送按钮会被 main-layout 的 overflow:hidden 裁掉 */
+    min-width: 0;
+    max-width: 100%;
     display: flex;
     flex-direction: column;
     background: white;
     border-right: 1px solid var(--border-color);
     position: relative;
+    overflow-x: hidden;
 }
 
 .chat-messages {
     flex: 1;
+    min-width: 0;
+    overflow-x: hidden;
     overflow-y: auto;
     padding: 24px;
     background: linear-gradient(to bottom, #faf5ff 0%, #f5f3ff 100%);
@@ -851,6 +858,8 @@ body {
 /* Messages */
 .message {
     margin-bottom: 16px;
+    min-width: 0;
+    max-width: 100%;
     animation: fadeInUp 0.3s ease-out;
 }
 
@@ -876,11 +885,14 @@ body {
 }
 
 .message-content {
-    max-width: 75%;
+    max-width: min(75%, 100%);
+    min-width: 0;
     padding: 14px 18px;
     border-radius: var(--radius-lg);
     line-height: 1.6;
     word-wrap: break-word;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .user-message .message-content {
@@ -1045,6 +1057,10 @@ body {
     padding: 24px;
     background: white;
     border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .input-actions {
@@ -1075,16 +1091,24 @@ body {
     box-shadow: var(--shadow-sm);
 }
 
+/*
+ * 发送按钮始终绝对定位在输入框内部右侧。
+ * 避免历史消息撑宽 flex 布局后，发送按钮被挤出视口裁切（表现为“按钮消失”）。
+ */
 .input-container {
-    display: flex;
-    gap: 12px;
-    align-items: flex-end;
+    position: relative;
+    display: block;
     margin-bottom: 12px;
+    min-width: 0;
+    width: 100%;
 }
 
 .message-input {
-    flex: 1;
-    padding: 14px 18px;
+    display: block;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 14px 56px 14px 18px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     font-size: 14px;
@@ -1102,13 +1126,18 @@ body {
 }
 
 .send-btn {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
     border: none;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     background: var(--primary-gradient);
     color: white;
     cursor: pointer;
@@ -2278,6 +2307,9 @@ body {
     border-collapse: collapse;
     margin: 12px 0;
     width: 100%;
+    max-width: 100%;
+    display: block;
+    overflow-x: auto;
 }
 
 .message-content th,
@@ -2906,6 +2938,19 @@ body {
         padding: 12px 16px;
     }
 
+    .input-container {
+        margin-bottom: 10px;
+    }
+
+    .message-input {
+        padding: 12px 56px 12px 16px;
+    }
+
+    .send-btn {
+        width: 40px;
+        height: 40px;
+    }
+
     .form-grid {
         grid-template-columns: 1fr;
     }
@@ -2982,13 +3027,15 @@ body {
         font-size: 13px;
     }
 
-    .input-container {
-        gap: 8px;
+    .message-input {
+        padding-right: 52px;
     }
 
     .send-btn {
-        width: 42px;
-        height: 42px;
+        width: 36px;
+        height: 36px;
+        right: 6px;
+        bottom: 6px;
     }
 }
 
@@ -3375,6 +3422,21 @@ body {
 .top-header,
 .input-section {
     margin-left: 0;
+}
+
+/*
+ * 窄屏隐藏左侧悬浮导览条。
+ * 导览条为 fixed 叠加层（约 60px），在中窄宽度会遮挡聊天区与输入区；
+ * 制作工坊入口仍可通过世界侧栏/流程其它入口进入，故窄屏直接不显示。
+ */
+@media (max-width: 1024px) {
+    .step-nav {
+        display: none !important;
+    }
+
+    .main-layout {
+        margin-left: 0;
+    }
 }
 
 /* ==================== 图片预览和上传功能样式 ==================== */

@@ -562,6 +562,14 @@ class StoryboardAgentCliService:
                 model, model_id=model_id, vendor_id=vendor_id
             )
 
+        # 画幅：显式传入优先；否则继承同世界已有集（优先第 1 集），再兜底 16:9
+        effective_ratio = (str(workflow_ratio).strip() if workflow_ratio else "") or None
+        if not effective_ratio:
+            inherited = StoryboardModel.resolve_inherited_workflow_ratio(
+                int(user_id), int(world_id)
+            ) or {}
+            effective_ratio = (str(inherited.get("workflow_ratio") or "").strip() or None) or "16:9"
+
         storyboard_id = StoryboardModel.create(
             user_id=int(user_id),
             world_id=int(world_id),
@@ -571,7 +579,7 @@ class StoryboardAgentCliService:
             title=title if title is not None else (_get_field(script, "title") or ""),
             style=style,
             style_reference_image=style_reference_image,
-            workflow_ratio=workflow_ratio,
+            workflow_ratio=effective_ratio,
             composition_preference=composition_preference,
             version=version,
             config_json={"selectedScriptSplitLlmModel": selection},

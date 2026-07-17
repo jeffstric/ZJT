@@ -208,7 +208,7 @@
                         <p>{{ t('loading') }}</p>
                     </div>
 
-                    <div v-else-if="dashboard.modelAnalysis.models.length" class="model-analysis-content">
+                    <div v-else-if="sortedModelAnalysisModels().length" class="model-analysis-content">
                         <div class="model-analysis-stats">
                             <div class="model-stat-card total">
                                 <div class="model-stat-label">{{ t('model_chart_total_calls') }}</div>
@@ -305,7 +305,7 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <template v-for="model in dashboard.modelAnalysis.models" :key="'m-' + model.type">
+                                <template v-for="model in sortedModelAnalysisModels()" :key="'m-' + model.type">
                                     <tr class="model-row" @click="toggleModelExpand(model.type)">
                                         <td>
                                             <span class="expand-icon">{{ dashboard.modelAnalysis.expandedTypes[model.type] ? '&#9660;' : '&#9654;' }}</span>

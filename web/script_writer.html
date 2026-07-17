@@ -875,7 +875,10 @@
                         </div>
                         <div class="form-group">
                             <label class="form-label"><span data-i18n="label_parent_scene">父级场景</span></label>
-                            <input type="text" id="loc-parent" class="form-input" placeholder="输入父级场景ID（可选）" data-i18n-placeholder="placeholder_loc_parent">
+                            <select id="loc-parent" class="form-input">
+                                <option value="" data-i18n="option_no_parent_scene">无（顶层场景）</option>
+                            </select>
+                            <span class="form-hint" style="font-size: 12px; color: var(--muted, #6b7280); margin-top: 4px; display: block;">仅可选择顶级场景作为父级</span>
                         </div>
                         <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_scene_desc">场景描述</span></label>
@@ -1226,7 +1229,10 @@
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_parent_scene">父级场景</span></label>
-                        <input type="text" id="new-loc-parent" class="form-input" placeholder="所属父级场景名称（可选）">
+                        <select id="new-loc-parent" class="form-input">
+                            <option value="" data-i18n="option_no_parent_scene">无（顶层场景）</option>
+                        </select>
+                        <span class="form-hint" style="font-size: 12px; color: var(--muted, #6b7280); margin-top: 4px; display: block;">仅可选择顶级场景作为父级；未选则为顶层场景</span>
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_scene_desc">场景描述</span></label>

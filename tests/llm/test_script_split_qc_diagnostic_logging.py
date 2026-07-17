@@ -35,6 +35,7 @@ def _run_qc(context, auth_token="secret-token-must-not-be-logged"):
 
 
 def test_rule_qc_writes_correlated_input_prompt_status_and_report(monkeypatch, tmp_path):
+    monkeypatch.setattr(ScriptSplitQcConstants, "DIAGNOSTIC_LOGGING_ENABLED", True)
     monkeypatch.setattr(ScriptSplitQcConstants, "DIAGNOSTIC_LOG_DIR", str(tmp_path))
     context = qc_agent.create_qc_log_context(
         task_id=42,
@@ -82,6 +83,7 @@ def test_qc_diagnostic_logging_disabled_creates_no_context_or_files(monkeypatch,
 
 
 def test_qc_diagnostic_file_writes_use_asyncio_to_thread(monkeypatch, tmp_path):
+    monkeypatch.setattr(ScriptSplitQcConstants, "DIAGNOSTIC_LOGGING_ENABLED", True)
     monkeypatch.setattr(ScriptSplitQcConstants, "DIAGNOSTIC_LOG_DIR", str(tmp_path))
     original_to_thread = asyncio.to_thread
     calls = []

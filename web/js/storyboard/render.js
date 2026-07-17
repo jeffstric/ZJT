@@ -2129,7 +2129,11 @@ function renderGenerateProgressDialog() {
         : 0;
     const progressMessage = state.generateProgressMessage || '正在处理任务';
     const stepHtml = steps.map((step) => {
-        const cls = step.status || 'pending';
+        let cls = step.status || 'pending';
+        // 失败/暂停后：running 不得继续转圈，降级为 failed 并显示停止图标
+        if (cls === 'running' && error) {
+            cls = 'failed';
+        }
         let iconHtml;
         let statusText;
         if (cls === 'completed') {
@@ -2139,8 +2143,8 @@ function renderGenerateProgressDialog() {
             iconHtml = `<span class="spinner">${icon('loading', 16)}</span>`;
             statusText = '执行中';
         } else if (cls === 'failed') {
-            iconHtml = icon('close', 16);
-            statusText = '失败';
+            iconHtml = icon('stop', 16);
+            statusText = '已停止';
         } else {
             iconHtml = icon('circle', 16);
             statusText = '待开始执行';
@@ -2164,7 +2168,7 @@ function renderGenerateProgressDialog() {
         <div class="modal-overlay" data-modal="generate-progress" data-dismissible="${error ? 'true' : 'false'}">
             <div class="export-dialog generate-progress-dialog">
                 <header>
-                    <h2>正在生成分镜...</h2>
+                    <h2>${error ? '分镜生成已停止' : '正在生成分镜...'}</h2>
                     ${error ? `<button data-action="close-generate-progress">${icon('close', 18)}</button>` : ''}
                 </header>
                 <div class="generate-progress-summary">
@@ -2189,8 +2193,56 @@ function renderGenerateProgressDialog() {
 
 // ==================== 分区刷新 refresh(regions) ====================
 
+/**
+ * 世界内首建：视频比例确认门禁弹窗。
+ * 确认前不 create、不进入编辑器、不弹拆分框。
+ */
+function renderRatioConfirmDialog() {
+    if (!state.showRatioConfirmDialog && !state.ratioGateActive) return '';
+    const busy = !!state.isCreatingStoryboard;
+    const selected = state.pendingCreateRatio === '9:16' ? '9:16' : '16:9';
+    const err = state.ratioConfirmError
+        ? `<p class="dialog-error sb-ratio-confirm-error">${escapeHtml(state.ratioConfirmError)}</p>`
+        : '';
+    const option = (value, label, iconClass) => {
+        const checked = selected === value;
+        return `
+            <label class="sb-ratio-option ${checked ? 'checked' : ''}" data-action="select-create-ratio" data-ratio="${value}">
+                <input type="radio" name="storyboardCreateRatio" value="${value}" ${checked ? 'checked' : ''} ${busy ? 'disabled' : ''}>
+                <div class="sb-ratio-icon ${iconClass}"></div>
+                <div class="sb-ratio-text">
+                    <span class="sb-ratio-value">${value}</span>
+                    <span class="sb-ratio-label">${label}</span>
+                </div>
+            </label>`;
+    };
+    return `
+        <div class="modal-overlay sb-ratio-gate-overlay" data-modal="ratio-confirm" data-dismissible="false">
+            <div class="export-dialog sb-ratio-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="sb-ratio-confirm-title">
+                <header>
+                    <h2 id="sb-ratio-confirm-title">选择视频比例</h2>
+                </header>
+                <div class="empty-note">
+                    本世界尚无故事板，请先选择视频画幅后再继续。后续新建的其它集将自动继承该比例。错误的比例会导致分镜构图与生成结果全部错误。
+                    ${err}
+                </div>
+                <div class="sb-ratio-options">
+                    ${option('16:9', '横屏', 'sb-ratio-icon-landscape')}
+                    ${option('9:16', '竖屏', 'sb-ratio-icon-portrait')}
+                </div>
+                <div class="dialog-actions sb-ratio-confirm-actions">
+                    <button type="button" class="btn-secondary" data-action="cancel-create-ratio" ${busy ? 'disabled' : ''}>取消</button>
+                    <button type="button" class="btn-primary" data-action="confirm-create-ratio" ${busy ? 'disabled' : ''}>
+                        ${busy ? '创建中…' : '确认并创建'}
+                    </button>
+                </div>
+            </div>
+        </div>`;
+}
+
 function renderModalsHtml() {
     return [
+        renderRatioConfirmDialog(),
         renderExportDialog(),
         renderGenerateFromScriptDialog(),
         renderGenerateProgressDialog(),
@@ -2740,6 +2792,20 @@ export function refresh(regions = 'all', options = {}) {
 
     if (state.error) {
         app.innerHTML = `<div class="storyboard-error"><h1>故事板打开失败</h1><p>${escapeHtml(state.error)}</p><button class="btn-primary" data-route="script">返回剧本策划</button></div>`;
+        return;
+    }
+
+    // 比例门禁：仅渲染确认弹窗，不进入完整编辑器
+    if (state.ratioGateActive) {
+        onDomWillRerender();
+        app.innerHTML = `
+            <div class="storyboard-ratio-gate">
+                <div class="storyboard-loading">
+                    <div class="loading-mark">智</div>
+                    <div>请先选择视频比例…</div>
+                </div>
+            </div>
+            <div class="storyboard-modals" data-region="modals">${renderRatioConfirmDialog()}</div>`;
         return;
     }
 

@@ -95,6 +95,19 @@ function createGenerateProgressSteps() {
     ];
 }
 
+/** 将仍处于 running 的步骤标为 failed（失败/暂停后停转 loading） */
+function markRunningGenerateStepsFailed() {
+    const steps = state.generateProgressSteps || [];
+    steps.forEach((s) => {
+        if (s.status === 'running') s.status = 'failed';
+    });
+    // 兜底：按 stepIndex 标记
+    const idx = state.generateProgressStepIndex;
+    if (Number.isFinite(idx) && idx >= 0 && idx < steps.length && steps[idx].status !== 'completed') {
+        steps[idx].status = 'failed';
+    }
+}
+
 /** 根据后端 status/phase 更新进度步骤 UI */
 function updateGenerateProgressStepsByStatus(statusData) {
     applyGenerateProgressStatus(statusData);
@@ -113,10 +126,12 @@ function updateGenerateProgressStepsByStatus(statusData) {
     const targetStep = phaseToStep[phase] !== undefined
         ? phaseToStep[phase]
         : (phaseToStep[status] || 0);
+    const isTerminalFail = status === 'failed' || status === 'cancelled'
+        || status === 'paused' || status === 'waiting_auth';
     steps.forEach((s, i) => {
         if (status === 'completed') s.status = 'completed';
         else if (i < targetStep) s.status = 'completed';
-        else if (i === targetStep) s.status = 'running';
+        else if (i === targetStep) s.status = isTerminalFail ? 'failed' : 'running';
         else s.status = 'pending';
     });
     state.generateProgressStepIndex = Math.min(targetStep, Math.max(steps.length - 1, 0));
@@ -151,15 +166,14 @@ function attachGenerateFromScriptPolling(taskId) {
             rerender('all', { forcePreview: true });
         },
         onPaused: (statusData) => {
+            markRunningGenerateStepsFailed();
             state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
             state.isGeneratingFromScript = false;
             state.showGenerateProgressDialog = true;
             rerenderModals();
         },
         onError: (error) => {
-            const steps = state.generateProgressSteps || [];
-            const idx = state.generateProgressStepIndex;
-            if (idx >= 0 && idx < steps.length) steps[idx].status = 'failed';
+            markRunningGenerateStepsFailed();
             state.generateProgressError = error.message || '生成分镜失败';
             state.isGeneratingFromScript = false;
             state.showGenerateProgressDialog = true;
@@ -1753,6 +1767,12 @@ function handleRoute(route) {
     }
 }
 
+const RATIO_GATE_ALLOWED_ACTIONS = new Set([
+    'select-create-ratio',
+    'confirm-create-ratio',
+    'cancel-create-ratio',
+]);
+
 export function bindEvents() {
     // 鼠标离开分镜助手区：解除浮层 pin，恢复「移出渐隐」
     document.addEventListener('mouseout', (event) => {
@@ -1768,6 +1788,49 @@ export function bindEvents() {
     });
 
     document.addEventListener('click', async (event) => {
+        // 比例门禁：仅放行比例确认相关操作，禁止拆分/生图等一切业务
+        if (state.ratioGateActive) {
+            const actionEl = event.target.closest('[data-action]');
+            const action = actionEl?.dataset?.action || '';
+            if (!RATIO_GATE_ALLOWED_ACTIONS.has(action)) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+            event.preventDefault();
+            if (action === 'select-create-ratio') {
+                const ratio = actionEl.dataset.ratio || '16:9';
+                if (ratio === '16:9' || ratio === '9:16') {
+                    state.pendingCreateRatio = ratio;
+                    state.ratioConfirmError = '';
+                    rerender('all');
+                }
+                return;
+            }
+            if (action === 'cancel-create-ratio') {
+                if (state.isCreatingStoryboard) return;
+                state.ratioConfirmError = '未选择视频比例，无法使用故事板';
+                state.showRatioConfirmDialog = true;
+                state.ratioGateActive = true;
+                rerender('all');
+                return;
+            }
+            if (action === 'confirm-create-ratio') {
+                if (state.isCreatingStoryboard) return;
+                try {
+                    const { continueCreateWithRatio } = await import('./bootstrap.js');
+                    await continueCreateWithRatio(state.pendingCreateRatio || '16:9');
+                } catch (err) {
+                    state.ratioConfirmError = err.message || '创建故事板失败';
+                    state.ratioGateActive = true;
+                    state.showRatioConfirmDialog = true;
+                    rerender('all');
+                }
+                return;
+            }
+            return;
+        }
+
         // 集数切换面板：点外部关闭
         if (state.showEpisodePicker && !event.target.closest('[data-episode-switcher]')) {
             state.showEpisodePicker = false;

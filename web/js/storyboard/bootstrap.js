@@ -23,6 +23,12 @@ import { autoGenerateMissingFirstFrames } from './auto_missing_images.js';
 import { resumeAutoMissingVideos } from './auto_missing_videos.js';
 import { stopPlayback, updatePlayheadPosition } from './playback.js';
 
+let pageLifecycleBound = false;
+
+/**
+ * 加载或创建故事板。
+ * 世界内无故事板时返回 { deferred: true }，由比例门禁弹窗确认后再 create。
+ */
 async function loadStoryboard() {
     if (state.storyboardId) {
         return api.getStoryboard(state.storyboardId);
@@ -32,11 +38,21 @@ async function loadStoryboard() {
         throw new Error('缺少 world_id，无法创建故事板');
     }
 
+    const defaults = await api.getStoryboardCreateDefaults(state.worldId);
+    state.createDefaults = defaults || {};
+
+    if (defaults?.needs_ratio_confirm) {
+        // 关键：不 create、不 finishBootstrap、不开拆分弹窗
+        return { deferred: true, needs_ratio_confirm: true };
+    }
+
     return api.createStoryboard({
         world_id: state.worldId,
         episode_number: state.episodeNumber,
         script_id: state.scriptId,
         workflow_id: state.workflowId,
+        // 可选显式带上继承比例，便于排查；后端也会再 resolve
+        workflow_ratio: defaults?.workflow_ratio || undefined,
     });
 }
 
@@ -61,7 +77,12 @@ async function initI18n() {
 }
 
 async function maybePromptGenerateFromScript() {
+    // 比例门禁期间绝不弹拆分框
+    if (state.ratioGateActive) return;
     if (!state.storyboardId || state.scenes.length > 0) return;
+    // 无有效比例时也不拆分（后端会 400，前端提前拦截）
+    if (!String(state.workflowRatio || '').trim()) return;
+
     // 异步化后：先查是否有进行中的拆分任务，有则恢复轮询而不是弹 config 框。
     // 见设计文档 §15「页面刷新后恢复真实进度」。
     try {
@@ -91,15 +112,23 @@ async function maybePromptGenerateFromScript() {
 
 /** 刷新恢复时的轮询：完成后重新加载故事板，失败/暂停则显示提示。 */
 function pollScriptSplitTaskForRecovery(taskId) {
+    const markRunningFailed = () => {
+        const steps = state.generateProgressSteps || [];
+        steps.forEach((s) => {
+            if (s.status === 'running') s.status = 'failed';
+        });
+    };
     const updateStepsByStatus = (statusData) => {
         applyGenerateProgressStatus(statusData);
         const steps = state.generateProgressSteps || [];
         const phaseToStep = { planning: 0, segment_generation: 1, replan_segment: 1, merging: 2, global_qc: 2, publishing: 3, done: 4 };
         const targetStep = phaseToStep[statusData.phase] !== undefined ? phaseToStep[statusData.phase] : 0;
+        const st = statusData.status;
+        const isTerminalFail = st === 'failed' || st === 'cancelled' || st === 'paused' || st === 'waiting_auth';
         steps.forEach((s, i) => {
             if (statusData.status === 'completed') s.status = 'completed';
             else if (i < targetStep) s.status = 'completed';
-            else if (i === targetStep) s.status = 'running';
+            else if (i === targetStep) s.status = isTerminalFail ? 'failed' : 'running';
             else s.status = 'pending';
         });
         renderApp();
@@ -118,11 +147,13 @@ function pollScriptSplitTaskForRecovery(taskId) {
             renderApp();
         },
         onPaused: (statusData) => {
+            markRunningFailed();
             state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
             state.isGeneratingFromScript = false;
             renderApp();
         },
         onError: (error) => {
+            markRunningFailed();
             state.generateProgressError = error.message || '生成分镜失败';
             state.isGeneratingFromScript = false;
             renderApp();
@@ -130,20 +161,28 @@ function pollScriptSplitTaskForRecovery(taskId) {
     });
 }
 
-async function main() {
-    bindEvents();
-    initStateFromUrl();
+function bindPageLifecycleOnce() {
+    if (pageLifecycleBound) return;
+    pageLifecycleBound = true;
+    // 页面隐藏/卸载时停播，避免后台继续出声
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) stopPlayback();
+    });
+    window.addEventListener('pagehide', () => stopPlayback());
+    // 窗口尺寸变化后缩略图宽度可能变，重算播放头
+    window.addEventListener('resize', () => {
+        updatePlayheadPosition({ followScroll: false });
+    });
+}
 
-    if (!state.userId) {
-        throw new Error('缺少用户信息，请从剧本策划页面重新进入故事板');
+/**
+ * 故事板已就绪后的后续初始化（资产/模型/拆分提示/自动任务）。
+ * 比例门禁确认 create 成功后也会走这里。
+ */
+export async function finishBootstrapAfterStoryboardReady(data) {
+    if (data?.storyboard) {
+        restoreUiConfig(data.storyboard?.config_json || {});
     }
-
-    await initI18n();
-    state.editionInfo = await api.getEditionInfo().catch(() => ({ mode: 'community', mode_label: '社区版' }));
-
-    const data = await loadStoryboard();
-    loadStoryboardData(data);
-    restoreUiConfig(data.storyboard?.config_json || {});
 
     // LLM 模型恢复：优先 config_json（通过 restoreUiConfig），否则回退 localStorage
     // 使用专用 key 避免与 script_writer 冲突
@@ -249,19 +288,89 @@ async function main() {
     resumePollingTasks();
     autoGenerateMissingFirstFrames();
     resumeAutoMissingVideos().catch(() => {});
+    bindPageLifecycleOnce();
+}
 
-    // 页面隐藏/卸载时停播，避免后台继续出声
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden) stopPlayback();
-    });
-    window.addEventListener('pagehide', () => stopPlayback());
-    // 窗口尺寸变化后缩略图宽度可能变，重算播放头
-    window.addEventListener('resize', () => {
-        updatePlayheadPosition({ followScroll: false });
-    });
+/**
+ * 比例门禁确认后：带 workflow_ratio 创建故事板并完成初始化。
+ * 失败时保持门禁，错误写入 state.ratioConfirmError。
+ */
+export async function continueCreateWithRatio(ratio) {
+    const allowed = new Set(['16:9', '9:16']);
+    const workflowRatio = allowed.has(ratio) ? ratio : (state.pendingCreateRatio || '16:9');
+    if (!allowed.has(workflowRatio)) {
+        state.ratioConfirmError = '请选择视频比例 16:9 或 9:16';
+        renderApp();
+        return;
+    }
+    if (!state.worldId) {
+        state.ratioConfirmError = '缺少 world_id，无法创建故事板';
+        renderApp();
+        return;
+    }
+    if (state.isCreatingStoryboard) return;
+
+    state.isCreatingStoryboard = true;
+    state.ratioConfirmError = '';
+    state.pendingCreateRatio = workflowRatio;
+    renderApp();
+
+    try {
+        const data = await api.createStoryboard({
+            world_id: state.worldId,
+            episode_number: state.episodeNumber,
+            script_id: state.scriptId,
+            workflow_id: state.workflowId,
+            workflow_ratio: workflowRatio,
+        });
+        // 解除门禁后再加载业务数据
+        state.ratioGateActive = false;
+        state.showRatioConfirmDialog = false;
+        state.isCreatingStoryboard = false;
+        state.ratioConfirmError = '';
+        loadStoryboardData(data);
+        await finishBootstrapAfterStoryboardReady(data);
+    } catch (error) {
+        state.isCreatingStoryboard = false;
+        state.ratioGateActive = true;
+        state.showRatioConfirmDialog = true;
+        state.ratioConfirmError = error.message || '创建故事板失败，请重试';
+        renderApp();
+    }
+}
+
+async function main() {
+    bindEvents();
+    initStateFromUrl();
+
+    if (!state.userId) {
+        throw new Error('缺少用户信息，请从剧本策划页面重新进入故事板');
+    }
+
+    await initI18n();
+    state.editionInfo = await api.getEditionInfo().catch(() => ({ mode: 'community', mode_label: '社区版' }));
+
+    const data = await loadStoryboard();
+
+    // 世界内首个故事板：进入比例门禁，禁止 create / 拆分 / 其它业务
+    if (data?.deferred && data.needs_ratio_confirm) {
+        state.ratioGateActive = true;
+        state.showRatioConfirmDialog = true;
+        state.pendingCreateRatio = '16:9';
+        state.ratioConfirmError = '';
+        state.isCreatingStoryboard = false;
+        renderApp();
+        bindPageLifecycleOnce();
+        return;
+    }
+
+    loadStoryboardData(data);
+    await finishBootstrapAfterStoryboardReady(data);
 }
 
 main().catch((error) => {
     state.error = error.message || '故事板初始化失败';
+    state.ratioGateActive = false;
+    state.showRatioConfirmDialog = false;
     renderApp();
 });

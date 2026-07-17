@@ -1480,7 +1480,8 @@ def update_world(
 
 
 def create_location_json(user_id: str, world_id: str, auth_token: str, name: str, description: str = None, 
-                        reference_image: str = None, _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+                        reference_image: str = None, parent_id=None, parent_name: str = None,
+                        _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的地点JSON文件 - MCP工具函数
     
@@ -1491,6 +1492,8 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
         name: 地点名称（必填，只能包含中文、英文、数字）
         description: 地点描述（可选）
         reference_image: 参考图片（可选）
+        parent_id: 父级地点 ID 或兼容字段（可选；文件层优先用 parent_name）
+        parent_name: 父级地点名称（可选；未落库稳定键，父须为顶级场景名）
         **additional_fields: 额外字段（可选）
     
     Returns:
@@ -1530,15 +1533,26 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
             'created_at': datetime.now().isoformat()
         }
         
-        # 添加可选字段 - parent_id保持为null
-        location_data['parent_id'] = None
+        # 父级：支持 parent_name（文件层主字段）与 parent_id（DB id 或兼容）
+        pn = (str(parent_name).strip() if parent_name is not None else '') or None
+        # additional_fields 里也可能带 parent_name / parent_id
+        if pn is None and additional_fields.get('parent_name') is not None:
+            pn = (str(additional_fields.get('parent_name')).strip() or None)
+        pid = parent_id if parent_id is not None else additional_fields.get('parent_id')
+        if pid is not None and pid != '':
+            location_data['parent_id'] = pid
+        else:
+            location_data['parent_id'] = pn  # 过渡：无数字 id 时与 parent_name 双写
+        location_data['parent_name'] = pn
         if reference_image is not None:
             location_data['reference_image'] = reference_image
         if description is not None:
             location_data['description'] = description
         
-        # 添加额外字段
+        # 添加额外字段（不覆盖已规范化的 parent_*）
         for key, value in additional_fields.items():
+            if key in ('parent_id', 'parent_name'):
+                continue
             if key not in location_data:
                 location_data[key] = value
         
@@ -2139,7 +2153,8 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
         }
 
 
-def update_location_json(user_id: str, world_id: str, auth_token: str, name: str, parent_id: str = None, 
+def update_location_json(user_id: str, world_id: str, auth_token: str, name: str, parent_id: str = None,
+                        parent_name: str = None,
                         reference_image: str = None, description: str = None, **additional_fields) -> Dict[str, Any]:
     """
     更新地点JSON文件 - MCP工具函数
@@ -2149,7 +2164,8 @@ def update_location_json(user_id: str, world_id: str, auth_token: str, name: str
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         name: 地点名称（必填，用于定位文件）
-        parent_id: 父级地点ID（可选）
+        parent_id: 父级地点 ID 或兼容字段（可选）
+        parent_name: 父级地点名称（可选；文件层主字段）
         reference_image: 参考图片（可选）
         description: 地点描述（可选）
         **additional_fields: 额外字段（可选）
@@ -2194,8 +2210,15 @@ def update_location_json(user_id: str, world_id: str, auth_token: str, name: str
                 }
 
         # 更新字段（只更新提供的非None字段）
+        if parent_name is not None or additional_fields.get('parent_name') is not None:
+            pn = parent_name if parent_name is not None else additional_fields.get('parent_name')
+            pn = (str(pn).strip() if pn is not None and pn != '' else None)
+            existing_data['parent_name'] = pn
+            # 过渡双写：无显式 parent_id 时用名称
+            if parent_id is None:
+                existing_data['parent_id'] = pn
         if parent_id is not None:
-            existing_data['parent_id'] = parent_id
+            existing_data['parent_id'] = parent_id if parent_id != '' else None
         if reference_image is not None:
             existing_data['reference_image'] = reference_image
         if description is not None:
@@ -2203,6 +2226,8 @@ def update_location_json(user_id: str, world_id: str, auth_token: str, name: str
         
         # 添加额外字段
         for key, value in additional_fields.items():
+            if key in ('parent_id', 'parent_name'):
+                continue
             if key not in ['name', 'user_id', 'world_id', 'created_at']:  # 保护核心字段
                 existing_data[key] = value
         
@@ -2649,9 +2674,13 @@ MCP_TOOLS = [
                     "type": "string",
                     "description": "地点名称（必须与剧本原文语言一致：英文剧本用英文名，中文剧本用中文名；允许中文、英文、数字、点号、下划线）"
                 },
+                "parent_name": {
+                    "type": "string",
+                    "description": "父级场景名称（可选；须为已有顶级场景名）"
+                },
                 "parent_id": {
                     "type": "string",
-                    "description": "父级地点ID（可选）"
+                    "description": "父级地点ID或兼容字段（可选；优先使用 parent_name）"
                 },
                 "reference_image": {
                     "type": "string",
@@ -2842,9 +2871,13 @@ MCP_TOOLS = [
                     "type": "string",
                     "description": "地点名称（用于定位文件）"
                 },
+                "parent_name": {
+                    "type": "string",
+                    "description": "父级场景名称（可选；须为已有顶级场景名）"
+                },
                 "parent_id": {
                     "type": "string",
-                    "description": "父级地点ID（可选）"
+                    "description": "父级地点ID或兼容字段（可选；优先使用 parent_name）"
                 },
                 "reference_image": {
                     "type": "string",
