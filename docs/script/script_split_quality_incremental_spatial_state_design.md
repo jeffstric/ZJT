@@ -158,13 +158,13 @@ LLM 继续输出现有镜头艺术字段：
 - 对话、动作、声音和情绪
 - 相机与构图相关字段
 
-效果模式新增质量专用临时字段 `spatial_intent`。角色可见性继续只使用镜头顶层的 `characters_present`；不再在 `spatial_intent` 中重复定义 `visible_character_ids`：
+效果模式新增质量专用临时字段 `spatial_intent`。可见性继续使用镜头已有的 `characters_present` 和 `props_present`；不在 `spatial_intent` 中重复定义任何 `visible_*` 字段：
 
 ```json
 {
   "characters_present": ["char_001"],
+  "props_present": ["prop_003"],
   "spatial_intent": {
-    "visible_prop_ids": ["prop_003"],
     "state_changes": [
       {
         "change_id": "chg_0001",
@@ -189,7 +189,7 @@ LLM 继续输出现有镜头艺术字段：
 可见性真源固定如下：
 
 - 角色：`characters_present` 是唯一真源；物化器禁止读取其他角色可见性列表。
-- 道具：当前公开镜头 Schema 没有 `props_present`，首期使用 `spatial_intent.visible_prop_ids`。
+- 道具：`props_present` 是唯一真源；物化器禁止读取其他道具可见性列表。
 - 文本描述与结构化可见性冲突时，确定性物化使用结构化字段，并产生 `spatial_visibility_text_conflict` warning 交给 QC Agent 判断，不从文本反向改状态。
 
 ### 7.2 支持的变化操作
@@ -387,7 +387,7 @@ next_state, diagnostics = apply_spatial_intent(
 | `visibility` / `framing_role` | 由 `characters_present` 间接决定可见角色 | 未出镜 present 角色写 `offscreen/offscreen_continuity` | 后端统一生成 |
 | `continuity.unchanged_slots` | 不输出 | 由相邻规范状态 diff 生成 | 后端生成 |
 | `continuity.changed_positions` | 不再作为 v3 输入 | 由已接受的 `spatial_intent.state_changes` 转换，供旧下游兼容 | 过渡期后端单向生成 |
-| `spatial_intent` | 输出变化与可见道具 | 消费后从发布结构移除，原文写日志 | 不发布 |
+| `spatial_intent` | 只输出状态变化 | 消费后从发布结构移除，原文写日志 | 不发布 |
 
 多层容器使用 `container_path` 表达从空间单元到终端容器的稳定路径；扁平状态保存完整 path 和终端 `container_id`。物化时按 path 分组重建，禁止同一实体同时出现在父容器、子容器和 `loose_positions`。
 
