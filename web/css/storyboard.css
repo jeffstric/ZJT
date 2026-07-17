@@ -267,6 +267,48 @@ button {
 .header-right { justify-content: flex-end; gap: 10px; align-items: center; }
 .header-badge { font-size: 12px; color: var(--muted); padding: 5px 8px; background: var(--panel-soft); border-radius: 999px; }
 
+/* ========== Header 拆分任务徽章（最小化进度弹窗后常驻入口） ========== */
+.header-split-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 1px solid var(--primary);
+    border-radius: 999px;
+    background: rgba(47, 109, 246, 0.08);
+    color: var(--primary);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.header-split-badge:hover {
+    background: rgba(47, 109, 246, 0.16);
+    border-color: var(--primary);
+}
+.header-split-badge .spinner.mini {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    animation: spin 1s linear infinite;
+}
+.header-split-badge .spinner.mini svg { display: block; }
+.header-split-badge-label { white-space: nowrap; }
+/* 错误/暂停态：红色提示，吸引点击处理 */
+.header-split-badge.is-errored {
+    border-color: var(--danger);
+    background: rgba(220, 38, 38, 0.08);
+    color: var(--danger);
+    animation: header-split-pulse 1.6s ease-in-out infinite;
+}
+.header-split-badge.is-errored:hover {
+    background: rgba(220, 38, 38, 0.16);
+}
+@keyframes header-split-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
 /* ========== 算力显示（点击查看日志 / 充值） ========== */
 .computing-power-display {
     display: inline-flex;

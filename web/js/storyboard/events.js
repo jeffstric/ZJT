@@ -135,7 +135,12 @@ function updateGenerateProgressStepsByStatus(statusData) {
         else s.status = 'pending';
     });
     state.generateProgressStepIndex = Math.min(targetStep, Math.max(steps.length - 1, 0));
-    rerenderModals();
+    // 弹窗打开刷弹窗；最小化时刷 Header 徽章进度
+    if (state.showGenerateProgressDialog) {
+        rerenderModals();
+    } else {
+        rerender([Region.HEADER]);
+    }
 }
 
 /**
@@ -169,20 +174,28 @@ function attachGenerateFromScriptPolling(taskId) {
             markRunningGenerateStepsFailed();
             state.generateProgressError = statusData.message || '任务暂停，请刷新页面后继续';
             state.isGeneratingFromScript = false;
-            state.showGenerateProgressDialog = true;
-            rerenderModals();
+            // 最小化时不强制弹窗，仅在 Header 徽章显示「拆分待处理」
+            if (!state.showGenerateProgressDialog) {
+                rerender([Region.HEADER, Region.LEFT_TAB_BODY]);
+            } else {
+                rerenderModals();
+            }
         },
         onError: (error) => {
             markRunningGenerateStepsFailed();
             state.generateProgressError = error.message || '生成分镜失败';
             state.isGeneratingFromScript = false;
-            state.showGenerateProgressDialog = true;
-            rerenderModals();
+            // 最小化时不强制弹窗，仅在 Header 徽章显示「拆分待处理」
+            if (!state.showGenerateProgressDialog) {
+                rerender([Region.HEADER, Region.LEFT_TAB_BODY]);
+            } else {
+                rerenderModals();
+            }
         },
     });
 }
 
-/** 重新展示进度弹窗并确保轮询在跑（误关/空态恢复） */
+/** 重新展示进度弹窗并确保轮询在跑（误关/空态恢复/徽章点击） */
 function reopenGenerateProgressDialog() {
     const taskId = state.generateFromScriptTaskId;
     if (!taskId) return false;
@@ -195,7 +208,8 @@ function reopenGenerateProgressDialog() {
         state.isGeneratingFromScript = true;
     }
     attachGenerateFromScriptPolling(taskId);
-    rerenderModals();
+    // 弹窗重开 + Header 徽章隐藏（徽章仅在弹窗关闭时显示）
+    rerender([Region.MODAL, Region.HEADER]);
     return true;
 }
 
@@ -834,19 +848,24 @@ async function handleAction(action, target) {
     }
 
     if (action === 'close-generate-progress') {
-        // 仅错误/暂停态可关：停止本页轮询，任务 ID 保留便于刷新恢复
-        if (state.generateFromScriptTaskId) {
-            stopScriptSplitTaskPolling(state.generateFromScriptTaskId);
-        }
-        if (generateProgressTimer) {
-            clearInterval(generateProgressTimer);
-            generateProgressTimer = null;
+        // 进行中关闭 = 最小化：仅隐藏弹窗，**不停轮询、不清 taskId/isGeneratingFromScript**，
+        // 任务在后端继续，轮询持续更新 Header 徽章进度；点击徽章可重开弹窗。
+        // error/暂停态关闭：停止轮询并清理生成态（保留 taskId 供刷新恢复）。
+        const wasGenerating = Boolean(state.isGeneratingFromScript);
+        if (!wasGenerating) {
+            // 非进行中（error/暂停态）：停轮询、清错误
+            if (state.generateFromScriptTaskId) {
+                stopScriptSplitTaskPolling(state.generateFromScriptTaskId);
+            }
+            if (generateProgressTimer) {
+                clearInterval(generateProgressTimer);
+                generateProgressTimer = null;
+            }
+            state.generateProgressError = '';
         }
         state.showGenerateProgressDialog = false;
-        state.generateProgressError = '';
-        state.isGeneratingFromScript = false;
-        // 同步刷左栏空态「查看拆分进度」入口
-        rerender([Region.MODAL, Region.LEFT_TAB_BODY]);
+        // 同步刷 Header（徽章出现/消失）+ 左栏空态「查看拆分进度」入口
+        rerender([Region.MODAL, Region.HEADER, Region.LEFT_TAB_BODY]);
         return;
     }
 
@@ -1086,7 +1105,13 @@ async function handleAction(action, target) {
     }
 
     if (action === 'toggle-subtitle') {
-        state.subtitleEnabled = target.checked;
+        // click 路径上有 preventDefault，checkbox 原生切换会被取消；
+        // 不能读 target.checked（仍是旧值），需按 state 翻转
+        state.subtitleEnabled = !state.subtitleEnabled;
+        const cb = document.querySelector(
+            '.timeline-progress-row input[type="checkbox"][data-action="toggle-subtitle"]'
+        );
+        if (cb) cb.checked = Boolean(state.subtitleEnabled);
         // 播放中仅切换字幕层可见性，不 rerender
         const sub = document.querySelector('.preview-subtitle');
         if (sub) {

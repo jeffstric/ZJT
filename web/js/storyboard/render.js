@@ -751,6 +751,29 @@ function formatPowerDisplay(power) {
     return String(power);
 }
 
+// Header 常驻「拆分中」徽章：拆分任务活跃且进度弹窗已最小化时显示，点击重新打开弹窗
+function renderHeaderSplitBadge() {
+    // 仅当有活跃拆分任务、且进度弹窗已关闭时显示
+    if (!state.generateFromScriptTaskId) return '';
+    if (state.showGenerateProgressDialog) return '';
+    const rawPct = Number(state.generateProgressPercent);
+    const pct = Number.isFinite(rawPct) ? Math.round(Math.max(0, Math.min(100, rawPct))) : 0;
+    const errored = Boolean(state.generateProgressError);
+    const iconHtml = errored
+        ? icon('stop', 14)
+        : `<span class="spinner mini">${icon('loading', 14)}</span>`;
+    const label = errored ? '拆分待处理' : `拆分中 ${pct}%`;
+    const title = errored
+        ? '剧本拆分已停止，点击查看详情'
+        : '剧本拆分进行中（后台运行），点击查看进度';
+    return `
+        <button type="button" class="header-split-badge ${errored ? 'is-errored' : ''}"
+            data-action="reopen-generate-progress" title="${escapeHtml(title)}">
+            ${iconHtml}
+            <span class="header-split-badge-label">${escapeHtml(label)}</span>
+        </button>`;
+}
+
 function renderHeader() {
     const power = state.computingPower;
     const powerText = formatPowerDisplay(power);
@@ -789,6 +812,7 @@ function renderHeader() {
                 <button class="header-nav-btn active" type="button">编辑器</button>
             </nav>
             <div class="header-right">
+                ${renderHeaderSplitBadge()}
                 <button type="button"
                     class="computing-power-display ${powerLevel}"
                     data-action="open-power-logs"
@@ -2169,7 +2193,9 @@ function renderGenerateProgressDialog() {
             <div class="export-dialog generate-progress-dialog">
                 <header>
                     <h2>${error ? '分镜生成已停止' : '正在生成分镜...'}</h2>
-                    ${error ? `<button data-action="close-generate-progress">${icon('close', 18)}</button>` : ''}
+                    <button data-action="close-generate-progress"
+                        title="${error ? '关闭' : '最小化（任务在后台继续运行）'}"
+                        aria-label="${error ? '关闭' : '最小化，任务在后台继续运行'}">${icon('close', 18)}</button>
                 </header>
                 <div class="generate-progress-summary">
                     <div class="generate-progress-meta">
