@@ -480,9 +480,7 @@ async function onWorldCreated(worldId) {
 // Initialize world selector
 function initWorldSelector() {
   const defaultWorldSelect = document.getElementById('defaultWorldSelect');
-  const createWorldBtn = document.getElementById('createWorldBtn');
-  const editWorldBtn = document.getElementById('editWorldBtn');
-  const deleteWorldBtn = document.getElementById('deleteWorldBtn');
+  const createWorkflowBtn = document.getElementById('createWorkflowBtn');
   const editWorldModal = document.getElementById('editWorldModal');
   const editWorldSaveBtn = document.getElementById('editWorldSaveBtn');
   const editWorldCancelBtn = document.getElementById('editWorldCancelBtn');
@@ -540,31 +538,18 @@ function initWorldSelector() {
     closeWorldSearchDropdown();
   });
 
-  // Handle create world button (复用现有的createWorldModal)
-  if (createWorldBtn) {
-    createWorldBtn.addEventListener('click', (e) => {
+  // Handle create workflow button (新建画布)
+  if (createWorkflowBtn) {
+    createWorkflowBtn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       closeWorldSearchDropdown();
-      openWorldCreationModal();
-    });
-  }
-
-  if (editWorldBtn) {
-    editWorldBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closeWorldSearchDropdown();
-      openEditWorldModal();
-    });
-  }
-
-  if (deleteWorldBtn) {
-    deleteWorldBtn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      closeWorldSearchDropdown();
-      deleteCurrentWorld();
+      // create_workflow_modal.js 暴露的全局函数
+      if (typeof window.openCreateWorkflowModal === 'function') {
+        window.openCreateWorkflowModal();
+      } else {
+        console.error('[新建画布] create_workflow_modal.js 未加载，无法打开弹窗');
+      }
     });
   }
 

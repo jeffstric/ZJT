@@ -707,6 +707,19 @@
   "video_prompt_environment_sound": "Environment Sound: {value}",
   "video_prompt_background_music": "Background Music: {value}",
   "process_face_label": "Process face",
-  "process_face_community_hint": "This is a commercial-edition feature. Please contact us to upgrade."
+  "process_face_community_hint": "This is a commercial-edition feature. Please contact us to upgrade.",
+  "create_canvas": "New Canvas",
+  "create_canvas_modal_title": "New Canvas",
+  "workflow_name_label": "Workflow Name",
+  "workflow_name_placeholder": "Enter workflow name...",
+  "workflow_ratio_label": "Aspect Ratio",
+  "ratio_landscape": "Landscape",
+  "ratio_portrait": "Portrait",
+  "ratio_square": "Square",
+  "creating_btn": "Creating...",
+  "toast_create_success": "Created successfully",
+  "toast_workflow_name_required": "Please enter a workflow name",
+  "toast_ratio_required": "Please select an aspect ratio",
+  "toast_operation_failed": "Operation failed, please try again later"
 }
 

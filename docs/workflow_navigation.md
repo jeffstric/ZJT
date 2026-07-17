@@ -60,6 +60,18 @@
   2. 获取当前选择的世界 ID
   3. 跳转到 `/script-writer?workflow_id={workflowId}&user_id={userId}&world_id={worldId}`
 
+#### 新建画布
+- 位置：左上角世界选择器旁的「新建画布」按钮（`#createWorkflowBtn`，带 SVG 图标）
+- 点击后打开新建画布弹窗（`#createWorkflowModal`，画布页风格的白底模态框）
+- 弹窗字段：
+  - 工作流名称（必填）
+  - 世界（可选，下拉选择，复用 `world.js` 的 `worldListCache`）
+  - 画幅比例（必填，radio 卡片：16:9 横屏 / 9:16 竖屏，默认 16:9）
+- 提交流程：调用 `POST /api/video-workflow/create` 创建工作流（带 `workflow_ratio` / `default_world_id`），成功后跳转 `/video-workflow?workflow_id={newId}` 进入新画布
+- 实现文件：`web/js/create_workflow_modal.js`（在 `world.js` 之后加载）
+- 入口绑定：`world.js` 的 `initWorldSelector()` 内统一绑定 `#createWorkflowBtn` click，调用 `window.openCreateWorkflowModal()`
+- 注意：左上角原有的「新建/编辑/删除世界」三个按钮（`#createWorldBtn` / `#editWorldBtn` / `#deleteWorldBtn`）已移除，世界增删改走剧本创作系统或世界管理入口
+
 ## URL参数
 
 ### 剧本创作系统
@@ -117,3 +129,10 @@
 
 ### video_workflow.html
 - `goToScriptWriter()`：跳转到剧本创作系统（保存工作流后跳转）
+
+### create_workflow_modal.js（新建画布弹窗）
+- `openCreateWorkflowModal()`：打开新建画布弹窗（暴露到 `window` 供 `world.js` 调用）
+- `closeCreateWorkflowModal()`：关闭弹窗
+- `submitCreateWorkflow()`：收集表单 → 校验 → 调用 `POST /api/video-workflow/create` → 成功后跳转 `/video-workflow?workflow_id={id}`
+- `populateWorkflowWorldOptions()`：复用 `world.js` 的 `worldListCache` 填充世界下拉
+- `updateWorkflowRatioStyles()`：兼容不支持 `:has()` 的浏览器，同步比例卡片选中态

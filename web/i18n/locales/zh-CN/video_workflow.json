@@ -707,6 +707,19 @@
   "video_prompt_environment_sound": "环境音：{value}",
   "video_prompt_background_music": "背景音乐：{value}",
   "process_face_label": "是否处理人脸",
-  "process_face_community_hint": "此功能为商业版功能，请联系购买商业版本后使用"
+  "process_face_community_hint": "此功能为商业版功能，请联系购买商业版本后使用",
+  "create_canvas": "新建画布",
+  "create_canvas_modal_title": "新建画布",
+  "workflow_name_label": "工作流名称",
+  "workflow_name_placeholder": "请输入工作流名称...",
+  "workflow_ratio_label": "画幅比例",
+  "ratio_landscape": "横屏",
+  "ratio_portrait": "竖屏",
+  "ratio_square": "方形",
+  "creating_btn": "创建中...",
+  "toast_create_success": "创建成功",
+  "toast_workflow_name_required": "请输入工作流名称",
+  "toast_ratio_required": "请选择画幅比例",
+  "toast_operation_failed": "操作失败，请稍后重试"
 }
 

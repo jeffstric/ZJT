@@ -3414,3 +3414,68 @@ textarea:focus{ border-color: var(--primary); }
   color: #9ca3af;
   margin-top: 2px;
 }
+
+/* ===== 新建画布弹窗的比例卡片样式（仅用于 #createWorkflowModal）===== */
+#createWorkflowModal .ratio-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 6px;
+  border: 2px solid var(--border, #e0e0e0);
+  border-radius: 10px;
+  transition: all 0.2s ease;
+  background: #fff;
+  min-height: 92px;
+  cursor: pointer;
+  gap: 6px;
+  /* 5 个选项时让卡片均匀分布 */
+  flex: 1 1 calc(33.333% - 6px);
+  min-width: 80px;
+  box-sizing: border-box;
+}
+#createWorkflowModal .ratio-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+  border: 2px solid #a5b4fc;
+  border-radius: 3px;
+}
+#createWorkflowModal .ratio-icon-landscape {
+  width: 40px;
+  height: 24px;
+}
+#createWorkflowModal .ratio-icon-portrait {
+  width: 24px;
+  height: 40px;
+}
+#createWorkflowModal .ratio-icon-square {
+  width: 32px;
+  height: 32px;
+}
+#createWorkflowModal .ratio-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+#createWorkflowModal .ratio-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+#createWorkflowModal .ratio-option .ratio-label {
+  font-size: 11px;
+  color: #666;
+}
+/* 选中态（:has() 与 .checked 双重兜底） */
+#createWorkflowModal .ratio-option:has(input[type="radio"]:checked),
+#createWorkflowModal .ratio-option.checked {
+  border-color: #3b82f6;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(59, 130, 246, 0.08));
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+#createWorkflowModal .ratio-option:hover {
+  border-color: #93c5fd;
+}
