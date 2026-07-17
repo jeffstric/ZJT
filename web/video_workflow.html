@@ -1113,9 +1113,11 @@
     
     // 跳转到剧本创作系统
     async function goToScriptWriter() {
-      // 获取workflow_id
-      const urlParams = new URLSearchParams(window.location.search);
-      const workflowId = urlParams.get('id');
+      // 获取 workflow id（兼容 id / workflow_id）
+      const workflowId = (typeof getWorkflowIdFromUrl === 'function')
+        ? getWorkflowIdFromUrl()
+        : (new URLSearchParams(window.location.search).get('id')
+          || new URLSearchParams(window.location.search).get('workflow_id'));
       
       // 获取当前选择的世界id
       const worldSelect = document.getElementById('defaultWorldSelect');

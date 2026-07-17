@@ -1,7 +1,8 @@
 // 新建画布模态框逻辑
 // 在 video_workflow.html 左上角「新建画布」按钮被点击时触发，
 // 提交后调用后端 POST /api/video-workflow/create 创建工作流，
-// 创建成功后跳转到 /video-workflow?workflow_id=xxx 进入画布页。
+// 创建成功后跳转到 /video-workflow?id=xxx 进入画布页
+// （画布页 getWorkflowIdFromUrl 以 id 为主参数，与列表页跳转保持一致）
 
 (function () {
   // 避免重复初始化
@@ -198,11 +199,12 @@
         const successMsg = (window.t && window.t('toast_create_success')) || '创建成功';
         showToast(successMsg, 'success');
         closeCreateWorkflowModal();
-        // 跳转到新建的画布
+        // 跳转到新建的画布（必须用 id=，与列表页/getWorkflowIdFromUrl 一致；
+        // 误用 workflow_id= 会导致 loadWorkflow 读不到 ID，世界和比例保持默认）
         const newWorkflowId = result.data.id;
         // 给 toast 一点展示时间再跳转
         setTimeout(() => {
-          window.location.href = '/video-workflow?workflow_id=' + encodeURIComponent(newWorkflowId);
+          window.location.href = '/video-workflow?id=' + encodeURIComponent(newWorkflowId);
         }, 300);
       } else {
         const failMsg = result.message || ((window.t && window.t('toast_operation_failed')) || '创建失败，请稍后重试');

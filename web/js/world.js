@@ -51,7 +51,7 @@ async function populateWorldSelector() {
 
   // Restore saved world selection
   if (state.defaultWorldId) {
-    defaultWorldSelect.value = state.defaultWorldId;
+    defaultWorldSelect.value = String(state.defaultWorldId);
   }
 
   // 渲染自定义可搜索下拉
@@ -175,12 +175,13 @@ function filterWorldSearchDropdown(keyword) {
 }
 
 function getCachedWorld(worldId) {
-  if (!worldId) return null;
+  if (!worldId && worldId !== 0) return null;
   const idNum = parseInt(worldId, 10);
   if (Number.isNaN(idNum)) {
     return null;
   }
-  return worldListCache.find(world => world.id === idNum) || null;
+  // 用 == 兼容后端返回 number / string 两种 id 类型
+  return worldListCache.find(world => world.id == idNum) || null;
 }
 
 // Handle world selection change

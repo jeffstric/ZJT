@@ -67,7 +67,7 @@
   - 工作流名称（必填）
   - 世界（可选，下拉选择，复用 `world.js` 的 `worldListCache`）
   - 画幅比例（必填，radio 卡片：16:9 横屏 / 9:16 竖屏，默认 16:9）
-- 提交流程：调用 `POST /api/video-workflow/create` 创建工作流（带 `workflow_ratio` / `default_world_id`），成功后跳转 `/video-workflow?workflow_id={newId}` 进入新画布
+- 提交流程：调用 `POST /api/video-workflow/create` 创建工作流（带 `workflow_ratio` / `default_world_id`），成功后跳转 `/video-workflow?id={newId}` 进入新画布
 - 实现文件：`web/js/create_workflow_modal.js`（在 `world.js` 之后加载）
 - 入口绑定：`world.js` 的 `initWorldSelector()` 内统一绑定 `#createWorkflowBtn` click，调用 `window.openCreateWorkflowModal()`
 - 注意：左上角原有的「新建/编辑/删除世界」三个按钮（`#createWorldBtn` / `#editWorldBtn` / `#deleteWorldBtn`）已移除，世界增删改走剧本创作系统或世界管理入口
@@ -80,7 +80,8 @@
 - `world_id`：世界ID
 
 ### 工作流画布
-- `id`：工作流ID
+- `id`：工作流ID（标准参数，列表页/新建画布跳转均使用此参数）
+- `workflow_id`：工作流ID（兼容历史链接；`getWorkflowIdFromUrl` 会在缺少 `id` 时回退读取）
 - `from_world_id`：来源世界ID（从剧本创作系统跳转时传递）
 - `auto_load_script`：是否自动打开剧本选择框（从剧本创作系统跳转时传递）
 - `debug`：Debug模式密码（用于开启调试模式）
@@ -133,6 +134,6 @@
 ### create_workflow_modal.js（新建画布弹窗）
 - `openCreateWorkflowModal()`：打开新建画布弹窗（暴露到 `window` 供 `world.js` 调用）
 - `closeCreateWorkflowModal()`：关闭弹窗
-- `submitCreateWorkflow()`：收集表单 → 校验 → 调用 `POST /api/video-workflow/create` → 成功后跳转 `/video-workflow?workflow_id={id}`
+- `submitCreateWorkflow()`：收集表单 → 校验 → 调用 `POST /api/video-workflow/create` → 成功后跳转 `/video-workflow?id={id}`
 - `populateWorkflowWorldOptions()`：复用 `world.js` 的 `worldListCache` 填充世界下拉
 - `updateWorkflowRatioStyles()`：兼容不支持 `:has()` 的浏览器，同步比例卡片选中态

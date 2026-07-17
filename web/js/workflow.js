@@ -807,7 +807,8 @@
             console.log('[加载工作流] 从服务器加载 default_world_id:', workflow.default_world_id);
             const defaultWorldSelect = document.getElementById('defaultWorldSelect');
             if(defaultWorldSelect){
-              defaultWorldSelect.value = workflow.default_world_id;
+              // select option.value 始终是字符串，显式转换避免 number/string 匹配失败
+              defaultWorldSelect.value = String(workflow.default_world_id);
               // 更新视觉状态（移除红色警告、同步自定义可搜索下拉的触发器文本）
               if(typeof updateWorldSelectorState === 'function'){
                 updateWorldSelectorState();
@@ -2460,9 +2461,10 @@
       _pollStatusRunning = true;
       
       try {
-        // 从 URL 参数中获取 workflowId
-        const urlParams = new URLSearchParams(window.location.search);
-        const workflowId = urlParams.get('id');
+        // 从 URL 参数中获取 workflowId（与 getWorkflowIdFromUrl 保持一致）
+        const workflowId = (typeof getWorkflowIdFromUrl === 'function')
+          ? getWorkflowIdFromUrl()
+          : new URLSearchParams(window.location.search).get('id');
         if(!workflowId) return;
         
         const userId = localStorage.getItem('user_id');

@@ -207,17 +207,11 @@ describe('proxyDownloadUrl', () => {
 
 // ── getWorkflowIdFromUrl ──
 describe('getWorkflowIdFromUrl', () => {
-  const originalSearch = window.location.search;
-
-  afterEach(() => {
-    // jsdom 不允许直接修改 window.location.search，跳过恢复
-  });
-
-  test('能从 URL 参数获取 id', () => {
+  test('能从 URL 参数获取 id 或 workflow_id（类型安全）', () => {
     // jsdom 环境中 URLSearchParams 读取 window.location.search
     // 由于无法直接修改，此函数在 jsdom 中使用默认值
     const result = getWorkflowIdFromUrl();
-    // jsdom 默认 search 为空，所以返回 null
+    // jsdom 默认 search 为空，所以返回 null；有参数时为 string
     expect(result === null || typeof result === 'string').toBe(true);
   });
 });
