@@ -476,14 +476,24 @@ class LocationModel:
                 
                 all_locations = selected_locations
             
-            # Build tree structure with only necessary fields
+            # Build tree structure. Must keep reference_image(s): quality first-frame
+            # preflight / subscene grid use get_tree_by_world; omitting refs makes every
+            # location look empty and blocks on the root (e.g. 城南酒店) even after images exist.
             location_map = {}
             for loc in all_locations:
+                reference_images = loc.reference_images
+                if isinstance(reference_images, str):
+                    try:
+                        reference_images = json.loads(reference_images)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        reference_images = []
                 location_map[loc.id] = {
                     'id': loc.id,
                     'name': loc.name,
                     'parent_id': loc.parent_id,
                     'description': loc.description,
+                    'reference_image': loc.reference_image,
+                    'reference_images': reference_images,
                     'children': []
                 }
             
