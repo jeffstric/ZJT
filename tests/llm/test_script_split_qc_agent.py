@@ -161,3 +161,22 @@ def test_no_dialogue_does_not_trigger_dialogue_language_error():
     )
 
     assert "LANG_DIALOGUE_NOT_TARGET" not in _error_codes(report)
+
+
+def test_spatial_materialization_warnings_are_exposed_to_qc_report():
+    parsed = _parsed_with_shots(_shot(1))
+    parsed["_spatial_diagnostics"] = [{
+        "code": "spatial_planned_change_missing",
+        "severity": "warning",
+        "message": "规划变化未被覆盖",
+        "shot_ref": "shot_1",
+    }]
+
+    report = run_rule_qc(parsed)
+
+    issue = next(
+        item for item in report.issues
+        if item.code == "spatial_planned_change_missing"
+    )
+    assert issue.severity == "warning"
+    assert report.passed is True

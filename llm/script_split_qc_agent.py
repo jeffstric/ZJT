@@ -243,6 +243,23 @@ def run_rule_qc(
 ) -> QcReport:
     """确定性规则质检（不调用 LLM）。"""
     issues: List[QcIssue] = []
+    for diagnostic in parsed_data.get("_spatial_diagnostics") or []:
+        if not isinstance(diagnostic, dict):
+            continue
+        severity = str(diagnostic.get("severity") or "warning")
+        if severity != "warning":
+            continue
+        code = str(diagnostic.get("code") or "").strip()
+        if not code.startswith("spatial_"):
+            continue
+        issues.append(QcIssue(
+            code=code,
+            severity="warning",
+            message=str(diagnostic.get("message") or code),
+            shot_ref=str(diagnostic.get("shot_ref") or ""),
+            field="spatial_intent",
+            evidence=str(diagnostic.get("change_id") or ""),
+        ))
     groups = parsed_data.get("shot_groups") or []
     if not groups:
         issues.append(QcIssue(

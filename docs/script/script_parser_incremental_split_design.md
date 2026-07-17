@@ -137,6 +137,14 @@
 
 场景父级结构是上述 forced-accept 的明确例外。`new_root_location_forbidden`、`location_parent_invalid`、`location_parent_conflict` 带 `_hard_gate=true`，无论 `enable_qc`、修正轮数或调用重试是否耗尽都不得强制接纳。段级、合并级和发布前会分别重跑结构硬门禁；合并发现历史完成段非法时原子重开具体段并按数据库实际状态校准 `completed_segment_count`，发布前失败则禁止调用 location bootstrap 和创建分镜。
 
+**已绑定 `location_db_id` 的场景（2026-07-17 起）**：段生成提示要求 LLM 禁止乱写 parent；`sanitize_parsed_location_references` 在确认 `location_db_id` 对应真实 DB 行后，会按数据库 `parent_id` 回写或清空规划 `parent_id`，使“库中顶层场景被模型写成子场景”不再触发 `location_parent_conflict`。名称兜底且未声明有效 `location_db_id` 的同名异父仍保留冲突语义，避免静默绑错库场景。
+
+**生成进度展示（2026-07-17 起）**：`progress` 在 `segment_generation` 阶段按段表实时 `count(completed)/total` 计算（`10 + 75 * completed/total`，上限 84），并对历史 progress **只增不减**，避免硬门禁重开段后 UI 从 80%+ 掉回 40%。轮询 `to_public_status` 同步用段表推导 `completed_segments` 与当前未完成段序号（`get_first_uncompleted`），避免出现「第 6/6 段但仅完成一半」的错位文案。
+
+**同一物理场景不因时间复制（2026-07-17 起）**：段生成与效果模式规划提示均要求：剧本中同一地点在不同时段（如「前台-深夜十二点」）必须复用同一 location / location_db_id；禁止新建「前台（深夜版）」等时间变体场景；时间只写在分镜 `time_of_day` 与画面/氛围描述中。
+
+**全局 ID 临时键（2026-07-17 起）**：段生成提示要求——已有实体复用 registry 中的 `char_/loc_/prop_`；**新建实体使用本段唯一临时 id**（`loc_tmp_xxx` / `prop_tmp_xxx` / `char_tmp_xxx`），不要自行从 001 重开或占用已用号段。引擎在校验前调用 `rewrite_segment_entity_ids`：按 **name / \*_db_id** 匹配 registry 强制复用；未命中则按预留游标发号，并改写段内全部精确 id 引用，从而消化 `*_id_should_reuse` 与 `*_id_not_reserved` 类常见模型错误。
+
 段级生成严格遵守“一次 scheduler tick 最多一次 LLM 调用”。本轮解析成功但 QC 未通过时，segment 立即持久化最近一次完整 `parsed_result_json`、结构化 `validation_errors` 和重试计数，然后正常结束当前 tick、释放租约；下一 tick 再把这些检查点作为 `previous_parsed_result + qc_feedback` 发起一次定向修复。网络失败计数与 QC 修正轮次分别保存在错误元数据中，互不挤占预算。禁止在一个 `step_generate_segment()` 内循环发起多次模型请求，否则多轮请求会错误共享同一个 worker watchdog 时限。
 
 ## 7. 阶段二：复用现有 script_parser 逐段拆分
@@ -1038,3 +1046,22 @@ quality 策略 `build_segment_context`（`enterprise/services/script_split_quali
 - 本修复只改提示词渲染，不改质检规则、不改 engine 编排逻辑、不改空间契约编译，风险最小。
 - 并发段共享同一 registry 快照导致的 `location_id_not_reserved`（8%）属另一类问题（并发 ID 预留竞态），不在本次提示词修复范围；提示词已通过强调"复用既有 ID + 按预留起始续编"尽量缓解，但根治需改并发游标逻辑（另案）。
 - 提示词加长会增加单次 LLM 输入 token（`global_registry` 最多 40000 字符、`continuity_in/out` 各 8000 字符），均在 `max_tokens=65536` 预算内，且这些信息原本就该让模型看到。
+
+## 27. 效果模式 v3：增量空间状态（取代 26.3 的新任务路径）
+
+第 26 节描述的是 v2 计划的兼容路径。自 2026-07-17 起，新建效果模式任务使用 `schema_version=3`、`spatial_state_version=1`；v2 检查点继续按第 26 节恢复，不做在线升级。
+
+v3 不再要求分镜 LLM 重复生成规划期 `continuity_in/out` 和每镜完整物理位置。阶段一仅确定：
+
+- 全局实体与 `spatial_world`；
+- `mode=none` 段的 `initial_spatial_state`；
+- `mode=inherit` 的真实上游依赖；
+- 剧情明确发生的 `planned_state_changes`。
+
+阶段二提示只注入紧凑 `previous_state`、允许的 space/container/slot/anchor ID、计划变化和上一镜摄影机摘要。每镜继续输出摄影机、构图、动作、对白等艺术字段，同时用 `spatial_intent.state_changes` 声明实际变化；未变化位置不再重复抄写。
+
+可见性固定使用现有字段：角色为 `characters_present`，道具为 `props_present`。特写中未出镜但未离开的实体由后端作为 `offscreen_continuity` 保留，禁止通过删除位置或伪造 `exit` 来实现不出镜。
+
+运行时由 enterprise 状态机确定性物化完整 `spatial_layout`，然后才执行场景结构、空间契约和 QC。`mode=inherit` 的初始状态只能来自上游已物化最后镜 handoff；`mode=none` 会清空历史尾镜和旧 continuity 上下文，避免独立段被前段污染。
+
+原始 intent、物化结果和 diagnostics 的日志路径及错误语义见 `script_split_quality_incremental_spatial_state_design.md` 第 18 节。

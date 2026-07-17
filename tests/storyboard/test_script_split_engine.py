@@ -96,6 +96,11 @@ def patch_models(monkeypatch):
     # _is_cancelled 默认返回 False（取消测试单独覆盖）
     monkeypatch.setattr(engine.ScriptSplitTaskModel, "is_cancel_requested",
                         staticmethod(lambda tid: False))
+
+    async def fake_db_locations(_config=None):
+        return []
+
+    monkeypatch.setattr(engine, "_load_current_db_locations", fake_db_locations)
     return calls
 
 
@@ -187,7 +192,8 @@ class TestStepPlan:
 
         with pytest.raises(TaskPaused) as exc_info:
             _run(step_plan(task))
-        assert exc_info.value.code == "plan_failed"
+        # 耗尽后 pause；具体 code 优先取最后一轮校验错误（如 plan_no_segments）
+        assert exc_info.value.code in {"plan_failed", "plan_no_segments", "quality_plan_invalid"}
 
     def test_successful_plan_persists_and_transitions(self, patch_models, monkeypatch):
         """成功规划 → 持久化计划 + 写 segment 检查点 + 转 generating（progress=10）。"""

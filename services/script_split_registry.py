@@ -112,6 +112,166 @@ class AcceptedRegistry:
         self.spatial_world.setdefault("space_units", []).extend(new_units)
 
 
+# ---- 临时 ID / 全局 ID 改写 ----
+
+_KIND_SPECS = [
+    ("character", "characters", "char", "character_db_id"),
+    ("location", "locations", "loc", "location_db_id"),
+    ("prop", "props", "prop", "props_db_id"),
+]
+
+
+def _is_tmp_entity_id(prefix: str, entity_id: Any) -> bool:
+    """新实体临时 id：char_tmp_xxx / loc_tmp_xxx / prop_tmp_xxx（tmp 后至少一段后缀）。"""
+    if not entity_id:
+        return False
+    return bool(re.match(rf"^{re.escape(prefix)}_tmp_.+$", str(entity_id), flags=re.I))
+
+
+def _apply_id_map_inplace(obj: Any, id_map: Dict[str, str]) -> None:
+    """将树中所有等于旧 id 的字符串值替换为新 id（精确匹配）。"""
+    if not id_map:
+        return
+    if isinstance(obj, dict):
+        for key, value in list(obj.items()):
+            if isinstance(value, str) and value in id_map:
+                obj[key] = id_map[value]
+            else:
+                _apply_id_map_inplace(value, id_map)
+    elif isinstance(obj, list):
+        for index, value in enumerate(obj):
+            if isinstance(value, str) and value in id_map:
+                obj[index] = id_map[value]
+            else:
+                _apply_id_map_inplace(value, id_map)
+
+
+def rewrite_segment_entity_ids(
+    seg_result: Dict[str, Any],
+    registry: AcceptedRegistry,
+) -> Dict[str, Any]:
+    """按 name / *_db_id 匹配 registry，把临时 id 与错误编号改写为全局 id。
+
+    规则：
+    1. name 或 db_id 命中 registry → 强制复用已有全局 id。
+    2. 否则视为新实体：接受合法且未占用的 {prefix}_NNN（≥预留起始）；
+       临时 id（prefix_tmp_xxx）、非法格式、低于预留、或撞已占用号 → 后端按序发号。
+    3. 本段内同名新实体共享同一新全局 id。
+    4. 改写 characters/locations/props 及整棵 JSON 中的精确 id 引用。
+
+    不修改 registry 游标；commit 仍在段通过后进行。
+    """
+    if not isinstance(seg_result, dict):
+        return seg_result
+
+    reservations = registry.id_reservations()
+    local_cursors = {
+        "char": _parse_id_num("char", reservations["character_start"]) or 1,
+        "loc": _parse_id_num("loc", reservations["location_start"]) or 1,
+        "prop": _parse_id_num("prop", reservations["prop_start"]) or 1,
+    }
+    id_map: Dict[str, str] = {}
+    # 本段已确定的最终 id（防止两个新实体抢同一合法号）
+    taken_final_ids: Set[str] = set()
+    for kind in ("character", "location", "prop"):
+        taken_final_ids.update(registry._store(kind).keys())
+    # 本段新实体：规范化名 → 最终 id
+    pending_name_to_id: Dict[Tuple[str, str], str] = {}
+
+    def _alloc(prefix: str) -> str:
+        while True:
+            num = local_cursors[prefix]
+            local_cursors[prefix] = num + 1
+            candidate = f"{prefix}_{num:03d}"
+            if candidate not in taken_final_ids:
+                taken_final_ids.add(candidate)
+                return candidate
+
+    for kind, top_key, prefix, db_field in _KIND_SPECS:
+        entities = seg_result.get(top_key) or []
+        if not isinstance(entities, list):
+            continue
+        for ent in entities:
+            if not isinstance(ent, dict):
+                continue
+            old_id = str(ent.get("id") or "").strip()
+            if not old_id:
+                # 无 id：有 name 则发号并写回
+                name_norm = _normalize_name(ent.get("name"))
+                existing = (
+                    registry.find_by_name(kind, ent.get("name"))
+                    or registry.find_by_db_id(kind, ent.get(db_field))
+                )
+                if existing:
+                    ent["id"] = existing
+                    continue
+                if name_norm and (kind, name_norm) in pending_name_to_id:
+                    ent["id"] = pending_name_to_id[(kind, name_norm)]
+                    continue
+                new_id = _alloc(prefix)
+                ent["id"] = new_id
+                if name_norm:
+                    pending_name_to_id[(kind, name_norm)] = new_id
+                continue
+
+            if old_id in id_map:
+                ent["id"] = id_map[old_id]
+                continue
+
+            existing = (
+                registry.find_by_name(kind, ent.get("name"))
+                or registry.find_by_db_id(kind, ent.get(db_field))
+            )
+            name_norm = _normalize_name(ent.get("name"))
+
+            if existing is not None:
+                final_id = existing
+            elif name_norm and (kind, name_norm) in pending_name_to_id:
+                final_id = pending_name_to_id[(kind, name_norm)]
+            else:
+                num = _parse_id_num(prefix, old_id)
+                res_key = {
+                    "char": "character_start",
+                    "loc": "location_start",
+                    "prop": "prop_start",
+                }[prefix]
+                start = _parse_id_num(prefix, reservations[res_key]) or 1
+                occupied_by_registry = old_id in registry._store(kind)
+                keep_as_new = (
+                    num is not None
+                    and num >= start
+                    and not _is_tmp_entity_id(prefix, old_id)
+                    and not occupied_by_registry
+                    and old_id not in taken_final_ids
+                )
+                if keep_as_new:
+                    final_id = old_id
+                    taken_final_ids.add(final_id)
+                    if num + 1 > local_cursors[prefix]:
+                        local_cursors[prefix] = num + 1
+                else:
+                    final_id = _alloc(prefix)
+                if name_norm:
+                    pending_name_to_id[(kind, name_norm)] = final_id
+
+            if old_id != final_id:
+                id_map[old_id] = final_id
+            ent["id"] = final_id
+
+    if id_map:
+        _apply_id_map_inplace(seg_result, id_map)
+        # 实体 id 再对齐一次（防止 map 应用顺序问题）
+        for _kind, top_key, _prefix, _db in _KIND_SPECS:
+            for ent in seg_result.get(top_key) or []:
+                if not isinstance(ent, dict):
+                    continue
+                eid = str(ent.get("id") or "")
+                if eid in id_map:
+                    ent["id"] = id_map[eid]
+
+    return seg_result
+
+
 # ---- 单段实体校验 ----
 
 def validate_segment_entities(
@@ -124,6 +284,8 @@ def validate_segment_entities(
     1. 同 db_id 或规范化名称相同 → 必须复用已有全局 ID。
     2. 新实体 → 必须使用预留 ID 起始（char_NNN/loc_NNN/prop_NNN）。
     3. 给同实体分配新 ID、复用已占用 ID、引用未登记 ID → 拒绝。
+
+    调用方应先执行 rewrite_segment_entity_ids，以吸收 tmp id 与常见编号错误。
     """
     errors: List[Dict[str, Any]] = []
     reservations = registry.id_reservations()
@@ -133,13 +295,7 @@ def validate_segment_entities(
         "prop": _parse_id_num("prop", reservations["prop_start"]),
     }
 
-    kind_specs = [
-        ("character", "characters", "char", "character_db_id"),
-        ("location", "locations", "loc", "location_db_id"),
-        ("prop", "props", "prop", "props_db_id"),
-    ]
-
-    for kind, top_key, prefix, db_field in kind_specs:
+    for kind, top_key, prefix, db_field in _KIND_SPECS:
         entities = seg_result.get(top_key) or []
         if not isinstance(entities, list):
             errors.append({"code": f"{kind}_not_list", "message": f"{top_key} 不是数组"})
@@ -178,7 +334,7 @@ def validate_segment_entities(
                         "code": f"{kind}_id_format_invalid",
                         "kind": kind,
                         "given_id": eid,
-                        "message": f"新 {kind} id 格式应为 {prefix}_NNN，得到 {eid}",
+                        "message": f"新 {kind} id 格式应为 {prefix}_NNN 或 {prefix}_tmp_xxx，得到 {eid}",
                     })
                 elif num < start:
                     errors.append({
@@ -389,6 +545,7 @@ def renumber_global(parsed: Dict[str, Any]) -> Dict[str, Any]:
 
 __all__ = [
     "AcceptedRegistry",
+    "rewrite_segment_entity_ids",
     "validate_segment_entities",
     "validate_segment_spatial_references",
     "renumber_global",

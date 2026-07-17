@@ -3,10 +3,19 @@
 核心仓库只定义通用执行协议；效果模式实现由 Enterprise 包延迟提供。
 """
 import importlib
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from config.constant import Edition
 from services.storyboard_spatial.exceptions import StoryboardEnterpriseFeatureRequired
+
+
+@dataclass(frozen=True)
+class ScriptSplitMaterializationResult:
+    parsed: Dict[str, Any]
+    final_state: Dict[str, Any]
+    diagnostics: List[Dict[str, Any]]
+    degraded: bool = False
 
 
 class StandardScriptSplitStrategy:
@@ -28,6 +37,7 @@ class StandardScriptSplitStrategy:
         self,
         plan: Dict[str, Any],
         anchors: List[Dict[str, Any]],
+        db_locations: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         return plan
 
@@ -45,6 +55,27 @@ class StandardScriptSplitStrategy:
         segment_id: str,
     ) -> List[Dict[str, Any]]:
         return []
+
+    def materialize_segment_result(
+        self,
+        parsed: Dict[str, Any],
+        plan: Dict[str, Any],
+        segment_id: str,
+        segment_context: Dict[str, Any],
+    ) -> ScriptSplitMaterializationResult:
+        return ScriptSplitMaterializationResult(
+            parsed=parsed,
+            final_state={},
+            diagnostics=[],
+        )
+
+    async def write_materialization_logs(
+        self,
+        task_id: int,
+        segment_id: str,
+        parsed: Dict[str, Any],
+    ) -> None:
+        return None
 
     def repair_merged_result(
         self,
@@ -65,4 +96,8 @@ def get_script_split_strategy(sequence_mode: str):
     return module.QualityScriptSplitStrategy()
 
 
-__all__ = ["StandardScriptSplitStrategy", "get_script_split_strategy"]
+__all__ = [
+    "ScriptSplitMaterializationResult",
+    "StandardScriptSplitStrategy",
+    "get_script_split_strategy",
+]

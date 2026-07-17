@@ -120,6 +120,11 @@ class StoryboardVoiceoverBootstrapService:
             scene_id=scene_id,
         )
 
+    @staticmethod
+    def _is_eligible_dialogue(dialogue: Dict[str, Any]) -> bool:
+        """可自动配音对账的对白：非空台词 + 有角色。"""
+        return bool((dialogue.get("text") or "").strip() and dialogue.get("character_id"))
+
     def ensure_for_split_task(
         self,
         split_task_id: int,
@@ -132,12 +137,15 @@ class StoryboardVoiceoverBootstrapService:
         - 按 script_split_task_id 限定范围（JOIN storyboard_scene），避免误处理手工分镜。
         - 每个对白独立短事务，失败不影响其他条。
         - remaining_count>0 时调用方（step_publish）保持 publishing，下个 tick 继续。
+        - remaining_count 只统计「仍可处理且未完成」的对白：
+          有台词 + 有 character_id + 无 selected_audio_id，且本轮未业务 skip。
+          无角色/空台词、或业务 skip（缺参考音等）不阻挡 completed。
         """
         constants = StoryboardAudioGenerateConstants
         batch_size = int(limit if limit is not None else constants.AUTO_VOICEOVER_SUBMIT_BATCH_SIZE)
 
         dialogues = self._list_dialogues_by_split_task(int(split_task_id))
-        eligible = [d for d in dialogues if (d.get("text") or "").strip() and d.get("character_id")]
+        eligible = [d for d in dialogues if self._is_eligible_dialogue(d)]
         # 未选中配音的、且符合资格的，取前 batch_size 条本轮处理
         pending = [d for d in eligible if not d.get("selected_audio_id")][:batch_size]
 
@@ -153,9 +161,12 @@ class StoryboardVoiceoverBootstrapService:
             "failures": [],
         }
         if not summary["enabled"]:
-            # 未启用：剩余全部计入 remaining，调用方据此决定是否 completed
-            summary["remaining_count"] = sum(1 for d in dialogues if not d.get("selected_audio_id"))
+            # 未启用：无可处理工作，不因未选中配音而卡住 publishing
+            summary["remaining_count"] = 0
             return summary
+
+        # 本轮已业务结案（skip/submitted/reused）的 id；skip 无 selected 也不再计入 remaining
+        terminal_ids: set = set()
 
         for d in pending:
             try:
@@ -180,12 +191,16 @@ class StoryboardVoiceoverBootstrapService:
                 "[voiceover-bootstrap] split_task=%s dialogue=%s scene=%s decision=%s reason=%s",
                 split_task_id, d.get("id"), d.get("scene_id"), decision, item.get("reason"),
             )
+            dialogue_id = int(item.get("dialogue_id") or d["id"])
             if decision == "submitted":
                 summary["submitted_count"] += 1
+                terminal_ids.add(dialogue_id)
             elif decision == "reused":
                 summary["reused_count"] += 1
+                terminal_ids.add(dialogue_id)
             elif decision == "skipped":
                 summary["skipped_count"] += 1
+                terminal_ids.add(dialogue_id)
                 summary["skipped"].append({
                     "dialogue_id": item.get("dialogue_id"),
                     "scene_id": item.get("scene_id"),
@@ -201,9 +216,17 @@ class StoryboardVoiceoverBootstrapService:
                     "message": item.get("message"),
                 })
 
-        # remaining = 本任务全部仍未选中配音的对白数（重新统计，反映本轮提交后的真实状态）
+        # remaining = 仍可处理且未完成：
+        # 有台词 + 有角色 + 无 selected_audio_id，且本轮未 skip/submit/reuse 结案。
+        # 不含无角色旁白等非 eligible，避免 publishing 永久卡住。
         dialogues_after = self._list_dialogues_by_split_task(int(split_task_id))
-        summary["remaining_count"] = sum(1 for d in dialogues_after if not d.get("selected_audio_id"))
+        summary["remaining_count"] = sum(
+            1
+            for d in dialogues_after
+            if self._is_eligible_dialogue(d)
+            and not d.get("selected_audio_id")
+            and int(d["id"]) not in terminal_ids
+        )
         return summary
 
     # ------------------------------------------------------------------

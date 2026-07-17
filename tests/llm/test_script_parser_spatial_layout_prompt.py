@@ -2,6 +2,7 @@ from pathlib import Path
 
 from llm.script_parser import (
     SCRIPT_PARSER_SYSTEM_PROMPT,
+    _should_repair_spatial_layout,
     repair_spatial_layout_continuity,
 )
 
@@ -24,6 +25,12 @@ def test_script_parser_prompt_requires_spatial_layout_schema():
     assert "透过车窗" in prompt
     assert "车外" in prompt
     assert "一致性自检" in prompt
+
+
+def test_v3_incremental_spatial_context_bypasses_legacy_repair():
+    assert _should_repair_spatial_layout(None) is True
+    assert _should_repair_spatial_layout({"spatial_state_version": 0}) is True
+    assert _should_repair_spatial_layout({"spatial_state_version": 1}) is False
 
 
 def test_script_parser_prompt_preserves_secondary_characters_in_closeups():

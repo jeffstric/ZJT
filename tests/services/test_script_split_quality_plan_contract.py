@@ -227,3 +227,89 @@ def test_inherit_matches_from_segment_not_list_predecessor():
         plan, _anchors_for("block_0001", "block_0002", "block_0003")
     )
     assert compiled["segments"][2]["spatial_dependency"]["from_segment_id"] == "seg_0001"
+
+
+def test_compile_l0_rejects_planned_new_root_against_db():
+    plan = {
+        "schema_version": 2,
+        "entities": {
+            "characters": [
+                {"character_key": "character:lin", "name": "林晓", "description": "主角"},
+            ],
+            "locations": [
+                {
+                    "location_key": "location:office",
+                    "name": "酒店办公室",
+                    "description": "新顶层",
+                },
+            ],
+            "props": [],
+        },
+        "spatial_world": {"space_units": []},
+        "segments": [
+            {
+                "segment_id": "seg_0001",
+                "title": "开场",
+                "summary": "开场",
+                "block_ids": ["block_0001"],
+                "continuity_in": {"characters": []},
+                "continuity_out": {"characters": []},
+                "state_changes": [],
+                "spatial_dependency": {"mode": "none", "reason": "开篇"},
+            },
+        ],
+    }
+    with pytest.raises(QualityPlanError, match="new_root_location_forbidden"):
+        compile_quality_plan(plan, _anchors_for("block_0001"), db_locations=[])
+
+
+def test_compile_l0_accepts_db_matched_location_and_child():
+    plan = {
+        "schema_version": 2,
+        "entities": {
+            "characters": [
+                {"character_key": "character:lin", "name": "林晓", "description": "主角"},
+            ],
+            "locations": [
+                {
+                    "location_key": "location:lobby",
+                    "name": "城南酒店大堂",
+                    "description": "大堂",
+                },
+                {
+                    "location_key": "location:office",
+                    "name": "酒店办公室",
+                    "description": "办公室",
+                    "parent_location_key": "location:lobby",
+                },
+            ],
+            "props": [],
+        },
+        "spatial_world": {
+            "space_units": [
+                {"space_unit_id": "space_unit:lobby", "name": "城南酒店大堂"},
+                {"space_unit_id": "space_unit:office", "name": "酒店办公室"},
+            ]
+        },
+        "segments": [
+            {
+                "segment_id": "seg_0001",
+                "title": "开场",
+                "summary": "开场",
+                "block_ids": ["block_0001"],
+                "continuity_in": {"characters": []},
+                "continuity_out": {"characters": []},
+                "state_changes": [],
+                "spatial_dependency": {"mode": "none", "reason": "开篇"},
+            },
+        ],
+    }
+    db = [{"id": 565, "name": "城南酒店大堂", "parent_id": None, "children": []}]
+    compiled = compile_quality_plan(
+        plan, _anchors_for("block_0001"), db_locations=db,
+    )
+    locs = compiled["compiled_registry"]["locations"]
+    by_id = {item["id"]: item for item in locs}
+    assert by_id["loc_001"]["location_db_id"] == 565
+    assert by_id["loc_002"]["parent_id"] == "loc_001"
+    assert by_id["loc_002"]["location_db_id"] is None

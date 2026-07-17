@@ -144,6 +144,11 @@ v3 不再要求 LLM 为每个 segment 重复输出完整 `continuity_in` 和 `co
 3. 规划器只声明剧情明确发生的变化，不规划每个镜头的构图、可见性和坐标抄写。
 4. 单段仍受 1500 字硬上限约束，同时增加较短的软目标；跨地点或预计镜头明显过多时优先继续分段。
 5. `spatial_world` 没有 anchor 时明确表示 anchor 可省略，不能诱导阶段二自造 ID。
+6. **先登记 `spatial_world.space_units[].containers[].slots`（或 anchors），再写 `initial_spatial_state`**；引用 ID 必须可被 `SpatialCatalog` 解析。
+7. `container_id` 禁止填 `character:*` / `prop:*` / `space_unit:*` / `spatial_unit:*`；空间单元与容器不得混用。
+8. present 实体必须有 `container_id+slot_id` 或已登记 `anchor_id`；禁止只写 `space_unit_id`。
+9. 手持/佩戴道具：物理落点仍用场景 container+slot（可与持有人同槽），另写 `holder_character_id`；禁止 `container_id=character:xxx`。
+10. 提示中提供可复制的正确 few-shot 与错误对照（见 `enterprise/services/script_split_quality/planner.py`）。
 
 ## 7. 阶段二增量输出
 
@@ -600,3 +605,49 @@ v3 唯一合法顺序是：
 5. 接入 quality strategy 钩子；同一改动中替换旧 repair/validator 路径并修复 `_shot_positions.position_3d`。
 6. 更新阶段一、阶段二和 QC 提示词、扁平上下文投影及日志。
 7. 完成单元、集成和回归测试，以新任务启用 v3，观察错误码、重试次数、token、degraded 与无 3D 比例。
+
+## 18. 实现状态（2026-07-17）
+
+本方案已完成代码接入。实际调用顺序固定为：
+
+```text
+阶段一 v3 规划
+  → L0 规划编译：对照世界场景树绑定 locations + 新顶层硬门禁
+  → 阶段二 LLM 输出艺术字段 + spatial_intent
+  → enterprise materializer 按镜头应用规范状态机
+  → L1 场景结构硬门禁（locations + space_unit/registry 引用）
+  → 段级/跨段确定性校验
+  → enable_qc 控制的规则 QC
+  → 保存完整 spatial_layout 与规范 handoff
+  → 全段完成后 L2 合并全量结构校验（兜底）
+```
+
+新顶层提前门禁细节见 `docs/script/script_split_early_new_root_location_gate.md`。
+
+实现边界：
+
+- `enterprise/services/script_split_quality/spatial_state.py`：`SpatialCatalog`、初始状态规范化及 `enter/move/exit/pickup/put_down/transfer` 纯函数状态转换。
+- `enterprise/services/script_split_quality/spatial_materializer.py`：使用 `characters_present`/`props_present` 作为唯一可见性真源，保留摄影机与表演字段，确定性生成完整布局和兼容 `changed_positions`。
+- `enterprise/services/script_split_quality/contract.py`：按 `schema_version` 固定分流；v2 不升级，v3 编译 `initial_spatial_state` 与 `planned_state_changes`。
+- `enterprise/services/script_split_quality/strategy.py`：构建紧凑上下文、真实 handoff、物化钩子和诊断日志。
+- `services/script_split_engine.py`：只调用通用策略钩子，不包含效果模式状态机；物化严格早于全部校验与 QC。
+- `llm/script_parser.py`：`spatial_state_version=1` 时输出/记录原始 intent 并跳过旧空间 repair。
+
+v3 检查点会保留 `_spatial_final_state`、`_spatial_diagnostics`、`_spatial_degraded` 和 `_spatial_degraded_hops`，供依赖段恢复和 handoff 使用；合并器只发布实体、空间世界和 `shot_groups`，这些内部字段不会进入最终故事板结果。
+
+诊断语义：
+
+- 非法引用或状态变化产生 error，该变化被跳过，最后有效状态不受污染，并标记 degraded。
+- 合法但未规划的变化产生 `spatial_unplanned_change` warning，仍按实际镜头应用。
+- 规划变化未被任何镜头消费产生 `spatial_planned_change_missing` warning；后端不会替模型执行。
+- `spatial_*` warning 会并入规则 QC 报告供观察和后续智能 QC 判断，但 warning 本身不把 `report.passed` 改为 false。
+- `planned_state_changes.change_id` 仅用于覆盖核对，`continuity.changed_positions` 只从实际接纳的 intent 单向生成。
+
+日志位于 `logs/script_parser/`：
+
+- `*_08_spatial_intent_raw.json`：LLM 清洗后的 v3 原始 intent。
+- `script_split_task_*_spatial_materialized.json`：后端物化后的完整段 JSON。
+- `script_split_task_*_spatial_diagnostics.json`：状态机与计划覆盖诊断。
+- 既有 `*_01_system_prompt.txt`、`*_02_user_prompt.txt`、`*_03_qc_*` 保持不变。
+
+验证结果：聚焦的契约、状态机、物化、handoff、引擎顺序、提示词与日志测试 79 项通过；扩展的拆分任务、租约恢复、空间投影、首帧宫格与 enterprise 服务测试 98 项通过。静态编译、阻塞调用红线检查和两个仓库的 `git diff --check` 均通过；阻塞检查仍会报告项目原有 R5 advisory warning，但没有新增 R4/R6 违规。

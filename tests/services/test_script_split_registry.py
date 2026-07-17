@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from services.script_split_registry import (
     AcceptedRegistry,
+    rewrite_segment_entity_ids,
     validate_segment_entities,
     validate_segment_spatial_references,
     renumber_global,
@@ -92,6 +93,103 @@ def test_validate_entities_bad_id_format():
     ok, errors = validate_segment_entities(seg, reg)
     assert not ok
     assert any(e["code"] == "character_id_format_invalid" for e in errors)
+
+
+# ---- rewrite_segment_entity_ids ----
+
+def test_rewrite_tmp_location_to_reserved_id():
+    reg = AcceptedRegistry()
+    reg.commit_entity("location", "loc_001", {"name": "大堂", "location_db_id": 565})
+    reg.commit_entity("location", "loc_002", {"name": "走廊", "location_db_id": 798})
+    reg.commit_entity("location", "loc_003", {"name": "套房", "location_db_id": 819})
+    reg.commit_entity("location", "loc_004", {"name": "前台", "location_db_id": 794})
+    # 预留 loc_005
+    seg = {
+        "locations": [
+            {"id": "loc_001", "name": "大堂", "location_db_id": 565},
+            {
+                "id": "loc_tmp_storage",
+                "name": "储物间",
+                "location_db_id": None,
+                "parent_id": "loc_001",
+            },
+        ],
+        "shot_groups": [{
+            "shots": [{"location_id": "loc_tmp_storage", "characters_present": []}],
+        }],
+    }
+    rewrite_segment_entity_ids(seg, reg)
+    assert seg["locations"][1]["id"] == "loc_005"
+    assert seg["locations"][1]["parent_id"] == "loc_001"
+    assert seg["shot_groups"][0]["shots"][0]["location_id"] == "loc_005"
+    ok, errors = validate_segment_entities(seg, reg)
+    assert ok, errors
+
+
+def test_rewrite_should_reuse_prop_by_name():
+    reg = AcceptedRegistry()
+    reg.commit_entity("prop", "prop_001", {"name": "工牌"})
+    seg = {
+        "props": [{"id": "prop_005", "name": "工牌"}],
+        "shot_groups": [{
+            "shots": [{"props_present": ["prop_005"]}],
+        }],
+    }
+    rewrite_segment_entity_ids(seg, reg)
+    assert seg["props"][0]["id"] == "prop_001"
+    assert seg["shot_groups"][0]["shots"][0]["props_present"] == ["prop_001"]
+    ok, errors = validate_segment_entities(seg, reg)
+    assert ok, errors
+
+
+def test_rewrite_not_reserved_location_gets_new_id():
+    reg = AcceptedRegistry()
+    reg.commit_entity("location", "loc_001", {"name": "大堂"})
+    # start=2, model wrongly uses loc_001 for a different new place name already taken id
+    seg = {
+        "locations": [
+            {"id": "loc_001", "name": "大堂"},
+            {"id": "loc_001", "name": "神秘密室"},  # 撞号且不同名 → 应发 loc_002
+        ],
+    }
+    # two entities can't share same list entry easily - second as wrong low id
+    seg = {
+        "locations": [
+            {"id": "loc_001", "name": "大堂"},
+            {"id": "loc_tmp_secret", "name": "神秘密室"},
+        ],
+        "shot_groups": [],
+    }
+    rewrite_segment_entity_ids(seg, reg)
+    assert seg["locations"][0]["id"] == "loc_001"
+    assert seg["locations"][1]["id"] == "loc_002"
+    ok, errors = validate_segment_entities(seg, reg)
+    assert ok, errors
+
+
+def test_rewrite_two_tmp_locations_get_distinct_ids():
+    reg = AcceptedRegistry()
+    reg.commit_entity("location", "loc_001", {"name": "大堂"})
+    seg = {
+        "locations": [
+            {"id": "loc_tmp_a", "name": "阳台内侧"},
+            {"id": "loc_tmp_b", "name": "储物间"},
+        ],
+        "shot_groups": [{
+            "shots": [
+                {"location_id": "loc_tmp_a"},
+                {"location_id": "loc_tmp_b"},
+            ],
+        }],
+    }
+    rewrite_segment_entity_ids(seg, reg)
+    ids = {e["id"] for e in seg["locations"]}
+    assert ids == {"loc_002", "loc_003"}
+    assert seg["shot_groups"][0]["shots"][0]["location_id"] in ids
+    assert seg["shot_groups"][0]["shots"][1]["location_id"] in ids
+    assert seg["shot_groups"][0]["shots"][0]["location_id"] != seg["shot_groups"][0]["shots"][1]["location_id"]
+    ok, errors = validate_segment_entities(seg, reg)
+    assert ok, errors
 
 
 # ---- 空间引用校验 ----

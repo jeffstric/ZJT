@@ -344,4 +344,80 @@ def test_ensure_for_split_task_reconciles_all_dialogues(voiceover_service, monke
     assert submitted == [101, 102]
     assert summary["eligible_count"] == 2
     assert summary["submitted_count"] == 2
-    assert summary["remaining_count"] == 1  # 103 旁白仍未选中
+    # 旁白无 character_id：不可自动处理，不计入 remaining，避免 publishing 卡死
+    assert summary["remaining_count"] == 0
+
+
+def test_ensure_for_split_task_remaining_excludes_skipped_and_non_eligible(
+    voiceover_service, monkeypatch,
+):
+    """remaining 只统计仍可处理且未完成：skip / 无角色 不阻挡 completed。"""
+    svc, _calls = voiceover_service
+    dialogues = [
+        {"id": 101, "scene_id": 201, "character_id": 17, "text": "有参考音", "selected_audio_id": None},
+        {"id": 102, "scene_id": 201, "character_id": 18, "text": "缺参考音", "selected_audio_id": None},
+        {"id": 103, "scene_id": 201, "character_id": None, "text": "旁白", "selected_audio_id": None},
+    ]
+
+    def _list_dialogues(_split_task_id):
+        return list(dialogues)
+
+    def _ensure(dialogue_id, user_id, config=None):
+        if dialogue_id == 101:
+            dialogues[0]["selected_audio_id"] = 901
+            return {
+                "success": True,
+                "decision": "submitted",
+                "dialogue_id": 101,
+                "reason": None,
+            }
+        return {
+            "success": True,
+            "decision": "skipped",
+            "dialogue_id": dialogue_id,
+            "reason": "missing_reference_audio",
+            "message": "角色缺少参考音频",
+        }
+
+    monkeypatch.setattr(svc, "_list_dialogues_by_split_task", _list_dialogues)
+    monkeypatch.setattr(svc, "ensure_dialogue_voiceover", _ensure)
+
+    summary = svc.ensure_for_split_task(50, 7)
+
+    assert summary["submitted_count"] == 1
+    assert summary["skipped_count"] == 1
+    assert summary["eligible_count"] == 2
+    assert summary["remaining_count"] == 0
+
+
+def test_ensure_for_split_task_remaining_counts_unprocessed_batch(
+    voiceover_service, monkeypatch,
+):
+    """batch 截断后，未处理的 eligible 未选中对白仍计入 remaining。"""
+    svc, _calls = voiceover_service
+    dialogues = [
+        {"id": 101, "scene_id": 1, "character_id": 1, "text": "a", "selected_audio_id": None},
+        {"id": 102, "scene_id": 1, "character_id": 1, "text": "b", "selected_audio_id": None},
+        {"id": 103, "scene_id": 1, "character_id": 1, "text": "c", "selected_audio_id": None},
+    ]
+
+    def _list_dialogues(_split_task_id):
+        return list(dialogues)
+
+    def _ensure(dialogue_id, user_id, config=None):
+        for d in dialogues:
+            if d["id"] == dialogue_id:
+                d["selected_audio_id"] = 1000 + dialogue_id
+        return {
+            "success": True,
+            "decision": "submitted",
+            "dialogue_id": dialogue_id,
+        }
+
+    monkeypatch.setattr(svc, "_list_dialogues_by_split_task", _list_dialogues)
+    monkeypatch.setattr(svc, "ensure_dialogue_voiceover", _ensure)
+
+    summary = svc.ensure_for_split_task(50, 7, limit=1)
+
+    assert summary["submitted_count"] == 1
+    assert summary["remaining_count"] == 2

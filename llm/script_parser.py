@@ -52,11 +52,15 @@ SCRIPT_PARSER_SYSTEM_PROMPT = """你是一个专业的影视剧本分析师和�
    - parent_id为null表示顶层场景（如"神明竞技场"）
    - parent_id指向父场景id表示子场景（如"竞技场看台"的parent_id指向"神明竞技场"的id）
    - level表示层级深度，顶层为0，每下一级加1
+   - **已绑定 location_db_id 的场景：parent_id/level 必须以数据库列表中的真实父子关系为准，禁止按剧情猜测改写父级**
 6. **场景与数据库关联**：每个location必须包含location_db_id字段
    - 如果剧本中的场景与数据库中已有场景匹配，则将location_db_id设置为数据库场景的ID（必须是数据库列表中实际存在的ID）
+   - **一旦填写了真实 location_db_id：必须沿用该 ID 与数据库中的名称/层级；parent_id 只能指向“数据库中该场景真实父级”对应的内部 loc_xxx，若数据库该场景本身是顶层则 parent_id 必须为 null**
    - 如果是新场景，不在数据库中，则location_db_id必须设置为null，不能随意编造ID
    - 匹配时考虑场景名称和描述的相似性，不需要完全一致
    - **【警告】严禁编造不存在的location_db_id，如果不确定是否匹配，必须设置为null**
+   - **【警告】严禁把数据库已有顶层场景写成子场景（或反过来）来“圆”剧情空间关系**
+   - **【同一物理空间不因时间拆成多个场景】**：剧本写「场景3：前台 - 深夜十二点」与「大堂/前台 - 十一点」若地点相同，必须复用同一 location（同一内部 id + 同一 location_db_id）。**禁止**新建「前台区域（深夜版）」「大堂（午夜）」等按时间变体场景。时间、时段、光线变化只写在镜头的 `time_of_day`、`opening_frame_description`、`scene_detail`、`atmosphere` 等字段中
 7. **道具与数据库关联**：每个props必须包含props_db_id字段
    - 如果剧本中的道具与数据库中已有道具匹配，则将props_db_id设置为数据库道具的ID（必须是数据库列表中实际存在的ID）
    - 如果是新道具，不在数据库中，则props_db_id必须设置为null，不能随意编造ID
@@ -327,15 +331,14 @@ def _replace_prop_markers(text: str, valid_marker_props: List[Dict[str, Any]]) -
 
 
 def _flatten_db_locations(db_locations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """递归展平 get_tree_by_world 返回的树形场景列表为扁平的 [{id, name}, ...]。"""
-    flat: List[Dict[str, Any]] = []
-    for loc in db_locations or []:
-        if not isinstance(loc, dict):
-            continue
-        flat.append({"id": loc.get("id"), "name": loc.get("name")})
-        if loc.get("children"):
-            flat.extend(_flatten_db_locations(loc.get("children") or []))
-    return flat
+    """递归展平 get_tree_by_world 返回的树形场景列表。
+
+    必须保留 id/name/parent_id：后续 sanitize 对齐父级、名称兜底匹配都依赖完整字段。
+    与 location_structure_guard.flatten_db_locations 一致，树节点缺 parent_id 时从父节点继承。
+    """
+    from services.location_structure_guard import flatten_db_locations
+
+    return flatten_db_locations(db_locations or [])
 
 
 def _find_unique_location_by_name(name: Any, db_locations_flat: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -354,6 +357,30 @@ def _find_unique_location_by_name(name: Any, db_locations_flat: List[Dict[str, A
     return fuzzy_matches[0] if len(fuzzy_matches) == 1 else None
 
 
+def _align_location_parent_to_database(
+    location: Dict[str, Any],
+    db_row: Dict[str, Any],
+    db_id_to_internal: Dict[int, str],
+) -> None:
+    """已绑定 DB 的场景：parent_id 以数据库层级为准，忽略 LLM 乱写的父级。"""
+    actual_parent_db_id = _safe_int(db_row.get("parent_id"))
+    if actual_parent_db_id is None:
+        location["parent_id"] = None
+        if location.get("level") is not None:
+            try:
+                location["level"] = 0
+            except Exception:
+                pass
+        return
+    parent_internal = db_id_to_internal.get(actual_parent_db_id)
+    if parent_internal:
+        location["parent_id"] = parent_internal
+    else:
+        # 父场景未出现在本段 locations 中时，清空错误 parent，避免 location_parent_conflict。
+        # 数据库侧父子关系仍以 location_db_id 对应行的 parent_id 为准。
+        location["parent_id"] = None
+
+
 def sanitize_parsed_location_references(
     parsed_data: Dict[str, Any],
     db_locations: Optional[List[Dict[str, Any]]] = None,
@@ -365,7 +392,7 @@ def sanitize_parsed_location_references(
     LLM 可能在 locations 里声明数据库根本不存在的 location_db_id（编造的假 ID），
     或把 location_db_id 留空当作"新场景"。这里以数据库已有场景为准：
       1. 用 location_db_id 对照数据库主键核实；不在则按名称兜底匹配；
-         匹配上 → 复用 DB id（只认数据库场景）。
+         匹配上 → 复用 DB id（只认数据库场景），并按 DB 回写 parent_id。
       2. 仍未匹配、且 location_db_id 为 null 的新场景 / 子场景 → 保留，
          由后续 storyboard_location_bootstrap_service 负责入库与 id 回填。
          parent_id（内部 loc_xxx）、level、description、atmosphere、
@@ -373,6 +400,8 @@ def sanitize_parsed_location_references(
       3. 编造了假 location_db_id（非 null 但 DB 不存在）→ 丢弃，避免假场景穿透。
       4. shot.location_id 指向被丢弃 / 悬空的 location 时置为 null，
          避免假场景穿透到下游 storyboard_scene.prompt.location。
+      5. 已给出有效 location_db_id 时，禁止因 LLM 乱写 parent 触发
+         location_parent_conflict：父级一律按数据库记录对齐或清空。
     """
     db_flat = _flatten_db_locations(db_locations or [])
     db_locations_by_id = {
@@ -399,9 +428,8 @@ def sanitize_parsed_location_references(
         given_db_id = _safe_int(location.get("location_db_id"))
         db_match = db_locations_by_id.get(given_db_id)
         if db_match:
-            # 显式有效 DB id 始终保留；父级冲突由完整硬门禁报告。
-            match_result = match_location_with_parent(location, locations_by_key, db_flat)
-            db_match = match_result.db_location or db_match
+            # 显式有效 DB id：始终保留，后续按 DB 对齐 parent。
+            pass
         else:
             match_result = match_location_with_parent(location, locations_by_key, db_flat)
             # 名称兜底只有父级一致时才允许绑定。同名异父保留为未入库候选，
@@ -424,6 +452,22 @@ def sanitize_parsed_location_references(
             valid_location_ids.add(str(location.get("id")))
             unpersisted_count += 1
         # 否则：编造的非 null 假 id → 丢弃
+
+    # 第二遍：凡已绑定 location_db_id 的场景，parent 以数据库为准
+    db_id_to_internal: Dict[int, str] = {}
+    for location in valid_locations:
+        db_id = _safe_int(location.get("location_db_id"))
+        internal_id = str(location.get("id") or "").strip()
+        if db_id is not None and internal_id:
+            db_id_to_internal[db_id] = internal_id
+    for location in valid_locations:
+        db_id = _safe_int(location.get("location_db_id"))
+        if db_id is None:
+            continue
+        db_row = db_locations_by_id.get(db_id)
+        if not db_row:
+            continue
+        _align_location_parent_to_database(location, db_row, db_id_to_internal)
 
     parsed_data["locations"] = valid_locations
 
@@ -520,6 +564,72 @@ def repair_spatial_layout_continuity(parsed_data: Dict[str, Any]) -> Dict[str, A
     offscreen_continuity 方式补回原 slot；不强行加入 characters_present。
     """
     return _repair_spatial_layout_continuity_core(parsed_data)
+
+
+def _should_repair_spatial_layout(
+    segment_context: Optional[Dict[str, Any]],
+) -> bool:
+    """v3 由 enterprise 状态机物化，禁止再执行旧空间修复。"""
+    return int((segment_context or {}).get("spatial_state_version") or 0) != 1
+
+
+def _build_incremental_spatial_prompt(
+    segment_context: Dict[str, Any],
+) -> str:
+    previous_state = json.dumps(
+        segment_context.get("previous_state") or {},
+        ensure_ascii=False,
+    )
+    allowed_ids = json.dumps(
+        segment_context.get("spatial_catalog_prompt") or {},
+        ensure_ascii=False,
+        indent=2,
+    )
+    planned_changes = json.dumps(
+        segment_context.get("planned_state_changes") or [],
+        ensure_ascii=False,
+        indent=2,
+    )
+    previous_camera = json.dumps(
+        segment_context.get("previous_camera_summary") or {},
+        ensure_ascii=False,
+        indent=2,
+    )
+    return f"""
+
+**【效果模式 v3 · 增量空间意图】**
+后端已保存完整物理状态。你负责镜头艺术创作，并只声明剧情中真实发生的空间变化；不要逐镜抄写未变化实体的位置。
+
+每个镜头必须输出 `spatial_intent.state_changes` 数组；没有移动时输出空数组。支持 enter、move、exit、pickup、put_down、transfer。实体和目标只能引用下方允许 ID；anchors 为空时省略 anchor_id，禁止自造 anchor_id。
+
+**道具持有（极易错，必须遵守）**：
+- `pickup`：持有人写在 `to.holder_character_id`（推荐）；也可写 change 顶层 `holder_character_id`。不要只把 container/slot 写进 to 却漏 holder。
+- `put_down`：`from.holder_character_id` 必须是当前真实持有人；`to` 为放下后的物理落点（container+slot 或 anchor）。
+- `transfer`：`from.holder_character_id` 为交出方，`to.holder_character_id` 为接收方（接收方也可写顶层 holder）。
+- 角色**提着/拿着道具入场**：`enter` 道具时可在 `to` 或顶层写 `holder_character_id`（持有人须已在场或同一镜更早 enter）；后端会记为手持，不必再单独 pickup。
+- 手持中的道具随持有人移动；不要对已手持道具再写无 holder 的自由 move 到台面——应使用 `put_down`。
+
+`characters_present 和 props_present 是唯一可见性真源`：它们只表示当前画面能看见什么，不代表角色/道具离开物理世界。不要新增其他重复的可见性列表。
+
+正例：上一镜林晓在沙发左侧、陈总在右侧；当前是林晓特写，陈总未出镜且没有离开。characters_present 只写林晓，spatial_intent.state_changes=[]。后端会把陈总保留为 offscreen_continuity；禁止为了不出镜而声明 exit。
+
+【上一段或本独立段的规范入点状态（紧凑只读）】
+```json
+{previous_state}
+```
+【允许的空间 ID】
+```json
+{allowed_ids}
+```
+【规划期剧情变化（参考，不得由后端代执行）】
+```json
+{planned_changes}
+```
+【上一镜摄影机摘要（仅艺术参考）】
+```json
+{previous_camera}
+```
+"""
 
 
 def _repair_shot_spatial_layout_from_previous(
@@ -1155,10 +1265,13 @@ async def parse_script_to_shots(
 
 {chr(10).join(location_lines)}
 
-**【重要警告】关于location_db_id字段：**
+**【重要警告】关于location_db_id与parent_id：**
 - 如果剧本中的场景与上述数据库场景匹配，请设置location_db_id为数据库场景的ID（必须是上面列表中实际存在的ID）
-- 如果剧本中的场景是新场景，不在数据库中，则location_db_id必须设置为null
-- 匹配时要考虑场景名称和描述的相似性，不需要完全一致
+- **已设置真实 location_db_id 时：以数据库该行为唯一真源**——name 用库中名称；parent_id 必须与库中父子一致（树形缩进表示父子；顶层场景 parent_id=null）
+- **禁止**在已绑定 location_db_id 后，凭剧情把顶层场景改写成某大厅/走廊的子场景，或改挂到错误父场景
+- **禁止因时间不同复制场景**：同一物理地点（如前台、大堂）在剧本中出现「深夜/白天/次日」等不同时间，仍必须复用库中已有场景或本输出中已登记的同一 location；**不要**创建「前台（深夜版）」这类时间变体子场景。时间只写在分镜字段（time_of_day、画面描述、氛围）里
+- 如果剧本中的场景是新场景，不在数据库中，则location_db_id必须设置为null，且新场景的 parent_id 必须指向本输出中已有的合法父场景内部 id
+- 匹配时要考虑场景名称和描述的相似性，不需要完全一致（**匹配地点本身，忽略时间后缀**）
 - **严禁编造或随意填写不存在的location_db_id！如果不确定是否匹配，必须设置为null**
 - **只能使用上面列表中显示的ID，不能使用其他任何数字**
 """
@@ -1491,7 +1604,15 @@ async def parse_script_to_shots(
             # 模型自行编造容器/锚点 → ref_prop_unknown / ref_anchor_unknown 占 30%+。
             quality_mode = bool(segment_context.get("quality_mode"))
             spatial_contract_block = ""
-            if quality_mode:
+            incremental_spatial = (
+                quality_mode
+                and int(segment_context.get("spatial_state_version") or 0) == 1
+            )
+            if incremental_spatial:
+                spatial_contract_block = _build_incremental_spatial_prompt(
+                    segment_context
+                )
+            if quality_mode and not incremental_spatial:
                 spatial_contract = segment_context.get("spatial_contract") or {}
                 continuity_in = spatial_contract.get("continuity_in") or {}
                 continuity_out = spatial_contract.get("continuity_out") or {}
@@ -1552,7 +1673,7 @@ async def parse_script_to_shots(
    - 合法 space_unit_id：{su_text}
    - 合法 anchor（格式 space_unit_id/anchor_id）：{anchor_text}
 
-5. **全局资产真源**：以下为规划阶段确定的全局实体注册表（characters/locations/props/spatial_world），本段必须复用其中的 ID，新实体按预留起始编号续编（见上方 {res_text}）。不得复用已占用编号、不得为同名实体分配新 ID。
+5. **全局资产真源**：以下为规划阶段确定的全局实体注册表（characters/locations/props/spatial_world）。已有实体必须复用其中 id；**新实体用 char_tmp_xxx / loc_tmp_xxx / prop_tmp_xxx（本段唯一）**，不要自行占用预留数字号（参考起始：{res_text}）。同名/同 db_id 禁止另起新 id。
 ```json
 {gr_text}
 ```
@@ -1563,11 +1684,16 @@ async def parse_script_to_shots(
 **【分段拆分模式 · 第 {seg_idx}/{total_seg} 段 segment_id={seg_id}】**
 你只需为下方剧本内容中的**当前分段**生成分镜，不要生成其他段。
 - 历史尾部摘要只用于保持连续性，**不得重复生成**已拆过的历史镜头。
-- 优先复用「已接受资产注册表」中的角色/场景/道具/空间 ID。
+- 优先复用「已接受资产注册表」中的角色/场景/道具：同名或同 db_id 必须使用注册表里的全局 id（char_xxx/loc_xxx/prop_xxx）。
+- **全局 ID 规则（重要）**：
+  - **已有实体**：id 必须等于注册表中的 id；name 与注册表一致；有则填 character_db_id/location_db_id/props_db_id。
+  - **本段新建实体**：不要自行猜测下一个 loc_005/prop_005 数字号；请使用**本段内唯一**的临时 id：`loc_tmp_<英文或拼音后缀>`、`prop_tmp_<后缀>`、`char_tmp_<后缀>`（例：`loc_tmp_balcony`、`prop_tmp_badge`）。镜头与 spatial 中引用同一临时 id。后端会按 name/db_id 匹配注册表并分配真正的全局编号。
+  - **禁止**新实体从 char_001/loc_001/prop_001 重开编号，也禁止使用已占用号段。
+  - 预留起始（仅供参考，新实体请用 tmp）：{res_text}。
 - **场景层级硬规则**：拆分流程严禁创建新的顶层场景。请尽可能按数据库场景列表中的真实 `location_db_id` 复用已有场景；允许复用已有顶层场景，但 `location_db_id` 必须真实有效。
-- 若确需创建新场景，必须输出 `location_db_id=null` 且 `parent_id` 指向一个合法父场景内部 ID；严禁输出 `location_db_id=null,parent_id=null`，也严禁为绕过父场景缺失而把子场景提升为顶层。
-- 当前分段首次出现的新实体，必须使用预留的全局 ID 起始编号：{res_text}。
-  不得从 char_001/loc_001/prop_001 重新编号（首段除外）。
+- **已有 DB 场景（已声明真实 location_db_id）**：必须按该 ID 复用，name/`parent_id` 以数据库列表为准；**禁止**为“剧情上像子区域”而把库中顶层场景的 `parent_id` 改写成其他场景。不确定父子时：`parent_id=null`（由库真源决定），不要猜。
+- **同一地点不因时间拆分**：剧本「场景3：前台 - 深夜十二点」与已有「酒店前台区域/大堂」是同一物理空间时，**必须复用已有 location**（优先 location_db_id=库中前台或大堂），**禁止**新建「前台区域（深夜版）」等时间变体场景或仅为时间变化挂子场景。时间变化只写在 shot 的 `time_of_day` 与画面/氛围描述中。
+- 若确需创建新场景，必须输出 `location_db_id=null` 且 `parent_id` 指向一个合法父场景内部 ID；严禁输出 `location_db_id=null,parent_id=null`，也严禁为绕过父场景缺失而把子场景提升为顶层；**且新场景必须是新的物理空间，不能仅是已有场景的时间版**；新场景的 id 用 `loc_tmp_xxx`。
 - 分镜编号可以是段内编号，最终由后端统一重排。
 {spatial_contract_block}
 【已接受资产注册表（必须复用其中已有全局 ID）】
@@ -1906,12 +2032,19 @@ JSON格式示例：
             parsed_data,
         )
 
-        parsed_data = repair_spatial_layout_continuity(parsed_data)
-        await _save_log_file_async(
-            log_dir,
-            f"script_parser_{timestamp}_08_spatial_continuity_repaired.json",
-            parsed_data,
-        )
+        if _should_repair_spatial_layout(segment_context):
+            parsed_data = repair_spatial_layout_continuity(parsed_data)
+            await _save_log_file_async(
+                log_dir,
+                f"script_parser_{timestamp}_08_spatial_continuity_repaired.json",
+                parsed_data,
+            )
+        else:
+            await _save_log_file_async(
+                log_dir,
+                f"script_parser_{timestamp}_08_spatial_intent_raw.json",
+                parsed_data,
+            )
 
         # 重新组合分镜组，确保每组不超过max_group_duration秒
         parsed_data = await asyncio.to_thread(

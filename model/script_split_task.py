@@ -5,7 +5,7 @@ Script split task model - persistent task & lease for incremental script splitti
 本表是分段拆分的根任务表，承载分段计划、进度、租约和最终结果。
 分段检查点存于 script_split_segment。
 """
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from .database import (
     execute_query,
     execute_update,
@@ -84,18 +84,39 @@ class ScriptSplitTask:
         return _loads(self.final_result_json, None)
 
     def to_public_status(self) -> Dict[str, Any]:
-        """对外轻量状态（轮询用），不含 script_content/auth_token/final_result。"""
+        """对外轻量状态（轮询用），不含 script_content/auth_token/final_result。
+
+        生成阶段进度与段号按段表实时推导，并对 progress 做只增不减，
+        避免 completed 被硬门禁回退后 UI 从 80%+ 掉到 40%。
+        """
+        progress = int(self.progress or 0)
+        completed = int(self.completed_segment_count or 0)
+        total = self.total_segment_count
+        current = self.current_segment_index
+
+        if (
+            self.status == ScriptSplitConstants.STATUS_GENERATING
+            and self.id is not None
+            and int(total or 0) > 0
+        ):
+            progress, completed, current = ScriptSplitTaskModel.live_generation_progress_view(
+                self.id,
+                int(total),
+                previous_progress=progress,
+                fallback_current=current,
+            )
+
         return {
             'task_id': self.id,
             'status': self.status,
             'phase': self.phase,
-            'progress': self.progress,
-            'completed_segments': self.completed_segment_count,
-            'total_segments': self.total_segment_count,
-            'current_segment': self.current_segment_index,
-            'message': _phase_message(self.status, self.phase,
-                                      self.current_segment_index,
-                                      self.total_segment_count),
+            'progress': progress,
+            'completed_segments': completed,
+            'total_segments': total,
+            'current_segment': current,
+            'message': _phase_message(
+                self.status, self.phase, current, total,
+            ),
             'poll_after_ms': ScriptSplitConstants.DEFAULT_POLL_MS,
         }
 
@@ -352,6 +373,96 @@ class ScriptSplitTaskModel:
             "WHERE id = %s",
             (task_id,),
         )
+
+    @staticmethod
+    def count_completed_segments(task_id: int) -> int:
+        """段表实时 completed 计数（生成进度真源）。"""
+        from model.script_split_segment import (
+            ScriptSplitSegmentModel,
+            SEGMENT_STATUS_COMPLETED,
+        )
+        return int(
+            ScriptSplitSegmentModel.count_by_status(
+                task_id, SEGMENT_STATUS_COMPLETED,
+            ) or 0
+        )
+
+    @staticmethod
+    def compute_generation_progress(
+        task_id: int,
+        total_segments: int,
+        previous_progress: Optional[int] = None,
+        *,
+        base: int = 10,
+        span: int = 75,
+        cap: int = 84,
+    ) -> Tuple[int, int]:
+        """按段表 completed/total 计算生成阶段进度，且相对 previous 只增不减。
+
+        返回 (progress, completed_count)。
+        公式：progress = base + int(span * completed / total)，上限 cap；
+        若提供 previous_progress，则 progress = max(previous, 计算值)。
+        """
+        total = max(1, int(total_segments or 1))
+        completed = ScriptSplitTaskModel.count_completed_segments(task_id)
+        raw = base + int(span * completed / total)
+        raw = min(max(0, raw), cap)
+        if previous_progress is not None:
+            raw = max(int(previous_progress or 0), raw)
+        return raw, completed
+
+    @staticmethod
+    def live_generation_progress_view(
+        task_id: int,
+        total_segments: int,
+        previous_progress: Optional[int] = None,
+        fallback_current: Optional[int] = None,
+    ) -> Tuple[int, int, int]:
+        """轮询视图：进度(只增不减) + 实时 completed + 当前未完成段序号。"""
+        from model.script_split_segment import ScriptSplitSegmentModel
+
+        progress, completed = ScriptSplitTaskModel.compute_generation_progress(
+            task_id,
+            total_segments,
+            previous_progress=previous_progress,
+        )
+        total = max(1, int(total_segments or 1))
+        first = ScriptSplitSegmentModel.get_first_uncompleted(task_id)
+        if first is not None:
+            current = int(first.segment_index)
+        elif completed >= total:
+            current = total
+        else:
+            current = int(fallback_current or 0) or total
+        return progress, completed, current
+
+    @staticmethod
+    def sync_generation_progress(
+        task_id: int,
+        total_segments: int,
+        previous_progress: Optional[int] = None,
+        *,
+        current_segment_index: Optional[int] = None,
+    ) -> Tuple[int, int]:
+        """写回 completed_segment_count 与单调 progress；返回 (progress, completed)。"""
+        progress, completed = ScriptSplitTaskModel.compute_generation_progress(
+            task_id,
+            total_segments,
+            previous_progress=previous_progress,
+        )
+        fields: Dict[str, Any] = {
+            "completed_segment_count": completed,
+        }
+        if current_segment_index is not None:
+            fields["current_segment_index"] = current_segment_index
+        ScriptSplitTaskModel.save_field(task_id, **fields)
+        ScriptSplitTaskModel.update_status(
+            task_id,
+            ScriptSplitConstants.STATUS_GENERATING,
+            phase="segment_generation",
+            progress=progress,
+        )
+        return progress, completed
 
     @staticmethod
     def request_cancel(task_id: int) -> None:

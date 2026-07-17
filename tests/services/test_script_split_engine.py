@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -67,6 +68,23 @@ def _disable_plan_persistence(monkeypatch):
     )
 
 
+async def _empty_db_locations(_config=None):
+    return []
+
+
+def _mock_db_locations(monkeypatch, locations=None):
+    result = list(locations or [])
+
+    async def _loader(_config=None):
+        return result
+
+    monkeypatch.setattr(
+        script_split_engine,
+        "_load_current_db_locations",
+        _loader,
+    )
+
+
 def test_step_plan_correlates_retry_attempts_and_validation_logs(monkeypatch):
     task = _planning_task()
     plan_results = iter([{}, _segment_plan()])
@@ -92,6 +110,7 @@ def test_step_plan_correlates_retry_attempts_and_validation_logs(monkeypatch):
     )
     monkeypatch.setattr(script_split_engine, "anchorize_script", lambda _script: PLAN_ANCHORS)
     monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _task_id: False)
+    _mock_db_locations(monkeypatch, [])
     monkeypatch.setattr(
         script_split_engine,
         "validate_segment_plan",
@@ -132,6 +151,7 @@ def test_step_plan_logs_timeout_without_auth_token(monkeypatch):
     )
     monkeypatch.setattr(script_split_engine, "anchorize_script", lambda _script: PLAN_ANCHORS)
     monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _task_id: False)
+    _mock_db_locations(monkeypatch, [])
 
     with pytest.raises(script_split_engine.EngineError) as exc_info:
         asyncio.run(script_split_engine.step_plan(task))
@@ -162,9 +182,10 @@ def test_step_plan_uses_strategy_prompt_and_persists_compiled_registry(monkeypat
             assert max_output_tokens > 0
             return "enterprise-quality-prompt"
 
-        def compile_plan(self, plan, anchors):
+        def compile_plan(self, plan, anchors, db_locations=None):
             assert plan == raw_plan
             assert anchors == PLAN_ANCHORS
+            assert db_locations == []
             return compiled_plan
 
     async def fake_plan_segments(**kwargs):
@@ -187,6 +208,7 @@ def test_step_plan_uses_strategy_prompt_and_persists_compiled_registry(monkeypat
     )
     monkeypatch.setattr(script_split_engine, "anchorize_script", lambda _script: PLAN_ANCHORS)
     monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _task_id: False)
+    _mock_db_locations(monkeypatch, [])
     monkeypatch.setattr(
         script_split_engine,
         "validate_segment_plan",
@@ -266,6 +288,24 @@ def test_quality_parallel_batch_starts_multiple_segments_together(monkeypatch):
         script_split_engine.ScriptSplitTaskModel,
         "update_status",
         lambda *_args, **_kwargs: None,
+    )
+    def fake_sync(task_id, total, previous_progress=None, current_segment_index=None):
+        fields = {
+            "completed_segment_count": 2,
+            "current_segment_index": current_segment_index,
+        }
+        saved_fields.append((task_id, fields))
+        return (50, 2)
+
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "sync_generation_progress",
+        fake_sync,
+    )
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "count_completed_segments",
+        lambda _task_id: 2,
     )
 
     asyncio.run(script_split_engine._step_generate_parallel_batch(task, object()))
@@ -367,6 +407,7 @@ def test_segment_retry_passes_previous_parsed_result(monkeypatch):
 
     monkeypatch.setattr(script_parser, "parse_script_to_shots", fake_parse_script_to_shots)
     monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _task_id: False)
+    _mock_db_locations(monkeypatch, [])
     monkeypatch.setattr(
         script_split_engine,
         "_validate_segment",
@@ -402,7 +443,7 @@ def test_segment_retry_passes_previous_parsed_result(monkeypatch):
         "save_failure",
         fake_save_failure,
     )
-    for method_name in ("save_field", "increment_completed", "update_status"):
+    for method_name in ("save_field", "increment_completed", "update_status", "sync_generation_progress"):
         monkeypatch.setattr(
             script_split_engine.ScriptSplitTaskModel,
             method_name,
@@ -530,6 +571,7 @@ def test_retry_exhaustion_reuses_last_parseable_candidate(monkeypatch):
 
 def _prepare_segment_generation_test(monkeypatch, task, segment):
     monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _task_id: False)
+    _mock_db_locations(monkeypatch, [])
     monkeypatch.setattr(
         script_split_engine.ScriptSplitSegmentModel,
         "get_first_uncompleted",
@@ -546,12 +588,85 @@ def _prepare_segment_generation_test(monkeypatch, task, segment):
             method_name,
             lambda *args, **kwargs: None,
         )
-    for method_name in ("save_field", "increment_completed", "update_status"):
+    for method_name in (
+        "save_field",
+        "increment_completed",
+        "update_status",
+        "sync_generation_progress",
+        "get_by_id",
+    ):
         monkeypatch.setattr(
             script_split_engine.ScriptSplitTaskModel,
             method_name,
             lambda *args, **kwargs: None,
         )
+
+
+def test_segment_generation_materializes_before_all_validators_and_qc(monkeypatch):
+    events = []
+    raw = {
+        "characters": [], "locations": [], "props": [],
+        "shot_groups": [{"shots": [{"shot_id": "shot_raw"}]}],
+    }
+    materialized = {
+        "characters": [], "locations": [], "props": [],
+        "shot_groups": [{"shots": [{"shot_id": "shot_materialized"}]}],
+    }
+    segment = ScriptSplitSegment(
+        task_id=800, segment_index=1, segment_id="seg_0001",
+        source_content="短剧本",
+    )
+    task = ScriptSplitTask(
+        id=800,
+        request_config={"enable_qc": True, "qc_max_rounds": 2},
+        segment_plan_json={"segments": [{"segment_id": "seg_0001"}]},
+        accepted_registry_json={}, continuity_state_json={},
+        total_segment_count=1,
+    )
+
+    class Strategy:
+        parallel_enabled = False
+
+        def build_segment_context(self, _plan, _segment_id):
+            return {"upstream_spatial_handoff": {"canonical_state": {}}}
+
+        def materialize_segment_result(self, parsed, *_args):
+            assert parsed is raw
+            events.append("materialize")
+            return SimpleNamespace(parsed=materialized)
+
+        def validate_segment_result(self, parsed, *_args):
+            assert parsed is materialized
+            events.append("segment")
+            return []
+
+        def validate_cross_segment(self, parsed, *_args):
+            assert parsed is materialized
+            events.append("cross")
+            return []
+
+    async def fake_parse(**_kwargs):
+        return raw
+
+    async def fake_structure(parsed, _cfg, plan=None):
+        assert parsed is materialized
+        events.append("structure")
+        return []
+
+    async def fake_qc(**kwargs):
+        assert kwargs["parsed"] is materialized
+        events.append("qc")
+        return []
+
+    monkeypatch.setattr(script_parser, "parse_script_to_shots", fake_parse)
+    monkeypatch.setattr(script_split_engine, "get_script_split_strategy", lambda _mode: Strategy())
+    monkeypatch.setattr(script_split_engine, "_validate_segment_location_structure", fake_structure)
+    monkeypatch.setattr(script_split_engine, "_run_enabled_segment_qc", fake_qc)
+    _prepare_segment_generation_test(monkeypatch, task, segment)
+
+    asyncio.run(script_split_engine.step_generate_segment(task))
+
+    assert events == ["materialize", "structure", "segment", "cross", "qc"]
 
 
 def test_disabled_qc_skips_local_and_agent_checks(monkeypatch):
@@ -760,6 +875,138 @@ def test_existing_exhausted_qc_checkpoint_is_completed_without_llm(monkeypatch):
     accepted_errors = saved[0][1]["validation_errors"]
     assert accepted_errors[0]["code"] == "QC_REJECTED"
     assert accepted_errors[0]["_forced_accept"] is True
+
+
+def test_step_plan_retries_on_new_root_from_compile(monkeypatch):
+    """L0：compile 因新顶层失败时进入规划重试，反馈含错误码。"""
+    task = _planning_task(request_config={"sequence_mode": "quality"})
+    plan_calls = []
+    attempts = {"n": 0}
+
+    class FakeStrategy:
+        def build_planning_prompt(self, anchors, max_output_tokens):
+            return "prompt"
+
+        def compile_plan(self, plan, anchors, db_locations=None):
+            attempts["n"] += 1
+            if attempts["n"] < 2:
+                raise ValueError(
+                    "new_root_location_forbidden: 拆分流程不允许创建顶层场景：酒店办公室"
+                )
+            return dict(plan, compiled_registry={"locations": [], "characters": [], "props": []})
+
+    async def fake_plan_segments(**kwargs):
+        plan_calls.append(kwargs)
+        return _segment_plan(), "stop"
+
+    async def fake_write_validation(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(
+        script_split_engine,
+        "get_script_split_strategy",
+        lambda _mode: FakeStrategy(),
+    )
+    monkeypatch.setattr(script_segment_planner, "plan_segments", fake_plan_segments)
+    monkeypatch.setattr(
+        script_segment_planner, "write_plan_validation_log", fake_write_validation,
+    )
+    monkeypatch.setattr(script_split_engine, "anchorize_script", lambda _s: PLAN_ANCHORS)
+    monkeypatch.setattr(script_split_engine, "_is_cancelled", lambda _t: False)
+    _mock_db_locations(monkeypatch, [])
+    monkeypatch.setattr(
+        script_split_engine, "validate_segment_plan", lambda _p, _a: (True, []),
+    )
+    monkeypatch.setattr(
+        script_split_engine, "plan_to_segments", lambda _p, _a: [{"segment_index": 1}],
+    )
+    _disable_plan_persistence(monkeypatch)
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel,
+        "save_field",
+        lambda *a, **k: None,
+    )
+
+    asyncio.run(script_split_engine.step_plan(task))
+
+    assert attempts["n"] == 2
+    assert plan_calls[1].get("feedback")
+    assert "new_root_location_forbidden" in plan_calls[1]["feedback"]
+
+
+def test_segment_extended_hard_gate_on_space_unit_registry_new_root(monkeypatch):
+    """L1：locations 合法但 space_unit 引用规划非法顶层 → hard pause。"""
+    parsed = {
+        "characters": [],
+        "locations": [{
+            "id": "loc_001",
+            "name": "城南酒店大堂",
+            "location_db_id": 565,
+            "parent_id": None,
+        }],
+        "props": [],
+        "spatial_world": {
+            "space_units": [{
+                "space_unit_id": "space_unit:office",
+                "name": "酒店办公室",
+                "owner_id": "loc_004",
+                "location_ids": ["loc_004"],
+            }]
+        },
+        "shot_groups": [],
+    }
+    plan = {
+        "compiled_registry": {
+            "locations": [
+                {"id": "loc_001", "name": "城南酒店大堂", "location_db_id": 565},
+                {
+                    "id": "loc_004",
+                    "name": "酒店办公室",
+                    "location_db_id": None,
+                    "parent_id": None,
+                },
+            ]
+        }
+    }
+    segment = ScriptSplitSegment(
+        task_id=201,
+        segment_index=1,
+        segment_id="seg_0001",
+        source_content="短剧本",
+    )
+    task = ScriptSplitTask(
+        id=201,
+        request_config={"enable_qc": False, "world_id": 6},
+        segment_plan_json=plan,
+        accepted_registry_json={},
+        continuity_state_json={},
+        total_segment_count=1,
+    )
+    saved_failures = []
+
+    async def fake_parse(**_kwargs):
+        return parsed
+
+    monkeypatch.setattr(script_parser, "parse_script_to_shots", fake_parse)
+    _prepare_segment_generation_test(monkeypatch, task, segment)
+    _mock_db_locations(monkeypatch, [
+        {"id": 565, "name": "城南酒店大堂", "parent_id": None, "children": []},
+    ])
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitSegmentModel,
+        "save_failure",
+        lambda *args, **kwargs: saved_failures.append((args, kwargs)),
+    )
+
+    with pytest.raises(script_split_engine.TaskPaused) as exc_info:
+        asyncio.run(script_split_engine.step_generate_segment(task))
+
+    assert exc_info.value.code == "new_root_location_forbidden"
+    assert saved_failures
+    assert any(
+        error.get("location_id") == "loc_004"
+        for error in saved_failures[0][0][2]
+    )
 
 
 def test_disabled_qc_pauses_on_new_root_location_without_forced_accept(monkeypatch):

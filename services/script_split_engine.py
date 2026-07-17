@@ -27,6 +27,7 @@ from services.script_split_planner import (
 )
 from services.script_split_registry import (
     AcceptedRegistry,
+    rewrite_segment_entity_ids,
     validate_segment_entities,
     validate_segment_spatial_references,
     renumber_global,
@@ -36,7 +37,9 @@ from services.storyboard_quality_sequence import (
     get_storyboard_quality_sequence_strategy,
 )
 from services.location_structure_guard import (
+    bind_and_validate_planned_locations,
     validate_full_location_structure,
+    validate_segment_location_structure_extended,
     validate_segment_new_roots,
 )
 from model.script_split_task import ScriptSplitTaskModel, ScriptSplitTask
@@ -95,11 +98,35 @@ async def _load_current_db_locations(config: Dict[str, Any]) -> List[Dict[str, A
 async def _validate_segment_location_structure(
     parsed: Dict[str, Any],
     config: Dict[str, Any],
+    plan: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    return validate_segment_new_roots(
+    """L1：段级扩展硬门禁（locations + space_unit/registry 引用）。"""
+    return validate_segment_location_structure_extended(
         parsed,
         await _load_current_db_locations(config),
+        plan=plan,
     )
+
+
+def _planned_location_hard_errors(
+    plan: Dict[str, Any],
+    db_locations: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """对已编译 plan 的 registry locations 做 L0 复检。"""
+    registry = plan.get("compiled_registry") or {}
+    if not isinstance(registry, dict):
+        return []
+    locations = registry.get("locations") or []
+    if not locations:
+        return []
+    _bound, errors = bind_and_validate_planned_locations(
+        locations,
+        db_locations,
+        spatial_world=registry.get("spatial_world")
+        if isinstance(registry.get("spatial_world"), dict)
+        else plan.get("spatial_world"),
+    )
+    return errors
 
 
 async def _revalidate_saved_full_location_graph(
@@ -221,15 +248,33 @@ async def step_plan(task: ScriptSplitTask) -> None:
     script = task.script_content or ""
     strategy = get_script_split_strategy(cfg.get("sequence_mode", "speed"))
 
-    # 已有计划（断点续传）则跳过规划
-    if task.get_segment_plan():
-        logger.info("task %s 已有分段计划，跳过规划", task.id)
-        return
+    # 已有计划：L0 复检（历史 plan 可能含非法新顶层）；不通过则清空并重规划
+    existing_plan = task.get_segment_plan()
+    if existing_plan:
+        db_locations = await _load_current_db_locations(cfg)
+        hard_errors = _planned_location_hard_errors(existing_plan, db_locations)
+        if not hard_errors:
+            logger.info("task %s 已有分段计划，跳过规划", task.id)
+            return
+        logger.warning(
+            "task %s 已有计划未通过场景结构 L0 复检，将重规划: %s",
+            task.id,
+            [error.get("code") for error in hard_errors],
+        )
+        # save_field 会跳过 None；用空对象清空计划，迫使本步重新规划
+        ScriptSplitTaskModel.save_field(
+            task.id,
+            segment_plan_json={},
+            accepted_registry_json={},
+            total_segment_count=0,
+            completed_segment_count=0,
+        )
 
     anchors = anchorize_script(script)
     if not anchors:
         raise EngineError("empty_script", "剧本为空，无法分段")
 
+    db_locations = await _load_current_db_locations(cfg)
     plan = None
     planning_prompt = strategy.build_planning_prompt(
         anchors,
@@ -289,12 +334,25 @@ async def step_plan(task: ScriptSplitTask) -> None:
         compiled_plan = raw_plan
         if ok:
             try:
-                compiled_plan = strategy.compile_plan(raw_plan, anchors)
+                compiled_plan = strategy.compile_plan(
+                    raw_plan,
+                    anchors,
+                    db_locations=db_locations,
+                )
             except ValueError as exc:
                 ok = False
+                message = str(exc)
+                code = "quality_plan_invalid"
+                if "new_root_location_forbidden" in message:
+                    code = "new_root_location_forbidden"
+                elif "location_parent" in message:
+                    code = "location_parent_invalid"
+                elif "planned_space_unit_location_unbound" in message:
+                    code = "planned_space_unit_location_unbound"
                 errors = [{
-                    "code": "quality_plan_invalid",
-                    "message": str(exc),
+                    "code": code,
+                    "message": message,
+                    "_hard_gate": code != "quality_plan_invalid",
                 }]
         await write_plan_validation_log(
             log_context,
@@ -316,8 +374,14 @@ async def step_plan(task: ScriptSplitTask) -> None:
         logger.warning("task %s 规划第 %d 次失败: %s", task.id, attempt, errors)
 
     if plan is None:
-        raise TaskPaused("plan_failed",
-                         f"规划失败，已重试 {ScriptSplitConstants.PLAN_MAX_RETRIES} 次")
+        first = (last_errors[0] if last_errors else {}) or {}
+        detail = first.get("message") or (
+            f"规划失败，已重试 {ScriptSplitConstants.PLAN_MAX_RETRIES} 次"
+        )
+        raise TaskPaused(
+            str(first.get("code") or "plan_failed"),
+            str(detail),
+        )
 
     # 持久化计划
     segs = plan_to_segments(plan, anchors)
@@ -375,6 +439,7 @@ async def step_generate_segment(
 
     # 构建段上下文
     segment_context = _build_segment_context(task, seg, registry)
+    segment_context.update(strategy.build_segment_context(plan, seg.segment_id))
     if _parallel_child:
         # 依赖感知：优先用 build_runtime_segment_context（按依赖类型注入真实 handoff，
         # 见设计文档 §9.2/§20.2）。仅当策略未提供该方法（如非 quality）时回退到旧逻辑。
@@ -383,7 +448,6 @@ async def step_generate_segment(
                 strategy.build_runtime_segment_context(plan, seg, _all_segments)
             )
         else:
-            segment_context.update(strategy.build_segment_context(plan, seg.segment_id))
             contract = segment_context.get("spatial_contract") or {}
             segment_context["previous_tail_summary"] = []
             segment_context["continuity_state"] = contract.get("continuity_in") or {}
@@ -434,6 +498,7 @@ async def step_generate_segment(
         checkpoint_hard_errors = await _validate_segment_location_structure(
             last_parsed_result,
             cfg,
+            plan=plan,
         )
         previous_full_hard_errors = [
             error for error in last_errors
@@ -574,7 +639,27 @@ async def step_generate_segment(
     if _is_cancelled(task.id):
         raise CancelledByUser()
 
-    hard_structure_errors = await _validate_segment_location_structure(parsed, cfg)
+    if hasattr(strategy, "materialize_segment_result"):
+        materialized = strategy.materialize_segment_result(
+            parsed,
+            plan,
+            seg.segment_id,
+            segment_context,
+        )
+        parsed = materialized.parsed
+        if hasattr(strategy, "write_materialization_logs"):
+            await strategy.write_materialization_logs(
+                task.id,
+                seg.segment_id,
+                parsed,
+            )
+
+    # 全局 ID 改写：name/db_id 复用 + loc_tmp_xxx 等临时 id 发号（先于一切实体校验）
+    parsed = rewrite_segment_entity_ids(parsed, registry)
+
+    hard_structure_errors = await _validate_segment_location_structure(
+        parsed, cfg, plan=plan,
+    )
     errors: List[Dict[str, Any]] = list(
         strategy.validate_segment_result(parsed, plan, seg.segment_id) or []
     )
@@ -757,13 +842,14 @@ def _complete_segment_result(
         accepted_registry_json=registry.to_context(),
         continuity_state_json=continuity_out,
     )
-    ScriptSplitTaskModel.increment_completed(task.id)
-    progress = 10 + int(75 * (task.completed_segment_count + 1) / total)
-    ScriptSplitTaskModel.update_status(
+    # 进度以段表 completed 实时计数为准，且相对历史 progress 只增不减。
+    # 使用内存中的 task.progress，避免在单测/无 DB 环境下额外 get_by_id。
+    prev_progress = int(getattr(task, "progress", None) or 0)
+    ScriptSplitTaskModel.sync_generation_progress(
         task.id,
-        ScriptSplitConstants.STATUS_GENERATING,
-        phase="segment_generation",
-        progress=min(progress, 84),
+        total,
+        previous_progress=prev_progress,
+        current_segment_index=seg.segment_index,
     )
 
 
@@ -837,18 +923,17 @@ async def _step_generate_parallel_batch(task: ScriptSplitTask, strategy) -> None
         SEGMENT_STATUS_COMPLETED,
     )
     next_segment = ScriptSplitSegmentModel.get_first_uncompleted(task.id)
-    progress = 10 + int(75 * completed / total)
-    ScriptSplitTaskModel.save_field(
+    # 进度按段表实时 completed/total，且只增不减（避免硬门禁回退后 UI 倒退）
+    prev_progress = int(getattr(task, "progress", None) or 0)
+    current_idx = next_segment.segment_index if next_segment else total
+    ScriptSplitTaskModel.sync_generation_progress(
         task.id,
-        completed_segment_count=completed,
-        current_segment_index=(next_segment.segment_index if next_segment else total),
+        total,
+        previous_progress=prev_progress,
+        current_segment_index=current_idx,
     )
-    ScriptSplitTaskModel.update_status(
-        task.id,
-        ScriptSplitConstants.STATUS_GENERATING,
-        phase="segment_generation",
-        progress=min(progress, 84),
-    )
+    # completed 变量供后续 merge 判断使用（与段表一致）
+    completed = ScriptSplitTaskModel.count_completed_segments(task.id)
 
     for error_type in (WaitingAuth, CancelledByUser, TaskPaused, EngineError):
         for result in results:
@@ -964,11 +1049,34 @@ async def step_merge(task: ScriptSplitTask) -> None:
         merged = sanitize_parsed_location_references(merged, db_locations)
         merged = repair_spatial_layout_continuity(merged)
 
+    # 合并前再检规划 registry（生成中途可能被用户删除世界场景）
+    plan = task.get_segment_plan() or {}
+    if plan.get("compiled_registry"):
+        plan_errors = _planned_location_hard_errors(plan, db_locations or [])
+        if plan_errors:
+            logger.error(
+                "task %s 合并前规划 registry L0 复检失败（资产可能已变更）: %s",
+                task.id,
+                [error.get("code") for error in plan_errors],
+            )
+            _pause_for_hard_gate(plan_errors)
+
     hard_structure_errors = validate_full_location_structure(
         merged,
         db_locations or [],
     )
     if hard_structure_errors:
+        if any(
+            error.get("code") == "new_root_location_forbidden"
+            for error in hard_structure_errors
+            if isinstance(error, dict)
+        ):
+            logger.error(
+                "task %s 合并阶段仍命中 new_root_location_forbidden，"
+                "说明 L0/L1 可能漏检: %s",
+                task.id,
+                hard_structure_errors,
+            )
         errors_by_segment = _map_location_errors_to_segments(
             completed,
             hard_structure_errors,
@@ -1114,6 +1222,8 @@ async def _reconcile_voiceover_and_finalize(task: ScriptSplitTask, final_result:
     - remaining_count > 0：保持 publishing，下个 worker tick 继续对账（publishing
       在 claim_next_task 的 recoverable 列表内，lease 过期后会被重新领取）。
     - remaining_count == 0：写 metadata 摘要后 completed。
+    - remaining 只含「仍可处理且未完成」的对白（有台词+角色、未入队/未 skip），
+      无角色旁白等不可自动处理的不阻挡 completed。
     - 临时系统错误（对账抛异常）：抛 voiceover_bootstrap_failed，按现有任务重试机制处理。
 
     拆分任务只等待「音频任务已可靠入队」，不等待 TTS 实际生成完成（方案 §9.3）。
@@ -1331,7 +1441,10 @@ async def _run_enabled_segment_qc(
 
 
 def _validate_segment(parsed: Dict[str, Any], registry: AcceptedRegistry) -> Tuple[bool, List[Dict[str, Any]]]:
-    """单段综合校验：实体 ID 策略 + 空间引用完整性。"""
+    """单段综合校验：实体 ID 策略 + 空间引用完整性。
+
+    假定调用方已对 parsed 执行 rewrite_segment_entity_ids（engine 在校验前统一调用）。
+    """
     ok1, errs1 = validate_segment_entities(parsed, registry)
     ok2, errs2 = validate_segment_spatial_references(parsed, registry)
     return (ok1 and ok2), (errs1 + errs2)
@@ -1389,6 +1502,20 @@ def _format_plan_errors(errors: List[Dict[str, Any]]) -> str:
     lines = ["上一版分段计划校验失败，请修正："]
     for e in errors:
         lines.append(f"- [{e.get('code')}] {e.get('message')}")
+    joined = " ".join(str(e.get("message") or e.get("code") or "") for e in errors)
+    if "location_parent_conflict" in joined or "parent_conflict" in joined:
+        lines.append(
+            "- [hint] 复用世界已有场景时请删除 parent_location_key（省略/null），"
+            "勿按剧情猜测「走廊/阳台父=套房」等层级；数据库父子由后端接管。"
+        )
+    if (
+        "planned_space_unit_location_unbound" in joined
+        or ("space_unit" in joined and "关联" in joined)
+    ):
+        lines.append(
+            "- [hint] 每个 space_unit 的 name/location_key 必须对应 entities.locations 已有项；"
+            "不要写 locations 未登记的 suite 等中间层。"
+        )
     return "\n".join(lines)
 
 

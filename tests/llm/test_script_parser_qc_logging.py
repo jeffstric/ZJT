@@ -28,7 +28,14 @@ class _FakeClient:
         )
 
 
-def _run_parser(monkeypatch, tmp_path, qc_feedback, *, logging_enabled=True):
+def _run_parser(
+    monkeypatch,
+    tmp_path,
+    qc_feedback,
+    *,
+    logging_enabled=True,
+    segment_context=None,
+):
     captured_messages = []
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -54,10 +61,48 @@ def _run_parser(monkeypatch, tmp_path, qc_feedback, *, logging_enabled=True):
             "shot_groups": [],
         },
         qc_feedback=qc_feedback,
-        segment_context={"segment_id": "seg_0001", "segment_index": 1, "total_segments": 1},
+        segment_context=segment_context or {
+            "segment_id": "seg_0001", "segment_index": 1, "total_segments": 1,
+        },
         strict_json=True,
     ))
     return captured_messages
+
+
+def test_v3_prompt_requests_incremental_intent_and_compact_state(monkeypatch, tmp_path):
+    messages = _run_parser(
+        monkeypatch,
+        tmp_path,
+        None,
+        segment_context={
+            "segment_id": "seg_0002",
+            "segment_index": 2,
+            "total_segments": 3,
+            "quality_mode": True,
+            "spatial_state_version": 1,
+            "previous_state": {
+                "char_001": ["present", "space:room", "container:sofa", "left"],
+            },
+            "spatial_catalog_prompt": {
+                "space_units": ["space:room"],
+                "containers": ["container:sofa"],
+                "slots": ["container:sofa/left"],
+                "anchors": [],
+            },
+            "planned_state_changes": [],
+            "previous_camera_summary": {"space_unit_id": "space:room"},
+        },
+    )
+
+    prompt = next(item["content"] for item in messages if item["role"] == "user")
+    assert "spatial_intent.state_changes" in prompt
+    assert "characters_present 和 props_present 是唯一可见性真源" in prompt
+    assert "offscreen_continuity" in prompt
+    assert '"char_001": ["present", "space:room", "container:sofa", "left"]' in prompt
+    assert "禁止自造 anchor_id" in prompt
+    assert "visible_character_ids" not in prompt
+    assert "continuity_in" not in prompt
+    assert "continuity_out" not in prompt
 
 
 @pytest.mark.parametrize(

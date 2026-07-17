@@ -1,13 +1,18 @@
 """剧本拆分场景层级的确定性硬校验。
 
-该模块不依赖 QC，也不执行数据库写入。段级只判断新顶层场景；完整校验在
-合并和发布前使用全量 locations 与最新数据库场景树检查父级、冲突和环。
+该模块不依赖 QC，也不执行数据库写入。
+
+校验层次：
+- L0 规划编译：bind + validate 规划 locations / space_units 对照 DB
+- L1 段级：locations + 本段 space_unit/镜头引用拉起的 registry 地点新顶层
+- L2/L3 合并与发布：全量父级图、冲突与环
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,28 @@ def _location_id(location: Dict[str, Any]) -> str:
 
 def _location_name(location: Dict[str, Any]) -> str:
     return str(location.get("name") or location.get("location_name") or "")
+
+
+def _location_key(location: Dict[str, Any]) -> str:
+    return str(
+        location.get("location_key")
+        or location.get("entity_key")
+        or ""
+    ).strip()
+
+
+def _new_root_error(location: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "code": "new_root_location_forbidden",
+        "severity": "error",
+        "message": (
+            f"拆分流程不允许创建顶层场景：{_location_name(location) or _location_id(location)}；"
+            "请复用已有场景，或在剧本创作页先创建顶层场景"
+        ),
+        "location_id": _location_id(location),
+        "location_name": _location_name(location),
+        "_hard_gate": True,
+    }
 
 
 def flatten_db_locations(locations: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -159,17 +186,7 @@ def validate_segment_new_roots(
             continue
         if _candidate_db_match(location, by_id, by_name):
             continue
-        errors.append({
-            "code": "new_root_location_forbidden",
-            "severity": "error",
-            "message": (
-                f"拆分流程不允许创建顶层场景：{_location_name(location) or _location_id(location)}；"
-                "请复用已有场景，或在剧本创作页先创建顶层场景"
-            ),
-            "location_id": _location_id(location),
-            "location_name": _location_name(location),
-            "_hard_gate": True,
-        })
+        errors.append(_new_root_error(location))
     return errors
 
 
@@ -183,7 +200,6 @@ def validate_full_location_structure(
         _location_id(item): item for item in locations if _location_id(item)
     }
     db_flat = flatten_db_locations(db_locations)
-    by_id, by_name = _db_indexes(db_flat)
     matches: Dict[str, Optional[Dict[str, Any]]] = {}
     errors: List[Dict[str, Any]] = []
 
@@ -264,10 +280,376 @@ def validate_full_location_structure(
     return errors
 
 
+def _registry_locations(plan: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(plan, dict):
+        return []
+    registry = plan.get("compiled_registry") or {}
+    if isinstance(registry, dict):
+        items = registry.get("locations") or []
+        if isinstance(items, list):
+            return [item for item in items if isinstance(item, dict)]
+    entities = plan.get("entities") or {}
+    if isinstance(entities, dict):
+        items = entities.get("locations") or []
+        if isinstance(items, list):
+            return [item for item in items if isinstance(item, dict)]
+    return []
+
+
+def _index_locations(locations: Sequence[Dict[str, Any]]) -> Tuple[
+    Dict[str, Dict[str, Any]],
+    Dict[str, Dict[str, Any]],
+    Dict[str, Dict[str, Any]],
+]:
+    by_id: Dict[str, Dict[str, Any]] = {}
+    by_key: Dict[str, Dict[str, Any]] = {}
+    by_name: Dict[str, Dict[str, Any]] = {}
+    for location in locations:
+        loc_id = _location_id(location)
+        if loc_id:
+            by_id[loc_id] = location
+        key = _location_key(location)
+        if key:
+            by_key[key] = location
+        name = _normalize_name(_location_name(location))
+        if name and name not in by_name:
+            by_name[name] = location
+    return by_id, by_key, by_name
+
+
+def bind_planned_locations(
+    planned_locations: Sequence[Dict[str, Any]],
+    db_locations: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """绑定规划 locations：写 location_db_id，解析 parent_location_key → parent_id。"""
+    by_id, by_name = _db_indexes(db_locations)
+    bound: List[Dict[str, Any]] = []
+    key_to_internal: Dict[str, str] = {}
+
+    for raw in planned_locations or []:
+        if not isinstance(raw, dict):
+            continue
+        location = deepcopy(raw)
+        # 模型禁止编造 DB id：不在库中的显式 id 清空后走名称匹配
+        given_db_id = _safe_int(location.get("location_db_id"))
+        if given_db_id is not None and given_db_id not in by_id:
+            location["location_db_id"] = None
+
+        db_match = _candidate_db_match(location, by_id, by_name)
+        if db_match:
+            location["location_db_id"] = _safe_int(db_match.get("id"))
+        else:
+            location["location_db_id"] = None
+
+        key = _location_key(location)
+        internal_id = _location_id(location)
+        if key and internal_id:
+            key_to_internal[key] = internal_id
+        bound.append(location)
+
+    # 第二遍：parent_location_key → parent_id（内部 loc_xxx）
+    for location in bound:
+        parent_key = str(
+            location.get("parent_location_key")
+            or location.get("parent_entity_key")
+            or ""
+        ).strip()
+        if parent_key:
+            parent_internal = key_to_internal.get(parent_key)
+            if parent_internal:
+                location["parent_id"] = parent_internal
+            elif location.get("parent_id") in (None, ""):
+                # 保留无法解析的 key 到 parent_id 占位，交给 full 校验报 missing
+                location["parent_id"] = parent_key
+        # 已绑定 DB 且未声明规划父：parent 以 DB 为准，不在此写内部 parent
+        # 未匹配 DB 且无任何父：保持 parent_id 空，由校验打新顶层
+        if location.get("location_db_id") is not None and not parent_key:
+            # 显式 parent_id 若存在，留给 full 校验做 conflict；不在此清空
+            pass
+
+    return bound
+
+
+def validate_planned_location_structure(
+    planned_locations: Sequence[Dict[str, Any]],
+    db_locations: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """规划 locations 硬校验（与 full 同构）。"""
+    bound = bind_planned_locations(planned_locations, db_locations)
+    return validate_full_location_structure({"locations": bound}, db_locations)
+
+
+def validate_planned_space_units(
+    spatial_world: Optional[Dict[str, Any]],
+    planned_locations: Sequence[Dict[str, Any]],
+    db_locations: Iterable[Dict[str, Any]] = (),
+) -> List[Dict[str, Any]]:
+    """规划 space_unit 必须能关联到合法 plan location。"""
+    del db_locations  # 关联合法性以 locations 绑定结果为准；DB 在 locations 层已校验
+    locations = [item for item in planned_locations if isinstance(item, dict)]
+    by_id, by_key, by_name = _index_locations(locations)
+    errors: List[Dict[str, Any]] = []
+    space_units = (spatial_world or {}).get("space_units") or []
+    for unit in space_units:
+        if not isinstance(unit, dict):
+            continue
+        unit_id = str(unit.get("space_unit_id") or unit.get("id") or "")
+        explicit_key = str(
+            unit.get("location_key")
+            or unit.get("owner_location_key")
+            or unit.get("entity_key")
+            or ""
+        ).strip()
+        owner_id = str(unit.get("owner_id") or "").strip()
+        name = _location_name(unit)
+
+        matched: Optional[Dict[str, Any]] = None
+        if explicit_key and explicit_key in by_key:
+            matched = by_key[explicit_key]
+        elif owner_id and owner_id in by_id:
+            matched = by_id[owner_id]
+        elif name:
+            matched = by_name.get(_normalize_name(name))
+
+        if matched is None:
+            errors.append({
+                "code": "planned_space_unit_location_unbound",
+                "severity": "error",
+                "message": (
+                    f"规划 space_unit {unit_id or name or '?'} 无法关联到 entities.locations；"
+                    "请为 space_unit 使用与地点一致的名称，或填写 location_key"
+                ),
+                "space_unit_id": unit_id,
+                "location_name": name,
+                "_hard_gate": True,
+            })
+    return errors
+
+
+def bind_and_validate_planned_locations(
+    planned_locations: Sequence[Dict[str, Any]],
+    db_locations: Iterable[Dict[str, Any]],
+    spatial_world: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """L0：绑定规划地点并返回 (bound_locations, errors)。"""
+    bound = bind_planned_locations(planned_locations, db_locations)
+    errors = validate_full_location_structure({"locations": bound}, db_locations)
+    if spatial_world is not None:
+        errors.extend(
+            validate_planned_space_units(spatial_world, bound, db_locations)
+        )
+    return bound, errors
+
+
+def _pull_registry_location(
+    loc_id: str,
+    registry_by_id: Dict[str, Dict[str, Any]],
+    collected: Dict[str, Dict[str, Any]],
+) -> None:
+    if not loc_id or loc_id in collected:
+        return
+    location = registry_by_id.get(loc_id)
+    if not location:
+        return
+    collected[loc_id] = deepcopy(location)
+    parent_id = str(location.get("parent_id") or "").strip()
+    if parent_id:
+        _pull_registry_location(parent_id, registry_by_id, collected)
+
+
+def collect_segment_location_graph(
+    parsed: Dict[str, Any],
+    plan: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """构建本段可见地点图：locations + space_unit/镜头引用 + registry 祖先链。"""
+    collected: Dict[str, Dict[str, Any]] = {}
+    name_only: List[Dict[str, Any]] = []
+
+    for location in parsed.get("locations") or []:
+        if not isinstance(location, dict):
+            continue
+        loc_id = _location_id(location)
+        if loc_id:
+            collected[loc_id] = deepcopy(location)
+        else:
+            name_only.append(deepcopy(location))
+
+    registry = _registry_locations(plan)
+    registry_by_id, registry_by_key, registry_by_name = _index_locations(registry)
+
+    def _ensure_ref(loc_id: str, fallback_name: str = "") -> None:
+        if not loc_id:
+            return
+        if loc_id in collected:
+            return
+        if loc_id in registry_by_id:
+            _pull_registry_location(loc_id, registry_by_id, collected)
+            return
+        # 悬挂 id：合成候选，便于打 space_unit_location_missing / 新根
+        synthetic = {
+            "id": loc_id,
+            "name": fallback_name or loc_id,
+            "location_db_id": None,
+            "parent_id": None,
+            "_synthetic_from_space_unit": True,
+        }
+        collected[loc_id] = synthetic
+
+    for unit in (parsed.get("spatial_world") or {}).get("space_units") or []:
+        if not isinstance(unit, dict):
+            continue
+        owner_id = str(unit.get("owner_id") or "").strip()
+        unit_name = _location_name(unit)
+        if owner_id:
+            _ensure_ref(owner_id, unit_name)
+        for raw_id in unit.get("location_ids") or []:
+            ref_id = str(raw_id or "").strip()
+            if ref_id:
+                _ensure_ref(ref_id, unit_name)
+        explicit_key = str(
+            unit.get("location_key")
+            or unit.get("owner_location_key")
+            or ""
+        ).strip()
+        if explicit_key and explicit_key in registry_by_key:
+            reg = registry_by_key[explicit_key]
+            _pull_registry_location(_location_id(reg), registry_by_id, collected)
+        elif unit_name and not owner_id:
+            norm = _normalize_name(unit_name)
+            if norm in registry_by_name:
+                reg = registry_by_name[norm]
+                _pull_registry_location(_location_id(reg), registry_by_id, collected)
+            else:
+                # 仅有 name、无 id：若已在 collected 中同名则跳过，否则合成
+                existing_names = {
+                    _normalize_name(_location_name(item)) for item in collected.values()
+                }
+                if norm not in existing_names:
+                    name_only.append({
+                        "id": "",
+                        "name": unit_name,
+                        "location_db_id": None,
+                        "parent_id": None,
+                        "_synthetic_from_space_unit": True,
+                    })
+
+    for group in parsed.get("shot_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for shot in group.get("shots") or []:
+            if not isinstance(shot, dict):
+                continue
+            shot_loc = str(
+                shot.get("location_id")
+                or shot.get("location")
+                or ""
+            ).strip()
+            # location_id 可能是内部 loc_xxx 或数字 db id 字符串；内部 id 才拉 registry
+            if shot_loc.startswith("loc_"):
+                _ensure_ref(shot_loc)
+
+    locations = list(collected.values()) + name_only
+    return {"locations": locations}
+
+
+def validate_space_unit_location_refs(
+    parsed: Dict[str, Any],
+    graph: Dict[str, Any],
+    db_locations: Iterable[Dict[str, Any]] = (),
+) -> List[Dict[str, Any]]:
+    """检查 space_unit 引用是否落到地点图；悬挂合成点若也无法匹配 DB 则报 missing。"""
+    del db_locations
+    graph_by_id = {
+        _location_id(item): item
+        for item in graph.get("locations") or []
+        if isinstance(item, dict) and _location_id(item)
+    }
+    errors: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for unit in (parsed.get("spatial_world") or {}).get("space_units") or []:
+        if not isinstance(unit, dict):
+            continue
+        unit_id = str(unit.get("space_unit_id") or "")
+        refs = []
+        owner_id = str(unit.get("owner_id") or "").strip()
+        if owner_id:
+            refs.append(owner_id)
+        for raw_id in unit.get("location_ids") or []:
+            ref_id = str(raw_id or "").strip()
+            if ref_id:
+                refs.append(ref_id)
+        for ref_id in refs:
+            loc = graph_by_id.get(ref_id)
+            if loc is None:
+                marker = f"missing:{unit_id}:{ref_id}"
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                errors.append({
+                    "code": "space_unit_location_missing",
+                    "severity": "error",
+                    "message": (
+                        f"space_unit {unit_id or '?'} 引用的地点 {ref_id} 不存在于 "
+                        "locations 或规划注册表"
+                    ),
+                    "space_unit_id": unit_id,
+                    "location_id": ref_id,
+                    "_hard_gate": True,
+                })
+                continue
+            if loc.get("_synthetic_from_space_unit") and not _location_name(loc):
+                marker = f"synth:{unit_id}:{ref_id}"
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                errors.append({
+                    "code": "space_unit_location_missing",
+                    "severity": "error",
+                    "message": (
+                        f"space_unit {unit_id or '?'} 引用的地点 {ref_id} 无法解析"
+                    ),
+                    "space_unit_id": unit_id,
+                    "location_id": ref_id,
+                    "_hard_gate": True,
+                })
+    return errors
+
+
+def validate_segment_location_structure_extended(
+    parsed: Dict[str, Any],
+    db_locations: Iterable[Dict[str, Any]],
+    *,
+    plan: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """L1 扩展：locations + space_unit/引用拉起的 registry 地点新顶层与悬挂引用。"""
+    graph = collect_segment_location_graph(parsed, plan)
+    # 合成点若名称能匹配 DB，不应打新根；先尝试绑定名称
+    by_id, by_name = _db_indexes(db_locations)
+    for location in graph.get("locations") or []:
+        if not isinstance(location, dict):
+            continue
+        if location.get("location_db_id") not in (None, ""):
+            continue
+        match = _candidate_db_match(location, by_id, by_name)
+        if match:
+            location["location_db_id"] = _safe_int(match.get("id"))
+
+    errors = validate_segment_new_roots(graph, db_locations)
+    errors.extend(validate_space_unit_location_refs(parsed, graph, db_locations))
+    return errors
+
+
 __all__ = [
     "LocationMatchResult",
+    "bind_and_validate_planned_locations",
+    "bind_planned_locations",
+    "collect_segment_location_graph",
     "flatten_db_locations",
     "match_location_with_parent",
     "validate_full_location_structure",
+    "validate_planned_location_structure",
+    "validate_planned_space_units",
+    "validate_segment_location_structure_extended",
     "validate_segment_new_roots",
+    "validate_space_unit_location_refs",
 ]

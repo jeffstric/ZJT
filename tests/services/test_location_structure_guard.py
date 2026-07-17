@@ -1,5 +1,10 @@
 from services.location_structure_guard import (
+    bind_and_validate_planned_locations,
+    bind_planned_locations,
+    collect_segment_location_graph,
     validate_full_location_structure,
+    validate_planned_location_structure,
+    validate_segment_location_structure_extended,
     validate_segment_new_roots,
 )
 
@@ -130,3 +135,145 @@ def test_full_validation_detects_missing_parent_and_cycle():
     cycle_errors = validate_full_location_structure(cycle, [])
     assert _codes(cycle_errors) == ["location_parent_invalid"]
     assert cycle_errors[0]["reason"] == "cycle"
+
+
+def test_bind_planned_locations_writes_db_id_for_unique_name():
+    planned = [
+        {"id": "loc_001", "location_key": "location:lobby", "name": "城南酒店大堂"},
+        {
+            "id": "loc_002",
+            "location_key": "location:office",
+            "name": "酒店办公室",
+            "parent_location_key": "location:lobby",
+        },
+    ]
+    db = [{"id": 565, "name": "城南酒店大堂", "parent_id": None, "children": []}]
+
+    bound = bind_planned_locations(planned, db)
+
+    assert bound[0]["location_db_id"] == 565
+    assert bound[1]["location_db_id"] is None
+    assert bound[1]["parent_id"] == "loc_001"
+
+
+def test_planned_new_root_without_parent_is_forbidden():
+    planned = [
+        {"id": "loc_004", "location_key": "location:hotel_office", "name": "酒店办公室"},
+    ]
+
+    errors = validate_planned_location_structure(planned, [])
+
+    assert _codes(errors) == ["new_root_location_forbidden"]
+    assert errors[0]["location_name"] == "酒店办公室"
+
+
+def test_planned_new_child_with_parent_key_reaches_db_root():
+    planned = [
+        {"id": "loc_001", "location_key": "location:lobby", "name": "城南酒店大堂"},
+        {
+            "id": "loc_004",
+            "location_key": "location:hotel_office",
+            "name": "酒店办公室",
+            "parent_location_key": "location:lobby",
+        },
+    ]
+    db = [{"id": 565, "name": "城南酒店大堂", "parent_id": None, "children": []}]
+
+    bound, errors = bind_and_validate_planned_locations(planned, db)
+
+    assert errors == []
+    assert bound[1]["parent_id"] == "loc_001"
+    assert bound[0]["location_db_id"] == 565
+
+
+def test_planned_space_unit_must_bind_to_location():
+    planned = [
+        {"id": "loc_001", "location_key": "location:lobby", "name": "城南酒店大堂"},
+    ]
+    db = [{"id": 565, "name": "城南酒店大堂", "parent_id": None, "children": []}]
+    spatial_world = {
+        "space_units": [
+            {"space_unit_id": "space_unit:office", "name": "酒店办公室", "containers": []},
+        ]
+    }
+
+    _bound, errors = bind_and_validate_planned_locations(
+        planned, db, spatial_world=spatial_world,
+    )
+
+    assert "planned_space_unit_location_unbound" in _codes(errors)
+
+
+def test_collect_graph_pulls_registry_location_from_space_unit_owner():
+    parsed = {
+        "locations": [
+            {"id": "loc_001", "name": "城南酒店大堂", "location_db_id": 565, "parent_id": None},
+        ],
+        "spatial_world": {
+            "space_units": [
+                {
+                    "space_unit_id": "space_unit:office",
+                    "name": "酒店办公室",
+                    "owner_id": "loc_004",
+                    "location_ids": ["loc_004"],
+                }
+            ]
+        },
+    }
+    plan = {
+        "compiled_registry": {
+            "locations": [
+                {"id": "loc_001", "name": "城南酒店大堂", "location_db_id": 565, "parent_id": None},
+                {
+                    "id": "loc_004",
+                    "name": "酒店办公室",
+                    "location_db_id": None,
+                    "parent_id": None,
+                },
+            ]
+        }
+    }
+
+    graph = collect_segment_location_graph(parsed, plan)
+    ids = {item["id"] for item in graph["locations"]}
+    assert "loc_004" in ids
+
+
+def test_segment_extended_rejects_space_unit_registry_new_root():
+    """task 47 形态：locations 无新根，但 space_unit 引用规划非法顶层。"""
+    parsed = {
+        "locations": [
+            {"id": "loc_001", "name": "城南酒店大堂", "location_db_id": 565, "parent_id": None},
+        ],
+        "spatial_world": {
+            "space_units": [
+                {
+                    "space_unit_id": "space_unit:office",
+                    "name": "酒店办公室",
+                    "owner_id": "loc_004",
+                    "location_ids": ["loc_004"],
+                }
+            ]
+        },
+        "shot_groups": [],
+    }
+    plan = {
+        "compiled_registry": {
+            "locations": [
+                {"id": "loc_001", "name": "城南酒店大堂", "location_db_id": 565},
+                {"id": "loc_004", "name": "酒店办公室", "location_db_id": None, "parent_id": None},
+            ]
+        }
+    }
+    db = [{"id": 565, "name": "城南酒店大堂", "parent_id": None, "children": []}]
+
+    errors = validate_segment_location_structure_extended(parsed, db, plan=plan)
+
+    assert "new_root_location_forbidden" in _codes(errors)
+    office_errors = [
+        error for error in errors
+        if error.get("code") == "new_root_location_forbidden"
+        and error.get("location_id") == "loc_004"
+    ]
+    assert office_errors
+
