@@ -55,7 +55,7 @@ sceneSpan = scene.duration > 0 ? scene.duration : EMPTY_HOLD_FALLBACK(2s)
 1. **起点**：点击分镜选中后点播放 → **从该分镜**播到最后；`ended` 后再点播放仍跟**当前选中镜**，不强制回片头。  
 2. **选中分镜**：`stopPlayback` + `syncSelectionToTimeline`（`currentTime` = 该镜起点，`status=idle`）。  
 3. **暂停 / 继续**：同一按钮；冻结 video + 当前 audio。  
-4. **字幕**：勾选「字幕」时显示当前对白文本。  
+4. **字幕**：勾选「字幕」时显示当前对白文本。时间轴 `.subtitle-toggle` 的 checkbox 由原生 `change` 同步 `state.subtitleEnabled`（全局 click 委托不对 `input[type=checkbox]` 调用 `preventDefault`，否则勾选会被锁死无法撤销）。  
 5. **停播**：点其他分镜、键盘左右切镜、切 grid、全量 `renderApp`、页面隐藏/卸载。  
 6. **播放头**：`.scene-timeline-playhead` 按 **当前分镜索引 + 镜内 `sceneLocalTime/sceneSpan` 比例** 定位到对应卡片；水平坐标用 `getBoundingClientRect` 相对 list 换算（不可用 thumb.offsetLeft，因 item/thumb 为 `position:relative` 会导致恒为 0 而钉在第一镜）；播放中/选中时自动滚入视口。  
 

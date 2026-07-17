@@ -774,6 +774,18 @@ async function sendStoryboardAgentMessage(current) {
     }
 }
 
+/**
+ * 解析 checkbox 目标勾选值。
+ * - 原生 input[type=checkbox]：走 change 时 checked 已是新值
+ * - label / 其它：click 路径有 preventDefault，原生不会翻转，按当前 state 取反
+ */
+function nextCheckboxState(target, currentEnabled) {
+    if (target && typeof target.matches === 'function' && target.matches('input[type="checkbox"]')) {
+        return Boolean(target.checked);
+    }
+    return !currentEnabled;
+}
+
 async function handleAction(action, target) {
     const current = getCurrentScene();
 
@@ -1135,12 +1147,13 @@ async function handleAction(action, target) {
     }
 
     if (action === 'toggle-subtitle') {
-        // click 路径上有 preventDefault，checkbox 原生切换会被取消；
-        // 不能读 target.checked（仍是旧值），需按 state 翻转
-        state.subtitleEnabled = !state.subtitleEnabled;
-        const cb = document.querySelector(
-            '.timeline-progress-row input[type="checkbox"][data-action="toggle-subtitle"]'
-        );
+        // change 路径读 input.checked；label click 路径 preventDefault 后按 state 翻转
+        state.subtitleEnabled = nextCheckboxState(target, state.subtitleEnabled);
+        const cb = target?.matches?.('input[type="checkbox"]')
+            ? target
+            : document.querySelector(
+                '.timeline-progress-row input[type="checkbox"][data-action="toggle-subtitle"]'
+            );
         if (cb) cb.checked = Boolean(state.subtitleEnabled);
         // 播放中仅切换字幕层可见性，不 rerender
         const sub = document.querySelector('.preview-subtitle');
@@ -1162,11 +1175,15 @@ async function handleAction(action, target) {
         || action === 'toggle-enable-script-split-qc'
     ) {
         if (state.isGeneratingFromScript) return;
-        // click 路径有 preventDefault，checkbox 状态不可靠，按当前 state 翻转
-        if (action === 'toggle-force-medium-shot') state.forceMediumShot = !state.forceMediumShot;
-        else if (action === 'toggle-no-bg-music') state.noBgMusic = !state.noBgMusic;
-        else if (action === 'toggle-split-multi-dialogue') state.splitMultiDialogue = !state.splitMultiDialogue;
-        else state.enableScriptSplitQc = !state.enableScriptSplitQc;
+        if (action === 'toggle-force-medium-shot') {
+            state.forceMediumShot = nextCheckboxState(target, state.forceMediumShot);
+        } else if (action === 'toggle-no-bg-music') {
+            state.noBgMusic = nextCheckboxState(target, state.noBgMusic);
+        } else if (action === 'toggle-split-multi-dialogue') {
+            state.splitMultiDialogue = nextCheckboxState(target, state.splitMultiDialogue);
+        } else {
+            state.enableScriptSplitQc = nextCheckboxState(target, state.enableScriptSplitQc);
+        }
         await persistUiConfig();
         rerenderModals();
         return;
@@ -1431,8 +1448,7 @@ async function handleAction(action, target) {
     }
 
     if (action === 'toggle-clip-to-audio') {
-        // click 监听里对 action 做了 preventDefault，checkbox 不会自动翻转，这里手动取反
-        state.clipToAudioDuration = !state.clipToAudioDuration;
+        state.clipToAudioDuration = nextCheckboxState(target, state.clipToAudioDuration);
         await persistUiConfig();
         rerenderAgentPanel();
         return;
@@ -1440,10 +1456,9 @@ async function handleAction(action, target) {
 
     if (action === 'toggle-audio-embedded') {
         // 分镜级「声音同出」开关：开启后导出完整视频时保留视频原声、跳过 TTS 混音。
-        // click 路径上有 preventDefault，checkbox 原生翻转被取消，需按 scene 翻转后局部刷新。
         const scene = getCurrentScene();
         if (!scene) return;
-        scene.audioEmbedded = !scene.audioEmbedded;
+        scene.audioEmbedded = nextCheckboxState(target, scene.audioEmbedded);
         try {
             await api.updateScene(scene.id, { audio_embedded: scene.audioEmbedded ? 1 : 0 });
         } catch (e) {
@@ -1536,16 +1551,13 @@ async function handleAction(action, target) {
     }
 
     if (action === 'toggle-export-burn-subtitles') {
-        // click 路径上有 preventDefault，checkbox 原生切换会被取消；
-        // 不能读 target.checked（仍是旧值），需按 state 翻转后只刷 modal
-        state.exportBurnSubtitles = !state.exportBurnSubtitles;
+        state.exportBurnSubtitles = nextCheckboxState(target, state.exportBurnSubtitles);
         rerenderModals();
         return;
     }
 
     if (action === 'toggle-enable-thinking' || action === 'toggle-enable-thinking-label') {
-        // click 路径上有 preventDefault，checkbox 默认勾选可能被取消，统一按 state 翻转
-        state.enableThinking = !state.enableThinking;
+        state.enableThinking = nextCheckboxState(target, state.enableThinking);
         saveThinkingStateToStorage(true);
         rerenderModals();
         return;
@@ -1996,9 +2008,28 @@ export function bindEvents() {
         }
 
         if (!actionTarget) return;
+        // checkbox：禁止 preventDefault，否则原生勾选被取消，再读 checked 会得到旧值导致无法撤销。
+        // 改由下方 change 监听处理（target.checked 已是用户意图）。
+        if (actionTarget.matches('input[type="checkbox"]')) {
+            return;
+        }
         event.preventDefault();
         try {
             await handleAction(actionTarget.dataset.action, actionTarget);
+        } catch (error) {
+            notify(error.message || '操作失败');
+        }
+    });
+
+    // checkbox data-action：原生切换完成后同步 state（与 click preventDefault 解耦）
+    document.addEventListener('change', async (event) => {
+        const target = event.target;
+        if (!target || typeof target.matches !== 'function') return;
+        if (!target.matches('input[type="checkbox"][data-action]')) return;
+        const action = target.dataset.action;
+        if (!action) return;
+        try {
+            await handleAction(action, target);
         } catch (error) {
             notify(error.message || '操作失败');
         }
