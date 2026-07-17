@@ -102,11 +102,12 @@ class StoryboardLocationBootstrapService:
                 id_map[loc_key] = None
                 continue
 
-            if parent_db_id is None:
+            if parent_key and parent_db_id is None:
                 raise LocationBootstrapStructureError(
                     "location_parent_invalid",
                     f"子场景 {loc_key}(name={name}) 的父场景 {parent_key} 未能映射到数据库",
                 )
+            # 无 parent_key：新顶层场景，parent_db_id=None，下面 create 以 parent_id=None 落库
 
             # 先查同名行：存在则直接复用 id（绝不走 upsert，避免 ON DUPLICATE KEY UPDATE
             # 把已有的 reference_image / reference_images 抹成 NULL，造成数据丢失）。
@@ -216,10 +217,9 @@ class StoryboardLocationBootstrapService:
             key = str(location.get("id") or location.get("location_id") or "")
             parent_key = str(location.get("parent_id") or "")
             if not parent_key:
-                raise LocationBootstrapStructureError(
-                    "new_root_location_forbidden",
-                    f"拆分流程不允许创建顶层场景：{location.get('name') or key}",
-                )
+                # 新顶层场景放行：DB 没有的新地点允许作为顶层落库
+                # （提示词引导 LLM 优先挂父场景，找不到合适父场景才作顶层新建）
+                continue
 
             visited = {key}
             current_key = parent_key

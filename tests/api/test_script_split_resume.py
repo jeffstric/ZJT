@@ -1,10 +1,16 @@
 import asyncio
 
+import pytest
+
 from config.constant import ScriptSplitConstants
 from model.script_split_segment import ScriptSplitSegment
 from model.script_split_task import ScriptSplitTask
 from api import script_split
-from api.script_split import _resume_target_state
+from api.script_split import (
+    _resume_target_state,
+    _validate_world_scene_precondition,
+    ScriptSplitPreconditionError,
+)
 
 
 def test_resume_targets_publishing_when_final_result_exists():
@@ -19,7 +25,7 @@ def test_resume_targets_publishing_when_final_result_exists():
 
 
 def test_request_config_normalizes_sequence_mode():
-    assert script_split._normalize_request_config({})["sequence_mode"] == "speed"
+    assert script_split._normalize_request_config({})["sequence_mode"] == "balanced"
     assert script_split._normalize_request_config({"sequence_mode": " QUALITY "})["sequence_mode"] == "quality"
 
 
@@ -30,6 +36,49 @@ def test_request_config_rejects_unknown_sequence_mode():
         assert "sequence_mode" in str(exc)
     else:
         raise AssertionError("unknown sequence_mode should be rejected")
+
+
+def _patch_location_counts(monkeypatch, total, with_image):
+    monkeypatch.setattr(
+        script_split.LocationModel, "count_by_world", lambda wid: total
+    )
+    monkeypatch.setattr(
+        script_split.LocationModel,
+        "count_with_image_by_world",
+        lambda wid: with_image,
+    )
+
+
+def test_precondition_skips_when_world_id_missing(monkeypatch):
+    """world_id 缺失（如 cli 来源）时跳过校验，且不查 DB。"""
+    def boom(*args, **kwargs):
+        raise AssertionError("should not query DB when world_id missing")
+    monkeypatch.setattr(script_split.LocationModel, "count_by_world", boom)
+    monkeypatch.setattr(script_split.LocationModel, "count_with_image_by_world", boom)
+
+    asyncio.run(_validate_world_scene_precondition(None))
+    asyncio.run(_validate_world_scene_precondition(""))
+
+
+def test_precondition_raises_when_world_has_no_scene(monkeypatch):
+    _patch_location_counts(monkeypatch, total=0, with_image=0)
+    with pytest.raises(ScriptSplitPreconditionError) as exc:
+        asyncio.run(_validate_world_scene_precondition(252))
+    assert exc.value.code == "world_no_scene"
+
+
+def test_precondition_raises_when_no_scene_has_image(monkeypatch):
+    """有场景但全部无参考图 → 阻止（world_no_scene_image）。"""
+    _patch_location_counts(monkeypatch, total=5, with_image=0)
+    with pytest.raises(ScriptSplitPreconditionError) as exc:
+        asyncio.run(_validate_world_scene_precondition(246))
+    assert exc.value.code == "world_no_scene_image"
+
+
+def test_precondition_passes_when_world_has_imaged_scene(monkeypatch):
+    """至少 1 个场景有参考图 → 放行（不抛异常）。"""
+    _patch_location_counts(monkeypatch, total=5, with_image=2)
+    asyncio.run(_validate_world_scene_precondition(246))
 
 
 def test_resume_targets_generating_when_plan_exists():

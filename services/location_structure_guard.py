@@ -178,16 +178,22 @@ def validate_segment_new_roots(
     parsed_data: Dict[str, Any],
     db_locations: Iterable[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """段级硬校验：仅拒绝本段无法复用 DB 的新顶层场景。"""
-    by_id, by_name = _db_indexes(db_locations)
-    errors: List[Dict[str, Any]] = []
-    for location in parsed_data.get("locations") or []:
-        if not isinstance(location, dict) or location.get("parent_id") not in (None, ""):
-            continue
-        if _candidate_db_match(location, by_id, by_name):
-            continue
-        errors.append(_new_root_error(location))
-    return errors
+    """段级校验：新顶层场景放行（不再硬拒绝）。
+
+    历史上本函数把"DB 无法复用的新顶层场景"作为硬门禁拒绝，导致剧本出现 DB 没有
+    的场景（双世界设定、新地点、命名差异、空 world）时必然死锁——LLM 既无法复用
+    又无法新建顶层，任务一律 paused（如 world 252/258 空世界、world 244 穿越前现代
+    卧室、world 261 校园路上、world 246 现代客厅）。
+
+    现放行：剧本需要的新地点允许登记为顶层，由 publish 阶段
+    StoryboardLocationBootstrapService 自动落库到 world 场景库，下次复用。
+    提示词层引导 LLM 优先把新场景挂到已有顶层作子场景，只有找不到合适父场景
+    才作顶层新建，以控制新顶层数量。
+
+    仍由其他函数保留的校验：location_parent_conflict（已有 DB 场景父级冲突）、
+    父链环 / missing / unreachable（见 validate_full_location_structure）。
+    """
+    return []
 
 
 def validate_full_location_structure(

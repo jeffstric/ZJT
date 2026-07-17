@@ -5,6 +5,7 @@ Script split task API - 任务查询、结果、恢复、取消、活跃任务�
 提交接口（POST /api/parse-script）仍在 server.py，改为创建任务后返回 202。
 本模块提供通用任务接口，供前端轮询和页面刷新恢复。
 """
+import asyncio
 import hashlib
 import logging
 from typing import Optional
@@ -17,10 +18,54 @@ from api.auth_identity import (
     resolve_authorization_user_id,
 )
 from config.constant import ScriptSplitConstants
+from model.location import LocationModel
 from model.script_split_segment import ScriptSplitSegmentModel
 from model.script_split_task import ScriptSplitTaskModel
 
 logger = logging.getLogger(__name__)
+
+
+class ScriptSplitPreconditionError(ValueError):
+    """剧本拆分前置校验失败（如 world 无场景 / 无参考图场景）。
+
+    由 create_split_task 在创建任务前抛出；调用方应 catch 并返回 4xx。
+    """
+
+    def __init__(self, code: str, message: str):
+        self.code = code
+        self.message = message
+        super().__init__(f"[{code}] {message}")
+
+
+async def _validate_world_scene_precondition(world_id: Optional[int]) -> None:
+    """前置校验：world 至少有 1 个场景，且至少有 1 个带参考图的场景。
+
+    不满足时抛 ScriptSplitPreconditionError，由调用方返回 4xx 提示用户先补齐场景/图片，
+    而非拆到一半被 location_structure_guard 暂停（new_root_location_forbidden 死锁）。
+    DB 查询走 asyncio.to_thread，避免阻塞事件循环（CLAUDE.md 规则 1）。
+    world_id 缺失（如 cli 来源）时跳过，保持向后兼容。
+    """
+    if world_id is None or world_id == "":
+        return
+    try:
+        world_id = int(world_id)
+    except (TypeError, ValueError):
+        return
+
+    total, with_image = await asyncio.gather(
+        asyncio.to_thread(LocationModel.count_by_world, world_id),
+        asyncio.to_thread(LocationModel.count_with_image_by_world, world_id),
+    )
+    if total == 0:
+        raise ScriptSplitPreconditionError(
+            "world_no_scene",
+            "当前世界没有任何场景，请先在剧本创作页创建顶层场景（并补充参考图）后再发起拆分。",
+        )
+    if with_image == 0:
+        raise ScriptSplitPreconditionError(
+            "world_no_scene_image",
+            "当前世界的场景都没有参考图，请先在剧本创作页为至少一个场景补充参考图后再发起拆分。",
+        )
 
 router = APIRouter(prefix="/api/script-split", tags=["script-split"])
 
@@ -348,6 +393,8 @@ async def create_split_task(
     """
     import asyncio
     request_config = _normalize_request_config(request_config)
+    # 前置校验：world 必须有可用场景资产，否则不创建任务，直接提示用户补齐
+    await _validate_world_scene_precondition(request_config.get("world_id"))
     script_sha256 = hashlib.sha256(
         (script_content or "").encode("utf-8")
     ).hexdigest()
@@ -369,4 +416,4 @@ async def create_split_task(
     return task_id, is_new
 
 
-__all__ = ["router", "create_split_task", "compute_active_key"]
+__all__ = ["router", "create_split_task", "compute_active_key", "ScriptSplitPreconditionError"]

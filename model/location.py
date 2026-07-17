@@ -63,7 +63,28 @@ class LocationModel:
         except Exception as e:
             logger.error(f"Failed to count locations for world {world_id}: {e}")
             raise
-    
+
+    @staticmethod
+    def count_with_image_by_world(world_id: int) -> int:
+        """
+        Count locations under a specific world that have at least one reference image.
+
+        reference_image（单图 varchar）与 reference_images（多图 JSON text）任一非空即视为有图，
+        与 storyboard_location_bootstrap_service._subscene_has_reference_image 判断保持一致。
+        用于剧本拆分前置校验：world 至少需有一个带参考图的场景才允许拆分。
+        """
+        sql = (
+            "SELECT COUNT(*) AS total FROM location WHERE world_id = %s "
+            "AND ((reference_image IS NOT NULL AND reference_image <> '') "
+            "OR (reference_images IS NOT NULL AND reference_images <> ''))"
+        )
+        try:
+            result = execute_query(sql, (world_id,), fetch_one=True)
+            return result['total'] if result and 'total' in result else 0
+        except Exception as e:
+            logger.error(f"Failed to count locations with image for world {world_id}: {e}")
+            raise
+
     @staticmethod
     def create(
         world_id: int,

@@ -1,5 +1,20 @@
 # 新顶层场景提前硬门禁（摘要）
 
+> **⚠️ 设计变更（2026-07-18）：新顶层场景已放开，不再硬门禁。**
+>
+> 原硬门禁（`validate_segment_new_roots` 拒绝 DB 无法复用的新顶层）导致剧本中出现 DB 没有
+> 的场景时必然死锁——LLM 既无法复用又无法新建顶层，任务一律 paused。实测 5 个失败 world：
+> 空 world（252/258）、双世界设定（244 穿越前现代卧室）、新地点（261 校园路上）、命名差异
+> （246 现代客厅）。提示词强化无法解决（guard 是代码硬门禁）。
+>
+> 现改为：`services/location_structure_guard.py:validate_segment_new_roots` 放行新顶层；
+> `services/storyboard_location_bootstrap_service.py` 允许新顶层（parent_id=None）落库到
+> world 场景库，下次复用。提示词引导 LLM **优先把新场景挂到已有顶层作子场景，只有找不到
+> 合适父场景才作顶层新建**，控制新顶层数量。空 world / 无图 world 由前置校验
+> （`_validate_world_scene_precondition`）在拆分前拦截。
+>
+> 详见 `script_split_precondition_and_time_suffix.md`。
+
 完整设计见：
 
 [`docs/superpowers/specs/2026-07-17-script-split-early-new-root-location-gate-design.md`](../superpowers/specs/2026-07-17-script-split-early-new-root-location-gate-design.md)

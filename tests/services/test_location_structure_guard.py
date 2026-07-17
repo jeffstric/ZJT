@@ -13,7 +13,8 @@ def _codes(errors):
     return [error["code"] for error in errors]
 
 
-def test_segment_rejects_unmatched_new_root_as_hard_gate():
+def test_segment_allows_unmatched_new_root():
+    """新顶层场景放行：DB 没有的新地点允许登记为顶层，由 publish 阶段落库。"""
     parsed = {
         "locations": [
             {
@@ -25,14 +26,11 @@ def test_segment_rejects_unmatched_new_root_as_hard_gate():
         ]
     }
 
-    errors = validate_segment_new_roots(parsed, [])
-
-    assert _codes(errors) == ["new_root_location_forbidden"]
-    assert errors[0]["_hard_gate"] is True
-    assert errors[0]["location_id"] == "loc_001"
+    assert validate_segment_new_roots(parsed, []) == []
 
 
-def test_guard_accepts_location_id_and_location_name_aliases():
+def test_segment_allows_aliased_new_root():
+    """别名字段（location_id/location_name）的新顶层同样放行。"""
     parsed = {
         "locations": [{
             "location_id": "loc_alias",
@@ -42,10 +40,7 @@ def test_guard_accepts_location_id_and_location_name_aliases():
         }]
     }
 
-    errors = validate_segment_new_roots(parsed, [])
-
-    assert errors[0]["location_id"] == "loc_alias"
-    assert errors[0]["location_name"] == "别名场景"
+    assert validate_segment_new_roots(parsed, []) == []
 
 
 def test_segment_allows_new_child_whose_parent_may_arrive_from_another_segment():
@@ -156,15 +151,15 @@ def test_bind_planned_locations_writes_db_id_for_unique_name():
     assert bound[1]["parent_id"] == "loc_001"
 
 
-def test_planned_new_root_without_parent_is_forbidden():
+def test_planned_new_root_without_parent_is_allowed():
+    """规划阶段无父级的新顶层场景放行。"""
     planned = [
         {"id": "loc_004", "location_key": "location:hotel_office", "name": "酒店办公室"},
     ]
 
     errors = validate_planned_location_structure(planned, [])
 
-    assert _codes(errors) == ["new_root_location_forbidden"]
-    assert errors[0]["location_name"] == "酒店办公室"
+    assert errors == []
 
 
 def test_planned_new_child_with_parent_key_reaches_db_root():
@@ -269,11 +264,6 @@ def test_segment_extended_rejects_space_unit_registry_new_root():
 
     errors = validate_segment_location_structure_extended(parsed, db, plan=plan)
 
-    assert "new_root_location_forbidden" in _codes(errors)
-    office_errors = [
-        error for error in errors
-        if error.get("code") == "new_root_location_forbidden"
-        and error.get("location_id") == "loc_004"
-    ]
-    assert office_errors
+    # 新顶层放行：space_unit 引用的规划新顶层不再报 new_root_location_forbidden
+    assert "new_root_location_forbidden" not in _codes(errors)
 

@@ -259,7 +259,8 @@ class TestBootstrap:
         assert exc_info.value.code == "location_parent_invalid"
         mock_create.assert_not_called()
 
-    def test_new_top_level_location_is_rejected_before_any_database_write(self):
+    def test_new_top_level_location_is_persisted_as_root(self):
+        """新顶层场景（DB 没有的新地点）放行落库，以 parent_id=None 创建。"""
         parsed = {
             "locations": [{
                 "id": "loc_root",
@@ -270,13 +271,15 @@ class TestBootstrap:
             "shot_groups": [],
         }
 
-        with patch(_LM + ".create") as mock_create, \
+        with patch(_LM + ".create", return_value=12345) as mock_create, \
              patch(_LM + ".get_by_name", return_value=None):
-            with pytest.raises(LocationBootstrapStructureError) as exc_info:
-                StoryboardLocationBootstrapService().bootstrap(parsed, WORLD_ID, USER_ID)
+            result = StoryboardLocationBootstrapService().bootstrap(parsed, WORLD_ID, USER_ID)
 
-        assert exc_info.value.code == "new_root_location_forbidden"
-        mock_create.assert_not_called()
+        mock_create.assert_called_once()
+        # 新顶层以 parent_id=None 落库
+        assert mock_create.call_args.kwargs.get("parent_id") is None
+        assert result["created_location_count"] == 1
+        assert result["id_map"]["loc_root"] == 12345
 
     def test_topological_order_parents_before_children(self):
         """验证 level 排序：已有根下的多层新子场景按父先于子入库。"""

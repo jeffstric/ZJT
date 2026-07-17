@@ -5846,7 +5846,7 @@ async def parse_script(
         # 见 docs/script/script_parser_incremental_split_design.md §10 §13.1。
         # 原 db_location/db_character 后处理在 worker 的 merge 阶段完成后，
         # 由 GET /api/script-split/tasks/{id}/result 返回时补充（下一轮前端适配时对齐）。
-        from api.script_split import create_split_task
+        from api.script_split import create_split_task, ScriptSplitPreconditionError
         from config.constant import ScriptSplitConstants
         request_config = {
             "max_group_duration": max_group_duration,
@@ -5889,6 +5889,11 @@ async def parse_script(
             },
         )
 
+    except ScriptSplitPreconditionError as e:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": e.message, "error_code": e.code}
+        )
     except Exception as e:
         logger.error(f"Failed to parse script: {str(e)}")
         logger.error(traceback.format_exc())

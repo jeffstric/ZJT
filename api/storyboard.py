@@ -2224,7 +2224,7 @@ async def generate_storyboard_from_script(
     # 见 docs/script/script_parser_incremental_split_design.md §13.2 §15。
     # 原 QC 循环、parse_script_to_shots、资产化、create_scenes、配音/宫格提交
     # 全部由 worker 推进，发布阶段在 task/script_split_task.py 的 publishing 步骤完成。
-    from api.script_split import create_split_task
+    from api.script_split import create_split_task, ScriptSplitPreconditionError
     from config.constant import ScriptSplitConstants
     request_config = {
         'max_group_duration': max_group_duration,
@@ -2257,6 +2257,11 @@ async def generate_storyboard_from_script(
             script_content=script.content,
             request_config=request_config,
             auth_token=normalized_auth_token,
+        )
+    except ScriptSplitPreconditionError as e:
+        return JSONResponse(
+            status_code=400,
+            content={'error': e.message, 'code': e.code},
         )
     except Exception as e:
         logger.error(f"create storyboard split task failed: {e}", exc_info=True)
