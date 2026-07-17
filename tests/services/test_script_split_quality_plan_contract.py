@@ -253,7 +253,8 @@ class TestScriptSplitQualityPlanContract(unittest.TestCase):
             "seg_0001",
         )
 
-    def test_compile_l0_rejects_planned_new_root_against_db(self):
+    def test_compile_l0_allows_planned_new_root_against_db(self):
+        """新顶层场景放行：DB 没有的新地点允许登记为顶层，由 publish 阶段落库。"""
         plan = {
             "schema_version": 2,
             "entities": {
@@ -283,8 +284,13 @@ class TestScriptSplitQualityPlanContract(unittest.TestCase):
                 },
             ],
         }
-        with self.assertRaisesRegex(QualityPlanError, "new_root_location_forbidden"):
-            compile_quality_plan(plan, _anchors_for("block_0001"), db_locations=[])
+        compiled = compile_quality_plan(plan, _anchors_for("block_0001"), db_locations=[])
+        locs = compiled["compiled_registry"]["locations"]
+        by_id = {item["id"]: item for item in locs}
+        # DB 为空、无父级的新顶层：编译放行，location_db_id 留空待 publish 阶段落库
+        self.assertEqual(by_id["loc_001"]["name"], "酒店办公室")
+        self.assertIsNone(by_id["loc_001"]["location_db_id"])
+        self.assertIsNone(by_id["loc_001"].get("parent_id"))
 
     def test_compile_l0_accepts_db_matched_location_and_child(self):
         plan = {
