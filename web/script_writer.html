@@ -510,6 +510,17 @@
                         <span data-i18n="tab_prop">道具</span>
                     </button>
                 </div>
+                <!-- 世界导入进度条（前端直传七牛 + 后端限速下载，仅在导入进行中显示） -->
+                <div class="world-import-progress" id="worldImportProgress" hidden>
+                    <div class="world-import-progress-info">
+                        <span class="world-import-progress-stage" id="worldImportProgressStage"></span>
+                        <span class="world-import-progress-pct" id="worldImportProgressPct"></span>
+                    </div>
+                    <div class="world-import-progress-bar">
+                        <div class="world-import-progress-bar-fill" id="worldImportProgressFill"></div>
+                    </div>
+                    <button type="button" class="world-import-progress-cancel" id="worldImportProgressCancel" title="取消" data-i18n-title="cancel" hidden>×</button>
+                </div>
                 <div class="file-list-container" id="file-list">
                     <div class="file-list-header">
                         <button class="add-file-btn-fab" id="add-file-btn" style="display:none" onclick="showNewScriptModal()" title="新建剧本" data-i18n-title="title_new_script">

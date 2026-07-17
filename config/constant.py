@@ -37,6 +37,31 @@ QINIU_HTTP_CONNECTION_TIMEOUT = 30
 # 单请求 30s 超时会被穿透累积；给一个明确的上限，超过则视为失败上抛。
 QINIU_UPLOAD_HARD_TIMEOUT = 90
 
+# ===== 七牛云前端直传（大世界文件上传）=====
+# 上传区域域名（按 bucket 所在区域选择；华东 https://upload.qiniup.com）。
+# 完整区域列表参考 https://developer.qiniu.com/kodo/1671/region-endpoint-fq
+QINIU_UPLOAD_REGION_URL = "https://upload.qiniup.com"
+# 直传上传 token 有效期（秒）：前端拿到后直传七牛，短期过期避免泄露。
+QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES = 1800
+# 前端直传 key 前缀，便于后台批量清理与统计。
+WORLD_IMPORT_KEY_PREFIX = "world_import"
+
+# ===== 大世界导入：后端限速下载与内存任务 =====
+# 限速下载速率上限（字节/秒）：避免拉取大 zip 打满服务器出口带宽影响其他接口/用户。
+WORLD_IMPORT_DOWNLOAD_RATE_BPS = 20 * 1024 * 1024   # 默认 20 MB/s
+# 限速下载单 chunk 大小（字节）
+WORLD_IMPORT_DOWNLOAD_CHUNK_BYTES = 256 * 1024       # 256 KB / chunk
+# 限速下载总超时（秒）：asyncio.wait_for 保护，遵守超时红线。
+WORLD_IMPORT_DOWNLOAD_TIMEOUT = 1800
+# 导入任务进度刷新粒度（百分比），避免高频更新 job 字典
+WORLD_IMPORT_PROGRESS_STEP = 5
+# 内存 job 保留时长（秒），过期由后台清理协程淘汰
+WORLD_IMPORT_JOB_TTL = 3600
+# 内存 job 清理协程轮询间隔（秒）
+WORLD_IMPORT_JOB_CLEANUP_INTERVAL = 300
+# 同时进行的导入任务上限，超限返回 429
+WORLD_IMPORT_JOB_MAX_CONCURRENT = 2
+
 # ===== 图片 URL 过期保护（签名 URL 自动刷新/转存）=====
 # 探测只针对「非自有 CDN」的第三方 URL（自有 CDN 走重签名，不探测）。
 # 过期 URL 会立即返回 401（不等超时）；只有「不可达」(DNS/连接失败) 才卡满 connect。

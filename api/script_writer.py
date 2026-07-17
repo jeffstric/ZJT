@@ -6,6 +6,7 @@ Script Writer API 集成模块
 import os
 import re
 import json
+import time
 import logging
 import uuid
 import asyncio
@@ -4803,17 +4804,23 @@ async def import_world(
     world_id: str = Form(...),
     file: UploadFile = File(...)
 ):
-    """从 zip 包导入世界数据"""
+    """从 zip 包导入世界数据（小文件兜底链路，已修复事件循环阻塞）"""
+    tmp_path = None
     try:
         import tempfile as _tempfile
         suffix = '.zip'
+        # 流式分块写临时文件，避免一次性 await file.read() 把整个 zip 读进内存
         with _tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            content = await file.read()
-            tmp.write(content)
             tmp_path = tmp.name
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1 MB / chunk
+                if not chunk:
+                    break
+                tmp.write(chunk)
 
         try:
-            result = file_manager.import_world(user_id, world_id, tmp_path)
+            # 解包是 CPU+磁盘密集型同步函数，必须丢线程池，否则阻塞事件循环
+            result = await asyncio.to_thread(file_manager.import_world, user_id, world_id, tmp_path)
             return JSONResponse({
                 'success': True,
                 'message': f'导入完成: 剧本{result["scripts"]}个, 角色{result["characters"]}个, '
@@ -4822,10 +4829,334 @@ async def import_world(
             })
         finally:
             try:
-                os.unlink(tmp_path)
+                await asyncio.to_thread(os.unlink, tmp_path)
             except Exception:
                 pass
 
     except Exception as e:
         logger.error(f'导入世界失败: {str(e)}')
         return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+# ==================== 大世界文件：前端直传七牛 + 后端限速下载导入 ====================
+#
+# 设计目标：上传非常大的世界 zip 时不再卡死整个服务。
+#   1) 浏览器 ──> POST /api/world-upload-token        颁发绑定 key 的短期上传 token
+#   2) 浏览器 ──> 七牛上传域名（前端直传，带进度）     后端完全不接触大文件
+#   3) 浏览器 ──> POST /api/import-world-from-cloud   提交 key，立即返回 job_id
+#   4) 后端    ：asyncio.create_task 后台限速下载 zip → to_thread 解包
+#   5) 浏览器 ──> GET  /api/world-import-status       轮询 job 进度
+#
+# job 状态仅存内存（进程重启会丢失，前端会把 404 当作"任务丢失，请重试"）。
+
+# 内存任务表：{ job_id: {status, progress, stage, message, result, error, started_at, updated_at} }
+_world_import_jobs: Dict[str, Dict[str, Any]] = {}
+_world_import_jobs_lock = asyncio.Lock()
+_world_import_cleanup_started = False
+
+
+async def _ensure_world_import_cleanup_task():
+    """惰性启动 job 清理协程（首次有任务时起，周期淘汰 TTL 过期 job）"""
+    global _world_import_cleanup_started
+    if _world_import_cleanup_started:
+        return
+    async with _world_import_jobs_lock:
+        if not _world_import_cleanup_started:
+            asyncio.create_task(_world_import_jobs_cleanup_loop())
+            _world_import_cleanup_started = True
+
+
+async def _world_import_jobs_cleanup_loop():
+    """周期清理超过 WORLD_IMPORT_JOB_TTL 的 job，防止内存无限增长"""
+    from config.constant import WORLD_IMPORT_JOB_TTL, WORLD_IMPORT_JOB_CLEANUP_INTERVAL
+    while True:
+        try:
+            await asyncio.sleep(WORLD_IMPORT_JOB_CLEANUP_INTERVAL)
+            now = time.time()
+            expired = []
+            async with _world_import_jobs_lock:
+                for jid, job in list(_world_import_jobs.items()):
+                    if now - job.get('updated_at', job.get('started_at', now)) > WORLD_IMPORT_JOB_TTL:
+                        expired.append(jid)
+                for jid in expired:
+                    _world_import_jobs.pop(jid, None)
+            if expired:
+                logger.info(f'[world_import] 清理过期 job: {len(expired)} 个')
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception('[world_import] cleanup loop error')
+
+
+async def _set_world_import_job(job_id: str, **fields):
+    """更新 job 字段（线程安全）"""
+    async with _world_import_jobs_lock:
+        job = _world_import_jobs.get(job_id)
+        if job is None:
+            return
+        job.update(fields)
+        job['updated_at'] = time.time()
+
+
+async def _count_active_world_import_jobs() -> int:
+    """统计处于 pending/downloading/unpacking 状态的 job 数"""
+    async with _world_import_jobs_lock:
+        return sum(
+            1 for j in _world_import_jobs.values()
+            if j.get('status') in ('pending', 'downloading', 'unpacking')
+        )
+
+
+async def _download_world_zip_with_rate_limit(
+    download_url: str,
+    job_id: str,
+    total_size_hint: Optional[int] = None
+) -> str:
+    """
+    流式下载世界 zip 到临时文件，并按 WORLD_IMPORT_DOWNLOAD_RATE_BPS 限速。
+
+    - httpx.AsyncClient 流式下载，逐 chunk 写盘，避免内存峰值。
+    - 每个 chunk 后 await asyncio.sleep() 控速，避免打满出口带宽。
+    - 整体用 asyncio.wait_for(timeout) 保护，遵守超时红线。
+    - try/finally 清理临时文件。
+    """
+    import tempfile as _tempfile
+    from config.constant import (
+        WORLD_IMPORT_DOWNLOAD_RATE_BPS,
+        WORLD_IMPORT_DOWNLOAD_CHUNK_BYTES,
+        WORLD_IMPORT_DOWNLOAD_TIMEOUT,
+        WORLD_IMPORT_PROGRESS_STEP,
+        UploadPathConstants,
+    )
+    import httpx
+
+    # 确保 temp 目录存在
+    tmp_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), UploadPathConstants.TEMP_DIR)
+    os.makedirs(tmp_root, exist_ok=True)
+
+    tmp_path: Optional[str] = None
+
+    async def _do_download():
+        nonlocal tmp_path
+        with _tempfile.NamedTemporaryFile(delete=False, suffix='.zip', dir=tmp_root) as tmp:
+            tmp_path = tmp.name
+            received = 0
+            last_reported_step = 0
+            rate_bps = WORLD_IMPORT_DOWNLOAD_RATE_BPS
+            chunk_bytes = WORLD_IMPORT_DOWNLOAD_CHUNK_BYTES
+            async with httpx.AsyncClient(timeout=httpx.Timeout(WORLD_IMPORT_DOWNLOAD_TIMEOUT, connect=30.0)) as client:
+                async with client.stream('GET', download_url) as response:
+                    response.raise_for_status()
+                    if total_size_hint is None:
+                        # 尝试从 Content-Length 推断
+                        cl = response.headers.get('content-length')
+                        if cl:
+                            try:
+                                total_size_hint_inner = int(cl)
+                            except ValueError:
+                                total_size_hint_inner = 0
+                        else:
+                            total_size_hint_inner = 0
+                    else:
+                        total_size_hint_inner = total_size_hint
+
+                    async for chunk in response.aiter_bytes(chunk_size=chunk_bytes):
+                        tmp.write(chunk)
+                        received += len(chunk)
+                        # 限速：按本 chunk 字节数计算应睡眠时间，平滑出口速率
+                        if rate_bps and rate_bps > 0:
+                            await asyncio.sleep(len(chunk) / rate_bps)
+                        # 进度上报（按 5% 粒度，避免高频写字典）
+                        if total_size_hint_inner > 0:
+                            pct = int(received * 100 / total_size_hint_inner)
+                            if pct >= last_reported_step + WORLD_IMPORT_PROGRESS_STEP:
+                                last_reported_step = pct
+                                await _set_world_import_job(
+                                    job_id,
+                                    status='downloading',
+                                    stage='downloading',
+                                    progress=min(pct, 99),
+                                    received_bytes=received,
+                                    total_bytes=total_size_hint_inner,
+                                )
+            # 下载完成
+            await _set_world_import_job(
+                job_id,
+                stage='downloading',
+                progress=99,
+                received_bytes=received,
+            )
+            return tmp_path
+
+    try:
+        # 超时红线：所有流式操作必须受 wait_for 保护
+        return await asyncio.wait_for(_do_download(), timeout=WORLD_IMPORT_DOWNLOAD_TIMEOUT)
+    except Exception:
+        # 失败时清理半成品临时文件
+        if tmp_path:
+            try:
+                await asyncio.to_thread(os.unlink, tmp_path)
+            except Exception:
+                pass
+        raise
+
+
+async def _run_world_import_job(job_id: str, download_url: str, user_id: str, world_id: str):
+    """后台协程：限速下载 zip → 线程池解包 → 更新 job 状态"""
+    tmp_path: Optional[str] = None
+    try:
+        await _set_world_import_job(job_id, status='downloading', stage='downloading', progress=0)
+        tmp_path = await _download_world_zip_with_rate_limit(download_url, job_id)
+
+        await _set_world_import_job(job_id, status='unpacking', stage='unpacking', progress=99)
+        # 解包是同步 CPU/磁盘密集型，丢线程池避免阻塞事件循环
+        result = await asyncio.to_thread(file_manager.import_world, user_id, world_id, tmp_path)
+
+        await _set_world_import_job(
+            job_id,
+            status='done',
+            stage='done',
+            progress=100,
+            result=result,
+            message=f'导入完成: 剧本{result["scripts"]}个, 角色{result["characters"]}个, '
+                    f'场景{result["locations"]}个, 道具{result["props"]}个, 图片{result["images"]}张',
+        )
+    except asyncio.TimeoutError:
+        logger.error(f'[world_import] job {job_id} 下载超时')
+        await _set_world_import_job(job_id, status='failed', stage='failed', error='下载超时')
+    except Exception as e:
+        logger.error(f'[world_import] job {job_id} 失败: {e}', exc_info=True)
+        await _set_world_import_job(job_id, status='failed', stage='failed', error=str(e))
+    finally:
+        if tmp_path:
+            try:
+                await asyncio.to_thread(os.unlink, tmp_path)
+            except Exception:
+                pass
+
+
+@router.post('/world-upload-token')
+@require_permission("script:create")
+async def world_upload_token(
+    request: Request,
+    world_id: str = Form(...),
+    filename: str = Form(...),
+    size: Optional[int] = Form(None),
+):
+    """
+    颁发前端直传七牛的上传 token。
+
+    前端拿到 {upload_url, token, key} 后，用 XHR 直接 POST 到七牛上传域名，
+    不再经后端转发大文件，彻底释放后端带宽与事件循环。
+    """
+    from config.constant import (
+        QINIU_UPLOAD_REGION_URL,
+        QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+        WORLD_IMPORT_KEY_PREFIX,
+    )
+    try:
+        storage = get_file_storage(get_config())
+        if not hasattr(storage, 'get_upload_token'):
+            return JSONResponse(
+                {'success': False, 'error': '当前存储后端不支持前端直传'},
+                status_code=500,
+            )
+
+        # 生成绑定 key：world_import/<datetime>/<unique>.zip
+        base_key = storage.generate_key_with_datetime(filename)
+        key = f"{WORLD_IMPORT_KEY_PREFIX}/{base_key}"
+        token = storage.get_upload_token(
+            key=key,
+            expires=QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+            policy={'fileType': 0},  # 0=标准存储
+        )
+        return JSONResponse({
+            'success': True,
+            'upload_url': QINIU_UPLOAD_REGION_URL,
+            'token': token,
+            'key': key,
+            'expires': QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+        })
+    except Exception as e:
+        logger.error(f'颁发世界上传 token 失败: {e}', exc_info=True)
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+@router.post('/import-world-from-cloud')
+@require_permission("script:create")
+async def import_world_from_cloud(
+    request: Request,
+    user_id: str = Form(...),
+    world_id: str = Form(...),
+    key: str = Form(...),
+):
+    """
+    基于七牛云 key 触发大世界导入（异步后台任务）。
+
+    立即返回 job_id，前端轮询 /api/world-import-status 获取进度。
+    """
+    from config.constant import WORLD_IMPORT_JOB_MAX_CONCURRENT
+    try:
+        # 并发上限保护
+        active = await _count_active_world_import_jobs()
+        if active >= WORLD_IMPORT_JOB_MAX_CONCURRENT:
+            return JSONResponse(
+                {'success': False, 'error': f'当前已有 {active} 个导入任务在进行，请稍后再试'},
+                status_code=429,
+            )
+
+        storage = get_file_storage(get_config())
+        # 生成临时私有下载 URL（短期过期，不泄露）
+        download_url = storage.get_download_url(key)
+
+        job_id = str(uuid.uuid4())
+        now = time.time()
+        async with _world_import_jobs_lock:
+            _world_import_jobs[job_id] = {
+                'status': 'pending',
+                'stage': 'pending',
+                'progress': 0,
+                'message': '任务已创建',
+                'result': None,
+                'error': None,
+                'started_at': now,
+                'updated_at': now,
+                'user_id': user_id,
+                'world_id': world_id,
+            }
+
+        await _ensure_world_import_cleanup_task()
+        # 后台执行，不阻塞响应
+        asyncio.create_task(_run_world_import_job(job_id, download_url, user_id, world_id))
+
+        return JSONResponse({'success': True, 'job_id': job_id})
+    except Exception as e:
+        logger.error(f'创建云端世界导入任务失败: {e}', exc_info=True)
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+@router.get('/world-import-status')
+@require_permission("script:create")
+async def world_import_status(
+    request: Request,
+    job_id: str = QueryParam(...),
+):
+    """查询世界导入任务进度（前端轮询）"""
+    async with _world_import_jobs_lock:
+        job = _world_import_jobs.get(job_id)
+        if not job:
+            return JSONResponse(
+                {'success': False, 'error': '任务不存在或已过期（可能进程已重启），请重试'},
+                status_code=404,
+            )
+        # 返回快照，不暴露内部字段
+        return JSONResponse({
+            'success': True,
+            'job_id': job_id,
+            'status': job.get('status'),
+            'stage': job.get('stage'),
+            'progress': job.get('progress', 0),
+            'message': job.get('message'),
+            'result': job.get('result'),
+            'error': job.get('error'),
+        })

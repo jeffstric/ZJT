@@ -3104,28 +3104,168 @@
                 return;
             }
             try {
+                // 大文件链路：前端直传七牛 → 后端限速下载 → 后台解包 → 轮询
                 updateStatus(window.t ? window.t('status_importing_world') : '正在导入世界数据...');
-                const formData = new FormData();
-                formData.append('user_id', USER_ID);
-                formData.append('world_id', WORLD_ID);
-                formData.append('file', file);
-                const response = await fetch(`/api/import-world?auth_token=${AUTH_TOKEN}`, {
+                showWorldImportProgress(window.t ? window.t('world_import_stage_uploading') : '上传中…', 0);
+
+                // 1) 颁发上传 token
+                const tokenResp = await fetch(`/api/world-upload-token?auth_token=${AUTH_TOKEN}`, {
                     method: 'POST',
-                    body: formData
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: new URLSearchParams({
+                        world_id: WORLD_ID,
+                        filename: file.name,
+                        size: String(file.size),
+                    })
                 });
-                const data = await response.json();
-                if (data.success) {
-                    showSuccess('✓ ' + data.message);
-                    updateStatus(window.t ? window.t('status_import_done') : '导入完成');
-                    await loadFiles(currentFileType);
-                } else {
-                    showError((window.t ? window.t('error_import_failed', {error: data.error || (window.t ? window.t('error_unknown') : '未知错误')}) : '导入失败: ' + (data.error || '未知错误')));
-                    updateStatus(window.t ? window.t('status_import_failed') : '导入失败');
+                const tokenData = await tokenResp.json().catch(() => ({}));
+                if (!tokenResp.ok || !tokenData.success) {
+                    throw new Error(tokenData.error || tokenResp.statusText || '获取上传凭证失败');
                 }
+
+                // 2) 前端直传七牛（XHR 带 upload.onprogress）
+                const key = await uploadWorldZipToQiniu(
+                    tokenData.upload_url,
+                    tokenData.token,
+                    tokenData.key,
+                    file
+                );
+
+                // 3) 触发后端导入（立即返回 job_id）
+                const importResp = await fetch(`/api/import-world-from-cloud?auth_token=${AUTH_TOKEN}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: new URLSearchParams({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        key: key,
+                    })
+                });
+                const importData = await importResp.json().catch(() => ({}));
+                if (importResp.status === 429) {
+                    throw new Error(importData.error || '当前导入任务过多，请稍后再试');
+                }
+                if (!importResp.ok || !importData.success) {
+                    throw new Error(importData.error || importResp.statusText || '创建导入任务失败');
+                }
+
+                // 4) 轮询任务进度
+                const result = await pollWorldImportStatus(importData.job_id);
+                showSuccess('✓ ' + (result.message || (window.t ? window.t('status_import_done') : '导入完成')));
+                updateStatus(window.t ? window.t('status_import_done') : '导入完成');
+                await loadFiles(currentFileType);
             } catch (error) {
                 showError((window.t ? window.t('error_import_failed', {error: error.message}) : '导入失败: ' + error.message));
                 updateStatus(window.t ? window.t('status_import_failed') : '导入失败');
+            } finally {
+                hideWorldImportProgress();
             }
+        }
+
+        /**
+         * 前端直传七牛云（带进度回调）。返回上传后的 key。
+         * 用 XHR 而非 fetch，因为需要 xhr.upload.onprogress。
+         */
+        function uploadWorldZipToQiniu(uploadUrl, token, key, file) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', uploadUrl, true);
+                xhr.responseType = 'json';
+
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const pct = Math.round(e.loaded * 100 / e.total);
+                        showWorldImportProgress(
+                            window.t ? window.t('world_import_stage_uploading') : '上传中…',
+                            pct
+                        );
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        // 七牛 form 上传成功响应体：{"key":"...","hash":"..."}（取决于 token returnBody）
+                        // key 以我们传入的为准
+                        resolve(key);
+                    } else {
+                        let detail = '';
+                        try { detail = JSON.stringify(xhr.response || xhr.responseText); } catch (_) { detail = xhr.responseText || ''; }
+                        reject(new Error(`上传到云端失败 (HTTP ${xhr.status}): ${detail}`));
+                    }
+                };
+
+                xhr.onerror = () => reject(new Error('上传到云端失败：网络错误'));
+                xhr.ontimeout = () => reject(new Error('上传到云端超时'));
+
+                const formData = new FormData();
+                formData.append('token', token);
+                formData.append('key', key);
+                formData.append('file', file);
+                xhr.send(formData);
+            });
+        }
+
+        /** 轮询后端导入任务状态直到 done/failed */
+        async function pollWorldImportStatus(jobId) {
+            const stageI18n = {
+                downloading: window.t ? window.t('world_import_stage_downloading') : '云端下载中…',
+                unpacking: window.t ? window.t('world_import_stage_unpacking') : '解包导入中…',
+                done: window.t ? window.t('world_import_stage_done') : '导入完成',
+                pending: window.t ? window.t('world_import_stage_pending') : '排队中…',
+                failed: window.t ? window.t('world_import_stage_failed') : '导入失败',
+            };
+            while (true) {
+                await new Promise(r => setTimeout(r, 1500));
+                let resp;
+                try {
+                    resp = await fetch(`/api/world-import-status?job_id=${encodeURIComponent(jobId)}&auth_token=${AUTH_TOKEN}`);
+                } catch (e) {
+                    // 网络抖动：继续重试
+                    continue;
+                }
+                if (resp.status === 404) {
+                    // 任务丢失（进程重启等），让用户重试
+                    throw new Error('导入任务已丢失（服务可能重启过），请重试');
+                }
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || !data.success) {
+                    throw new Error(data.error || '查询导入状态失败');
+                }
+                const stageLabel = stageI18n[data.stage] || data.stage || '';
+                showWorldImportProgress(stageLabel, data.progress || 0, data.status);
+                if (data.status === 'done') {
+                    return data;
+                }
+                if (data.status === 'failed') {
+                    throw new Error(data.error || '导入失败');
+                }
+            }
+        }
+
+        /** 显示/更新导入进度条。status 可选：done/failed 用于变色 */
+        function showWorldImportProgress(stageText, pct, status) {
+            const box = document.getElementById('worldImportProgress');
+            const stageEl = document.getElementById('worldImportProgressStage');
+            const pctEl = document.getElementById('worldImportProgressPct');
+            const fillEl = document.getElementById('worldImportProgressFill');
+            if (!box) return;
+            box.hidden = false;
+            if (stageText !== undefined) stageEl.textContent = stageText;
+            const p = Math.max(0, Math.min(100, Math.round(pct || 0)));
+            pctEl.textContent = p + '%';
+            fillEl.style.width = p + '%';
+            box.classList.toggle('done', status === 'done');
+            box.classList.toggle('error', status === 'failed');
+        }
+
+        function hideWorldImportProgress() {
+            const box = document.getElementById('worldImportProgress');
+            if (!box) return;
+            // 延迟隐藏，让用户看到完成/失败状态
+            setTimeout(() => {
+                box.hidden = true;
+                box.classList.remove('done', 'error');
+            }, 1500);
         }
 
         function handleImportWorld(event) {
