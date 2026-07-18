@@ -39,7 +39,7 @@
 - 点击"制作工坊"步骤触发（`goToWorkflowCanvas()`）
 - 流程：
   1. 提交当前剧本数据（`submitToDatabase()`）
-  2. 检查资产完成状态（角色、场景、道具图片）（`checkAssetsComplete()`）
+  2. 检查资产完成状态（角色至少一个有图、场景至少一个有图、道具图片）（`checkAssetsComplete()`）
   3. 如有未完成资产，弹出确认提示（`showAssetConfirmModal()`）
   4. 跳转到 `/video-workflow?id={workflowId}&from_world_id={worldId}&auto_load_script=true`
   5. 如果没有关联工作流，提示并跳转到工作流列表页

@@ -72,10 +72,14 @@ script_segment_planner_task_{task_id}_*
   "code": 0,
   "data": {
     "has_script": true,
+    "character_count": 5,
+    "character_image_count": 3,
+    "location_count": 4,
+    "location_image_count": 2,
     "missing_assets": [
-      {"type": "角色", "items": ["角色名1", "角色名2"]},
-      {"type": "场景", "items": ["场景名1"]},
-      {"type": "道具", "items": ["道具名1"]}
+      {"type": "characters", "items": ["角色名1", "角色名2"]},
+      {"type": "locations", "items": ["场景名1"]},
+      {"type": "props", "items": ["道具名1"]}
     ]
   }
 }
@@ -84,6 +88,6 @@ script_segment_planner_task_{task_id}_*
 ### 检查项
 
 1. **剧本检查**: 检查世界是否存在剧本，如果没有剧本则 `has_script` 为 `false`
-2. **角色参考图**: 检查所有角色是否有 `reference_image`
-3. **场景参考图**: 检查所有场景是否有 `reference_image`
-4. **道具参考图**: 检查所有道具是否有 `reference_image`
+2. **角色参考图**: 只要至少一个角色有参考图（`reference_image` 或 `reference_images`）即通过；仅当所有角色均无图时才列入 `missing_assets`
+3. **场景参考图**: 只要至少一个场景有参考图（`reference_image` 或 `reference_images`）即通过；仅当所有场景均无图时才列入 `missing_assets`
+4. **道具参考图**: 检查所有道具是否有 `reference_image`，缺图的道具列入 `missing_assets`
