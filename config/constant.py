@@ -123,6 +123,11 @@ ASSET_LIST_DB_QUERY_TIMEOUT = 30
 # 音频时长探测（ffprobe）单次执行超时（秒）。用于分镜配音完成后探测时长并回写。
 FFPROBE_AUDIO_DURATION_TIMEOUT = 30
 
+# 角色参考音频上传后自动裁剪的最大时长（秒）
+CHARACTER_VOICE_MAX_DURATION = 20.0
+# 角色参考音频裁剪时 ffmpeg/ffprobe 单次执行超时（秒）
+CHARACTER_VOICE_TRIM_TIMEOUT = 30
+
 # 数字人双模型路由：分镜待说台词 TTS 总时长 <= 该阈值（秒）时选择 Wan2.2，> 则选择 LTX2.3。
 # 比较前统一按毫秒精度规整，避免浮点误差导致边界值被错误分配。
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0

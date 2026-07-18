@@ -835,14 +835,19 @@
                                     <button type="button" class="btn btn-secondary btn-sm" onclick="clearCharacterDefaultVoice()" data-i18n="btn_clear">
                                         清空
                                     </button>
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="triggerCharacterVoiceUpload()">
+                                        上传音频
+                                    </button>
                                     <button type="button" class="btn btn-primary btn-sm" id="generate-character-voice-btn" onclick="generateCharacterReferenceAudio()" data-i18n="btn_generate_audio">
                                         生成参考音频
                                     </button>
                                 </div>
+                                <input type="file" id="char-voice-file" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma" style="display: none;" onchange="handleCharacterVoiceUpload(event)">
                             </div>
                             <div id="char-default-voice-preview" style="display: none; margin-top: 8px;">
                                 <audio controls style="width: 100%; height: 36px;"></audio>
                             </div>
+                            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
                         </div>
                         <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_reference_image">参考图片</span></label>

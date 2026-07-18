@@ -3986,6 +3986,63 @@
             showCharacterDefaultVoicePreview('');
         }
 
+        function triggerCharacterVoiceUpload() {
+            const fileInput = document.getElementById('char-voice-file');
+            fileInput.click();
+        }
+
+        async function handleCharacterVoiceUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const allowedExtensions = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.wma'];
+            const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+            if (!allowedExtensions.includes(fileExtension)) {
+                showError(window.t ? window.t('error_select_audio_file') : '请选择支持的音频格式文件');
+                event.target.value = '';
+                return;
+            }
+
+            const maxSize = 20 * 1024 * 1024;
+            if (file.size > maxSize) {
+                showError(window.t ? window.t('error_audio_too_large') : '音频大小不能超过20MB');
+                event.target.value = '';
+                return;
+            }
+
+            showInfo('正在上传音频...');
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', USER_ID);
+            formData.append('world_id', WORLD_ID);
+            formData.append('auth_token', AUTH_TOKEN);
+
+            try {
+                const response = await fetch('/api/upload-character-audio', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('char-default-voice').value = data.url;
+                    showCharacterDefaultVoicePreview(data.url);
+                    showSuccess(window.t ? window.t('success_audio_uploaded') : '音频上传成功');
+                } else {
+                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                }
+            } catch (error) {
+                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+            }
+
+            event.target.value = '';
+        }
+
         async function generateCharacterReferenceAudio() {
             if (!currentEditFile || currentEditFile.fileType !== 'characters') {
                 showError(window.t ? window.t('error_open_character_first') : '请先打开一个角色进行编辑');
@@ -6558,15 +6615,17 @@
                 if (data.code === 0) {
                     return {
                         hasScript: data.data.has_script,
-                        missingAssets: data.data.missing_assets || []
+                        missingAssets: data.data.missing_assets || [],
+                        character_image_count: data.data.character_image_count || 0,
+                        location_image_count: data.data.location_image_count || 0
                     };
                 } else {
                     console.error('检查资产状态失败:', data.message);
-                    return { hasScript: true, missingAssets: [] };
+                    return { hasScript: true, missingAssets: [], character_image_count: 0, location_image_count: 0 };
                 }
             } catch (error) {
                 console.error('检查资产状态请求失败:', error);
-                return { hasScript: true, missingAssets: [] };
+                return { hasScript: true, missingAssets: [], character_image_count: 0, location_image_count: 0 };
             }
         }
         

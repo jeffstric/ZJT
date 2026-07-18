@@ -4030,38 +4030,32 @@ async def check_assets_complete(request: Request, check_request: CheckAssetsRequ
         scripts_result = ScriptModel.list_by_world(world_id, page=1, page_size=1)
         result['has_script'] = scripts_result.get('total', 0) > 0
 
-        # 2. 检查角色参考图
+        # 2. 检查角色参考图（只需至少一个角色有图即可）
         characters_result = CharacterModel.list_by_world(world_id, page=1, page_size=1000)
         characters = characters_result.get('data', [])
         result['character_count'] = len(characters)
         result['character_image_count'] = sum(
-            1 for c in characters if c.get('reference_image')
+            1 for c in characters
+            if c.get('reference_image') or c.get('reference_images')
         )
-        missing_characters = [
-            c['name'] for c in characters
-            if not c.get('reference_image')
-        ]
-        if missing_characters:
+        if result['character_image_count'] == 0 and characters:
             result['missing_assets'].append({
                 'type': 'characters',
-                'items': missing_characters
+                'items': [c['name'] for c in characters]
             })
 
-        # 3. 检查场景参考图
+        # 3. 检查场景参考图（只需至少一个场景有图即可）
         locations_result = LocationModel.list_by_world(world_id, page=1, page_size=1000)
         locations = locations_result.get('data', [])
         result['location_count'] = len(locations)
         result['location_image_count'] = sum(
-            1 for loc in locations if loc.get('reference_image')
+            1 for loc in locations
+            if loc.get('reference_image') or loc.get('reference_images')
         )
-        missing_locations = [
-            loc['name'] for loc in locations
-            if not loc.get('reference_image')
-        ]
-        if missing_locations:
+        if result['location_image_count'] == 0 and locations:
             result['missing_assets'].append({
                 'type': 'locations',
-                'items': missing_locations
+                'items': [loc['name'] for loc in locations]
             })
 
         # 4. 检查道具参考图
@@ -4478,6 +4472,162 @@ async def upload_agent_audio(
             'success': False,
             'error': f'上传失败: {str(e)}'
         }, status_code=500)
+
+
+@router.post('/upload-character-audio')
+@require_permission("script_writer:upload_image")
+async def upload_character_audio(
+    request: Request,
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+    world_id: str = Form(...),
+    auth_token: str = Form(...)
+):
+    """
+    上传角色参考音频文件
+
+    音频保存到 upload/character/voice/ 目录，
+    超过 20 秒自动裁剪。
+
+    Args:
+        file: 音频文件
+        user_id: 用户ID
+        world_id: 世界ID
+        auth_token: 认证令牌
+
+    Returns:
+        音频访问 URL
+    """
+    import subprocess
+    from config.config_util import get_config_value, resolve_bin_path
+    from config.constant import CHARACTER_VOICE_MAX_DURATION, CHARACTER_VOICE_TRIM_TIMEOUT
+    from utils.project_path import get_project_root
+
+    try:
+        allowed_extensions = {'.mp3', '.wav', '.aac', '.ogg', '.m4a', '.flac', '.wma'}
+        file_extension = os.path.splitext(file.filename or '')[1].lower()
+
+        if file_extension not in allowed_extensions:
+            return JSONResponse({
+                'success': False,
+                'error': f'不支持的文件类型。允许的类型: {", ".join(sorted(allowed_extensions))}'
+            }, status_code=400)
+
+        max_size_mb = get_dynamic_config_value('upload', 'max_audio_size_mb', default=20)
+        max_size_bytes = max_size_mb * 1024 * 1024
+
+        content = await file.read()
+        if len(content) > max_size_bytes:
+            return JSONResponse({
+                'success': False,
+                'error': f'音频大小不能超过 {max_size_mb}MB'
+            }, status_code=400)
+
+        upload_dir = os.path.join('upload', 'character', 'voice')
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        full_upload_dir = os.path.join(app_dir, upload_dir)
+
+        os.makedirs(full_upload_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        unique_id = uuid.uuid4().hex[:8]
+        filename = f"character_voice_{timestamp}_{unique_id}{file_extension}"
+        file_path = os.path.join(full_upload_dir, filename)
+
+        with open(file_path, 'wb') as f:
+            f.write(content)
+
+        # 自动裁剪音频（超过 20 秒）
+        await asyncio.to_thread(_trim_character_audio, file_path, CHARACTER_VOICE_MAX_DURATION, CHARACTER_VOICE_TRIM_TIMEOUT)
+
+        server_host = get_config()["server"]["host"]
+        url = f"{server_host.rstrip('/')}/{upload_dir.replace(os.sep, '/')}/{filename}"
+
+        logger.info(f'角色参考音频上传成功: {url}')
+
+        return JSONResponse({
+            'success': True,
+            'url': url
+        })
+
+    except Exception as e:
+        logger.error(f'角色参考音频上传失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': f'上传失败: {str(e)}'
+        }, status_code=500)
+
+
+def _trim_character_audio(audio_path: str, max_duration: float, timeout: int) -> None:
+    """
+    检查音频时长，超过 max_duration 则用 ffmpeg 裁剪。
+    同步函数，调用方应通过 asyncio.to_thread 包装。
+    """
+    import subprocess
+    from config.config_util import get_config_value, resolve_bin_path
+    from utils.project_path import get_project_root
+
+    try:
+        app_dir = get_project_root()
+        ffmpeg_path = resolve_bin_path(get_config_value("bin", "ffmpeg", default="ffmpeg"), app_dir)
+        ffprobe_path = resolve_bin_path(get_config_value("bin", "ffprobe", default="ffprobe"), app_dir)
+
+        duration_cmd = [
+            ffprobe_path, '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            audio_path
+        ]
+        duration_result = subprocess.run(
+            duration_cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
+            timeout=timeout
+        )
+        if duration_result.returncode != 0:
+            logger.warning(f"Failed to get audio duration: {duration_result.stderr}")
+            return
+
+        duration = float(duration_result.stdout.strip())
+        logger.info(f"Character voice audio duration: {duration:.2f}s")
+
+        if duration <= max_duration:
+            return
+
+        logger.info(f"Trimming character voice audio from {duration:.2f}s to {max_duration:.2f}s")
+        base_name = os.path.splitext(audio_path)[0]
+        ext = os.path.splitext(audio_path)[1]
+        trimmed_path = f"{base_name}_trimmed{ext}"
+
+        trim_cmd = [
+            ffmpeg_path, '-i', audio_path,
+            '-t', str(max_duration),
+            '-acodec', 'copy',
+            '-y',
+            trimmed_path
+        ]
+        trim_result = subprocess.run(
+            trim_cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
+            timeout=timeout
+        )
+        if trim_result.returncode != 0:
+            logger.error(f"ffmpeg trim error: {trim_result.stderr}")
+            return
+
+        os.remove(audio_path)
+        os.rename(trimmed_path, audio_path)
+        logger.info(f"Character voice audio trimmed successfully: {audio_path}")
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Audio trim/probe timeout({timeout}s): {audio_path}")
+    except Exception as e:
+        logger.warning(f"Audio trim failed (non-fatal): {audio_path} - {e}")
 
 
 @router.delete('/staging-file')
