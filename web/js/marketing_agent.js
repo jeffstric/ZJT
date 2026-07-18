@@ -5990,6 +5990,8 @@
                         ? window.TaskConfig.getTaskIdByKey(model.key, category)
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
+                    const valid_image_urls = isImg2Vid && uploadedImageUrl.value ? [uploadedImageUrl.value] : [];
+                    const video_prefs = buildAgentVideoPreferences(valid_image_urls);
                     const resp = await fetch('/api/video-model', {
                         method: 'POST',
                         headers: {
@@ -6002,11 +6004,12 @@
                             world_id: worldId.value,
                             session_id: currentSessionId.value,
                             task_id: taskId,
-                            category: category
+                            category: category,
+                            video_preferences: video_prefs
                         })
                     });
                     if (!checkAuthResponse(resp)) return;
-                    console.log('[视频偏好] 已同步到后端:', model.name, 'task_id:', taskId, 'category:', category);
+                    console.log('[视频偏好] 已同步到后端:', model.name, 'task_id:', taskId, 'category:', category, 'prefs:', video_prefs);
                 } catch (e) {
                     console.warn('[视频模型] 同步失败:', e);
                 }
