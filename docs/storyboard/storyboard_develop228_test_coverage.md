@@ -197,7 +197,7 @@
 | --- | --- | --- |
 | 2.9.1 | 数字人双模型路由 | `WAN_MAX_SPEECH_DURATION_SECONDS=1.0` 阈值：≤1s 走 Wan2.2，>1s 走 LTX2.3（`StoryboardDigitalHumanConstants`） |
 | 2.9.2 | `auto_generate_missing_videos` 批次编排 | `_plan_video_batch_items` / `_process_one_video_batch_job` / `_summarize_batch_items`，复用 image batch 编排表 asset_type=video |
-| 2.9.3 | 故事板导出 | ffmpeg 导出 + 字幕烧录（`StoryboardExportConstants` / `StoryboardSubtitleConstants`），导出任务查询 `/export-job/{id}` |
+| 2.9.3 | 故事板导出 | ffmpeg 导出 + 字幕烧录（`StoryboardExportConstants` / `StoryboardSubtitleConstants`），导出任务查询 `/export-job/{id}`。字幕模块覆盖见 `tests/storyboard/test_storyboard_subtitle.py`：`ffmpeg_subtitles_filter_arg`（默认/带 fontsdir/冒号转义/反斜杠规范化）、`resolve_builtin_font`（存在/缺失）、`write_ass_file`（内置字体 family、UTF-8 BOM、显式 font_name 优先级）、内置 CJK 字体 `files/fonts/NotoSansSC-Regular.otf` 防 Windows fontconfig 豆腐块 |
 | 2.9.4 | `media_file_mapping` 实体类型 | 新增 `STORYBOARD_SCENE_ASSET=6`，CRUD 覆盖（走 `tests/crud/`） |
 | 2.9.5 | `audio_embedded` 字段透传 | `storyboard_scene.audio_embedded` 默认 1（数字人），`add_scene`/`update_scene` 透传 |
 | 2.9.6 | `digital_human_runninghub_v1_driver` 改动 | 驱动单元/集成测试（`tests/drivers/`、`tests/driver_integration/`），mock 第三方 HTTP |

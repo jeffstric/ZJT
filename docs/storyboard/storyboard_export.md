@@ -60,11 +60,27 @@
 ### 字幕硬烧（整片）
 
 - 模块：`services/storyboard_subtitle.py`（独立于导出编排）
-- Body：`include_subtitles`（默认 `true`）；前端导出弹框可取消勾选
+- Body：`include_subtitles`（固定 `true`，前端不再暴露开关）
 - 时间轴：与有选中配音的对白串行一致；`text` + `audio duration`（库字段或 ffprobe）
 - 版式：底部居中，最多 **3 行**，左右约 86% 宽，不占满屏
 - 超长：折行后按 3 行分页，在对白时间窗内 **字数加权轮播**；时长不够则末页 `…`
 - 技术：生成 ASS → ffmpeg `subtitles=` 硬烧（workdir 相对路径，兼容 Windows）
+
+#### 内置 CJK 字体（防"蚂蚁文/豆腐块"）
+
+**背景**：项目捆绑的 ffmpeg 是 gyan.dev `essentials_build`（启用 `--enable-fontconfig --enable-libass`，但不附带 `fonts.conf`）。若只把字体名写进 ASS Style 行、`-vf subtitles=` 不带 `fontsdir=`，Windows 下 fontconfig 经常无法把 `"Microsoft YaHei"` 解析到 `C:\Windows\Fonts\msyh.ttc`，libass 找不到字形 → 中文渲染成 `.notdef` 方块（蚂蚁文）。瘦客户机 / Docker / 未装中文字体的 Windows Server Core 同样会触发。
+
+**方案**：随项目内置思源黑体（Noto Sans SC，OFL 1.1），烧录时拷贝到 `work_dir/fonts/` 并传 `fontsdir=`，让 libass 直接从该目录加载，**彻底脱离宿主字体依赖**，全平台一致。
+
+- 字体目录：`files/fonts/`（非 web 公开目录，程序通过文件系统直接读取，避免被外部下载）
+  - `NotoSansSC-Regular.otf`（思源黑体 简中子集，~8MB）
+  - `LICENSE-OFL.txt`（SIL Open Font License 1.1 全文，满足 OFL 分发要求）
+  - `README.md`（字体来源与许可证说明）
+- 字体解析：`services/storyboard_subtitle.py::resolve_builtin_font()` 返回 `(family, 绝对路径)`；缺失时回退 `resolve_cjk_font_name()`（系统字体探测，仅作兜底）
+- 滤镜参数：`ffmpeg_subtitles_filter_arg(ass_name, fonts_subdir="fonts")` → `subtitles=subtitles.ass:fontsdir=fonts`
+- 拷贝时机：`build_merged_video()` 烧录分支内，写完 ASS 后、调用 ffmpeg 前，`shutil.copy2` 拷贝到 `work_dir/fonts/`
+- 路径策略：`fontsdir` 用 work_dir 下的相对子目录名 `fonts`，规避 Windows 绝对路径盘符冒号破坏 `subtitles=` 滤镜语法
+- 常量：`config/constant.py::StoryboardSubtitleConstants` 的 `BUILTIN_FONT_SUBDIR` / `BUILTIN_FONT_FILENAME` / `BUILTIN_FONT_FAMILY` / `WORK_FONT_SUBDIR`
 
 ## 实现
 
@@ -72,7 +88,29 @@
 - `services/storyboard_subtitle.py`：折行 / 分页 / ASS / 滤镜参数
 - `api/storyboard.py`：导出路由
 - `config/constant.py`：`StoryboardTimeouts` / `StoryboardExportConstants` / `StoryboardSubtitleConstants`
-- 前端：`events.js` 导出回调 + CDN 链接点击下载
+- 前端：`events.js` 导出回调 + `download.js` 附件下载（走 `/api/download` 代理，见下节）
+
+## 前端交互（导出按钮）
+
+header 右侧两个按钮，**无中间弹窗**，点击即触发：
+
+| 按钮 | action | 行为 |
+|------|--------|------|
+| 一键转视频 | `export-full` | 提交异步 job → 轮询 → 完成后附件下载 mp4（固定烧录字幕） |
+| 导出素材包 | `export-scenes` | 同步打包 → 完成后附件下载 zip |
+
+### 附件下载（防弹窗拦截 / 防破坏七牛签名）
+
+**问题背景**：早期实现用 `a.href=<CDN URL>; a.target='_blank'; a.click()`：
+- `target='_blank'` 跨域时被浏览器弹窗拦截器拦掉，用户必须手动"允许弹窗"才能下载，流失严重；
+- 直接给七牛私有桶已签名 URL 拼 `?attname=` 会破坏签名（七牛 401/400）。
+
+**方案**：`web/js/storyboard/download.js::downloadAsAttachment(url, filename)`
+- 构造同源 URL `/api/download?url=<已签名CDN>&filename=<name>`
+- 动态 `<a>` **不设 `target`** + `a.click()`：浏览器识别 `Content-Disposition: attachment` 后原地下载，不开新 tab、不触发弹窗拦截
+- 后端 `server.py:/api/download`（`server.py:548-563`）检测到 CDN 域名 → `CDNUtil.get_signed_download_url(url, attname)` 重新签名（attname 参与新签名）→ **302 重定向到七牛**，浏览器直连 CDN 拉流，**本站零带宽消耗**
+
+> 注：未采用 `web/js/pages/_utils.js::buildDownloadUrl`，因后者对 http URL 直接前端拼 `?attname=`，会破坏私有桶签名；storyboard 的 download_url 是带 `e`+`token` 的私有桶签名 URL（见 `services/storyboard_export_service.py::upload_local_file_to_cdn`），必须走后端重签名。
 
 ## 依赖
 

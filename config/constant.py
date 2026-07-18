@@ -695,6 +695,14 @@ class StoryboardSubtitleConstants:
     MIN_PAGE_DURATION_SECONDS = 0.8
     # 无探测时长时的单条对白默认秒数
     DEFAULT_CUE_DURATION_SECONDS = 2.0
+    # 内置 CJK 字体（相对项目根），烧录时拷贝到 work_dir 并传 fontsdir=
+    # 规避宿主机无中文字体 / Windows fontconfig 解析失败导致字幕渲染为豆腐块（蚂蚁文）
+    # 字体放 files/（非 web 公开目录，避免被外部下载），程序通过文件系统直接读取
+    BUILTIN_FONT_SUBDIR = "files/fonts"
+    BUILTIN_FONT_FILENAME = "NotoSansSC-Regular.otf"
+    BUILTIN_FONT_FAMILY = "Noto Sans SC"
+    # 烧录时拷贝到 work_dir 下的子目录名（相对路径规避 Windows 盘符冒号转义）
+    WORK_FONT_SUBDIR = "fonts"
 
 
 class ScriptParserConstants:

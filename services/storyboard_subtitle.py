@@ -340,6 +340,29 @@ def format_ass_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
+def resolve_builtin_font() -> tuple[Optional[str], Optional[str]]:
+    """
+    返回内置 CJK 字体的 (family_name, 绝对路径)。
+
+    优先使用随项目分发的思源黑体（Noto Sans SC），避免：
+    - 宿主机未安装中文字体（瘦客户机 / Docker / Windows Server Core）
+    - Windows 下 ffmpeg fontconfig 无法把 family 名解析到系统字体（libass 渲染成豆腐块/蚂蚁文）
+
+    内置字体缺失时返回 (None, None)，由调用方回退到系统字体探测。
+    """
+    from utils.project_path import get_project_root
+
+    font_path = os.path.join(
+        get_project_root(),
+        StoryboardSubtitleConstants.BUILTIN_FONT_SUBDIR,
+        StoryboardSubtitleConstants.BUILTIN_FONT_FILENAME,
+    )
+    if os.path.isfile(font_path):
+        return StoryboardSubtitleConstants.BUILTIN_FONT_FAMILY, font_path
+    logger.warning("内置 CJK 字体缺失，回退系统字体探测: %s", font_path)
+    return None, None
+
+
 def resolve_cjk_font_name() -> str:
     """返回 ASS Style 用的字体名（尽量选系统常见中文字体）。"""
     candidates = [
@@ -370,7 +393,10 @@ def write_ass_file(
     font_name: Optional[str] = None,
 ) -> str:
     """写入 ASS 文件，返回 path。"""
-    font_name = font_name or resolve_cjk_font_name()
+    if not font_name:
+        # 内置字体优先，缺失时回退系统字体探测
+        builtin_family, _ = resolve_builtin_font()
+        font_name = builtin_family or resolve_cjk_font_name()
     font_size = resolve_font_size(height)
     margin_l = max(8, int(width * StoryboardSubtitleConstants.SIDE_MARGIN_RATIO))
     margin_r = margin_l
@@ -418,11 +444,22 @@ def write_ass_file(
     return path
 
 
-def ffmpeg_subtitles_filter_arg(ass_basename: str = "subtitles.ass") -> str:
+def ffmpeg_subtitles_filter_arg(
+    ass_basename: str = "subtitles.ass",
+    fonts_subdir: Optional[str] = None,
+) -> str:
     """
     在 work_dir 为 cwd 时使用的 -vf 参数。
     仅用相对文件名，避免 Windows 盘符冒号破坏滤镜语法。
+
+    :param fonts_subdir: work_dir 下的字体子目录（相对路径），传入后会追加 ``:fontsdir=``。
+        让 libass 从该目录加载字体，规避宿主机 fontconfig 解析失败导致中文渲染为豆腐块。
     """
     # 转义：\\ 与 :
     name = ass_basename.replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
-    return f"subtitles={name}"
+    arg = f"subtitles={name}"
+    if fonts_subdir:
+        # fontsdir 用相对路径（work_dir 下子目录），避免 Windows 盘符冒号
+        fonts_dir = fonts_subdir.replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+        arg += f":fontsdir={fonts_dir}"
+    return arg

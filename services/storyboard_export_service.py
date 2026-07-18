@@ -747,17 +747,36 @@ def build_merged_video(
 
     if burn_subtitles:
         try:
+            from config.constant import StoryboardSubtitleConstants
             from services.storyboard_subtitle import (
                 build_subtitle_cues,
                 write_ass_file,
                 ffmpeg_subtitles_filter_arg,
+                resolve_builtin_font,
             )
             cues = build_subtitle_cues(plan, width=width, height=height)
             if cues:
                 ass_name = "subtitles.ass"
                 ass_path = os.path.join(work_dir, ass_name)
                 write_ass_file(cues, ass_path, width, height)
-                vf = ffmpeg_subtitles_filter_arg(ass_name)
+
+                # 拷贝内置 CJK 字体到 work_dir/fonts/，让 libass 经 fontsdir= 加载，
+                # 规避宿主机 fontconfig 在 Windows 下解析失败导致字幕渲染为豆腐块（蚂蚁文）
+                fonts_subdir: Optional[str] = None
+                _, builtin_font_abspath = resolve_builtin_font()
+                if builtin_font_abspath:
+                    fonts_subdir = StoryboardSubtitleConstants.WORK_FONT_SUBDIR
+                    work_fonts_dir = os.path.join(work_dir, fonts_subdir)
+                    os.makedirs(work_fonts_dir, exist_ok=True)
+                    shutil.copy2(
+                        builtin_font_abspath,
+                        os.path.join(
+                            work_fonts_dir,
+                            StoryboardSubtitleConstants.BUILTIN_FONT_FILENAME,
+                        ),
+                    )
+
+                vf = ffmpeg_subtitles_filter_arg(ass_name, fonts_subdir=fonts_subdir)
                 # cwd=work_dir，滤镜用相对路径，避免 Windows 盘符破坏 subtitles=
                 _run_cmd_cwd(
                     work_dir,
