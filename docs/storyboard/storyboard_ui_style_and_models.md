@@ -95,6 +95,31 @@ deepseek-v4-flash（deepseek vendor） > qwen3.5-plus (zjt_api) > 任意 qwen3.5
 - `render.js`：renderHeader 内联 header-style-info（右侧）；renderModelConfigModal + render*ModelConfig（tabs + 条件内容 + 单个 grouped dialogue select）；删除 renderStyleSettings 和 thumbnail 渲染；使用 truncate。
 - `events.js`：configTab（closest 早处理）、configSelect（String 比较 + mainSel sync）、open-model-config 设置 tab；新增 edit-global-style / save-global-style / close-global-style，使用 renderGlobalStyleDialog 实现双字段弹窗编辑。
 
+### 算力与分辨率展示（模型 option 内联）
+
+模型配置弹窗的下拉 option 内联显示算力消耗，视频模型额外显示支持的分辨率，让用户选模型时一眼看到成本与能力：
+
+| 模型类型 | 展示格式示例 |
+|----------|-------------|
+| 图片模型（固定计费） | `nano-banana（2算力）` |
+| 视频模型（固定计费） | `LTX2.0（6算力）`、`LTX2.3（6算力）` |
+| 视频模型（按时长计费） | `Wan2.2（8-18算力）`、`可灵v2.5-turbo（38-70算力）` |
+| 视频模型（按时长+分辨率） | `Seedance 2.0（303-454算力，480P/720P/1080P/4K）` |
+
+**后端**（`api/storyboard.py::get_storyboard_models` 的 `_list()`）：
+- `computing_power`：最小时长档位的算力值（int）
+- `computing_power_mode`：`'fixed'`（固定）或 `'by_duration'`（按时长 dict 计费）
+- `computing_power_range`：dict 计费时返回 `[min, max]`，否则 `None`
+- 辅助函数 `_resolve_effective_power_config(c)`：统一解析最终生效算力（**任务层优先，空则取实现方层 `default_computing_power`**），覆盖算力定义在实现方层的模型（LTX2.3/可灵/Vidu/Grok/Seedance 1.5 Pro 等，它们的 `UnifiedTaskConfig.computing_power=0`）
+- 辅助函数 `_computing_power_range(cp)`：dict → `[min, max]`，int/None → `None`
+
+**前端**（`web/js/storyboard/render.js`）：
+- `formatComputingPower(m)`：按 mode/range 格式化，固定→`X算力`，多档位→`X-Y算力`
+- `formatVideoResolutions(m)`：从 `supported_video_resolutions` 拼成 `480P/720P/...`
+- `formatModelOptionLabel(m)`：组装 `Name（算力，分辨率）`；`renderImageModelConfig` / `renderVideoModelConfig` 的 option 文本改用此函数
+
+> 注：视频 tab 下方的分辨率 chip（`data-action="set-video-resolution"`）仍保留，用于**选定模型后切换**分辨率；option 内联的分辨率信息是**选模型时预览**，两者互补。仅 Seedance/Happy Horse 系列配置了 `supported_video_resolutions`，其他视频模型（Wan2.2/LTX/可灵等）无分辨率选项。
+
 ### i18n & CSS
 - 在 `web/i18n/locales/zh-CN/storyboard.json`（及 en）补充画风、构图、待接入等文案。
 - CSS 复用现有 `.info-card`、`.chat-mode-select` 样式，新增少量 `.style-settings-card`。

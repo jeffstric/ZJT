@@ -1734,6 +1734,43 @@ async def list_storyboard_folders(
     return JSONResponse({'success': True, 'total': len(folders), 'folders': folders})
 
 
+def _computing_power_range(cp):
+    """按时长计费的 dict 算力返回 [min, max]；固定计费（int）或空返回 None。
+
+    供前端模型 option 内联展示「8-18算力」范围使用，避免把 dict 计费模型的最小档位值
+    （如 Wan2.2 的 8）误显示为固定值。
+    """
+    if isinstance(cp, dict) and cp:
+        try:
+            vals = sorted(int(v) for v in cp.values())
+            return [vals[0], vals[-1]]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _resolve_effective_power_config(task_config):
+    """返回最终生效的原始算力配置（任务层优先，空则实现方层 default_computing_power）。
+
+    UnifiedTaskConfig.get_computing_power() 不传 duration 时对 dict 计费只返回首项，
+    且当 task.computing_power=0 时需要从实现方层取值。这里统一解析出原始 int/dict，
+    供 _list 计算 computing_power / mode / range 三个展示字段使用。
+
+    Returns:
+        int / dict / None：最终生效的算力配置；无配置返回 None。
+    """
+    cp = task_config.computing_power
+    if cp:
+        return cp
+    impl_name = getattr(task_config, 'implementation', None)
+    if not impl_name:
+        return None
+    impl = UnifiedConfigRegistry.get_implementation(impl_name) if hasattr(UnifiedConfigRegistry, 'get_implementation') else None
+    if impl is None:
+        impl = UnifiedConfigRegistry.get_all_implementations().get(impl_name) if hasattr(UnifiedConfigRegistry, 'get_all_implementations') else None
+    return getattr(impl, 'default_computing_power', None) if impl else None
+
+
 def _video_resolution_options_from_task(task_config) -> tuple:
     """从任务实现方配置提取视频分辨率选项。返回 (options, default_value)。"""
     try:
@@ -1877,12 +1914,17 @@ async def get_storyboard_models(
         for c in configs:
             if not c.enabled or c.hidden:
                 continue
+            # 算力展示元信息（前端 option 内联用）：统一解析最终生效配置，
+            # 覆盖「算力定义在实现方层」的模型（如 LTX2.3/可灵/Seedance 1.5 Pro）
+            eff_cp = _resolve_effective_power_config(c)
             item = {
                 'task_id': c.id,
                 'key': c.key,
                 'short_key': getattr(c, 'short_key', None) or '',
                 'name': c.name,
-                'computing_power': c.get_computing_power() if c.computing_power else 0,
+                'computing_power': (list(eff_cp.values())[0] if isinstance(eff_cp, dict) and eff_cp else (eff_cp or 0)),
+                'computing_power_mode': 'by_duration' if isinstance(eff_cp, dict) else 'fixed',
+                'computing_power_range': _computing_power_range(eff_cp),
                 'supported_durations': c.supported_durations or [],
                 'default_duration': c.default_duration,
                 'supported_ratios': c.supported_ratios or [],

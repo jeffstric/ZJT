@@ -1943,6 +1943,50 @@ function renderThinkingControls(selection) {
         </div>`;
 }
 
+/** 格式化模型 option 的算力展示文本。
+ *  - 固定计费：'2算力'
+ *  - 按时长计费（多档位）：'8-18算力'
+ *  - 按时长计费（单档位）：'8+算力'
+ *  - 无算力配置：''（调用方据此跳过）
+ */
+function formatComputingPower(m) {
+    const cp = Number(m?.computing_power) || 0;
+    if (cp <= 0) return '';
+    if (m?.computing_power_mode === 'by_duration') {
+        const range = m.computing_power_range;
+        if (Array.isArray(range) && range.length === 2 && range[0] !== range[1]) {
+            return `${range[0]}-${range[1]}算力`;
+        }
+        return `${cp}+算力`;
+    }
+    return `${cp}算力`;
+}
+
+/** 格式化模型 option 的分辨率展示文本（仅视频模型有 supported_video_resolutions）。
+ *  返回 '480P/720P/1080P/4K'；无则返回 ''。
+ */
+function formatVideoResolutions(m) {
+    const opts = m?.supported_video_resolutions || [];
+    if (!Array.isArray(opts) || !opts.length) return '';
+    const labels = opts
+        .map(o => (typeof o === 'string' ? o : (o?.label || o?.value || '')))
+        .filter(Boolean);
+    return labels.length ? labels.join('/') : '';
+}
+
+/** 格式化模型 option 完整标签：Name + (算力[, 分辨率])。
+ *  图片模型只显示算力；视频模型显示算力 + 分辨率（如有）。
+ */
+function formatModelOptionLabel(m) {
+    if (!m) return '';
+    const extras = [];
+    const power = formatComputingPower(m);
+    if (power) extras.push(power);
+    const res = formatVideoResolutions(m);
+    if (res) extras.push(res);
+    return extras.length ? `${m.name}（${extras.join('，')}）` : m.name;
+}
+
 function renderImageModelConfig(disabled = false) {
     const models = state.textToImageModels.length ? state.textToImageModels : state.imageModels;
     let html = '<label class="config-label">生图模型</label><div class="config-hint">用于对话改图与图片生成</div><div class="config-select-wrapper"><select class="chat-mode-select" data-config-select="image"';
@@ -1951,7 +1995,7 @@ function renderImageModelConfig(disabled = false) {
     models.forEach(m => {
         const val = m.task_id;
         const sel = String(state.selectedImageTaskId) === String(val) ? 'selected' : '';
-        html += `<option value="${val}" ${sel}>${escapeHtml(m.name)}</option>`;
+        html += `<option value="${val}" ${sel}>${escapeHtml(formatModelOptionLabel(m))}</option>`;
     });
     html += '</select></div>';
     return html;
@@ -1971,7 +2015,7 @@ function renderVideoModelConfig() {
     models.forEach(m => {
         const val = m.task_id;
         const sel = String(state.selectedVideoTaskId) === String(val) ? 'selected' : '';
-        html += `<option value="${val}" ${sel}>${escapeHtml(m.name)}</option>`;
+        html += `<option value="${val}" ${sel}>${escapeHtml(formatModelOptionLabel(m))}</option>`;
     });
     html += '</select></div>';
 
