@@ -1926,10 +1926,10 @@ async def set_video_model(request: Request):
                 'error': f'模型 {config.name} 不属于类别 {category}'
             }, status_code=400)
 
-        # 保存偏好
-        if category == TaskCategory.TEXT_TO_VIDEO:
+        # 保存偏好：检查模型实际支持的所有 category，对每个匹配的都设置
+        if TaskCategory.TEXT_TO_VIDEO in model_categories:
             set_text_to_video_model_id(user_id, world_id, task_id)
-        else:
+        if TaskCategory.IMAGE_TO_VIDEO in model_categories:
             set_image_to_video_model_id(user_id, world_id, task_id)
 
         # 同步更新 video_preferences 缓存（含 model_name、ratio、duration 等）
@@ -2939,7 +2939,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                             v_model_categories.extend(v_config.categories)
                         if TaskCategory.IMAGE_TO_VIDEO in v_model_categories:
                             set_image_to_video_model_id(user_id, world_id, v_task_id)
-                        elif TaskCategory.TEXT_TO_VIDEO in v_model_categories:
+                        if TaskCategory.TEXT_TO_VIDEO in v_model_categories:
                             set_text_to_video_model_id(user_id, world_id, v_task_id)
                 except (TypeError, ValueError):
                     pass
