@@ -116,6 +116,8 @@ def test_generate_video_command_supports_image_to_video(monkeypatch, capsys):
             "image_to_video",
             "--image-mode",
             "first_last_with_ref",
+            "--task-type",
+            "20",
         ]
     )
     out = json.loads(capsys.readouterr().out)
@@ -123,6 +125,36 @@ def test_generate_video_command_supports_image_to_video(monkeypatch, capsys):
     assert code == 0
     assert out["project_ids"] == [2]
     assert calls[0]["image_mode"] == "first_last_with_ref"
+    assert calls[0]["task_type"] == 20
+
+
+def test_generate_video_command_requires_task_type(monkeypatch, capsys):
+    """CLI generate-video 必须显式传入 --task-type，未传时拒绝提交。"""
+    from scripts import storyboard_agent_cli
+
+    class FakeService:
+        def generate_video(self, **kwargs):
+            raise AssertionError("不应在缺 task_type 时调用 generate_video")
+
+    monkeypatch.setattr(storyboard_agent_cli, "StoryboardAgentCliService", lambda: FakeService())
+
+    code = storyboard_agent_cli.main(
+        [
+            "generate-video",
+            "--scene-id",
+            "12",
+            "--user-id",
+            "7",
+            "--mode",
+            "image_to_video",
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+
+    # 缺 --task-type 应直接失败，不进入 service 层
+    assert code == 1
+    assert out["success"] is False
+    assert "task_type" in out.get("error", "")
 
 
 def test_auto_generate_missing_images_command(monkeypatch, capsys):

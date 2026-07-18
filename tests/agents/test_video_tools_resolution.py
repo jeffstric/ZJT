@@ -179,7 +179,7 @@ def test_generate_text_to_video_forwards_user_resolution(patched_video_flow):
     captured = patched_video_flow
     captured['prefs'] = {'resolution': '480P'}
 
-    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat')
+    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat', task_type=999)
 
     assert result['success'] is True
     # 核心：用户选择的 480P 必须透传到 /api/ai-app-run 请求体
@@ -195,7 +195,7 @@ def test_generate_text_to_video_uses_impl_default_when_no_pref(patched_video_flo
     captured = patched_video_flow
     captured['prefs'] = {}
 
-    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat')
+    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat', task_type=999)
 
     assert result['success'] is True
     # 无偏好时下发 impl 默认 720P（与端点默认一致，保证算力估算与扣费对齐）
@@ -209,7 +209,7 @@ def test_generate_text_to_video_downgrades_invalid_resolution(patched_video_flow
     captured = patched_video_flow
     captured['prefs'] = {'resolution': '4K'}  # 模型不支持
 
-    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat')
+    result = generate_text_to_video(user_id='u1', world_id='w1', auth_token='t', prompt='a cat', task_type=999)
 
     assert result['success'] is True
     assert captured['request_data']['resolution'] == '720P'
@@ -227,6 +227,7 @@ def test_image_to_video_forwards_resolution(patched_video_flow):
         auth_token='t',
         prompt='run',
         image_urls='http://example.com/a.jpg',
+        task_type=999,
     )
 
     assert result['success'] is True

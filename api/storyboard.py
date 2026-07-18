@@ -1405,6 +1405,7 @@ class StoryboardImageAgentRunner:
             "edit_image",
             "get_text_to_image_model_info",
             "get_user_computing_power",
+            "list_video_models",
             "ask_user",
         ]
         allowed_tools = resolve_storyboard_agent_allowed_tools(

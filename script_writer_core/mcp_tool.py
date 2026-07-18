@@ -297,6 +297,89 @@ def get_user_computing_power(user_id: str, world_id: str, auth_token: str) -> Di
         return {'success': False, 'error': f'查询算力失败: {str(e)}'}
 
 
+def list_video_models(user_id: str, world_id: str, auth_token: str,
+                      category: str = "image_to_video") -> Dict[str, Any]:
+    """
+    查询当前可用的视频模型列表 - MCP工具函数
+
+    返回所有 enabled 且非 hidden 的视频模型（按 sort_order 升序），
+    供 Agent 在调用 image_to_video / generate_text_to_video 前选取 task_id。
+    视频生成工具要求显式传入 task_type（模型 task_id），不再隐式回退。
+
+    Args:
+        user_id: 用户ID（必填，签名兼容）
+        world_id: 世界ID（必填，签名兼容）
+        auth_token: 认证令牌（必填，签名兼容）
+        category: 模型类别（可选，默认 image_to_video）：
+                  image_to_video（图生视频）或 text_to_video（文生视频）
+
+    Returns:
+        dict: {success, category, models: [{task_id, name, short_key, computing_power,
+              supported_durations, default_duration, supported_ratios,
+              supported_image_modes, supports_last_frame}]}
+    """
+    try:
+        from config.unified_config import UnifiedConfigRegistry, TaskCategory
+
+        # 归一化 category：只接受两类视频，非法值统一回退图生视频
+        if str(category).strip().lower() == "text_to_video":
+            cat = TaskCategory.TEXT_TO_VIDEO
+            cat_label = "text_to_video"
+        else:
+            cat = TaskCategory.IMAGE_TO_VIDEO
+            cat_label = "image_to_video"
+
+        configs = UnifiedConfigRegistry.get_by_category(cat)
+        # 与 /api/storyboard/models 同口径：sort_order 升序、过滤 disabled/hidden
+        configs = sorted(
+            configs,
+            key=lambda c: (
+                float(getattr(c, 'sort_order', 999999) or 999999),
+                int(getattr(c, 'id', 0) or 0),
+            ),
+        )
+
+        models = []
+        for c in configs:
+            if not c.enabled or c.hidden:
+                continue
+            item = {
+                'task_id': c.id,
+                'name': c.name,
+                'short_key': getattr(c, 'short_key', None) or '',
+                'computing_power': c.computing_power,
+                'supported_durations': c.supported_durations or [],
+                'default_duration': c.default_duration,
+                'supported_ratios': c.supported_ratios or [],
+            }
+            # 图生视频额外暴露图模式能力，供 Agent 判断是否支持首尾帧/全能参考
+            if cat == TaskCategory.IMAGE_TO_VIDEO:
+                modes = list(getattr(c, 'supported_image_modes', None) or ['first_last_frame'])
+                item['supported_image_modes'] = [str(m) for m in modes]
+                item['supports_last_frame'] = bool(getattr(c, 'supports_last_frame', True))
+            models.append(item)
+
+        if not models:
+            return {
+                'success': False,
+                'error': f'当前没有可用的 {cat_label} 模型（全部已禁用或隐藏）',
+                'category': cat_label,
+                'models': [],
+            }
+
+        return {
+            'success': True,
+            'category': cat_label,
+            'models': models,
+            'message': (
+                f'共 {len(models)} 个可用 {cat_label} 模型。'
+                f'请在调用视频生成工具时，将所选模型的 task_id 作为 task_type 参数传入。'
+            ),
+        }
+    except Exception as e:
+        return {'success': False, 'error': f'查询视频模型列表失败: {str(e)}'}
+
+
 def fetch_image_as_base64(user_id: str, world_id: str, auth_token: str,
                           image_url: str, max_size_mb: float = 2.0) -> Dict[str, Any]:
     """
@@ -3098,6 +3181,21 @@ MCP_TOOLS = [
         }
     },
     {
+        "name": "list_video_models",
+        "description": "查询当前可用的视频模型列表（含 task_id、算力、支持的时长/比例/图模式）。视频生成工具（image_to_video / generate_text_to_video）要求显式传入 task_type 参数，因此在调用视频生成工具之前，必须先调用本工具获取可用模型的 task_id，再选取一个合适的模型将其 task_id 作为 task_type 传入。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "模型类别（可选，默认 image_to_video）：image_to_video（图生视频，基于图片生成视频）或 text_to_video（文生视频，纯文本生成视频）",
+                    "default": "image_to_video"
+                }
+            },
+            "required": []
+        }
+    },
+    {
         "name": "generate_text_to_image",
         "description": "文本生图（非阻塞）。发起图片生成请求，立即返回project_ids。返回结果包含 model_used、image_size_used、computing_power_required 等算力信息。注意：生图模型由用户在前端界面选择，不同模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。",
         "inputSchema": {
@@ -3267,7 +3365,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_text_to_video",
-        "description": "文本生成视频（非阻塞）。发起视频生成请求，立即返回 project_ids。非阻塞，后台自动跟踪进度。视频模型由系统自动选择，请先调用 get_user_computing_power 确认算力是否充足。",
+        "description": "文本生成视频（非阻塞）。发起视频生成请求，立即返回 project_ids。非阻塞，后台自动跟踪进度。视频模型由系统自动选择（用户偏好/默认），请先调用 get_user_computing_power 确认算力是否充足。",
         "inputSchema": {
             "type": "object",
             "properties": {
