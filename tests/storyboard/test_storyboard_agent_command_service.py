@@ -272,3 +272,185 @@ def test_storyboard_agent_command_dispatches_split_force_overwrite_subscene_grid
 
     assert result["success"] is True
     assert calls[0]["force_overwrite_subscene_grids"] is False
+
+
+def test_schema_lists_export_commands():
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+
+    schema = StoryboardAgentCommandService().schema()
+    command_names = [item["name"] for item in schema["commands"]]
+
+    assert "export-check" in command_names
+    assert "export-full-video" in command_names
+    assert "export-package" in command_names
+
+    export_check = next(
+        item for item in schema["commands"] if item["name"] == "export-check"
+    )
+    assert export_check["permission"] == "storyboard:export"
+    assert "storyboard_id" in export_check["params"]
+    assert export_check["response"]["total_scenes"] == "int"
+
+    export_full_video = next(
+        item for item in schema["commands"] if item["name"] == "export-full-video"
+    )
+    assert "include_subtitles" in export_full_video["params"]
+    assert export_full_video["response"]["download_url"] == "string"
+
+    export_package = next(
+        item for item in schema["commands"] if item["name"] == "export-package"
+    )
+    assert export_package["response"]["download_url"] == "string"
+
+
+def test_export_check_dispatches_to_service():
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+
+    calls = []
+
+    class FakeStoryboardService:
+        def export_check(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "success": True,
+                "storyboard_id": kwargs["storyboard_id"],
+                "total_scenes": 5,
+                "ready_scenes": 4,
+                "missing_scenes": 1,
+                "details": [],
+            }
+
+    result = StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+        "export-check",
+        {"storyboard_id": 42, "user_id": 7},
+    )
+
+    assert result["success"] is True
+    assert result["total_scenes"] == 5
+    assert calls[0]["storyboard_id"] == 42
+    assert calls[0]["user_id"] == 7
+
+
+def test_export_full_video_dispatches_with_default_subtitles():
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+
+    calls = []
+
+    class FakeStoryboardService:
+        def export_full_video(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "success": True,
+                "download_url": "https://cdn.example.com/video.mp4",
+                "filename": "video.mp4",
+            }
+
+    result = StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+        "export-full-video",
+        {"storyboard_id": 42, "user_id": 7},
+    )
+
+    assert result["success"] is True
+    assert result["download_url"] == "https://cdn.example.com/video.mp4"
+    assert calls[0]["storyboard_id"] == 42
+    assert calls[0]["user_id"] == 7
+    assert calls[0]["include_subtitles"] is True
+
+
+def test_export_full_video_dispatches_with_subtitles_false():
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+
+    calls = []
+
+    class FakeStoryboardService:
+        def export_full_video(self, **kwargs):
+            calls.append(kwargs)
+            return {"success": True, "download_url": "x", "filename": "x"}
+
+    StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+        "export-full-video",
+        {"storyboard_id": 42, "user_id": 7, "include_subtitles": False},
+    )
+
+    assert calls[0]["include_subtitles"] is False
+
+
+def test_export_package_dispatches_to_service():
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+
+    calls = []
+
+    class FakeStoryboardService:
+        def export_package(self, **kwargs):
+            calls.append(kwargs)
+            return {
+                "success": True,
+                "download_url": "https://cdn.example.com/assets.zip",
+                "filename": "assets.zip",
+            }
+
+    result = StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+        "export-package",
+        {"storyboard_id": 42, "user_id": 7},
+    )
+
+    assert result["success"] is True
+    assert result["download_url"] == "https://cdn.example.com/assets.zip"
+    assert calls[0]["storyboard_id"] == 42
+    assert calls[0]["user_id"] == 7
+
+
+def test_export_cli_parser_accepts_export_check():
+    from scripts.storyboard_agent_cli import build_parser
+
+    args = build_parser().parse_args([
+        "export-check",
+        "--storyboard-id", "42",
+        "--user-id", "7",
+    ])
+
+    assert args.command == "export-check"
+    assert args.storyboard_id == 42
+    assert args.user_id == 7
+
+
+def test_export_cli_parser_accepts_export_full_video():
+    from scripts.storyboard_agent_cli import build_parser
+
+    args = build_parser().parse_args([
+        "export-full-video",
+        "--storyboard-id", "42",
+        "--user-id", "7",
+    ])
+
+    assert args.command == "export-full-video"
+    assert args.storyboard_id == 42
+    assert args.user_id == 7
+    assert args.include_subtitles is True
+
+
+def test_export_cli_parser_accepts_export_full_video_no_subtitles():
+    from scripts.storyboard_agent_cli import build_parser
+
+    args = build_parser().parse_args([
+        "export-full-video",
+        "--storyboard-id", "42",
+        "--user-id", "7",
+        "--no-subtitles",
+    ])
+
+    assert args.include_subtitles is False
+
+
+def test_export_cli_parser_accepts_export_package():
+    from scripts.storyboard_agent_cli import build_parser
+
+    args = build_parser().parse_args([
+        "export-package",
+        "--storyboard-id", "42",
+        "--user-id", "7",
+    ])
+
+    assert args.command == "export-package"
+    assert args.storyboard_id == 42
+    assert args.user_id == 7

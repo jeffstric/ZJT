@@ -810,6 +810,7 @@ class StoryboardAgentCliService:
                 ratio=ratio_value,
                 duration_seconds=duration_value,
                 count=int(count or 1),
+                task_type=task_type,
             )
         else:
             resolved_image_urls = image_urls or self._resolve_video_image_urls(context, image_mode)
@@ -3581,6 +3582,129 @@ class StoryboardAgentCliService:
         if db_character_id is None:
             return None
         return self._safe_int(db_character_id, None)
+
+    def export_check(
+        self,
+        storyboard_id: int,
+        user_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """导出前核查：检查所有分镜素材完整性，返回缺失清单。"""
+        from services.storyboard_export_service import collect_export_plan
+
+        self._ensure_storyboard_for_user(storyboard_id, user_id)
+
+        plan = collect_export_plan(int(storyboard_id))
+        details: List[Dict[str, Any]] = []
+        ready_count = 0
+        missing_count = 0
+
+        for sc in plan.scenes:
+            has_visual = sc.visual_type != "none"
+            has_audio = len(sc.audios) > 0
+            is_ready = has_visual and not sc.missing
+            if is_ready:
+                ready_count += 1
+            else:
+                missing_count += 1
+            details.append({
+                "index": sc.index,
+                "scene_id": sc.scene_id,
+                "title": sc.title,
+                "visual_type": sc.visual_type,
+                "audios": len(sc.audios),
+                "missing": list(sc.missing),
+                "ready": is_ready,
+            })
+
+        return {
+            "success": True,
+            "storyboard_id": int(storyboard_id),
+            "title": plan.title,
+            "episode_number": plan.episode_number,
+            "total_scenes": len(plan.scenes),
+            "ready_scenes": ready_count,
+            "missing_scenes": missing_count,
+            "details": details,
+        }
+
+    def export_full_video(
+        self,
+        storyboard_id: int,
+        user_id: int,
+        *,
+        include_subtitles: bool = True,
+    ) -> Dict[str, Any]:
+        """导出整集视频：合成 MP4 + 上传 CDN，返回 download_url。"""
+        import asyncio
+        import os as _os
+        from services.storyboard_export_service import (
+            collect_export_plan,
+            materialize_package_files,
+            build_merged_video,
+            upload_local_file_to_cdn,
+            make_work_dir,
+            cleanup_dir,
+        )
+
+        self._ensure_storyboard_for_user(storyboard_id, user_id)
+
+        work = None
+        try:
+            work = make_work_dir(int(storyboard_id))
+            plan = collect_export_plan(int(storyboard_id))
+            if not plan.scenes:
+                raise StoryboardCliError("no_scenes", "故事板没有分镜，无法导出")
+            materialize_package_files(plan, _os.path.join(work, "package"))
+            local_path = build_merged_video(
+                plan, work, burn_subtitles=include_subtitles
+            )
+            download_url, filename = asyncio.run(
+                upload_local_file_to_cdn(local_path, content_type="video/mp4")
+            )
+            return {
+                "success": True,
+                "download_url": download_url,
+                "filename": filename,
+            }
+        finally:
+            if work:
+                cleanup_dir(work)
+
+    def export_package(
+        self,
+        storyboard_id: int,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """导出素材压缩包：打包 zip + 上传 CDN，返回 download_url。"""
+        import asyncio
+        from services.storyboard_export_service import (
+            collect_export_plan,
+            build_package_zip,
+            upload_local_file_to_cdn,
+            make_work_dir,
+            cleanup_dir,
+        )
+
+        self._ensure_storyboard_for_user(storyboard_id, user_id)
+
+        work = None
+        try:
+            work = make_work_dir(int(storyboard_id))
+            plan = collect_export_plan(int(storyboard_id))
+            if not plan.scenes:
+                raise StoryboardCliError("no_scenes", "故事板没有分镜，无法导出")
+            zip_path = build_package_zip(plan, work)
+            download_url, filename = asyncio.run(
+                upload_local_file_to_cdn(zip_path, content_type="application/zip")
+            )
+            return {
+                "success": True,
+                "download_url": download_url,
+                "filename": filename,
+            }
+        finally:
+            if work:
+                cleanup_dir(work)
 
     def _parse_script_to_shots_sync(self, **kwargs) -> Dict[str, Any]:
         import asyncio

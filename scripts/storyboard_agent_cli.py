@@ -236,6 +236,39 @@ def build_parser() -> argparse.ArgumentParser:
                               help="分镜难易程度（易/中/难）")
     update_scene.add_argument("--act-name", help="所属幕/分镜组名称")
 
+    export_check = subparsers.add_parser(
+        "export-check",
+        help="Check storyboard asset readiness before export.",
+    )
+    export_check.add_argument("--storyboard-id", type=int, required=True)
+    export_check.add_argument("--user-id", type=int)
+
+    export_full_video = subparsers.add_parser(
+        "export-full-video",
+        help="Compose all scenes into a full MP4, upload to CDN, return download_url.",
+    )
+    export_full_video.add_argument("--storyboard-id", type=int, required=True)
+    export_full_video.add_argument("--user-id", type=int, required=True)
+    export_full_video.add_argument(
+        "--include-subtitles",
+        action="store_true",
+        default=True,
+        help="Burn dialogue subtitles into video (default: true).",
+    )
+    export_full_video.add_argument(
+        "--no-subtitles",
+        action="store_false",
+        dest="include_subtitles",
+        help="Disable subtitle burning.",
+    )
+
+    export_package = subparsers.add_parser(
+        "export-package",
+        help="Pack all scene assets into a zip, upload to CDN, return download_url.",
+    )
+    export_package.add_argument("--storyboard-id", type=int, required=True)
+    export_package.add_argument("--user-id", type=int, required=True)
+
     return parser
 
 

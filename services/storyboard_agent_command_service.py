@@ -244,6 +244,35 @@ class StoryboardAgentCommandService:
                         "act_name",
                     ],
                 },
+                {
+                    "name": "export-check",
+                    "permission": "storyboard:export",
+                    "params": ["storyboard_id"],
+                    "response": {
+                        "total_scenes": "int",
+                        "ready_scenes": "int",
+                        "missing_scenes": "int",
+                        "details": "array",
+                    },
+                },
+                {
+                    "name": "export-full-video",
+                    "permission": "storyboard:export",
+                    "params": ["storyboard_id", "include_subtitles"],
+                    "response": {
+                        "download_url": "string",
+                        "filename": "string",
+                    },
+                },
+                {
+                    "name": "export-package",
+                    "permission": "storyboard:export",
+                    "params": ["storyboard_id"],
+                    "response": {
+                        "download_url": "string",
+                        "filename": "string",
+                    },
+                },
             ],
         }
 
@@ -417,6 +446,8 @@ class StoryboardAgentCommandService:
             )
 
         if command == "auto-generate-missing-videos":
+            # CLI 批量视频强制要求显式 task_type：CLI 路径不走 ai-chat，不会把齿轮选择
+            # 同步到用户偏好，必须由调用方显式传入，避免回退到错误模型。
             return self.service.auto_generate_missing_videos(
                 storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
                 user_id=_to_required_int(data.get("user_id"), "user_id"),
@@ -425,12 +456,15 @@ class StoryboardAgentCommandService:
                 stop_on_error=not _to_bool(
                     True if data.get("continue_on_error") is None else data.get("continue_on_error")
                 ),
-                task_type=_to_int(data.get("task_type") or data.get("video_task_id"), "task_type"),
+                task_type=_to_required_int(
+                    data.get("task_type") or data.get("video_task_id"), "task_type"
+                ),
                 ratio=data.get("ratio"),
                 sequence_mode=data.get("sequence_mode") or data.get("batch_mode") or "speed",
             )
 
         if command == "generate-video":
+            # CLI 单条视频强制要求显式 task_type（同上理由）。
             return self.service.generate_video(
                 scene_id=_to_required_int(data.get("scene_id"), "scene_id"),
                 user_id=_to_required_int(data.get("user_id"), "user_id"),
@@ -444,7 +478,7 @@ class StoryboardAgentCommandService:
                 image_urls=data.get("image_urls"),
                 video_urls=data.get("video_urls"),
                 audio_urls=data.get("audio_urls"),
-                task_type=_to_int(data.get("task_type"), "task_type"),
+                task_type=_to_required_int(data.get("task_type"), "task_type"),
             )
 
         if command == "task-status":
@@ -488,6 +522,27 @@ class StoryboardAgentCommandService:
                 audio_embedded=data.get("audio_embedded"),
                 difficulty=data.get("difficulty"),
                 act_name=data.get("act_name"),
+            )
+
+        if command == "export-check":
+            return self.service.export_check(
+                storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
+                user_id=_to_int(data.get("user_id"), "user_id"),
+            )
+
+        if command == "export-full-video":
+            _include_sub = data.get("include_subtitles")
+            include_subtitles = True if _include_sub is None else _to_bool(_include_sub)
+            return self.service.export_full_video(
+                storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
+                user_id=_to_required_int(data.get("user_id"), "user_id"),
+                include_subtitles=include_subtitles,
+            )
+
+        if command == "export-package":
+            return self.service.export_package(
+                storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
+                user_id=_to_required_int(data.get("user_id"), "user_id"),
             )
 
         raise StoryboardCliError("unknown_command", f"unknown command: {command}")
