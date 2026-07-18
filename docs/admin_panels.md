@@ -51,6 +51,8 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 
 仪表盘下方展示模型成功率分析图表和表格。模型列表由后端根据 `config/unified_config.py` 中启用的视频类任务配置动态生成，新增模型后无需前端改动；前端会隐藏调用量为 0 的模型，仅展示有实际数据的模型：
 
+- **数据来源**：`implementation_attempts`（每次实现方尝试的成功/失败），JOIN `ai_tools.type` 聚合；**不**直接按 `ai_tools` 终态计数。这样供应商重试时失败可正确归因到实际失败的实现方。
+- **attempt 写入**：任务首次提交时由 `visual_task` 写入 `attempt_number=1`。判断依据是「该任务是否已有 attempt 记录」，**不是** `ai_tools.implementation` 是否为空。画布创建任务时会预写 `implementation`（用于分辨率/算力），不影响首次 attempt 记录。供应商重试由 `ImplementationRetryPipelineDriver` 写 `attempt_number>=2`。
 - **日期范围筛选**：支持今天、3 天、7 天快捷筛选，也支持开始日期和结束日期自定义筛选。
 - **模型选择**：支持按模型类型选择展示范围，可全选或清空。
 - **汇总卡片**：展示总调用次数、成功次数、失败次数、平均成功率。
@@ -240,7 +242,7 @@ GET /api/admin/dashboard/model-analysis?days=7&start_date=2026-06-03&end_date=20
 
 返回数据包含模型汇总 `models` 和每日聚合 `daily`。前端使用 `daily[].models` 渲染每日趋势折线图、每日堆积柱状图，并使用 `models` 渲染调用量玫瑰图和明细表格。
 
-`models` 会返回所有启用的图生视频、文生视频、数字人类任务类型（数据为 0 的模型也包含在内），新增模型后无需前端维护映射；页面渲染时会过滤掉调用量为 0 的模型，仅展示有数据的模型。
+`models` 会返回所有启用的图生视频、文生视频、数字人类任务类型（数据为 0 的模型也包含在内），新增模型后无需前端维护映射；页面渲染时会过滤掉调用量为 0 的模型，仅展示有数据的模型。统计仅计入 `implementation_attempts.status IN (2, -1)` 的终态尝试；任务创建时预写的 `ai_tools.implementation` 不会阻止 attempt 记录。
 
 ### 用户列表
 

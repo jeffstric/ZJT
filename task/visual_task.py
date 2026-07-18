@@ -323,11 +323,15 @@ async def _submit_new_task(ai_tool):
                                    message=f"选用实现方: {implementation_name}",
                                    detail={'impl_name': implementation_name, 'impl_id': implementation_id})
 
-                # 仅在首次提交时记录实现方尝试（attempt_number=1）
-                # 重试由 ImplementationRetryPipelineDriver 记录（attempt_number>=2）
-                if not ai_tool.implementation:
-                    try:
-                        from model.implementation_attempts import ImplementationAttemptModel
+                # 首次提交记录实现方尝试（attempt_number=1）。
+                # 不能用 ai_tool.implementation 是否为空判断：画布创建时会预写 implementation
+                # （用于分辨率/算力），预写后旧逻辑会漏写 attempt，导致仪表盘无统计。
+                # 重试由 ImplementationRetryPipelineDriver 先写 attempt>=2 再入队，
+                # 因此「已有任意 attempt」时跳过即可，避免重复 create。
+                try:
+                    from model.implementation_attempts import ImplementationAttemptModel
+                    attempted = ImplementationAttemptModel.get_attempted_implementations(task_id)
+                    if not attempted:
                         ImplementationAttemptModel.create(
                             ai_tool_id=task_id,
                             implementation=implementation_id,
@@ -335,8 +339,8 @@ async def _submit_new_task(ai_tool):
                             status=0,
                             started_at=datetime.now()
                         )
-                    except Exception as e:
-                        logger.warning(f"Failed to record implementation attempt for task {task_id}: {e}")
+                except Exception as e:
+                    logger.warning(f"Failed to record implementation attempt for task {task_id}: {e}")
             else:
                 logger.warning(f"Implementation name '{implementation_name}' not found in IMPLEMENTATION_TO_ID mapping for task {task_id}")
 
