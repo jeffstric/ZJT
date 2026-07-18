@@ -4,9 +4,7 @@
 
 import asyncio
 import logging
-import os
-from datetime import datetime
-from logging.handlers import TimedRotatingFileHandler
+from utils.logger_config import DailyFileHandler
 from typing import Optional, Union
 from concurrent.futures import ThreadPoolExecutor
 
@@ -36,19 +34,9 @@ def _setup_qiniu_logger() -> logging.Logger:
 
     qiniu_logger.setLevel(logging.DEBUG)
 
-    # 确保日志目录存在
-    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs")
-    os.makedirs(log_dir, exist_ok=True)
-
-    # 按天轮转的文件处理器
-    log_file = os.path.join(log_dir, "qiniu_upload.log")
-    file_handler = TimedRotatingFileHandler(
-        log_file,
-        when="midnight",
-        interval=1,
-        backupCount=7,
-        encoding="utf-8"
-    )
+    # 使用项目统一的 DailyFileHandler，避免 Windows 上 TimedRotatingFileHandler
+    # rename 操作导致的 WinError 32 文件锁问题
+    file_handler = DailyFileHandler('qiniu_upload', encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(logging.Formatter(
         "%(asctime)s - %(levelname)s - %(message)s"
@@ -290,9 +278,11 @@ class QiniuFileStorage(BaseFileStorage):
         Returns:
             str: 带签名的下载URL
         """
+        from urllib.parse import quote
         base_url = self.get_public_url(key)
         if attname:
-            base_url = f"{base_url}?attname={attname}"
+            encoded_attname = quote(attname, safe='')
+            base_url = f"{base_url}?attname={encoded_attname}"
         return self._auth.private_download_url(base_url, expires=expires)
 
     def get_public_url(self, key: str) -> str:
