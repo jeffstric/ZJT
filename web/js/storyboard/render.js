@@ -821,7 +821,7 @@ function renderHeader() {
                     <span class="power-value">${escapeHtml(powerText)}</span>
                 </button>
                 <button class="btn-primary" data-action="export-full">一键转视频</button>
-                <button class="btn-ghost" data-action="open-export">导出</button>
+                <button class="btn-ghost" data-action="export-scenes">导出素材包</button>
             </div>
         </header>`;
 }
@@ -1498,30 +1498,6 @@ export function renderRightSidebar(scene) {
                 ${videoGrid}
             </div>
         </aside>`;
-}
-
-function renderExportDialog() {
-    if (!state.showExportDialog) return '';
-    const burnSubs = state.exportBurnSubtitles !== false;
-    return `
-        <div class="modal-overlay">
-            <div class="export-dialog">
-                <header><h2>导出故事板</h2><button data-action="close-export">${icon('close', 18)}</button></header>
-                <button class="export-option" data-action="export-scenes" title="按分镜导出选中视频/图与配音 zip，上传图床">
-                    导出素材包
-                    <span class="export-option-desc">分镜N.mp4 / 分镜N_M.wav，CDN 下载</span>
-                </button>
-                <label class="export-subtitle-opt" data-action="toggle-export-burn-subtitles">
-                    <input type="checkbox" data-action="toggle-export-burn-subtitles" ${burnSubs ? 'checked' : ''}
-                        aria-checked="${burnSubs ? 'true' : 'false'}">
-                    完整视频烧录字幕（超长自动分页，最多 3 行）
-                </label>
-                <button class="export-option" data-action="export-full" title="按时间轴顺序合成完整视频，上传图床">
-                    导出完整视频
-                    <span class="export-option-desc">对齐预览顺序，异步合成后 CDN 下载</span>
-                </button>
-            </div>
-        </div>`;
 }
 
 function renderPowerLogsDialog() {
@@ -2269,7 +2245,6 @@ function renderRatioConfirmDialog() {
 function renderModalsHtml() {
     return [
         renderRatioConfirmDialog(),
-        renderExportDialog(),
         renderGenerateFromScriptDialog(),
         renderGenerateProgressDialog(),
         renderPowerLogsDialog(),

@@ -92,9 +92,6 @@ const state = {
         generation: 0,
         buffering: false, // 本镜媒体预加载中，时钟未走
     },
-    showExportDialog: false,
-    /** 导出完整视频时是否硬烧字幕（默认 true） */
-    exportBurnSubtitles: true,
 
     // 算力日志 / 充值弹窗
     showPowerLogsModal: false,

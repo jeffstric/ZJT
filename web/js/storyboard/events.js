@@ -36,6 +36,7 @@ import state, {
 } from './state.js';
 import * as api from './api.js';
 import { sceneToPromptPayload, sceneToUpdatePayload } from './adapters.js';
+import { downloadAsAttachment } from './download.js';
 import {
     refresh,
     renderPromptWithInlineRoles,
@@ -1487,18 +1488,6 @@ async function handleAction(action, target) {
         return;
     }
 
-    if (action === 'open-export') {
-        state.showExportDialog = true;
-        rerenderModals();
-        return;
-    }
-
-    if (action === 'close-export') {
-        state.showExportDialog = false;
-        rerenderModals();
-        return;
-    }
-
     if (action === 'open-power-logs') {
         if (!state.authToken && !localStorage.getItem('auth_token')) {
             notify('请先登录后再查看算力日志');
@@ -1550,12 +1539,6 @@ async function handleAction(action, target) {
         return;
     }
 
-    if (action === 'toggle-export-burn-subtitles') {
-        state.exportBurnSubtitles = nextCheckboxState(target, state.exportBurnSubtitles);
-        rerenderModals();
-        return;
-    }
-
     if (action === 'toggle-enable-thinking' || action === 'toggle-enable-thinking-label') {
         state.enableThinking = nextCheckboxState(target, state.enableThinking);
         saveThinkingStateToStorage(true);
@@ -1565,8 +1548,9 @@ async function handleAction(action, target) {
 
     if (action === 'export-full') {
         try {
+            // 固定烧录字幕：内置 CJK 字体已解决 Windows fontconfig 豆腐块问题
             const response = await api.exportFullVideo(state.storyboardId, {
-                include_subtitles: state.exportBurnSubtitles !== false,
+                include_subtitles: true,
             });
             if (!response.success && response.error) {
                 notify(response.error);
@@ -1577,23 +1561,15 @@ async function handleAction(action, target) {
                 notify(response.error || '导出任务提交失败');
                 return;
             }
-            state.showExportDialog = false;
-            rerenderModals();
             notify('完整视频导出任务已提交，正在合成并上传…');
-            // 轮询 job → CDN 链接下载（对齐剧本世界导出：不走本站带宽）
+            // 轮询 job → CDN 链接下载（走 /api/download 代理重签名 + 302，不占本站带宽，不开新 tab）
             const deadline = Date.now() + 30 * 60 * 1000;
             while (Date.now() < deadline) {
                 await new Promise(r => setTimeout(r, 2000));
                 const job = await api.getExportJob(jobId);
                 if (job.status === 'completed' && job.download_url) {
-                    const a = document.createElement('a');
-                    a.href = job.download_url;
-                    a.download = job.filename || 'storyboard_full.mp4';
-                    a.target = '_blank';
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    notify('完整视频已生成，已打开下载链接');
+                    downloadAsAttachment(job.download_url, job.filename || 'storyboard_full.mp4');
+                    notify('完整视频已生成，已开始下载');
                     return;
                 }
                 if (job.status === 'failed') {
@@ -1616,16 +1592,8 @@ async function handleAction(action, target) {
                 notify(response.error || '素材包导出失败');
                 return;
             }
-            const a = document.createElement('a');
-            a.href = response.download_url;
-            a.download = response.filename || 'storyboard_assets.zip';
-            a.target = '_blank';
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            state.showExportDialog = false;
-            rerenderModals();
-            notify('素材包导出成功，已打开图床下载链接');
+            downloadAsAttachment(response.download_url, response.filename || 'storyboard_assets.zip');
+            notify('素材包导出成功，已开始下载');
         } catch (e) {
             notify(e.message || '素材包导出失败');
         }
@@ -2333,7 +2301,6 @@ export function bindEvents() {
                 return;
             }
             state.showModelConfigModal = false;
-            state.showExportDialog = false;
             state.showGlobalStyleDialog = false;
             state.showSceneEditDialog = false;
             state.sceneEditTargetId = null;

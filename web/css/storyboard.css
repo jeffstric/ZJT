@@ -3108,36 +3108,6 @@ button {
 .edit-dialog label { display: grid; gap: 6px; margin-top: 12px; color: var(--muted); font-size: 13px; }
 .edit-dialog textarea { min-height: 92px; }
 .edit-dialog footer { margin-top: 14px; justify-content: flex-end; }
-.export-option {
-    width: 100%;
-    margin-top: 12px;
-    padding: 12px;
-    border-radius: 8px;
-    background: var(--panel-soft);
-    color: var(--foreground);
-    text-align: left;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-.export-option-desc {
-    font-size: 11px;
-    color: var(--muted);
-    font-weight: 400;
-}
-.export-subtitle-opt {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 12px;
-    font-size: 12px;
-    color: var(--muted);
-    cursor: pointer;
-    user-select: none;
-}
-.export-subtitle-opt input {
-    margin: 0;
-}
 
 /* 思考模式（对齐 script_writer：DeepSeek 开关 / Doubao 强度） */
 .sb-thinking-wrap {
