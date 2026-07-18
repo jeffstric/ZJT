@@ -1932,6 +1932,15 @@ async def set_video_model(request: Request):
         else:
             set_image_to_video_model_id(user_id, world_id, task_id)
 
+        # 同步更新 video_preferences 缓存（含 model_name、ratio、duration 等）
+        video_prefs = data.get('video_preferences')
+        if video_prefs and isinstance(video_prefs, dict):
+            existing_prefs = get_video_preferences(user_id, world_id)
+            existing_prefs.update(video_prefs)
+            existing_prefs['task_id'] = task_id
+            existing_prefs['model_name'] = config.name
+            set_video_preferences(user_id, world_id, existing_prefs)
+
         return JSONResponse({
             'success': True,
             'task_id': task_id,
@@ -4789,7 +4798,7 @@ async def export_world(
         upload_result = await storage.upload_file(storage_key, zip_path, content_type='application/zip')
         if not upload_result.success:
             return JSONResponse({'success': False, 'error': upload_result.error or '上传导出文件失败'}, status_code=500)
-        download_url = storage.get_download_url(upload_result.key)
+        download_url = storage.get_download_url(upload_result.key, attname=filename)
         return JSONResponse({
             'success': True,
             'download_url': download_url,
