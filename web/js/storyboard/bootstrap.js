@@ -16,6 +16,7 @@ import state, {
     applyGenerateProgressStatus,
 } from './state.js';
 import * as api from './api.js';
+import { handleAuthError } from './api.js';
 import { bindEvents, loadSceneAgentMessages } from './events.js';
 import { renderApp } from './render.js';
 import { resumePollingTasks, pollScriptSplitTask, stopScriptSplitTaskPolling } from './polling.js';
@@ -369,6 +370,9 @@ async function main() {
 }
 
 main().catch((error) => {
+    if (handleAuthError(error.status, error.response || error.payload || {})) {
+        return;
+    }
     state.error = error.message || '故事板初始化失败';
     state.ratioGateActive = false;
     state.showRatioConfirmDialog = false;

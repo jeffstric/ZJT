@@ -3,6 +3,34 @@ import { normalizePagedList } from './adapters.js';
 
 const API_BASE = '/api/storyboard';
 
+/**
+ * 统一认证错误处理。
+ * 检测到 401 或 TOKEN_EXPIRED 时清理本地凭证并跳转首页登录页，登录后可回到当前页面。
+ * @param {number} status HTTP 状态码
+ * @param {object} data 响应体
+ * @returns {boolean} 是否已按认证错误处理
+ */
+export function handleAuthError(status, data = {}) {
+    const isAuthError = status === 401
+        || data.token_expired
+        || data.error_code === 'TOKEN_EXPIRED'
+        || (data.error && String(data.error).toUpperCase() === 'TOKEN_EXPIRED');
+    if (!isAuthError) return false;
+
+    try {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user_id');
+    } catch (_) { /* ignore */ }
+
+    const message = window.t ? window.t('alert_login_expired') : '登录已过期\n\n您的登录信息已过期，请重新登录。';
+    alert('⚠️ ' + message);
+
+    const redirectUrl = window.location.pathname + window.location.search;
+    window.location.href = '/?login=1&redirect_url=' + encodeURIComponent(redirectUrl);
+    return true;
+}
+
 function authHeaders(json = true) {
     const headers = {};
     if (json) headers['Content-Type'] = 'application/json';
@@ -21,6 +49,7 @@ function authHeaders(json = true) {
 async function readJson(resp) {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {
+        handleAuthError(resp.status, data);
         const error = new Error(data.message || data.error || `HTTP ${resp.status}`);
         error.status = resp.status;
         error.code = data.error_code || data.error || data.code || '';
