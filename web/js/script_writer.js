@@ -3040,7 +3040,7 @@
             return match ? match[1] : '';
         }
 
-        function openStoryboardFromScript(scriptId, episodeNumber) {
+        async function openStoryboardFromScript(scriptId, episodeNumber) {
             const currentWorldId = window.currentWorldId || WORLD_ID;
             if (!currentWorldId) {
                 alert('请先选择世界');
@@ -3050,6 +3050,24 @@
             const ep = parseInt(episodeNumber, 10);
             if (!ep) {
                 alert('该剧本没有集数信息');
+                return;
+            }
+
+            // 进入故事板前检查当前世界是否已有角色图和场景图
+            const assetsStatus = await checkAssetsComplete();
+            const charCount = assetsStatus.character_image_count || 0;
+            const locCount = assetsStatus.location_image_count || 0;
+            if (charCount === 0 || locCount === 0) {
+                let message = '';
+                if (charCount === 0 && locCount === 0) {
+                    message = window.t ? window.t('storyboard_entry_no_character_and_location_image') : '⚠️ 当前世界还没有角色参考图和场景参考图';
+                } else if (charCount === 0) {
+                    message = window.t ? window.t('storyboard_entry_no_character_image') : '⚠️ 当前世界还没有角色参考图';
+                } else {
+                    message = window.t ? window.t('storyboard_entry_no_location_image') : '⚠️ 当前世界还没有场景参考图';
+                }
+                message += window.t ? window.t('storyboard_entry_submit_hint') : '\n💡 提示：请点击上方的「提交」按钮提交数据后再进入故事板';
+                alert(message);
                 return;
             }
 

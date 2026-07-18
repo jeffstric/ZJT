@@ -4001,7 +4001,11 @@ async def check_assets_complete(request: Request, check_request: CheckAssetsRequ
                     {'type': '角色', 'items': ['角色名1', '角色名2']},
                     {'type': '场景', 'items': ['场景名1']},
                     {'type': '道具', 'items': ['道具名1']}
-                ]
+                ],
+                'character_count': int,
+                'character_image_count': int,
+                'location_count': int,
+                'location_image_count': int
             }
         }
     """
@@ -4012,14 +4016,18 @@ async def check_assets_complete(request: Request, check_request: CheckAssetsRequ
             'has_script': False,
             'missing_assets': []
         }
-        
+
         # 1. 检查是否存在剧本
         scripts_result = ScriptModel.list_by_world(world_id, page=1, page_size=1)
         result['has_script'] = scripts_result.get('total', 0) > 0
-        
+
         # 2. 检查角色参考图
         characters_result = CharacterModel.list_by_world(world_id, page=1, page_size=1000)
         characters = characters_result.get('data', [])
+        result['character_count'] = len(characters)
+        result['character_image_count'] = sum(
+            1 for c in characters if c.get('reference_image')
+        )
         missing_characters = [
             c['name'] for c in characters
             if not c.get('reference_image')
@@ -4033,6 +4041,10 @@ async def check_assets_complete(request: Request, check_request: CheckAssetsRequ
         # 3. 检查场景参考图
         locations_result = LocationModel.list_by_world(world_id, page=1, page_size=1000)
         locations = locations_result.get('data', [])
+        result['location_count'] = len(locations)
+        result['location_image_count'] = sum(
+            1 for loc in locations if loc.get('reference_image')
+        )
         missing_locations = [
             loc['name'] for loc in locations
             if not loc.get('reference_image')

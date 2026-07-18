@@ -109,9 +109,14 @@ get-or-create 命中已有故事板时**不改** title。历史空 title 不自�
 `openStoryboardFromScript(scriptId, episodeNumber)`：
 
 1. 使用当前 `world_id` 和剧本 `episode_number` 定位文件夹。
-2. 如果能拿到 `script_id`，附加到 URL。
-3. 跳转 `/storyboard?world_id=...&episode_number=...&script_id=...`。
-4. 故事板页调用 `POST /api/storyboard/create` 幂等创建或打开。
+2. 调用 `POST /api/check-assets-complete` 校验当前世界的资产图片：
+   - 要求 `character_image_count > 0` 且 `location_image_count > 0`。
+   - 若角色图或场景图为空，弹出 `alert` 提示用户先点击上方的「提交」按钮提交数据，并**阻止跳转**。
+3. 校验通过后，如果能拿到 `script_id`，附加到 URL。
+4. 跳转 `/storyboard?world_id=...&episode_number=...&script_id=...`。
+5. 故事板页调用 `POST /api/storyboard/create` 幂等创建或打开。
+
+> `/api/check-assets-complete` 在原有 `has_script` / `missing_assets` 基础上，额外返回 `character_count`、`character_image_count`、`location_count`、`location_image_count`，供前端判断。
 
 ### 故事板编辑器
 
