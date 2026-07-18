@@ -56,3 +56,7 @@ API 响应 → 提取 reasoning_content → 存入对话历史 → 构建 API �
 ```
 
 这与 `thought_signature`（Gemini 模型）的处理方式一致。
+
+### 脚本解析入口
+
+`/api/parse-script` 和故事板“从剧本生成”入口会接收 `enable_thinking`、`thinking_effort`，并透传到 `llm.script_parser.parse_script_to_shots()`。前端剧本节点在拆分模型支持思考模式时显示开关，DeepSeek 系列模型默认开启；用户手动关闭后会随工作流保存和重载恢复。

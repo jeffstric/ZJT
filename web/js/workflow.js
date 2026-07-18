@@ -807,10 +807,18 @@
             console.log('[加载工作流] 从服务器加载 default_world_id:', workflow.default_world_id);
             const defaultWorldSelect = document.getElementById('defaultWorldSelect');
             if(defaultWorldSelect){
-              defaultWorldSelect.value = workflow.default_world_id;
-              // 更新视觉状态（移除红色警告）
+              // select option.value 始终是字符串，显式转换避免 number/string 匹配失败
+              defaultWorldSelect.value = String(workflow.default_world_id);
+              // 更新视觉状态（移除红色警告、同步自定义可搜索下拉的触发器文本）
               if(typeof updateWorldSelectorState === 'function'){
                 updateWorldSelectorState();
+              }
+              // 兜底：若世界缓存还没加载完导致 updateWorldSelectorState 取不到世界名，
+              // 主动刷新一次世界选择器（populateWorldSelector 内部会恢复 state.defaultWorldId）
+              const cachedWorld = (typeof getCachedWorld === 'function') ? getCachedWorld(workflow.default_world_id) : null;
+              if(!cachedWorld && typeof populateWorldSelector === 'function'){
+                console.log('[加载工作流] 世界缓存未就绪，重新填充世界选择器');
+                await populateWorldSelector();
               }
             }
           }
@@ -2231,7 +2239,21 @@
         node.data.forceMediumShot = nodeData.data.forceMediumShot !== undefined ? nodeData.data.forceMediumShot : true;
         node.data.noBgMusic = nodeData.data.noBgMusic !== undefined ? nodeData.data.noBgMusic : true;
         node.data.splitMultiDialogue = nodeData.data.splitMultiDialogue !== undefined ? nodeData.data.splitMultiDialogue : false;
-        node.data.narrationAsDialogue = nodeData.data.narrationAsDialogue !== undefined ? nodeData.data.narrationAsDialogue : false;
+        // 分镜拆分模式 + 质检（与故事板对齐；旧工作流缺省 balanced / 关闭质检）
+        const savedSequenceMode = nodeData.data.sequenceMode;
+        node.data.sequenceMode = ['speed', 'balanced', 'quality'].includes(savedSequenceMode)
+          ? savedSequenceMode
+          : 'balanced';
+        node.data.enableScriptSplitQc = nodeData.data.enableScriptSplitQc === true;
+        const savedQcRounds = Number(nodeData.data.scriptSplitQcMaxRounds);
+        node.data.scriptSplitQcMaxRounds = [1, 2, 3, 4, 5].includes(savedQcRounds) ? savedQcRounds : 2;
+        // 参数区分组折叠态（旧数据缺省全折叠；开启质检时 advanced 展开）
+        const savedSections = nodeData.data.uiSections || {};
+        node.data.uiSections = {
+          gridVideo: savedSections.gridVideo === true,
+          language: savedSections.language === true,
+          advanced: savedSections.advanced === true || node.data.enableScriptSplitQc === true,
+        };
         // 恢复语言设置（兼容旧数据：旧的 language 字段作为两个新字段的默认值）
         const legacyLanguage = nodeData.data.language || '';
         node.data.dialogueLanguage = nodeData.data.dialogueLanguage !== undefined ? nodeData.data.dialogueLanguage : legacyLanguage;
@@ -2244,6 +2266,16 @@
         if(nodeData.data.splitModelId) node.data.splitModelId = nodeData.data.splitModelId;
         if(nodeData.data.splitModelVendorId) node.data.splitModelVendorId = nodeData.data.splitModelVendorId;
         if(nodeData.data.splitModelVendorName) node.data.splitModelVendorName = nodeData.data.splitModelVendorName;
+        node.data.enableThinking = nodeData.data.enableThinking !== undefined ? nodeData.data.enableThinking : false;
+        node.data.thinkingEffort = nodeData.data.thinkingEffort || 'medium';
+        node.data.thinkingExplicitlyDisabled = nodeData.data.thinkingExplicitlyDisabled !== undefined ? nodeData.data.thinkingExplicitlyDisabled : false;
+
+        // 恢复分段拆分任务状态（见设计文档 §14）
+        // 刷新后若有未完成的 splitTaskId，恢复轮询；已应用结果则不重复创建节点。
+        node.data.splitTaskId = nodeData.data.splitTaskId || null;
+        node.data.splitTaskMode = nodeData.data.splitTaskMode || null;
+        node.data.splitTaskResultApplied = nodeData.data.splitTaskResultApplied === true;
+        node.data.splitTaskPostActionStarted = nodeData.data.splitTaskPostActionStarted === true;
 
         const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
         if(el){
@@ -2252,7 +2284,6 @@
           const forceMediumShotEl = el.querySelector('.script-force-medium-shot');
           const noBgMusicEl = el.querySelector('.script-no-bg-music');
           const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
-          const narrationAsDialogueEl = el.querySelector('.script-narration-as-dialogue');
           const splitBtn = el.querySelector('.script-split-btn');
           const infoField = el.querySelector('.script-info-field');
           const nameEl = el.querySelector('.script-name');
@@ -2264,7 +2295,30 @@
           if(forceMediumShotEl) forceMediumShotEl.checked = node.data.forceMediumShot;
           if(noBgMusicEl) noBgMusicEl.checked = node.data.noBgMusic;
           if(splitMultiDialogueEl) splitMultiDialogueEl.checked = node.data.splitMultiDialogue;
-          if(narrationAsDialogueEl) narrationAsDialogueEl.checked = node.data.narrationAsDialogue;
+          const sequenceModeEl = el.querySelector('.script-sequence-mode');
+          if(sequenceModeEl) {
+            const isEnterprise = state.editionInfo && state.editionInfo.mode === 'enterprise';
+            if(node.data.sequenceMode === 'quality' && !isEnterprise) {
+              node.data.sequenceMode = 'balanced';
+            }
+            sequenceModeEl.value = node.data.sequenceMode || 'balanced';
+            const qualityOpt = sequenceModeEl.querySelector('option[value="quality"]');
+            if(qualityOpt) qualityOpt.disabled = !isEnterprise;
+          }
+          const enableSplitQcEl = el.querySelector('.script-enable-split-qc');
+          const qcRoundsFieldEl = el.querySelector('.script-qc-rounds-field');
+          const qcMaxRoundsEl = el.querySelector('.script-qc-max-rounds');
+          if(enableSplitQcEl) enableSplitQcEl.checked = node.data.enableScriptSplitQc === true;
+          if(qcMaxRoundsEl) qcMaxRoundsEl.value = String(node.data.scriptSplitQcMaxRounds || 2);
+          if(qcRoundsFieldEl) {
+            qcRoundsFieldEl.style.display = node.data.enableScriptSplitQc === true ? 'block' : 'none';
+          }
+          // 恢复参数分组折叠
+          if(typeof node.setParamGroupOpen === 'function' && node.data.uiSections) {
+            ['gridVideo', 'language', 'advanced'].forEach((key) => {
+              node.setParamGroupOpen(key, node.data.uiSections[key] === true);
+            });
+          }
 
           // 恢复模型选择器的显示状态
           const videoModelEl = el.querySelector('.script-video-model');
@@ -2286,6 +2340,11 @@
             ensureSelectHasSavedOption(splitModelEl, node.data.splitModel);
             splitModelEl.value = node.data.splitModel;
           }
+          const enableThinkingEl = el.querySelector('.script-enable-thinking');
+          const thinkingEffortEl = el.querySelector('.script-thinking-effort');
+          if(enableThinkingEl) enableThinkingEl.checked = node.data.enableThinking === true;
+          if(thinkingEffortEl) thinkingEffortEl.value = node.data.thinkingEffort || 'medium';
+          if(splitModelEl) splitModelEl.dispatchEvent(new Event('change', { bubbles: true }));
 
           // 恢复语言选择器的UI显示
           const presetLanguageValues = ['', 'English', 'Deutsch', 'Français', 'Русский'];
@@ -2318,6 +2377,55 @@
             if(lengthEl) lengthEl.textContent = `长度: ${node.data.scriptContent.length} 字符`;
             if(infoField) infoField.style.display = 'block';
             if(charCountEl) charCountEl.textContent = `${node.data.scriptContent.length}/2000`;
+          }
+
+          if(typeof node.updateParamGroupSummaries === 'function') {
+            node.updateParamGroupSummaries();
+          }
+
+          // 恢复未完成的分段拆分任务轮询（见设计文档 §14 createScriptNodeWithData）
+          // 任务已应用结果或已无活跃任务则不恢复。
+          if (window.ScriptSplitTask && node.data.splitTaskId && !node.data.splitTaskResultApplied) {
+            const statusEl2 = el.querySelector('.script-status');
+            const splitBtn2 = el.querySelector('.script-split-btn');
+            const splitGridBtn2 = el.querySelector('.script-split-grid-btn');
+            const gridStatusEl2 = el.querySelector('.script-grid-status');
+            if (splitBtn2) splitBtn2.disabled = true;
+            if (splitGridBtn2) splitGridBtn2.disabled = true;
+            window.ScriptSplitTask.pollScriptSplitTask(node.data.splitTaskId, {
+              onUpdate: (status) => {
+                const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#666'; targetEl.textContent = status.message || '拆分中…'; }
+              },
+              onComplete: async (parsedData) => {
+                if (node.data.splitTaskMode === 'split_and_generate_grid') {
+                  if (node.data.splitTaskPostActionStarted) { if (splitGridBtn2) splitGridBtn2.disabled = false; if (splitBtn2) splitBtn2.disabled = false; return; }
+                  node.data.splitTaskPostActionStarted = true;
+                  // 宫格模式：交给节点的 runGridFlow（通过模拟无法直接调用，降级为先应用结果）
+                  if (node.applyParsedData) { await node.applyParsedData(parsedData, { autoGenerateFrames: false }); }
+                  node.data.splitTaskResultApplied = true;
+                  if (window.safeAutoSave) window.safeAutoSave();
+                } else {
+                  if (node.applyParsedData) { await node.applyParsedData(parsedData); }
+                  node.data.splitTaskResultApplied = true;
+                  if (window.safeAutoSave) window.safeAutoSave();
+                }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+              },
+              onPaused: (status) => {
+                const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#d97706'; targetEl.textContent = status.message || '任务暂停'; }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+              },
+              onError: (error) => {
+                const targetEl = node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2;
+                if (targetEl) { targetEl.style.display = 'block'; targetEl.style.color = '#dc2626'; targetEl.textContent = '拆分失败: ' + (error.message || ''); }
+                if (splitBtn2) splitBtn2.disabled = false;
+                if (splitGridBtn2) splitGridBtn2.disabled = false;
+              },
+            });
           }
         }
       }
@@ -2353,9 +2461,10 @@
       _pollStatusRunning = true;
       
       try {
-        // 从 URL 参数中获取 workflowId
-        const urlParams = new URLSearchParams(window.location.search);
-        const workflowId = urlParams.get('id');
+        // 从 URL 参数中获取 workflowId（与 getWorkflowIdFromUrl 保持一致）
+        const workflowId = (typeof getWorkflowIdFromUrl === 'function')
+          ? getWorkflowIdFromUrl()
+          : new URLSearchParams(window.location.search).get('id');
         if(!workflowId) return;
         
         const userId = localStorage.getItem('user_id');

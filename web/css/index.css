@@ -267,8 +267,18 @@ header {
   padding: 4px 8px;
 }
 
-.modal-close:hover { 
-  color: var(--text); 
+.modal-close:hover {
+  color: var(--text);
+}
+
+/* 可滚动弹窗（.modal 设 overflow-y:auto）内的粘性头部：
+   把关闭按钮（position:absolute）的包裹层从 relative 改为 sticky，
+   使头部连同 × 始终吸附在滚动容器顶部，避免滚动时关闭按钮被带出可视区。 */
+.modal-sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--panel);
 }
 
 .modal-tabs {
@@ -413,9 +423,215 @@ header {
   gap: 4px;
 }
 
+.user-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .user-phone {
   font-size: 14px;
   color: var(--muted);
+}
+
+.agent-connect-btn {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  border: 1px solid rgba(34, 197, 94, 0.36);
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.14), rgba(14, 165, 233, 0.10));
+  color: #dffcf0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.16);
+  transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.06s;
+}
+
+.agent-connect-btn:hover {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.22), rgba(14, 165, 233, 0.16));
+  border-color: rgba(34, 197, 94, 0.62);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.22);
+}
+
+.agent-connect-btn:active {
+  transform: translateY(1px);
+}
+
+.agent-connect-btn::after {
+  content: "智能体连接";
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 7px);
+  transform: translateX(-50%) translateY(-3px);
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.94);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 20;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.agent-connect-btn:hover::after,
+.agent-connect-btn:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.agent-connect-icons {
+  display: grid;
+  grid-template-columns: repeat(2, 18px);
+  grid-template-rows: repeat(2, 18px);
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.agent-icon-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+}
+
+.agent-icon-badge img {
+  width: 16px;
+  height: 16px;
+  display: block;
+  object-fit: contain;
+}
+
+.agent-connection-modal {
+  max-width: 640px;
+}
+
+.agent-connection-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-connection-desc,
+.agent-connection-warning {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.agent-connection-warning {
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.08);
+  border-radius: 8px;
+}
+
+.agent-connection-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.agent-connection-grid code {
+  display: block;
+  padding: 8px 10px;
+  background: #0b1220;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.agent-connection-text {
+  min-height: 220px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .agent-connection-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-connect-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .agent-connect-icons {
+    grid-template-columns: repeat(2, 14px);
+    grid-template-rows: repeat(2, 14px);
+    gap: 2px;
+  }
+
+  .agent-icon-badge img {
+    width: 10px;
+    height: 10px;
+  }
+
+  .user-info-wrapper {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .user-agent-row {
+    gap: 6px;
+  }
+
+  .computing-power-display {
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .btn {
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: 8px;
+  }
+
+  .header-title-group .subtitle {
+    display: none;
+  }
+
+  .title {
+    font-size: 16px;
+  }
+
+  header > div:last-child {
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+  }
 }
 
 .computing-power-display {
@@ -1554,7 +1770,7 @@ header {
 /* Feature Cards */
 .feature-cards {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -1601,6 +1817,10 @@ header {
 
 .feature-card-icon.purple {
   background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+}
+
+.feature-card-icon.storyboard {
+  background: linear-gradient(135deg, #0f766e 0%, #2563eb 100%);
 }
 
 .feature-card-info {
@@ -2658,4 +2878,66 @@ html.marketing-mode .container {
   background: rgba(34, 197, 94, 0.15);
   color: var(--primary);
   font-weight: 600;
+}
+
+/* ===== 数字人顶部卡片标签 tab ===== */
+/* 仅覆盖「直接包含 .dh-tabs」的 .form（即数字人页根容器），
+   不影响其他页面的 .form。让 tab+body 撑满容器形成一体卡片。*/
+.form > .dh-tabs {
+  padding: 0;
+  border-top: none;
+}
+.dh-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 4px -1px; /* 左右 4px 与 body 对齐；-1px 让选中项底边与下方卡片无缝衔接 */
+}
+
+.dh-tab {
+  position: relative;
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-align: center;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease, transform .06s ease;
+}
+
+.dh-tab:hover:not(:disabled):not(.active) {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dh-tab:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.dh-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 选中态：绿色凸起卡片，底边与下方表单卡片重合 */
+.dh-tab.active {
+  color: #051b0d; /* 与 .btn 文字色一致 */
+  background: var(--primary);
+  border-color: var(--border);
+  box-shadow: 0 8px 20px rgba(34, 197, 94, 0.25),
+              inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+/* 表单主体卡片：承接 tab，形成「标签翻起 + 卡片」一体感 */
+.dh-tab-body {
+  margin: 0 4px; /* 与 .dh-tabs 左右对齐 */
+  border: 1px solid var(--border);
+  border-radius: 0 0 10px 10px;
+  padding: 16px;
+  background: var(--panel);
 }

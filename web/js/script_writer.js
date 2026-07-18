@@ -66,10 +66,27 @@
             QWEN_PLUS: 'qwen-plus',
             OLLAMA_QWEN_3_6_35B: 'qwen3.6:35b-a3b'
         };
+        const STORY_TYPE_LABELS = {
+            dialogue: '对话剧情',
+            narration: '旁白解说',
+            music_mv: '音乐MV'
+        };
+
+        function normalizeStoryType(storyType) {
+            return Object.prototype.hasOwnProperty.call(STORY_TYPE_LABELS, storyType)
+                ? storyType
+                : 'dialogue';
+        }
+
+        function getStoryTypeLabel(storyType) {
+            const normalized = normalizeStoryType(storyType);
+            const key = `story_type_${normalized}`;
+            return window.t ? window.t(key) : (STORY_TYPE_LABELS[normalized] || STORY_TYPE_LABELS.dialogue);
+        }
         let isCommunityEdition = false;  // 默认为商业版，页面初始化时通过API更新
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
-        let currentEditWorld = { id: '', name: '', description: '' };
+        let currentEditWorld = { id: '', name: '', description: '', story_type: 'dialogue' };
         let driverStatus = {};  // 驱动可用状态
 
         function handleTokenExpired() {
@@ -261,6 +278,7 @@
             await loadTextToImageModels();
             await loadComputingPower();
             await loadUserWorlds();
+            bindWorldSearchEvents();
             // 加载任务配置（用于多角度图生成）
             if (window.TaskConfig) {
                 await window.TaskConfig.load();
@@ -270,6 +288,9 @@
 
             renderCarousel();
             initCarousel();
+            restoreInterventionLevel();
+            initCustomModelSelectMenus();
+            initImportDropZone();
 
             // 设置发送按钮事件监听器
             const sendButton = document.getElementById('send-btn');
@@ -300,6 +321,7 @@
                 messageInput.addEventListener('input', function() {
                     this.style.height = 'auto';
                     this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+                    syncSendBtnLayout();
                 });
 
                 messageInput.addEventListener('keydown', function(e) {
@@ -308,6 +330,8 @@
                         sendMessage();
                     }
                 });
+                // 首屏：单行居中
+                syncSendBtnLayout();
             }
             
             // 检查是否缺少world_id
@@ -481,8 +505,58 @@
                 } else {
                     console.log('没有历史消息');
                 }
+
+                // 历史加载完成后确保输入区可用（发送按钮始终可点；仅未选世界时保持禁用）
+                restoreInputControlsAfterHistory();
             } catch (error) {
                 console.error('加载历史消息失败:', error);
+                restoreInputControlsAfterHistory();
+            }
+        }
+
+        /**
+         * 按输入框高度切换发送按钮垂直布局：
+         * - 单行：CSS top:50% 居中
+         * - 多行（is-expanded）：贴右下
+         * 阈值略大于单行自然高度，避免亚像素抖动。
+         */
+        function syncSendBtnLayout() {
+            const input = document.getElementById('message-input');
+            const container = input && input.closest
+                ? input.closest('.input-container')
+                : document.querySelector('.input-container');
+            if (!input || !container) return;
+            const expanded = input.offsetHeight > 56;
+            container.classList.toggle('is-expanded', expanded);
+        }
+
+        /**
+         * 历史消息渲染后恢复底部输入/发送控件。
+         * 宽内容曾会把 flex 布局撑出视口导致发送按钮被裁切；同时避免 isProcessing 残留导致按钮一直 disabled。
+         * 窄屏兜底：确保输入条滚入视口，避免加载长历史后发送按钮“看不见”。
+         */
+        function restoreInputControlsAfterHistory() {
+            if (!window.WORLD_ID) return;
+            const input = document.getElementById('message-input');
+            const sendBtn = document.getElementById('send-btn');
+            if (input) {
+                input.disabled = false;
+            }
+            // 仅当当前没有进行中的任务/验证时恢复发送按钮，避免打断流式回复
+            if (sendBtn && !isProcessing && !pendingVerificationId) {
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('sending');
+            }
+            syncSendBtnLayout();
+            // 窄屏：输入区应始终在聊天列底部；极端布局下再 scrollIntoView 兜底
+            const inputSection = document.querySelector('.input-section');
+            if (inputSection && typeof inputSection.scrollIntoView === 'function') {
+                try {
+                    inputSection.scrollIntoView({ block: 'end', behavior: 'instant' });
+                } catch (_) {
+                    // Safari 旧版不支持 behavior:'instant'
+                    inputSection.scrollIntoView(false);
+                }
             }
         }
 
@@ -585,7 +659,7 @@
                             warningMsg += window.t ? window.t('alert_file_diff_local_only', { files: localOnlyList }) : `📁 本地独有文件（数据库中不存在）：\n  • ${localOnlyList}\n\n`;
                         }
 
-                        warningMsg += window.t ? window.t('alert_file_diff_hint') : '💡 提示：这些文件的本地内容已保留，不会被数据库覆盖。如需同步，请使用"提交数据"按钮。';
+                        warningMsg += window.t ? window.t('alert_file_diff_hint') : '💡 提示：这些文件的本地内容已保留，不会被数据库覆盖。如需同步，请使用"提交"按钮。';
 
                         alert(warningMsg);
                         updateStatus(window.t ? window.t('status_orchestrator_ready_local') : '剧本编排系统已就绪（检测到未提交的本地修改）');
@@ -1038,6 +1112,7 @@
             // 如果有待处理的验证，优先走验证提交路由（不受 isProcessing 限制）
             if (pendingVerificationId) {
                 let message;
+                let fromInput = false;
                 if (customMessage) {
                     message = customMessage;
                 } else {
@@ -1050,11 +1125,16 @@
                         }
                         return;
                     }
-                    input.value = '';
-                    input.style.height = 'auto';
+                    // 成功后再清空，避免提交失败时丢失草稿
+                    fromInput = true;
                 }
                 // 保持 isProcessing = true，Expert 仍在处理中
-                await submitVerificationAnswer(message);
+                await submitVerificationAnswer(message, { fromInput });
+                // 提交失败时恢复发送按钮，便于用户重试
+                if (sendBtn && pendingVerificationId) {
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                }
                 return;
             }
 
@@ -1086,6 +1166,7 @@
                 }
                 input.value = '';
                 input.style.height = 'auto';
+                syncSendBtnLayout();
             }
 
             if (isSystemMessage) {
@@ -1136,7 +1217,8 @@
                         model_id: modelId,
                         vendor_id: vendorId ? parseInt(vendorId) : 1,
                         language: localStorage.getItem('zjt_locale') || 'zh-CN',
-                        ...getThinkingParams()
+                        ...getThinkingParams(),
+                        intervention_level: getInterventionLevel()
                     }),
                     signal: controller.signal
                 });
@@ -1252,8 +1334,16 @@
                                 pendingVerificationId = null;
                                 pendingVerificationData = null;
                                 const input = document.getElementById('message-input');
-                                input.value = '';
-                                input.placeholder = '输入消息...';
+                                if (input) {
+                                    input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                                }
+                                // 超时后需允许用户重新发送，恢复发送按钮与处理状态
+                                isProcessing = false;
+                                const sendBtn = document.getElementById('send-btn');
+                                if (sendBtn) {
+                                    sendBtn.disabled = false;
+                                    sendBtn.classList.remove('sending');
+                                }
                             }
                             showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
                         } else if (data.type === 'status') {
@@ -1403,8 +1493,16 @@
                             pendingVerificationId = null;
                             pendingVerificationData = null;
                             const input = document.getElementById('message-input');
-                            input.value = '';
-                            input.placeholder = '输入消息...';
+                            if (input) {
+                                input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                            }
+                            // 超时后需允许用户重新发送，恢复发送按钮与处理状态
+                            isProcessing = false;
+                            const sendBtn = document.getElementById('send-btn');
+                            if (sendBtn) {
+                                sendBtn.disabled = false;
+                                sendBtn.classList.remove('sending');
+                            }
                         }
                         showError(window.t ? window.t('error_verification_timeout') : '验证已超时，请重新发送消息');
                     } else if (data.type === 'status') {
@@ -1646,6 +1744,7 @@
             // 为选项按钮添加事件监听器
             const optionBtns = contentDiv.querySelectorAll('.option-btn');
             const input = document.getElementById('message-input');
+            const sendBtn = document.getElementById('send-btn');
 
             optionBtns.forEach(btn => {
                 btn.addEventListener('click', (e) => {
@@ -1655,30 +1754,62 @@
                         // 点击"其他"按钮，焦点转移到下方的消息输入框
                         input.placeholder = window.t ? window.t('placeholder_custom_answer') : '请输入您的自定义答案...';
                         input.focus();
+                        // 等待自定义输入时保持发送按钮可用
+                        if (sendBtn) {
+                            sendBtn.disabled = false;
+                            sendBtn.classList.remove('sending');
+                        }
                         updateStatus('💬 ' + (window.t ? window.t('status_custom_answer') : '请在下方输入框中输入您的自定义答案'));
                         console.log('[VERIFICATION] 用户选择"其他"，等待自定义输入');
                     } else {
                         // 点击预设选项，直接提交（无需用户再输入）
+                        // fromInput=false：不清理输入框草稿
                         const index = e.target.dataset.optionIndex;
                         const option = verification.options[index];
                         if (option) {
                             console.log('[VERIFICATION] 用户选择选项:', option);
-                            submitVerificationAnswer(option);
+                            // 提交中禁用按钮，避免重复点击
+                            if (sendBtn) {
+                                sendBtn.disabled = true;
+                                sendBtn.classList.add('sending');
+                            }
+                            submitVerificationAnswer(option, { fromInput: false }).finally(() => {
+                                // 失败仍 pending 时 submitVerificationAnswer 外层/调用方会恢复；
+                                // 成功则保持 disabled，等待 SSE 继续；失败由下方 pending 恢复兜底
+                                if (sendBtn && pendingVerificationId) {
+                                    sendBtn.disabled = false;
+                                    sendBtn.classList.remove('sending');
+                                }
+                            });
                         }
                     }
                 });
             });
 
-            // 启用输入框
-            input.disabled = false;
-            input.placeholder = verification.options && verification.options.length > 0
-                ? (window.t ? window.t('placeholder_select_or_custom') : '点击上方选项或选择"其他"输入自定义答案')
-                : (window.t ? window.t('placeholder_enter_answer') : '请输入您的回答...');
+            // 启用输入框与发送按钮：原始 sendMessage 在发起任务时会把按钮置为 disabled+sending，
+            // ask_user 出现后若不恢复，按钮会一直半透明，选中输入框后看起来像“消失”
+            if (input) {
+                input.disabled = false;
+                input.placeholder = verification.options && verification.options.length > 0
+                    ? (window.t ? window.t('placeholder_select_or_custom') : '点击上方选项或选择"其他"输入自定义答案')
+                    : (window.t ? window.t('placeholder_enter_answer') : '请输入您的回答...');
+            }
+            if (sendBtn) {
+                sendBtn.disabled = false;
+                sendBtn.classList.remove('sending');
+            }
 
             updateStatus(window.t ? window.t('status_waiting_answer') : '等待您的回答...');
         }
 
-        async function submitVerificationAnswer(userInput) {
+        /**
+         * 提交 human_verification / ask_user 的用户答案。
+         * @param {string} userInput 答案内容
+         * @param {{fromInput?: boolean}} [options]
+         *   - fromInput: true 表示答案来自底部输入框，成功后才清空输入框；
+         *     false（默认）表示来自预设选项点击，保留输入框草稿不被覆盖。
+         */
+        async function submitVerificationAnswer(userInput, { fromInput = false } = {}) {
             if (!pendingVerificationId) {
                 console.error('No pending verification');
                 return;
@@ -1709,24 +1840,27 @@
                     // 显示用户回答
                     addMessage('user', `我的回答：${userInput}`);
 
-                    // 重置输入框
+                    // 仅当答案来自输入框时清空；选项点击保留用户草稿
                     const input = document.getElementById('message-input');
-                    input.value = '';
-                    input.placeholder = '输入消息...';
+                    if (input) {
+                        if (fromInput) {
+                            input.value = '';
+                            input.style.height = 'auto';
+                            syncSendBtnLayout();
+                        }
+                        input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                    }
 
                     updateStatus(window.t ? window.t('status_waiting_ai') : '等待 AI 继续处理...');
                 } else {
                     showError((window.t ? window.t('error_verification_submit_failed_detail', {error: response.data.error}) : '验证提交失败：' + response.data.error + '，请重新输入'));
-                    // 保持 pendingVerificationId，允许用户重试
-                    // 注意：不重置 isProcessing，因为 Expert 仍在等待
+                    // 保持 pendingVerificationId，允许用户重试；失败不清空输入框
                     const input = document.getElementById('message-input');
-                    input.value = '';  // 清空失败的输入
-                    input.focus();
+                    input?.focus();
                 }
             } catch (error) {
                 console.error('Failed to submit verification:', error);
                 const input = document.getElementById('message-input');
-                input.value = '';
 
                 // 401: token 过期
                 if (error.response && error.response.status === 401) {
@@ -1736,11 +1870,13 @@
                     return;
                 }
 
-                // 400 算力不足：清除验证状态，提醒用户充值
+                // 400 算力不足：清除验证状态，提醒用户充值（保留输入框内容便于后续使用）
                 if (error.response && error.response.status === 400 && error.response.data?.error_code === 'INSUFFICIENT_POWER') {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
-                    input.placeholder = '输入消息...';
+                    if (input) {
+                        input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                    }
                     showError(error.response.data.message || '您的算力不足，请充值后再试');
                     return;
                 }
@@ -1749,12 +1885,14 @@
                 if (error.response && (error.response.status === 404 || error.response.status === 410)) {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
-                    input.placeholder = '输入消息...';
+                    if (input) {
+                        input.placeholder = window.t ? window.t('placeholder_message') : '输入消息...';
+                    }
                     showError(window.t ? window.t('error_verification_expired') : '验证已过期，请重新发送消息');
                 } else {
-                    // 其他错误（网络问题等），保持状态允许用户重试
+                    // 其他错误（网络问题等），保持状态与输入内容，允许用户重试
                     showError((window.t ? window.t('error_verification_error_detail', {error: error.message}) : '提交验证时出错：' + error.message + '，请重新输入'));
-                    input.focus();
+                    input?.focus();
                 }
             }
         }
@@ -2165,6 +2303,127 @@
             display.style.color = '';
         }
 
+        let activeCustomModelSelect = null;
+        let customModelSelectListenersReady = false;
+
+        function closeCustomModelSelectMenu() {
+            if (!activeCustomModelSelect) return;
+            activeCustomModelSelect.menu.remove();
+            activeCustomModelSelect.wrapper.classList.remove('custom-select-open');
+            activeCustomModelSelect.wrapper.setAttribute('aria-expanded', 'false');
+            activeCustomModelSelect = null;
+        }
+
+        function appendCustomModelSelectOption(menu, selector, option, optionIndex) {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'custom-model-select-option';
+            item.textContent = option.textContent || option.value;
+            item.title = option.textContent || option.value;
+            item.disabled = option.disabled;
+            if (option.selected) {
+                item.classList.add('selected');
+            }
+            item.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (option.disabled) return;
+                selector.selectedIndex = optionIndex;
+                closeCustomModelSelectMenu();
+                selector.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+            menu.appendChild(item);
+        }
+
+        function appendCustomModelSelectOptions(menu, selector, children) {
+            Array.from(children).forEach((child) => {
+                if (child.tagName === 'OPTGROUP') {
+                    const label = document.createElement('div');
+                    label.className = 'custom-model-select-group';
+                    label.textContent = child.label;
+                    menu.appendChild(label);
+                    appendCustomModelSelectOptions(menu, selector, child.children);
+                    return;
+                }
+                if (child.tagName !== 'OPTION') return;
+                const optionIndex = Array.prototype.indexOf.call(selector.options, child);
+                appendCustomModelSelectOption(menu, selector, child, optionIndex);
+            });
+        }
+
+        function openCustomModelSelectMenu(selector) {
+            const wrapper = selector.closest('.model-select-wrapper');
+            if (!wrapper) return;
+            if (activeCustomModelSelect && activeCustomModelSelect.selector === selector) {
+                closeCustomModelSelectMenu();
+                return;
+            }
+            closeCustomModelSelectMenu();
+
+            const rect = wrapper.getBoundingClientRect();
+            const menu = document.createElement('div');
+            menu.className = 'custom-model-select-menu';
+            menu.style.top = `${rect.bottom + 6}px`;
+            menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8))}px`;
+            menu.style.width = `${Math.max(rect.width, 240)}px`;
+            menu.style.maxHeight = `${Math.max(120, Math.min(400, window.innerHeight - rect.bottom - 18))}px`;
+            appendCustomModelSelectOptions(menu, selector, selector.children);
+            document.body.appendChild(menu);
+
+            wrapper.classList.add('custom-select-open');
+            wrapper.setAttribute('aria-expanded', 'true');
+            activeCustomModelSelect = { selector, wrapper, menu };
+        }
+
+        function initCustomModelSelectMenus() {
+            document.querySelectorAll('.model-select-wrapper .model-select').forEach((selector) => {
+                const wrapper = selector.closest('.model-select-wrapper');
+                const display = wrapper?.querySelector('.model-select-display');
+                if (!wrapper || !display || wrapper.dataset.customSelectReady === 'true') return;
+                wrapper.dataset.customSelectReady = 'true';
+                wrapper.tabIndex = 0;
+                wrapper.setAttribute('role', 'combobox');
+                wrapper.setAttribute('aria-haspopup', 'listbox');
+                wrapper.setAttribute('aria-expanded', 'false');
+                selector.tabIndex = -1;
+                selector.setAttribute('aria-hidden', 'true');
+
+                const openMenu = (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openCustomModelSelectMenu(selector);
+                };
+                display.addEventListener('click', openMenu);
+                wrapper.addEventListener('keydown', (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        openMenu(event);
+                    } else if (event.key === 'Escape') {
+                        closeCustomModelSelectMenu();
+                    }
+                });
+            });
+
+            if (customModelSelectListenersReady) return;
+            customModelSelectListenersReady = true;
+            document.addEventListener('click', (event) => {
+                if (!activeCustomModelSelect) return;
+                if (activeCustomModelSelect.menu.contains(event.target) || activeCustomModelSelect.wrapper.contains(event.target)) return;
+                closeCustomModelSelectMenu();
+            });
+            window.addEventListener('resize', closeCustomModelSelectMenu);
+            window.addEventListener('scroll', (event) => {
+                if (!activeCustomModelSelect) return;
+                // 菜单自身（或其内部）滚动时不应关闭；仅当滚动发生在菜单/触发元素外部时才关闭
+                const target = event.target;
+                if (target instanceof Node) {
+                    if (activeCustomModelSelect.menu.contains(target) || activeCustomModelSelect.wrapper.contains(target)) {
+                        return;
+                    }
+                }
+                closeCustomModelSelectMenu();
+            }, true);
+        }
+
         function updateModelTooltip() {
             const selector = document.getElementById('model-selector');
             if (!selector) return;
@@ -2332,6 +2591,97 @@
             };
         }
 
+        // ==================== AI 介入程度 ====================
+        const INTERVENTION_LEVEL_I18N_KEYS = {
+            balanced: 'intervention_balanced',
+            concise: 'intervention_concise',
+            detailed: 'intervention_detailed'
+        };
+
+        function onInterventionLevelChange() {
+            const selector = document.getElementById('intervention-level-selector');
+            if (!selector) return;
+            localStorage.setItem('lastInterventionLevel', selector.value);
+            updateInterventionLevelDisplay();
+        }
+
+        function updateInterventionLevelDisplay() {
+            const selector = document.getElementById('intervention-level-selector');
+            const display = document.getElementById('intervention-level-display');
+            if (!selector || !display) return;
+            const fallbackLabels = {
+                balanced: '标准',
+                concise: '简洁·少提问',
+                detailed: '精细·多确认'
+            };
+            const value = selector.value || 'balanced';
+            const translationKey = INTERVENTION_LEVEL_I18N_KEYS[value] || INTERVENTION_LEVEL_I18N_KEYS.balanced;
+            display.textContent = window.t ? window.t(translationKey) : (fallbackLabels[value] || fallbackLabels.balanced);
+        }
+
+        function restoreInterventionLevel() {
+            const saved = localStorage.getItem('lastInterventionLevel');
+            const selector = document.getElementById('intervention-level-selector');
+            if (!selector) return;
+            if (saved && ['balanced', 'concise', 'detailed'].includes(saved)) {
+                selector.value = saved;
+            } else {
+                selector.value = 'balanced';
+            }
+            updateInterventionLevelDisplay();
+        }
+
+        function getInterventionLevel() {
+            const selector = document.getElementById('intervention-level-selector');
+            return selector ? selector.value : 'balanced';
+        }
+
+        // ==================== 窄屏暂存区切换 ====================
+        function toggleFileSidebar() {
+            const sidebar = document.getElementById('file-sidebar');
+            const overlay = document.getElementById('file-sidebar-overlay');
+            if (!sidebar || !overlay) return;
+            const isOpen = sidebar.classList.contains('open');
+            if (isOpen) {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                document.body.style.overflow = '';
+            } else {
+                sidebar.classList.add('open');
+                overlay.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+
+        function openModelSettingsPanel() {
+            const card = document.getElementById('model-selector-card');
+            const overlay = document.getElementById('model-settings-overlay');
+            const button = document.querySelector('.model-settings-toggle-btn');
+            if (!card || !overlay) return;
+            card.classList.add('compact-open');
+            overlay.classList.add('active');
+            if (button) button.setAttribute('aria-expanded', 'true');
+        }
+
+        function closeModelSettingsPanel() {
+            const card = document.getElementById('model-selector-card');
+            const overlay = document.getElementById('model-settings-overlay');
+            const button = document.querySelector('.model-settings-toggle-btn');
+            if (!card || !overlay) return;
+            card.classList.remove('compact-open');
+            overlay.classList.remove('active');
+            if (button) button.setAttribute('aria-expanded', 'false');
+        }
+
+        function toggleModelSettingsPanel() {
+            const card = document.getElementById('model-selector-card');
+            if (card && card.classList.contains('compact-open')) {
+                closeModelSettingsPanel();
+            } else {
+                openModelSettingsPanel();
+            }
+        }
+
         function updateImageModelIcon() {
             const selector = document.getElementById('text-to-image-model-selector');
             const icon = document.getElementById('image-model-icon');
@@ -2345,6 +2695,20 @@
 
             const modelName = selectedOption.textContent;
             icon.title = `生图模型: ${modelName}`;
+            // 同步自定义下拉框的显示文本（与 LLM 模型的 updateModelSelectorDisplay 保持一致）
+            updateImageModelDisplay();
+        }
+
+        function updateImageModelDisplay() {
+            const selector = document.getElementById('text-to-image-model-selector');
+            const display = document.getElementById('image-model-selector-display');
+            if (!selector || !display) return;
+
+            const selectedOption = selector.options[selector.selectedIndex];
+            if (!selectedOption) return;
+
+            display.textContent = selectedOption.dataset.conciseName || selectedOption.textContent || selectedOption.value;
+            display.style.color = '';
         }
 
 
@@ -2526,6 +2890,8 @@
 
                 // 显示选择器
                 selector.style.display = '';
+                // 包装在 .model-select-wrapper 后，同步自定义显示层的文本
+                updateImageModelDisplay();
                 // 注意：自动设置模型逻辑已移至 createSession() 成功后执行
             } catch (error) {
                 console.error('加载生图模型列表失败:', error);
@@ -2665,6 +3031,57 @@
             return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
 
+        function getScriptEpisodeNumber(file) {
+            if (!file) return '';
+            const direct = file.episode_number || file.json_data?.episode_number;
+            if (direct) return direct;
+            const source = `${file.display_name || ''} ${file.file_name || ''} ${file.name || ''}`;
+            const match = source.match(/(?:第\s*)?(\d+)\s*(?:集|episode|ep)?/i);
+            return match ? match[1] : '';
+        }
+
+        async function openStoryboardFromScript(scriptId, episodeNumber) {
+            const currentWorldId = window.currentWorldId || WORLD_ID;
+            if (!currentWorldId) {
+                alert('请先选择世界');
+                return;
+            }
+
+            const ep = parseInt(episodeNumber, 10);
+            if (!ep) {
+                alert('该剧本没有集数信息');
+                return;
+            }
+
+            // 进入故事板前检查当前世界是否已有角色图和场景图
+            const assetsStatus = await checkAssetsComplete();
+            const charCount = assetsStatus.character_image_count || 0;
+            const locCount = assetsStatus.location_image_count || 0;
+            if (charCount === 0 || locCount === 0) {
+                let message = '';
+                if (charCount === 0 && locCount === 0) {
+                    message = window.t ? window.t('storyboard_entry_no_character_and_location_image') : '⚠️ 当前世界还没有角色参考图和场景参考图';
+                } else if (charCount === 0) {
+                    message = window.t ? window.t('storyboard_entry_no_character_image') : '⚠️ 当前世界还没有角色参考图';
+                } else {
+                    message = window.t ? window.t('storyboard_entry_no_location_image') : '⚠️ 当前世界还没有场景参考图';
+                }
+                message += window.t ? window.t('storyboard_entry_submit_hint') : '\n💡 提示：请点击上方的「提交」按钮提交数据后再进入故事板';
+                alert(message);
+                return;
+            }
+
+            const params = new URLSearchParams({
+                world_id: currentWorldId,
+                episode_number: ep,
+            });
+            if (scriptId) params.set('script_id', scriptId);
+            if (USER_ID) params.set('user_id', USER_ID);
+            if (WORKFLOW_ID) params.set('workflow_id', WORKFLOW_ID);
+            // 注意：不再把 auth_token 放到 URL 中（避免敏感信息暴露），storyboard 会从 localStorage 读取（参考本文件实现）
+            window.location.href = `/storyboard?${params.toString()}`;
+        }
+
 
         function switchFileTab(fileType, evt) {
             currentFileType = fileType;
@@ -2711,7 +3128,7 @@
                 }
                 const a = document.createElement('a');
                 a.href = result.download_url;
-                a.download = result.filename || `world_${WORLD_ID}_export.zip`;
+                a.download = result.filename || `world_export_${WORLD_ID}_${new Date().toISOString().slice(0,19).replace(/[-T:]/g, '')}.zip`;
                 a.target = '_blank';
                 document.body.appendChild(a);
                 a.click();
@@ -2728,44 +3145,219 @@
             document.getElementById('import-world-file').click();
         }
 
-        async function handleImportWorld(event) {
-            const fileInput = event.target;
-            const file = fileInput.files[0];
+        async function importWorldFromFile(file) {
             if (!file) return;
             if (!file.name.endsWith('.zip')) {
                 showError(window.t ? window.t('error_zip_only') : '请选择 .zip 格式的文件');
-                fileInput.value = '';
                 return;
             }
             if (!confirm(window.t ? window.t('confirm_import_world', {name: file.name}) : `确定要导入 "${file.name}" 吗？\n\n导入会覆盖当前世界的同名数据，请确认。`)) {
-                fileInput.value = '';
                 return;
             }
             try {
+                // 大文件链路：前端直传七牛 → 后端限速下载 → 后台解包 → 轮询
                 updateStatus(window.t ? window.t('status_importing_world') : '正在导入世界数据...');
-                const formData = new FormData();
-                formData.append('user_id', USER_ID);
-                formData.append('world_id', WORLD_ID);
-                formData.append('file', file);
-                const response = await fetch(`/api/import-world?auth_token=${AUTH_TOKEN}`, {
+                showWorldImportProgress(window.t ? window.t('world_import_stage_uploading') : '上传中…', 0);
+
+                // 1) 颁发上传 token
+                const tokenResp = await fetch(`/api/world-upload-token?auth_token=${AUTH_TOKEN}`, {
                     method: 'POST',
-                    body: formData
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: new URLSearchParams({
+                        world_id: WORLD_ID,
+                        filename: file.name,
+                        size: String(file.size),
+                    })
                 });
-                const data = await response.json();
-                if (data.success) {
-                    showSuccess('✓ ' + data.message);
-                    updateStatus(window.t ? window.t('status_import_done') : '导入完成');
-                    await loadFiles(currentFileType);
-                } else {
-                    showError((window.t ? window.t('error_import_failed', {error: data.error || (window.t ? window.t('error_unknown') : '未知错误')}) : '导入失败: ' + (data.error || '未知错误')));
-                    updateStatus(window.t ? window.t('status_import_failed') : '导入失败');
+                const tokenData = await tokenResp.json().catch(() => ({}));
+                if (!tokenResp.ok || !tokenData.success) {
+                    throw new Error(tokenData.error || tokenResp.statusText || '获取上传凭证失败');
                 }
+
+                // 2) 前端直传七牛（XHR 带 upload.onprogress）
+                const key = await uploadWorldZipToQiniu(
+                    tokenData.upload_url,
+                    tokenData.token,
+                    tokenData.key,
+                    file
+                );
+
+                // 3) 触发后端导入（立即返回 job_id）
+                const importResp = await fetch(`/api/import-world-from-cloud?auth_token=${AUTH_TOKEN}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: new URLSearchParams({
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        key: key,
+                    })
+                });
+                const importData = await importResp.json().catch(() => ({}));
+                if (importResp.status === 429) {
+                    throw new Error(importData.error || '当前导入任务过多，请稍后再试');
+                }
+                if (!importResp.ok || !importData.success) {
+                    throw new Error(importData.error || importResp.statusText || '创建导入任务失败');
+                }
+
+                // 4) 轮询任务进度
+                const result = await pollWorldImportStatus(importData.job_id);
+                showSuccess('✓ ' + (result.message || (window.t ? window.t('status_import_done') : '导入完成')));
+                updateStatus(window.t ? window.t('status_import_done') : '导入完成');
+                await loadFiles(currentFileType);
             } catch (error) {
                 showError((window.t ? window.t('error_import_failed', {error: error.message}) : '导入失败: ' + error.message));
                 updateStatus(window.t ? window.t('status_import_failed') : '导入失败');
             } finally {
-                fileInput.value = '';
+                hideWorldImportProgress();
             }
+        }
+
+        /**
+         * 前端直传七牛云（带进度回调）。返回上传后的 key。
+         * 用 XHR 而非 fetch，因为需要 xhr.upload.onprogress。
+         */
+        function uploadWorldZipToQiniu(uploadUrl, token, key, file) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', uploadUrl, true);
+                xhr.responseType = 'json';
+
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const pct = Math.round(e.loaded * 100 / e.total);
+                        showWorldImportProgress(
+                            window.t ? window.t('world_import_stage_uploading') : '上传中…',
+                            pct
+                        );
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        // 七牛 form 上传成功响应体：{"key":"...","hash":"..."}（取决于 token returnBody）
+                        // key 以我们传入的为准
+                        resolve(key);
+                    } else {
+                        let detail = '';
+                        try { detail = JSON.stringify(xhr.response || xhr.responseText); } catch (_) { detail = xhr.responseText || ''; }
+                        reject(new Error(`上传到云端失败 (HTTP ${xhr.status}): ${detail}`));
+                    }
+                };
+
+                xhr.onerror = () => reject(new Error('上传到云端失败：网络错误'));
+                xhr.ontimeout = () => reject(new Error('上传到云端超时'));
+
+                const formData = new FormData();
+                formData.append('token', token);
+                formData.append('key', key);
+                formData.append('file', file);
+                xhr.send(formData);
+            });
+        }
+
+        /** 轮询后端导入任务状态直到 done/failed */
+        async function pollWorldImportStatus(jobId) {
+            const stageI18n = {
+                downloading: window.t ? window.t('world_import_stage_downloading') : '云端下载中…',
+                unpacking: window.t ? window.t('world_import_stage_unpacking') : '解包导入中…',
+                done: window.t ? window.t('world_import_stage_done') : '导入完成',
+                pending: window.t ? window.t('world_import_stage_pending') : '排队中…',
+                failed: window.t ? window.t('world_import_stage_failed') : '导入失败',
+            };
+            while (true) {
+                await new Promise(r => setTimeout(r, 1500));
+                let resp;
+                try {
+                    resp = await fetch(`/api/world-import-status?job_id=${encodeURIComponent(jobId)}&auth_token=${AUTH_TOKEN}`);
+                } catch (e) {
+                    // 网络抖动：继续重试
+                    continue;
+                }
+                if (resp.status === 404) {
+                    // 任务丢失（进程重启等），让用户重试
+                    throw new Error('导入任务已丢失（服务可能重启过），请重试');
+                }
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || !data.success) {
+                    throw new Error(data.error || '查询导入状态失败');
+                }
+                const stageLabel = stageI18n[data.stage] || data.stage || '';
+                showWorldImportProgress(stageLabel, data.progress || 0, data.status);
+                if (data.status === 'done') {
+                    return data;
+                }
+                if (data.status === 'failed') {
+                    throw new Error(data.error || '导入失败');
+                }
+            }
+        }
+
+        /** 显示/更新导入进度条。status 可选：done/failed 用于变色 */
+        function showWorldImportProgress(stageText, pct, status) {
+            const box = document.getElementById('worldImportProgress');
+            const stageEl = document.getElementById('worldImportProgressStage');
+            const pctEl = document.getElementById('worldImportProgressPct');
+            const fillEl = document.getElementById('worldImportProgressFill');
+            if (!box) return;
+            box.hidden = false;
+            if (stageText !== undefined) stageEl.textContent = stageText;
+            const p = Math.max(0, Math.min(100, Math.round(pct || 0)));
+            pctEl.textContent = p + '%';
+            fillEl.style.width = p + '%';
+            box.classList.toggle('done', status === 'done');
+            box.classList.toggle('error', status === 'failed');
+        }
+
+        function hideWorldImportProgress() {
+            const box = document.getElementById('worldImportProgress');
+            if (!box) return;
+            // 延迟隐藏，让用户看到完成/失败状态
+            setTimeout(() => {
+                box.hidden = true;
+                box.classList.remove('done', 'error');
+            }, 1500);
+        }
+
+        function handleImportWorld(event) {
+            const fileInput = event.target;
+            const file = fileInput.files[0];
+            importWorldFromFile(file).finally(() => {
+                fileInput.value = '';
+            });
+        }
+
+        function initImportDropZone() {
+            const dropZone = document.getElementById('importDropZone');
+            if (!dropZone) return;
+
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }, false);
+            });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => {
+                    dropZone.classList.add('drag-over');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    // dragleave 仅在真正离开 dropZone 时移除高亮，避免进入子元素时闪烁
+                    if (eventName === 'dragleave' && dropZone.contains(e.relatedTarget)) {
+                        return;
+                    }
+                    dropZone.classList.remove('drag-over');
+                }, false);
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                const file = e.dataTransfer.files[0];
+                importWorldFromFile(file);
+            }, false);
         }
 
         async function loadFiles(fileType) {
@@ -2823,6 +3415,7 @@
                         let imageIconHtml = '';
                         let voiceIconHtml = '';
                         let deleteButtonHtml = '';
+                        let storyboardButtonHtml = '';
                         
                         // 角色、场景、道具显示图片预览图标
                         if (['characters', 'locations', 'props'].includes(fileType)) {
@@ -2893,6 +3486,17 @@
                             `;
                         }
                         
+                        if (fileType === 'scripts') {
+                            storyboardButtonHtml = `
+                                <button class="file-btn storyboard-btn" data-action="open-storyboard" data-script-id="${escapeHtmlAttr(file.id || file.script_id || '')}" data-episode-number="${escapeHtmlAttr(getScriptEpisodeNumber(file))}" title="打开故事板">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="3" y="4" width="18" height="16" rx="2"/>
+                                        <path d="M8 4v16M3 9h18M3 15h18"/>
+                                    </svg>
+                                </button>
+                            `;
+                        }
+
                         // 剧本使用 display_name 展示，其他类型使用 name
                         const displayName = (fileType === 'scripts' && file.display_name) ? file.display_name : file.name;
                         // 剧本使用 file_name 作为 API 键，其他类型使用 name
@@ -2903,6 +3507,7 @@
                             <div class="file-actions">
                                 ${imageIconHtml}
                                 ${voiceIconHtml}
+                                ${storyboardButtonHtml}
                                 ${deleteButtonHtml}
                                 <button class="file-btn view-btn" data-action="view" data-file-type="${escapeHtmlAttr(fileType)}" data-file-key="${escapeHtmlAttr(fileKey)}" title="查看" data-i18n-title="title_view">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2934,6 +3539,8 @@
                                 if (!btn.disabled) playCharacterVoice(btn.dataset.fileName);
                             } else if (action === 'delete') {
                                 deleteStagingFile(btn.dataset.filePath);
+                            } else if (action === 'open-storyboard') {
+                                openStoryboardFromScript(btn.dataset.scriptId, btn.dataset.episodeNumber);
                             } else if (action === 'view') {
                                 viewFile(btn.dataset.fileType, btn.dataset.fileKey);
                             } else if (action === 'edit') {
@@ -3011,10 +3618,12 @@
         }
 
         function showWorldViewer(fileName, data) {
+            data.story_type = normalizeStoryType(data.story_type);
             document.getElementById('view-modal-title').textContent = `🌍 查看世界 - ${fileName}`;
             document.getElementById('world-view-form').style.display = 'block';
             document.getElementById('view-world-name').textContent = data.name || '未设置';
             document.getElementById('view-world-user-id').textContent = data.user_id || '未设置';
+            document.getElementById('world-story-type-view').textContent = getStoryTypeLabel(data.story_type);
             document.getElementById('view-world-description').textContent = data.description || '未设置';
             document.getElementById('view-world-story-outline').textContent = data.story_outline || '未设置';
             document.getElementById('view-world-visual-style').textContent = data.visual_style || '未设置';
@@ -3044,11 +3653,114 @@
             document.getElementById('view-modal-title').textContent = `🏛️ 查看场景 - ${fileName}`;
             document.getElementById('location-view-form').style.display = 'block';
             document.getElementById('view-loc-name').textContent = data.name || '未设置';
-            document.getElementById('view-loc-parent').textContent = data.parent_id || '无';
+            const parentLabel = resolveParentName(data) || '无';
+            document.getElementById('view-loc-parent').textContent = parentLabel;
             document.getElementById('view-loc-description').textContent = data.description || '未设置';
             
             const imageContainer = document.getElementById('view-loc-image-container');
             displayImage(imageContainer, data.reference_image);
+        }
+
+        // ==================== 场景父级（仅顶级可选） ====================
+        /** 缓存本世界场景 JSON 列表：[{name, parent_name, parent_id, ...}] */
+        let cachedLocationJsonList = [];
+
+        /** 无父引用 = 顶级（未落库只看文件字段，不查 DB） */
+        function isTopLevelLocation(locJson) {
+            if (!locJson || typeof locJson !== 'object') return true;
+            const parentName = String(locJson.parent_name ?? '').trim();
+            if (parentName) return false;
+            const pid = locJson.parent_id;
+            if (pid === null || pid === undefined || pid === '') return true;
+            return false;
+        }
+
+        /**
+         * 解析父场景名称（兼容 parent_name / 数字 parent_id / 名称字符串 parent_id）
+         * @param {object} locJson
+         * @param {Array} [allLocs]
+         */
+        function resolveParentName(locJson, allLocs) {
+            if (!locJson || typeof locJson !== 'object') return null;
+            const pn = String(locJson.parent_name ?? '').trim();
+            if (pn) return pn;
+            const pid = locJson.parent_id;
+            if (pid === null || pid === undefined || pid === '') return null;
+            const pidStr = String(pid).trim();
+            if (!pidStr) return null;
+            // 纯数字：尝试在列表中用 id 反查 name（历史同步残留）
+            if (/^\d+$/.test(pidStr) && Array.isArray(allLocs)) {
+                const byId = allLocs.find((l) => String(l.id) === pidStr || String(l.db_id) === pidStr);
+                if (byId && byId.name) return String(byId.name).trim();
+            }
+            // 非纯数字或反查失败：当作名称
+            if (!/^\d+$/.test(pidStr)) return pidStr;
+            return pidStr;
+        }
+
+        /** 拉取本世界场景 JSON 列表（含 json_data） */
+        async function fetchLocationJsonList() {
+            try {
+                const response = await fetch(
+                    `/api/locations-files?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`
+                );
+                const data = await response.json();
+                const locs = data.locations || data.data?.data || [];
+                cachedLocationJsonList = locs.map((l) => {
+                    const jd = l.json_data && typeof l.json_data === 'object' ? l.json_data : l;
+                    return {
+                        name: jd.name || l.name || '',
+                        parent_name: jd.parent_name ?? null,
+                        parent_id: jd.parent_id ?? null,
+                        id: jd.id ?? null,
+                        ...jd,
+                    };
+                }).filter((l) => l.name);
+                return cachedLocationJsonList;
+            } catch (e) {
+                console.warn('获取场景列表失败:', e);
+                cachedLocationJsonList = [];
+                return [];
+            }
+        }
+
+        /**
+         * 填充父级场景下拉：仅顶级场景
+         * @param {HTMLSelectElement} selectEl
+         * @param {{ excludeName?: string, selectedParentName?: string|null }} [opts]
+         */
+        async function loadTopLevelParentOptions(selectEl, opts = {}) {
+            if (!selectEl) return;
+            const excludeName = (opts.excludeName || '').trim();
+            const selectedParentName = (opts.selectedParentName || '').trim();
+            const list = await fetchLocationJsonList();
+            const tops = list.filter((l) => isTopLevelLocation(l) && l.name !== excludeName);
+
+            selectEl.innerHTML = '';
+            const emptyOpt = document.createElement('option');
+            emptyOpt.value = '';
+            emptyOpt.textContent = '无（顶层场景）';
+            selectEl.appendChild(emptyOpt);
+
+            tops.forEach((loc) => {
+                const opt = document.createElement('option');
+                opt.value = loc.name;
+                opt.textContent = loc.name;
+                if (selectedParentName && loc.name === selectedParentName) {
+                    opt.selected = true;
+                }
+                selectEl.appendChild(opt);
+            });
+
+            // 历史父级已非顶级或已删除：保留可见但禁用，避免静默丢失
+            if (selectedParentName && !tops.some((t) => t.name === selectedParentName)) {
+                const stale = document.createElement('option');
+                stale.value = selectedParentName;
+                stale.textContent = `${selectedParentName}（已非顶级或已删除，请重选）`;
+                stale.disabled = true;
+                stale.selected = true;
+                selectEl.appendChild(stale);
+            }
         }
 
         function showPropViewer(fileName, data) {
@@ -3274,6 +3986,63 @@
             showCharacterDefaultVoicePreview('');
         }
 
+        function triggerCharacterVoiceUpload() {
+            const fileInput = document.getElementById('char-voice-file');
+            fileInput.click();
+        }
+
+        async function handleCharacterVoiceUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const allowedExtensions = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.wma'];
+            const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+            if (!allowedExtensions.includes(fileExtension)) {
+                showError(window.t ? window.t('error_select_audio_file') : '请选择支持的音频格式文件');
+                event.target.value = '';
+                return;
+            }
+
+            const maxSize = 20 * 1024 * 1024;
+            if (file.size > maxSize) {
+                showError(window.t ? window.t('error_audio_too_large') : '音频大小不能超过20MB');
+                event.target.value = '';
+                return;
+            }
+
+            showInfo('正在上传音频...');
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('user_id', USER_ID);
+            formData.append('world_id', WORLD_ID);
+            formData.append('auth_token', AUTH_TOKEN);
+
+            try {
+                const response = await fetch('/api/upload-character-audio', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    document.getElementById('char-default-voice').value = data.url;
+                    showCharacterDefaultVoicePreview(data.url);
+                    showSuccess(window.t ? window.t('success_audio_uploaded') : '音频上传成功');
+                } else {
+                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                }
+            } catch (error) {
+                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+            }
+
+            event.target.value = '';
+        }
+
         async function generateCharacterReferenceAudio() {
             if (!currentEditFile || currentEditFile.fileType !== 'characters') {
                 showError(window.t ? window.t('error_open_character_first') : '请先打开一个角色进行编辑');
@@ -3331,13 +4100,19 @@
             }
         }
 
-        function showLocationEditor(fileName, data) {
+        async function showLocationEditor(fileName, data) {
             document.getElementById('edit-modal-title').textContent = `✏️ 编辑场景 - ${fileName}`;
             document.getElementById('location-edit-form').style.display = 'block';
             document.getElementById('loc-name').value = data.name || '';
-            document.getElementById('loc-parent').value = data.parent_id || '';
             document.getElementById('loc-description').value = data.description || '';
             document.getElementById('loc-image').value = data.reference_image || '';
+
+            const parentSelect = document.getElementById('loc-parent');
+            const selectedParent = resolveParentName(data, cachedLocationJsonList);
+            await loadTopLevelParentOptions(parentSelect, {
+                excludeName: data.name || '',
+                selectedParentName: selectedParent,
+            });
 
             // 如果有图片，显示预览
             if (data.reference_image) {
@@ -4696,10 +5471,12 @@
         });
 
         function collectLocationData() {
-            const parentId = document.getElementById('loc-parent').value.trim();
+            const parentName = (document.getElementById('loc-parent').value || '').trim() || null;
             const data = {
                 name: document.getElementById('loc-name').value.trim(),
-                parent_id: parentId === '' ? null : parentId,
+                // 文件层主字段：父场景名称；parent_id 过渡期双写同名，同步时按名称解析
+                parent_name: parentName,
+                parent_id: parentName,
                 description: document.getElementById('loc-description').value.trim(),
                 reference_image: document.getElementById('loc-image').value.trim()
             };
@@ -4798,12 +5575,14 @@
 
         function showWorldEditor(fileName, data) {
             console.log('showWorldEditor called with data:', data); // 调试日志
+            data.story_type = normalizeStoryType(data.story_type);
             document.getElementById('edit-modal-title').textContent = `✏️ 编辑世界 - ${fileName}`;
             document.getElementById('world-edit-form').style.display = 'block';
             
             // 确保所有字段都有值，使用空字符串作为默认值
             document.getElementById('world-name').value = data.name || '';
             document.getElementById('world-user-id').value = data.user_id || USER_ID;
+            document.getElementById('world-story-type').value = data.story_type;
             document.getElementById('world-description').value = data.description || '';
             document.getElementById('world-story-outline').value = data.story_outline || '';
             document.getElementById('world-visual-style').value = data.visual_style || '';
@@ -4820,6 +5599,7 @@
                 id: parseInt(WORLD_ID),
                 name: document.getElementById('world-name').value.trim(),
                 user_id: parseInt(document.getElementById('world-user-id').value) || parseInt(USER_ID),
+                story_type: normalizeStoryType(document.getElementById('world-story-type').value),
                 description: document.getElementById('world-description').value.trim(),
                 story_outline: document.getElementById('world-story-outline').value.trim(),
                 visual_style: document.getElementById('world-visual-style').value.trim(),
@@ -4832,6 +5612,103 @@
             return JSON.stringify(data, null, 2);
         }
 
+        // 缓存世界列表，用于侧边栏搜索
+        let cachedWorlds = [];
+
+        function renderWorldList(worlds) {
+            const worldList = document.getElementById('world-list');
+            if (!worldList) return;
+
+            if (worlds.length === 0) {
+                const searchInput = document.getElementById('world-search-input');
+                const hasKeyword = searchInput && searchInput.value.trim();
+                worldList.innerHTML = `<div class="world-empty">${hasKeyword
+                    ? (window.t ? window.t('no_worlds_found') : '未找到匹配的世界')
+                    : (window.t ? window.t('no_worlds') : '暂无世界')}</div>`;
+                return;
+            }
+
+            worldList.innerHTML = '';
+            worlds.forEach(world => {
+                const worldItem = document.createElement('div');
+                worldItem.className = 'world-item' + (world.id == WORLD_ID ? ' active' : '');
+
+                const worldInfo = document.createElement('div');
+                worldInfo.className = 'world-info';
+                worldInfo.onclick = () => switchWorld(world.id);
+
+                const worldName = document.createElement('div');
+                worldName.className = 'world-name';
+                worldName.textContent = world.name;
+                worldInfo.appendChild(worldName);
+
+                if (world.description) {
+                    const worldDesc = document.createElement('div');
+                    worldDesc.className = 'world-desc';
+                    worldDesc.textContent = world.description;
+                    worldInfo.appendChild(worldDesc);
+                }
+
+                const worldActions = document.createElement('div');
+                worldActions.className = 'world-actions';
+
+                const editBtn = document.createElement('button');
+                editBtn.className = 'world-edit-btn';
+                editBtn.title = '编辑世界';
+                editBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    showEditWorldModal(world.id, world.name, world.description || '', world.story_type);
+                };
+                editBtn.innerHTML = `
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                `;
+
+                worldActions.appendChild(editBtn);
+                worldItem.appendChild(worldInfo);
+                worldItem.appendChild(worldActions);
+                worldList.appendChild(worldItem);
+            });
+        }
+
+        function filterWorlds(keyword) {
+            const normalized = (keyword || '').toLowerCase().trim();
+            if (!normalized) {
+                renderWorldList(cachedWorlds);
+                return;
+            }
+            const filtered = cachedWorlds.filter(world => {
+                const name = (world.name || '').toLowerCase();
+                const desc = (world.description || '').toLowerCase();
+                return name.includes(normalized) || desc.includes(normalized);
+            });
+            renderWorldList(filtered);
+        }
+
+        function bindWorldSearchEvents() {
+            const searchInput = document.getElementById('world-search-input');
+            const clearBtn = document.getElementById('world-search-clear');
+            if (!searchInput) return;
+
+            searchInput.addEventListener('input', (e) => {
+                filterWorlds(e.target.value);
+                if (clearBtn) {
+                    clearBtn.style.display = e.target.value ? 'flex' : 'none';
+                }
+            });
+
+            if (clearBtn) {
+                clearBtn.addEventListener('click', () => {
+                    searchInput.value = '';
+                    filterWorlds('');
+                    clearBtn.style.display = 'none';
+                    searchInput.focus();
+                });
+            }
+        }
+
         async function loadUserWorlds() {
             try {
                 const response = await fetch('/api/worlds?page=1&page_size=100', {
@@ -4841,65 +5718,21 @@
                     }
                 });
                 const data = await response.json();
-                
+
                 // 兼容后端返回格式: {code: 0, data: {data: [...]}}
                 const worlds = data.data?.data || data.worlds || [];
                 if (data.code === 0 || data.success) {
-                    const worldList = document.getElementById('world-list');
-                    
-                    if (worlds.length === 0) {
-                        worldList.innerHTML = '<div class="world-empty">暂无世界</div>';
-                        return;
-                    }
-                    
-                    worldList.innerHTML = '';
-                    worlds.forEach(world => {
-                        const worldItem = document.createElement('div');
-                        worldItem.className = 'world-item' + (world.id == WORLD_ID ? ' active' : '');
-                        
-                        const worldInfo = document.createElement('div');
-                        worldInfo.className = 'world-info';
-                        worldInfo.onclick = () => switchWorld(world.id);
-                        
-                        const worldName = document.createElement('div');
-                        worldName.className = 'world-name';
-                        worldName.textContent = world.name;
-                        worldInfo.appendChild(worldName);
-                        
-                        if (world.description) {
-                            const worldDesc = document.createElement('div');
-                            worldDesc.className = 'world-desc';
-                            worldDesc.textContent = world.description;
-                            worldInfo.appendChild(worldDesc);
-                        }
-                        
-                        const worldActions = document.createElement('div');
-                        worldActions.className = 'world-actions';
-                        
-                        const editBtn = document.createElement('button');
-                        editBtn.className = 'world-edit-btn';
-                        editBtn.title = '编辑世界';
-                        editBtn.onclick = (e) => {
-                            e.stopPropagation();
-                            showEditWorldModal(world.id, world.name, world.description || '');
-                        };
-                        editBtn.innerHTML = `
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                            </svg>
-                        `;
-                        
-                        worldActions.appendChild(editBtn);
-                        worldItem.appendChild(worldInfo);
-                        worldItem.appendChild(worldActions);
-                        worldList.appendChild(worldItem);
-                    });
+                    cachedWorlds = worlds;
+                    // 应用当前搜索关键字过滤（如果有）
+                    const searchInput = document.getElementById('world-search-input');
+                    filterWorlds(searchInput ? searchInput.value : '');
                 } else {
+                    cachedWorlds = [];
                     document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
                 }
             } catch (error) {
                 console.error('加载世界列表失败:', error);
+                cachedWorlds = [];
                 document.getElementById('world-list').innerHTML = '<div class="world-empty">加载失败</div>';
             }
         }
@@ -4961,6 +5794,7 @@
         function showNewWorldModal() {
             document.getElementById('new-world-name').value = '';
             document.getElementById('new-world-description').value = '';
+            document.getElementById('new-world-story-type').value = 'dialogue';
             document.getElementById('new-world-modal').classList.add('show');
             document.getElementById('new-world-name').focus();
         }
@@ -4972,6 +5806,7 @@
         async function createNewWorld() {
             const name = document.getElementById('new-world-name').value.trim();
             const description = document.getElementById('new-world-description').value.trim();
+            const storyType = normalizeStoryType(document.getElementById('new-world-story-type').value);
             
             if (!name) {
                 showError(window.t ? window.t('error_enter_world_name') : '请输入世界名称');
@@ -4989,7 +5824,8 @@
                     },
                     body: JSON.stringify({
                         name: name,
-                        description: description
+                        description: description,
+                        story_type: storyType
                     })
                 });
                 
@@ -5229,10 +6065,8 @@
 
         async function fetchExistingLocations() {
             try {
-                const response = await fetch(`/api/locations-files?user_id=${USER_ID}&world_id=${WORLD_ID}&auth_token=${AUTH_TOKEN}&raw_json=true`);
-                const data = await response.json();
-                const locs = data.locations || data.data?.data || [];
-                existingLocations = locs.map(l => l.name).filter(Boolean);
+                const list = await fetchLocationJsonList();
+                existingLocations = list.map((l) => l.name).filter(Boolean);
             } catch (e) {
                 console.warn('获取已有场景列表失败:', e);
                 existingLocations = [];
@@ -5255,12 +6089,15 @@
             }
         }
 
-        function showNewLocationModal() {
-            ['new-loc-name','new-loc-parent'].forEach(id => document.getElementById(id).value = '');
+        async function showNewLocationModal() {
+            document.getElementById('new-loc-name').value = '';
             document.getElementById('new-loc-description').value = '';
             const hint = document.getElementById('loc-name-hint');
             hint.style.display = 'none'; hint.textContent = '';
-            fetchExistingLocations();
+            await fetchExistingLocations();
+            await loadTopLevelParentOptions(document.getElementById('new-loc-parent'), {
+                selectedParentName: '',
+            });
             document.getElementById('new-location-modal').classList.add('show');
             document.getElementById('new-loc-name').focus();
             document.getElementById('new-loc-name').oninput = checkLocationNameDuplicate;
@@ -5278,11 +6115,13 @@
             try {
                 updateStatus(window.t ? window.t('status_creating_scene') : '正在创建场景...');
                 const now = new Date().toISOString();
+                const parentName = (document.getElementById('new-loc-parent').value || '').trim() || null;
                 const data = {
                     user_id: USER_ID,
                     world_id: WORLD_ID,
                     name: name,
-                    parent_id: document.getElementById('new-loc-parent').value.trim() || null,
+                    parent_name: parentName,
+                    parent_id: parentName,
                     description: document.getElementById('new-loc-description').value.trim(),
                     reference_image: '',
                     reference_images: [],
@@ -5390,20 +6229,22 @@
         }
 
         // 编辑世界相关函数
-        function showEditWorldModal(worldId, worldName, worldDescription = '') {
+        function showEditWorldModal(worldId, worldName, worldDescription = '', storyType = 'dialogue') {
             currentEditWorld.id = worldId;
             currentEditWorld.name = worldName;
             currentEditWorld.description = worldDescription;
+            currentEditWorld.story_type = normalizeStoryType(storyType);
             
             document.getElementById('edit-world-name').value = worldName;
             document.getElementById('edit-world-description').value = worldDescription;
+            document.getElementById('edit-world-story-type').value = currentEditWorld.story_type;
             document.getElementById('edit-world-modal').classList.add('show');
             document.getElementById('edit-world-name').focus();
         }
 
         function closeEditWorldModal() {
             document.getElementById('edit-world-modal').classList.remove('show');
-            currentEditWorld = { id: '', name: '', description: '' };
+            currentEditWorld = { id: '', name: '', description: '', story_type: 'dialogue' };
         }
 
         function openComputingPowerLogsModal() {
@@ -5571,6 +6412,7 @@
         async function saveEditedWorld() {
             const name = document.getElementById('edit-world-name').value.trim();
             const description = document.getElementById('edit-world-description').value.trim();
+            const storyType = normalizeStoryType(document.getElementById('edit-world-story-type').value);
             
             if (!name) {
                 showError(window.t ? window.t('error_enter_world_name') : '请输入世界名称');
@@ -5590,6 +6432,7 @@
                     body: JSON.stringify({
                         name: name,
                         description: description,
+                        story_type: storyType,
                         user_id: USER_ID,
                         auth_token: AUTH_TOKEN
                     })
@@ -5632,6 +6475,7 @@
             
             // 按 Escape 键关闭弹窗
             if (e.key === 'Escape') {
+                closeCustomModelSelectMenu();
                 if (document.getElementById('new-world-modal').classList.contains('show')) {
                     closeNewWorldModal();
                 }
@@ -5771,15 +6615,17 @@
                 if (data.code === 0) {
                     return {
                         hasScript: data.data.has_script,
-                        missingAssets: data.data.missing_assets || []
+                        missingAssets: data.data.missing_assets || [],
+                        character_image_count: data.data.character_image_count || 0,
+                        location_image_count: data.data.location_image_count || 0
                     };
                 } else {
                     console.error('检查资产状态失败:', data.message);
-                    return { hasScript: true, missingAssets: [] };
+                    return { hasScript: true, missingAssets: [], character_image_count: 0, location_image_count: 0 };
                 }
             } catch (error) {
                 console.error('检查资产状态请求失败:', error);
-                return { hasScript: true, missingAssets: [] };
+                return { hasScript: true, missingAssets: [], character_image_count: 0, location_image_count: 0 };
             }
         }
         
@@ -5804,7 +6650,7 @@
                         }
                         message += '\n';
                     });
-                    message += window.t ? window.t('asset_confirm_hint') : '\n💡 提示：请点击「提交数据」按钮生成资产图片后再进入制作工坊\n';
+                    message += window.t ? window.t('asset_confirm_hint') : '\n💡 提示：请点击「提交」按钮生成资产图片后再进入制作工坊\n';
                 }
 
                 message += window.t ? window.t('asset_confirm_enter_workflow') : '\n是否仍要进入制作工坊？';
@@ -5817,6 +6663,108 @@
             });
         }
         
+        function showModeSelection() {
+            submitToDatabase().catch(e => console.warn('预提交失败:', e));
+
+            let modal = document.getElementById('mode-selection-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'mode-selection-modal';
+                modal.className = 'sw-modal-overlay';
+                modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;z-index:9999;';
+                modal.innerHTML = `
+                    <div style="background:#1e1e2e;border-radius:12px;padding:32px;max-width:480px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+                        <h2 style="color:#e8e8e8;margin:0 0 8px;font-size:20px;">选择制作模式</h2>
+                        <p style="color:#a0a0b0;margin:0 0 24px;font-size:14px;">选择你想使用的短剧制作方式</p>
+                        <div style="display:flex;gap:16px;">
+                            <div onclick="selectMode('canvas')" style="flex:1;background:#0f3460;border:2px solid transparent;border-radius:10px;padding:20px;cursor:pointer;text-align:center;transition:all 0.2s;" onmouseenter="this.style.borderColor='#4f46e5'" onmouseleave="this.style.borderColor='transparent'">
+                                <div style="font-size:36px;margin-bottom:8px;">🎨</div>
+                                <h3 style="color:#e8e8e8;margin:0 0 6px;font-size:16px;">画布模式</h3>
+                                <p style="color:#a0a0b0;margin:0;font-size:12px;">节点式工作流，自由连接各类处理节点</p>
+                            </div>
+                            <div onclick="selectMode('storyboard')" style="flex:1;background:#0f3460;border:2px solid transparent;border-radius:10px;padding:20px;cursor:pointer;text-align:center;transition:all 0.2s;" onmouseenter="this.style.borderColor='#4f46e5'" onmouseleave="this.style.borderColor='transparent'">
+                                <div style="font-size:36px;margin-bottom:8px;">📋</div>
+                                <h3 style="color:#e8e8e8;margin:0 0 6px;font-size:16px;">故事板模式</h3>
+                                <p style="color:#a0a0b0;margin:0;font-size:12px;">分镜式编辑，按场景逐帧生成图片和视频</p>
+                            </div>
+                        </div>
+                        <div style="text-align:center;margin-top:16px;">
+                            <button onclick="closeModeSelection()" style="background:none;border:1px solid #555;color:#a0a0b0;padding:6px 20px;border-radius:6px;cursor:pointer;font-size:13px;">取消</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            }
+            modal.style.display = 'flex';
+        }
+
+        function closeModeSelection() {
+            const modal = document.getElementById('mode-selection-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function selectMode(mode) {
+            closeModeSelection();
+            if (mode === 'canvas') {
+                await goToWorkflowCanvas();
+            } else if (mode === 'storyboard') {
+                await goToStoryboard();
+            }
+        }
+
+        async function goToStoryboard() {
+            try {
+                await submitToDatabase();
+            } catch (e) {
+                console.error('提交数据失败:', e);
+            }
+
+            const assetsStatus = await checkAssetsComplete();
+            const hasProblems = !assetsStatus.hasScript || assetsStatus.missingAssets.length > 0;
+            if (hasProblems) {
+                const confirmed = await showAssetConfirmModal(assetsStatus.hasScript, assetsStatus.missingAssets);
+                if (!confirmed) return;
+            }
+
+            const currentWorldId = window.currentWorldId || WORLD_ID;
+            if (!currentWorldId) {
+                alert('请先选择世界');
+                return;
+            }
+
+            let episodeNumber = 1;
+            const episodeInput = document.getElementById('script-episode');
+            if (episodeInput && episodeInput.value) {
+                episodeNumber = parseInt(episodeInput.value, 10) || 1;
+            }
+
+            let scriptId = null;
+            try {
+                const resp = await fetch(`/api/scripts?world_id=${encodeURIComponent(currentWorldId)}&page_size=100&order_by=episode_number&order_direction=ASC`, {
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const result = await resp.json();
+                const scripts = result?.data?.data || [];
+                const matched = scripts.find(item => parseInt(item.episode_number, 10) === episodeNumber);
+                scriptId = matched ? matched.id : null;
+            } catch (e) {
+                console.warn('获取当前剧本ID失败，故事板后端将按集数兜底:', e);
+            }
+
+            const params = new URLSearchParams({
+                world_id: currentWorldId,
+                episode_number: episodeNumber,
+            });
+            if (scriptId) params.set('script_id', scriptId);
+            if (USER_ID) params.set('user_id', USER_ID);
+            if (WORKFLOW_ID) params.set('workflow_id', WORKFLOW_ID);
+            // 注意：不再把 auth_token 放到 URL 中（避免敏感信息暴露），storyboard 会从 localStorage 读取（参考本文件实现）
+            window.location.href = `/storyboard?${params.toString()}`;
+        }
+
         // 跳转到工作流画布
         async function goToWorkflowCanvas() {
             // 如果没有WORKFLOW_ID，尝试从当前世界获取关联的工作流
@@ -6034,6 +6982,19 @@
             }
         }
 
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const sidebar = document.getElementById('file-sidebar');
+                const overlay = document.getElementById('file-sidebar-overlay');
+                if (sidebar && sidebar.classList.contains('open')) {
+                    sidebar.classList.remove('open');
+                    overlay.classList.remove('active');
+                    document.body.style.overflow = '';
+                }
+                closeModelSettingsPanel();
+            }
+        });
+
         document.addEventListener('DOMContentLoaded', () => {
             const dropZone = document.getElementById('script-drop-zone');
             const fileInput = document.getElementById('import-script-file');
@@ -6124,6 +7085,7 @@
         // 监听语言变化事件，更新动态设置的文本值
         if (window.ZJTi18n) {
             window.ZJTi18n.on('locale-changed', () => {
+                updateInterventionLevelDisplay();
                 // 如果没有选择世界，更新占位符和状态文本
                 if (!window.WORLD_ID) {
                     const messageInput = document.getElementById('message-input');

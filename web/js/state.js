@@ -184,9 +184,10 @@
     }
 
     // 获取URL参数中的工作流ID
+    // 优先读 id（列表页/新建画布标准参数），兼容 workflow_id（历史链接/剧本侧跳转）
     function getWorkflowIdFromUrl(){
       const params = new URLSearchParams(window.location.search);
-      return params.get('id');
+      return params.get('id') || params.get('workflow_id');
     }
 
     // 获取auth token

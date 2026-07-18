@@ -1521,6 +1521,7 @@ const AdminApp = {
 
         sortedModelAnalysisModels() {
             return [...(this.dashboard.modelAnalysis.models || [])]
+                .filter(model => (model.total || 0) > 0)
                 .sort((a, b) => (b.total || 0) - (a.total || 0));
         },
 
@@ -3118,13 +3119,25 @@ const AdminApp = {
                 'kling_image_to_video': 'Kling 图生视频',
                 'gemini_image_edit': 'Gemini 图片编辑 (标准版)',
                 'gemini_image_edit_pro': 'Gemini 图片编辑 (Pro版)',
+                'gemini_3_1_flash_image_edit': 'Gemini 3.1 Flash 图片编辑',
                 'veo3_image_to_video': 'VEO3 图生视频',
                 'ltx2_image_to_video': 'LTX2 图生视频',
+                'ltx2_3_image_to_video': 'LTX2.3 图生视频',
                 'wan22_image_to_video': 'Wan22 图生视频',
                 'digital_human': '数字人',
+                'digital_human_ltx2_3_voice': '数字人 LTX2.3 With Voice',
                 'vidu_image_to_video': 'Vidu 图生视频',
                 'vidu_q2_image_to_video': 'Vidu Q2 图生视频',
-                'seedream_text_to_image': 'Seedream 文生图'
+                'seedream_text_to_image': 'Seedream 文生图',
+                'gpt_image_2': 'GPT Image 2',
+                'seedance_1_5_pro_image_to_video': 'Seedance 1.5 Pro 图生视频',
+                'seedance_2_0_fast_image_to_video': 'Seedance 2.0 Fast 图生视频',
+                'seedance_2_0_image_to_video': 'Seedance 2.0 图生视频',
+                'seedance_2_0_mini_image_to_video': 'Seedance 2.0 Mini 图生视频',
+                'grok_image_to_video': 'Grok 图生视频',
+                'happy_horse_image_to_video': 'Happy Horse 图生视频',
+                'happy_horse_reference_to_video': 'Happy Horse 参考生视频',
+                'qwen_multi_angle_image_edit': 'Qwen 多角度图片编辑'
             };
             return keyMap[driverKey] || driverKey;
         },

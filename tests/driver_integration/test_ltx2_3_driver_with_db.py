@@ -20,7 +20,7 @@ from tests.base.base_video_driver_test import BaseVideoDriverTest, mock_get_dyna
 from task.visual_drivers.ltx2_3_runninghub_v1_driver import Ltx2Dot3RunninghubV1Driver
 from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_COMPLETED, AI_TOOL_STATUS_FAILED
 
-LTX2_3_IMAGE_TO_VIDEO_TYPE = 10
+LTX2_3_IMAGE_TO_VIDEO_TYPE = 20
 
 
 @dataclass

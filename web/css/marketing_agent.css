@@ -430,6 +430,16 @@ body {
   color: var(--text-primary);
 }
 
+@media (max-width: 499px) {
+  .top-bar-date {
+    display: inline-block;
+    width: 1em;
+    overflow: hidden;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+}
+
 .top-bar-right {
   display: flex;
   align-items: center;
@@ -1517,6 +1527,12 @@ body {
   background: #dc2626;
 }
 
+@media (max-width: 1389px) {
+  .feedback-fab-container {
+    display: none;
+  }
+}
+
 /* ========== 联系我们弹窗内容 ========== */
 .feedback-body {
   display: flex;
@@ -1631,12 +1647,18 @@ body {
 .asset-preview video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
   display: block;
 }
 
 .asset-preview img {
+  object-fit: cover;
   cursor: zoom-in;
+}
+
+.asset-preview video {
+  /* 视频用 contain 完整显示：竖屏视频容器已按比例自适应高度，contain 与 cover 效果一致；
+     横屏视频在默认 1:1 容器内会上下留白但画面完整，避免裁切 */
+  object-fit: contain;
 }
 
 .asset-card-body {
@@ -1734,4 +1756,33 @@ body {
   padding: 20px 0 4px;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+@media (max-width: 499px) {
+  .mobile-foldable {
+    display: none !important;
+  }
+
+  .toolbar-expanded .mobile-foldable {
+    display: flex !important;
+  }
+
+  .marketing-panel {
+    position: fixed !important;
+    inset: 0 !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    width: 100% !important;
+    min-width: auto !important;
+    z-index: 1000 !important;
+    overflow-y: auto !important;
+    padding: 16px !important;
+    max-height: 100vh !important;
+  }
+}
+
+@media (min-width: 500px) {
+  .mobile-settings-toggle {
+    display: none !important;
+  }
 }

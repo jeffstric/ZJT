@@ -6,7 +6,6 @@
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
     { path: '/video-enhance', name: 'video-enhance', component: VideoEnhance },
-    { path: '/video-remix', name: 'video-remix', component: VideoRemix },
     { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate },
     { path: '/digital-human', name: 'digital-human', component: DigitalHuman },
     { path: '/skill-config', name: 'skill-config', component: SkillConfig }
@@ -155,6 +154,12 @@
       checkinLoading: false,
       checkinToast: { show: false, reward: 0, streak_days: 0, nextRewardText: '' },
       checkinToastTimer: null,
+      showAgentConnectionModal: false,
+      agentConnectionLoading: false,
+      agentConnectionError: '',
+      agentConnectionCopied: false,
+      agentConnectionInfo: null,
+      agentConnectionText: '',
     } },
     mounted() {
       // Extract auth_token from URL query parameters at app level
@@ -334,6 +339,94 @@
     },
     methods: {
       goHome(){ this.$router.push({name:'list'}); },
+
+      openAgentConnectionModal() {
+        this.showAgentConnectionModal = true;
+        this.agentConnectionError = '';
+        this.agentConnectionCopied = false;
+      },
+
+      closeAgentConnectionModal() {
+        this.showAgentConnectionModal = false;
+        this.agentConnectionError = '';
+        this.agentConnectionCopied = false;
+      },
+
+      buildAgentConnectionText(data) {
+        const payload = {
+          skill: 'storyboard-agent-api',
+          base_url: data.base_url,
+          agent_token: data.agent_token,
+          api_version: data.api_version,
+          app_version: data.app_version,
+          environment: data.environment,
+          token_type: data.token_type,
+          expires_at: data.expires_at,
+          note: 'Use the fixed v1 endpoints documented in the storyboard-agent-api skill. Exchange agent_token for auth_token first, then discover worlds, scripts, characters, locations, props, and storyboard scenes before creating, splitting, generating, or polling storyboard tasks. If using CLI fallback, set comfyui_env to the environment value before running commands.',
+        };
+        return [
+          '请使用 $storyboard-agent-api 协助处理我的智剧通分镜：可查看世界列表、世界下的剧本、主角/角色、场景、道具和分镜场次，并按需创建分镜、拆分剧本、生成分镜图/视频、查询任务状态。',
+          '连接信息如下，请不要把 token 放进 URL：',
+          '环境说明：请以 JSON 中的 environment 为准；如改用本地 CLI fallback，请先设置 comfyui_env 为该值。',
+          JSON.stringify(payload, null, 2),
+        ].join('\n');
+      },
+
+      async generateAgentConnection() {
+        if (!this.authToken) {
+          this.agentConnectionError = '请先登录后再生成智能体连接信息';
+          return;
+        }
+        this.agentConnectionLoading = true;
+        this.agentConnectionError = '';
+        this.agentConnectionCopied = false;
+        try {
+          const response = await axios.post('/api/agent-auth/storyboard-connection', {}, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (!response.data || response.data.success === false) {
+            this.agentConnectionError = response.data?.error || response.data?.message || '生成连接信息失败';
+            return;
+          }
+          const info = {
+            ...response.data,
+            base_url: window.location.origin,
+          };
+          this.agentConnectionInfo = info;
+          this.agentConnectionText = this.buildAgentConnectionText(info);
+          await this.copyText(this.agentConnectionText);
+          this.agentConnectionCopied = true;
+          setTimeout(() => { this.agentConnectionCopied = false; }, 3000);
+        } catch (error) {
+          console.error('Generate agent connection error:', error);
+          this.agentConnectionError = error?.response?.data?.error || error?.response?.data?.detail || '生成连接信息失败，请稍后重试';
+        } finally {
+          this.agentConnectionLoading = false;
+        }
+      },
+
+      async copyText(text) {
+        if (!text) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(text);
+            return;
+          } catch (err) {
+            console.warn('Clipboard API failed, fallback copy will be used', err);
+          }
+        }
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+        } finally {
+          document.body.removeChild(textarea);
+        }
+      },
       
       maskEmail(email) {
         if (!email || !email.includes('@')) return email || '';

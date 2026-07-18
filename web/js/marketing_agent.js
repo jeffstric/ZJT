@@ -42,6 +42,7 @@
             const showSettingsPanel = ref(false);
             const showVideoModePanel = ref(false);
             const showDurationPanel = ref(false);
+            const showMobileToolbar = ref(false);
             const autoMode = ref(false);
             const showModelSelect = ref(false);
             const mediaType = ref('image');
@@ -324,20 +325,6 @@
                 if (!aiToolId) return '';
                 const safeTitle = escapeHtmlAttr(title || '');
                 return `<button class="publish-result-btn" onclick="event.stopPropagation(); window.publishGeneratedResult && window.publishGeneratedResult(${escapeHtmlAttr(JSON.stringify(String(aiToolId)))}, '${safeTitle}')">发布</button>`;
-            }
-
-            function buildGeneratedMediaHtml(type, urls) {
-                if (type === 'image') {
-                    return urls.map(url =>
-                        `<div class="generated-image-wrapper" onclick="document.getElementById('imgModal').style.display='flex';document.getElementById('imgModalImg').src='${escapeHtmlAttr(url)}';window.resetModalImageInfo && window.resetModalImageInfo()"><img src="${escapeHtmlAttr(url)}" class="generated-image" alt="${window.t('generated_result_alt')}"></div>`
-                    ).join('');
-                }
-                if (type === 'video') {
-                    return urls.map(url =>
-                        `<video src="${escapeHtmlAttr(url)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video>`
-                    ).join('');
-                }
-                return '';
             }
 
             function buildGeneratedMediaRowsHtml(type, rows) {
@@ -1259,6 +1246,18 @@
                 return isVideoResultUrl(asset?.result_url || asset?.video_path || '');
             }
 
+            // 返回竖屏视频应使用的 aspect-ratio CSS 值（如 '9:16'）；非竖屏返回空串，沿用默认正方形容器
+            function verticalVideoAspectRatio(ratio) {
+                if (!ratio || typeof ratio !== 'string') return '';
+                const parts = ratio.split(':');
+                if (parts.length !== 2) return '';
+                const w = parseFloat(parts[0]);
+                const h = parseFloat(parts[1]);
+                if (!w || !h) return '';
+                // 竖屏：高 > 宽，用原始比例让卡片自适应高度，视频完整无裁切
+                return h > w ? ratio : '';
+            }
+
             function formatAssetType(asset) {
                 if (isAssetVideo(asset)) return window.t('video');
                 return window.t('image');
@@ -1423,16 +1422,38 @@
             function showImageModal(src, aiToolId, suggestedTitle) {
                 const modal = document.getElementById('imgModal');
                 const img = document.getElementById('imgModalImg');
+                const video = document.getElementById('imgModalVideo');
                 if (modal && img) {
+                    if (video) { video.style.display = 'none'; video.pause(); }
+                    img.style.display = '';
                     img.src = src;
                     modal.style.display = 'flex';
-                    // 设置弹框图片信息
                     if (aiToolId) {
                         setModalImageInfo(aiToolId, suggestedTitle);
                     } else {
                         resetModalImageInfo();
                     }
                 }
+            }
+
+            function previewMedia(src, mediaType) {
+                const modal = document.getElementById('imgModal');
+                const img = document.getElementById('imgModalImg');
+                const video = document.getElementById('imgModalVideo');
+                if (!modal || !img || !video) return;
+                if (mediaType === 'video') {
+                    img.style.display = 'none';
+                    video.style.display = '';
+                    video.src = src;
+                    video.load();
+                } else {
+                    video.style.display = 'none';
+                    video.pause();
+                    img.style.display = '';
+                    img.src = src;
+                }
+                modal.style.display = 'flex';
+                resetModalImageInfo();
             }
 
             /**
@@ -5969,6 +5990,8 @@
                         ? window.TaskConfig.getTaskIdByKey(model.key, category)
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
+                    const valid_image_urls = isImg2Vid && uploadedImageUrl.value ? [uploadedImageUrl.value] : [];
+                    const video_prefs = buildAgentVideoPreferences(valid_image_urls);
                     const resp = await fetch('/api/video-model', {
                         method: 'POST',
                         headers: {
@@ -5981,11 +6004,12 @@
                             world_id: worldId.value,
                             session_id: currentSessionId.value,
                             task_id: taskId,
-                            category: category
+                            category: category,
+                            video_preferences: video_prefs
                         })
                     });
                     if (!checkAuthResponse(resp)) return;
-                    console.log('[视频偏好] 已同步到后端:', model.name, 'task_id:', taskId, 'category:', category);
+                    console.log('[视频偏好] 已同步到后端:', model.name, 'task_id:', taskId, 'category:', category, 'prefs:', video_prefs);
                 } catch (e) {
                     console.warn('[视频模型] 同步失败:', e);
                 }
@@ -6032,6 +6056,10 @@
                 showRatioPanel.value = false;
                 showModelSelect.value = false;
                 showDurationPanel.value = false;
+            }
+
+            function toggleMobileToolbar() {
+                showMobileToolbar.value = !showMobileToolbar.value;
             }
 
             // 点击外部关闭下拉
@@ -6213,6 +6241,7 @@
                 assetsTotalPages,
                 loadAssets,
                 isAssetVideo,
+                verticalVideoAspectRatio,
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,
@@ -6233,6 +6262,7 @@
                 formatShortDate,
                 renderMarkdown,
                 showImageModal,
+                previewMedia,
                 autoResize,
                 handleSend,
                 sendContinue,
@@ -6267,6 +6297,8 @@
                 toggleModelPanel,
                 toggleRatioPanel,
                 toggleSettingsPanel,
+                showMobileToolbar,
+                toggleMobileToolbar,
                 showSettingsPanel,
                 showVideoModePanel,
                 showDurationPanel,

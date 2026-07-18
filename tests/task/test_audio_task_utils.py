@@ -26,7 +26,27 @@ import types
 model_pkg = types.ModuleType('model')
 model_pkg.TasksModel = MagicMock()
 model_pkg.AIAudioModel = MagicMock()
+model_pkg.StoryboardModel = MagicMock()
+model_pkg.StoryboardSceneModel = MagicMock()
+model_pkg.StoryboardDialogueModel = MagicMock()
 sys.modules['model'] = model_pkg
+
+# audio_task 新增了这些子模块的直接 import，需 mock 以避免触发真实 DB/配置加载
+_sb_mod = types.ModuleType('model.storyboard')
+_sb_mod.StoryboardModel = MagicMock()
+_sb_mod.StoryboardSceneModel = MagicMock()
+sys.modules['model.storyboard'] = _sb_mod
+_sd_mod = types.ModuleType('model.storyboard_dialogue')
+_sd_mod.StoryboardDialogueModel = MagicMock()
+sys.modules['model.storyboard_dialogue'] = _sd_mod
+# storyboard_dialogue_audio 已在真实模块中, 但测试里也 mock 掉避免 DB
+_sda_mod = types.ModuleType('model.storyboard_dialogue_audio')
+_sda_mod.StoryboardDialogueAudioModel = MagicMock()
+sys.modules['model.storyboard_dialogue_audio'] = _sda_mod
+# utils.audio_duration_util
+_adu_mod = types.ModuleType('utils.audio_duration_util')
+_adu_mod.probe_audio_duration = MagicMock()
+sys.modules['utils.audio_duration_util'] = _adu_mod
 
 # Mock config.constant
 config_constant = types.ModuleType('config.constant')
@@ -57,6 +77,10 @@ from task.audio_task import build_character_audio_text, calculate_next_retry_del
 # 恢复被 mock 的 sys.modules，防止污染后续测试
 for _key, _saved in [
     ('model', _saved_model),
+    ('model.storyboard', None),
+    ('model.storyboard_dialogue', None),
+    ('model.storyboard_dialogue_audio', None),
+    ('utils.audio_duration_util', None),
     ('config.constant', _saved_config_constant),
     ('config.config_util', _saved_config_util),
     ('task.async_drivers.runninghub_audio_driver', _saved_rh_config),

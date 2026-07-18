@@ -29,7 +29,13 @@ sys.modules['model.database'] = mock_db
 if 'model.ai_tool_pipeline_steps' in sys.modules:
     importlib.reload(sys.modules['model.ai_tool_pipeline_steps'])
 
-from model.ai_tool_pipeline_steps import PipelineStepModel, PipelineStepStatus, PipelineStep
+from model.ai_tool_pipeline_steps import (
+    PipelineStepModel,
+    PipelineStepStatus,
+    PipelineStage,
+    PipelineStepType,
+    PipelineStep,
+)
 
 # 获取模块内实际使用的数据库函数引用
 _steps_module = sys.modules['model.ai_tool_pipeline_steps']
@@ -348,6 +354,135 @@ class TestPipelineStepModelDeleteByAiToolId(unittest.TestCase):
         self.assertIn('DELETE FROM ai_tool_pipeline_steps', sql)
         self.assertIn('WHERE ai_tool_id = %s', sql)
         self.assertEqual(params, (100,))
+
+
+class TestFailPendingGridSplitStep(unittest.TestCase):
+    """测试 PipelineStepModel.fail_pending_grid_split_step()"""
+
+    def setUp(self):
+        _steps_module.execute_update.reset_mock()
+        _steps_module.execute_update.return_value = 1
+
+    def test_fails_pending_step(self):
+        """把 PENDING 的 grid split step 标记为 FAILED，返回影响行数"""
+        result = PipelineStepModel.fail_pending_grid_split_step(1075, "宫格生图失败")
+
+        self.assertEqual(result, 1)
+        call_args = _steps_module.execute_update.call_args
+        sql = call_args[0][0]
+        params = call_args[0][1]
+
+        # SQL 应只更新 PENDING 的行
+        self.assertIn('UPDATE ai_tool_pipeline_steps', sql)
+        self.assertIn('SET status = %s, error_message = %s', sql)
+        self.assertIn('WHERE ai_tool_id = %s', sql)
+        self.assertIn(f'step_type = %s', sql)
+        self.assertIn(f'status = %s', sql)
+        # 参数顺序：新status, error_msg, ai_tool_id, stage, step_type, 旧status
+        self.assertEqual(params[0], PipelineStepStatus.FAILED)
+        self.assertEqual(params[1], "宫格生图失败")
+        self.assertEqual(params[2], 1075)
+        self.assertEqual(params[3], PipelineStage.BEFORE_FINISH)
+        self.assertEqual(params[4], PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT)
+        self.assertEqual(params[5], PipelineStepStatus.PENDING)
+
+    def test_truncates_long_error_message(self):
+        """超长 error_message 截断到 512 字符"""
+        long_msg = "x" * 600
+        PipelineStepModel.fail_pending_grid_split_step(1, long_msg)
+
+        params = _steps_module.execute_update.call_args[0][1]
+        self.assertEqual(len(params[1]), 512)
+
+    def test_no_pending_step_returns_zero(self):
+        """没有匹配的 PENDING step 时返回 0（不影响已终结的行）"""
+        _steps_module.execute_update.return_value = 0
+        result = PipelineStepModel.fail_pending_grid_split_step(999, "err")
+
+        self.assertEqual(result, 0)
+
+
+class TestGetOrphanGridSplitSteps(unittest.TestCase):
+    """测试 PipelineStepModel.get_orphan_grid_split_steps()"""
+
+    def setUp(self):
+        # 彻底重置（含 return_value/side_effect），避免跨测试/跨文件 mock 残留污染
+        _steps_module.execute_query.reset_mock(return_value=True, side_effect=True)
+
+    def tearDown(self):
+        # 清掉 return_value，避免以 list 形态残留给后续文件的 fetch_one 调用（如 AIToolsModel.get_by_id）
+        _steps_module.execute_query.reset_mock(return_value=True, side_effect=True)
+
+    def test_returns_orphan_steps(self):
+        """JOIN 命中后返回 PipelineStep 列表"""
+        _steps_module.execute_query.return_value = [
+            {'id': 72, 'ai_tool_id': 1075, 'stage': 'before_finish',
+             'step_type': 'storyboard_first_frame_grid_split', 'status': 0},
+            {'id': 91, 'ai_tool_id': 1076, 'stage': 'before_finish',
+             'step_type': 'storyboard_first_frame_grid_split', 'status': 0},
+        ]
+
+        result = PipelineStepModel.get_orphan_grid_split_steps(
+            limit=50, grid_failed_statuses=(-1, -2, -4),
+        )
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].id, 72)
+        # SQL 应含 JOIN 与失败状态 IN
+        sql = _steps_module.execute_query.call_args[0][0]
+        self.assertIn('INNER JOIN grid_image_tasks', sql)
+        self.assertIn('g.project_id = CAST(s.ai_tool_id AS CHAR)', sql)
+        self.assertIn('IN (%s,%s,%s)', sql)
+
+    def test_empty_statuses_returns_empty(self):
+        """失败状态元组为空时直接返回空列表（不发 SQL）"""
+        result = PipelineStepModel.get_orphan_grid_split_steps(limit=50, grid_failed_statuses=())
+
+        self.assertEqual(result, [])
+        _steps_module.execute_query.assert_not_called()
+
+    def test_no_results_returns_empty(self):
+        """查询无结果返回空列表"""
+        _steps_module.execute_query.return_value = None
+        result = PipelineStepModel.get_orphan_grid_split_steps(limit=50, grid_failed_statuses=(-1,))
+
+        self.assertEqual(result, [])
+
+
+class TestFailStepsByIds(unittest.TestCase):
+    """测试 PipelineStepModel.fail_steps_by_ids()"""
+
+    def setUp(self):
+        _steps_module.execute_update.reset_mock(return_value=True, side_effect=True)
+        _steps_module.execute_update.return_value = 2
+
+    def tearDown(self):
+        _steps_module.execute_update.reset_mock(return_value=True, side_effect=True)
+
+    def test_fails_steps_by_ids(self):
+        """按 ID 批量标记 FAILED，只更新 PENDING 的"""
+        result = PipelineStepModel.fail_steps_by_ids([72, 91], "孤儿清理")
+
+        self.assertEqual(result, 2)
+        call_args = _steps_module.execute_update.call_args
+        sql = call_args[0][0]
+        params = call_args[0][1]
+
+        self.assertIn('UPDATE ai_tool_pipeline_steps', sql)
+        self.assertIn('WHERE id IN (%s,%s)', sql)
+        self.assertIn('AND status = %s', sql)
+        self.assertEqual(params[0], PipelineStepStatus.FAILED)
+        self.assertEqual(params[1], "孤儿清理")
+        self.assertEqual(params[2], 72)
+        self.assertEqual(params[3], 91)
+        self.assertEqual(params[4], PipelineStepStatus.PENDING)
+
+    def test_empty_ids_returns_zero(self):
+        """空 ID 列表不发 SQL"""
+        result = PipelineStepModel.fail_steps_by_ids([], "err")
+
+        self.assertEqual(result, 0)
+        _steps_module.execute_update.assert_not_called()
 
 
 if __name__ == '__main__':

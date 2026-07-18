@@ -224,3 +224,8 @@ upgrade:
     - "https://github.com/jeffstric/ZJT.git"      # 备用 GitHub
   branch: "main"             # 跟踪分支
   timeout_seconds: 30        # git fetch/pull 超时（秒）
+
+# 剧本分段拆分多 worker 配置
+# 由 run_prod.py 读取，>0 时拉起 N 个独立 worker 进程，主调度器跳过此 job
+script_split:
+  worker_total: 0  # 0=主调度器单进程(兼容旧行为)；>0=由 N 个独立 worker 进程分片接管(id MOD N = index)

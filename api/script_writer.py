@@ -6,6 +6,7 @@ Script Writer API 集成模块
 import os
 import re
 import json
+import time
 import logging
 import uuid
 import asyncio
@@ -17,6 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from perseids_server.utils.permission import require_permission
 from config.config_util import get_dynamic_config_value, get_config
+from config.constant import StoryType
 from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
 from llm.llm_client_factory import get_llm_client
 
@@ -512,6 +514,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                 'id': world.id,
                 'name': world.name,
                 'story_outline': world.story_outline,
+                'story_type': getattr(world, 'story_type', 'dialogue'),
                 'visual_style': world.visual_style,
                 'era_environment': world.era_environment,
                 'color_language': world.color_language,
@@ -654,16 +657,39 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
             else:
                 file_manager.save_script(script.get('title'), new_script_json, user_id, world_id)
         
-        # 3. 同步场景
+        # 3. 同步场景（保留 DB 层级：parent_id + parent_name）
         locations_result = LocationModel.list_by_world(int(world_id), page=1, page_size=1000)
         locations = locations_result.get('data', []) if isinstance(locations_result, dict) else []
+        # id → name，用于把 DB parent_id 还原为文件层 parent_name
+        id_to_name = {}
+        for loc in locations:
+            if loc.get('id') is not None and loc.get('name'):
+                id_to_name[int(loc['id'])] = loc['name']
+
+        def _location_parent_fields(loc: dict) -> dict:
+            pid = loc.get('parent_id')
+            parent_name = None
+            parent_id_val = None
+            if pid is not None and pid != '':
+                try:
+                    parent_id_val = int(pid)
+                    parent_name = id_to_name.get(parent_id_val)
+                except (TypeError, ValueError):
+                    parent_id_val = None
+                    parent_name = None
+            return {
+                'parent_id': parent_id_val,
+                'parent_name': parent_name,
+            }
+
         for loc in locations:
             if loc.get('user_id') != int(user_id):
                 continue
-                
+
+            parent_fields = _location_parent_fields(loc)
             loc_file = base_path / "locations" / f"location_{loc.get('name')}.json"
             file_name = f"location_{loc.get('name')}.json"
-            
+
             if loc_file.exists():
                 temp_filename = f"temp_location_{loc.get('name')}.json"
                 temp_result = create_location_json(
@@ -673,16 +699,19 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     name=loc.get('name'),
                     description=loc.get('description'),
                     reference_image=loc.get('reference_image'),
-                    _temp_filename=temp_filename
+                    parent_id=parent_fields['parent_id'],
+                    parent_name=parent_fields['parent_name'],
+                    _temp_filename=temp_filename,
+                    **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                 )
-                
+
                 if temp_result.get('success'):
                     temp_file = base_path / "locations" / temp_filename
                     if temp_file.exists():
                         try:
                             new_content = temp_file.read_text(encoding='utf-8')
                             existing_content = loc_file.read_text(encoding='utf-8')
-                            
+
                             if not compare_json_content(new_content, existing_content, file_name):
                                 if force_overwrite:
                                     create_location_json(
@@ -691,7 +720,10 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         auth_token=auth_token,
                                         name=loc.get('name'),
                                         description=loc.get('description'),
-                                        reference_image=loc.get('reference_image')
+                                        reference_image=loc.get('reference_image'),
+                                        parent_id=parent_fields['parent_id'],
+                                        parent_name=parent_fields['parent_name'],
+                                        **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                                     )
                                     result['diff_files'].append(file_name)
                                     result['overwritten_files'].append(file_name)
@@ -708,7 +740,10 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     auth_token=auth_token,
                     name=loc.get('name'),
                     description=loc.get('description'),
-                    reference_image=loc.get('reference_image')
+                    reference_image=loc.get('reference_image'),
+                    parent_id=parent_fields['parent_id'],
+                    parent_name=parent_fields['parent_name'],
+                    **({'reference_images': loc.get('reference_images')} if loc.get('reference_images') is not None else {}),
                 )
         
         # 4. 同步道具
@@ -1891,11 +1926,20 @@ async def set_video_model(request: Request):
                 'error': f'模型 {config.name} 不属于类别 {category}'
             }, status_code=400)
 
-        # 保存偏好
-        if category == TaskCategory.TEXT_TO_VIDEO:
+        # 保存偏好：检查模型实际支持的所有 category，对每个匹配的都设置
+        if TaskCategory.TEXT_TO_VIDEO in model_categories:
             set_text_to_video_model_id(user_id, world_id, task_id)
-        else:
+        if TaskCategory.IMAGE_TO_VIDEO in model_categories:
             set_image_to_video_model_id(user_id, world_id, task_id)
+
+        # 同步更新 video_preferences 缓存（含 model_name、ratio、duration 等）
+        video_prefs = data.get('video_preferences')
+        if video_prefs and isinstance(video_prefs, dict):
+            existing_prefs = get_video_preferences(user_id, world_id)
+            existing_prefs.update(video_prefs)
+            existing_prefs['task_id'] = task_id
+            existing_prefs['model_name'] = config.name
+            set_video_preferences(user_id, world_id, existing_prefs)
 
         return JSONResponse({
             'success': True,
@@ -2142,6 +2186,8 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                             update_data['description'] = world_data['description']
                         if 'story_outline' in world_data:
                             update_data['story_outline'] = world_data['story_outline']
+                        if 'story_type' in world_data:
+                            update_data['story_type'] = world_data['story_type']
                         if 'visual_style' in world_data:
                             update_data['visual_style'] = world_data['visual_style']
                         if 'era_environment' in world_data:
@@ -2274,58 +2320,134 @@ async def submit_to_database(request: SubmitDatabaseRequest):
                     results['scripts']['failed'] += 1
                     results['scripts']['errors'].append(f"{script['name']}: {str(e)}")
             
-            # 4. 提交场景
+            # 4. 提交场景（两阶段：先建行再按名称挂 parent_id，避免名称被 int 静默丢弃）
+            def resolve_location_parent_name(loc_data: dict) -> Optional[str]:
+                """文件层父引用：优先 parent_name，其次非纯数字 parent_id 当名称。"""
+                if not isinstance(loc_data, dict):
+                    return None
+                pn = loc_data.get('parent_name')
+                if pn is not None and str(pn).strip():
+                    return str(pn).strip()
+                raw = loc_data.get('parent_id')
+                if raw is None or raw == '':
+                    return None
+                s = str(raw).strip()
+                if not s:
+                    return None
+                # 纯数字视为 DB id，Phase B 单独处理
+                if s.isdigit():
+                    return None
+                return s
+
             locations = file_manager.list_locations(str(user_id), str(world_id))
+            name_to_db_id: Dict[str, int] = {}
+            pending_parent_by_name: Dict[str, Optional[str]] = {}
+            pending_parent_id_raw: Dict[str, Any] = {}
+
+            # Phase A：upsert 全部场景；已存在不覆盖 parent_id，新建 parent=None
             for loc in locations:
                 try:
-                    # 直接使用 list_locations 返回的 json_data，避免用中文名查找拼音文件名导致找不到
                     loc_data = loc.get('json_data')
-                    if loc_data and isinstance(loc_data, dict):
-                        name = loc_data.get('name', loc['name'])
-                        parent_id_raw = loc_data.get('parent_id')
-                        description = loc_data.get('description')
-                        reference_image = loc_data.get('reference_image')
-                        reference_images = loc_data.get('reference_images')
+                    if not loc_data or not isinstance(loc_data, dict):
+                        results['locations']['skipped'] += 1
+                        continue
+                    name = loc_data.get('name', loc['name'])
+                    description = loc_data.get('description')
+                    reference_image = loc_data.get('reference_image')
+                    reference_images = loc_data.get('reference_images')
+                    pending_parent_by_name[name] = resolve_location_parent_name(loc_data)
+                    pending_parent_id_raw[name] = loc_data.get('parent_id')
 
-                        # 处理 parent_id：必须是整数或 None
-                        parent_id = None
-                        if parent_id_raw is not None:
-                            try:
-                                parent_id = int(parent_id_raw) if parent_id_raw else None
-                            except (ValueError, TypeError):
-                                parent_id = None
-
-                        # 使用 create_or_update 避免并发竞态导致的重复创建
-                        loc_id = LocationModel.create_or_update(
+                    existing = LocationModel.get_by_name(world_id, name)
+                    if existing:
+                        LocationModel.update(
+                            existing.id,
+                            description=description,
+                            reference_image=reference_image,
+                            reference_images=reference_images,
+                        )
+                        loc_id = existing.id
+                    else:
+                        loc_id = LocationModel.create(
                             world_id=world_id,
                             name=name,
                             user_id=user_id,
-                            parent_id=parent_id,
+                            parent_id=None,
                             reference_image=reference_image,
                             reference_images=reference_images,
-                            description=description
+                            description=description,
                         )
-                        # 确保 CDN mapping
-                        try:
-                            if reference_image:
-                                from utils.media_mapping_util import ensure_entity_image_mapping
-                                from model.media_file_mapping import MediaFileEntity
-                                ensure_entity_image_mapping(
-                                    user_id=user_id,
-                                    image_url=reference_image,
-                                    entity_type=MediaFileEntity.LOCATION,
-                                    entity_id=loc_id,
-                                    label="image"
-                                )
-                        except Exception as e:
-                            logger.warning(f"CDN mapping for location {name} failed: {e}")
-                        results['locations']['success'] += 1
-                        results['total'] += 1
-                    else:
-                        results['locations']['skipped'] += 1
+                    name_to_db_id[name] = int(loc_id)
+                    try:
+                        if reference_image:
+                            from utils.media_mapping_util import ensure_entity_image_mapping
+                            from model.media_file_mapping import MediaFileEntity
+                            ensure_entity_image_mapping(
+                                user_id=user_id,
+                                image_url=reference_image,
+                                entity_type=MediaFileEntity.LOCATION,
+                                entity_id=loc_id,
+                                label="image"
+                            )
+                    except Exception as e:
+                        logger.warning(f"CDN mapping for location {name} failed: {e}")
+                    results['locations']['success'] += 1
+                    results['total'] += 1
                 except Exception as e:
                     results['locations']['failed'] += 1
-                    results['locations']['errors'].append(f"{loc['name']}: {str(e)}")
+                    results['locations']['errors'].append(f"{loc.get('name', '?')}: {str(e)}")
+
+            # Phase B：按 parent_name / 数字 parent_id 挂接父级（父必须是顶级）
+            for child_name, parent_name in pending_parent_by_name.items():
+                child_id = name_to_db_id.get(child_name)
+                if not child_id:
+                    continue
+                parent_db_id = None
+                raw_parent = pending_parent_id_raw.get(child_name)
+                if parent_name:
+                    parent_db_id = name_to_db_id.get(parent_name)
+                    if not parent_db_id:
+                        parent_row = LocationModel.get_by_name(world_id, parent_name)
+                        if parent_row:
+                            parent_db_id = int(parent_row.id)
+                elif raw_parent is not None and str(raw_parent).strip().isdigit():
+                    try:
+                        cand = int(raw_parent)
+                        parent_obj = LocationModel.get_by_id(cand)
+                        if parent_obj and int(parent_obj.world_id) == world_id:
+                            parent_db_id = cand
+                    except (TypeError, ValueError):
+                        parent_db_id = None
+
+                if not parent_name and not parent_db_id:
+                    # 明确顶层：清空父级
+                    try:
+                        LocationModel.update(child_id, parent_id=None)
+                    except Exception as e:
+                        logger.warning(f"Clear parent for location {child_name} failed: {e}")
+                    continue
+
+                if not parent_db_id:
+                    results['locations']['errors'].append(
+                        f"{child_name}: 找不到父场景「{parent_name or raw_parent}」，未写入 parent_id"
+                    )
+                    continue
+                if parent_db_id == child_id:
+                    results['locations']['errors'].append(f"{child_name}: 不能将自己设为父场景")
+                    continue
+                parent_obj = LocationModel.get_by_id(parent_db_id)
+                if not parent_obj:
+                    results['locations']['errors'].append(f"{child_name}: 父场景 id={parent_db_id} 不存在")
+                    continue
+                if parent_obj.parent_id is not None:
+                    results['locations']['errors'].append(
+                        f"{child_name}: 父场景「{parent_obj.name}」不是顶级场景，已跳过挂接"
+                    )
+                    continue
+                try:
+                    LocationModel.update(child_id, parent_id=parent_db_id)
+                except Exception as e:
+                    results['locations']['errors'].append(f"{child_name}: 挂接父级失败 {e}")
             
             # 5. 提交道具
             props = file_manager.list_props(str(user_id), str(world_id))
@@ -2603,10 +2725,12 @@ async def get_world_file(
         # 读取文件内容
         with open(world_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
+        json_data = json.loads(content)
+        json_data['story_type'] = StoryType.normalize(json_data.get('story_type'))
+        content = json.dumps(json_data, ensure_ascii=False, indent=2)
         
         if raw_json:
             # 返回JSON数据用于编辑
-            json_data = json.loads(content)
             return JSONResponse({
                 'success': True,
                 'world': {
@@ -2653,6 +2777,8 @@ async def save_world_file(
         # 验证JSON格式
         try:
             world_data = json.loads(content)
+            world_data['story_type'] = StoryType.normalize(world_data.get('story_type'))
+            content = json.dumps(world_data, ensure_ascii=False, indent=2)
         except json.JSONDecodeError as e:
             return JSONResponse({
                 'success': False,
@@ -2813,7 +2939,7 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                             v_model_categories.extend(v_config.categories)
                         if TaskCategory.IMAGE_TO_VIDEO in v_model_categories:
                             set_image_to_video_model_id(user_id, world_id, v_task_id)
-                        elif TaskCategory.TEXT_TO_VIDEO in v_model_categories:
+                        if TaskCategory.TEXT_TO_VIDEO in v_model_categories:
                             set_text_to_video_model_id(user_id, world_id, v_task_id)
                 except (TypeError, ValueError):
                     pass
@@ -3884,7 +4010,11 @@ async def check_assets_complete(request: Request, check_request: CheckAssetsRequ
                     {'type': '角色', 'items': ['角色名1', '角色名2']},
                     {'type': '场景', 'items': ['场景名1']},
                     {'type': '道具', 'items': ['道具名1']}
-                ]
+                ],
+                'character_count': int,
+                'character_image_count': int,
+                'location_count': int,
+                'location_image_count': int
             }
         }
     """
@@ -3895,35 +4025,37 @@ async def check_assets_complete(request: Request, check_request: CheckAssetsRequ
             'has_script': False,
             'missing_assets': []
         }
-        
+
         # 1. 检查是否存在剧本
         scripts_result = ScriptModel.list_by_world(world_id, page=1, page_size=1)
         result['has_script'] = scripts_result.get('total', 0) > 0
-        
-        # 2. 检查角色参考图
+
+        # 2. 检查角色参考图（只需至少一个角色有图即可）
         characters_result = CharacterModel.list_by_world(world_id, page=1, page_size=1000)
         characters = characters_result.get('data', [])
-        missing_characters = [
-            c['name'] for c in characters
-            if not c.get('reference_image')
-        ]
-        if missing_characters:
+        result['character_count'] = len(characters)
+        result['character_image_count'] = sum(
+            1 for c in characters
+            if c.get('reference_image') or c.get('reference_images')
+        )
+        if result['character_image_count'] == 0 and characters:
             result['missing_assets'].append({
                 'type': 'characters',
-                'items': missing_characters
+                'items': [c['name'] for c in characters]
             })
 
-        # 3. 检查场景参考图
+        # 3. 检查场景参考图（只需至少一个场景有图即可）
         locations_result = LocationModel.list_by_world(world_id, page=1, page_size=1000)
         locations = locations_result.get('data', [])
-        missing_locations = [
-            loc['name'] for loc in locations
-            if not loc.get('reference_image')
-        ]
-        if missing_locations:
+        result['location_count'] = len(locations)
+        result['location_image_count'] = sum(
+            1 for loc in locations
+            if loc.get('reference_image') or loc.get('reference_images')
+        )
+        if result['location_image_count'] == 0 and locations:
             result['missing_assets'].append({
                 'type': 'locations',
-                'items': missing_locations
+                'items': [loc['name'] for loc in locations]
             })
 
         # 4. 检查道具参考图
@@ -4342,6 +4474,162 @@ async def upload_agent_audio(
         }, status_code=500)
 
 
+@router.post('/upload-character-audio')
+@require_permission("script_writer:upload_image")
+async def upload_character_audio(
+    request: Request,
+    file: UploadFile = File(...),
+    user_id: str = Form(...),
+    world_id: str = Form(...),
+    auth_token: str = Form(...)
+):
+    """
+    上传角色参考音频文件
+
+    音频保存到 upload/character/voice/ 目录，
+    超过 20 秒自动裁剪。
+
+    Args:
+        file: 音频文件
+        user_id: 用户ID
+        world_id: 世界ID
+        auth_token: 认证令牌
+
+    Returns:
+        音频访问 URL
+    """
+    import subprocess
+    from config.config_util import get_config_value, resolve_bin_path
+    from config.constant import CHARACTER_VOICE_MAX_DURATION, CHARACTER_VOICE_TRIM_TIMEOUT
+    from utils.project_path import get_project_root
+
+    try:
+        allowed_extensions = {'.mp3', '.wav', '.aac', '.ogg', '.m4a', '.flac', '.wma'}
+        file_extension = os.path.splitext(file.filename or '')[1].lower()
+
+        if file_extension not in allowed_extensions:
+            return JSONResponse({
+                'success': False,
+                'error': f'不支持的文件类型。允许的类型: {", ".join(sorted(allowed_extensions))}'
+            }, status_code=400)
+
+        max_size_mb = get_dynamic_config_value('upload', 'max_audio_size_mb', default=20)
+        max_size_bytes = max_size_mb * 1024 * 1024
+
+        content = await file.read()
+        if len(content) > max_size_bytes:
+            return JSONResponse({
+                'success': False,
+                'error': f'音频大小不能超过 {max_size_mb}MB'
+            }, status_code=400)
+
+        upload_dir = os.path.join('upload', 'character', 'voice')
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        full_upload_dir = os.path.join(app_dir, upload_dir)
+
+        os.makedirs(full_upload_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        unique_id = uuid.uuid4().hex[:8]
+        filename = f"character_voice_{timestamp}_{unique_id}{file_extension}"
+        file_path = os.path.join(full_upload_dir, filename)
+
+        with open(file_path, 'wb') as f:
+            f.write(content)
+
+        # 自动裁剪音频（超过 20 秒）
+        await asyncio.to_thread(_trim_character_audio, file_path, CHARACTER_VOICE_MAX_DURATION, CHARACTER_VOICE_TRIM_TIMEOUT)
+
+        server_host = get_config()["server"]["host"]
+        url = f"{server_host.rstrip('/')}/{upload_dir.replace(os.sep, '/')}/{filename}"
+
+        logger.info(f'角色参考音频上传成功: {url}')
+
+        return JSONResponse({
+            'success': True,
+            'url': url
+        })
+
+    except Exception as e:
+        logger.error(f'角色参考音频上传失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': f'上传失败: {str(e)}'
+        }, status_code=500)
+
+
+def _trim_character_audio(audio_path: str, max_duration: float, timeout: int) -> None:
+    """
+    检查音频时长，超过 max_duration 则用 ffmpeg 裁剪。
+    同步函数，调用方应通过 asyncio.to_thread 包装。
+    """
+    import subprocess
+    from config.config_util import get_config_value, resolve_bin_path
+    from utils.project_path import get_project_root
+
+    try:
+        app_dir = get_project_root()
+        ffmpeg_path = resolve_bin_path(get_config_value("bin", "ffmpeg", default="ffmpeg"), app_dir)
+        ffprobe_path = resolve_bin_path(get_config_value("bin", "ffprobe", default="ffprobe"), app_dir)
+
+        duration_cmd = [
+            ffprobe_path, '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            audio_path
+        ]
+        duration_result = subprocess.run(
+            duration_cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
+            timeout=timeout
+        )
+        if duration_result.returncode != 0:
+            logger.warning(f"Failed to get audio duration: {duration_result.stderr}")
+            return
+
+        duration = float(duration_result.stdout.strip())
+        logger.info(f"Character voice audio duration: {duration:.2f}s")
+
+        if duration <= max_duration:
+            return
+
+        logger.info(f"Trimming character voice audio from {duration:.2f}s to {max_duration:.2f}s")
+        base_name = os.path.splitext(audio_path)[0]
+        ext = os.path.splitext(audio_path)[1]
+        trimmed_path = f"{base_name}_trimmed{ext}"
+
+        trim_cmd = [
+            ffmpeg_path, '-i', audio_path,
+            '-t', str(max_duration),
+            '-acodec', 'copy',
+            '-y',
+            trimmed_path
+        ]
+        trim_result = subprocess.run(
+            trim_cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='ignore',
+            timeout=timeout
+        )
+        if trim_result.returncode != 0:
+            logger.error(f"ffmpeg trim error: {trim_result.stderr}")
+            return
+
+        os.remove(audio_path)
+        os.rename(trimmed_path, audio_path)
+        logger.info(f"Character voice audio trimmed successfully: {audio_path}")
+
+    except subprocess.TimeoutExpired:
+        logger.warning(f"Audio trim/probe timeout({timeout}s): {audio_path}")
+    except Exception as e:
+        logger.warning(f"Audio trim failed (non-fatal): {audio_path} - {e}")
+
+
 @router.delete('/staging-file')
 @require_permission("script_writer:delete_staging_file")
 async def delete_staging_file(
@@ -4660,7 +4948,7 @@ async def export_world(
         upload_result = await storage.upload_file(storage_key, zip_path, content_type='application/zip')
         if not upload_result.success:
             return JSONResponse({'success': False, 'error': upload_result.error or '上传导出文件失败'}, status_code=500)
-        download_url = storage.get_download_url(upload_result.key)
+        download_url = storage.get_download_url(upload_result.key, attname=filename)
         return JSONResponse({
             'success': True,
             'download_url': download_url,
@@ -4687,17 +4975,23 @@ async def import_world(
     world_id: str = Form(...),
     file: UploadFile = File(...)
 ):
-    """从 zip 包导入世界数据"""
+    """从 zip 包导入世界数据（小文件兜底链路，已修复事件循环阻塞）"""
+    tmp_path = None
     try:
         import tempfile as _tempfile
         suffix = '.zip'
+        # 流式分块写临时文件，避免一次性 await file.read() 把整个 zip 读进内存
         with _tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            content = await file.read()
-            tmp.write(content)
             tmp_path = tmp.name
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1 MB / chunk
+                if not chunk:
+                    break
+                tmp.write(chunk)
 
         try:
-            result = file_manager.import_world(user_id, world_id, tmp_path)
+            # 解包是 CPU+磁盘密集型同步函数，必须丢线程池，否则阻塞事件循环
+            result = await asyncio.to_thread(file_manager.import_world, user_id, world_id, tmp_path)
             return JSONResponse({
                 'success': True,
                 'message': f'导入完成: 剧本{result["scripts"]}个, 角色{result["characters"]}个, '
@@ -4706,10 +5000,334 @@ async def import_world(
             })
         finally:
             try:
-                os.unlink(tmp_path)
+                await asyncio.to_thread(os.unlink, tmp_path)
             except Exception:
                 pass
 
     except Exception as e:
         logger.error(f'导入世界失败: {str(e)}')
         return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+# ==================== 大世界文件：前端直传七牛 + 后端限速下载导入 ====================
+#
+# 设计目标：上传非常大的世界 zip 时不再卡死整个服务。
+#   1) 浏览器 ──> POST /api/world-upload-token        颁发绑定 key 的短期上传 token
+#   2) 浏览器 ──> 七牛上传域名（前端直传，带进度）     后端完全不接触大文件
+#   3) 浏览器 ──> POST /api/import-world-from-cloud   提交 key，立即返回 job_id
+#   4) 后端    ：asyncio.create_task 后台限速下载 zip → to_thread 解包
+#   5) 浏览器 ──> GET  /api/world-import-status       轮询 job 进度
+#
+# job 状态仅存内存（进程重启会丢失，前端会把 404 当作"任务丢失，请重试"）。
+
+# 内存任务表：{ job_id: {status, progress, stage, message, result, error, started_at, updated_at} }
+_world_import_jobs: Dict[str, Dict[str, Any]] = {}
+_world_import_jobs_lock = asyncio.Lock()
+_world_import_cleanup_started = False
+
+
+async def _ensure_world_import_cleanup_task():
+    """惰性启动 job 清理协程（首次有任务时起，周期淘汰 TTL 过期 job）"""
+    global _world_import_cleanup_started
+    if _world_import_cleanup_started:
+        return
+    async with _world_import_jobs_lock:
+        if not _world_import_cleanup_started:
+            asyncio.create_task(_world_import_jobs_cleanup_loop())
+            _world_import_cleanup_started = True
+
+
+async def _world_import_jobs_cleanup_loop():
+    """周期清理超过 WORLD_IMPORT_JOB_TTL 的 job，防止内存无限增长"""
+    from config.constant import WORLD_IMPORT_JOB_TTL, WORLD_IMPORT_JOB_CLEANUP_INTERVAL
+    while True:
+        try:
+            await asyncio.sleep(WORLD_IMPORT_JOB_CLEANUP_INTERVAL)
+            now = time.time()
+            expired = []
+            async with _world_import_jobs_lock:
+                for jid, job in list(_world_import_jobs.items()):
+                    if now - job.get('updated_at', job.get('started_at', now)) > WORLD_IMPORT_JOB_TTL:
+                        expired.append(jid)
+                for jid in expired:
+                    _world_import_jobs.pop(jid, None)
+            if expired:
+                logger.info(f'[world_import] 清理过期 job: {len(expired)} 个')
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception('[world_import] cleanup loop error')
+
+
+async def _set_world_import_job(job_id: str, **fields):
+    """更新 job 字段（线程安全）"""
+    async with _world_import_jobs_lock:
+        job = _world_import_jobs.get(job_id)
+        if job is None:
+            return
+        job.update(fields)
+        job['updated_at'] = time.time()
+
+
+async def _count_active_world_import_jobs() -> int:
+    """统计处于 pending/downloading/unpacking 状态的 job 数"""
+    async with _world_import_jobs_lock:
+        return sum(
+            1 for j in _world_import_jobs.values()
+            if j.get('status') in ('pending', 'downloading', 'unpacking')
+        )
+
+
+async def _download_world_zip_with_rate_limit(
+    download_url: str,
+    job_id: str,
+    total_size_hint: Optional[int] = None
+) -> str:
+    """
+    流式下载世界 zip 到临时文件，并按 WORLD_IMPORT_DOWNLOAD_RATE_BPS 限速。
+
+    - httpx.AsyncClient 流式下载，逐 chunk 写盘，避免内存峰值。
+    - 每个 chunk 后 await asyncio.sleep() 控速，避免打满出口带宽。
+    - 整体用 asyncio.wait_for(timeout) 保护，遵守超时红线。
+    - try/finally 清理临时文件。
+    """
+    import tempfile as _tempfile
+    from config.constant import (
+        WORLD_IMPORT_DOWNLOAD_RATE_BPS,
+        WORLD_IMPORT_DOWNLOAD_CHUNK_BYTES,
+        WORLD_IMPORT_DOWNLOAD_TIMEOUT,
+        WORLD_IMPORT_PROGRESS_STEP,
+        UploadPathConstants,
+    )
+    import httpx
+
+    # 确保 temp 目录存在
+    tmp_root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), UploadPathConstants.TEMP_DIR)
+    os.makedirs(tmp_root, exist_ok=True)
+
+    tmp_path: Optional[str] = None
+
+    async def _do_download():
+        nonlocal tmp_path
+        with _tempfile.NamedTemporaryFile(delete=False, suffix='.zip', dir=tmp_root) as tmp:
+            tmp_path = tmp.name
+            received = 0
+            last_reported_step = 0
+            rate_bps = WORLD_IMPORT_DOWNLOAD_RATE_BPS
+            chunk_bytes = WORLD_IMPORT_DOWNLOAD_CHUNK_BYTES
+            async with httpx.AsyncClient(timeout=httpx.Timeout(WORLD_IMPORT_DOWNLOAD_TIMEOUT, connect=30.0)) as client:
+                async with client.stream('GET', download_url) as response:
+                    response.raise_for_status()
+                    if total_size_hint is None:
+                        # 尝试从 Content-Length 推断
+                        cl = response.headers.get('content-length')
+                        if cl:
+                            try:
+                                total_size_hint_inner = int(cl)
+                            except ValueError:
+                                total_size_hint_inner = 0
+                        else:
+                            total_size_hint_inner = 0
+                    else:
+                        total_size_hint_inner = total_size_hint
+
+                    async for chunk in response.aiter_bytes(chunk_size=chunk_bytes):
+                        tmp.write(chunk)
+                        received += len(chunk)
+                        # 限速：按本 chunk 字节数计算应睡眠时间，平滑出口速率
+                        if rate_bps and rate_bps > 0:
+                            await asyncio.sleep(len(chunk) / rate_bps)
+                        # 进度上报（按 5% 粒度，避免高频写字典）
+                        if total_size_hint_inner > 0:
+                            pct = int(received * 100 / total_size_hint_inner)
+                            if pct >= last_reported_step + WORLD_IMPORT_PROGRESS_STEP:
+                                last_reported_step = pct
+                                await _set_world_import_job(
+                                    job_id,
+                                    status='downloading',
+                                    stage='downloading',
+                                    progress=min(pct, 99),
+                                    received_bytes=received,
+                                    total_bytes=total_size_hint_inner,
+                                )
+            # 下载完成
+            await _set_world_import_job(
+                job_id,
+                stage='downloading',
+                progress=99,
+                received_bytes=received,
+            )
+            return tmp_path
+
+    try:
+        # 超时红线：所有流式操作必须受 wait_for 保护
+        return await asyncio.wait_for(_do_download(), timeout=WORLD_IMPORT_DOWNLOAD_TIMEOUT)
+    except Exception:
+        # 失败时清理半成品临时文件
+        if tmp_path:
+            try:
+                await asyncio.to_thread(os.unlink, tmp_path)
+            except Exception:
+                pass
+        raise
+
+
+async def _run_world_import_job(job_id: str, download_url: str, user_id: str, world_id: str):
+    """后台协程：限速下载 zip → 线程池解包 → 更新 job 状态"""
+    tmp_path: Optional[str] = None
+    try:
+        await _set_world_import_job(job_id, status='downloading', stage='downloading', progress=0)
+        tmp_path = await _download_world_zip_with_rate_limit(download_url, job_id)
+
+        await _set_world_import_job(job_id, status='unpacking', stage='unpacking', progress=99)
+        # 解包是同步 CPU/磁盘密集型，丢线程池避免阻塞事件循环
+        result = await asyncio.to_thread(file_manager.import_world, user_id, world_id, tmp_path)
+
+        await _set_world_import_job(
+            job_id,
+            status='done',
+            stage='done',
+            progress=100,
+            result=result,
+            message=f'导入完成: 剧本{result["scripts"]}个, 角色{result["characters"]}个, '
+                    f'场景{result["locations"]}个, 道具{result["props"]}个, 图片{result["images"]}张',
+        )
+    except asyncio.TimeoutError:
+        logger.error(f'[world_import] job {job_id} 下载超时')
+        await _set_world_import_job(job_id, status='failed', stage='failed', error='下载超时')
+    except Exception as e:
+        logger.error(f'[world_import] job {job_id} 失败: {e}', exc_info=True)
+        await _set_world_import_job(job_id, status='failed', stage='failed', error=str(e))
+    finally:
+        if tmp_path:
+            try:
+                await asyncio.to_thread(os.unlink, tmp_path)
+            except Exception:
+                pass
+
+
+@router.post('/world-upload-token')
+@require_permission("script:create")
+async def world_upload_token(
+    request: Request,
+    world_id: str = Form(...),
+    filename: str = Form(...),
+    size: Optional[int] = Form(None),
+):
+    """
+    颁发前端直传七牛的上传 token。
+
+    前端拿到 {upload_url, token, key} 后，用 XHR 直接 POST 到七牛上传域名，
+    不再经后端转发大文件，彻底释放后端带宽与事件循环。
+    """
+    from config.constant import (
+        QINIU_UPLOAD_REGION_URL,
+        QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+        WORLD_IMPORT_KEY_PREFIX,
+    )
+    try:
+        storage = get_file_storage(get_config())
+        if not hasattr(storage, 'get_upload_token'):
+            return JSONResponse(
+                {'success': False, 'error': '当前存储后端不支持前端直传'},
+                status_code=500,
+            )
+
+        # 生成绑定 key：world_import/<datetime>/<unique>.zip
+        base_key = storage.generate_key_with_datetime(filename)
+        key = f"{WORLD_IMPORT_KEY_PREFIX}/{base_key}"
+        token = storage.get_upload_token(
+            key=key,
+            expires=QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+            policy={'fileType': 0},  # 0=标准存储
+        )
+        return JSONResponse({
+            'success': True,
+            'upload_url': QINIU_UPLOAD_REGION_URL,
+            'token': token,
+            'key': key,
+            'expires': QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+        })
+    except Exception as e:
+        logger.error(f'颁发世界上传 token 失败: {e}', exc_info=True)
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+@router.post('/import-world-from-cloud')
+@require_permission("script:create")
+async def import_world_from_cloud(
+    request: Request,
+    user_id: str = Form(...),
+    world_id: str = Form(...),
+    key: str = Form(...),
+):
+    """
+    基于七牛云 key 触发大世界导入（异步后台任务）。
+
+    立即返回 job_id，前端轮询 /api/world-import-status 获取进度。
+    """
+    from config.constant import WORLD_IMPORT_JOB_MAX_CONCURRENT
+    try:
+        # 并发上限保护
+        active = await _count_active_world_import_jobs()
+        if active >= WORLD_IMPORT_JOB_MAX_CONCURRENT:
+            return JSONResponse(
+                {'success': False, 'error': f'当前已有 {active} 个导入任务在进行，请稍后再试'},
+                status_code=429,
+            )
+
+        storage = get_file_storage(get_config())
+        # 生成临时私有下载 URL（短期过期，不泄露）
+        download_url = storage.get_download_url(key)
+
+        job_id = str(uuid.uuid4())
+        now = time.time()
+        async with _world_import_jobs_lock:
+            _world_import_jobs[job_id] = {
+                'status': 'pending',
+                'stage': 'pending',
+                'progress': 0,
+                'message': '任务已创建',
+                'result': None,
+                'error': None,
+                'started_at': now,
+                'updated_at': now,
+                'user_id': user_id,
+                'world_id': world_id,
+            }
+
+        await _ensure_world_import_cleanup_task()
+        # 后台执行，不阻塞响应
+        asyncio.create_task(_run_world_import_job(job_id, download_url, user_id, world_id))
+
+        return JSONResponse({'success': True, 'job_id': job_id})
+    except Exception as e:
+        logger.error(f'创建云端世界导入任务失败: {e}', exc_info=True)
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+
+@router.get('/world-import-status')
+@require_permission("script:create")
+async def world_import_status(
+    request: Request,
+    job_id: str = QueryParam(...),
+):
+    """查询世界导入任务进度（前端轮询）"""
+    async with _world_import_jobs_lock:
+        job = _world_import_jobs.get(job_id)
+        if not job:
+            return JSONResponse(
+                {'success': False, 'error': '任务不存在或已过期（可能进程已重启），请重试'},
+                status_code=404,
+            )
+        # 返回快照，不暴露内部字段
+        return JSONResponse({
+            'success': True,
+            'job_id': job_id,
+            'status': job.get('status'),
+            'stage': job.get('stage'),
+            'progress': job.get('progress', 0),
+            'message': job.get('message'),
+            'result': job.get('result'),
+            'error': job.get('error'),
+        })

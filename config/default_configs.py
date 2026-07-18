@@ -858,6 +858,15 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
 
+    # ==================== 剧本分段拆分多 worker 配置 ====================
+    {
+        'key': 'script_split.worker_total',
+        'value_type': 'int',
+        'description': '剧本分段拆分独立 worker 进程数；0=主调度器单进程(兼容旧行为)，>0=由 N 个独立 worker 进程分片接管(id MOD N = index)。⚠️修改后需重启服务生效：运行中的 worker 进程数在启动时固定，热更新 DB 不会自动增减进程',
+        'editable': True,
+        'is_sensitive': False
+    },
+
     # ==================== 每日签到配置 ====================
     {
         'key': 'checkin.enabled',

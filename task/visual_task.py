@@ -52,7 +52,7 @@ from config.constant import (
     RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
 )
-from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage
+from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 
 logging.basicConfig(level=logging.INFO)
@@ -98,19 +98,35 @@ def _is_expire_check_enabled():
 
 
 def _normalize_failure_reason(reason):
-    """将外部驱动返回的失败原因转换成可写入数据库的字符串。"""
+    """将外部驱动返回的失败原因转换成可写入数据库的字符串。
+
+    内容审核/违禁类错误会改写为面向用户的中文提示（方案 A，见
+    docs/image/content_moderation_error_design.md）。
+    """
+    from utils.content_moderation_error import (
+        format_user_facing_moderation_error,
+        rewrite_failure_reason_if_moderation,
+    )
+
     if reason is None:
         return "任务失败"
     if isinstance(reason, str):
-        return reason
+        return rewrite_failure_reason_if_moderation(reason)
     if isinstance(reason, dict):
+        friendly = format_user_facing_moderation_error(
+            error_code=reason.get("code") or reason.get("error_code"),
+            error_message=reason.get("message") or reason.get("msg") or reason.get("error"),
+            error_type=reason.get("type"),
+        )
+        if friendly:
+            return friendly
         message = reason.get("message")
         if isinstance(message, str) and message:
-            return message
+            return rewrite_failure_reason_if_moderation(message)
     try:
-        return json.dumps(reason, ensure_ascii=False)
+        return rewrite_failure_reason_if_moderation(json.dumps(reason, ensure_ascii=False))
     except (TypeError, ValueError):
-        return str(reason)
+        return rewrite_failure_reason_if_moderation(str(reason))
 
 if _is_test_mode_enabled():
     logger.info("=" * 60)
@@ -739,6 +755,11 @@ def _check_pipeline_stage(ai_tool, stage):
     from task.pipeline_processor import PipelineProcessor
 
     all_steps = PipelineProcessor.get_all_steps(ai_tool.id, stage)
+    if stage == PipelineStage.BEFORE_FINISH:
+        all_steps = [
+            step for step in all_steps
+            if step.step_type != PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+        ]
     if not all_steps:
         # 无步骤，直接回到主流程
         if stage == PipelineStage.PARAM_PREPARE:
@@ -769,7 +790,10 @@ def _check_pipeline_stage(ai_tool, stage):
             logger.info(f"Task {ai_tool.id} failed: param_prepare step failed")
         elif stage == PipelineStage.BEFORE_FINISH:
             # 检查是否还有待处理的重试步骤
-            remaining = PipelineProcessor.get_pending_steps(ai_tool.id, stage)
+            remaining = [
+                step for step in PipelineProcessor.get_pending_steps(ai_tool.id, stage)
+                if step.step_type != PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+            ]
             if remaining:
                 # 还有重试机会，继续等待
                 return False

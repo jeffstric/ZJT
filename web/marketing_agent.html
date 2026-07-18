@@ -260,8 +260,9 @@
                                      }">
                                     <div style="position: relative; width: 24px; height: 24px; flex-shrink: 0;">
                                         <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl"
-                                             style="width: 24px; height: 24px; border-radius: 4px; object-fit: cover;"
-                                             :style="{ opacity: item.uploading ? 0.5 : 1 }" />
+                                             style="width: 24px; height: 24px; border-radius: 4px; object-fit: cover; cursor: pointer;"
+                                             :style="{ opacity: item.uploading ? 0.5 : 1 }"
+                                             @click="previewMedia(item.serverUrl || item.previewUrl || item.thumbnailUrl, item.type)" />
                                         <span v-else style="font-size: 14px;">{{ item.type === 'video' ? '🎬' : '🎵' }}</span>
                                         <div v-if="item.uploading" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;">
                                             <svg width="14" height="14" viewBox="0 0 24 24">
@@ -310,7 +311,7 @@
                         </div>
                     </div>
                     <div class="marketing-input-bar">
-                        <div class="marketing-input-bar-left">
+                        <div class="marketing-input-bar-left" :class="{ 'toolbar-expanded': showMobileToolbar }">
                             <!-- 类型选择 -->
                             <div class="marketing-dropdown" style="position: relative;">
                                 <button class="marketing-bar-btn" @click.stop="toggleDropdown">
@@ -336,7 +337,7 @@
 
                             <!-- Agent 模式：自定义综合设置 -->
                             <template v-if="selectedType === 'agent'">
-                                <div class="marketing-dropdown" style="position: relative;">
+                                <div class="marketing-dropdown mobile-foldable" style="position: relative;">
                                     <button class="marketing-bar-btn" @click.stop="toggleSettingsPanel">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <circle cx="12" cy="12" r="3"/>
@@ -346,6 +347,10 @@
                                     </button>
                                     <!-- 综合设置面板（向上弹出） -->
                                     <div v-if="showSettingsPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 16px; box-shadow: 0 -8px 32px rgba(0,0,0,0.12); padding: 20px; min-width: 360px; z-index: 100;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                            <span style="font-size: 16px; font-weight: 600; color: #1a1a1a;">{{ $t('custom_settings') }}</span>
+                                            <button @click.stop="showSettingsPanel = false" style="background: none; border: none; font-size: 20px; color: #999; cursor: pointer; padding: 4px; line-height: 1;">✕</button>
+                                        </div>
                                         <!-- 生成偏好 -->
                                         <div style="margin-bottom: 20px;">
                                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
@@ -596,7 +601,7 @@
                                 <span>{{ $t('use_skill') }}</span>
                             </button>
                             <!-- 视频时长选择（视频模式时显示） -->
-                            <div v-if="isVideoMode" class="marketing-dropdown" style="position: relative;">
+                            <div v-if="isVideoMode" class="marketing-dropdown mobile-foldable" style="position: relative;">
                                 <button class="marketing-bar-btn" @click.stop="showDurationPanel = !showDurationPanel">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <circle cx="12" cy="12" r="10"/>
@@ -640,12 +645,18 @@
                             </div>
                             <input type="file" ref="referenceInputRef" style="display: none;" accept=".jpg,.jpeg,.png,.gif,.webp" multiple @change="handleReferenceFileChange">
                             <!-- @主体按钮（全能参考模式下可用） -->
-                            <button class="marketing-bar-btn" :style="showAddSubject ? '' : 'color: #ccc; cursor: not-allowed;'" :title="showAddSubject ? $t('add_subject_tip') : $t('mode_not_supported')" @mousedown.prevent @click="showAddSubject && triggerMention()">
+                            <button class="marketing-bar-btn mobile-foldable" :style="showAddSubject ? '' : 'color: #ccc; cursor: not-allowed;'" :title="showAddSubject ? $t('add_subject_tip') : $t('mode_not_supported')" @mousedown.prevent @click="showAddSubject && triggerMention()">
                                 <span :style="showAddSubject ? 'color: #00a8e6; font-weight: 600;' : 'color: #ccc; font-weight: 600;'">@</span>
                                 <span>{{ $t('add_subject') }}</span>
                             </button>
                         </div>
                         <div class="marketing-input-bar-right" style="display: flex; align-items: center; gap: 10px;">
+                            <button class="marketing-bar-btn mobile-settings-toggle" @click.stop="toggleMobileToolbar" :title="$t('more_settings')">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="3"/>
+                                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.17 15 1.65 1.65 0 0 0 2.66 15V15a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1.51-1V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                                </svg>
+                            </button>
                             <div v-if="computingPower > 0" style="display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: #f0f4f8; border-radius: 8px; font-size: 12px; color: #475569;">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="stroke: #00a8e6;">
                                     <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
@@ -686,7 +697,7 @@
                 </div>
                 <div v-else class="asset-grid">
                     <article v-for="asset in assetItems" :key="asset.id" class="asset-card">
-                        <div class="asset-preview">
+                        <div class="asset-preview" :style="verticalVideoAspectRatio(asset.ratio) ? { aspectRatio: verticalVideoAspectRatio(asset.ratio) } : null">
                             <video v-if="isAssetVideo(asset)" :src="asset.result_url" controls preload="metadata"></video>
                             <img v-else :src="asset.result_url" :alt="asset.prompt || $t('generated_result_alt')" loading="lazy" decoding="async" @click="showImageModal(asset.result_url, asset.id, asset.prompt)">
                         </div>
@@ -753,8 +764,9 @@
         </div>
 
         <!-- 图片放大模态框 -->
-        <div id="imgModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; flex-direction: column; cursor: zoom-out;" onclick="this.style.display='none'">
+        <div id="imgModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; flex-direction: column; cursor: zoom-out;" onclick="const v=document.getElementById('imgModalVideo'); if(v){v.pause();v.style.display='none';} document.getElementById('imgModalImg').style.display=''; this.style.display='none'">
             <img id="imgModalImg" style="max-width: 90%; max-height: 85%; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);" src="" :alt="$t('image_modal_alt')">
+            <video id="imgModalVideo" controls style="display: none; max-width: 90%; max-height: 85%; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);"></video>
             <div style="display: flex; gap: 12px; margin-top: 16px;">
                 <button style="padding: 8px 20px; background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'" onclick="event.stopPropagation(); downloadModalImage()">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>

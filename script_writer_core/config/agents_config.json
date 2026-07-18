@@ -213,6 +213,24 @@
       ],
       "summary_only": true
     },
+    "storyboard-image": {
+      "expert_type": "storyboard",
+      "skills": ["storyboard-image"],
+      "model": "gemini/gemini-3-flash-preview",
+      "max_iterations": 30,
+      "allowed_tools": [
+        "generate_text_to_image",
+        "edit_image",
+        "generate_text_to_video",
+        "image_to_video",
+        "list_video_models",
+        "check_image_status",
+        "get_text_to_image_model_info",
+        "get_user_computing_power",
+        "ask_user"
+      ],
+      "summary_only": true
+    },
     "marketing-video": {
       "expert_type": "marketing",
       "skills": ["marketing-video"],
@@ -221,6 +239,7 @@
       "allowed_tools": [
         "generate_text_to_video",
         "image_to_video",
+        "list_video_models",
         "get_user_computing_power",
         "ask_user"
       ],

@@ -3,7 +3,7 @@ World Model - Database operations for world table
 """
 from typing import Optional, Dict, Any
 from .database import execute_query, execute_update, execute_insert
-from config.constant import Edition
+from config.constant import Edition, StoryType
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,7 @@ class World:
         self.name = kwargs.get('name')
         self.description = kwargs.get('description')
         self.story_outline = kwargs.get('story_outline')
+        self.story_type = StoryType.normalize(kwargs.get('story_type'))
         self.visual_style = kwargs.get('visual_style')
         self.era_environment = kwargs.get('era_environment')
         self.color_language = kwargs.get('color_language')
@@ -32,6 +33,7 @@ class World:
             'name': self.name,
             'description': self.description,
             'story_outline': self.story_outline,
+            'story_type': self.story_type,
             'visual_style': self.visual_style,
             'era_environment': self.era_environment,
             'color_language': self.color_language,
@@ -51,6 +53,7 @@ class WorldModel:
         user_id: int,
         description: Optional[str] = None,
         story_outline: Optional[str] = None,
+        story_type: Optional[str] = None,
         visual_style: Optional[str] = None,
         era_environment: Optional[str] = None,
         color_language: Optional[str] = None,
@@ -64,6 +67,7 @@ class WorldModel:
             user_id: User ID
             description: World description (optional)
             story_outline: Story outline (optional)
+            story_type: Story type (optional)
             visual_style: Visual style (optional)
             era_environment: Era environment (optional)
             color_language: Color language (optional)
@@ -74,10 +78,20 @@ class WorldModel:
         """
         sql = """
             INSERT INTO world 
-            (name, user_id, description, story_outline, visual_style, era_environment, color_language, composition_preference)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (name, user_id, description, story_outline, story_type, visual_style, era_environment, color_language, composition_preference)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (name, user_id, description, story_outline, visual_style, era_environment, color_language, composition_preference)
+        params = (
+            name,
+            user_id,
+            description,
+            story_outline,
+            StoryType.normalize(story_type),
+            visual_style,
+            era_environment,
+            color_language,
+            composition_preference,
+        )
         
         try:
             record_id = execute_insert(sql, params)
@@ -216,13 +230,24 @@ class WorldModel:
         Returns:
             Number of affected rows
         """
-        allowed_fields = ['name', 'description', 'story_outline', 'visual_style', 'era_environment', 'color_language', 'composition_preference']
+        allowed_fields = [
+            'name',
+            'description',
+            'story_outline',
+            'story_type',
+            'visual_style',
+            'era_environment',
+            'color_language',
+            'composition_preference',
+        ]
         
         update_fields = []
         params = []
         
         for field, value in kwargs.items():
             if field in allowed_fields:
+                if field == 'story_type':
+                    value = StoryType.normalize(value)
                 update_fields.append(f"{field} = %s")
                 params.append(value)
         
@@ -269,6 +294,7 @@ CREATE TABLE IF NOT EXISTS `world` (
   `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '' COMMENT '世界名称',
   `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '世界描述',
   `story_outline` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '故事大纲',
+  `story_type` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'dialogue' COMMENT '故事类型：dialogue=对话剧情,narration=旁白解说,music_mv=音乐MV',
   `visual_style` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '画面风格',
   `era_environment` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '时代环境',
   `color_language` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '色彩语言',

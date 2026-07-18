@@ -7,6 +7,7 @@ PipelineProcessor 纯逻辑单元测试
 使用 @patch 装饰器模拟外部依赖。
 """
 import importlib
+import asyncio
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -85,6 +86,55 @@ class TestPipelineProcessorGetPendingSteps(unittest.TestCase):
 
         MockStepModel.get_pending_steps.assert_called_once_with(1, 'param_prepare')
         self.assertEqual(result, ['step1', 'step2'])
+
+
+class TestPipelineProcessorWaitingSteps(unittest.TestCase):
+    @patch('task.pipeline_processor.PipelineProcessor.dispatch_step')
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_storyboard_grid_split_step_is_owned_by_grid_task_scheduler(self, MockStepModel, mock_dispatch):
+        """storyboard_first_frame_grid_split 不能被全局 before_finish 调度器提前执行。"""
+        from model import PipelineStage, PipelineStepType
+
+        step = MagicMock()
+        step.id = 52
+        step.ai_tool_id = 1075
+        step.stage = PipelineStage.BEFORE_FINISH
+        step.step_type = PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+
+        MockStepModel.get_all_waiting_steps.return_value = [step]
+        MockStepModel.get_processing_steps.return_value = []
+        MockStepModel.get_ready_to_retry_steps.return_value = []
+
+        asyncio.run(PipelineProcessor.process_all_pending_steps())
+
+        mock_dispatch.assert_not_called()
+        MockStepModel.update_status.assert_not_called()
+
+    @patch('task.pipeline_processor.PipelineProcessor.dispatch_step')
+    @patch('task.pipeline_processor.PipelineStepModel')
+    def test_stage_completion_does_not_dispatch_storyboard_grid_split_step(self, MockStepModel, mock_dispatch):
+        """implementation_retry 完成后，阶段推进也不能提前派发分镜宫格拆图。"""
+        from model import PipelineStage, PipelineStepStatus, PipelineStepType
+
+        retry_step = MagicMock()
+        retry_step.id = 119
+        retry_step.ai_tool_id = 1120
+        retry_step.stage = PipelineStage.BEFORE_FINISH
+        retry_step.step_type = PipelineStepType.IMPLEMENTATION_RETRY
+        retry_step.status = PipelineStepStatus.COMPLETED
+
+        split_step = MagicMock()
+        split_step.id = 118
+        split_step.ai_tool_id = 1120
+        split_step.stage = PipelineStage.BEFORE_FINISH
+        split_step.step_type = PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
+        split_step.status = PipelineStepStatus.PENDING
+
+        MockStepModel.get_by_ai_tool_and_stage.return_value = [retry_step, split_step]
+
+        asyncio.run(PipelineProcessor._check_ai_tool_stage_completion(1120, PipelineStage.BEFORE_FINISH))
+
+        mock_dispatch.assert_not_called()
 
 
 class TestPipelineProcessorHasSteps(unittest.TestCase):

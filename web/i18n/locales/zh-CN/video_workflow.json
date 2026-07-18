@@ -7,6 +7,8 @@
   "step_nav_current": "当前",
   "return_to_list": "返回列表",
   "select_world": "选择世界...",
+  "search_world_placeholder": "搜索世界...",
+  "no_worlds_found": "未找到匹配的世界",
   "create_world": "新建世界",
   "edit_world": "编辑当前世界",
   "delete_world": "删除当前世界",
@@ -350,7 +352,6 @@
   "script_force_medium_shot": "对话禁止全景",
   "script_no_bg_music": "不生成背景音乐",
   "script_split_multi_dialogue": "拆分多人对话镜头",
-  "script_narration_as_dialogue": "解说剧（仅旁白说话）",
   "script_split_btn": "拆分幕",
   "script_grid_only_btn": "宫格生图",
   "script_split_grid_btn": "拆分幕 + 宫格生图",
@@ -706,6 +707,19 @@
   "video_prompt_environment_sound": "环境音：{value}",
   "video_prompt_background_music": "背景音乐：{value}",
   "process_face_label": "是否处理人脸",
-  "process_face_community_hint": "此功能为商业版功能，请联系购买商业版本后使用"
+  "process_face_community_hint": "此功能为商业版功能，请联系购买商业版本后使用",
+  "create_canvas": "新建画布",
+  "create_canvas_modal_title": "新建画布",
+  "workflow_name_label": "工作流名称",
+  "workflow_name_placeholder": "请输入工作流名称...",
+  "workflow_ratio_label": "画幅比例",
+  "ratio_landscape": "横屏",
+  "ratio_portrait": "竖屏",
+  "ratio_square": "方形",
+  "creating_btn": "创建中...",
+  "toast_create_success": "创建成功",
+  "toast_workflow_name_required": "请输入工作流名称",
+  "toast_ratio_required": "请选择画幅比例",
+  "toast_operation_failed": "操作失败，请稍后重试"
 }
 

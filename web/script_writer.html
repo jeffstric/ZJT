@@ -200,7 +200,7 @@
                     <div class="step-nav-badge current" data-i18n="current">当前</div>
                 </div>
                 <div class="step-nav-connector"></div>
-                <div class="step-nav-item clickable" data-step="canvas" onclick="goToWorkflowCanvas()">
+                <div class="step-nav-item clickable" data-step="canvas" onclick="showModeSelection()">
                     <div class="step-nav-icon">🎬</div>
                     <div class="step-nav-text" data-i18n="production_workshop">制作工坊</div>
                     <div class="step-nav-arrow">→</div>
@@ -229,6 +229,10 @@
                 </button>
             </div>
         </div>
+        <div class="world-search-box">
+            <input type="text" id="world-search-input" class="world-search-input" placeholder="搜索世界..." data-i18n="search_world_placeholder:placeholder">
+            <button class="world-search-clear" id="world-search-clear" type="button" title="清空搜索" data-i18n="clear_search:title">×</button>
+        </div>
         <div class="world-list" id="world-list">
             <div class="world-empty" data-i18n="loading">加载中...</div>
         </div>
@@ -247,14 +251,19 @@
                     <img src="/files/logo.svg" alt="Logo" class="app-logo">
                 </a>
                 <nav class="breadcrumb-nav">
-                    <a href="/video-workflow-list" class="breadcrumb-link" data-i18n="workflow_list">工作流列表</a>
+                    <a href="/video-workflow-list" class="breadcrumb-link" data-i18n="workflow_list">工作流</a>
                     <span class="breadcrumb-separator">/</span>
                     <span class="breadcrumb-current" data-i18n="script_writer_title">剧本智能创作系统</span>
                 </nav>
                 <span class="world-name-display" id="world-name-display" data-i18n="loading">加载中...</span>
             </div>
             <div class="header-right">
-                <div class="model-selector-card">
+                <button class="model-settings-toggle-btn" onclick="toggleModelSettingsPanel()" title="模型设置" data-i18n="model_settings:title" aria-label="模型设置" aria-expanded="false">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 3v18M5 7h14M7 12h10M9 17h6"/>
+                    </svg>
+                </button>
+                <div class="model-selector-card" id="model-selector-card">
                     <div class="model-selector-item">
                         <div class="model-icon text-model-icon" id="llm-model-icon" title="AI 模型" data-i18n="ai_model:title">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -281,6 +290,22 @@
                             <option value="high" data-i18n="high">高</option>
                         </select>
                     </div>
+                    <div class="intervention-level-wrapper" id="intervention-level-wrapper">
+                        <div class="model-icon intervention-icon" id="intervention-icon" title="AI 介入程度" data-i18n="intervention_level:title">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="3"/>
+                                <path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24"/>
+                            </svg>
+                        </div>
+                        <div class="model-select-wrapper">
+                            <select id="intervention-level-selector" class="model-select" onchange="onInterventionLevelChange()" title="选择 AI 介入程度" data-i18n="select_intervention_level:title">
+                                <option value="balanced" data-i18n="intervention_balanced">标准</option>
+                                <option value="concise" data-i18n="intervention_concise">简洁·少提问</option>
+                                <option value="detailed" data-i18n="intervention_detailed">精细·多确认</option>
+                            </select>
+                            <div class="model-select-display" id="intervention-level-display">标准</div>
+                        </div>
+                    </div>
                     <div class="model-divider"></div>
                     <div class="model-selector-item">
                         <div class="model-icon image-model-icon" id="image-model-icon" title="生图模型" data-i18n="image_model:title">
@@ -293,18 +318,21 @@
                                 <path d="M9 12c0 1.5 1 3 3 3s3-1.5 3-3"/>
                             </svg>
                         </div>
-                        <select id="text-to-image-model-selector" class="model-select" onchange="changeTextToImageModel()" title="选择生图模型" style="display: none;" data-i18n="select_image_model:title">
-                            <option value="" data-i18n="loading">加载中...</option>
-                        </select>
+                        <div class="model-select-wrapper">
+                            <select id="text-to-image-model-selector" class="model-select" onchange="changeTextToImageModel()" title="选择生图模型" style="display: none;" data-i18n="select_image_model:title">
+                                <option value="" data-i18n="loading">加载中...</option>
+                            </select>
+                            <div class="model-select-display" id="image-model-selector-display">加载中...</div>
+                        </div>
                     </div>
                 </div>
                 <div class="computing-power-display" id="computing-power-display" title="当前算力余额（点击查看日志）" onclick="openComputingPowerLogsModal()" style="cursor: pointer;" data-i18n="current_power_balance:title">
                     <span class="power-icon">⚡</span>
                     <span class="power-value" id="power-value">--</span>
                 </div>
-                <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交数据" data-i18n="submit_data:title">
+                <button class="header-action-btn primary" onclick="submitToDatabase()" title="提交" data-i18n="submit_data:title">
                     <span class="btn-icon">💾</span>
-                    <span class="btn-text" data-i18n="submit_data">提交数据</span>
+                    <span class="btn-text" data-i18n="submit_data">提交</span>
                 </button>
                 <div class="auto-submit-container">
                     <label class="auto-submit-toggle" title="开启后每分钟自动提交" data-i18n="auto_submit_tip:title">
@@ -421,7 +449,7 @@
             </div>
 
             <!-- 文件管理面板 -->
-            <aside class="file-sidebar">
+            <aside class="file-sidebar" id="file-sidebar">
                 <div class="sidebar-header">
                     <h3 class="sidebar-title" data-i18n="file_management">📁 暂存文件管理</h3>
                     <div class="sidebar-header-actions">
@@ -432,13 +460,16 @@
                                 <line x1="12" y1="15" x2="12" y2="3"/>
                             </svg>
                         </button>
-                        <button class="import-icon-btn" onclick="triggerImportWorld()" title="导入世界数据" data-i18n="import_world:title">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                <polyline points="17 8 12 3 7 8"/>
-                                <line x1="12" y1="3" x2="12" y2="15"/>
-                            </svg>
-                        </button>
+                        <div class="import-drop-zone" id="importDropZone" onclick="triggerImportWorld()" title="导入世界数据" data-i18n="import_world:title">
+                            <button class="import-icon-btn" type="button" aria-label="导入世界数据" tabindex="-1">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="17 8 12 3 7 8"/>
+                                    <line x1="12" y1="3" x2="12" y2="15"/>
+                                </svg>
+                            </button>
+                            <span class="import-drop-hint" data-i18n="drop_import_world_hint">拖入 .zip</span>
+                        </div>
                         <input type="file" id="import-world-file" accept=".zip" style="display:none" onchange="handleImportWorld(event)">
                         <button class="refresh-icon-btn" onclick="refreshFiles()" title="刷新文件列表" data-i18n="refresh_files:title">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -478,6 +509,17 @@
                         <span class="tab-icon">🎁</span>
                         <span data-i18n="tab_prop">道具</span>
                     </button>
+                </div>
+                <!-- 世界导入进度条（前端直传七牛 + 后端限速下载，仅在导入进行中显示） -->
+                <div class="world-import-progress" id="worldImportProgress" hidden>
+                    <div class="world-import-progress-info">
+                        <span class="world-import-progress-stage" id="worldImportProgressStage"></span>
+                        <span class="world-import-progress-pct" id="worldImportProgressPct"></span>
+                    </div>
+                    <div class="world-import-progress-bar">
+                        <div class="world-import-progress-bar-fill" id="worldImportProgressFill"></div>
+                    </div>
+                    <button type="button" class="world-import-progress-cancel" id="worldImportProgressCancel" title="取消" data-i18n-title="cancel" hidden>×</button>
                 </div>
                 <div class="file-list-container" id="file-list">
                     <div class="file-list-header">
@@ -600,6 +642,10 @@
                         <div class="form-group">
                             <label class="form-label"><span data-i18n="label_user_id">用户ID</span></label>
                             <div class="view-field" id="view-world-user-id"></div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label"><span data-i18n="label_story_type">故事类型</span></label>
+                            <div class="view-field" id="world-story-type-view"></div>
                         </div>
                         <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
@@ -789,14 +835,19 @@
                                     <button type="button" class="btn btn-secondary btn-sm" onclick="clearCharacterDefaultVoice()" data-i18n="btn_clear">
                                         清空
                                     </button>
+                                    <button type="button" class="btn btn-primary btn-sm" onclick="triggerCharacterVoiceUpload()">
+                                        上传音频
+                                    </button>
                                     <button type="button" class="btn btn-primary btn-sm" id="generate-character-voice-btn" onclick="generateCharacterReferenceAudio()" data-i18n="btn_generate_audio">
                                         生成参考音频
                                     </button>
                                 </div>
+                                <input type="file" id="char-voice-file" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma" style="display: none;" onchange="handleCharacterVoiceUpload(event)">
                             </div>
                             <div id="char-default-voice-preview" style="display: none; margin-top: 8px;">
                                 <audio controls style="width: 100%; height: 36px;"></audio>
                             </div>
+                            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
                         </div>
                         <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_reference_image">参考图片</span></label>
@@ -847,7 +898,10 @@
                         </div>
                         <div class="form-group">
                             <label class="form-label"><span data-i18n="label_parent_scene">父级场景</span></label>
-                            <input type="text" id="loc-parent" class="form-input" placeholder="输入父级场景ID（可选）" data-i18n-placeholder="placeholder_loc_parent">
+                            <select id="loc-parent" class="form-input">
+                                <option value="" data-i18n="option_no_parent_scene">无（顶层场景）</option>
+                            </select>
+                            <span class="form-hint" style="font-size: 12px; color: var(--muted, #6b7280); margin-top: 4px; display: block;">仅可选择顶级场景作为父级</span>
                         </div>
                         <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_scene_desc">场景描述</span></label>
@@ -999,6 +1053,14 @@
                             <label class="form-label"><span data-i18n="label_user_id">用户ID</span></label>
                             <input type="text" id="world-user-id" class="form-input" readonly>
                         </div>
+                        <div class="form-group">
+                            <label class="form-label"><span data-i18n="label_story_type">故事类型</span></label>
+                            <select id="world-story-type" class="form-input">
+                                <option value="dialogue" data-i18n="story_type_dialogue">对话剧情</option>
+                                <option value="narration" data-i18n="story_type_narration">旁白解说</option>
+                                <option value="music_mv" data-i18n="story_type_music_mv">音乐MV</option>
+                            </select>
+                        </div>
                         <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
                             <textarea id="world-description" class="form-textarea" rows="4" placeholder="描述这个世界的背景、设定等" data-i18n-placeholder="placeholder_world_desc"></textarea>
@@ -1063,6 +1125,14 @@
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_world_name">世界名称</span> *</label>
                         <input type="text" id="new-world-name" class="form-input" placeholder="输入世界名称" data-i18n-placeholder="placeholder_world_name" maxlength="100">
+                    </div>
+                    <div class="form-group full-width">
+                        <label class="form-label"><span data-i18n="label_story_type">故事类型</span></label>
+                        <select id="new-world-story-type" class="form-input">
+                            <option value="dialogue" data-i18n="story_type_dialogue">对话剧情</option>
+                            <option value="narration" data-i18n="story_type_narration">旁白解说</option>
+                            <option value="music_mv" data-i18n="story_type_music_mv">音乐MV</option>
+                        </select>
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
@@ -1182,7 +1252,10 @@
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_parent_scene">父级场景</span></label>
-                        <input type="text" id="new-loc-parent" class="form-input" placeholder="所属父级场景名称（可选）">
+                        <select id="new-loc-parent" class="form-input">
+                            <option value="" data-i18n="option_no_parent_scene">无（顶层场景）</option>
+                        </select>
+                        <span class="form-hint" style="font-size: 12px; color: var(--muted, #6b7280); margin-top: 4px; display: block;">仅可选择顶级场景作为父级；未选则为顶层场景</span>
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_scene_desc">场景描述</span></label>
@@ -1248,6 +1321,14 @@
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_world_name">世界名称</span> *</label>
                         <input type="text" id="edit-world-name" class="form-input" placeholder="输入世界名称" data-i18n-placeholder="placeholder_world_name" maxlength="100">
+                    </div>
+                    <div class="form-group full-width">
+                        <label class="form-label"><span data-i18n="label_story_type">故事类型</span></label>
+                        <select id="edit-world-story-type" class="form-input">
+                            <option value="dialogue" data-i18n="story_type_dialogue">对话剧情</option>
+                            <option value="narration" data-i18n="story_type_narration">旁白解说</option>
+                            <option value="music_mv" data-i18n="story_type_music_mv">音乐MV</option>
+                        </select>
                     </div>
                     <div class="form-group full-width">
                         <label class="form-label"><span data-i18n="label_world_desc">世界描述</span></label>
@@ -1407,6 +1488,19 @@
             </div>
         </div>
     </div>
+
+    <!-- 暂存区遮罩层（窄屏全屏模式用） -->
+    <div class="file-sidebar-overlay" id="file-sidebar-overlay" onclick="toggleFileSidebar()"></div>
+
+    <!-- 窄屏模型设置遮罩层 -->
+    <div class="model-settings-overlay" id="model-settings-overlay" onclick="closeModelSettingsPanel()"></div>
+
+    <!-- 窄屏暂存区浮动按钮 -->
+    <button class="file-sidebar-toggle-btn" id="file-sidebar-toggle-btn" onclick="toggleFileSidebar()" title="暂存文件" data-i18n="staging_files:title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+    </button>
 
 </body>
 </html>

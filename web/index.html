@@ -40,12 +40,30 @@
             <div class="title">{{ mainTitle }}</div>
             <div class="subtitle" v-if="route.name==='list'">{{ $t('subtitle') }}</div>
           </div>
+          <button v-if="isLoggedIn" class="agent-connect-btn" type="button" @click="openAgentConnectionModal" title="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息" aria-label="获取 Codex / Claude Code / OpenClaw / 腾讯 WorkBuddy 智能体连接信息">
+            <span class="agent-connect-icons" aria-hidden="true">
+              <span class="agent-icon-badge codex">
+                <img src="/assets/logos/agent-codex.svg" alt="">
+              </span>
+              <span class="agent-icon-badge claude">
+                <img src="/assets/logos/agent-claude-code.ico" alt="">
+              </span>
+              <span class="agent-icon-badge openclaw">
+                <img src="/assets/logos/agent-openclaw.svg" alt="">
+              </span>
+              <span class="agent-icon-badge workbuddy">
+                <img src="/assets/logos/agent-workbuddy.webp" alt="">
+              </span>
+            </span>
+          </button>
         </div>
         <div style="display: flex; gap: 10px; align-items: center;">
           <button class="btn secondary" v-if="route.name!=='list'" @click="goHome">{{ $t('back') }}</button>
           <template v-if="isLoggedIn">
             <div class="user-info-wrapper">
-              <span class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
+              <div class="user-agent-row">
+                <span class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
+              </div>
               <div class="computing-power-display">
                 <template v-if="checkinStatus.checkin_enabled">
                   <button class="checkin-badge" v-if="!checkinStatus.checked_in_today" @click="performCheckin" :disabled="checkinLoading" :title="$t('check_in_tip')">
@@ -125,6 +143,48 @@
       <div class="checkin-toast-title">签到成功 +{{ checkinToast.reward }} 算力</div>
       <div class="checkin-toast-sub">已连续签到 {{ checkinToast.streak_days }} 天</div>
       <div v-if="checkinToast.nextRewardText" class="checkin-toast-next">{{ checkinToast.nextRewardText }}</div>
+    </div>
+
+    <!-- 智能体连接信息弹窗 -->
+    <div class="modal-overlay" v-if="showAgentConnectionModal" @click.self="closeAgentConnectionModal">
+      <div class="modal agent-connection-modal" style="position: relative;">
+        <button class="modal-close" @click="closeAgentConnectionModal">×</button>
+        <div class="modal-title">智能体连接信息</div>
+        <div class="agent-connection-content">
+          <p class="agent-connection-desc">
+            将下面连接包交给 Codex、Claude Code、OpenClaw 或腾讯 WorkBuddy 智能体。接口路径由 skill 按 api_version 固定拼接，智能体会先用 agent_token 换取 auth_token。
+          </p>
+          <div class="status danger" v-if="agentConnectionError" style="margin-bottom: 12px;">{{ agentConnectionError }}</div>
+          <div class="status success" v-if="agentConnectionCopied" style="margin-bottom: 12px;">已复制到剪贴板</div>
+          <button class="btn" @click="generateAgentConnection" :disabled="agentConnectionLoading" style="width: 100%; margin-bottom: 12px;">
+            {{ agentConnectionLoading ? '生成中...' : (agentConnectionInfo ? '重新生成并复制' : '生成并复制连接信息') }}
+          </button>
+          <div class="agent-connection-grid" v-if="agentConnectionInfo">
+            <div>
+              <label class="label">Base URL</label>
+              <code>{{ agentConnectionInfo.base_url }}</code>
+            </div>
+            <div>
+              <label class="label">API Version</label>
+              <code>{{ agentConnectionInfo.api_version || '-' }}</code>
+            </div>
+            <div>
+              <label class="label">Agent Token 有效期</label>
+              <code>{{ agentConnectionInfo.expires_at || '-' }}</code>
+            </div>
+          </div>
+          <textarea
+            v-if="agentConnectionText"
+            class="textarea agent-connection-text"
+            readonly
+            :value="agentConnectionText"
+            @focus="$event.target.select()"
+          ></textarea>
+          <div class="agent-connection-warning">
+            这段信息包含可操作账号的 agent_token，只交给你信任的智能体。agent_token 会被智能体换成短期 auth_token；重新登录只会影响页面登录态，不会自动撤销已生成的 agent_token。
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 意见反馈弹窗 -->
@@ -866,9 +926,9 @@
     </div>
     
     <!-- Mode Selection Modal -->
-    <div class="modal-overlay" v-if="showModeSelectModal" @click.self="creationMode ? showModeSelectModal = false : null">
+    <div class="modal-overlay" v-if="showModeSelectModal" @click.self="showModeSelectModal = false">
       <div class="modal" style="position: relative; max-width: 500px;">
-        <button class="modal-close" v-if="creationMode" @click="showModeSelectModal = false">×</button>
+        <button class="modal-close" @click="showModeSelectModal = false">×</button>
         <div class="modal-title" style="text-align: center;">{{ $t('select_creation_mode') }}</div>
         <div style="padding: 20px;">
           <p style="text-align: center; color: var(--muted); margin-bottom: 24px;">{{ $t('select_creation_mode_desc') }}</p>
@@ -884,7 +944,7 @@
             <div class="mode-select-item" :class="{active: creationMode === 'marketing'}" @click="selectCreationMode('marketing')">
               <div class="mode-select-icon">🎯</div>
               <div class="mode-select-content">
-                <div class="mode-select-title">{{ $t('mode_marketing') }} <span class="beta-tag">Beta</span></div>
+                <div class="mode-select-title">{{ $t('mode_marketing') }}</div>
                 <div class="mode-select-desc">{{ $t('mode_marketing_desc') }}</div>
               </div>
               <div class="mode-select-check" v-if="creationMode === 'marketing'">✓</div>
@@ -906,7 +966,6 @@
   <script src="/js/pages/list_page.js"></script>
   <script src="/js/pages/digital_human.js"></script>
   <script src="/js/pages/audio_generate.js"></script>
-  <script src="/js/pages/video_remix.js"></script>
   <script src="/js/pages/video_enhance.js"></script>
   <script src="/js/pages/image_edit.js"></script>
   <script src="/js/pages/text_to_image.js"></script>
@@ -975,7 +1034,7 @@
         }
       },
       template: `
-        <div class="modal-overlay" @click.self="close" style="z-index: 10001;">
+        <div class="modal-overlay" style="z-index: 10001;" @click.self="close">
           <div class="modal" style="max-width: 720px; max-height: 82vh; overflow-y: auto;">
             <button class="modal-close" @click="close">×</button>
             <div class="modal-title">{{ $t('task_timeline') }} <span style="font-weight: 400; color: var(--muted); font-size: 14px;">ID: {{ aiToolId }}</span></div>
@@ -1007,6 +1066,25 @@
     // 注册 Vue i18n 插件
     app.use(window.ZJTi18nVue);
     app.mount('#app');
+
+    // 全局 ESC 键关闭弹窗：关闭最上层可见的 .modal-overlay。
+    // 各弹窗（历史记录、登录、充值、timeline-modal 等）均含 .modal-close 按钮，
+    // 这里直接触发其 click()，复用各弹窗既有的关闭逻辑（showXxx=false / closeHistory / close）。
+    // 弹窗用 v-if 控制，被关闭后即从 DOM 移除，因此 querySelectorAll 取到的都是当前可见弹窗。
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      var overlays = document.querySelectorAll('.modal-overlay');
+      if (!overlays.length) return;
+      // 取最后一个（DOM 顺序最末者通常为最上层）；优先比较 z-index
+      var top = overlays[overlays.length - 1];
+      var maxZ = parseInt(getComputedStyle(top).zIndex || 0, 10);
+      for (var i = overlays.length - 1; i >= 0; i--) {
+        var z = parseInt(getComputedStyle(overlays[i]).zIndex || 0, 10);
+        if (z > maxZ) { maxZ = z; top = overlays[i]; }
+      }
+      var btn = top.querySelector('.modal-close');
+      if (btn) { e.preventDefault(); btn.click(); }
+    });
 
     // 扫描 DOM 中的 data-i18n 属性并翻译
     if (window.ZJTi18nDOM) {

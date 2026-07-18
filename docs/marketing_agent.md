@@ -238,6 +238,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - **文生视频**：`TaskConfig.getModelOptionsForCategory('text_to_video')`
 - **图生视频**：`TaskConfig.getModelOptionsForCategory('image_to_video')`，根据 `videoImageMode` 过滤支持的模型
 - 模型偏好从后端 `GET /api/video-model` 获取，回退到 `localStorage`
+- 用户在 Agent 模式下切换视频模型时，前端 `syncVideoModelToBackend()` 会调用 `POST /api/video-model` 并携带完整 `video_preferences`（含 `model_name`、`ratio`、`duration`、`resolution`、`image_mode`、`enable_face_mask`），后端合并更新 `_video_preferences_cache`，确保 MCP 视频工具执行时读取到最新偏好
 
 #### 模型选择状态
 
@@ -455,6 +456,7 @@ Agent 对话模式即使当前自定义面板停留在“图片”，前端也�
 | `/api/system/server-config` | GET | 获取服务器配置（文件大小限制等） |
 | `/api/models` | GET | 获取可用 LLM 模型列表 |
 | `/api/video-model` | GET | 获取用户视频模型偏好 |
+| `/api/video-model` | POST | 设置视频模型偏好（含 task_id + video_preferences 完整字段） |
 | `/api/text-to-image-model` | POST | 同步图片模型偏好到后端 |
 
 ### 用户和算力

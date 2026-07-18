@@ -106,6 +106,12 @@ def get_llm_client(model: str, vendor_id: Optional[int] = None) -> BaseLLMClient
         model: 模型名称
         vendor_id: 可选的供应商 ID。若提供，优先使用该 ID 直接路由。
     """
+    # 防御：部分前端入口会把 model 传成对象（{name, model, model_id, vendor_id}），
+    # 这里拍平为字符串，避免 Gemini 路由把 dict 序列化进 URL 触发 404。
+    if isinstance(model, dict):
+        model = model.get("model") or model.get("name") or ""
+    elif model is not None and not isinstance(model, str):
+        model = str(model)
     return LLMClientFactory.get_client(model, vendor_id=vendor_id)
 
 

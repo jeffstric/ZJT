@@ -7,6 +7,7 @@
   <link rel="icon" href="/files/logo.ico" type="image/vnd.microsoft.icon"/>
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/video_workflow.css" />
+  <link rel="stylesheet" href="/css/image_coloring_editor.css" />
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
   <script src="/i18n/i18n-dom.js?v=__VERSION__"></script>
@@ -48,13 +49,32 @@
           </div>
         </a>
         <div class="world-selector">
-          <select id="defaultWorldSelect" data-i18n="select_world:title">
-            <option value="" data-i18n="select_world">选择世界...</option>
-          </select>
+          <div class="world-searchable-select" id="worldSearchableSelect">
+            <select id="defaultWorldSelect" data-i18n="select_world:title" style="display: none;">
+              <option value="" data-i18n="select_world">选择世界...</option>
+            </select>
+            <button type="button" class="world-search-trigger" id="worldSearchTrigger" aria-haspopup="listbox" aria-expanded="false">
+              <span class="world-search-trigger-text" id="worldSearchTriggerText" data-i18n="select_world">选择世界...</span>
+              <svg class="world-search-trigger-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <div class="world-search-dropdown" id="worldSearchDropdown" role="listbox" aria-hidden="true">
+              <div class="world-search-input-wrap">
+                <input type="text" id="worldSearchInput" placeholder="搜索世界..." data-i18n="search_world_placeholder:placeholder" autocomplete="off">
+              </div>
+              <div class="world-search-options" id="worldSearchOptions"></div>
+            </div>
+          </div>
           <div class="world-selector-actions">
-            <button class="mini-btn" id="createWorldBtn" type="button" data-i18n="create_world:title">+</button>
-            <button class="mini-btn secondary" id="editWorldBtn" type="button" data-i18n="edit_world:title">✎</button>
-            <button class="mini-btn btn-danger" id="deleteWorldBtn" type="button" data-i18n="delete_world:title">−</button>
+            <button class="mini-btn" id="createWorkflowBtn" type="button" data-i18n="create_canvas:title" style="display: inline-flex; align-items: center; gap: 4px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <line x1="12" y1="8" x2="12" y2="16"/>
+                <line x1="8" y1="12" x2="16" y2="12"/>
+              </svg>
+              <span data-i18n="create_canvas">新建画布</span>
+            </button>
           </div>
           <span id="editionBadge" style="display: none; margin-left: 8px; padding: 2px 8px; background: #22c55e; color: white; border-radius: 4px; font-size: 12px; font-weight: 500;" data-i18n="public_space">公共空间</span>
         </div>
@@ -768,6 +788,82 @@
     </div>
   </div>
 
+  <!-- 新建画布模态框 -->
+  <div class="modal" id="createWorkflowModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 500px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
+      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
+        <div class="modal-title" style="color: #0f172a;" data-i18n="create_canvas_modal_title">新建画布</div>
+        <button class="modal-close" id="createWorkflowModalClose" type="button" aria-label="关闭" data-i18n="close:aria-label">×</button>
+      </div>
+      <div class="modal-body" style="background: #ffffff; padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <!-- 名称 -->
+          <div class="field">
+            <label class="label" style="color: #0f172a;" data-i18n="workflow_name_label">工作流名称 <span style="color: #ef4444;">*</span></label>
+            <input type="text" id="createWorkflowNameInput" placeholder="请输入工作流名称..." style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;" data-i18n="workflow_name_placeholder:placeholder" />
+          </div>
+          <!-- 世界 -->
+          <div class="field">
+            <label class="label" style="color: #0f172a;" data-i18n="world_label">世界</label>
+            <select id="createWorkflowWorldSelect" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px;">
+              <option value="" data-i18n="select_world_placeholder">选择世界（可选）</option>
+            </select>
+          </div>
+          <!-- 画幅比例 -->
+          <div class="field">
+            <label class="label" style="color: #0f172a;" data-i18n="workflow_ratio_label">画幅比例 <span style="color: #ef4444;">*</span></label>
+            <div id="createWorkflowRatioGroup" style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <label class="ratio-option" data-ratio="16:9">
+                <input type="radio" name="createWorkflowRatio" value="16:9" style="display: none;">
+                <div class="ratio-icon ratio-icon-landscape"></div>
+                <div class="ratio-text">
+                  <span class="ratio-value">16:9</span>
+                  <span class="ratio-label" data-i18n="ratio_landscape">横屏</span>
+                </div>
+              </label>
+              <label class="ratio-option" data-ratio="9:16">
+                <input type="radio" name="createWorkflowRatio" value="9:16" style="display: none;">
+                <div class="ratio-icon ratio-icon-portrait"></div>
+                <div class="ratio-text">
+                  <span class="ratio-value">9:16</span>
+                  <span class="ratio-label" data-i18n="ratio_portrait">竖屏</span>
+                </div>
+              </label>
+              <label class="ratio-option" data-ratio="4:3">
+                <input type="radio" name="createWorkflowRatio" value="4:3" style="display: none;">
+                <div class="ratio-icon ratio-icon-landscape"></div>
+                <div class="ratio-text">
+                  <span class="ratio-value">4:3</span>
+                  <span class="ratio-label" data-i18n="ratio_landscape">横屏</span>
+                </div>
+              </label>
+              <label class="ratio-option" data-ratio="3:4">
+                <input type="radio" name="createWorkflowRatio" value="3:4" style="display: none;">
+                <div class="ratio-icon ratio-icon-portrait"></div>
+                <div class="ratio-text">
+                  <span class="ratio-value">3:4</span>
+                  <span class="ratio-label" data-i18n="ratio_portrait">竖屏</span>
+                </div>
+              </label>
+              <label class="ratio-option" data-ratio="1:1">
+                <input type="radio" name="createWorkflowRatio" value="1:1" style="display: none;">
+                <div class="ratio-icon ratio-icon-square"></div>
+                <div class="ratio-text">
+                  <span class="ratio-value">1:1</span>
+                  <span class="ratio-label" data-i18n="ratio_square">方形</span>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
+        <button class="mini-btn secondary" id="createWorkflowCancelBtn" type="button" data-i18n="cancel">取消</button>
+        <button class="mini-btn" id="createWorkflowSaveBtn" type="button" data-i18n="create_btn">创建</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 编辑世界模态框 -->
   <div class="modal" id="editWorldModal" aria-hidden="true">
     <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 500px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
@@ -902,50 +998,8 @@
     </div>
   </div>
 
-  <!-- 涂色编辑模态框 -->
-  <div class="modal" id="coloringEditorModal" aria-hidden="true">
-    <div class="modal-card" role="dialog" aria-modal="true" style="max-width: 900px; background: #ffffff; color: #111827; border: 1px solid #e5e7eb;">
-      <div class="modal-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
-        <div class="modal-title" style="color: #0f172a;" data-i18n="coloring_edit_modal">图片涂色编辑</div>
-        <button class="modal-close" id="coloringEditorModalClose" type="button" aria-label="关闭" data-i18n="close:aria-label">×</button>
-      </div>
-      <div class="modal-body" style="background: #ffffff; padding: 20px;">
-        <div style="display: flex; flex-direction: column; gap: 16px;">
-          <div class="coloring-canvas-container">
-            <canvas id="coloringCanvas"></canvas>
-          </div>
-          <div class="coloring-tools">
-            <div class="field" style="flex: 1;">
-              <label class="label" style="color: #0f172a;">画笔大小</label>
-              <input type="range" id="coloringBrushSize" min="20" max="200" value="50" style="width: 100%;" />
-              <div style="text-align: center; font-size: 12px; color: #6b7280; margin-top: 4px;">
-                <span id="coloringBrushSizeValue">50</span>px
-              </div>
-            </div>
-            <div class="field" style="flex: 1;">
-              <label class="label" style="color: #0f172a;">颜色</label>
-              <input type="color" id="coloringColor" value="#ff0000" style="width: 100%; height: 40px; border: 1px solid #d1d5db; border-radius: 8px; cursor: pointer;" />
-            </div>
-            <div class="field" style="flex: 1;">
-              <label class="label" style="color: #0f172a;">透明度</label>
-              <input type="range" id="coloringOpacity" min="0" max="100" value="50" style="width: 100%;" />
-              <div style="text-align: center; font-size: 12px; color: #6b7280; margin-top: 4px;">
-                <span id="coloringOpacityValue">50</span>%
-              </div>
-            </div>
-          </div>
-          <div style="display: flex; gap: 8px; justify-content: center;">
-            <button class="mini-btn secondary" id="coloringUndoBtn" type="button" data-i18n="coloring_undo">撤销</button>
-            <button class="mini-btn secondary" id="coloringClearBtn" type="button" data-i18n="coloring_clear">清空</button>
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid #e5e7eb;">
-        <button class="mini-btn secondary" id="coloringCancelBtn" type="button" data-i18n="cancel">取消</button>
-        <button class="mini-btn" id="coloringConfirmBtn" type="button" data-i18n="coloring_confirm">确认</button>
-      </div>
-    </div>
-  </div>
+  <!-- 涂色编辑模态框：可由 image_coloring_editor.js 自注入；此处保留兼容旧缓存页面 -->
+  <!-- 实际 DOM 优先使用脚本 ensureModalDom 注入的结构 -->
 
   <!-- 时间轴面板 -->
   <div class="timeline-container" id="timelineContainer" style="display:none;">
@@ -997,6 +1051,7 @@
   <script src="/js/api.js"></script>
   <script src="/js/task_config.js"></script>
   <script src="/js/world.js"></script>
+  <script src="/js/create_workflow_modal.js"></script>
   <script src="/js/timeline.js"></script>
   <script src="/js/workflow.js"></script>
   <script src="/js/canvas.js"></script>
@@ -1058,9 +1113,11 @@
     
     // 跳转到剧本创作系统
     async function goToScriptWriter() {
-      // 获取workflow_id
-      const urlParams = new URLSearchParams(window.location.search);
-      const workflowId = urlParams.get('id');
+      // 获取 workflow id（兼容 id / workflow_id）
+      const workflowId = (typeof getWorkflowIdFromUrl === 'function')
+        ? getWorkflowIdFromUrl()
+        : (new URLSearchParams(window.location.search).get('id')
+          || new URLSearchParams(window.location.search).get('workflow_id'));
       
       // 获取当前选择的世界id
       const worldSelect = document.getElementById('defaultWorldSelect');
@@ -1261,6 +1318,7 @@
   <script src="/js/audio_node.js"></script>
   <script src="/js/image_to_video_node.js"></script>
   <script src="/js/image_node.js"></script>
+  <script src="/js/script_split_task.js"></script>
   <script src="/js/script_node.js"></script>
   <script src="/js/shot_group_node.js"></script>
   <script src="/js/shot_frame_node.js"></script>

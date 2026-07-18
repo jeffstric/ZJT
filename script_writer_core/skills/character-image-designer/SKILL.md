@@ -574,6 +574,12 @@ if not result.get("success"):
 
 变体图与主图格式完全相同——都是三视角参考图（正面、侧面、背面），只是服装/造型描述不同。变体图会追加到角色的 `reference_images` 数组中，标签(label)标识变体类型。
 
+**🔴 强制规则：额外形象必须走图片编辑（图生图），禁止文生图**
+- **必须**调用 `generate_character_variant_image()` 生成额外形象/变体图
+- 该工具会基于角色已有主参考图（`reference_image`）做图片编辑，保证五官/身份一致
+- **禁止**对变体图调用 `generate_text_to_image()` 或 `generate_4grid_character_images()`
+- 主参考图仍用文生图；只有「另外一个形象」才用变体工具
+
 #### 4.6.1 变体图判断逻辑（智能判断）
 
 **步骤1：确定角色重要性**
@@ -604,19 +610,20 @@ if not result.get("success"):
 
 #### 4.6.2 变体图提示词模板
 
-变体图使用**与主图完全相同的三视角模板**，只是将服装/造型描述替换为变体对应的描述。物理特征（身高、体型、发型、眼睛、面部特征、特殊标记）必须与主图保持一致。
+变体图走**图片编辑（基于主参考图）**，提示词必须明确要求保持参考图人物身份，仅改变服装/造型。三视角布局与主图一致。
 
 **写实风格变体模板**：
 ```
-[画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. Three high-resolution full-body photographs arranged in a horizontal row from left to right: [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [变体服装/造型详细描述: 上衣款式、下装、鞋子、材质、颜色、特殊装饰] in all three shots with identical appearance. Physical characteristics remain consistent with the character's default appearance: [身高体型描述], [发型详细描述], [眼睛描述], [面部特征], [特殊标记]. Facial expression: [基于此变体的情绪/状态表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+Using the provided reference image of the same person, keep identical face, facial features, body proportions, hair silhouette identity and identity consistency. Only change the outfit/styling. [画风描述], [时代环境], [色彩基调]. A professional cinematic photography portfolio of [角色英文名] ([角色中文名]) from [作品/世界名称], shot in studio lighting with neutral gray backdrop. Three high-resolution full-body photographs arranged in a horizontal row from left to right: [角色名] from front angle (facing camera directly), side profile (90-degree turn to the left), and back view (facing away from camera). The subject is wearing [变体服装/造型详细描述: 上衣款式、下装、鞋子、材质、颜色、特殊装饰] in all three shots with identical appearance. Physical characteristics remain consistent with the reference image: [身高体型描述], [发型详细描述], [眼睛描述], [面部特征], [特殊标记]. Facial expression: [基于此变体的情绪/状态表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 **动漫风格变体模板**：
 ```
-[画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a clean neutral background. Three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [变体服装/造型详细描述]. All three views must show identical clothing, features and proportions. Physical features remain consistent with the character's default appearance: [身高体型描述], [发型详细描述], [眼睛描述], [面部特征], [特殊标记]. Expression shows [基于此变体的情绪/状态表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
+Using the provided reference image of the same character, keep identical face, facial features, body proportions and identity consistency. Only change the outfit/styling. [画风描述], [时代环境], [色彩基调]. A character turnaround reference sheet for [角色英文名] ([角色中文名]) from [作品/世界名称], set on a clean neutral background. Three full-body illustrations arranged in a horizontal row from left to right showing front view (facing viewer directly), side profile (turned 90 degrees), and back view (facing away) of the SAME character [角色名] wearing [变体服装/造型详细描述]. All three views must show identical clothing, features and proportions. Physical features remain consistent with the reference image: [身高体型描述], [发型详细描述], [眼睛描述], [面部特征], [特殊标记]. Expression shows [基于此变体的情绪/状态表情]. ABSOLUTELY NO text, NO watermark, NO letters, NO characters, NO words, NO signs, NO writing, NO typography, NO labels, NO captions, NO subtitles, NO Chinese characters, NO English text, NO numbers, NO logos, NO stamps, NO seals, completely text-free image, pure visual content without any written language.
 ```
 
 **⚠️ 变体图提示词关键要求：**
+- **开头必须声明**基于参考图保持同一人物身份（face/identity consistency），仅改变服装/造型
 - 物理特征（身高、体型、发型、眼睛等）**必须与主图保持完全一致**，只有服装/造型描述不同
 - 画风选择（写实/动漫）必须与主图一致，使用与主图相同的模板
 - 末尾必须包含相同的反文字声明
@@ -624,20 +631,20 @@ if not result.get("success"):
 
 #### 4.6.3 变体图生成调用
 
-变体图必须使用 `generate_character_variant_image()` 逐个生成（不能用4宫格，因为每个变体属于不同角色+不同标签）：
+变体图必须使用 `generate_character_variant_image()` 逐个生成（内部基于主图做图片编辑；不能用4宫格/文生图，因为每个变体属于不同角色+不同标签，且需要保持身份一致）：
 
 ```python
-# 为角色生成一个变体图
+# 为角色生成一个变体图（基于主参考图做图生图）
 result = generate_character_variant_image(
     character_name="豆包",
     variant_label="黑化形态",
-    variant_prompt="[变体三视角提示词]"
+    variant_prompt="[变体三视角编辑提示词：保持参考图身份，仅改变装]"
 )
 
 # 检查返回结果
 if result.get('success'):
     print(f"变体图生成请求已提交: 角色={result['character_name']}, 标签={result['variant_label']}")
-    # 使用 get_task_status 蟥询生成状态
+    # 使用 get_task_status 查询生成状态
     # 注意：item_type=7, item_name 使用 composite_item_name（格式："角色名|变体标签"）
     status = get_task_status(
         item_type=7,
@@ -650,7 +657,7 @@ else:
 result = generate_character_variant_image(
     character_name="豆包",
     variant_label="黑化形态",
-    variant_prompt="[变体三视角提示词]",
+    variant_prompt="[变体三视角编辑提示词]",
     force_update=True
 )
 ```
@@ -660,6 +667,7 @@ result = generate_character_variant_image(
 - 如果角色没有主参考图，`generate_character_variant_image` 会返回错误提示先生成主图
 
 **⚠️ 注意事项**：
+- 工具内部会把主参考图作为 `edit_image` 的源图，**不要**再改用 `generate_text_to_image`
 - 变体图生成完成后会**自动追加**到角色的 `reference_images` 数组中，无需手动写入
 - 每个变体在数组中有唯一的 `label` 标签和 `id`，前端可以自动识别和展示
 - 同一角色同一标签的变体图默认不重复生成（除非设置 `force_update=True`）

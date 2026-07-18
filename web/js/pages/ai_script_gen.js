@@ -825,7 +825,7 @@
     </div>
     <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
       <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
-        <div style="position: relative;">
+        <div class="modal-sticky-header">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; padding-right: 40px; margin-bottom: 12px;">
             <div style="display: flex; align-items: flex-start; gap: 12px;">
               <div class="modal-title">历史记录 (共 {{ historyTotal }} 条)</div>

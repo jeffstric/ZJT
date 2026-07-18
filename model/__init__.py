@@ -10,6 +10,7 @@ from .runninghub_slots import RunningHubSlotsModel, RunningHubSlot
 from .database import get_db_connection, execute_query, execute_update, execute_insert, transaction, execute_insert_in_transaction, execute_update_in_transaction
 from .users import UsersModel, User
 from .user_tokens import UserTokensModel, UserToken
+from .user_api_tokens import UserApiTokensModel, UserApiToken
 from .computing_power import ComputingPowerModel, ComputingPower
 from .computing_power_log import ComputingPowerLogModel, ComputingPowerLog
 from .verify_codes import VerifyCodesModel, VerifyCode
@@ -26,6 +27,13 @@ from .implementation_attempts import ImplementationAttemptModel, ImplementationA
 from .commission_log import CommissionLogModel, CommissionLog
 from .commission_withdraw import CommissionWithdrawModel, CommissionWithdraw
 from .marketing_publications import MarketingPublicationModel, MarketingPublication, PublicationStatus
+from .storyboard import StoryboardModel, Storyboard, StoryboardSceneModel, StoryboardScene
+from .storyboard_dialogue import StoryboardDialogueModel, StoryboardDialogue
+from .storyboard_dialogue_audio import StoryboardDialogueAudioModel, StoryboardDialogueAudio
+from .storyboard_scene_asset import StoryboardSceneAssetModel, StoryboardSceneAsset
+from .storyboard_image_batch import StoryboardImageBatchJobModel, StoryboardImageBatchItemModel
+from .script_split_task import ScriptSplitTaskModel, ScriptSplitTask
+from .script_split_segment import ScriptSplitSegmentModel, ScriptSplitSegment
 
 __all__ = [
     'AIToolsModel',
@@ -51,6 +59,8 @@ __all__ = [
     'User',
     'UserTokensModel',
     'UserToken',
+    'UserApiTokensModel',
+    'UserApiToken',
     'ComputingPowerModel',
     'ComputingPower',
     'ComputingPowerLogModel',
@@ -90,4 +100,20 @@ __all__ = [
     'MarketingPublicationModel',
     'MarketingPublication',
     'PublicationStatus',
+    'StoryboardModel',
+    'Storyboard',
+    'StoryboardSceneModel',
+    'StoryboardScene',
+    'StoryboardDialogueModel',
+    'StoryboardDialogue',
+    'StoryboardDialogueAudioModel',
+    'StoryboardDialogueAudio',
+    'StoryboardSceneAssetModel',
+    'StoryboardSceneAsset',
+    'StoryboardImageBatchJobModel',
+    'StoryboardImageBatchItemModel',
+    'ScriptSplitTaskModel',
+    'ScriptSplitTask',
+    'ScriptSplitSegmentModel',
+    'ScriptSplitSegment',
 ]

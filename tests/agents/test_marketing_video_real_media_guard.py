@@ -17,6 +17,7 @@ def test_image_to_video_rejects_placeholder_image_url():
         image_urls="https://example.com/reference_restaurant.jpg",
         ratio="9:16",
         duration_seconds=10,
+        task_type=20,
     )
 
     assert result["success"] is False

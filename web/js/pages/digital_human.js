@@ -343,25 +343,21 @@
     },
     template: `
       <div class="form">
-        <div class="field">
-          <div style="display: flex; gap: 8px; margin-bottom: 8px;">
-            <button
-              :class="['btn', version === 'v1' ? '' : 'secondary']"
-              style="flex: 1; padding: 8px 12px; font-size: 13px;"
-              @click="switchVersion('v1')"
-              :disabled="loading">
-              wan2.2 数字人
-            </button>
-            <button
-              :class="['btn', version === 'v2' ? '' : 'secondary']"
-              style="flex: 1; padding: 8px 12px; font-size: 13px;"
-              @click="switchVersion('v2')"
-              :disabled="loading">
-              LTX2.3 数字人
-            </button>
-          </div>
+        <div class="dh-tabs">
+          <button type="button" class="dh-tab"
+            :class="{ active: version === 'v1' }"
+            @click="switchVersion('v1')"
+            :disabled="loading">
+            wan2.2 数字人
+          </button>
+          <button type="button" class="dh-tab"
+            :class="{ active: version === 'v2' }"
+            @click="switchVersion('v2')"
+            :disabled="loading">
+            LTX2.3 数字人
+          </button>
         </div>
-
+        <div class="dh-tab-body">
         <div class="field">
           <label class="label">{{ $t('digital_human_image') }} <span style="color: red;">*</span></label>
           <input class="input" type="file" accept="image/*" @change="onImageFile" :disabled="loading" />
@@ -425,6 +421,7 @@
           </div>
         </div>
 
+        </div>
         <div class="modal-overlay" v-if="showHistory" @click.self="closeHistory">
           <div class="modal" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" @scroll="handleHistoryScroll">
             <button class="modal-close" @click="closeHistory">×</button>

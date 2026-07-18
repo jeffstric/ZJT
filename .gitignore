@@ -13,6 +13,7 @@ data/mysql
 script_writer_core/logs
 files/script_writer/*
 files/tmp/*
+docs/superpowers/*
 bin
 build/*
 test-results.xml
@@ -22,8 +23,11 @@ dist/*
 *.spec
 enterprise/
 .claude/settings.local.json
+.claude/skills/lark*
+.agents/skills/lark*
 *.spec
 scripts/build_enterprise.py
+*.lock
 
 # Node modules
 node_modules/
@@ -41,3 +45,5 @@ console-errors.txt
 tests/e2e/
 playwright.config.js
 
+auto_test/test_assets/*
+auto_test/samples/*

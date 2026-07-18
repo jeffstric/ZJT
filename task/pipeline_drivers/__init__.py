@@ -20,6 +20,7 @@ from .base_pipeline_driver import BasePipelineDriver
 from .face_mask_driver import FaceMaskPipelineDriver
 from .image_face_mask_driver import ImageFaceMaskPipelineDriver
 from .implementation_retry_driver import ImplementationRetryPipelineDriver
+from .storyboard_grid_split_driver import StoryboardGridSplitPipelineDriver
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ _DRIVER_MAP = {
     PipelineStepType.FACE_MASK: FaceMaskPipelineDriver,
     PipelineStepType.IMAGE_FACE_MASK: ImageFaceMaskPipelineDriver,
     PipelineStepType.IMPLEMENTATION_RETRY: ImplementationRetryPipelineDriver,
+    PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT: StoryboardGridSplitPipelineDriver,
 }
 
 

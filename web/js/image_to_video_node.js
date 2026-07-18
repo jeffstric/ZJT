@@ -283,6 +283,7 @@
           const fallbackOptions = [
             { value: 'wan22', label: 'Wan2.2' },
             { value: 'sora2', label: 'Sora2' },
+            { value: 'ltx2_3', label: 'LTX2.3' },
             { value: 'ltx2', label: 'LTX2.0' },
             { value: 'kling', label: '可灵' },
             { value: 'vidu', label: 'Vidu' },

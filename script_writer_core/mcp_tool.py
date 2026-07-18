@@ -15,7 +15,7 @@ from script_writer_core.skill_loader import SkillLoader
 from script_writer_core.cron_task_manager import get_task_manager
 from script_writer_core.constant import ItemType
 from config.config_util import get_config
-from config.constant import FilePathConstants
+from config.constant import FilePathConstants, StoryType, GridConfig
 
 # 模块级日志
 logger = logging.getLogger(__name__)
@@ -165,6 +165,43 @@ def _resolve_image_size_for_model(config, image_size: Optional[str], image_size_
     return image_size, None
 
 
+def _size_to_numeric(size: str) -> int:
+    """把 '1K'/'2K'/'4K'/'3K' 等档位转为数值（去掉 K 后取 int），非法值返回 0。"""
+    try:
+        return int(str(size).strip().rstrip('Kk'))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _pick_grid_image_size(config, target_size: Optional[str]) -> Optional[str]:
+    """
+    根据模型 supported_sizes 选出最接近且不超过 target_size 的分辨率档位。
+
+    - target_size 在 supported_sizes 中：直接用
+    - 不在但有不超过它的档位：取其中最大者（如 target=4K，模型支持 1K/2K/3K → 选 3K）
+    - 所有支持值都超过 target（如 target=2K，模型支持 3K/4K）：取最小支持值
+    - config 无 supported_sizes：原样返回 target_size（交给端点/driver 处理）
+    """
+    if not target_size:
+        return _get_lowest_supported_image_size(config)
+    if not config:
+        return target_size
+    supported = getattr(config, 'supported_sizes', None) or []
+    if not supported:
+        return target_size
+    if target_size in supported:
+        return target_size
+    target_num = _size_to_numeric(target_size)
+    if target_num <= 0:
+        return supported[0]
+    # 不超过目标的最大档位
+    not_exceed = [s for s in supported if _size_to_numeric(s) > 0 and _size_to_numeric(s) <= target_num]
+    if not_exceed:
+        return max(not_exceed, key=_size_to_numeric)
+    # 所有支持值都超过目标 → 取最小支持值
+    return min(supported, key=_size_to_numeric)
+
+
 def get_text_to_image_model_info(user_id: str, world_id: str, auth_token: str) -> Dict[str, Any]:
     """
     获取当前用户/世界选中的生图模型信息 - MCP工具函数
@@ -258,6 +295,89 @@ def get_user_computing_power(user_id: str, world_id: str, auth_token: str) -> Di
         }
     except Exception as e:
         return {'success': False, 'error': f'查询算力失败: {str(e)}'}
+
+
+def list_video_models(user_id: str, world_id: str, auth_token: str,
+                      category: str = "image_to_video") -> Dict[str, Any]:
+    """
+    查询当前可用的视频模型列表 - MCP工具函数
+
+    返回所有 enabled 且非 hidden 的视频模型（按 sort_order 升序），
+    供 Agent 在调用 image_to_video / generate_text_to_video 前选取 task_id。
+    视频生成工具要求显式传入 task_type（模型 task_id），不再隐式回退。
+
+    Args:
+        user_id: 用户ID（必填，签名兼容）
+        world_id: 世界ID（必填，签名兼容）
+        auth_token: 认证令牌（必填，签名兼容）
+        category: 模型类别（可选，默认 image_to_video）：
+                  image_to_video（图生视频）或 text_to_video（文生视频）
+
+    Returns:
+        dict: {success, category, models: [{task_id, name, short_key, computing_power,
+              supported_durations, default_duration, supported_ratios,
+              supported_image_modes, supports_last_frame}]}
+    """
+    try:
+        from config.unified_config import UnifiedConfigRegistry, TaskCategory
+
+        # 归一化 category：只接受两类视频，非法值统一回退图生视频
+        if str(category).strip().lower() == "text_to_video":
+            cat = TaskCategory.TEXT_TO_VIDEO
+            cat_label = "text_to_video"
+        else:
+            cat = TaskCategory.IMAGE_TO_VIDEO
+            cat_label = "image_to_video"
+
+        configs = UnifiedConfigRegistry.get_by_category(cat)
+        # 与 /api/storyboard/models 同口径：sort_order 升序、过滤 disabled/hidden
+        configs = sorted(
+            configs,
+            key=lambda c: (
+                float(getattr(c, 'sort_order', 999999) or 999999),
+                int(getattr(c, 'id', 0) or 0),
+            ),
+        )
+
+        models = []
+        for c in configs:
+            if not c.enabled or c.hidden:
+                continue
+            item = {
+                'task_id': c.id,
+                'name': c.name,
+                'short_key': getattr(c, 'short_key', None) or '',
+                'computing_power': c.computing_power,
+                'supported_durations': c.supported_durations or [],
+                'default_duration': c.default_duration,
+                'supported_ratios': c.supported_ratios or [],
+            }
+            # 图生视频额外暴露图模式能力，供 Agent 判断是否支持首尾帧/全能参考
+            if cat == TaskCategory.IMAGE_TO_VIDEO:
+                modes = list(getattr(c, 'supported_image_modes', None) or ['first_last_frame'])
+                item['supported_image_modes'] = [str(m) for m in modes]
+                item['supports_last_frame'] = bool(getattr(c, 'supports_last_frame', True))
+            models.append(item)
+
+        if not models:
+            return {
+                'success': False,
+                'error': f'当前没有可用的 {cat_label} 模型（全部已禁用或隐藏）',
+                'category': cat_label,
+                'models': [],
+            }
+
+        return {
+            'success': True,
+            'category': cat_label,
+            'models': models,
+            'message': (
+                f'共 {len(models)} 个可用 {cat_label} 模型。'
+                f'请在调用视频生成工具时，将所选模型的 task_id 作为 task_type 参数传入。'
+            ),
+        }
+    except Exception as e:
+        return {'success': False, 'error': f'查询视频模型列表失败: {str(e)}'}
 
 
 def fetch_image_as_base64(user_id: str, world_id: str, auth_token: str,
@@ -507,12 +627,14 @@ def check_image_status(user_id: str, world_id: str, auth_token: str, project_id:
 
 def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                image_url: str, aspect_ratio: str = "16:9", count: int = 1,
-               image_size: Optional[str] = None) -> Dict[str, Any]:
+               image_size: Optional[str] = None,
+               item_type: Optional[int] = None, item_name: Optional[str] = None,
+               force_update_exist_image: bool = False) -> Dict[str, Any]:
     """
     图片编辑（图生图）- MCP工具函数（非阻塞版本，支持后台任务处理）
 
     根据用户提供的图片 URL 和编辑指令，调用图片编辑 API 生成新图片。
-    后台 scheduler 会自动跟踪进度，可通过 check_image_status 查询结果。
+    后台 scheduler 会自动跟踪进度，可通过 check_image_status / get_task_status 查询结果。
 
     注意：图片编辑模型由用户在前端界面选择，不同模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。
 
@@ -525,6 +647,9 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
         aspect_ratio: 图片宽高比（默认：16:9）
         count: 生成图片数量（默认：1）
         image_size: 图片分辨率（可选），如 1K/2K/3K/4K
+        item_type: 物品类型（可选）：1=角色, 2=地点, 3=道具, 7=角色变体图。传入后会绑定后台任务并自动写回对应字段
+        item_name: 物品名称（可选），当指定 item_type 时必填；变体图格式为 "角色名|变体标签"
+        force_update_exist_image: 是否强制覆盖已有图像/同标签变体（默认：False）
 
     Returns:
         dict: 操作结果，包含 success 状态、project_ids、task_id 等
@@ -573,6 +698,68 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             if parsed.scheme not in ('http', 'https'):
                 return {'success': False, 'error': f'图片URL仅支持 http/https 协议: {u[:100]}'}
         logger.info(f"[edit_image] 解析到 {len(parsed_urls)} 张图片: {parsed_urls}")
+
+        # 绑定 item 时做冲突与已有图像检查（与 generate_text_to_image 对齐）
+        if item_type is not None:
+            if not isinstance(item_type, int) or item_type not in [1, 2, 3, 7]:
+                return {
+                    'success': False,
+                    'error': 'item_type参数错误。图片编辑支持：1=角色, 2=地点, 3=道具, 7=角色变体图'
+                }
+            if not item_name or not isinstance(item_name, str):
+                return {
+                    'success': False,
+                    'error': '当指定item_type时，必须同时提供item_name参数'
+                }
+
+            task_manager = get_task_manager()
+            if task_manager.is_item_generating(item_type, item_name, user_id):
+                return {
+                    'success': False,
+                    'error': f'该项目正在生成图片中，请等待完成后再试。可以调用相关API查询任务状态。'
+                }
+
+            if not force_update_exist_image:
+                file_manager = get_file_manager()
+                if item_type == 1:
+                    existing_data = file_manager.get_character_json(item_name, user_id, world_id)
+                    if existing_data and existing_data.get('reference_image'):
+                        return {
+                            'success': False,
+                            'error': f'角色 "{item_name}" 已存在参考图像，如需更新请设置 force_update_exist_image=True',
+                            'existing_image': existing_data.get('reference_image'),
+                            'skip_reason': 'already_has_image'
+                        }
+                elif item_type == 2:
+                    existing_data = file_manager.get_location_json(item_name, user_id, world_id)
+                    if existing_data and existing_data.get('reference_image'):
+                        return {
+                            'success': False,
+                            'error': f'地点 "{item_name}" 已存在参考图像，如需更新请设置 force_update_exist_image=True',
+                            'existing_image': existing_data.get('reference_image'),
+                            'skip_reason': 'already_has_image'
+                        }
+                elif item_type == 3:
+                    existing_data = file_manager.get_prop_json(item_name, user_id, world_id)
+                    if existing_data and existing_data.get('reference_image'):
+                        return {
+                            'success': False,
+                            'error': f'道具 "{item_name}" 已存在参考图像，如需更新请设置 force_update_exist_image=True',
+                            'existing_image': existing_data.get('reference_image'),
+                            'skip_reason': 'already_has_image'
+                        }
+                elif item_type == 7:
+                    char_name = item_name.split('|')[0] if '|' in item_name else item_name
+                    variant_label = item_name.split('|')[1] if '|' in item_name else ''
+                    existing_data = file_manager.get_character_json(char_name, user_id, world_id)
+                    if existing_data and variant_label:
+                        existing_variants = existing_data.get('reference_images', [])
+                        if any(v.get('label') == variant_label for v in existing_variants if isinstance(v, dict)):
+                            return {
+                                'success': False,
+                                'error': f'角色 "{char_name}" 已存在标签为 "{variant_label}" 的变体图，如需更新请设置 force_update_exist_image=True',
+                                'skip_reason': 'already_has_variant'
+                            }
 
         server_config = get_config().get("server", {})
         comfyui_base_url = server_config.get("comfyui_base_url_inner") or server_config.get("host", "")
@@ -653,7 +840,7 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                 logger.info(f"[MOCK] mcp_tool image_edit short-circuit pid={result_data['project_ids'][0]}")
             else:
                 # ⚠️ verify=False 禁用 SSL 证书验证，因为 ComfyUI 可能使用自签名证书
-                response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+                response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
                 response.raise_for_status()
                 result_data = response.json()
             # ==============================================================================
@@ -666,29 +853,90 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                     'error': '图片编辑请求成功但未返回project_ids'
                 }
 
-            # 创建通用后台任务记录（复用 item_type=0 机制）
-            task_id = None
+            # 读取自动重试配置
+            max_retries = 0
             try:
-                from model import GridImageTasksModel, GridImageTaskStatus
-                general_task_key = f"{user_id}_0_{project_ids[0]}"
-                existing = GridImageTasksModel.get_by_task_key(general_task_key)
-                if existing and existing.status not in [GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING]:
-                    GridImageTasksModel.delete_by_task_key(general_task_key)
-                GridImageTasksModel.create(
-                    task_key=general_task_key,
-                    project_id=project_ids[0],
-                    item_type=0,
-                    item_name=project_ids[0],
-                    user_id=user_id,
-                    world_id=world_id,
-                    comfyui_base_url=comfyui_base_url,
-                    auth_token=auth_token,
-                    max_attempts=60
-                )
-                task_id = general_task_key
-                logger.info(f"创建图片编辑后台任务: {general_task_key}, project_id: {project_ids[0]}")
-            except Exception as e:
-                logger.warning(f"图片编辑后台任务创建失败（不影响编辑请求）: {e}")
+                max_retries = get_config().get("image", {}).get("max_retry_count", 0) or 0
+            except Exception:
+                pass
+
+            task_id = None
+            bound_item_type = 0
+            bound_item_name = project_ids[0]
+
+            if item_type is not None and item_name:
+                # 绑定到具体角色/场景/道具/变体的任务（必须成功，否则无法回写 JSON）
+                # 图生图源图写入 reference_images，供失败重试时走 image-edit
+                source_refs = [{'url': u, 'role_description': 'source'} for u in parsed_urls]
+                try:
+                    task_manager = get_task_manager()
+                    task_id = task_manager.create_image_task(
+                        project_id=project_ids[0],
+                        item_type=item_type,
+                        item_name=item_name,
+                        comfyui_base_url=comfyui_base_url,
+                        auth_token=auth_token,
+                        user_id=user_id,
+                        world_id=world_id,
+                        prompt=prompt,
+                        task_config_id=str(text_to_image_task_id) if text_to_image_task_id is not None else None,
+                        aspect_ratio=aspect_ratio,
+                        image_size=image_size,
+                        is_grid=False,
+                        max_retries=max_retries,
+                        reference_images=source_refs,
+                    )
+                    bound_item_type = item_type
+                    bound_item_name = item_name
+                    logger.info(
+                        f"创建图片编辑绑定任务: item_type={item_type}, item_name={item_name}, "
+                        f"project_id={project_ids[0]}, task_key={task_id}"
+                    )
+                except ValueError as e:
+                    return {'success': False, 'error': str(e), 'project_ids': project_ids}
+                except Exception as e:
+                    # 绑定失败则无法自动写回 reference_images，必须对调用方报失败
+                    logger.error(
+                        f"图片编辑绑定任务创建失败: item_type={item_type}, item_name={item_name}, "
+                        f"project_id={project_ids[0]}, err={e}",
+                        exc_info=True,
+                    )
+                    return {
+                        'success': False,
+                        'error': f'图片编辑请求已提交，但后台绑定任务创建失败（结果无法写回资产）: {str(e)}',
+                        'project_ids': project_ids,
+                        'comfyui_base_url': comfyui_base_url,
+                        'model_used': model_name,
+                    }
+            else:
+                # 通用后台任务记录（复用 item_type=0 机制）
+                try:
+                    from model import GridImageTasksModel, GridImageTaskStatus
+                    general_task_key = f"{user_id}_0_{project_ids[0]}"
+                    existing = GridImageTasksModel.get_by_task_key(general_task_key)
+                    if existing and existing.status not in [GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING]:
+                        GridImageTasksModel.delete_by_task_key(general_task_key)
+                    GridImageTasksModel.create(
+                        task_key=general_task_key,
+                        project_id=project_ids[0],
+                        item_type=0,
+                        item_name=project_ids[0],
+                        user_id=user_id,
+                        world_id=world_id,
+                        comfyui_base_url=comfyui_base_url,
+                        auth_token=auth_token,
+                        max_attempts=60,
+                        prompt=prompt,
+                        task_config_id=text_to_image_task_id,
+                        aspect_ratio=aspect_ratio,
+                        image_size=image_size,
+                        is_grid=False,
+                        max_retries=max_retries
+                    )
+                    task_id = general_task_key
+                    logger.info(f"创建图片编辑后台任务: {general_task_key}, project_id: {project_ids[0]}")
+                except Exception as e:
+                    logger.warning(f"图片编辑后台任务创建失败（不影响编辑请求）: {e}")
 
             result = {
                 'success': True,
@@ -699,8 +947,8 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                 'image_size_used': image_size,
                 'computing_power_required': computing_power_per_image,
                 'computing_power_total': computing_power_total,
-                'item_type': 0,
-                'item_name': project_ids[0],
+                'item_type': bound_item_type,
+                'item_name': bound_item_name,
             }
 
             if task_id:
@@ -1102,6 +1350,7 @@ def create_world_json(user_id: str, world_id: str, auth_token: str, name: str, d
         world_data = {
             'name': validated_name,
             'user_id': user_id,
+            'story_type': StoryType.normalize(additional_fields.pop('story_type', None)),
             'created_at': datetime.now().isoformat()
         }
         
@@ -1200,6 +1449,7 @@ def read_world(user_id: str, world_id: str, auth_token: str, limit: Optional[int
             'success': True,
             'world_id': world_id,
             'world_name': world_data.get('name', ''),
+            'story_type': StoryType.normalize(world_data.get('story_type')),
             'story_outline': _truncate_content(world_data.get('story_outline', ''), limit),
             'visual_style': _truncate_content(world_data.get('visual_style', ''), limit),
             'era_environment': _truncate_content(world_data.get('era_environment', ''), limit),
@@ -1218,6 +1468,7 @@ def read_world(user_id: str, world_id: str, auth_token: str, limit: Optional[int
 def update_world(
     user_id: str, world_id: str, auth_token: str,
     story_outline: str = None,
+    story_type: str = None,
     visual_style: str = None,
     era_environment: str = None,
     color_language: str = None,
@@ -1241,7 +1492,7 @@ def update_world(
     """
     try:
         # 验证至少有一个字段需要更新
-        if all(v is None for v in [story_outline, visual_style, era_environment, color_language, composition_preference]):
+        if all(v is None for v in [story_outline, story_type, visual_style, era_environment, color_language, composition_preference]):
             return {
                 'success': False,
                 'error': '至少需要提供一个字段进行更新'
@@ -1262,6 +1513,8 @@ def update_world(
         # 更新提供的字段
         if story_outline is not None:
             world_data['story_outline'] = story_outline
+        if story_type is not None:
+            world_data['story_type'] = StoryType.normalize(story_type)
         if visual_style is not None:
             world_data['visual_style'] = visual_style
         if era_environment is not None:
@@ -1283,6 +1536,8 @@ def update_world(
         updated_fields = []
         if story_outline is not None:
             updated_fields.append('story_outline')
+        if story_type is not None:
+            updated_fields.append('story_type')
         if visual_style is not None:
             updated_fields.append('visual_style')
         if era_environment is not None:
@@ -1308,7 +1563,8 @@ def update_world(
 
 
 def create_location_json(user_id: str, world_id: str, auth_token: str, name: str, description: str = None, 
-                        reference_image: str = None, _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
+                        reference_image: str = None, parent_id=None, parent_name: str = None,
+                        _temp_filename: str = None, language: str = "zh-CN", **additional_fields) -> Dict[str, Any]:
     """
     创建标准格式的地点JSON文件 - MCP工具函数
     
@@ -1319,6 +1575,8 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
         name: 地点名称（必填，只能包含中文、英文、数字）
         description: 地点描述（可选）
         reference_image: 参考图片（可选）
+        parent_id: 父级地点 ID 或兼容字段（可选；文件层优先用 parent_name）
+        parent_name: 父级地点名称（可选；未落库稳定键，父须为顶级场景名）
         **additional_fields: 额外字段（可选）
     
     Returns:
@@ -1358,15 +1616,26 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
             'created_at': datetime.now().isoformat()
         }
         
-        # 添加可选字段 - parent_id保持为null
-        location_data['parent_id'] = None
+        # 父级：支持 parent_name（文件层主字段）与 parent_id（DB id 或兼容）
+        pn = (str(parent_name).strip() if parent_name is not None else '') or None
+        # additional_fields 里也可能带 parent_name / parent_id
+        if pn is None and additional_fields.get('parent_name') is not None:
+            pn = (str(additional_fields.get('parent_name')).strip() or None)
+        pid = parent_id if parent_id is not None else additional_fields.get('parent_id')
+        if pid is not None and pid != '':
+            location_data['parent_id'] = pid
+        else:
+            location_data['parent_id'] = pn  # 过渡：无数字 id 时与 parent_name 双写
+        location_data['parent_name'] = pn
         if reference_image is not None:
             location_data['reference_image'] = reference_image
         if description is not None:
             location_data['description'] = description
         
-        # 添加额外字段
+        # 添加额外字段（不覆盖已规范化的 parent_*）
         for key, value in additional_fields.items():
+            if key in ('parent_id', 'parent_name'):
+                continue
             if key not in location_data:
                 location_data[key] = value
         
@@ -1879,20 +2148,17 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
                 'error': '角色名称不能为空且必须是字符串'
             }
         
-        # 生成安全的文件名
-        safe_name = _sanitize_filename(name)
-        filename = f"character_{safe_name}.json"
-        
-        # 使用FileManager统一路径管理
+        # 使用FileManager统一路径管理，按 name 解析真实文件路径
+        # （兼容 character_中文名.json / sanitize 名 / 拼音临时文件名）
         file_manager = get_file_manager()
-        file_path = file_manager.get_content_file_path(user_id, world_id, "characters", filename)
-        
-        # 检查文件是否存在
-        if not os.path.exists(file_path):
+        resolved_path = file_manager.resolve_character_file_path(name, user_id, world_id)
+        if not resolved_path or not resolved_path.exists():
             return {
                 'success': False,
                 'error': f'角色 "{name}" 不存在，无法更新'
             }
+        file_path = str(resolved_path)
+        filename = resolved_path.name
         
         # 读取现有数据
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -1931,8 +2197,14 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
         # 更新修改时间
         existing_data['updated_at'] = datetime.now().isoformat()
         
-        # 保存更新后的数据
-        success = file_manager.save_json_content(user_id, world_id, "characters", filename, existing_data)
+        # 直接写回已解析到的真实文件路径，避免 sanitize 后写到另一个新文件
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, ensure_ascii=False, indent=2)
+            success = True
+        except Exception as e:
+            logger.error(f"保存角色JSON失败 {file_path}: {e}")
+            success = False
 
         if not success:
             return {
@@ -1964,7 +2236,8 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
         }
 
 
-def update_location_json(user_id: str, world_id: str, auth_token: str, name: str, parent_id: str = None, 
+def update_location_json(user_id: str, world_id: str, auth_token: str, name: str, parent_id: str = None,
+                        parent_name: str = None,
                         reference_image: str = None, description: str = None, **additional_fields) -> Dict[str, Any]:
     """
     更新地点JSON文件 - MCP工具函数
@@ -1974,7 +2247,8 @@ def update_location_json(user_id: str, world_id: str, auth_token: str, name: str
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         name: 地点名称（必填，用于定位文件）
-        parent_id: 父级地点ID（可选）
+        parent_id: 父级地点 ID 或兼容字段（可选）
+        parent_name: 父级地点名称（可选；文件层主字段）
         reference_image: 参考图片（可选）
         description: 地点描述（可选）
         **additional_fields: 额外字段（可选）
@@ -2019,8 +2293,15 @@ def update_location_json(user_id: str, world_id: str, auth_token: str, name: str
                 }
 
         # 更新字段（只更新提供的非None字段）
+        if parent_name is not None or additional_fields.get('parent_name') is not None:
+            pn = parent_name if parent_name is not None else additional_fields.get('parent_name')
+            pn = (str(pn).strip() if pn is not None and pn != '' else None)
+            existing_data['parent_name'] = pn
+            # 过渡双写：无显式 parent_id 时用名称
+            if parent_id is None:
+                existing_data['parent_id'] = pn
         if parent_id is not None:
-            existing_data['parent_id'] = parent_id
+            existing_data['parent_id'] = parent_id if parent_id != '' else None
         if reference_image is not None:
             existing_data['reference_image'] = reference_image
         if description is not None:
@@ -2028,6 +2309,8 @@ def update_location_json(user_id: str, world_id: str, auth_token: str, name: str
         
         # 添加额外字段
         for key, value in additional_fields.items():
+            if key in ('parent_id', 'parent_name'):
+                continue
             if key not in ['name', 'user_id', 'world_id', 'created_at']:  # 保护核心字段
                 existing_data[key] = value
         
@@ -2474,9 +2757,13 @@ MCP_TOOLS = [
                     "type": "string",
                     "description": "地点名称（必须与剧本原文语言一致：英文剧本用英文名，中文剧本用中文名；允许中文、英文、数字、点号、下划线）"
                 },
+                "parent_name": {
+                    "type": "string",
+                    "description": "父级场景名称（可选；须为已有顶级场景名）"
+                },
                 "parent_id": {
                     "type": "string",
-                    "description": "父级地点ID（可选）"
+                    "description": "父级地点ID或兼容字段（可选；优先使用 parent_name）"
                 },
                 "reference_image": {
                     "type": "string",
@@ -2667,9 +2954,13 @@ MCP_TOOLS = [
                     "type": "string",
                     "description": "地点名称（用于定位文件）"
                 },
+                "parent_name": {
+                    "type": "string",
+                    "description": "父级场景名称（可选；须为已有顶级场景名）"
+                },
                 "parent_id": {
                     "type": "string",
-                    "description": "父级地点ID（可选）"
+                    "description": "父级地点ID或兼容字段（可选；优先使用 parent_name）"
                 },
                 "reference_image": {
                     "type": "string",
@@ -2754,6 +3045,11 @@ MCP_TOOLS = [
                 "story_outline": {
                     "type": "string",
                     "description": "故事大纲内容（可选）"
+                },
+                "story_type": {
+                    "type": "string",
+                    "enum": ["dialogue", "narration", "music_mv"],
+                    "description": "故事类型：dialogue=对话剧情，narration=旁白解说，music_mv=音乐MV"
                 },
                 "visual_style": {
                     "type": "string",
@@ -2881,6 +3177,21 @@ MCP_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "list_video_models",
+        "description": "查询当前可用的视频模型列表（含 task_id、算力、支持的时长/比例/图模式）。视频生成工具（image_to_video / generate_text_to_video）要求显式传入 task_type 参数，因此在调用视频生成工具之前，必须先调用本工具获取可用模型的 task_id，再选取一个合适的模型将其 task_id 作为 task_type 传入。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "模型类别（可选，默认 image_to_video）：image_to_video（图生视频，基于图片生成视频）或 text_to_video（文生视频，纯文本生成视频）",
+                    "default": "image_to_video"
+                }
+            },
             "required": []
         }
     },
@@ -3034,7 +3345,7 @@ MCP_TOOLS = [
                 },
                 "image_url": {
                     "type": "string",
-                    "description": "原始图片URL（必填），支持多张图片用英文逗号分隔。对话中每张图片都有 [图片N]（URL: ...） 标签，请将所有需要编辑的图片 URL 用逗号拼接后传入。例如：'http://xxx/a.jpg,http://xxx/b.jpg'"
+                    "description": "原始图片URL（必填），仅支持 http/https URL；支持多张图片用英文逗号分隔。对话中每张图片都有 [图片N]（URL: ...） 标签，请将所有需要编辑的图片 URL 用逗号拼接后传入。例如：'http://xxx/a.jpg,http://xxx/b.jpg'。不要传入 /upload/...、upload/... 或本地文件路径。"
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -3054,7 +3365,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_text_to_video",
-        "description": "文本生成视频（非阻塞）。发起视频生成请求，立即返回 project_ids。非阻塞，后台自动跟踪进度。视频模型由系统自动选择，请先调用 get_user_computing_power 确认算力是否充足。",
+        "description": "文本生成视频（非阻塞）。发起视频生成请求，立即返回 project_ids。非阻塞，后台自动跟踪进度。视频模型由系统自动选择（用户偏好/默认），请先调用 get_user_computing_power 确认算力是否充足。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -3224,7 +3535,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_character_variant_image",
-        "description": "为角色生成造型变体图（服装/造型三视角参考图）。变体图与主图格式一致（正面、侧面、背面三视角），只是服装/造型不同。生成完成后自动写入角色的 reference_images 数组。注意：角色必须已存在且已有主参考图(reference_image)，才能生成变体图。不同生图模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。",
+        "description": "为角色生成造型变体图（服装/造型三视角参考图）。基于角色已有主参考图(reference_image)做图片编辑（图生图），保证五官/身份一致，仅改变服装/造型。禁止用文生图生成额外形象。生成完成后自动写入角色的 reference_images 数组。注意：角色必须已存在且已有主参考图，才能生成变体图。请先调用 get_text_to_image_model_info 了解当前模型。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -3238,7 +3549,7 @@ MCP_TOOLS = [
                 },
                 "variant_prompt": {
                     "type": "string",
-                    "description": "三视角提示词（必填），与主图模板一致但服装/造型描述不同。必须包含三视角（正面、侧面、背面）的描述，末尾必须包含反文字声明"
+                    "description": "三视角编辑提示词（必填）。必须强调保持参考图中同一人物的五官/体型/身份一致，仅改变服装/造型；必须包含三视角（正面、侧面、背面）描述，末尾必须包含反文字声明"
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -3793,7 +4104,7 @@ def generate_digital_human(
         api_url = f"{base_url.rstrip('/')}/api/digital-human"
 
         try:
-            response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+            response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
             response.raise_for_status()
 
             result_data = response.json()
@@ -4031,7 +4342,7 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                 result_data = {'project_ids': [generate_mock_project_id()]}
                 logger.info(f"[MOCK] mcp_tool text_to_image short-circuit pid={result_data['project_ids'][0]}")
             else:
-                response = httpx.post(api_url, data=request_data, timeout=30, verify=False)
+                response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
                 response.raise_for_status()
                 result_data = response.json()
             # ==============================================================================
@@ -4261,9 +4572,10 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
             "grid_layout": "2x2",
             "grid_aspect_ratio": "16:9",
             "global_watermark": "",
+            "style_guidance": GridConfig.STYLE_GUIDANCE_NO_TEXT,
             "shots": [
-                {"shot_number": f"Shot {i+1}", "prompt_text": prompt}
-                for i, prompt in enumerate(prompts)
+                {"shot_number": "", "prompt_text": prompt}
+                for prompt in prompts
             ]
         }
 
@@ -4306,6 +4618,439 @@ def generate_4grid_images(user_id: str, world_id: str, auth_token: str,
         }
 
 
+def _resolve_image_edit_task_id(user_id: str, world_id: str) -> Optional[int]:
+    """
+    解析图片编辑所需的 task_id（模型配置 id）。
+
+    复用 edit_image() 的模型选择逻辑：若用户当前选中的模型不支持 IMAGE_EDIT，
+    则 fallback 到默认 IMAGE_EDIT 模型（id=DEFAULT_TEXT_TO_IMAGE_TASK_ID）。
+    返回 None 表示无可用 IMAGE_EDIT 模型。
+    """
+    from config.unified_config import UnifiedConfigRegistry, TaskCategory
+    task_id = _get_text_to_image_task_id(user_id, world_id)
+    config = UnifiedConfigRegistry.get_by_id(task_id)
+    if config and (
+        config.category == TaskCategory.IMAGE_EDIT
+        or TaskCategory.IMAGE_EDIT in getattr(config, 'categories', [])
+    ):
+        return task_id
+    image_edit_models = UnifiedConfigRegistry.get_by_category(TaskCategory.IMAGE_EDIT)
+    if not image_edit_models:
+        return None
+    fallback = next(
+        (m for m in image_edit_models if m.id == DEFAULT_TEXT_TO_IMAGE_TASK_ID),
+        image_edit_models[0],
+    )
+    logger.warning(
+        f"宫格 i2i：当前模型不支持图片编辑，自动切换到 {fallback.name} (id={fallback.id})"
+    )
+    return fallback.id
+
+
+def _to_public_http_url(url: str, comfyui_base_url: str) -> Optional[str]:
+    """
+    将本地 /upload/... 路径转为可被 /api/image-edit 接受的公开 http(s) URL。
+
+    edit_image() 仅接受 http/https 协议（防 SSRF），本地相对路径必须先转换。
+    已是 http/https 的原样返回；无法识别的返回 None。
+    """
+    if not url or not isinstance(url, str):
+        return None
+    url = url.strip()
+    if url.lower().startswith(('http://', 'https://')):
+        return url
+    # 本地相对路径：以 / 开头则拼到 host 根，否则补 /
+    if url.startswith('/'):
+        return f"{comfyui_base_url.rstrip('/')}{url}"
+    return f"{comfyui_base_url.rstrip('/')}/{url}"
+
+
+def submit_grid_image_task(
+    user_id: str,
+    world_id: str,
+    auth_token: str,
+    item_names: List[str],
+    prompts: List[str],
+    item_type: int,
+    grid_size: int,
+    mode: str = "text_to_image",
+    reference_images: Optional[List[Dict[str, str]]] = None,
+    target_entity_ids: Optional[List[Optional[int]]] = None,
+    aspect_ratio: Optional[str] = None,
+    image_size: Optional[str] = None,
+    grid_cells: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    通用宫格图像提交入口（支持 2x2 四宫格 / 3x3 九宫格，支持 t2i / i2i 两种模式）。
+
+    两个干净分支，互不污染：
+      - mode="text_to_image"：复用 generate_text_to_image（/api/text-to-image，
+        aspect_ratio，is_grid=True 强制最大分辨率），内部自动创建 grid_image_tasks。
+      - mode="image_edit"：以参考图为输入走图生图（/api/image-edit，ref_image_urls，
+        ratio，IMAGE_EDIT 模型），显式创建带 grid_type 的 grid_image_tasks 记录，
+        使后台轮询器能按 item_type 触发宫格切图。
+
+    Args:
+        user_id / world_id / auth_token: 用户/世界/认证。
+        item_names: 各格子名称（placeholder 占位项会被切图时跳过）。
+        prompts: 各格子提示词。
+        item_type: ItemType 宫格类型（4=角色四宫格, 5=场景四宫格, 6=道具四宫格, 8=分镜首帧宫格）。
+        grid_size: GridConfig.SIZE_2X2(4) 或 GridConfig.SIZE_3X3(9)。
+        mode: "text_to_image" 或 "image_edit"。
+        reference_images: i2i 模式下的参考图列表，每项 {"url": str, "role_description": str}。
+            url 为参考图地址（本地路径或 http URL）；role_description 说明这张图的角色
+            （如"父场景的完整俯瞰图"、"分镜首帧"），会被拼进 prompt 全局说明区，对所有格子生效。
+            支持多张参考图（如父场景图 + 角色图），适配不同宫格生图场景。
+        target_entity_ids: 各格子对应的切图回写目标 DB id（与 item_names 等长，按索引对齐；
+            placeholder 格子传 None）。仅 item_type=5(location_grid) 时用于按 id 回写
+            location.reference_image；为 None 时回退按 item_name 回写。
+        aspect_ratio: 宫格整体画幅，缺省回退 16:9。
+        image_size: 可选图片尺寸，写入任务记录供重试复原。
+        grid_cells: 可选的格子绑定元数据，分镜首帧宫格用来驱动后续拆图写回。
+
+    Returns:
+        dict: 与 generate_4grid_images 结构一致的结果。
+    """
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
+
+    if grid_size not in GridConfig.VALID_SIZES:
+        return {'success': False, 'error': f'不支持的 grid_size={grid_size}，允许: {GridConfig.VALID_SIZES}'}
+    if item_type not in ItemType.GRID_MAP:
+        return {'success': False, 'error': f'无效的 item_type={item_type}，必须为宫格类型({sorted(ItemType.GRID_MAP.keys())})'}
+    if mode not in ("text_to_image", "image_edit"):
+        return {'success': False, 'error': f'无效的 mode={mode}，必须为 text_to_image 或 image_edit'}
+
+    item_info = ItemType.GRID_MAP[item_type]
+    resolved_aspect_ratio = str(aspect_ratio or "16:9").strip() or "16:9"
+
+    # 数量校验：placeholder 不计入有效项，但总长度需等于 grid_size
+    if len(item_names) != grid_size:
+        return {'success': False, 'error': f'item_names 必须包含 {grid_size} 个名称（含 placeholder），当前 {len(item_names)}'}
+    if len(prompts) != grid_size:
+        return {'success': False, 'error': f'prompts 必须包含 {grid_size} 个提示词，当前 {len(prompts)}'}
+    # target_entity_ids 长度校验（提供时必须与 item_names 对齐）
+    if target_entity_ids is not None and len(target_entity_ids) != grid_size:
+        return {'success': False, 'error': f'target_entity_ids 长度({len(target_entity_ids)})必须等于 grid_size({grid_size})'}
+
+    grid_layout = "2x2" if grid_size == GridConfig.SIZE_2X2 else "3x3"
+
+    # i2i 模式必须有参考图
+    if mode == "image_edit" and not reference_images:
+        return {'success': False, 'error': 'image_edit 模式必须提供 reference_images（至少一张参考图）'}
+
+    _logger.info(
+        "[GRID] submit_grid_image_task mode=%s layout=%s type=%s names=%s target_ids=%s ref_imgs=%s",
+        mode, grid_layout, item_info['name_cn'], item_names, target_entity_ids,
+        [(r.get('url'), r.get('role_description', '')[:30]) for r in (reference_images or [])],
+    )
+
+    # 构造参考图角色说明（拼进 prompt 全局说明区，对所有格子生效）
+    reference_images_legend = ""
+    if reference_images:
+        legend_parts = []
+        for idx, ref in enumerate(reference_images, 1):
+            role = (ref.get('role_description') or '').strip()
+            if role:
+                legend_parts.append(f"图{idx}是{role}")
+        if legend_parts:
+            reference_images_legend = "参考图说明：" + "；".join(legend_parts) + "。各格内容需与参考图保持视觉连续性。"
+
+    # 构造宫格 prompt JSON（shots 列表天然支持任意长度）
+    grid_prompt = {
+        "grid_layout": grid_layout,
+        "grid_aspect_ratio": resolved_aspect_ratio,
+        "global_watermark": "",
+        "style_guidance": GridConfig.STYLE_GUIDANCE_NO_TEXT,
+        "shots": [
+            {"shot_number": "", "prompt_text": p}
+            for p in prompts
+        ],
+    }
+    if reference_images_legend:
+        grid_prompt["reference_images_legend"] = reference_images_legend
+    prompt_json_str = json.dumps(grid_prompt, ensure_ascii=False)
+
+    # item_name 列只存「展示短 key」（避免 9 个中文名逗号拼接超 varchar(255)）。
+    # 真实名称与回写目标 id 分别落 item_names_json / target_entity_ids_json，
+    # 切图与回写统一通过 GridImageTask.get_item_names_list() / get_target_entity_ids_list() 读取。
+    if target_entity_ids is not None:
+        # 用真实 id 列表生成稳定短 key（如 "loc#100,101,#"），placeholder 位用 # 占位
+        display_key = "loc#" + ",".join(
+            (str(tid) if tid is not None else "#") for tid in target_entity_ids
+        )
+    else:
+        # 无 target_entity_ids（如四宫格 t2i）：退化为名称首字符拼接，保持兼容
+        display_key = ",".join(n[:8] for n in item_names)
+    combined_item_name = display_key
+
+    # ---------- 分支 A：纯文生图 ----------
+    if mode == "text_to_image":
+        result = generate_text_to_image(
+            user_id=user_id,
+            world_id=world_id,
+            auth_token=auth_token,
+            prompt=prompt_json_str,
+            aspect_ratio=resolved_aspect_ratio,
+            count=1,
+            item_type=item_type,
+            item_name=combined_item_name,
+            force_update_exist_image=False,
+            is_grid=True,
+        )
+        if result.get('success'):
+            result['item_type_name'] = item_info['name_cn']
+            result['base_item_type'] = item_info.get('base_type')
+            result['item_names'] = item_names
+        return result
+
+    # ---------- 分支 B：图生图（参考图作为输入）----------
+    # 复用 edit_image() 的模型选择 + URL 校验 + 请求构造，但显式创建带 grid_type 的 task。
+    server_config = get_config().get("server", {})
+    comfyui_base_url = server_config.get("comfyui_base_url_inner") or server_config.get("host", "")
+    if not comfyui_base_url:
+        return {'success': False, 'error': '配置文件中未找到 comfyui_base_url_inner 或 host 配置'}
+
+    # 参考图 url 转公开 http URL（edit_image 仅接受 http/https，防 SSRF）
+    public_ref_urls = []
+    for ref in reference_images:
+        raw_url = ref.get('url') if isinstance(ref, dict) else ref
+        if not raw_url:
+            continue
+        public_url = _to_public_http_url(raw_url, comfyui_base_url)
+        if public_url:
+            public_ref_urls.append(public_url)
+    if not public_ref_urls:
+        return {'success': False, 'error': 'reference_images 无法转为有效 http URL（全部为空或非法）'}
+
+    # 解析模型 task_id（IMAGE_EDIT 类别，含 fallback）
+    edit_task_id = _resolve_image_edit_task_id(user_id, world_id)
+    if edit_task_id is None:
+        return {'success': False, 'error': '无可用图片编辑模型，无法执行宫格 i2i'}
+    model_name = _get_model_name_by_task_id(edit_task_id)
+
+    if not auth_token:
+        return {'success': False, 'error': '认证令牌不能为空'}
+
+    # 按 IMAGE_EDIT 模型 supported_sizes 解析目标分辨率（不支持时自动降级到最接近档位）
+    from config.unified_config import UnifiedConfigRegistry
+    edit_config = UnifiedConfigRegistry.get_by_id(edit_task_id)
+    resolved_image_size = _pick_grid_image_size(edit_config, image_size)
+    _logger.info(
+        "[GRID] i2i image_size: requested=%s resolved=%s model=%s supported=%s",
+        image_size, resolved_image_size, model_name,
+        getattr(edit_config, 'supported_sizes', None),
+    )
+
+    # 发起图生图请求（参照 edit_image L632-658）
+    api_url = f"{comfyui_base_url.rstrip('/')}/api/image-edit"
+    request_data = {
+        'prompt': prompt_json_str,
+        'task_id': edit_task_id,
+        'ratio': resolved_aspect_ratio,  # i2i 端点字段名是 ratio，不是 aspect_ratio
+        'count': 1,
+        'user_id': user_id,
+        'auth_token': auth_token,
+        'ref_image_urls': ','.join(public_ref_urls),  # 逗号分隔的参考图 URL 列表
+    }
+    if resolved_image_size:
+        request_data['image_size'] = resolved_image_size
+    try:
+        from task.mock_interceptor import is_mock_enabled, generate_mock_project_id
+        if is_mock_enabled():
+            result_data = {'project_ids': [generate_mock_project_id()]}
+            _logger.info(f"[MOCK] submit_grid_image_task i2i short-circuit pid={result_data['project_ids'][0]}")
+        else:
+            response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
+            response.raise_for_status()
+            result_data = response.json()
+    except httpx.HTTPStatusError as e:
+        error_detail = f'宫格图生图请求失败: {str(e)}'
+        try:
+            resp_json = e.response.json()
+            detail = resp_json.get('detail', '')
+            if detail:
+                error_detail = detail
+        except Exception:
+            detail = ''
+        _logger.error(
+            "[GRID] i2i 请求失败 status=%s detail=%s url=%s",
+            e.response.status_code, error_detail, api_url,
+        )
+        return {'success': False, 'error': error_detail, 'model_used': model_name}
+    except Exception as e:
+        _logger.error("[GRID] i2i 请求异常: %s", e, exc_info=True)
+        return {'success': False, 'error': f'宫格图生图请求异常: {str(e)}'}
+
+    project_ids = result_data.get('project_ids', [])
+    if not project_ids:
+        return {'success': False, 'error': '宫格图生图请求成功但未返回 project_ids'}
+
+    # 显式创建带 grid_type 的 grid_image_tasks 记录（绕过 create_image_task 的长名 task_key）
+    # 用 project_id 短键，避免 9 名拼接超长/撞键
+    task_key = f"grid:{user_id}:{world_id}:{project_ids[0]}"
+    # target_entity_ids 中的 None（placeholder 位）过滤为纯 id 列表写入 JSON，
+    # 使 JSON_CONTAINS 查询与回写对齐语义清晰。
+    target_ids_for_db = [tid for tid in (target_entity_ids or []) if tid is not None]
+    pipeline_step_id = None
+    try:
+        from model import GridImageTasksModel, GridImageTaskStatus
+        existing = GridImageTasksModel.get_by_task_key(task_key)
+        if existing and existing.status not in [GridImageTaskStatus.QUEUED, GridImageTaskStatus.PROCESSING]:
+            GridImageTasksModel.delete_by_task_key(task_key)
+        grid_task_id = GridImageTasksModel.create(
+            task_key=task_key,
+            project_id=project_ids[0],
+            item_type=item_type,
+            item_name=combined_item_name,
+            user_id=user_id,
+            world_id=world_id,
+            comfyui_base_url=comfyui_base_url,
+            auth_token=auth_token,
+            max_attempts=60,
+            prompt=prompt_json_str,
+            task_config_id=str(edit_task_id),
+            aspect_ratio=resolved_aspect_ratio,
+            image_size=resolved_image_size or image_size,
+            is_grid=True,
+            max_retries=(
+                GridConfig.STORYBOARD_FIRST_FRAME_VALIDATION_MAX_RETRIES
+                if item_type == ItemType.STORYBOARD_FIRST_FRAME_GRID
+                else 0
+            ),
+            grid_size=grid_size,
+            grid_layout=grid_layout,
+            item_names=item_names,
+            target_entity_ids=target_ids_for_db,
+            reference_images=reference_images,
+        )
+        if item_type == ItemType.STORYBOARD_FIRST_FRAME_GRID:
+            from model.ai_tool_pipeline_steps import PipelineStage, PipelineStepModel, PipelineStepType
+
+            cells = grid_cells
+            if not cells:
+                cells = []
+                target_ids_by_index = target_entity_ids or []
+                for index in range(grid_size):
+                    scene_id = target_ids_by_index[index] if index < len(target_ids_by_index) else None
+                    cells.append(
+                        {
+                            "grid_index": index,
+                            "scene_id": scene_id,
+                            "batch_item_id": None,
+                            "placeholder": scene_id is None or GridConfig.is_placeholder(item_names[index]),
+                        }
+                    )
+
+            try:
+                ai_tool_id_for_step = int(project_ids[0])
+            except (TypeError, ValueError):
+                ai_tool_id_for_step = None
+                _logger.warning(
+                    "[GRID] 分镜首帧宫格 project_id 不是 ai_tools.id，跳过预建 pipeline step: %s",
+                    project_ids[0],
+                )
+            if ai_tool_id_for_step is not None:
+                try:
+                    pipeline_step_id = PipelineStepModel.create(
+                        ai_tool_id=ai_tool_id_for_step,
+                        stage=PipelineStage.BEFORE_FINISH,
+                        step_type=PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT,
+                        step_order=0,
+                        params={
+                            "grid_task_id": grid_task_id,
+                            "grid_size": grid_size,
+                            "grid_layout": grid_layout,
+                            "asset_type": "first_frame",
+                            "output_dir": "upload/storyboard/first_frame",
+                            "output_url_path": "upload/storyboard/first_frame",
+                            "cells": cells,
+                        },
+                        target=task_key,
+                    )
+                except Exception as step_err:
+                    _logger.error(
+                        "[GRID] 分镜首帧宫格 pipeline step 预创建失败，将在轮询成功时 fallback 创建: %s",
+                        step_err,
+                        exc_info=True,
+                    )
+        _logger.info(f"[GRID] 宫格 i2i 任务已创建: {task_key}, project_id={project_ids[0]}, target_ids={target_ids_for_db}")
+    except Exception as e:
+        # 入库失败必须返回失败：否则上层误认为已提交，但后台无任务可轮询/切图/回写。
+        # ComfyUI 侧的图生图请求虽已提交，但没有任务记录就无法走切图回写，等于无效提交。
+        _logger.error(f"[GRID] 宫格 i2i 后台任务记录创建失败（请求已提交但无任务记录）: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': f'宫格 i2i 请求已提交但后台任务记录创建失败: {e}',
+            'project_ids': project_ids,
+            'task_key': task_key,
+            'model_used': model_name,
+        }
+
+    return {
+        'success': True,
+        'project_ids': project_ids,
+        'grid_task_id': grid_task_id,
+        'pipeline_step_id': pipeline_step_id,
+        'status': 'submitted',
+        'mode': 'image_edit',
+        'grid_layout': grid_layout,
+        'item_type_name': item_info['name_cn'],
+        'base_item_type': item_info.get('base_type'),
+        'item_names': item_names,
+        'target_entity_ids': target_ids_for_db,
+        'model_used': model_name,
+        'task_key': task_key,
+        'message': f'宫格 i2i 请求已提交（父图作为输入），project_ids={project_ids}',
+    }
+
+
+def generate_9grid_location_images(
+    user_id: str,
+    world_id: str,
+    auth_token: str,
+    sub_location_names: List[str],
+    prompts: List[str],
+    reference_images: Optional[List[Dict[str, str]]] = None,
+    target_entity_ids: Optional[List[Optional[int]]] = None,
+) -> Dict[str, Any]:
+    """
+    生成 3x3 九宫格子场景参考图（以参考图为输入，走图生图）。
+
+    用于分镜首帧生成前，先用父场景图等参考图作为 i2i 输入，一次合成 9 个子场景参考图，
+    切图后按子场景 location.id 回写 reference_image。
+
+    不足 9 个子场景时，调用方应补 placeholder 占位（不回写、不建 location）。
+    超过 9 个时，调用方应拆成多个 3x3 批次分别调用。
+
+    Args:
+        user_id / world_id / auth_token: 用户/世界/认证。
+        sub_location_names: 9 个子场景名称（含 placeholder 占位）。
+        prompts: 9 个子场景提示词。
+        reference_images: 参考图列表，每项 {"url": str, "role_description": str}。
+            通常含父场景图（role_description 说明是父场景全景）；也可含角色图等其他参考。
+            url 为本地路径或 http URL；role_description 拼进 prompt 全局说明区。
+        target_entity_ids: 9 个子场景对应的 location DB id（与 sub_location_names 对齐；
+            placeholder 位传 None）。切图后按此 id 回写 location.reference_image，
+            并使 has_running_grid_for_entity 能查到运行中任务。
+
+    Returns:
+        dict: submit_grid_image_task 的结果。
+    """
+    return submit_grid_image_task(
+        user_id=user_id,
+        world_id=world_id,
+        auth_token=auth_token,
+        item_names=sub_location_names,
+        prompts=prompts,
+        item_type=ItemType.LOCATION_GRID,
+        grid_size=GridConfig.SIZE_3X3,
+        mode="image_edit",
+        reference_images=reference_images,
+        target_entity_ids=target_entity_ids,
+    )
+
+
 def generate_4grid_character_images(user_id: str, world_id: str, auth_token: str,
                                     character_names: List[str], prompts: List[str]) -> Dict[str, Any]:
     """
@@ -4344,12 +5089,13 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
                                       variant_prompt: str, aspect_ratio: str = "16:9",
                                       force_update: bool = False) -> Dict[str, Any]:
     """
-    生成角色造型变体图 - 为角色生成指定造型/服装的三视角参考图，并写入 reference_images 数组
+    生成角色造型变体图 - 基于已有主参考图做图片编辑（图生图），写入 reference_images 数组
 
     变体图与主图（reference_image）格式相同，都是三视角参考图（正面、侧面、背面），但服装/造型不同。
+    为保持五官/身份一致，内部走 edit_image（基于 reference_image），而不是文生图。
     生成的图片完成后会自动追加到角色 JSON 的 reference_images 数组中。
 
-    注意：不同生图模型算力价格不同，请先调用 get_text_to_image_model_info 了解当前模型。
+    注意：图片编辑模型由用户在前端界面选择，请先调用 get_text_to_image_model_info 了解当前模型。
 
     Args:
         user_id: 用户ID（必填）
@@ -4357,7 +5103,7 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
         auth_token: 认证令牌（必填）
         character_name: 角色名称（必填），如"豆包"
         variant_label: 变体标签（必填），如"晚礼服"、"战斗装"，用于在 reference_images 中标识该变体
-        variant_prompt: 三视角提示词（必填），与主图模板一致但服装/造型描述不同
+        variant_prompt: 三视角提示词（必填），强调保持参考图人物身份一致，仅改变服装/造型
         aspect_ratio: 图片宽高比（默认：16:9）
         force_update: 是否覆盖已有同标签变体图（默认：False）
 
@@ -4384,28 +5130,39 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
                 'skip_reason': 'already_has_variant'
             }
 
-    # 检查角色是否已有主参考图（变体图需要基于主图的角色特征）
-    if not character_data.get('reference_image'):
+    # 检查角色是否已有主参考图（变体图必须基于主图做图片编辑）
+    main_image_url = (character_data.get('reference_image') or '').strip()
+    if not main_image_url:
         return {
             'success': False,
             'error': f'角色 "{character_name}" 尚未生成主参考图(reference_image)，请先生成主图后再生成变体图',
             'skip_reason': 'no_main_image'
         }
 
+    # 主图必须是 http/https，否则 edit_image 无法引用
+    from urllib.parse import urlparse
+    parsed_main = urlparse(main_image_url)
+    if parsed_main.scheme not in ('http', 'https'):
+        return {
+            'success': False,
+            'error': f'角色 "{character_name}" 的主参考图URL无效（仅支持 http/https）: {main_image_url[:100]}',
+            'skip_reason': 'invalid_main_image_url'
+        }
+
     # 构造复合 item_name：角色名|变体标签，用于任务追踪和回调时区分
     composite_item_name = f"{character_name}|{variant_label}"
 
-    # 调用 generate_text_to_image 提交生图任务，item_type=7 表示角色变体图
-    result = generate_text_to_image(
+    # 基于主参考图做图片编辑（图生图），item_type=7 表示角色变体图
+    result = edit_image(
         user_id=user_id,
         world_id=world_id,
         auth_token=auth_token,
         prompt=variant_prompt,
+        image_url=main_image_url,
         aspect_ratio=aspect_ratio,
         item_type=7,
         item_name=composite_item_name,
         force_update_exist_image=force_update,
-        is_grid=False
     )
 
     # 添加角色名和变体标签到返回结果中
@@ -4413,6 +5170,7 @@ def generate_character_variant_image(user_id: str, world_id: str, auth_token: st
         result['character_name'] = character_name
         result['variant_label'] = variant_label
         result['composite_item_name'] = composite_item_name
+        result['source_image_url'] = main_image_url
 
     return result
 

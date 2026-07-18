@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Set, Tuple
-from config.constant import FilePathConstants, UploadPathConstants
+from config.constant import FilePathConstants, StoryType, UploadPathConstants
 from utils.project_path import get_project_root
 
 logger = logging.getLogger(__name__)
@@ -255,6 +255,62 @@ class FileManager:
         
         return None
     
+    def resolve_character_file_path(
+        self, character_name: str, user_id: str = "0", world_id: str = "0"
+    ) -> Optional[Path]:
+        """
+        解析角色 JSON 文件真实路径。
+
+        查找顺序：
+        1. character_{name}.json
+        2. character_{sanitize(name)}.json（空格/特殊字符转下划线）
+        3. {name}.json
+        4. 扫描 characters/character_*.json，按 JSON 内 name 字段匹配
+        """
+        self._ensure_directories(user_id, world_id)
+        characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
+        if not characters_dir.exists():
+            return None
+
+        name = (character_name or "").strip()
+        if not name:
+            return None
+
+        # 与 mcp_tool._sanitize_filename 对齐的轻量清理（避免循环导入）
+        safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+        safe_name = re.sub(r'\s+', '_', safe_name).strip('._')
+        if len(safe_name) > 50:
+            safe_name = safe_name[:50]
+
+        candidates = [
+            characters_dir / f"character_{name}.json",
+            characters_dir / f"character_{safe_name}.json",
+            characters_dir / f"{name}.json",
+        ]
+        # 去重但保序
+        seen = set()
+        unique_candidates = []
+        for p in candidates:
+            key = str(p)
+            if key not in seen:
+                seen.add(key)
+                unique_candidates.append(p)
+
+        for file_path in unique_candidates:
+            if file_path.exists():
+                return file_path
+
+        # 回退：扫描 JSON 内 name 字段（兼容拼音/临时文件名）
+        for file_path in characters_dir.glob("character_*.json"):
+            try:
+                char_data = json.loads(file_path.read_text(encoding='utf-8'))
+                if isinstance(char_data, dict) and (char_data.get('name') or '').strip() == name:
+                    return file_path
+            except Exception as e:
+                print(f"扫描角色卡失败 {file_path}: {e}")
+
+        return None
+
     def get_character_json(self, character_name: str, user_id: str = "0", world_id: str = "0") -> Optional[dict]:
         """
         获取指定角色卡的原始JSON数据（用于数据库操作）
@@ -267,25 +323,16 @@ class FileManager:
         Returns:
             角色卡JSON字典，如果不存在返回 None
         """
-        self._ensure_directories(user_id, world_id)
-        characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
-        
-        # 尝试多种文件名格式
-        possible_files = [
-            characters_dir / f"character_{character_name}.json",
-            characters_dir / f"{character_name}.json"
-        ]
-        
-        for file_path in possible_files:
-            if file_path.exists():
-                try:
-                    json_content = file_path.read_text(encoding='utf-8')
-                    char_data = json.loads(json_content)
-                    return char_data  # 直接返回JSON字典
-                except Exception as e:
-                    print(f"读取角色卡JSON失败 {character_name}: {e}")
-        
-        return None
+        file_path = self.resolve_character_file_path(character_name, user_id, world_id)
+        if not file_path:
+            return None
+
+        try:
+            json_content = file_path.read_text(encoding='utf-8')
+            return json.loads(json_content)
+        except Exception as e:
+            print(f"读取角色卡JSON失败 {character_name} ({file_path}): {e}")
+            return None
     
     def save_character(self, character_name: str, content: str, user_id: str = "0", world_id: str = "0") -> bool:
         """
@@ -694,6 +741,7 @@ class FileManager:
             try:
                 json_content = file_path.read_text(encoding='utf-8')
                 world_data = json.loads(json_content)
+                world_data['story_type'] = StoryType.normalize(world_data.get('story_type'))
                 return world_data
             except Exception as e:
                 print(f"读取世界JSON失败 world_id={world_id}: {e}")
@@ -717,6 +765,7 @@ class FileManager:
         file_path = worlds_dir / f"world_{world_id}.json"
         
         try:
+            world_data['story_type'] = StoryType.normalize(world_data.get('story_type'))
             world_json = json.dumps(world_data, ensure_ascii=False, indent=2)
             file_path.write_text(world_json, encoding='utf-8')
             print(f"✓ 世界信息已保存: {file_path}")
@@ -921,6 +970,14 @@ class FileManager:
             context += f"## 世界信息\n\n"
             context += f"**世界名称**: {world_data.get('name', '未命名')}\n\n"
             
+            story_type = world_data.get('story_type') or 'dialogue'
+            story_type_labels = {
+                'dialogue': '对话剧情',
+                'narration': '旁白解说',
+                'music_mv': '音乐MV',
+            }
+            context += f"**故事类型**: {story_type_labels.get(story_type, '对话剧情')} ({story_type})\n\n"
+
             if world_data.get('story_outline'):
                 context += f"**故事大纲**:\n{world_data.get('story_outline')}\n\n"
             
@@ -1239,7 +1296,18 @@ class FileManager:
             raise FileNotFoundError(f"世界目录不存在: {base_path}")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_name = f"world_export_{world_id}_{timestamp}.zip"
+
+        # 优先使用世界名称作为导出文件名，便于用户识别
+        world_data = self.get_world_json(user_id, world_id)
+        world_name = (world_data.get('name') or '').strip() if world_data else ''
+        if world_name:
+            safe_name = re.sub(r'[<>:"/\\|?*]', '_', world_name)
+            safe_name = re.sub(r'\s+', '_', safe_name).strip('._')
+            if len(safe_name) > 50:
+                safe_name = safe_name[:50]
+            zip_name = f"{safe_name}_{timestamp}.zip" if safe_name else f"world_export_{world_id}_{timestamp}.zip"
+        else:
+            zip_name = f"world_export_{world_id}_{timestamp}.zip"
         zip_path = Path(tempfile.gettempdir()) / zip_name
 
         collected_images: Set[str] = set()
