@@ -731,6 +731,7 @@ class StoryboardAgentCliService:
         image_urls: Optional[str] = None,
         video_urls: Optional[str] = None,
         audio_urls: Optional[str] = None,
+        task_type: Optional[int] = None,
     ) -> Dict[str, Any]:
         if mode not in VALID_VIDEO_MODES:
             raise StoryboardCliError("invalid_mode", f"invalid video mode: {mode}")
@@ -824,6 +825,7 @@ class StoryboardAgentCliService:
                 image_mode=image_mode,
                 video_urls=video_urls,
                 audio_urls=audio_urls,
+                task_type=task_type,
             )
 
         return self._finalize_submission(
@@ -2075,6 +2077,7 @@ class StoryboardAgentCliService:
                     prompt=job.get("prompt"),
                     ratio=job.get("ratio"),
                     image_mode=batch_image_mode,
+                    task_type=task_type_raw,
                 )
             except StoryboardCliError as exc:
                 StoryboardImageBatchItemModel.update(

@@ -30,7 +30,8 @@ python -m scripts.storyboard_agent_cli task-status --scene-id 123
   `StoryboardModel.create_scenes`，把已关联剧本拆分为分镜。`storyboard.html` 在空分镜弹框中提供“拆分剧本模型”和“生图模型”选择，前端会把用户选择的 `model`、`model_id`、`vendor_id` 传给后端，避免落回服务端默认模型；“生图模型”选择写入 `state.selectedImageTaskId` 并持久化到 `config_json`，拆分完成后由 `auto-generate-missing-images` 直接读取，无需改动拆分接口本身。
 - `generate-image` 支持 `auto`、`text_to_image` 和 `image_edit`，默认 `auto`。`auto` 会先收集当前分镜涉及的画风、角色、场景、道具和已有分镜图参考；只要存在参考图，就把这些 URL 按顺序发送给 `edit_image`，并把“图 1 是角色/场景/道具”的说明追加到 prompt；没有参考图时才调用 `generate_text_to_image`。`upload/...` 和 `/upload/...` 会按 `server.host` 转为 HTTP/HTTPS URL 后再暴露给智能体和工具。提交成功后把返回的 `project_ids` 绑定为 `storyboard_scene_asset`，默认选中第一条素材。
 - `generate-video` 支持 `text_to_video` 和 `image_to_video`，图生视频默认使用当前首帧，也可用
-  `first_last_with_ref` 或 `multi_reference` 汇入参考图。
+  `first_last_with_ref` 或 `multi_reference` 汇入参考图。`--task-type`（可选）显式指定图生视频模型
+  task_id，优先于用户偏好；传入无效（不存在/已禁用/类别不符）时自动降级到偏好/默认模型，不中断。
 - `bind-projects` 可把已有 `ai_tools` 记录绑定到分镜素材，便于外部 agent 已完成提交后回写分镜。
 
 ## 复用关系

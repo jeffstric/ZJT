@@ -59,9 +59,9 @@ GET /api/storyboard/image-batches/{batch_id}/status
   - `video_type=digital_human`：无完成视频且**成片配音就绪** + 有形象/首帧 → pending；缺配音 → skipped（`missing_audio` / `audio_pending`）
   - 已有视频 → completed；生成中 → running
 - 调度：`_process_one_video_batch_job` 按分镜类型分支：
-  - 普通镜 → `generate_video(mode=image_to_video, image_mode=<job.extra_json.image_mode>)`
+  - 普通镜 → `generate_video(mode=image_to_video, image_mode=<job.extra_json.image_mode>, task_type=<job.extra_json.task_type>)`，task_type 沿 `generate_video` → `submitter.image_to_video` → `video_tools.image_to_video` 一路透传到模型选择，**优先于用户偏好/默认回退**；传入的 task_type 无效（不存在/已禁用/类别不符）时记 warning 并降级，不中断批次
   - 对口型 → `submit_storyboard_digital_human_video`（**仅 LTX2.3 type=32**，禁止 i2v / wan）
-- `image_mode` 写入 `job.extra_json` 与幂等性 payload（不同模式视为不同批次，不互相吞并）；调度时若所选 `task_type` 的模型 `supported_image_modes` 不含该模式，自动降级为 `first_last_frame` 并记 warning
+- `task_type` 与 `image_mode` 一起写入 `job.extra_json` 与幂等性 payload（不同取值视为不同批次，不互相吞并）；调度时若所选 `task_type` 的模型 `supported_image_modes` 不含该模式，自动降级为 `first_last_frame` 并记 warning
 - 幂等：同 storyboard + asset_type=video + image_mode 活动批次冲突返回 409 `active_batch_exists`
 
 ## 视频生成模式（首尾帧 / 全能参考）

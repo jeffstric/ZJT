@@ -196,6 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
     generate_video.add_argument("--image-urls")
     generate_video.add_argument("--video-urls")
     generate_video.add_argument("--audio-urls")
+    generate_video.add_argument("--task-type", type=int, help="视频模型 task_id（图生视频时优先于用户偏好；无效自动降级）")
 
     task_status = subparsers.add_parser("task-status", help="Read selected task status for a scene.")
     task_status.add_argument("--scene-id", type=int, required=True)

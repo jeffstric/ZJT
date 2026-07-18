@@ -444,6 +444,7 @@ class StoryboardAgentCommandService:
                 image_urls=data.get("image_urls"),
                 video_urls=data.get("video_urls"),
                 audio_urls=data.get("audio_urls"),
+                task_type=_to_int(data.get("task_type"), "task_type"),
             )
 
         if command == "task-status":
