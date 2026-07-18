@@ -865,6 +865,22 @@ class ScriptSplitConstants:
         STATUS_FAILED,
         STATUS_CANCELLED,
     )
+
+    # ---- resume 拦截分类 ----
+    # paused/waiting_auth 调 resume 时，按 last_error_code 判断根因是否已清除。
+    # 根因在外部依赖或硬门禁的错误码：盲目重跑必然再次 paused（死循环），
+    # 必须由调用方确认根因已排除（如 LLM key 已修复、场景资产已补齐）后再 force 重试。
+    RESUME_BLOCKED_ERROR_CODES = (
+        "plan_call_failed",                # LLM 网关 4xx/5xx（如 highwayapi 403）
+        "plan_timeout",                    # LLM 调用超时
+        "step_watchdog_timeout",           # worker 单步 wall-clock 超时
+        "new_root_location_forbidden",     # 硬门禁：剧本含 DB 缺失的顶层场景
+        "location_parent_invalid",         # 硬门禁：场景父级关系非法
+        "location_parent_conflict",        # 硬门禁：场景父级冲突
+    )
+    # waiting_auth 特殊：根因是 token 过期，resume 时带新 auth_token 即可解除；
+    # 不带新 token 调 resume 会被拦截，要求先 /api/agent-auth/exchange 换取。
+    RESUME_NEEDS_AUTH_ERROR_CODES = ("waiting_auth",)
     # 活跃态：active_key 唯一索引保护，重复提交返回同任务
     ACTIVE_STATUSES = (
         STATUS_QUEUED,

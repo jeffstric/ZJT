@@ -118,6 +118,15 @@ class ScriptSplitTask:
                 self.status, self.phase, current, total,
             ),
             'poll_after_ms': ScriptSplitConstants.DEFAULT_POLL_MS,
+            # 暴露错误码与可恢复性：让 Agent 能程序化区分 paused 根因（外部依赖 /
+            # 内容校验 / 硬门禁 / 鉴权失效），而非只看到通用文案「已暂停」。
+            'error_code': self.last_error_code,
+            'error_message': self.last_error_message,
+            'resumable': self.status in (
+                ScriptSplitConstants.STATUS_PAUSED,
+                ScriptSplitConstants.STATUS_WAITING_AUTH,
+            ),
+            'resume_hint': _resume_hint(self.status, self.last_error_code),
         }
 
 
@@ -160,6 +169,33 @@ def _phase_message(status, phase, current_seg, total_seg) -> str:
     if status == ScriptSplitConstants.STATUS_FAILED:
         return '任务失败'
     return status or ''
+
+
+def _resume_hint(status: Optional[str], error_code: Optional[str]) -> Optional[str]:
+    """针对 paused/waiting_auth 给 Agent/调用方的可读恢复指引。
+
+    返回 None 表示非可恢复状态（无需指引）。指引文案面向程序化消费（Agent），
+    与面向前端的 ``_phase_message`` 区分：后者是按钮文案，前者是动作建议。
+    """
+    if status not in (
+        ScriptSplitConstants.STATUS_PAUSED,
+        ScriptSplitConstants.STATUS_WAITING_AUTH,
+    ):
+        return None
+    if error_code in ScriptSplitConstants.RESUME_BLOCKED_ERROR_CODES:
+        if error_code == "plan_call_failed":
+            return "llm_gateway_error: LLM 网关拒绝调用(如 403/5xx)，排查 api key/欠费/网络后调 resume(force=true) 重试"
+        if error_code == "plan_timeout":
+            return "llm_timeout: LLM 调用超时，排查模型可用性/网络后调 resume(force=true) 重试"
+        if error_code == "step_watchdog_timeout":
+            return "worker_timeout: 单步超时，排查 worker 进程/LLM 响应后调 resume(force=true) 重试"
+        # 硬门禁类（new_root_location_forbidden / location_parent_*）
+        return "hard_gate: 剧本含未建模的顶层场景或父级关系非法，需先在剧本创作页补齐场景资产后调 resume(force=true)"
+    if error_code in ScriptSplitConstants.RESUME_NEEDS_AUTH_ERROR_CODES:
+        return "auth_expired: 鉴权 token 已失效，先 POST /api/agent-auth/exchange 换取新 auth_token，再带 Authorization 头调 resume"
+    # plan_failed / segment_qc_failed / segment_max_retries / segment_repeatedly_interrupted 等
+    # 内容校验类：根因与外部依赖无关，直接 resume 即可重试
+    return "content_validation: 规划/段内容校验未通过，可直接调 resume 重试"
 
 
 class ScriptSplitTaskModel:
