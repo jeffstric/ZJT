@@ -380,6 +380,138 @@ def list_video_models(user_id: str, world_id: str, auth_token: str,
         return {'success': False, 'error': f'查询视频模型列表失败: {str(e)}'}
 
 
+def list_llm_models(user_id: str, world_id: str, auth_token: str) -> Dict[str, Any]:
+    """
+    查询当前可用的大语言模型（LLM）列表及费用 - MCP工具函数
+
+    返回所有已配置（vendor API key 已填）且启用的 LLM 模型，含每档 token 的算力
+    消耗率（threshold）和换算后的单价（元/百万 token）。供 Agent / CLI 调用方在
+    调用 split-from-script 等需要 LLM 的命令前，查询模型并选取合适的 model_id。
+
+    费用模型：vendor_model 表的三档 threshold（input/output/cache_read），
+    含义为「多少个该类 token 消耗 1 点算力」。换算单价公式：
+        单价(元/百万token) = 0.04 × 1_000_000 / threshold
+    （1 算力 = 0.04 元）。threshold 越小 → 单价越高。
+
+    Args:
+        user_id: 用户ID（必填，签名兼容）
+        world_id: 世界ID（必填，签名兼容）
+        auth_token: 认证令牌（必填，签名兼容）
+
+    Returns:
+        dict: {success, models: [{model_id, name, vendor_id, vendor_name,
+              context_window, supports_thinking, supports_vl,
+              pricing: {input_threshold, output_threshold, cache_read_threshold,
+                        input_price_per_million, output_price_per_million,
+                        cache_read_price_per_million}}]}
+    """
+    try:
+        from config.config_util import get_dynamic_config_value
+        from model.model import ModelModel
+        from model.vendor import VendorDAO
+        from model.vendor_model import VendorModelModel
+
+        # ---- 复用 get_available_models 的过滤逻辑（已配置 vendor + enabled + supports_tools）----
+        vendors = {v.id: v for v in VendorDAO.get_all()}
+        all_vendor_models = VendorModelModel.get_all()
+
+        def _is_vendor_configured(vendor_name: str) -> bool:
+            # 与 llm/llm_client_factory.py:is_vendor_configured 同口径
+            vendor_config_map = {
+                'google': ('llm', 'google', 'api_key'),
+                'claude': ('llm', 'claude', 'api_key'),
+                'aliyun': ('llm', 'qwen', 'api_key'),
+                'ollama': ('llm', 'ollama', 'enabled'),
+                'volcengine': ('volcengine', 'api_key'),
+                'zjt_api': ('api_aggregator', 'site_0', 'api_key'),
+                'deepseek': ('llm', 'deepseek', 'api_key'),
+            }
+            if vendor_name not in vendor_config_map:
+                return True
+            value = get_dynamic_config_value(*vendor_config_map[vendor_name], default='')
+            if isinstance(value, bool):
+                return value
+            return bool(value and len(str(value).strip()) > 0)
+
+        def _threshold_to_price(threshold):
+            """threshold(多少token=1算力) → 单价(元/百万token)。None → None。"""
+            if not threshold:
+                return None
+            try:
+                return round(0.04 * 1_000_000 / float(threshold), 2)
+            except (TypeError, ValueError, ZeroDivisionError):
+                return None
+
+        models = []
+        added_pairs = set()
+        for vm in all_vendor_models:
+            model_id = vm.model_id
+            vendor_id = vm.vendor_id
+            vendor = vendors.get(vendor_id)
+            vendor_name = vendor.vendor_name if vendor else 'unknown'
+
+            if not _is_vendor_configured(vendor_name):
+                continue
+            if (model_id, vendor_id) in added_pairs:
+                continue
+            added_pairs.add((model_id, vendor_id))
+
+            local_model = ModelModel.get_by_id(model_id)
+            if not local_model or not local_model.supports_tools or not local_model.enabled:
+                continue
+
+            # 查计费档位：补全三档 threshold（get_available_models 只返回 input）
+            in_th = out_th = cache_th = None
+            try:
+                billing = VendorModelModel.get_by_vendor_model_for_billing(
+                    vendor_id=vendor_id, model_id=model_id, raw_input_token=0,
+                )
+                if billing:
+                    in_th = billing.input_token_threshold
+                    out_th = billing.output_token_threshold
+                    cache_th = billing.cache_read_threshold
+            except Exception as vm_err:
+                logger.warning(f"[list_llm_models] 获取 model_id={model_id} 计费失败: {vm_err}")
+
+            models.append({
+                'model_id': model_id,
+                'name': local_model.model_name,
+                'vendor_id': vendor_id,
+                'vendor_name': vendor_name,
+                'context_window': local_model.context_window,
+                'supports_thinking': local_model.supports_thinking == 1,
+                'supports_vl': local_model.supports_vl == 1,
+                'pricing': {
+                    'input_threshold': in_th,
+                    'output_threshold': out_th,
+                    'cache_read_threshold': cache_th,
+                    # 换算单价（元/百万token），方便用户直接对比
+                    'input_price_per_million': _threshold_to_price(in_th),
+                    'output_price_per_million': _threshold_to_price(out_th),
+                    'cache_read_price_per_million': _threshold_to_price(cache_th),
+                },
+            })
+
+        if not models:
+            return {
+                'success': False,
+                'error': '当前没有可用的 LLM 模型（vendor 未配置或模型未启用）',
+                'models': [],
+            }
+
+        return {
+            'success': True,
+            'models': models,
+            'message': (
+                f'共 {len(models)} 个可用 LLM 模型。调用 split-from-script 时，'
+                f'请将所选模型的 name 作为 model、model_id 作为 model_id、'
+                f'vendor_id 作为 vendor_id 传入（pricing 用于对比费用）。'
+            ),
+        }
+    except Exception as e:
+        return {'success': False, 'error': f'查询 LLM 模型列表失败: {str(e)}'}
+
+
 def fetch_image_as_base64(user_id: str, world_id: str, auth_token: str,
                           image_url: str, max_size_mb: float = 2.0) -> Dict[str, Any]:
     """
@@ -3192,6 +3324,15 @@ MCP_TOOLS = [
                     "default": "image_to_video"
                 }
             },
+            "required": []
+        }
+    },
+    {
+        "name": "list_llm_models",
+        "description": "查询当前可用的大语言模型（LLM）列表及费用（含 input/output/cache_read 三档算力阈值与换算单价）。调用 split-from-script / create-storyboard-from-script 等需要 LLM 的命令前，可先用本工具查询模型并对比费用，选取后将 name 作为 model、model_id 作为 model_id、vendor_id 作为 vendor_id 传入对应命令。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
             "required": []
         }
     },

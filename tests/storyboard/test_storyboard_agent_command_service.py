@@ -266,12 +266,38 @@ def test_storyboard_agent_command_dispatches_split_force_overwrite_subscene_grid
             "storyboard_id": 44,
             "user_id": 7,
             "auth_token": "token",
+            "model": "deepseek-v4-pro",
             "force_overwrite_subscene_grids": True,
         },
     )
 
     assert result["success"] is True
     assert calls[0]["force_overwrite_subscene_grids"] is False
+    assert calls[0]["model"] == "deepseek-v4-pro"
+
+
+def test_split_from_script_requires_model():
+    """split-from-script 缺 model 时拒绝（CLI 路径强制，不再回退默认 gemini）。
+
+    _to_required_str 抛 StoryboardCliError，与 _to_required_int 同模式；
+    HTTP 路由层（api/storyboard.py）会捕获它转成 JSON 错误响应。
+    """
+    import pytest
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    class FakeStoryboardService:
+        def split_from_script(self, **kwargs):
+            raise AssertionError("缺 model 时不应进入 service")
+
+    with pytest.raises(StoryboardCliError) as exc_info:
+        StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+            "split-from-script",
+            {"storyboard_id": 44, "user_id": 7, "auth_token": "token"},
+        )
+
+    assert exc_info.value.error_code == "missing_parameter"
+    assert "model" in exc_info.value.message
 
 
 def test_schema_lists_export_commands():

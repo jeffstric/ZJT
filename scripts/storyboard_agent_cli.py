@@ -131,7 +131,10 @@ def build_parser() -> argparse.ArgumentParser:
     split_script.add_argument("--storyboard-id", type=int, required=True)
     split_script.add_argument("--user-id", type=int, required=True)
     split_script.add_argument("--auth-token", default="")
-    split_script.add_argument("--model")
+    split_script.add_argument(
+        "--model", required=True,
+        help="LLM 模型名（必填，不再回退默认 gemini；先用 list_llm_models 查可用模型）",
+    )
     split_script.add_argument("--model-id", type=int)
     split_script.add_argument("--vendor-id", type=int)
     split_script.add_argument("--max-group-duration", type=int, default=15)

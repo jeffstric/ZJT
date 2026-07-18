@@ -36,6 +36,17 @@ def _to_required_int(value: Any, name: str) -> int:
         raise StoryboardCliError("invalid_parameter", f"{name} must be an integer")
 
 
+def _to_required_str(value: Any, name: str, hint: str = "") -> str:
+    """要求非空字符串。用于 split-from-script 的 model 等强制参数，
+    避免回退到服务端默认模型（CLI 路径必须显式指定）。"""
+    if value in (None, ""):
+        msg = f"{name} is required"
+        if hint:
+            msg = f"{msg} ({hint})"
+        raise StoryboardCliError("missing_parameter", msg)
+    return str(value).strip()
+
+
 def _to_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -395,11 +406,16 @@ class StoryboardAgentCommandService:
         if command == "split-from-script":
             _legacy_force_overwrite_subscene_grids = _to_bool(data.get("force_overwrite_subscene_grids"))
             del _legacy_force_overwrite_subscene_grids
+            # CLI 路径强制显式指定 LLM 模型，禁止回退到默认 gemini。
+            # 调用方可先用 list_llm_models 查询可用模型及费用。
             return self.service.split_from_script(
                 storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
                 user_id=_to_required_int(data.get("user_id"), "user_id"),
                 auth_token=data.get("auth_token") or "",
-                model=data.get("model"),
+                model=_to_required_str(
+                    data.get("model"), "model",
+                    hint="use --model; call list_llm_models to get available models",
+                ),
                 model_id=_to_int(data.get("model_id"), "model_id"),
                 vendor_id=_to_int(data.get("vendor_id"), "vendor_id"),
                 max_group_duration=_to_int(data.get("max_group_duration"), "max_group_duration", 15) or 15,
