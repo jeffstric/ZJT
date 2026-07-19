@@ -72,7 +72,14 @@ async def generate_audio(
         # 直接 os.path.isfile() 会对带前导斜杠的路径在文件系统根解析而误判为 False，
         # 导致跳过上传、把不可达的路径透传给远程 TTS。这里先归一化为本地绝对路径再判断。
         uploaded_spk_audio_path = spk_audio_path
-        local_spk_path = resolve_upload_url_to_local_path(spk_audio_path) if spk_audio_path else None
+        local_spk_path = None
+        if spk_audio_path:
+            local_spk_path = resolve_upload_url_to_local_path(spk_audio_path)
+            if not (local_spk_path and os.path.isfile(local_spk_path)):
+                if os.path.isfile(spk_audio_path):
+                    local_spk_path = spk_audio_path
+                else:
+                    local_spk_path = None
         if local_spk_path and os.path.isfile(local_spk_path):
             logger.info(f"Uploading reference audio to TTS server: {local_spk_path}")
             upload_url = f"{tts_api_url}/upload_reference"
@@ -102,7 +109,14 @@ async def generate_audio(
         
         # Step 2: Upload emotion reference audio if provided and is a local file
         uploaded_emo_ref_path = emo_ref_path
-        local_emo_path = resolve_upload_url_to_local_path(emo_ref_path) if emo_ref_path else None
+        local_emo_path = None
+        if emo_ref_path:
+            local_emo_path = resolve_upload_url_to_local_path(emo_ref_path)
+            if not (local_emo_path and os.path.isfile(local_emo_path)):
+                if os.path.isfile(emo_ref_path):
+                    local_emo_path = emo_ref_path
+                else:
+                    local_emo_path = None
         if local_emo_path and os.path.isfile(local_emo_path):
             logger.info(f"Uploading emotion reference audio to TTS server: {local_emo_path}")
             upload_url = f"{tts_api_url}/upload_reference"
