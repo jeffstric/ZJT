@@ -188,9 +188,15 @@ def process_pending_async_task_submissions():
     处理待提交的异步任务（调度器入口）
 
     扫描所有需要重试的 async_task（status=QUEUED, next_retry_at <= NOW, retry_count < max_retries），
-    逐个提交到外部 API。
+    逐个提交到外部 API。同时清理已耗尽重试次数却仍卡在 QUEUED 的历史任务。
     """
     try:
+        # 先清理耗尽重试的僵尸 QUEUED（retry_count >= max_retries 不会被 get_ready 拾取）
+        try:
+            AsyncTasksModel.fail_exhausted_retry_tasks(limit=200)
+        except Exception as e:
+            logger.error(f"清理耗尽重试异步任务失败: {e}", exc_info=True)
+
         retry_tasks = AsyncTasksModel.get_ready_to_retry_tasks(limit=50)
 
         if not retry_tasks:
@@ -201,7 +207,7 @@ def process_pending_async_task_submissions():
         loop = asyncio.new_event_loop()
         try:
             for task in retry_tasks:
-                # 检查是否超过最大重试次数
+                # 检查是否超过最大重试次数（防御：正常不应进入 get_ready 结果集）
                 if task.retry_count >= task.max_retries:
                     RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_ASYNC)
                     logger.warning(f"任务 {task.id} 超过最大重试次数 {task.max_retries}，标记为失败")

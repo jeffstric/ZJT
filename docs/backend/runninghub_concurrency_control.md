@@ -78,10 +78,27 @@ ALTER TABLE async_tasks ADD COLUMN max_retries INT NOT NULL DEFAULT 5 COMMENT '�
 retry_tasks = AsyncTasksModel.get_ready_to_retry_tasks(limit=50)
 ```
 
+#### 状态轮询查询（已提交任务）
+
+```python
+# 仅取 external_task_id 非空的 QUEUED/PROCESSING 任务，避免等槽位任务占满 LIMIT
+pending = AsyncTasksModel.get_pending_tasks(implementation=impl_id, limit=50)
+```
+
+**事故教训（2026-07-20）**：`get_pending_tasks` 若不过滤 `external_task_id`，
+大量 `status=QUEUED AND external_task_id IS NULL` 的等槽位任务会按 `created_at ASC LIMIT 50`
+占满轮询窗口，轮询循环再 `continue` 跳过它们，导致已提交（`status=PROCESSING`）的任务
+`try_count` 永不递增、永远不发起 `/openapi/v2/query`。
+
+另：`retry_count >= max_retries` 的任务不会被 `get_ready_to_retry_tasks` 拾取，
+需由 `fail_exhausted_retry_tasks()` 批量标记 FAILED，否则永久卡在 QUEUED。
+
 #### 后台任务处理流程
 
 ```
 1. 定时任务每7秒执行 process_pending_async_task_submissions()
+   ↓
+1b. fail_exhausted_retry_tasks() 清理 retry_count >= max_retries 的僵尸 QUEUED
    ↓
 2. 查询可重试任务: status=QUEUED, next_retry_at <= NOW, retry_count < max_retries
    ↓
@@ -91,7 +108,7 @@ retry_tasks = AsyncTasksModel.get_ready_to_retry_tasks(limit=50)
    - 成功: 原子更新 external_task_id、将 status 改为 PROCESSING，并清空 next_retry_at
    - 失败: 释放槽位，安排下次重试
    ↓
-4. 轮询任务 (process_runninghub_async_tasks) 继续监控已提交任务的状态
+4. 轮询任务 (process_runninghub_async_tasks) 每10秒仅检查 external_task_id 非空的任务
 ```
 
 提交成功后的三个字段必须在同一次数据库更新中完成。若只更新

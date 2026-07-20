@@ -266,8 +266,8 @@ sequenceDiagram
 | 流水线步骤调度器 | 13s | 分发 PENDING 步骤、检查 PROCESSING 步骤、推进 ai_tools 状态 | `PipelineProcessor.process_all_pending_steps` |
 | 同步任务结果检查器 | 5s | 检查同步进程池中已完成任务的结果 | `SyncTaskExecutor.check_results` |
 | 孤儿任务恢复 | 20min | 重置卡在 PROCESSING 的超时任务 | `_reset_orphan_processing_tasks` |
-| RunningHub 异步轮询 | 10s | 轮询 RunningHub 异步任务状态 | `process_runninghub_async_tasks` |
-| 异步任务提交重试 | 7s | 槽位满时重试提交 | `process_pending_async_task_submissions` |
+| RunningHub 异步轮询 | 10s | 轮询**已提交** RunningHub 异步任务状态（`external_task_id` 非空） | `process_runninghub_async_tasks` |
+| 异步任务提交重试 | 7s | 槽位满时重试提交；顺带清理耗尽重试的僵尸 QUEUED | `process_pending_async_task_submissions` |
 | RunningHub 槽位清理 | 30min | 清理超时槽位 | `cleanup_runninghub_slots` |
 
 ## 7. 各状态下调度器行为
