@@ -213,7 +213,11 @@ class AsyncTasksModel:
     @staticmethod
     def get_pending_tasks(implementation: Optional[int] = None, limit: int = 50) -> List[AsyncTask]:
         """
-        获取待处理的任务（状态为 QUEUED 或 PROCESSING）
+        获取待轮询状态的任务（已提交到外部 API）
+
+        仅返回 status 为 QUEUED/PROCESSING 且 external_task_id 非空的记录。
+        未提交（external_task_id IS NULL）的任务由 process_pending_async_task_submissions
+        负责，不得进入状态轮询队列，否则会占满 LIMIT 导致已提交任务饿死。
 
         Args:
             implementation: 实现 ID 筛选（可选，不传则获取所有实现的任务）
@@ -225,7 +229,10 @@ class AsyncTasksModel:
         if implementation:
             sql = """
                 SELECT * FROM async_tasks
-                WHERE implementation = %s AND status IN (%s, %s)
+                WHERE implementation = %s
+                  AND status IN (%s, %s)
+                  AND external_task_id IS NOT NULL
+                  AND external_task_id != ''
                 ORDER BY created_at ASC
                 LIMIT %s
             """
@@ -234,6 +241,8 @@ class AsyncTasksModel:
             sql = """
                 SELECT * FROM async_tasks
                 WHERE status IN (%s, %s)
+                  AND external_task_id IS NOT NULL
+                  AND external_task_id != ''
                 ORDER BY created_at ASC
                 LIMIT %s
             """
@@ -247,6 +256,48 @@ class AsyncTasksModel:
             raise
         except Exception as e:
             logger.error(f"Failed to get pending async tasks (unexpected): {e}")
+            raise
+
+    @staticmethod
+    def fail_exhausted_retry_tasks(limit: int = 200) -> int:
+        """
+        将已耗尽提交重试次数、且从未成功提交的 QUEUED 任务标记为 FAILED。
+
+        get_ready_to_retry_tasks 条件含 retry_count < max_retries，耗尽后任务不会再被
+        拾取，若不同时标记失败会永久卡在 status=QUEUED，并污染运维统计。
+
+        Returns:
+            影响的行数
+        """
+        sql = """
+            UPDATE async_tasks
+            SET status = %s,
+                error_message = %s,
+                failed_at = NOW(),
+                next_retry_at = NULL
+            WHERE status = %s
+              AND external_task_id IS NULL
+              AND retry_count >= max_retries
+            ORDER BY id ASC
+            LIMIT %s
+        """
+        error_message = '超过最大重试次数，任务提交失败'
+        params = (
+            AsyncTaskStatus.FAILED,
+            error_message,
+            AsyncTaskStatus.QUEUED,
+            limit,
+        )
+        try:
+            affected = execute_update(sql, params)
+            if affected:
+                logger.warning(f"Marked {affected} exhausted async tasks as FAILED")
+            return affected
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to fail exhausted retry tasks: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to fail exhausted retry tasks (unexpected): {e}")
             raise
 
     @staticmethod
