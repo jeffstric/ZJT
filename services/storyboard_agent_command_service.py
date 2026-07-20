@@ -66,6 +66,22 @@ def _to_int_in_range(
     return result
 
 
+def _to_required_auth_token(value: Any) -> str:
+    """要求 auth_token 非空。用于消耗算力的命令（split/video/image），
+    避免漏传导致 LLM/生成算力免费消耗（token_log 门禁 if auth_token 会跳过）。
+    错误码 missing_auth_token 与数字人路径对齐。"""
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise StoryboardCliError(
+            "missing_auth_token",
+            "auth_token is required (该命令消耗算力，需先 POST /api/agent-auth/exchange 换取)",
+        )
+    # 去掉可能误带的 Bearer 前缀，统一返回纯 token
+    if normalized.lower().startswith("bearer "):
+        normalized = normalized[7:].strip()
+    return normalized
+
+
 def _to_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -429,10 +445,13 @@ class StoryboardAgentCommandService:
             del _legacy_force_overwrite_subscene_grids
             # CLI 路径强制显式指定 LLM 模型，禁止回退到默认 gemini。
             # 调用方可先用 list_llm_models 查询可用模型及费用。
+            # auth_token 强制非空：worker 调 LLM 的 token 算力由 auth_token 解析出的
+            # user_id 承担；漏传会导致 LLM 免费消耗（token_log 门禁 if auth_token 被跳过）。
+            # 与数字人路径（cli_service.py:749）的 missing_auth_token 策略对齐。
             return self.service.split_from_script(
                 storyboard_id=_to_required_int(data.get("storyboard_id"), "storyboard_id"),
                 user_id=_to_required_int(data.get("user_id"), "user_id"),
-                auth_token=data.get("auth_token") or "",
+                auth_token=_to_required_auth_token(data.get("auth_token")),
                 model=_to_required_str(
                     data.get("model"), "model",
                     hint="use --model; call list_llm_models to get available models",

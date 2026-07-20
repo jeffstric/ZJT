@@ -300,6 +300,30 @@ def test_split_from_script_requires_model():
     assert "model" in exc_info.value.message
 
 
+def test_split_from_script_requires_auth_token():
+    """split-from-script 缺 auth_token 时拒绝。
+
+    worker 调 LLM 的 token 算力由 auth_token 解析出的 user_id 承担；漏传会导致
+    LLM 免费消耗（token_log 门禁 if auth_token 被跳过）。与数字人路径对齐。
+    """
+    import pytest
+    from services.storyboard_agent_command_service import StoryboardAgentCommandService
+    from services.storyboard_agent_cli_service import StoryboardCliError
+
+    class FakeStoryboardService:
+        def split_from_script(self, **kwargs):
+            raise AssertionError("缺 auth_token 时不应进入 service")
+
+    with pytest.raises(StoryboardCliError) as exc_info:
+        StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
+            "split-from-script",
+            {"storyboard_id": 44, "user_id": 7, "model": "m"},  # 无 auth_token
+        )
+
+    assert exc_info.value.error_code == "missing_auth_token"
+    assert "auth_token" in exc_info.value.message
+
+
 def test_split_from_script_max_group_duration_range():
     """max_group_duration 强制 10~15 范围：低于 10 或高于 15 都拒绝。
     低于 10 会让分段碎、画面增多，导致同世界画风一致性下降。"""
@@ -319,7 +343,7 @@ def test_split_from_script_max_group_duration_range():
     for ok in [10, 12, 15]:
         result = StoryboardAgentCommandService(service=OkService()).execute(
             "split-from-script",
-            {"storyboard_id": 44, "user_id": 7, "model": "m", "max_group_duration": ok},
+            {"storyboard_id": 44, "user_id": 7, "auth_token": "token", "model": "m", "max_group_duration": ok},
         )
         assert result["max_group_duration"] == ok, f"{ok} 应放行"
 
@@ -328,7 +352,7 @@ def test_split_from_script_max_group_duration_range():
         with pytest.raises(StoryboardCliError) as exc_info:
             StoryboardAgentCommandService(service=FakeStoryboardService()).execute(
                 "split-from-script",
-                {"storyboard_id": 44, "user_id": 7, "model": "m", "max_group_duration": bad},
+                {"storyboard_id": 44, "user_id": 7, "auth_token": "token", "model": "m", "max_group_duration": bad},
             )
         assert exc_info.value.error_code == "invalid_parameter"
         assert "max_group_duration" in exc_info.value.message

@@ -130,7 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     split_script.add_argument("--storyboard-id", type=int, required=True)
     split_script.add_argument("--user-id", type=int, required=True)
-    split_script.add_argument("--auth-token", default="")
+    split_script.add_argument(
+        "--auth-token", default="",
+        help="用户 auth_token（必填，LLM token 算力由该 token 对应用户承担；先 exchange 换取）",
+    )
     split_script.add_argument(
         "--model", required=True,
         help="LLM 模型名（必填，不再回退默认 gemini；先用 list_llm_models 查可用模型）",
